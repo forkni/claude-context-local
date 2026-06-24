@@ -15,6 +15,7 @@ Usage::
 See ``docs/DSPY_SETUP.md`` for caveats, token limits, and optimizer guidance.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -42,8 +43,9 @@ class ClaudeCodeLM(dspy.BaseLM):
         model: Claude model identifier, e.g. ``"claude-sonnet-4-6"``.
             Falls back to the ``DSPY_LM_MODEL`` env var, then
             ``"claude-sonnet-4-6"``.
-        max_tokens: Token cap forwarded to ``--max-tokens``.
-        timeout: Per-call subprocess timeout in seconds.
+        max_tokens: Token cap stored for forward-compatibility (not forwarded to the CLI).
+        timeout: Per-call subprocess timeout in seconds (default 300 — the DSPy
+            ReAct system prompt is long and the first call may take 60–120 s).
         **kwargs: Forwarded to ``dspy.BaseLM.__init__``.
     """
 
@@ -51,7 +53,7 @@ class ClaudeCodeLM(dspy.BaseLM):
         self,
         model: str | None = None,
         max_tokens: int = 4096,
-        timeout: int = 120,
+        timeout: int = 300,
         **kwargs: Any,
     ) -> None:
         resolved_model = model or os.getenv("DSPY_LM_MODEL", "claude-sonnet-4-6")
@@ -86,9 +88,9 @@ class ClaudeCodeLM(dspy.BaseLM):
         kwargs.pop("rollout_id", None)
 
         n: int = kwargs.pop("n", 1)
-        max_tokens: int = kwargs.pop("max_tokens", self.max_tokens)
-        # temperature is accepted but not forwarded (CLI doesn't expose it via
-        # non-API path); pop to avoid unexpected forwarding in the future.
+        # Pop DSPy kwargs the CLI doesn't understand (keep in sync with
+        # DSPy's internal call sites to avoid unexpected forwarding).
+        kwargs.pop("max_tokens", None)
         kwargs.pop("temperature", None)
 
         # Build user and system content from the message list.
@@ -111,7 +113,7 @@ class ClaudeCodeLM(dspy.BaseLM):
 
         texts: list[str] = []
         for _ in range(n):
-            texts.append(self._call_claude(user_text, system_text, max_tokens))
+            texts.append(self._call_claude(user_text, system_text))
 
         choices = [
             {
@@ -130,22 +132,106 @@ class ClaudeCodeLM(dspy.BaseLM):
         resp._hidden_params = {"response_cost": 0.0}
         return resp
 
+    async def aforward(
+        self,
+        prompt: str | None = None,
+        messages: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> ModelResponse:
+        """Async path: run the blocking ``claude`` subprocess off the event loop.
+
+        Required by ``dspy.ReAct.aforward`` (and any async DSPy module that
+        calls ``acall``). Delegates to the sync :meth:`forward` via
+        :func:`asyncio.to_thread` so the running asyncio event loop — which
+        owns the MCP ``ClientSession`` — is never blocked.
+
+        Args:
+            prompt: Raw prompt string.
+            messages: OpenAI-style message list.
+            **kwargs: Forwarded to :meth:`forward`.
+
+        Returns:
+            Same ``litellm.ModelResponse`` as :meth:`forward`.
+        """
+        return await asyncio.to_thread(
+            self.forward, prompt=prompt, messages=messages, **kwargs
+        )
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_text(stdout: str) -> str:
+        """Pull the final assistant text out of ``claude -p --output-format json``.
+
+        The CLI's JSON shape varies by version; the final answer always lives
+        in the ``result`` field of the ``type=="result"`` event:
+
+        * CLI ≤ 2.0 (documented shape): single JSON object
+          ``{"type": "result", "result": "<text>", ...}``
+        * CLI 2.1.x (empirical): top-level JSON **array** of event objects
+          ``[{"type": "system", ...}, {"type": "assistant", ...},
+             {"type": "result", "subtype": "success", "result": "<text>", ...}]``
+
+        A defensive fallback extracts text from the last ``assistant`` content
+        block when no ``result`` entry is found, guarding against future format
+        drift.
+
+        Args:
+            stdout: Raw stdout from the ``claude -p`` subprocess.
+
+        Returns:
+            The assistant reply string.
+
+        Raises:
+            json.JSONDecodeError: If ``stdout`` is not valid JSON.
+            KeyError: If neither a ``result`` entry nor assistant text is found.
+            TypeError: If the JSON root type is neither ``dict`` nor ``list``.
+        """
+        data = json.loads(stdout)  # propagate JSONDecodeError to caller
+
+        if isinstance(data, dict):
+            # Documented single-object shape: {"type":"result","result":"...",...}
+            if "result" in data:
+                return data["result"]
+            raise KeyError("result")
+
+        if isinstance(data, list):
+            # CLI 2.1.x: array of typed event objects.
+            # Primary: find the type=="result" entry (walk in reverse — it's last).
+            for event in reversed(data):
+                if (
+                    isinstance(event, dict)
+                    and event.get("type") == "result"
+                    and "result" in event
+                ):
+                    return event["result"]
+            # Fallback: assemble text from the last assistant content blocks.
+            for event in reversed(data):
+                if isinstance(event, dict) and event.get("type") == "assistant":
+                    blocks = event.get("message", {}).get("content", [])
+                    text = "".join(
+                        b.get("text", "")
+                        for b in blocks
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
+                    if text:
+                        return text
+            raise KeyError("result")
+
+        raise TypeError(f"unexpected claude CLI JSON type: {type(data).__name__}")
 
     def _call_claude(
         self,
         user: str,
         system: str | None,
-        max_tokens: int,
     ) -> str:
         """Invoke ``claude -p`` and return the result text.
 
         Args:
             user: User-turn content.
             system: System prompt content, or ``None``.
-            max_tokens: Token ceiling for the response.
 
         Returns:
             The assistant reply string.
@@ -161,10 +247,13 @@ class ClaudeCodeLM(dspy.BaseLM):
                 "set the CLAUDE_CLI_PATH environment variable to its path."
             )
 
+        # Pass the user text via stdin (-p with no argument) rather than as a
+        # command-line argument.  The ReAct trajectory grows with each tool call
+        # and can exceed Windows' 32767-char CreateProcess limit or contain
+        # characters that trip the CLI's argument parser.  Stdin bypasses both.
         cmd: list[str] = [
             binary,
-            "-p",
-            user,
+            "-p",  # no inline argument; prompt is read from stdin
             "--model",
             self.model,
             "--output-format",
@@ -172,11 +261,17 @@ class ClaudeCodeLM(dspy.BaseLM):
             "--no-session-persistence",
             "--max-turns",
             "1",
+            # Disable the CLI's own agentic tools so it behaves as a pure
+            # text completer.  DSPy drives the tool-use loop itself; we don't
+            # want the CLI's built-in Bash/Edit/etc. tools competing with it.
+            "--tools",
+            "",
         ]
         if system:
             cmd += ["--system-prompt", system]
-        if max_tokens:
-            cmd += ["--max-tokens", str(max_tokens)]
+        # Note: the claude CLI does not expose --max-tokens for the -p mode;
+        # the max_tokens parameter is stored for forward-compatibility but not
+        # forwarded to the subprocess.
 
         # Strip API credentials so the CLI always uses subscription OAuth.
         env = {
@@ -185,26 +280,31 @@ class ClaudeCodeLM(dspy.BaseLM):
             if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
         }
 
-        logger.debug("ClaudeCodeLM: running %s", cmd[0])
+        logger.debug("ClaudeCodeLM: running %s (stdin=%d chars)", cmd[0], len(user))
         result = subprocess.run(
             cmd,
+            input=user,
             capture_output=True,
             text=True,
             timeout=self.timeout,
             env=env,
         )
 
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"claude CLI exited with code {result.returncode}: {result.stderr}"
-            )
-
+        # Parse stdout first regardless of exit code.  When --tools "" is used
+        # the CLI can exit 1 while still producing valid JSON output in stdout;
+        # treat that as success.  Only raise when both conditions hold (non-zero
+        # AND unparseable / empty stdout).
         try:
-            return json.loads(result.stdout)["result"]
-        except (json.JSONDecodeError, KeyError) as exc:
+            return self._extract_text(result.stdout)
+        except (json.JSONDecodeError, KeyError, TypeError) as parse_exc:
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"claude CLI exited with code {result.returncode}: "
+                    f"{result.stderr or result.stdout!r}"
+                ) from parse_exc
             raise RuntimeError(
                 f"Unexpected claude CLI output: {result.stdout!r}"
-            ) from exc
+            ) from parse_exc
 
 
 def configure_dspy(model: str | None = None, **kwargs: Any) -> ClaudeCodeLM:

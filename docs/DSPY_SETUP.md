@@ -96,6 +96,104 @@ To switch to the SDK path, install `claude-agent-sdk` and subclass
 `ClaudeCodeLM`, replacing `_call_claude` with an SDK invocation.  The
 subscription guard (stripping `ANTHROPIC_API_KEY`) applies either way.
 
+## Agent over MCP tools (ReAct + code-search)
+
+`utils/dspy_mcp.py` wires a `dspy.ReAct` agent to the project's `code-search`
+MCP server over **StreamableHTTP**.  Each ReAct step is one `claude -p` call;
+the agent issues `search_code` / `find_connections` calls against the
+**already-running, warm** server, producing a grounded answer from the actual
+codebase index — no second subprocess, no cold model load.
+
+### Prerequisites
+
+1. **The code-search HTTP server must be running on port 8765.**  Start it
+   with `start_mcp_http.bat` if needed, then verify:
+   ```bash
+   curl http://localhost:8765/mcp   # should return MCP protocol response
+   ```
+   Or in Claude Code: `/mcp` → `code-search:list_projects`.
+2. The target project must already be indexed (see `index_directory` tool).
+3. No `ANTHROPIC_API_KEY` set — see above.
+4. Active Claude Code login (`claude whoami`).
+
+### Quick start
+
+```python
+import asyncio
+from utils.dspy_mcp import run_code_search_agent
+
+result = asyncio.run(
+    run_code_search_agent(
+        "Where is the FAISS vector index class defined?",
+        project_path="D:/claude-context-local",   # must already be indexed
+    )
+)
+print(result.answer)
+```
+
+`run_code_search_agent` connects to the warm HTTP server, calls
+`switch_project` to activate the correct index (switch & leave — the server
+stays on the requested project after the call returns), then runs the ReAct
+loop.
+
+### Shared session seam (`code_search_session`)
+
+For multi-query workloads (e.g. the evaluation runner), open **one** session
+shared across all queries to avoid repeated connection setup:
+
+```python
+import asyncio
+import dspy
+from utils.dspy_mcp import code_search_session
+from utils.dspy_claude_code import ClaudeCodeLM
+
+async def batch_query(questions):
+    lm = ClaudeCodeLM()
+    async with code_search_session(project_path="D:/claude-context-local") as (_, tools):
+        agent = dspy.ReAct("question -> answer", tools=tools)
+        results = []
+        for q in questions:
+            with dspy.context(lm=lm):
+                results.append(await agent.acall(question=q))
+    return results
+```
+
+All calls in a batch must stay on **one event loop** that owns the session.
+Do not pass the session or tools to another thread or a separate event loop.
+
+### Runnable demo
+
+```bash
+.venv/Scripts/python.exe scripts/dspy_mcp_demo.py
+# custom question:
+.venv/Scripts/python.exe scripts/dspy_mcp_demo.py "How does hybrid search work?"
+```
+
+### Latency
+
+- Warm server (model already loaded): **no cold-start delay**.
+- Each `claude -p` ReAct step: **3–10 s**.
+- A typical 3-step query: **~15–40 s** total.
+- First call after server startup still incurs model load (~8–15 s);
+  the 45 s per-tool timeout accommodates this.
+
+### Design notes
+
+- Tools are exposed with `--tools ""` so the CLI's own Bash/Edit/etc. tools
+  are disabled; DSPy drives the tool-use loop entirely via its text-based
+  ReAct adapter.
+- Only read-only tools (`search_code`, `find_connections`) are exposed by
+  default; index-mutating or config tools are never passed to the agent.
+- Each tool call is wrapped in `asyncio.wait_for(timeout=45s)` so a stalled
+  tool returns an observation string instead of hanging the entire agent run.
+- The async path (`ReAct.aforward`) is required because the MCP
+  `ClientSession.call_tool` is a coroutine.  `ClaudeCodeLM.aforward` runs
+  the blocking `claude -p` subprocess via `asyncio.to_thread`, keeping the
+  event loop free.
+- `dspy.context(lm=lm)` is used (not `dspy.configure`) — it uses Python
+  contextvars so it is async-task-safe: multiple concurrent tasks can each
+  hold their own LM reference without interference.
+
 ## Troubleshooting
 
 | Symptom | Fix |
