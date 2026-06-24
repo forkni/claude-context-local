@@ -38,6 +38,49 @@ def _make_proc(stdout: str, returncode: int = 0, stderr: str = "") -> MagicMock:
 
 _PARIS_STDOUT = json.dumps({"result": "Paris"})
 
+# CLI 2.1.x array-of-events shape
+_PARIS_ARRAY_STDOUT = json.dumps(
+    [
+        {
+            "type": "system",
+            "subtype": "init",
+            "session_id": "s1",
+            "tools": [],
+            "mcp_servers": [],
+        },
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Paris"}],
+            },
+            "session_id": "s1",
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "result": "Paris",
+            "session_id": "s1",
+            "total_cost_usd": 0.001,
+            "usage": {"input_tokens": 10, "output_tokens": 1},
+        },
+    ]
+)
+
+# Array with NO type=="result" entry — only an assistant text block (fallback path)
+_PARIS_FALLBACK_STDOUT = json.dumps(
+    [
+        {"type": "system", "subtype": "init"},
+        {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Paris"}],
+            },
+        },
+    ]
+)
+
 
 # ---------------------------------------------------------------------------
 # ClaudeCodeLM.forward
@@ -138,6 +181,32 @@ class TestClaudeCodeLMForward:
 
         assert resp.choices[0].message.content == "Paris"
 
+    def test_parses_array_output(self):
+        """CLI 2.1.x emits a JSON array; the type=='result' entry holds the text."""
+        with (
+            patch("shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run", return_value=_make_proc(_PARIS_ARRAY_STDOUT)),
+        ):
+            lm = ClaudeCodeLM(model="claude-sonnet-4-6")
+            resp = lm.forward(
+                messages=[{"role": "user", "content": "capital of France?"}]
+            )
+
+        assert resp.choices[0].message.content == "Paris"
+
+    def test_parses_array_fallback_to_assistant_text(self):
+        """Array with no type=='result' entry falls back to the last assistant text block."""
+        with (
+            patch("shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run", return_value=_make_proc(_PARIS_FALLBACK_STDOUT)),
+        ):
+            lm = ClaudeCodeLM(model="claude-sonnet-4-6")
+            resp = lm.forward(
+                messages=[{"role": "user", "content": "capital of France?"}]
+            )
+
+        assert resp.choices[0].message.content == "Paris"
+
 
 # ---------------------------------------------------------------------------
 # Subscription guard — ANTHROPIC_API_KEY must be absent from env
@@ -202,7 +271,7 @@ class TestCallClaudeErrors:
         ):
             lm = ClaudeCodeLM(model="claude-sonnet-4-6")
             with pytest.raises(RuntimeError, match="claude CLI not found"):
-                lm._call_claude("hello", None, 4096)
+                lm._call_claude("hello", None)
 
     def test_raises_on_nonzero_exit(self):
         """RuntimeError is raised when the subprocess exits with non-zero."""
@@ -215,7 +284,7 @@ class TestCallClaudeErrors:
         ):
             lm = ClaudeCodeLM(model="claude-sonnet-4-6")
             with pytest.raises(RuntimeError, match="exited with code 1"):
-                lm._call_claude("hello", None, 4096)
+                lm._call_claude("hello", None)
 
     def test_raises_on_malformed_json(self):
         """RuntimeError when CLI returns non-JSON output."""
@@ -225,10 +294,10 @@ class TestCallClaudeErrors:
         ):
             lm = ClaudeCodeLM(model="claude-sonnet-4-6")
             with pytest.raises(RuntimeError, match="Unexpected claude CLI output"):
-                lm._call_claude("hello", None, 4096)
+                lm._call_claude("hello", None)
 
     def test_raises_when_result_key_missing(self):
-        """RuntimeError when JSON is valid but 'result' key is absent."""
+        """RuntimeError when JSON is valid but 'result' key is absent (dict shape)."""
         with (
             patch("shutil.which", return_value="/usr/bin/claude"),
             patch(
@@ -238,7 +307,18 @@ class TestCallClaudeErrors:
         ):
             lm = ClaudeCodeLM(model="claude-sonnet-4-6")
             with pytest.raises(RuntimeError, match="Unexpected claude CLI output"):
-                lm._call_claude("hello", None, 4096)
+                lm._call_claude("hello", None)
+
+    def test_raises_when_array_has_no_result_or_assistant(self):
+        """RuntimeError when array has no type=='result' and no assistant text block."""
+        empty_array_stdout = json.dumps([{"type": "system", "subtype": "init"}])
+        with (
+            patch("shutil.which", return_value="/usr/bin/claude"),
+            patch("subprocess.run", return_value=_make_proc(empty_array_stdout)),
+        ):
+            lm = ClaudeCodeLM(model="claude-sonnet-4-6")
+            with pytest.raises(RuntimeError, match="Unexpected claude CLI output"):
+                lm._call_claude("hello", None)
 
 
 # ---------------------------------------------------------------------------
