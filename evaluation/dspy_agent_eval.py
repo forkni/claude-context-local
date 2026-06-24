@@ -301,8 +301,12 @@ def tool_selection_metric(
 
     Scores 1.0 if the expected tool appears anywhere in the ReAct trajectory
     (recovery across the whole trajectory, not just step 0).  Scores 0.0 if
-    not used.  Returns 1.0 for examples with no ``expected_tool`` (category D,
-    which has no ground truth in the current dataset).
+    not used.  Returns 1.0 for examples with no ``expected_tool`` set.
+
+    Categories A/B/C expect ``search_code``; category D expects
+    ``find_connections``.  Examples without an ``expected_tool`` field are
+    excluded from tool-selection accuracy (counted as 1.0 so they do not
+    penalise the mean).
 
     Args:
         example: A DSPy example with an ``expected_tool`` field.
@@ -310,11 +314,11 @@ def tool_selection_metric(
         trace: Unused.
 
     Returns:
-        1.0 (correct tool used or no ground truth), 0.0 (wrong tool used).
+        1.0 (correct tool used or no expected_tool set), 0.0 (wrong tool used).
     """
     expected = example.get("expected_tool")
     if not expected:
-        return 1.0  # no ground truth for this category — not counted
+        return 1.0  # no expected_tool set — excluded from accuracy mean
 
     used = _extract_tools_from_trajectory(getattr(pred, "trajectory", None))
     return 1.0 if expected.lower() in used else 0.0
@@ -523,6 +527,7 @@ async def run_eval(
     project_path: str,
     *,
     dataset_path: str | Path | None = None,
+    split: str | None = None,
     k: int = 7,
     concurrency: int = 4,
     max_iters: int = 6,
@@ -545,6 +550,10 @@ async def run_eval(
         project_path: Absolute path to the already-indexed project directory.
         dataset_path: Path to the golden-dataset JSON.  Defaults to
             ``evaluation/golden_dataset.json``.
+        split: Dataset split to evaluate — ``"train"``, ``"val"``, ``"test"``,
+            or ``None`` (all 45 rows, default).  Pass ``"test"`` for the
+            held-out evaluation; ``None`` preserves the full-dataset assertion
+            in the e2e integration test.
         k: Recall cut-off for reporting (default 7).
         concurrency: Maximum parallel agent calls (default 4).
         max_iters: Maximum DSPy ReAct iterations per query (default 6).
@@ -571,7 +580,7 @@ async def run_eval(
             - ``failed_count``: number of queries that raised an exception.
             - ``total_queries``: total input queries.
     """
-    examples, thresholds = load_examples(dataset_path)
+    examples, thresholds = load_examples(dataset_path, split=split)
     lm = ClaudeCodeLM(model=model, **lm_kwargs)
     sem = asyncio.Semaphore(concurrency)
 
