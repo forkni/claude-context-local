@@ -139,7 +139,7 @@ Test suite documentation and validation reports.
 
 | Document | Description |
 |----------|-------------|
-| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (2,533 unit + 19 integration tests) |
+| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (2,853 unit + 19 integration tests) |
 | **[tests/README.md](../tests/README.md)** | Test suite organization and best practices |
 
 ### Testing Tools (scripts/test/)
@@ -185,10 +185,11 @@ Detailed technical documentation.
 
 | Document | Description |
 |----------|-------------|
-| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.16.0 |
+| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.17.0 |
 
 ### Key Versions
 
+- **v0.17.0** (2026-06-24): DSPy/GEPA agent-eval harness, `ClaudeCodeLM` subscription backend, `default_k` 4→7 (MRR +0.093, Recall@7 +0.122), CVE remediation 53→5, Batch 3/4/5 perf+fixes, 2,853 tests
 - **v0.16.0** (2026-06-11): code-review hardening — 30 correctness/concurrency fixes (Batch 1/2A/2B); thread-safe MCP server, MultiDiGraph call graph, atomic writes, 2,533 tests
 - **v0.15.0** (2026-06-03): LSP resolver repair (0 → 938 edges), resolver precision tuning, `min_confidence`/`use_pyproject_toml` config knobs, `docs/CALL_GRAPH_TUNING.md`, 2,495 tests
 - **v0.14.0** (2026-06-03): Layered call-graph resolver pipeline (AST→pyan→LibCST→LSP), optional `[callgraph]`/`[lsp]` extras, `find_connections` bidirectional callees + `resolver_source`/`resolver_confidence` provenance

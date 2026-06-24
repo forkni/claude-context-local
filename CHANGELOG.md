@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.17.0] - 2026-06-24
+
+### Added — DSPy/GEPA agent-evaluation harness
+
+- **Claude Code subscription LM backend for DSPy** (`d696615`, `utils/dspy_claude_code.py`, `docs/DSPY_SETUP.md`) — `ClaudeCodeLM(dspy.BaseLM)` shells to `claude -p --output-format json` for rollout and reflection, routing all LM calls through a Claude Max subscription with zero API cost. Handles CLI JSON envelope parsing (dict and array shapes), async dispatch via `asyncio.to_thread`, and intentionally-zero token/cost accounting. Configured via `configure_dspy()` helper.
+- **DSPy ReAct → code-search HTTP server bridge** (`d4396a5`) — wraps the running MCP HTTP transport as DSPy-callable tools, enabling structured agent rollouts against the live search index for benchmark and optimization work.
+- **DSPy agent-evaluation harness** (`af7f812`) — end-to-end harness for evaluating and optimizing the code-search MCP tool-use agent via `dspy.Evaluate` and `dspy.GEPA`; dataset loading, metric wiring, and trace collection included.
+- **GEPA optimization harness for CodeNavQA** (`21f74c5`, `883d6ad`, `5766c12`, `ebf6002`, `721c4cf`) — reflective evolutionary search over the `CodeNavQA` DSPy signature with the subscription LM as the reflection/proposer backend. GEPA-discovered guidance distilled back into the signature improved **Recall@7 0.668→0.717**. Includes chunk-id verbatim copy fix (`ebf6002`), unranked recall ceiling metric (`721c4cf`), and tool-vs-agent recall diagnostic.
+- **Optional `[gpu]` extra** (`pyproject.toml`) — `nvidia-ml-py>=12.535.77`; previously a transitive dependency, now explicitly pinned under `[gpu]` for NVML-backed VRAM monitoring.
+- **`ClaudeCodeLM` test suite** (`e2fcd2f`, `tests/unit/utils/test_dspy_claude_code.py`) — CLI array-format and dict-format JSON parsing tests; **2,853 unit tests** total.
+
+### Changed
+
+- **Search `default_k` 4→7** (`447dc9a`, `search_config.json`) — SSCG benchmark (k=7 hybrid, 2026-05-25): MRR 0.806, Recall@7 0.700, Hit@7 100% — vs k=4 baseline: MRR +0.093, Recall@7 +0.122. Targets that previously fell at rank 5–7 are now reliably retrieved. Pass `k=7` explicitly in production code (defensive against config drift).
+- **`mcp<2` upper pin** (`946f087`, `pyproject.toml`) — pins `mcp>=1.27.0,<2` to prevent accidental uptake of the v2 breaking-change release; `starlette>=1.3.1` promoted to a direct dependency so the CVE floor is enforced without transitive drift.
+- **GEPA-discovered search guidance ported to `mcp-search-tool` skill** (`110e4d1`) — multi-query strategy (3–6 diverse phrasings), `include_context=true` default, `reranker_score`-first sort, MRR lead-chunk rule, and metadata-only refetch gotcha added to the dotfiles skill.
+
+### Security
+
+- **CVE remediation: 53→5 advisories** — two rounds of dependency upgrades:
+  - **Round 1** (`3331c57`): 12 packages upgraded; 53→11 advisories. Includes `aiohttp>=3.14.1`, `python-dotenv>=1.2.2`, plus updates to `certifi`, `urllib3`, `requests`, `cryptography`, and others.
+  - **Round 2** (`946f087`): `starlette 0.52.1→1.3.1`; 11→5 advisories. 5 advisories remain (all low/medium-severity; documented in `pyproject.toml` security comment block).
+
+### Performance
+
+- **AST parse-once across relationship extractors** (`fb3d628`, `chunking/relationships/`) — a single parse result is now shared across all extractor passes per chunk instead of re-parsing per extractor; reduces CPU 2–4× on Python-heavy codebases. (#15)
+- **Single-pass file-accessibility probe** (`e995376`, `aec4e2c`, `mcp_server/tools/index_handlers.py`) — `rglob` runs once per index operation; `chunked_paths` set hoisted out of the inner loop; per-file `supported`-extension log line removed. (#17, #18)
+- **Batch 4 — embedding throughput + NVML** (`33c3b12`) — 7 targeted improvements: batch-size auto-tuner, ONNX warm-up token count, NVML free-memory polling, sentence-transformers `trust_remote_code`, and related throughput micro-opts. (#50–#56, #59)
+
+### Fixed
+
+- **Merged community chunks lost call/relationship edges** (`43dde19`, `graph/graph_storage.py`) — `union_edges` only iterated the first member's edges; a merged chunk spanning multiple members silently dropped all non-lead-member edges from `find_connections`. Fixed: union across all members. (#28, #16)
+- **Batch 3 — event-loop and contract fixes** (`9e88b20`) — six async handlers offloaded to `asyncio.to_thread`; metadata cache cleared on reindex; ONNX session max-sequence-length contract enforced at 2048 tokens; dead `_graph_scorer` field removed; graph node-ID normalization; benchmark line-check fix; Merkle sentinel write. (#43–#49)
+- **Batch 5 — routing-metadata and clarity** (`e4998f0`) — routing-metadata `None` propagation bug fixed; five P3 code-clarity refactors. (#57, #58, #60–#62)
+- **Indexing RAM-fallback override decoupled from config singleton** (`0e60a1d`) — override no longer mutates the shared `SearchConfig` singleton, preventing cross-request contamination in concurrent HTTP scenarios.
+- **Arena-polluted ONNX activation measurement excluded from batch sizing** (`2608aca`) — first-batch measurements inflated by arena allocation were used to set the per-batch ceiling, causing overly conservative sizes after warm-up. Fixed: discard the first measurement.
+- **Non-hybrid path strips persisted content** (`f89fdb7`, `search/`) — BM25-only and semantic-only paths now strip persisted `content` fields from results, consistent with the hybrid path. ONNX memory-management ADR added (`docs/adr/`).
+- **Windows cp1252 decode errors on `claude` CLI subprocess** (`ceb737e`, `utils/dspy_claude_code.py`) — `claude -p` output contains Unicode characters; `subprocess.run` on Windows defaults to cp1252. Fixed: `encoding="utf-8"` on the subprocess call.
+- **Pyrefly static-type cleanup** (`c6a9a1d`, `475d11c`) — `get_embedder` non-None assertion; `_class_file_cache` `getattr` annotated `Optional`. No runtime changes.
+
+---
+
 ## [0.16.0] - 2026-06-11
 
 ### Fixed — Correctness & integrity (Batch 1)

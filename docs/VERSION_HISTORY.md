@@ -2,15 +2,59 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-06-11)
+## Current Status: All Features Operational (2026-06-24)
 
-- **Version**: 0.16.0
+- **Version**: 0.17.0
 - **Status**: Production-ready, concurrency-safe
-- **Test Coverage**: 2,533 unit tests + 19 integration tests (100% pass rate)
-- **Dependencies**: 124 packages + optional `[callgraph]` / `[lsp]` extras
-- **SSCG Benchmark**: MRR 0.797, Recall@5 0.689, Recall@7 0.736, Hit@5 100% — all three modes pass thresholds (2026-06-08)
+- **Test Coverage**: 2,853 unit tests + 19 integration tests (100% pass rate)
+- **Dependencies**: 125 packages + optional `[callgraph]` / `[lsp]` / `[gpu]` extras
+- **SSCG Benchmark**: MRR 0.806, Recall@5 0.646, Recall@7 0.700, Hit@7 100% — recommended k=7 (2026-05-25)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: v0.16.0 — code-review correctness hardening (30 fixes across Batch 1/2A/2B) + concurrency safety for the async MCP server
+- **Recent**: v0.17.0 — DSPy/GEPA agent-eval harness, subscription LM backend, default_k 4→7, CVE 53→5
+
+---
+
+## v0.17.0 - DSPy/GEPA Agent-Evaluation Harness + Search Default Uplift (2026-06-24)
+
+New agent-evaluation and optimization subsystem built on DSPy, plus search quality improvements discovered by running GEPA on the MCP tool-use benchmark.
+
+### Added — DSPy/GEPA agent-evaluation harness
+
+- **`ClaudeCodeLM` subscription backend** (`utils/dspy_claude_code.py`) — `dspy.BaseLM` subclass that shells to `claude -p --output-format json`; routes rollout and reflection calls through a Claude Max subscription with zero API cost. Handles dict and array CLI JSON shapes, async dispatch, intentionally-zero cost accounting. `configure_dspy()` helper. See `docs/DSPY_SETUP.md`.
+- **DSPy ReAct → MCP HTTP bridge** — wraps the running code-search HTTP server as DSPy-callable tools for structured agent rollouts against the live index.
+- **DSPy agent-evaluation harness** — `dspy.Evaluate` + `dspy.GEPA` end-to-end harness; dataset loading, metric wiring, trace collection.
+- **GEPA optimization on CodeNavQA** — reflective evolutionary search with the subscription LM as proposer. GEPA-discovered guidance improved **Recall@7 0.668→0.717** after distillation back into the `CodeNavQA` signature. Includes chunk-id verbatim copy fix, unranked recall ceiling metric, tool-vs-agent recall diagnostic.
+- **Optional `[gpu]` extra** — `nvidia-ml-py>=12.535.77` for NVML-backed VRAM monitoring.
+- **`ClaudeCodeLM` test suite** — CLI array-format and dict-format JSON parsing tests; 2,853 unit tests total.
+
+### Changed
+
+- **Search `default_k` 4→7** — SSCG benchmark (k=7 hybrid, 2026-05-25): MRR 0.806, Recall@7 0.700, Hit@7 100% — vs k=4 baseline: MRR +0.093, Recall@7 +0.122.
+- **`mcp<2` upper pin** — prevents accidental uptake of v2 breaking-change release; `starlette>=1.3.1` promoted to a direct dependency.
+- **Search guidance** — GEPA-discovered multi-query strategy, `include_context=true` default, `reranker_score`-first sort, MRR lead-chunk rule ported to the `mcp-search-tool` skill.
+
+### Security
+
+- **CVE remediation: 53→5 advisories** (two rounds):
+  - Round 1 (`3331c57`): 12 packages upgraded; 53→11 advisories. `aiohttp>=3.14.1`, `python-dotenv>=1.2.2`, `certifi`, `urllib3`, `requests`, `cryptography`, others.
+  - Round 2 (`946f087`): `starlette 0.52.1→1.3.1`; 11→5 advisories. 5 remain (low/medium; documented in `pyproject.toml`).
+
+### Performance
+
+- **AST parse-once** (`#15`) — shared parse result across all relationship extractors; 2–4× CPU reduction per file.
+- **Single-pass `rglob` probe** (`#17`, `#18`) — `chunked_paths` set hoisted; accessibility probe runs once per index operation.
+- **Batch 4 — embedding throughput + NVML** (`#50–#56`, `#59`) — batch-size auto-tuner, ONNX warm-up, NVML polling, and related micro-opts.
+
+### Fixed
+
+- **Merged community edge union** (`#28`, `#16`) — `union_edges` now iterates all members, not just the first.
+- **Batch 3** (`#43–#49`) — six event-loop offloads, metadata cache clear on reindex, ONNX 2048-token contract, dead-field removal, graph-id normalization, Merkle sentinel.
+- **Batch 5** (`#57`, `#58`, `#60–#62`) — routing-metadata `None` propagation fix, five clarity refactors.
+- **RAM-fallback config decoupling** — override no longer mutates the shared `SearchConfig` singleton.
+- **Arena-polluted ONNX batch sizing** — first measurement discarded to avoid over-conservative ceilings.
+- **Non-hybrid path persisted content** — BM25-only and semantic-only paths now strip `content` fields consistently.
+- **Windows cp1252 decode on `claude` subprocess** — `encoding="utf-8"` added to prevent `UnicodeDecodeError` on Windows.
+- **Pyrefly type cleanup** — `get_embedder` non-None assertion, `_class_file_cache` `Optional` annotation.
 
 ---
 

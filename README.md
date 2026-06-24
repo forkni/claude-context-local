@@ -42,25 +42,26 @@
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 2,533 passing tests | All 19 MCP tools operational | Concurrency-safe | Windows 10/11
+**Status**: ✅ Production-ready | 2,853 passing tests | All 19 MCP tools operational | Concurrency-safe | Windows 10/11
 
-## What's New in v0.16.0
+## What's New in v0.17.0
 
-- **Concurrency-safe MCP server** — `ApplicationState` singleton lazy-init and teardown now guarded by a `threading.RLock`; model-pool factory by a separate module-level lock. Concurrent tool calls no longer risk duplicate VRAM allocation or mid-request teardown (#7). See [ADR-0006](docs/adr/0006-thread-safety-of-module-singletons.md).
-- **Event-loop correctness** — `_check_auto_reindex`, cache-miss `get_searcher`, and chunk-id lookups are offloaded via `asyncio.to_thread`; a per-project `asyncio.Lock` serializes concurrent reindex requests (#5). A stale-index `search_code` no longer freezes the event loop for minutes.
-- **Deterministic parallel chunking** — tree-sitter `Parser` objects and relationship extractors are now per-thread (`threading.local`); parallel workers no longer share mutable state, eliminating corrupt-tree crashes and cross-file edge contamination (#4).
-- **Full-fidelity call graph** — `DiGraph` migrated to `MultiDiGraph`; a node pair that both `calls` and `instantiates` the same symbol now retains all edge types instead of overwriting to the last one (#3).
-- **Index integrity** — embedding failures during incremental index no longer silently drop modified files (#1); atomic JSON writes at all 4 snapshot/graph sites (#27); Merkle symlink-cycle guard prevents infinite traversal (#21).
-- **Bug fixes** — file-read timeout deadlock (#6), CWD-relative import resolution (#8), `clear_index` open-handle delete on Windows (#10), offline-env flag leak (#11), ancestor-directory ignore false-positive (#12), BFS `visited`-before-filter ordering bug (#23), ONNX `provider_options` type mismatch (#9), and more.
-- **2,533 unit tests** passing (4 new thread-isolation determinism tests).
+- **DSPy/GEPA agent-evaluation harness** — full agent-evaluation and optimization loop for the code-search MCP tools: `ClaudeCodeLM` subscription backend (`utils/dspy_claude_code.py`), DSPy ReAct bridge to the live HTTP server, `dspy.Evaluate`/`dspy.GEPA` harness. Zero API cost — runs on a Claude Max subscription. See `docs/DSPY_SETUP.md`.
+- **GEPA-optimized CodeNavQA recall guidance** — GEPA reflective search distilled back into the `CodeNavQA` DSPy signature improved **Recall@7 0.668→0.717**; multi-query strategy, chunk-id verbatim copy, and tool-vs-agent recall diagnostic included.
+- **Search `default_k` 4→7** — SSCG benchmark (k=7 hybrid): MRR 0.806 (+0.093), Recall@7 0.700 (+0.122), Hit@7 100%. Targets that fell at rank 5–7 are now reliably retrieved. Pass `k=7` explicitly in production code.
+- **CVE remediation: 53→5 advisories** — two rounds of dependency upgrades (`aiohttp>=3.14.1`, `starlette>=1.3.1`, `python-dotenv>=1.2.2`, 12 other packages). 5 low/medium advisories remain (documented in `pyproject.toml`).
+- **New `[gpu]` optional extra** — `nvidia-ml-py>=12.535.77` pinned under `[gpu]` for NVML-backed VRAM monitoring.
+- **Performance** — AST parse-once across relationship extractors (#15); single-pass file-accessibility `rglob` (#17, #18); Batch 4 embedding throughput + NVML improvements (#50–#56, #59).
+- **Bug fixes** — merged community chunk edge union (#28, #16); Batch 3 event-loop offloads + ONNX 2048-token contract (#43–#49); Batch 5 routing-metadata fix (#57, #58, #60–#62); RAM-fallback config-singleton decoupling; Windows cp1252 decode on `claude` CLI subprocess; pyrefly type cleanup.
+- **2,853 unit tests** passing (ClaudeCodeLM CLI-format parsing tests added).
+
+**Previous (v0.16.0)**: Concurrency-safe MCP server (`threading.RLock` on `ApplicationState`), event-loop offloads via `asyncio.to_thread`, deterministic parallel chunking, `DiGraph`→`MultiDiGraph`, index integrity fixes (30 total — Batch 1/2A/2B). 2,533 tests.
 
 **Previous (v0.15.0)**: LSP resolver repair (0 → 938 resolved edges), resolver precision tuning, `min_confidence`/`use_pyproject_toml` config knobs, `docs/CALL_GRAPH_TUNING.md`.
 
 **Previous (v0.14.0)**: Layered call-graph resolver pipeline (AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98), optional `[callgraph]`/`[lsp]` extras, `find_connections` bidirectional callees with `resolver_source`/`resolver_confidence` provenance, `CallGraphConfig`, edge-attribute rename `source`→`resolver_source`. 2,451 tests.
 
-**Previous (v0.13.0)**: pyan3 cross-module caller edges in `find_connections`, direct-caller recall 0.57→0.95, `split_block` call edges recovered, Windows backslash normalization, `exc_info=True` across all swallow-and-degrade handlers. Security: pyjwt 2.13.0, uv 0.11.18.
-
-**Previous (v0.12.4)**: Three MCP server bug fixes: `switch_project` no longer logs "No indexed model detected" (reads `project_info.json`); `list_embedding_models` `loaded` field fixed; `CodeGraphStorage.clear()` deletes backing JSON. `GraphScoringStage` extracted; `ServiceLocator`/`ResourceManager`/`SearchFactory` collapsed to module-level functions (ADR-0005). Security: idna 3.17.
+**Previous (v0.13.0)**: pyan3 cross-module caller edges in `find_connections`, direct-caller recall 0.57→0.95, `split_block` call edges recovered, Windows backslash normalization. Security: pyjwt 2.13.0, uv 0.11.18.
 
 Previous release notes: [CHANGELOG.md](CHANGELOG.md)
 
