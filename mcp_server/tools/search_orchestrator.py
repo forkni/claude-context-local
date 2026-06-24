@@ -323,11 +323,19 @@ class SearchOrchestrator:
         stored_model_key = None
         if plan.auto_reindex and current_project:
             try:
-                reindexed, stored_model_key = _check_auto_reindex(
-                    current_project, plan.selected_model_key, plan.max_age_minutes
-                )
+                # Per-project asyncio.Lock prevents two concurrent search/index
+                # calls from reindexing the same project simultaneously.
+                # _check_auto_reindex is blocking (can run a full incremental
+                # reindex + HybridSearcher construction), so offload to a thread.
+                async with get_state().get_reindex_lock(current_project):
+                    reindexed, stored_model_key = await asyncio.to_thread(
+                        _check_auto_reindex,
+                        current_project,
+                        plan.selected_model_key,
+                        plan.max_age_minutes,
+                    )
                 if reindexed:
-                    get_state().searcher = None
+                    get_state().reset_searcher()
             except DimensionMismatchError as e:
                 return {
                     "error": "Dimension mismatch",
@@ -351,7 +359,11 @@ class SearchOrchestrator:
             )
 
         try:
-            searcher = get_searcher(model_key=effective_search_model)
+            # get_searcher can construct a HybridSearcher on cache-miss — offload
+            # to avoid blocking the event loop during model/index init.
+            searcher = await asyncio.to_thread(
+                lambda: get_searcher(model_key=effective_search_model)
+            )
         except DimensionMismatchError as e:
             return {
                 "error": "Dimension mismatch",
@@ -419,6 +431,7 @@ class SearchOrchestrator:
             nonlocal config_copy
             if config_copy is None:
                 config_copy = copy.deepcopy(config_singleton)
+            assert config_copy is not None  # set immediately above when None
             return config_copy
 
         if isinstance(searcher, HybridSearcher) and plan.ego_graph_enabled:
@@ -664,9 +677,13 @@ class SearchOrchestrator:
         if chunk_id:
             from mcp_server.tools.search_handlers import _handle_chunk_id_lookup
 
-            return _handle_chunk_id_lookup(chunk_id)
+            return await asyncio.to_thread(_handle_chunk_id_lookup, chunk_id)
 
-        plan = SearchPlanner().plan(arguments)
+        # SearchPlanner.plan() calls IntentClassifier.classify() which, when
+        # semantic_enabled=True (the default), runs embed_query() — a GPU forward
+        # pass per request.  It also probes the filesystem via _route_query_to_model.
+        # Offload to avoid blocking the event loop. plan() stays synchronous.
+        plan = await asyncio.to_thread(lambda: SearchPlanner().plan(arguments))
 
         if plan.redirect is not None:
             redirect = plan.redirect
@@ -684,7 +701,11 @@ class SearchOrchestrator:
                     f"{redirect.params.get('symbol_name')}"
                 )
                 try:
-                    _redirect_searcher = get_searcher(model_key=redirect.model_key)
+                    # get_searcher() can construct a HybridSearcher on cache-miss —
+                    # same reason the call 35 lines above is wrapped in to_thread.
+                    _redirect_searcher = await asyncio.to_thread(
+                        lambda: get_searcher(model_key=redirect.model_key)
+                    )
                     _redirect_result = await asyncio.to_thread(
                         _redirect_searcher.search,
                         redirect.params["symbol_name"],

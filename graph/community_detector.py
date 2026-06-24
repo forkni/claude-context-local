@@ -39,7 +39,7 @@ class CommunityDetector:
         Args:
             graph_storage: CodeGraphStorage instance with NetworkX graph
         """
-        self.nx_graph = graph_storage.graph  # NetworkX DiGraph
+        self.nx_graph = graph_storage.graph  # NetworkX MultiDiGraph
         self.storage = graph_storage
         self.logger = logging.getLogger(__name__)
 

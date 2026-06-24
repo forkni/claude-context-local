@@ -26,7 +26,7 @@ from typing import Any
 from chunking.relationships.relationship_extractors.base_extractor import (
     BaseRelationshipExtractor,
 )
-from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
+from chunking.relationships.relationship_types import RelationshipType
 
 
 # Builtin context managers to exclude
@@ -56,39 +56,11 @@ class ContextManagerExtractor(BaseRelationshipExtractor):
         super().__init__()
         self.relationship_type = RelationshipType.USES_CONTEXT_MANAGER
 
-    def extract(
-        self, code: str, chunk_metadata: dict[str, Any]
-    ) -> list[RelationshipEdge]:
-        """
-        Extract context manager relationships from code.
-
-        Args:
-            code: Source code string to analyze
-            chunk_metadata: Metadata about the code chunk
-                - chunk_id: Unique identifier
-                - chunk_type: Type of chunk
-
-        Returns:
-            List of RelationshipEdge objects for context manager relationships
-        """
-        self._reset_state()
-
-        try:
-            tree = ast.parse(code)
-        except SyntaxError:
-            self.logger.debug(
-                f"Syntax error parsing code in {chunk_metadata.get('chunk_id', 'unknown')}"
-            )
-            return []
-
-        # Walk the tree to find with statements
+    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         for node in ast.walk(tree):
             if isinstance(node, (ast.With, ast.AsyncWith)):
                 for item in node.items:
                     self._extract_context_expr(item.context_expr, chunk_metadata)
-
-        self._log_extraction_result(chunk_metadata)
-        return self.edges
 
     def _extract_context_expr(
         self, node: ast.AST, chunk_metadata: dict[str, Any]

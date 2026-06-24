@@ -128,13 +128,20 @@ def _route_query_to_model(
             code_index_file = project_dir / "index" / "code.index"
 
             if code_index_file.exists():
-                # Routed model has valid index
-                return decision.model_key, {
+                # Routed model has valid index.
+                # Include rejected_model/rejected_score when the router fell back to the
+                # default due to low confidence — avoids the ambiguity where `confidence`
+                # is the *rejected* model's score but `model_selected` is the default.
+                routing_info: dict = {
                     "model_selected": decision.model_key,
                     "confidence": decision.confidence,
                     "reason": decision.reason,
                     "scores": decision.scores,
                 }
+                if decision.rejected_model is not None:
+                    routing_info["rejected_model"] = decision.rejected_model
+                    routing_info["rejected_score"] = decision.rejected_score
+                return decision.model_key, routing_info
             else:
                 logger.warning(
                     f"Routed model '{decision.model_key}' has no index. "
@@ -759,10 +766,12 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     if chunk_id:
         chunk_id = MetadataStore.normalize_chunk_id(chunk_id)
 
-    searcher = get_searcher()
+    # Offload blocking get_searcher + find_similar_to_chunk off the event loop.
+    def _run_find_similar() -> list:
+        _searcher = get_searcher()
+        return _searcher.find_similar_to_chunk(chunk_id, k=k)
 
-    # Simple implementation - delegate to searcher
-    results = searcher.find_similar_to_chunk(chunk_id, k=k)
+    results = await asyncio.to_thread(_run_find_similar)
 
     formatted_results = []
     for result in results:
@@ -814,20 +823,19 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
         f"[FIND_CONNECTIONS] chunk_id={chunk_id}, symbol_name={symbol_name}, depth={max_depth}"
     )
 
-    # Get searcher
-    searcher = get_searcher()
+    # Offload blocking get_searcher + analyze_impact off the event loop.
+    def _run_find_connections():
+        _searcher = get_searcher()
+        _analyzer = RelationshipAnalyzer.from_searcher(_searcher)
+        return _analyzer.analyze_impact(
+            chunk_id=chunk_id,
+            symbol_name=symbol_name,
+            max_depth=max_depth,
+            exclude_dirs=exclude_dirs,
+            relationship_types=relationship_types,
+        )
 
-    # Create analyzer
-    analyzer = RelationshipAnalyzer.from_searcher(searcher)
-
-    # Run analysis - raises ValueError for validation errors
-    report = analyzer.analyze_impact(
-        chunk_id=chunk_id,
-        symbol_name=symbol_name,
-        max_depth=max_depth,
-        exclude_dirs=exclude_dirs,
-        relationship_types=relationship_types,
-    )
+    report = await asyncio.to_thread(_run_find_connections)
 
     # Convert to dict
     response = report.to_dict()
@@ -879,8 +887,8 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
     if target_chunk_id:
         target_chunk_id = MetadataStore.normalize_chunk_id(target_chunk_id)
 
-    # Get searcher and graph
-    searcher = get_searcher()
+    # Offload get_searcher off the event loop (can construct HybridSearcher on miss).
+    searcher = await asyncio.to_thread(get_searcher)
 
     # Resolve symbol names to chunk_ids if needed
     resolved_source = source_chunk_id
@@ -928,7 +936,8 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
 
     query_engine = GraphQueryEngine(graph_storage)
 
-    result = query_engine.find_path(
+    result = await asyncio.to_thread(
+        query_engine.find_path,
         source_id=resolved_source,
         target_id=resolved_target,
         max_hops=max_hops,
@@ -940,7 +949,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
         source_node = graph_storage.get_node_data(resolved_source)
         target_node = graph_storage.get_node_data(resolved_target)
 
-        response = {
+        response: dict[str, Any] = {
             "path_found": False,
             "source": {
                 "chunk_id": resolved_source,
@@ -965,7 +974,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
         }
     else:
         # Add source/target metadata
-        response = result
+        response: dict[str, Any] = result
         response["source"] = result["path"][0]["node"] if result["path"] else {}
         response["target"] = result["path"][-1]["node"] if result["path"] else {}
 

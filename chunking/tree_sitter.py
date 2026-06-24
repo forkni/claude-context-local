@@ -16,6 +16,7 @@ Supported languages (8 tree-sitter + 1 AST):
 """
 
 import logging
+import threading
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
@@ -156,14 +157,20 @@ def _read_file_with_timeout(file_path: Path, timeout: float = FILE_READ_TIMEOUT)
         with open(file_path, encoding="utf-8") as f:
             return f.read()
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(read_file)
-        try:
-            return future.result(timeout=timeout)
-        except FuturesTimeoutError:
-            raise TimeoutError(
-                f"File read timed out after {timeout}s (possibly locked): {file_path}"
-            ) from None
+    # Do NOT use 'with executor' — the context-manager's __exit__ calls
+    # shutdown(wait=True), which blocks forever if the thread is hung on a
+    # locked file, making the timeout illusory (#6).
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(read_file)
+    try:
+        return future.result(timeout=timeout)
+    except FuturesTimeoutError:
+        executor.shutdown(wait=False, cancel_futures=True)  # release, don't hang
+        raise TimeoutError(
+            f"File read timed out after {timeout}s (possibly locked): {file_path}"
+        ) from None
+    finally:
+        executor.shutdown(wait=False)
 
 
 def _is_binary_file(file_path: Path, sample_size: int = 8192) -> bool:
@@ -228,7 +235,9 @@ class TreeSitterChunker:
             repo_profile: Optional RepoProfile for adaptive chunk sizing.
                 Set by the indexer before chunking begins (full index only).
         """
-        self.chunkers: dict[str, LanguageChunker] = {}
+        # Per-thread chunker cache: tree-sitter Parser objects are not thread-safe.
+        # Each worker thread gets its own LanguageChunker instances via threading.local.
+        self._local = threading.local()
         self.repo_profile: object | None = None  # chunking.repo_profiler.RepoProfile
 
     def get_chunker(self, file_path: str) -> LanguageChunker | None:
@@ -255,18 +264,23 @@ class TreeSitterChunker:
             )
             return None
 
-        # Lazy initialization of chunkers
-        if suffix not in self.chunkers:
+        # Per-thread chunker cache (tree-sitter Parser is not thread-safe)
+        if not hasattr(self._local, "chunkers"):
+            self._local.chunkers = {}
+        chunkers = self._local.chunkers
+
+        # Lazy initialization of per-thread chunkers
+        if suffix not in chunkers:
             try:
                 language = AVAILABLE_LANGUAGES[language_name]
-                self.chunkers[suffix] = chunker_factory(language)
+                chunkers[suffix] = chunker_factory(language)
             except Exception as e:
                 logger.warning(
                     f"Failed to initialize chunker for {suffix}: {e}", exc_info=True
                 )
                 return None
 
-        return self.chunkers[suffix]
+        return chunkers[suffix]
 
     def chunk_file(
         self, file_path: str, content: str | None = None

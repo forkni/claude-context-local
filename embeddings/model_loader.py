@@ -8,7 +8,6 @@ This module handles loading SentenceTransformer models with:
 """
 
 import logging
-import os
 import shutil
 from collections.abc import Callable
 from typing import Any, Optional
@@ -40,7 +39,17 @@ _WARMUP_TEXT = (
     "        if len(item) <= max_length:\n"
     "            results.append(item.strip())\n"
     "    return results\n"
-) * 8  # repeat to fill ~512 tokens
+) * 32  # repeat to fill ~2048 tokens — matches the explicit max_length cap in
+# onnx_wrapper.py and t_eff in calculate_optimal_batch_size (#54/#46).
+# The probe must reflect peak-length inputs so the measured per-item activation
+# cost is representative of real indexing (code chunks regularly hit 1500+ tokens).
+
+
+# NVML init-once state: avoids repeated nvmlInit()/nvmlShutdown() per call (#53).
+# nvmlInit() is not free (~1–5 ms) and nvmlShutdown() invalidates all handles;
+# keeping them alive for the process lifetime is correct (NVML is process-scoped).
+_nvml_initialized: bool = False
+_nvml_handles: dict[int, Any] = {}  # device_index → nvml handle
 
 
 def _get_nvml_used_bytes(device: str = "cuda:0") -> int:
@@ -48,13 +57,19 @@ def _get_nvml_used_bytes(device: str = "cuda:0") -> int:
 
     Used to take before/after snapshots around ONNX model loads so that
     ORT's CUDAExecutionProvider allocations (invisible to PyTorch) can be
-    measured and reported to the dynamic batch-size calculator.
+    measured and reported to the dynamic batch-size calculator.  Also used
+    by ``CodeEmbedder._check_vram_status`` on the ONNX path (#56).
+
+    NVML is initialised once and device handles are cached across calls (#53).
+    ``nvmlShutdown()`` is never called — handles remain valid for the process
+    lifetime, and re-initialising would invalidate cached handles.
 
     Args:
         device: PyTorch device string (e.g. "cuda:0", "cuda:1", "cuda").
             The integer index is parsed from after the colon; bare "cuda"
             and non-cuda strings fall back to index 0.
     """
+    global _nvml_initialized, _nvml_handles
     try:
         # pyrefly: ignore [missing-import]
         import pynvml
@@ -67,10 +82,16 @@ def _get_nvml_used_bytes(device: str = "cuda:0") -> int:
             except ValueError:
                 idx = 0
 
-        pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(idx)
-        mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        pynvml.nvmlShutdown()
+        # Init once — nvmlShutdown() intentionally omitted (init-once pattern).
+        if not _nvml_initialized:
+            pynvml.nvmlInit()
+            _nvml_initialized = True
+
+        # Cache per-device handles; nvmlDeviceGetHandleByIndex is slightly expensive.
+        if idx not in _nvml_handles:
+            _nvml_handles[idx] = pynvml.nvmlDeviceGetHandleByIndex(idx)
+
+        mem = pynvml.nvmlDeviceGetMemoryInfo(_nvml_handles[idx])
         return mem.used
     except Exception:
         return 0
@@ -176,7 +197,11 @@ class ModelLoader:
         dummy_batch = [_WARMUP_TEXT] * batch_size
         try:
             if is_onnx:
-                # ORT allocates outside PyTorch — use pynvml delta
+                # ORT allocates outside PyTorch — use pynvml delta. NOTE: this delta
+                # captures BFCArena arena growth, not marginal per-item cost, so it is
+                # logged for diagnostics but is NOT trusted for ONNX batch sizing — the
+                # consumer (embedder.calculate_optimal_batch_size path) ignores the ONNX
+                # measured value and uses max(analytical estimate, calibrated floor).
                 pre = _get_nvml_used_bytes(device)
                 model.encode(dummy_batch, batch_size=batch_size)
                 post = _get_nvml_used_bytes(device)
@@ -590,16 +615,17 @@ class ModelLoader:
                     f"  3. You have internet access to download the model"
                 ) from e
 
-        # Step 3: Prepare for loading (enable offline mode if cache is valid)
+        # Step 3: Prepare for loading (find local cache dir if cache is valid)
         local_model_dir = None
         if cache_valid:
-            # Only use cached path if validation passed
+            # Only use cached path if validation passed.
+            # Do NOT set HF_HUB_OFFLINE / TRANSFORMERS_OFFLINE as process-wide
+            # env vars — they persist across model loads and break subsequent
+            # downloads for uncached models (e.g. after a model switch) with a
+            # misleading "not found on HuggingFace Hub" error (#11).
+            # local_files_only=True (passed via constructor kwargs) scopes the
+            # offline behaviour to this single load call, which is sufficient.
             try:
-                os.environ.setdefault("HF_HUB_OFFLINE", "1")
-                os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-                self._logger.info(
-                    "[VALIDATED CACHE] Enabling offline mode for faster startup."
-                )
                 local_model_dir = self._cache_manager.find_local_model_dir(
                     cache_valid=cache_valid
                 )
@@ -608,7 +634,7 @@ class ModelLoader:
                         f"Loading model from validated cache: {local_model_dir}"
                     )
             except Exception as _e:
-                self._logger.debug(f"Offline mode detection skipped: {_e}")
+                self._logger.debug(f"Cache dir detection skipped: {_e}")
 
         # Step 4: Load model with automatic fallback
         resolved_device = self.resolve_device(self.device)
@@ -685,10 +711,8 @@ class ModelLoader:
                     f"[FALLBACK] Attempting network re-download..."
                 )
 
-                # Disable offline mode to allow re-download
-                os.environ.pop("HF_HUB_OFFLINE", None)
-                os.environ.pop("TRANSFORMERS_OFFLINE", None)
-
+                # (HF_HUB_OFFLINE / TRANSFORMERS_OFFLINE are no longer set
+                #  by this code path, so no env cleanup needed here.)
                 try:
                     # Build constructor kwargs for fallback (deduplicated)
                     fallback_kwargs = self._build_constructor_kwargs(

@@ -11,6 +11,7 @@ from typing import Any
 # Import DEFAULT_EDGE_WEIGHTS for ego-graph weighted BFS
 from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 from search.config_paths import resolve_config_path
+from utils.atomic_io import write_json_atomic
 
 
 # Model registry with specifications
@@ -887,7 +888,11 @@ class SearchConfigManager:
 
     def load_config(self) -> SearchConfig:
         """Load configuration from file and environment variables."""
-        # Check if file changed since last load
+        # Check if file changed since last load.
+        # stat() is called on every load_config() invocation to support hot-reload
+        # without a file-watcher thread (#61). A single stat() is ~1 µs — cheaper than
+        # any alternative that avoids it entirely — so this is intentional, not a
+        # performance concern. The cache hit-path (mtime unchanged) returns immediately.
         current_mtime = None
         _config_path = Path(self.config_file)
         if _config_path.exists():
@@ -1051,20 +1056,8 @@ class SearchConfigManager:
             # Create directory if needed (pathlib handles the current-dir no-op case)
             Path(self.config_file).parent.mkdir(parents=True, exist_ok=True)
 
-            # ATOMIC WRITE: Write to temp file first, then rename
-            # This prevents data loss if exception occurs during write
-            temp_file = self.config_file + ".tmp"
             config_dict = config.to_dict()  # Serialize BEFORE opening file
-
-            with open(temp_file, "w") as f:
-                json.dump(config_dict, f, indent=2)
-
-            # Validate temp file before replacing original
-            with open(temp_file) as f:
-                json.load(f)  # Verify valid JSON was written
-
-            # Atomic rename (safe on same filesystem)
-            os.replace(temp_file, self.config_file)
+            write_json_atomic(self.config_file, config_dict)
 
             self.logger.info(f"Saved search config to {self.config_file}")
             self._config = config  # Update cached config
@@ -1074,9 +1067,6 @@ class SearchConfigManager:
 
         except Exception as e:
             self.logger.error(f"Failed to save config to {self.config_file}: {e}")
-            # Clean up temp file if it exists
-            temp_file = self.config_file + ".tmp"
-            Path(temp_file).unlink(missing_ok=True)
             raise  # Re-raise so caller knows save failed
 
     def get_search_mode_for_query(
@@ -1115,6 +1105,29 @@ class SearchConfigManager:
 
 # Global configuration manager instance
 _config_manager: SearchConfigManager | None = None
+
+# Transient override set by temporary_ram_fallback_off() during indexing.
+# Lives at module scope so it survives _config_manager = None (which clears
+# the singleton but does NOT touch this binding) and is never serialised to
+# disk, so it cannot trigger the Merkle reindex-loop that a disk write would.
+_indexing_ram_fallback_override: bool | None = None
+
+
+def set_indexing_ram_fallback_override(value: bool | None) -> None:
+    """Set (or clear) the transient RAM-fallback override used during indexing.
+
+    Call with ``False`` to suppress PyTorch VRAM spillover during indexing even
+    when ``allow_ram_fallback=True`` in the persisted config.  Call with ``None``
+    to restore normal config-driven behaviour.  This flag is module-level and
+    survives ``_config_manager = None`` resets that happen on every model switch.
+    """
+    global _indexing_ram_fallback_override
+    _indexing_ram_fallback_override = value
+
+
+def get_indexing_ram_fallback_override() -> bool | None:
+    """Return the current transient RAM-fallback override, or None if not set."""
+    return _indexing_ram_fallback_override
 
 
 def get_config_manager(config_file: str | None = None) -> SearchConfigManager:

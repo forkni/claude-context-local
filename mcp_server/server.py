@@ -150,7 +150,7 @@ class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
     def doRollover(self) -> None:  # noqa: N802
         if self.stream:
             self.stream.close()
-            self.stream = None
+            self.stream = None  # pyrefly: ignore [bad-assignment]  # stdlib sets stream=None during rollover; typeshed stub is non-optional
         stem = Path(self.baseFilename).stem  # "mcp_server"
         dfn = str(Path(self.baseFilename).parent / f"{stem}_{_SESSION_START}.log")
         self.rotate(self.baseFilename, dfn)  # suppresses PermissionError/OSError
@@ -254,11 +254,8 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
         if handler is None:
             raise ValueError(f"Unknown tool: {name}")
 
-        # Call handler
-        result = await handler(arguments)
-
-        # Apply output formatting (formatting-only, preserves all data)
-        # Use config default if no format specified
+        # Extract output_format BEFORE dispatch so handlers never receive the
+        # key (all current handlers ignore it, but future ones might not) (#36).
         from search.config import get_search_config
 
         config = get_search_config()
@@ -269,13 +266,21 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
             if isinstance(arguments, dict)
             else default_format
         )
+
+        # Call handler (arguments dict no longer contains output_format)
+        result = await handler(arguments)
         formatted_result = (
             format_response(result, output_format)
             if isinstance(result, dict)
             else result
         )
 
-        # Use compact JSON (no indent) for compact/toon formats, verbose for json format
+        # Use compact JSON (no indent) for compact/toon formats, verbose for json format.
+        # json.dumps runs inline on the event loop (#60). For typical search/index
+        # responses this is negligible (<1 ms). The only concern would be very large
+        # subgraph responses (find_connections with max_depth=5 on a dense graph); if
+        # that ever becomes a bottleneck, size-gate on len(result_text) and offload via
+        # asyncio.to_thread for payloads above ~1 MB.
         if output_format in ("compact", "ultra"):
             result_text = (
                 json.dumps(formatted_result, separators=(",", ":"))
@@ -307,7 +312,13 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
         raise
     except Exception as e:
         logger.error(f"[TOOL_ERROR] {name}: {e}", exc_info=True)
-        error_response = {"error": str(e), "tool": name, "arguments": arguments}
+        # Echo only argument keys (not values) to keep error payloads compact and avoid
+        # doubling log noise — exc_info=True above already captures full context (#62).
+        error_response = {
+            "error": str(e),
+            "tool": name,
+            "arguments_keys": list((arguments or {}).keys()),
+        }
         return [TextContent(type="text", text=json.dumps(error_response, indent=2))]
 
 
@@ -516,7 +527,9 @@ if __name__ == "__main__":
                     logger.info(
                         "[HTTP CLEANUP] Resource cleanup requested via /cleanup endpoint"
                     )
-                    _cleanup_previous_resources()
+                    # _cleanup_previous_resources() blocks (gc, CUDA ops, sleep) —
+                    # offload so the uvicorn event loop stays responsive.
+                    await asyncio.to_thread(_cleanup_previous_resources)
                     logger.info("[HTTP CLEANUP] Resources cleaned up successfully")
                     return JSONResponse(
                         {

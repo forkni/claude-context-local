@@ -111,7 +111,8 @@ class QueryEmbeddingCache:
             prevent external modification of cached data.
         """
         if self._disabled:
-            self._misses += 1
+            with self._lock:  # protect counter like all other _misses increments (#42)
+                self._misses += 1
             return None
 
         cache_key = self._generate_cache_key(

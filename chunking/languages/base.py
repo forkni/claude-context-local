@@ -7,6 +7,7 @@ for all language-specific chunkers.
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from dataclasses import replace as dc_replace
 from typing import TYPE_CHECKING, Any, Optional
 
 from tree_sitter import Language, Parser
@@ -511,11 +512,16 @@ class LanguageChunker(ABC):
     ) -> list["CodeChunk"]:
         """Convert merged TreeSitterChunks back to CodeChunks using original metadata.
 
-        Uses a 3-pass lookup to find the best-matching original chunk:
+        Uses a 2-pass lookup:
 
-        1. **Exact containment** (same file, original range ⊆ merged range)
-        2. **File fallback** — any chunk from the same file (handles edge-case line shifts)
-        3. **Skip** — logs a warning and omits the merged chunk if no original found
+        1. **Members** — all originals whose range is contained within the merged range
+           (same file, ``original ⊆ merged``).  For ``"merged"`` node_type all members
+           contribute calls/relationships/imports/decorators/tags (union, deduplicated).
+           Building the per-file index once also removes the O(M×N) full-list rescan that
+           previously ran for every merged chunk (#16).
+        2. **File fallback** — if no contained members are found, any chunk from the same
+           file is used as the sole representative (handles edge-case line shifts).
+        3. **Skip** — logs a warning and omits the merged chunk if no original found.
 
         ``original_chunks`` should be the community-annotated list produced by
         :meth:`_assign_community_ids` so that ``community_id`` is available when needed.
@@ -524,36 +530,137 @@ class LanguageChunker(ABC):
 
         logger = logging.getLogger(__name__)
         result = []
+
+        # Build file → chunks index once (O(M+N)) instead of rescanning per merged chunk
+        originals_by_file: dict[str, list] = {}
+        for c in original_chunks:
+            originals_by_file.setdefault(c.file_path, []).append(c)
+
         for ts_chunk in merged_ts_chunks:
-            merged_file = ts_chunk.metadata.get("file_path")
-            original = None
-            # Pass 1: exact containment within merged range, same file
-            for c in original_chunks:
-                if merged_file != c.file_path:
+            merged_file: str | None = ts_chunk.metadata.get("file_path")
+            file_originals = originals_by_file.get(merged_file or "", [])
+
+            # Collect every original whose range is fully contained within this merged chunk
+            members = [
+                c
+                for c in file_originals
+                if c.start_line >= ts_chunk.start_line
+                and c.end_line <= ts_chunk.end_line
+            ]
+
+            if not members:
+                if file_originals:
+                    # File fallback: use first same-file chunk as scalar-field representative
+                    members = [file_originals[0]]
+                    logger.debug(
+                        f"[REMERGE] Using fallback for {merged_file}:"
+                        f"{ts_chunk.start_line}-{ts_chunk.end_line}"
+                    )
+                else:
+                    logger.warning(
+                        f"[REMERGE] No original chunk found for merged chunk at "
+                        f"{merged_file}:{ts_chunk.start_line}-{ts_chunk.end_line}, skipping"
+                    )
                     continue
-                if (
-                    c.start_line >= ts_chunk.start_line
-                    and c.end_line <= ts_chunk.end_line
-                ):
-                    original = c
-                    break
-            # Pass 2: any chunk from same file
-            if original is None:
-                for c in original_chunks:
-                    if merged_file == c.file_path:
-                        original = c
-                        logger.debug(
-                            f"[REMERGE] Using fallback for {merged_file}:"
-                            f"{ts_chunk.start_line}-{ts_chunk.end_line}"
-                        )
-                        break
-            # Pass 3: skip if nothing found
-            if original is None:
-                logger.warning(
-                    f"[REMERGE] No original chunk found for merged chunk at "
-                    f"{merged_file}:{ts_chunk.start_line}-{ts_chunk.end_line}, skipping"
+
+            representative = members[0]
+
+            if ts_chunk.node_type == "merged":
+                # Compute the merged chunk_id so relationship edges are attributed to the
+                # right graph node.  Mirrors Embedder._build_chunk_id:
+                #   "{relative_path}:{start}-{end}:{chunk_type}[:{qualified_name}]"
+                rel_path = str(
+                    representative.relative_path or merged_file or ""
+                ).replace("\\", "/")
+                name = ts_chunk.metadata.get("name") or ""
+                parent = ts_chunk.parent_class or ""
+                qualified = f"{parent}.{name}" if parent and name else name
+                merged_chunk_id = (
+                    f"{rel_path}:{ts_chunk.start_line}-{ts_chunk.end_line}:merged"
+                    + (f":{qualified}" if qualified else "")
                 )
-                continue
+
+                # Union calls (CallEdge objects) — dedupe by (callee_name, line_number)
+                seen_call: set[tuple] = set()
+                unioned_calls: list = []
+                for m in members:
+                    for call in m.calls or []:
+                        key = (
+                            getattr(call, "callee_name", str(call)),
+                            getattr(call, "line_number", 0),
+                        )
+                        if key not in seen_call:
+                            seen_call.add(key)
+                            unioned_calls.append(call)
+
+                # Union relationships (RelationshipEdge objects) — dedupe by
+                # (target_name, relationship_type, line_number).  Rewrite source_id to the
+                # merged chunk_id so graph edges resolve from the correct node.
+                seen_rel: set[tuple] = set()
+                unioned_rels: list = []
+                for m in members:
+                    for rel in m.relationships or []:
+                        rt = getattr(rel, "relationship_type", None)
+                        rt_val = rt.value if hasattr(rt, "value") else str(rt)
+                        key = (
+                            getattr(rel, "target_name", ""),
+                            rt_val,
+                            getattr(rel, "line_number", 0),
+                        )
+                        if key not in seen_rel:
+                            seen_rel.add(key)
+                            try:
+                                unioned_rels.append(
+                                    dc_replace(rel, source_id=merged_chunk_id)
+                                )
+                            except Exception:
+                                unioned_rels.append(rel)
+
+                # Union list fields (imports, decorators) — dedupe by string value
+                seen_imports: set[str] = set()
+                unioned_imports: list = []
+                for m in members:
+                    for item in m.imports or []:
+                        k = str(item)
+                        if k not in seen_imports:
+                            seen_imports.add(k)
+                            unioned_imports.append(item)
+
+                seen_decs: set[str] = set()
+                unioned_decs: list = []
+                for m in members:
+                    for item in m.decorators or []:
+                        k = str(item)
+                        if k not in seen_decs:
+                            seen_decs.add(k)
+                            unioned_decs.append(item)
+
+                # Union tags (list[str] or set in practice)
+                seen_tags: set[str] = set()
+                unioned_tags: list = []
+                for m in members:
+                    for tag in m.tags or []:
+                        if tag not in seen_tags:
+                            seen_tags.add(tag)
+                            unioned_tags.append(tag)
+
+                calls: Any = unioned_calls
+                relationships: Any = unioned_rels
+                imports: Any = unioned_imports
+                decorators: Any = unioned_decs
+                tags: Any = unioned_tags
+                docstring = representative.docstring
+                complexity_score = representative.complexity_score
+            else:
+                # Non-merged node: preserve single-representative behavior
+                calls = representative.calls
+                relationships = representative.relationships
+                docstring = representative.docstring
+                decorators = representative.decorators
+                imports = representative.imports
+                complexity_score = representative.complexity_score
+                tags = representative.tags
+
             result.append(
                 CodeChunk(
                     content=ts_chunk.content,
@@ -564,24 +671,22 @@ class LanguageChunker(ABC):
                     ),
                     start_line=ts_chunk.start_line,
                     end_line=ts_chunk.end_line,
-                    file_path=original.file_path,
-                    relative_path=original.relative_path,
-                    folder_structure=original.folder_structure,
+                    file_path=representative.file_path,
+                    relative_path=representative.relative_path,
+                    folder_structure=representative.folder_structure,
                     name=ts_chunk.metadata.get("name"),
                     parent_name=ts_chunk.parent_class,
-                    language=original.language,
+                    language=representative.language,
                     chunk_id=None,
                     community_id=ts_chunk.community_id,
                     merged_from=ts_chunk.metadata.get("merged_from"),
-                    calls=original.calls if ts_chunk.node_type != "merged" else [],
-                    relationships=(
-                        original.relationships if ts_chunk.node_type != "merged" else []
-                    ),
-                    docstring=original.docstring,
-                    decorators=original.decorators,
-                    imports=original.imports,
-                    complexity_score=original.complexity_score,
-                    tags=original.tags,
+                    calls=calls,
+                    relationships=relationships,
+                    docstring=docstring,
+                    decorators=decorators,
+                    imports=imports,
+                    complexity_score=complexity_score,
+                    tags=tags,
                 )
             )
         return result

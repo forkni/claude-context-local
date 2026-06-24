@@ -731,6 +731,10 @@ class RelationshipAnalyzer:
                 raise SearchError(f"Chunk not found: {chunk_id}")
 
         # Delegate Tier 1→3 cascade to shared helper; raise on failure.
+        if symbol_name is None:
+            raise SearchError(
+                "No chunk_id or symbol_name provided for target resolution"
+            )
         resolved = self._resolve_by_symbol(symbol_name, exclude_dirs)
         if resolved is not None:
             return resolved

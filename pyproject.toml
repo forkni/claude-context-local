@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-context-local"
-version = "0.15.0"
+version = "0.17.0"
 description = "Local semantic code search for Claude Code (MCP) using multi-model routing (Qwen3, BGE-M3, CodeRankEmbed), FAISS, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,12 +28,13 @@ keywords = [
     "python",
 ]
 dependencies = [
-    "aiohttp>=3.13.5",  # Security: Fixes CVE-2025-69223 through CVE-2025-69230
+    "aiohttp>=3.14.1",  # Security: Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1)
     "einops>=0.8.0",  # Required for CodeRankEmbed model
     "faiss-cpu>=1.13.2",
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
     "huggingface-hub>=0.36.0",
-    "mcp>=1.27.0",
+    "mcp>=1.27.0,<2",  # <2: mcp v2 (beta 2026-06-30) has breaking changes
+    "starlette>=1.3.1",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
     "networkx>=3.0",  # Required for graph storage and community detection
     "nltk>=3.9.4",  # Security: Fixes CVE-2025-14009 (path traversal in downloader)
     "psutil>=7.2.1",
@@ -55,6 +56,8 @@ dependencies = [
     "tree-sitter-rust>=0.24.2",
     "tree-sitter-typescript>=0.23.2",
     "tiktoken>=0.12.0",
+    "dspy>=3.2.1",
+    "python-dotenv>=1.2.2",  # Security: Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)
 ]
 
 classifiers = [
@@ -107,6 +110,14 @@ onnx = [
 # transformers is pinned to >=4.51.0,<4.58.0 in the main dependencies.
 # Install: uv pip install -e .[onnx]
 # See tools/convert_onnx.py for standalone conversion usage.
+gpu = [
+    # nvidia-ml-py (pynvml): NVML bindings for device-level GPU memory reporting.
+    # Used by _get_nvml_used_bytes() (model_loader.py) and _check_vram_status()
+    # on the ONNX path (#53/#56).  Separate from the onnx extra so PyTorch-path
+    # users can also get accurate VRAM readings without the ONNX runtime.
+    # Install: uv pip install -e .[gpu]
+    "nvidia-ml-py>=12.535.77",
+]
 otel = [
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
@@ -128,29 +139,50 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-06-03 (pip-audit - 4 advisories remain: sqlitedict CVE-2024-35515 mitigated,
-#             transformers 2×RCE blocked by optimum-onnx <4.58.0 pin, starlette host-header injection deferred)
+# Last audit: 2026-06-24 (pip-audit - 5 advisories remain: transformers 2×RCE blocked by optimum-onnx pin,
+#             diskcache/sqlitedict/pyjwt 3 with no upstream fix)
 #
 # Direct dependency security updates:
-# mcp>=1.27.0        # Fixes CVE-2025-66416 (DNS rebinding vulnerability)
-# nltk>=3.9.4        # Fixes CVE-2025-14009 (path traversal in zipfile.extractall)
-# aiohttp>=3.13.5    # Fixes CVE-2025-69223 through CVE-2025-69230
+# mcp>=1.27.0,<2       # Fixes CVE-2025-66416 (DNS rebinding); <2 guards against mcp v2 breaking changes (beta 2026-06-30)
+# nltk>=3.9.4          # Fixes CVE-2025-14009 (path traversal in zipfile.extractall)
+# aiohttp>=3.14.1      # Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1)
+# python-dotenv>=1.2.2 # Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)
+# starlette>=1.3.1     # Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
 #
 # Transitive dependency security updates:
-# idna>=3.15               # Fixes CVE-2026-45409 (incomplete fix of CVE-2024-3651, DoS in idna.encode)
+# cryptography>=46.0.7     # Fixes CVE-2026-34073 (46.0.6 DNS name-constraint), CVE-2026-39892 (46.0.7 buffer overflow)
+# idna>=3.18               # Fixes CVE-2026-45409 (incomplete fix of CVE-2024-3651, DoS in idna.encode)
+# msgpack>=1.2.1           # Fixes GHSA-6v7p-g79w-8964 (repeated unpacker SEGV)
 # pip>=26.1.1              # Fixes CVE-2025-8869, CVE-2026-1703, CVE-2026-3219, CVE-2026-6357
 # pillow>=12.2.0           # Fixes CVE-2026-40192, CVE-2026-42308, CVE-2026-42309, CVE-2026-42310, CVE-2026-42311
-# python-multipart>=0.0.27 # Fixes CVE-2026-24486, CVE-2026-40347, CVE-2026-42561 (DoS in multipart parser)
+# pydantic-settings>=2.14.2 # Fixes GHSA-4xgf-cpjx-pc3j (symlink follow in NestedSecretsSettingsSource)
 # pygments>=2.20.0         # Fixes CVE-2026-4539 (ReDoS in AdlLexer)
 # pyjwt>=2.13.0            # Fixes CVE-2026-32597 (2.12.0), 4× CVEs (2.13.0: 48522/48524/48525/48526)
+# python-multipart>=0.0.32 # Fixes CVE-2026-24486, CVE-2026-40347, CVE-2026-42561, CVE-2026-53538, CVE-2026-53539, CVE-2026-53540 (DoS)
 # requests>=2.34.2         # Fixes CVE-2026-25645 (predictable tempfile name)
-# starlette>=0.51.0        # Fixes CVE (0.47.3 → 0.51.0); 1.0.1 fixes PYSEC-2026-161 host-header injection (deferred: major version)
 # urllib3>=2.7.0           # Fixes CVE-2026-44431 (cross-origin redirect), CVE-2026-44432 (decompression)
-# uv>=0.11.18              # Fixes GHSA-4gg8-gxpx-9rph (0.11.15, malicious-wheel path traversal)
+# uv>=0.11.24              # Fixes GHSA-4gg8-gxpx-9rph (0.11.15, malicious-wheel path traversal)
 # werkzeug>=3.1.4          # Fixes CVE-2025-66221 (Windows device name handling)
 # wheel>=0.46.3            # Fixes CVE-2026-24049 (path traversal in unpack)
 #
+# Deferred (no upstream fix):
+# * transformers CVE-2026-1839, PYSEC-2025-217 (Trainer/X-CLIP RCE) — fix needs 5.0.0rc3, blocked by optimum-onnx <4.58.0 pin; not applicable (no Trainer use)
+# * diskcache CVE-2025-69872, sqlitedict CVE-2024-35515 (pickle RCE) — no upstream fix; sqlitedict mitigated via JSON serialization (metadata.py)
+# * pyjwt PYSEC-2025-183 (disputed weak encryption) — no upstream fix
+#
 # Verification: .venv/Scripts/pip-audit --format json | .venv/Scripts/python.exe tools/summarize_audit.py
+#
+# Safe patch updates (tested 2026-06-24):
+# * starlette (0.52.1 → 1.3.1): Starlette 1.x breaking changes (on_startup/on_shutdown removal, @app.route()
+#   decorator) do not apply — server.py uses Starlette(routes=[Route(...)], lifespan=) which is the 1.0 canonical
+#   API. Live HTTP transport verified: POST /cleanup 200, POST /mcp 406 (correct MCP protocol rejection, not 307),
+#   sse-starlette 3.2.0 ping confirmed. pip check passed.
+# * aiohttp (3.13.5 → 3.14.1), cryptography (46.0.5 → 46.0.7), idna (3.11 → 3.18), msgpack (1.1.2 → 1.2.1)
+# * pydantic-settings (2.12.0 → 2.14.2), pygments (2.19.2 → 2.20.0), pyjwt (2.10.1 → 2.13.0)
+# * python-dotenv (1.2.1 → 1.2.2), python-multipart (0.0.22 → 0.0.32), requests (2.32.5 → 2.34.2)
+# * urllib3 (2.6.3 → 2.7.0), uv (0.11.6 → 0.11.24)
+# Tested: 2620 unit tests pass, pip check passed.
+# Remaining CVEs: 5 (down from 53)
 #
 # Safe patch updates (tested 2026-06-03):
 # * pyjwt (2.12.1 -> 2.13.0), uv (0.11.6 -> 0.11.18).
@@ -159,21 +191,12 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Safe patch updates (tested 2026-05-29):
 # * idna (3.11 -> 3.17) - fixes CVE-2026-45409.
 # Tested: 2340 unit tests pass, pip check passed.
-# Remaining CVEs: 4 (sqlitedict CVE-2024-35515 - no upstream fix, mitigated via JSON serialization in metadata.py;
-#                    transformers CVE-2026-1839 + PYSEC-2025-217 - fix requires 5.0.0rc3, blocked by optimum-onnx <4.58.0 pin;
-#                    starlette PYSEC-2026-161 - fix requires 1.0.1 (major version), deferred for ASGI compatibility testing).
 #
 # Safe patch updates (tested 2026-05-25):
 # * python-multipart (0.0.24 -> 0.0.27), pillow (12.1.1 -> 12.2.0), pip (26.0.1 -> 26.1.1).
 # * requests (2.33.1 -> 2.34.2), urllib3 (2.6.3 -> 2.7.0).
 # * Orphan removed: PyPDF2 3.0.1 (deprecated, unused).
 # Tested: 2089 unit tests pass, pip check passed.
-#
-# Safe patch updates (tested 2026-04-16):
-# * pygments (2.19.2 -> 2.20.0), pyjwt (2.10.1 -> 2.12.0), requests (2.32.5 -> 2.33.0).
-# * python-multipart (0.0.22 -> 0.0.26).
-# * Orphans removed: cryptography, typer-slim, shellingham (no dependents; eliminated 2 CVEs).
-# Tested: 1987 unit tests pass, pip check passed.
 
 [tool.uv]
 index-url = "https://pypi.org/simple"

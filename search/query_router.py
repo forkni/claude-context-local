@@ -49,6 +49,12 @@ class RoutingDecision:
     confidence: float
     reason: str
     scores: dict[str, float]
+    # Set only when confidence < threshold caused a fallback to the default model.
+    # In that case `confidence` holds the *rejected* best-model score (the gate value),
+    # not the confidence in `model_key` — these fields make the rejection explicit so
+    # callers don't misread the metadata as "X% confident in model_key".
+    rejected_model: str | None = None
+    rejected_score: float | None = None
 
 
 class QueryRouter:
@@ -425,12 +431,18 @@ class QueryRouter:
             confidence = scores[best_model]
 
             if confidence < confidence_threshold:
-                # Low confidence - use default (most reliable)
+                # Low confidence — use default (most reliable).
+                # `confidence` carries the *rejected* best-model score (the gate value)
+                # so the threshold comparison is visible to callers. `rejected_model` and
+                # `rejected_score` make the rejection explicit; without them the emitted
+                # metadata looks like "X% confident in default_model" which is wrong.
                 decision = RoutingDecision(
                     model_key=default_model,
                     confidence=confidence,
                     reason=f"Low confidence ({confidence:.2f} < {confidence_threshold}) - using default ({default_model})",
                     scores=scores,
+                    rejected_model=best_model,
+                    rejected_score=confidence,
                 )
             else:
                 # High confidence - use matched model

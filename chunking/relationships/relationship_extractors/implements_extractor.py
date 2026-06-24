@@ -111,57 +111,6 @@ class ImplementsExtractor(BaseRelationshipExtractor):
         super().__init__()
         self.relationship_type = RelationshipType.IMPLEMENTS
 
-    def extract(
-        self, code: str, chunk_metadata: dict[str, Any]
-    ) -> list[RelationshipEdge]:
-        """
-        Extract implementation relationships from code.
-
-        Args:
-            code: Source code string
-            chunk_metadata: Metadata about the code chunk
-                - chunk_id: Unique identifier
-                - file_path: File path
-                - name: Symbol name (class name)
-                - chunk_type: Type (should be "class")
-
-        Returns:
-            List of RelationshipEdge objects representing protocol implementations
-
-        Example:
-            >>> extractor = ImplementsExtractor()
-            >>> code = '''
-            ... from typing import Protocol
-            ... class MyProtocol(Protocol):
-            ...     def foo(self): pass
-            ... class Implementation(MyProtocol):
-            ...     def foo(self): pass
-            ... '''
-            >>> edges = extractor.extract(code, {"chunk_id": "test.py:5-7:class:Implementation"})
-            >>> len(edges)
-            1
-            >>> edges[0].target_name
-            'MyProtocol'
-        """
-        self._reset_state()
-
-        # Parse code
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            self.logger.debug(
-                f"Failed to parse code in {chunk_metadata.get('file_path')}: {e}"
-            )
-            return []
-
-        # Extract implementation relationships
-        self._extract_from_tree(tree, chunk_metadata)
-
-        # Log results
-        self._log_extraction_result(chunk_metadata)
-
-        return self.edges
-
     def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
         Walk AST and extract implementation relationships.

@@ -24,7 +24,7 @@ from typing import Any
 from chunking.relationships.relationship_extractors.base_extractor import (
     BaseRelationshipExtractor,
 )
-from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
+from chunking.relationships.relationship_types import RelationshipType
 
 
 class DefaultParameterExtractor(BaseRelationshipExtractor):
@@ -46,51 +46,15 @@ class DefaultParameterExtractor(BaseRelationshipExtractor):
         super().__init__()
         self.relationship_type = RelationshipType.USES_DEFAULT
 
-    def extract(
-        self, code: str, chunk_metadata: dict[str, Any]
-    ) -> list[RelationshipEdge]:
-        """
-        Extract default parameter relationships from code.
-
-        Args:
-            code: Source code string to analyze
-            chunk_metadata: Metadata about the code chunk
-
-        Returns:
-            List of RelationshipEdge objects for default parameters
-
-        Example:
-            >>> extractor = DefaultParameterExtractor()
-            >>> code = '''
-            ... DEFAULT_TIMEOUT = 30
-            ... def connect(timeout=DEFAULT_TIMEOUT):
-            ...     pass
-            ... '''
-            >>> edges = extractor.extract(code, {"chunk_id": "test.py:2-3:function:connect"})
-            >>> len(edges)
-            1
-            >>> edges[0].target_name
-            'DEFAULT_TIMEOUT'
-        """
-        self._reset_state()
-
-        try:
-            tree = ast.parse(code)
-        except SyntaxError:
-            self.logger.debug(
-                f"Syntax error parsing code in {chunk_metadata.get('chunk_id', 'unknown')}"
-            )
-            return []
-
+    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self._extract_defaults(node, chunk_metadata)
 
-        self._log_extraction_result(chunk_metadata)
-        return self.edges
-
     def _extract_defaults(
-        self, node: ast.FunctionDef, chunk_metadata: dict[str, Any]
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+        chunk_metadata: dict[str, Any],
     ) -> None:
         """
         Extract default values that are names (not literals).

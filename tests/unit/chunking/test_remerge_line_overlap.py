@@ -431,3 +431,177 @@ class TestFromTreesitterChunks:
         ts = self._make_ts_chunk("a.py", 1, 5)  # different file
         result = LanguageChunker._from_treesitter_chunks([ts], [orig])
         assert len(result) == 0
+
+
+class TestMergedChunkEdgeUnion:
+    """Regression tests for #28 — community-merged chunks must carry the union of
+    all member edges, not empty calls/relationships."""
+
+    def _make_rel_edge(self, source_id, target_name, line_number=1):
+        """Create a RelationshipEdge for testing."""
+        from chunking.relationships.relationship_types import (
+            RelationshipEdge,
+            RelationshipType,
+        )
+
+        return RelationshipEdge(
+            source_id=source_id,
+            target_name=target_name,
+            relationship_type=RelationshipType.CALLS,
+            line_number=line_number,
+        )
+
+    def _make_call_edge(self, caller_id, callee_name, line_number=1):
+        """Create a CallEdge for testing."""
+        from chunking.relationships.call_graph_extractor import CallEdge
+
+        return CallEdge(
+            caller_id=caller_id,
+            callee_name=callee_name,
+            line_number=line_number,
+        )
+
+    def _make_member(self, file_path, start_line, end_line, name, calls, rels):
+        return CodeChunk(
+            content=f"def {name}(): pass",
+            chunk_type="function",
+            start_line=start_line,
+            end_line=end_line,
+            file_path=file_path,
+            relative_path=file_path,
+            folder_structure=[],
+            name=name,
+            parent_name=None,
+            language="python",
+            chunk_id=f"{file_path}:{start_line}-{end_line}:function:{name}",
+            community_id=0,
+            calls=calls,
+            relationships=rels,
+            docstring=None,
+            decorators=[],
+            imports=[],
+            complexity_score=1,
+            tags=[],
+        )
+
+    def _make_merged_ts(self, file_path, start_line, end_line, name="merged_cls"):
+        from chunking.languages.base import TreeSitterChunk
+
+        return TreeSitterChunk(
+            content="# merged\n...",
+            start_line=start_line,
+            end_line=end_line,
+            node_type="merged",
+            language="python",
+            metadata={
+                "file_path": file_path,
+                "name": name,
+                "merged_from": None,
+                "relative_path": file_path,
+                "calls": [],
+                "relationships": [],
+                "docstring": None,
+                "decorators": [],
+                "imports": ["import os"],
+                "complexity_score": 0,
+                "tags": [],
+            },
+            chunk_id=None,
+            parent_class=None,
+            community_id=0,
+        )
+
+    def test_merged_chunk_unions_calls(self):
+        """Merged chunk must carry calls from ALL member chunks, not []."""
+        call_a = self._make_call_edge("file.py:1-10:function:method_a", "helper_a")
+        call_b = self._make_call_edge("file.py:11-20:function:method_b", "helper_b")
+
+        member_a = self._make_member("file.py", 1, 10, "method_a", [call_a], [])
+        member_b = self._make_member("file.py", 11, 20, "method_b", [call_b], [])
+        ts = self._make_merged_ts("file.py", 1, 20)
+
+        result = LanguageChunker._from_treesitter_chunks([ts], [member_a, member_b])
+
+        assert len(result) == 1
+        merged = result[0]
+        assert merged.chunk_type == "merged"
+
+        callee_names = {c.callee_name for c in (merged.calls or [])}
+        assert "helper_a" in callee_names, "merged chunk must carry method_a's calls"
+        assert "helper_b" in callee_names, "merged chunk must carry method_b's calls"
+
+    def test_merged_chunk_unions_relationships(self):
+        """Merged chunk must carry relationships from ALL member chunks, not []."""
+        rel_a = self._make_rel_edge(
+            "file.py:1-10:function:method_a", "BaseClass", line_number=1
+        )
+        rel_b = self._make_rel_edge(
+            "file.py:11-20:function:method_b", "OtherMixin", line_number=11
+        )
+
+        member_a = self._make_member("file.py", 1, 10, "method_a", [], [rel_a])
+        member_b = self._make_member("file.py", 11, 20, "method_b", [], [rel_b])
+        ts = self._make_merged_ts("file.py", 1, 20, name="MyClass")
+
+        result = LanguageChunker._from_treesitter_chunks([ts], [member_a, member_b])
+
+        assert len(result) == 1
+        merged = result[0]
+        rels = merged.relationships or []
+        target_names = {r.target_name for r in rels}
+        assert "BaseClass" in target_names, (
+            "merged chunk must carry method_a's relationships"
+        )
+        assert "OtherMixin" in target_names, (
+            "merged chunk must carry method_b's relationships"
+        )
+
+    def test_merged_relationship_source_id_rewritten_to_merged_chunk(self):
+        """source_id on unioned relationships must point to the merged chunk, not the member.
+
+        If source_id still points to an original member's chunk_id (which is not indexed),
+        graph edges would come from a phantom node and find_connections would miss them.
+        """
+        rel_a = self._make_rel_edge(
+            "file.py:1-10:function:method_a", "TargetClass", line_number=5
+        )
+        member_a = self._make_member("file.py", 1, 10, "method_a", [], [rel_a])
+        member_b = self._make_member("file.py", 11, 20, "method_b", [], [])
+        ts = self._make_merged_ts("file.py", 1, 20, name="MyClass")
+
+        result = LanguageChunker._from_treesitter_chunks([ts], [member_a, member_b])
+
+        assert len(result) == 1
+        merged = result[0]
+        rels = merged.relationships or []
+        assert len(rels) == 1
+        rewritten = rels[0]
+        # source_id must NOT be the original member's id
+        assert rewritten.source_id != "file.py:1-10:function:method_a", (
+            "source_id should be rewritten to the merged chunk's id"
+        )
+        # source_id must contain the merged chunk's line range and type
+        assert "1-20" in rewritten.source_id
+        assert "merged" in rewritten.source_id
+
+    def test_calls_deduplicated_across_members(self):
+        """Duplicate calls (same callee+line) appear only once in the union."""
+        call = self._make_call_edge(
+            "file.py:1-10:function:method_a", "shared_helper", 5
+        )
+        call_dup = self._make_call_edge(
+            "file.py:11-20:function:method_b", "shared_helper", 5
+        )
+
+        member_a = self._make_member("file.py", 1, 10, "method_a", [call], [])
+        member_b = self._make_member("file.py", 11, 20, "method_b", [call_dup], [])
+        ts = self._make_merged_ts("file.py", 1, 20)
+
+        result = LanguageChunker._from_treesitter_chunks([ts], [member_a, member_b])
+
+        merged = result[0]
+        calls = merged.calls or []
+        callee_names = [c.callee_name for c in calls]
+        assert callee_names.count("shared_helper") == 1, (
+            "duplicate call must appear once"
+        )

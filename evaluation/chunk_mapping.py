@@ -53,8 +53,12 @@ def build_line_to_chunk_map(
     for raw_id, entry in metadata_store.items():
         meta = entry.get("metadata", {})
         path = meta.get("relative_path", "").replace("\\", "/")
-        start = meta.get("start_line") or 0
-        end = meta.get("end_line") or 0
+        # Use get() without default so None and 0 both fall through to the
+        # truthiness filter below (0 is not a valid 1-indexed line number).
+        # Previously `or 0` masked None with 0, making the two cases indistinguishable
+        # in any debug output — this makes the intent explicit (#48).
+        start = meta.get("start_line")
+        end = meta.get("end_line")
         chunk_type = meta.get("chunk_type", "")
         if path and start and end and chunk_type in semantic_types:
             cid = normalize_chunk_id(raw_id) if normalize else raw_id
@@ -89,7 +93,7 @@ def find_enclosing_chunk(
     best_size = float("inf")
     for start, end, cid in chunks:
         if start <= line_num <= end:
-            size = end - start
+            size = end - start + 1  # inclusive span (#48)
             if size < best_size:
                 best_size = size
                 best = cid

@@ -8,11 +8,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-
-try:
-    import networkx as nx
-except ImportError:
-    nx = None
+import networkx as nx
 
 from utils.path_utils import normalize_path
 
@@ -44,12 +40,6 @@ class GraphQueryEngine:
         Args:
             graph_storage: CodeGraphStorage instance
         """
-        if nx is None:
-            raise ImportError(
-                "NetworkX is required for graph queries. "
-                "Install with: pip install networkx"
-            )
-
         self.storage = graph_storage
         self.logger = logging.getLogger(__name__)
 
@@ -67,6 +57,12 @@ class GraphQueryEngine:
         Returns:
             List of chunk IDs forming the call chain, or None if no path exists
         """
+        # Normalize path separators before graph lookup (#40). chunk_ids on
+        # Windows may use backslashes while the graph was built with forward
+        # slashes (or vice-versa), causing spurious "not in graph" misses.
+        start_chunk_id = start_chunk_id.replace("\\", "/")
+        end_chunk_id = end_chunk_id.replace("\\", "/")
+
         if start_chunk_id not in self.storage.graph:
             self.logger.warning(f"Start chunk {start_chunk_id} not in graph")
             return None
@@ -237,9 +233,10 @@ class GraphQueryEngine:
         Returns:
             Filtered subgraph view
         """
+        # Collect (u, v, key) triples — MultiDiGraph.edge_subgraph requires keys.
         filtered_edges = [
-            (u, v)
-            for u, v, d in self.storage.graph.edges(data=True)
+            (u, v, k)
+            for u, v, k, d in self.storage.graph.edges(keys=True, data=True)
             if d.get("relationship_type") in edge_types or d.get("type") in edge_types
         ]
         return self.storage.graph.edge_subgraph(filtered_edges)
@@ -431,9 +428,11 @@ class GraphQueryEngine:
         if chunk_id not in self.storage.graph:
             return {"calls_made": 0, "called_by_count": 0}
 
+        # Use distinct-neighbor counts to preserve "unique callee/caller" semantics
+        # under MultiDiGraph (out_degree/in_degree would count each parallel edge).
         return {
-            "calls_made": self.storage.graph.out_degree(chunk_id),
-            "called_by_count": self.storage.graph.in_degree(chunk_id),
+            "calls_made": len(set(self.storage.graph.successors(chunk_id))),
+            "called_by_count": len(set(self.storage.graph.predecessors(chunk_id))),
         }
 
     def find_entry_points(self) -> list[str]:
@@ -466,6 +465,19 @@ class GraphQueryEngine:
 
         return leaf_functions
 
+    def _simple_digraph_view(self) -> "nx.DiGraph":
+        """Collapse the MultiDiGraph to a simple DiGraph (one edge per (u,v) pair).
+
+        Used to preserve pre-multigraph parity for degree-based and pagerank
+        centrality so this correctness batch introduces no score drift.
+
+        .. note::
+            TODO: switch ``degree`` and ``pagerank`` to native MultiDiGraph counts
+            (degree = total relationship sites, pagerank weighted by edge multiplicity)
+            once dedicated value-shift tests are written.  Deferred from Batch 2A.
+        """
+        return nx.DiGraph(self.storage.graph)
+
     def compute_centrality(self, method: str = "degree") -> dict[str, float]:
         """
         Compute centrality scores for functions.
@@ -474,19 +486,28 @@ class GraphQueryEngine:
             method: Centrality method ("degree", "betweenness", "closeness", "pagerank")
 
         Returns:
-            Dictionary mapping chunk_id → centrality score
+            Dictionary mapping chunk_id → centrality score (float for all methods)
         """
         if method == "degree":
-            return dict(self.storage.graph.degree())
+            # Route through simple DiGraph view to preserve pre-multigraph parity.
+            # TODO: embrace multigraph counts once dedicated value-shift tests exist.
+            simple = self._simple_digraph_view()
+            return {node: float(deg) for node, deg in simple.degree()}
         elif method == "betweenness":
+            # betweenness_centrality is invariant to parallel edges (unweighted
+            # shortest paths), so no projection needed.
             # pyrefly: ignore [missing-attribute]
             return nx.betweenness_centrality(self.storage.graph)
         elif method == "closeness":
+            # closeness_centrality is invariant to parallel edges.
             # pyrefly: ignore [missing-attribute]
             return nx.closeness_centrality(self.storage.graph)
         elif method == "pagerank":
+            # Route through simple DiGraph view to preserve pre-multigraph parity.
+            # TODO: embrace multigraph pagerank (parallel edges → weight sum) once
+            # dedicated value-shift tests are written.
             # pyrefly: ignore [missing-attribute]
-            return nx.pagerank(self.storage.graph)
+            return nx.pagerank(self._simple_digraph_view())
         else:
             raise ValueError(
                 f"Unknown centrality method: {method}. "
@@ -563,10 +584,21 @@ class GraphQueryEngine:
         relation_types: list[str] | None,
         max_depth: int,
     ) -> list[RelationshipEntry]:
-        """BFS over inbound edges with dual symbol-name lookup at each hop."""
+        """BFS over inbound edges with dual symbol-name lookup at each hop.
+
+        Uses two separate sets to prevent the "visited-before-filter" bug (#23):
+        - ``visited``: tracks nodes queued for BFS expansion (prevents loops).
+        - ``reported``: tracks nodes already added to results (prevents duplicates).
+
+        Without this separation, a predecessor reachable from two different
+        query-nodes via edges of different types would be marked visited on the
+        first (possibly non-matching) encounter, silently suppressing the second
+        (possibly matching) edge.
+        """
         results: list[RelationshipEntry] = []
         origin_set = set(self._node_variants(chunk_id))
-        visited: set[str] = set(origin_set)
+        visited: set[str] = set(origin_set)  # nodes queued for BFS expansion
+        reported: set[str] = set()  # nodes already in results
 
         # query_nodes: the node IDs whose predecessors we will inspect at this depth
         current_query: set[str] = {v for v in origin_set if v in self.storage.graph}
@@ -576,16 +608,15 @@ class GraphQueryEngine:
 
             for query_node in current_query:
                 for pred in self.storage.get_callers(query_node):
-                    if pred in visited:
-                        continue
-                    visited.add(pred)
-
                     edge_data = self.storage.get_edge_data(pred, query_node) or {}
                     rel_type = edge_data.get("relationship_type") or edge_data.get(
                         "type", "unknown"
                     )
 
-                    if relation_types is None or rel_type in relation_types:
+                    # Report once per node on first matching edge (#23).
+                    if pred not in reported and (
+                        relation_types is None or rel_type in relation_types
+                    ):
                         results.append(
                             RelationshipEntry(
                                 chunk_id=pred,
@@ -595,11 +626,14 @@ class GraphQueryEngine:
                                 edge_data=edge_data,
                             )
                         )
+                        reported.add(pred)
 
+                    # Queue for BFS expansion using a separate visited guard.
                     if depth < max_depth:
                         for v in self._node_variants(pred):
                             if v not in visited:
                                 next_query.add(v)
+                                visited.add(v)
 
             if not next_query:
                 break
@@ -613,9 +647,15 @@ class GraphQueryEngine:
         relation_types: list[str] | None,
         max_depth: int,
     ) -> list[RelationshipEntry]:
-        """BFS over outbound edges."""
+        """BFS over outbound edges.
+
+        Uses two separate sets for the same reason as _traverse_inbound (#23):
+        - ``visited``: BFS expansion dedup.
+        - ``reported``: result dedup.
+        """
         results: list[RelationshipEntry] = []
-        visited: set[str] = {chunk_id}
+        visited: set[str] = {chunk_id}  # nodes queued for BFS expansion
+        reported: set[str] = set()  # nodes already in results
         current_nodes: set[str] = (
             {chunk_id} if chunk_id in self.storage.graph else set()
         )
@@ -625,16 +665,15 @@ class GraphQueryEngine:
 
             for node in current_nodes:
                 for succ in self.storage.get_callees(node):
-                    if succ in visited:
-                        continue
-                    visited.add(succ)
-
                     edge_data = self.storage.get_edge_data(node, succ) or {}
                     rel_type = edge_data.get("relationship_type") or edge_data.get(
                         "type", "unknown"
                     )
 
-                    if relation_types is None or rel_type in relation_types:
+                    # Report once per node on first matching edge (#23).
+                    if succ not in reported and (
+                        relation_types is None or rel_type in relation_types
+                    ):
                         results.append(
                             RelationshipEntry(
                                 chunk_id=succ,
@@ -644,9 +683,12 @@ class GraphQueryEngine:
                                 edge_data=edge_data,
                             )
                         )
+                        reported.add(succ)
 
-                    if depth < max_depth:
+                    # Queue for BFS expansion.
+                    if depth < max_depth and succ not in visited:
                         next_nodes.add(succ)
+                        visited.add(succ)
 
             if not next_nodes:
                 break

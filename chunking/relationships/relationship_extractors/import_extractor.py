@@ -67,39 +67,6 @@ class ImportExtractor(BaseRelationshipExtractor):
         self.relationship_type = RelationshipType.IMPORTS
         self.relation_filter = relation_filter
 
-    def extract(
-        self, code: str, chunk_metadata: dict[str, Any]
-    ) -> list[RelationshipEdge]:
-        """
-        Extract import relationships from code.
-
-        Args:
-            code: Source code string
-            chunk_metadata: Metadata about the code chunk
-
-        Returns:
-            List of RelationshipEdge objects for imports
-        """
-        self._reset_state()
-
-        # Parse code
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            # DEBUG: Method chunks often fail to parse standalone but parent class chunks succeed
-            self.logger.debug(
-                f"Failed to parse code in {chunk_metadata.get('file_path')}: {e}"
-            )
-            return []
-
-        # Extract imports
-        self._extract_from_tree(tree, chunk_metadata)
-
-        # Log results
-        self._log_extraction_result(chunk_metadata)
-
-        return self.edges
-
     def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
         Walk AST and extract import statements.
@@ -133,6 +100,8 @@ class ImportExtractor(BaseRelationshipExtractor):
             chunk_metadata: Chunk metadata
         """
         source_id = chunk_metadata.get("chunk_id")
+        if not source_id:
+            return
         line_number = import_node.lineno
 
         for alias in import_node.names:
@@ -176,6 +145,8 @@ class ImportExtractor(BaseRelationshipExtractor):
             chunk_metadata: Chunk metadata
         """
         source_id = chunk_metadata.get("chunk_id")
+        if not source_id:
+            return
         line_number = import_node.lineno
 
         # Get module name (may be None for relative imports)

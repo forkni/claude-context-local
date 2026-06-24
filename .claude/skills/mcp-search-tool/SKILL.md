@@ -33,14 +33,15 @@ Ensures all MCP semantic search operations follow correct workflows for accurate
 
 MCP search returns **ranked candidates**, not definitive answers. On the 2026-06-08 13-query SSCG benchmark (hybrid, k=7) Hit@5 = 100% — but the correct result is **not always ranked first**, and this is not a general reliability guarantee for arbitrary queries or codebases.
 
-**Baseline rule:** **pass `k=7` explicitly when correctness matters.** The tool default is `k=4`; targets may rank 6–7 on complex or multi-target queries, so Hit@7 > Hit@5. Use `k=10` for architectural / global queries.
+**Baseline rule:** **pass `k=7` explicitly when correctness matters.** The engine default is `k=7` (changed from 4 on 2026-06-24 based on SSCG benchmark: MRR +0.093, R@7 +0.122 vs k=4); targets may still rank 6–7 on complex or multi-target queries, so passing it explicitly is good defensive practice. Use `k=10` for architectural / global queries.
 
 **Result Interpretation Workflow:**
-1. Run `code-search:search_code(query="<your query>", k=7)` with appropriate filters
-2. **Scan ALL k results** — read each chunk_id and code snippet
-3. **Identify the best match** based on your actual need (not just highest score)
-4. If the best match is a module/summary chunk but you need specific code, look at lower-ranked results
-5. Use `chunk_id` from the best match for follow-up tools
+1. Call `code-search:search_code(query="<your query>", k=7, include_context=true)` — `include_context` fetches ego-graph/graph-hop neighbors inline (more recall per call). Use `k=10` for architectural / global queries.
+2. **Scan ALL k results** — sort by `reranker_score` first, then `blended_score` (results are NOT pre-sorted; see Gotchas). The tool returns **metadata rows** (chunk_id, type, name, scores, short snippet). Names + types + scores are enough to judge relevance — you do NOT need to refetch bodies to "confirm".
+3. **Issue a second search with alternate phrasings** when the question describes a generic operation (validate/normalize/encode/decode/load/save/id-handling) that could live in multiple subsystems, or when the first result set is concentrated in one module but the concept plausibly also exists in a sibling file. Use synonyms, subsystem names, and related symbol names. Aim for 2–3 diverse queries on non-trivial questions; do NOT finish after one query.
+4. **Identify the best match** based on your actual need.  For MRR / lead-chunk ranking, prefer the canonical `class` or `method`/`function` chunk whose name most directly matches the question — never a `split_block`, `module`, or `decorated_definition` fragment (even if it scores slightly higher; see Gotchas).
+5. If the best match is a module/summary chunk but you need specific code, look at lower-ranked results or filter with `chunk_type="function"` / `chunk_type="class"`.
+6. Use `chunk_id` from the best match for follow-up tools.
 
 **When rank-1 is most reliable:** small function discovery ("get X", "validate Y"), exact symbol lookup via `chunk_id`
 
@@ -134,11 +135,13 @@ Benchmark data & mode selection guide: [references/performance.md](references/pe
 
 These are non-obvious traps from real session experience — not things the docs mention.
 
-**Results are NOT sorted by blended_score.** The returned array is ordered by internal file/community grouping, not by score. When you need a true ranking (e.g. for MRR/Recall evaluation), sort by `blended_score` descending yourself:
+**Results are NOT sorted by score.** The returned array is ordered by internal file/community grouping, not by relevance. When you need a true ranking (e.g. for MRR/Recall evaluation), sort by `reranker_score` first (cross-encoder signal; strongest discriminator), then `blended_score` as a tiebreaker:
 ```python
-ranked = sorted(results, key=lambda r: r.get("blended_score", 0), reverse=True)
+ranked = sorted(results, key=lambda r: (r.get("reranker_score", 0), r.get("blended_score", 0)), reverse=True)
 ```
-Failing to sort is why a result at array position 0 isn't always rank-1.
+Failing to sort is why a result at array position 0 isn't always rank-1.  For a quick single-metric rank, `blended_score` works but `reranker_score` is more discriminating.
+
+**`search_code` returns metadata only — do NOT refetch chunk bodies.** Each result row contains `chunk_id`, `type`, `name`, `scores`, and a short snippet.  Names, types, and scores are sufficient to judge relevance; additional tool calls to fetch or "confirm" the body of each candidate waste call budget without improving precision.
 
 **`source="ego_graph"` items appear in the main results array.** When `ego_graph_enabled=true` (or when the live config has it on), expansion neighbors are interleaved with direct hits and carry their own `blended_score`. They count toward your top-k window. Don't filter them out before ranking — they are legitimate ranked candidates.
 
@@ -149,6 +152,8 @@ Failing to sort is why a result at array position 0 isn't always rank-1.
 **Call edges carry resolver provenance (v0.14.0+).** Every entry in `direct_callers` and `direct_callees` includes `resolver_source` (`"ast"` / `"pyan"` / `"libcst"` / `"lsp"`), `resolver_confidence` (0.5–0.98), and `confidence` tag (`"exact"` / `"recovered"` / `"ambiguous"`). Top-level `caller_confidence` / `callee_confidence` breakdowns show counts per tag. The confidence ladder (AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98) means edges are upgraded in-place to the highest-confidence resolver — `resolver_source: "lsp"` means basedpyright confirmed the call. Configure via `call_graph.min_confidence` (drops low-confidence edges) and see `docs/CALL_GRAPH_TUNING.md` for tuning recipes.
 
 **Community and module summary chunks surface at rank-1 on class-overview queries.** They have IDs like `__community__/label:0-0:community:label` or `file.py:0-0:module:name`. Add `chunk_type="function"` or `chunk_type="class"` to filter them when you need a specific implementation.
+
+**For ranking (MRR), lead with the canonical definition — not the highest-scoring fragment.** `split_block`, `module`, and `decorated_definition` chunks often outscore a `class` or `method` chunk on `reranker_score`/`blended_score` due to their compactness, but MRR rewards putting the single most directly relevant chunk first.  When ordering results, prefer the canonical `class` or `method`/`function` whose name most directly matches the question's core symbol — even if a sibling fragment scores slightly higher.
 
 **Unicode symbols crash on Windows cp1252 terminals.** `✓`/`✗` cause `UnicodeEncodeError` in any script that writes to stdout in a cmd/PowerShell window without UTF-8. Use plain ASCII (`PASS`/`FAIL`) or run with `PYTHONUTF8=1`. The smoke test in this skill uses plain ASCII for this reason.
 

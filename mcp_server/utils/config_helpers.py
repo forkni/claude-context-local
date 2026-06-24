@@ -66,12 +66,15 @@ def temporary_ram_fallback_off() -> Generator[bool, None, None]:
 
     try:
         if original_value:
-            # Temporarily disable RAM fallback for faster indexing.
-            # Toggle the in-memory singleton only — no disk write needed because the embedder
-            # reads the flag via ServiceLocator (same _config object), and writing to disk would
-            # change the file's mtime, causing the Merkle DAG to flag a spurious change and
-            # trigger an infinite reindex loop on every subsequent search_code call.
-            config.performance.allow_ram_fallback = False
+            # Suppress RAM fallback for the duration of indexing via a module-level flag
+            # in search.config that survives _config_manager = None resets (which happen on
+            # every model switch inside the multi-model indexing loop and would silently drop
+            # any in-memory mutation on config.performance.allow_ram_fallback).
+            # No disk write — writing would bump search_config.json's mtime, causing the
+            # Merkle DAG to flag a spurious change and trigger a reindex loop.
+            from search.config import set_indexing_ram_fallback_override
+
+            set_indexing_ram_fallback_override(False)
             was_modified = True
             logger.info(
                 "[REINDEX_CONFIG] Temporarily disabled allow_ram_fallback for indexing "
@@ -80,8 +83,9 @@ def temporary_ram_fallback_off() -> Generator[bool, None, None]:
         yield original_value
     finally:
         if was_modified:
-            # Restore original value in-memory (same singleton — no disk write required)
-            config.performance.allow_ram_fallback = original_value
+            from search.config import set_indexing_ram_fallback_override
+
+            set_indexing_ram_fallback_override(None)
             logger.info(
                 f"[REINDEX_CONFIG] Restored allow_ram_fallback to original value: {original_value}"
             )

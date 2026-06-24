@@ -266,9 +266,10 @@ class TestReadFileWithTimeout(TestCase):
         with patch("chunking.tree_sitter.ThreadPoolExecutor") as mock_executor:
             mock_future = Mock()
             mock_future.result.side_effect = FuturesTimeoutError()
-            mock_executor.return_value.__enter__.return_value.submit.return_value = (
-                mock_future
-            )
+            # _read_file_with_timeout no longer uses the context-manager form
+            # (to avoid shutdown(wait=True) deadlock on timeout — #6), so the
+            # mock must be on the instance directly, not on __enter__'s return.
+            mock_executor.return_value.submit.return_value = mock_future
 
             from chunking.tree_sitter import _read_file_with_timeout
 

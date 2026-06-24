@@ -112,11 +112,39 @@ class ONNXEmbeddingModel:
 
         target_device = device or self.device
 
-        # Tokenize — let the tokenizer handle padding/truncation
+        # Tokenize with an explicit cap so no single chunk inflates the whole batch.
+        # The model may support up to 8192 tokens (e.g. BGE-M3), but without Flash-
+        # Attention the ORT path materializes a T×T attention matrix, so cost grows
+        # quadratically.  2048 aligns with t_eff in calculate_optimal_batch_size so
+        # the batch-sizer and the tokenizer share the same token-length contract (#46).
+        _raw_max = getattr(self.tokenizer, "model_max_length", 2048)
+        try:
+            _max_len = min(int(_raw_max), 2048)
+        except (TypeError, ValueError):
+            _max_len = 2048
+
+        # Length-sorted tokenization: sort sentences by char-length (proxy for token
+        # length) before tokenizing with padding=True (#51).  All-ones padding fills
+        # to the *longest* sentence in the batch; grouping short sentences together
+        # cuts wasted padding tokens and the quadratic T×T attention cost.
+        # Original order is restored by unsorting before return.
+
+        if len(sentences) > 1:
+            sort_idx = sorted(range(len(sentences)), key=lambda i: len(sentences[i]))
+            sorted_sentences = [sentences[i] for i in sort_idx]
+            unsort_idx = [0] * len(sort_idx)
+            for new_pos, orig_pos in enumerate(sort_idx):
+                unsort_idx[orig_pos] = new_pos
+        else:
+            sorted_sentences = sentences
+            sort_idx = None
+            unsort_idx = None
+
         encoded = self.tokenizer(
-            sentences,
+            sorted_sentences,
             padding=True,
             truncation=True,
+            max_length=_max_len,
             return_tensors="pt",
         )
 
@@ -132,11 +160,16 @@ class ONNXEmbeddingModel:
             position_ids = position_ids.masked_fill(mask == 0, 1)
             encoded["position_ids"] = position_ids
 
-        # Move to target device
-        if target_device == "cuda":
-            encoded = {k: v.cuda() for k, v in encoded.items()}
+        # Move to target device.
+        # Use startswith("cuda") so "cuda:0" / "cuda:1" are handled correctly; .cuda()
+        # always targets device 0, causing an extra per-call H2D copy when a specific
+        # device is configured (#58).
+        if target_device.startswith("cuda"):
+            encoded = {k: v.to(target_device) for k, v in encoded.items()}
 
-        # Forward pass through ONNX Runtime
+        # Forward pass through ONNX Runtime.
+        # torch.no_grad() is a no-op here: ORT runs outside PyTorch autograd and
+        # optimum wraps its outputs in fresh tensors — it is kept for readability only.
         with torch.no_grad():
             output = self.ort_model(**encoded)
 
@@ -152,8 +185,19 @@ class ONNXEmbeddingModel:
             embeddings = (last_hidden * mask_expanded).sum(dim=1)
             embeddings = embeddings / mask_expanded.sum(dim=1).clamp(min=1e-9)
 
-        # L2 normalize (standard for retrieval models)
+        # L2 normalize (standard for retrieval models).
+        # Normalization invariant: all embeddings leaving this wrapper are
+        # unit-norm.  FaissVectorIndex.add() also calls faiss.normalize_L2 on
+        # arrival, making the FAISS inner-product metric equivalent to cosine
+        # similarity on both ONNX and PyTorch backends.  Callers of the raw
+        # embed_query() output on the PyTorch path must NOT assume unit norm —
+        # the SentenceTransformer may or may not include a Normalize layer (#33).
         embeddings = F.normalize(embeddings.float(), p=2, dim=1)
+
+        # Restore original sentence order after length-sorted encoding (#51).
+        if unsort_idx is not None:
+            idx_tensor = torch.tensor(unsort_idx, dtype=torch.long)
+            embeddings = embeddings[idx_tensor]
 
         if convert_to_tensor:
             return embeddings  # torch.Tensor on target_device

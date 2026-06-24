@@ -3,7 +3,7 @@
 This module handles:
 - Cleanup of previous project resources (index managers, searchers, embedders)
 - Project resource closure before deletion
-- Shared server state initialization for stdio and SSE modes
+- Shared server state initialization for stdio and StreamableHTTP modes
 """
 
 import gc
@@ -160,7 +160,7 @@ def close_project_resources(project_path: str) -> bool:
 
 
 def initialize_server_state() -> None:
-    """Initialize global server state (shared by stdio and SSE modes).
+    """Initialize global server state (shared by stdio and StreamableHTTP modes).
 
     Performs:
     1. Config sync from file with env override

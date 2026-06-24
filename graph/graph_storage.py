@@ -13,16 +13,14 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from utils.atomic_io import write_json_atomic
 from utils.path_utils import normalize_path
 
 
 if TYPE_CHECKING:
     from chunking.relationships.relationship_types import RelationshipEdge
 
-try:
-    import networkx as nx
-except ImportError:
-    nx = None
+import networkx as nx
 
 
 # Legacy string confidence tags written by the in-house call extractor
@@ -125,12 +123,6 @@ class CodeGraphStorage:
             project_id: Unique identifier for the project
             storage_dir: Directory for graph storage (default: ~/.claude_code_search/graphs)
         """
-        if nx is None:
-            raise ImportError(
-                "NetworkX is required for graph storage. "
-                "Install with: pip install networkx"
-            )
-
         self.logger = logging.getLogger(__name__)
         self.project_id = project_id
 
@@ -145,8 +137,10 @@ class CodeGraphStorage:
         # Graph file path
         self.graph_path = self.storage_dir / f"{project_id}_call_graph.json"
 
-        # Initialize directed graph (calls have direction)
-        self.graph = nx.DiGraph()
+        # Initialize multi-directed graph: allows parallel edges per (u,v) pair keyed
+        # by relationship type, so a node pair can carry both "calls" and "imports"
+        # without data loss.  Old DiGraph JSON is coerced on load (see load()).
+        self.graph = nx.MultiDiGraph()
 
         # Secondary index: name -> list[chunk_id] for O(1) find_path lookups.
         # Populated by add_node() and rebuilt by load() after graph restore.
@@ -242,6 +236,7 @@ class CodeGraphStorage:
         self.graph.add_edge(
             caller_id,
             callee_name,
+            key="calls",  # MultiDiGraph: dedups within-type; different types are parallel edges
             type="calls",
             line=line_number,
             is_method=is_method_call,
@@ -275,7 +270,11 @@ class CodeGraphStorage:
             KeyError: If the edge ``(caller_id, callee_id)`` does not exist in
                 the graph.  Callers should check ``graph.has_edge`` first.
         """
-        self.graph.edges[caller_id, callee_id].update(attrs)
+        # Normalize so Windows backslash ids don't cause KeyError when the
+        # graph was written with forward-slash ids (or vice-versa) (#47).
+        self.graph.edges[
+            normalize_path(caller_id), normalize_path(callee_id), "calls"
+        ].update(attrs)
 
     def add_relationship_edge(self, edge: "RelationshipEdge") -> None:
         """
@@ -319,10 +318,12 @@ class CodeGraphStorage:
                 language="",  # Unknown language
             )
 
-        # Add edge to graph with all attributes
+        # Add edge to graph with all attributes.
+        # key=relationship_type: dedups within-type, preserves parallel edges across types.
         self.graph.add_edge(
             normalized_source,
             edge.target_name,
+            key=edge.relationship_type.value,
             type=edge.relationship_type.value,
             line=edge.line_number,
             confidence=edge.confidence,
@@ -496,7 +497,10 @@ class CodeGraphStorage:
                     edge_type == "imports"
                     and exclude_import_categories
                     and self._should_exclude_edge(
-                        current_id, target, exclude_import_categories
+                        current_id,
+                        target,
+                        exclude_import_categories,
+                        edge_data=edge_data,
                     )
                 ):
                     continue
@@ -512,7 +516,10 @@ class CodeGraphStorage:
                     edge_type == "imports"
                     and exclude_import_categories
                     and self._should_exclude_edge(
-                        source, current_id, exclude_import_categories
+                        source,
+                        current_id,
+                        exclude_import_categories,
+                        edge_data=edge_data,
                     )
                 ):
                     continue
@@ -564,7 +571,11 @@ class CodeGraphStorage:
         return f"{relation_type}_by"
 
     def _should_exclude_edge(
-        self, source_id: str, target_id: str, exclude_categories: list[str]
+        self,
+        source_id: str,
+        target_id: str,
+        exclude_categories: list[str],
+        edge_data: "dict[str, Any] | None" = None,
     ) -> bool:
         """
         Check if edge should be excluded based on import category.
@@ -573,16 +584,24 @@ class CodeGraphStorage:
             source_id: Source node ID
             target_id: Target node ID
             exclude_categories: Categories to exclude (e.g., ["stdlib", "third_party"])
+            edge_data: Pre-fetched edge attrs dict for the specific traversed edge.
+                When provided (the normal path from ``_iter_matching_neighbors``) this
+                data is used directly, avoiding a second graph lookup and ensuring the
+                correct parallel edge is checked regardless of the edge's dict key.
+                When omitted, falls back to a keyed lookup on the "imports" edge.
 
         Returns:
             True if edge should be excluded, False otherwise
         """
-        # Get edge data
-        edge_data = self.get_edge_data(source_id, target_id)
+        if edge_data is None:
+            # Fallback: keyed lookup — only used by callers that don't have edge_data.
+            edge_data = self.get_edge_data(
+                source_id, target_id, relationship_type="imports"
+            )
         if not edge_data:
             return False
 
-        # Only filter "imports" relationships
+        # Type guard — the caller may pass any edge; only imports edges carry categories.
         edge_type = edge_data.get("relationship_type") or edge_data.get("type")
         if edge_type != "imports":
             return False
@@ -634,13 +653,27 @@ class CodeGraphStorage:
         """
         return list(self._name_index.get(name, []))
 
-    def get_edge_data(self, caller_id: str, callee_id: str) -> dict[str, Any] | None:
+    def get_edge_data(
+        self,
+        caller_id: str,
+        callee_id: str,
+        relationship_type: str | None = None,
+    ) -> dict[str, Any] | None:
         """
         Get edge metadata with validation and normalization.
+
+        On a MultiDiGraph a (u,v) pair may carry multiple parallel edges, one per
+        relationship type.  When *relationship_type* is given, returns data for that
+        specific edge (or None if it does not exist).  When omitted, returns the
+        **primary** edge — the one with the highest resolver_confidence; "calls" is
+        preferred on ties — preserving the single-dict contract for existing callers.
 
         Args:
             caller_id: Caller chunk ID (source node)
             callee_id: Callee chunk ID (target node)
+            relationship_type: If provided, look up this specific edge key (e.g.
+                "calls", "imports").  If None, return the primary (highest-confidence)
+                edge.
 
         Returns:
             Edge data dictionary with normalized keys, or None if edge not found.
@@ -654,7 +687,25 @@ class CodeGraphStorage:
         if not self.graph.has_edge(normalized_caller, normalized_callee):
             return None
 
-        edge_data = dict(self.graph.edges[normalized_caller, normalized_callee])
+        if relationship_type is not None:
+            # Keyed lookup — native get_edge_data returns the flat attrs dict for this key
+            raw = self.graph.get_edge_data(
+                normalized_caller, normalized_callee, key=relationship_type
+            )
+            if raw is None:
+                return None
+            edge_data = dict(raw)
+        else:
+            # No key: pick the primary edge — highest resolver_confidence, prefer "calls"
+            all_edges = self.graph.get_edge_data(normalized_caller, normalized_callee)
+            if not all_edges:
+                return None
+
+            def _primary_key(item: tuple) -> tuple:
+                k, attrs = item
+                return (attrs.get("resolver_confidence", 0.0), k == "calls")
+
+            edge_data = dict(max(all_edges.items(), key=_primary_key)[1])
 
         # Validate and normalize required fields
         # Support both old ('type', 'line') and new ('relationship_type', 'line_number') keys
@@ -706,6 +757,34 @@ class CodeGraphStorage:
 
         return edge_data
 
+    def get_all_edge_data(self, caller_id: str, callee_id: str) -> list[dict[str, Any]]:
+        """Return normalized edge data for every parallel edge between caller and callee.
+
+        On a MultiDiGraph there may be more than one edge per (u,v) pair — one per
+        relationship type (e.g., "calls" *and* "imports" on the same node pair).
+        Returns an empty list when no edge exists.
+
+        Args:
+            caller_id: Caller chunk ID (source node).
+            callee_id: Callee chunk ID (target node).
+
+        Returns:
+            List of normalized edge-data dicts, one per parallel edge.  May be empty.
+        """
+        normalized_caller = normalize_path(caller_id)
+        normalized_callee = normalize_path(callee_id)
+
+        all_edges = self.graph.get_edge_data(normalized_caller, normalized_callee)
+        if not all_edges:
+            return []
+
+        results = []
+        for key in all_edges:
+            edge = self.get_edge_data(caller_id, callee_id, relationship_type=key)
+            if edge is not None:
+                results.append(edge)
+        return results
+
     def save(self) -> None:
         """
         Save graph to JSON file.
@@ -713,14 +792,16 @@ class CodeGraphStorage:
         Uses NetworkX's node_link_data format for efficient serialization.
         """
         try:
+            # Stamp schema version so load() can detect and coerce old DiGraph JSON.
+            self.graph.graph["schema_version"] = 2
+
             # Convert graph to JSON-serializable format
             # Using edges="edges" for NetworkX 3.6+ forward compatibility
             # pyrefly: ignore [missing-attribute]
             data = nx.node_link_data(self.graph, edges="edges")
 
-            # Save to file
-            with open(self.graph_path, "w") as f:
-                json.dump(data, f, indent=2)
+            # Save to file (atomic write: tmp → os.replace)
+            write_json_atomic(self.graph_path, data)
 
             self.logger.info(
                 f"Saved call graph: {self.graph.number_of_nodes()} nodes, "
@@ -748,11 +829,16 @@ class CodeGraphStorage:
 
             # Reconstruct graph from JSON
             # Using edges="edges" for NetworkX 3.6+ forward compatibility
-            # pyrefly: ignore [missing-attribute]
             self.graph = nx.node_link_graph(data, directed=True, edges="edges")
 
+            # Coerce pre-multigraph JSON (schema_version absent / < 2) written by
+            # an older DiGraph-based release.  Each old single edge becomes key=0;
+            # new parallel edges accumulate normally on the next reindex.
+            if not self.graph.is_multigraph():
+                self.graph = nx.MultiDiGraph(self.graph)
+
             # Rebuild name index from loaded graph so get_nodes_by_name() works.
-            # node_ids are unique in a DiGraph, so no duplicate check needed.
+            # Node IDs are unique, so no duplicate check needed.
             self._name_index = {}
             for node_id, attrs in self.graph.nodes(data=True):
                 node_name = attrs.get("name")
@@ -772,7 +858,7 @@ class CodeGraphStorage:
             self.logger.error(f"Failed to load graph: {e}", exc_info=True)
             # Initialize empty graph on error
             # pyrefly: ignore [missing-attribute]
-            self.graph = nx.DiGraph()
+            self.graph = nx.MultiDiGraph()
             return False
 
     def clear(self) -> None:
@@ -841,6 +927,8 @@ class CodeGraphStorage:
             "total_nodes": self.graph.number_of_nodes(),
             "total_edges": self.graph.number_of_edges(),
             "is_directed": self.graph.is_directed(),
+            "is_multigraph": self.graph.is_multigraph(),
+            "schema_version": self.graph.graph.get("schema_version", 1),
             "storage_path": str(self.graph_path),
             "exists_on_disk": self.graph_path.exists(),
         }
@@ -851,7 +939,8 @@ class CodeGraphStorage:
 
     def __contains__(self, chunk_id: str) -> bool:
         """Check if chunk_id is in graph."""
-        return chunk_id in self.graph
+        # Normalize for cross-platform path consistency (#47).
+        return normalize_path(chunk_id) in self.graph
 
     def store_community_map(self, community_map: dict[str, int]) -> None:
         """Persist community assignments to JSON file.
@@ -860,8 +949,7 @@ class CodeGraphStorage:
             community_map: Dict mapping chunk_id -> community_id
         """
         community_path = self.storage_dir / f"{self.project_id}_communities.json"
-        with open(community_path, "w") as f:
-            json.dump(community_map, f, indent=2)
+        write_json_atomic(community_path, community_map)
         self.logger.info(
             f"Stored {len(community_map)} community assignments to {community_path}"
         )
@@ -879,11 +967,11 @@ class CodeGraphStorage:
         return None
 
     # pyrefly: ignore [missing-attribute]
-    def get_graph(self) -> "nx.DiGraph":
-        """Expose raw NetworkX DiGraph for external algorithms (e.g., PPR).
+    def get_graph(self) -> "nx.MultiDiGraph":
+        """Expose raw NetworkX MultiDiGraph for external algorithms (e.g., PPR).
 
         Returns:
-            The underlying NetworkX directed graph.
+            The underlying NetworkX multi-directed graph.
         """
         return self.graph
 

@@ -22,7 +22,7 @@ from typing import Any
 from chunking.relationships.relationship_extractors.base_extractor import (
     BaseRelationshipExtractor,
 )
-from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
+from chunking.relationships.relationship_types import RelationshipType
 
 
 class ConstantExtractor(BaseRelationshipExtractor):
@@ -45,54 +45,17 @@ class ConstantExtractor(BaseRelationshipExtractor):
         super().__init__()
         self.known_constants: set[str] = set()
 
-    def extract(
-        self, code: str, chunk_metadata: dict[str, Any]
-    ) -> list[RelationshipEdge]:
-        """
-        Extract constant relationships from code.
-
-        Args:
-            code: Source code string to analyze
-            chunk_metadata: Metadata about the code chunk
-                - chunk_id: Unique identifier
-                - chunk_type: Type of chunk ("module", "function", etc.)
-
-        Returns:
-            List of RelationshipEdge objects for constant relationships
-
-        Example:
-            >>> extractor = ConstantExtractor()
-            >>> code = '''
-            ... TIMEOUT = 30
-            ... def connect():
-            ...     time.sleep(TIMEOUT)
-            ... '''
-            >>> edges = extractor.extract(code, {"chunk_id": "test.py:1:module"})
-            >>> len(edges)
-            2  # One DEFINES_CONSTANT, one USES_CONSTANT
-        """
-        self._reset_state()
+    def _reset_state(self) -> None:
+        super()._reset_state()
         self.known_constants.clear()
 
-        try:
-            tree = ast.parse(code)
-        except SyntaxError:
-            self.logger.debug(
-                f"Syntax error parsing code in {chunk_metadata.get('chunk_id', 'unknown')}"
-            )
-            return []
-
+    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         chunk_type = chunk_metadata.get("chunk_type", "")
-
         # Extract definitions from module-level chunks
         if chunk_type == "module":
             self._extract_constant_definitions(tree, chunk_metadata)
-
         # Extract usages from all chunks
         self._extract_constant_usages(tree, chunk_metadata)
-
-        self._log_extraction_result(chunk_metadata)
-        return self.edges
 
     def _extract_constant_definitions(
         self, tree: ast.AST, chunk_metadata: dict[str, Any]
@@ -220,8 +183,10 @@ class ConstantExtractor(BaseRelationshipExtractor):
                 return True
 
         # Empty collections
-        if isinstance(node, (ast.List, ast.Dict, ast.Set, ast.Tuple)):
-            return len(node.elts if hasattr(node, "elts") else node.keys) == 0
+        if isinstance(node, ast.Dict):
+            return len(node.keys) == 0
+        if isinstance(node, (ast.List, ast.Set, ast.Tuple)):
+            return len(node.elts) == 0
 
         return False
 
@@ -248,9 +213,3 @@ class ConstantExtractor(BaseRelationshipExtractor):
                 return True
 
         return False
-
-    def _reset_state(self) -> None:
-        """Reset extractor state before extraction."""
-        super()._reset_state()
-        # Note: We don't reset known_constants here because we want to track
-        # constants across definitions and usages in the same extraction call

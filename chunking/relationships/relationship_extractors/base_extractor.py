@@ -42,14 +42,18 @@ class BaseRelationshipExtractor(ABC):
         self.relationship_type: RelationshipType | None = None  # Set by subclass
         self.edges: list[RelationshipEdge] = []
 
-    @abstractmethod
     def extract(
         self, code: str, chunk_metadata: dict[str, Any]
     ) -> list[RelationshipEdge]:
         """
         Extract relationships from code.
 
-        This method must be implemented by all subclasses.
+        Parses ``code`` with ``ast.parse`` then delegates to
+        :meth:`_extract_from_tree`.  Subclasses should implement
+        ``_extract_from_tree`` rather than overriding this method.
+
+        For the parse-once fast path (shared tree across all extractors) use
+        :meth:`extract_from_tree` instead.
 
         Args:
             code: Source code string to analyze
@@ -62,9 +66,6 @@ class BaseRelationshipExtractor(ABC):
         Returns:
             List of RelationshipEdge objects found in the code
 
-        Raises:
-            SyntaxError: If code cannot be parsed (should be caught and logged)
-
         Example:
             >>> extractor = InheritanceExtractor()
             >>> edges = extractor.extract(
@@ -75,6 +76,58 @@ class BaseRelationshipExtractor(ABC):
             1
             >>> edges[0].relationship_type
             <RelationshipType.INHERITS: 'inherits'>
+        """
+        self._reset_state()
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as e:
+            self.logger.debug(
+                f"Failed to parse code in {chunk_metadata.get('file_path')}: {e}"
+            )
+            return []
+        self._extract_from_tree(tree, chunk_metadata)
+        self._log_extraction_result(chunk_metadata)
+        return self.edges
+
+    def extract_from_tree(
+        self,
+        tree: ast.AST,
+        code: str,
+        chunk_metadata: dict[str, Any],
+    ) -> list[RelationshipEdge]:
+        """
+        Extract relationships using a pre-parsed AST tree.
+
+        Avoids a redundant ``ast.parse`` call when the same tree is shared
+        across multiple extractors (parse-once optimisation, #15).  The
+        ``code`` parameter is accepted for API symmetry but is unused by the
+        default implementation; subclasses that need it should read from it.
+
+        Args:
+            tree: Already-parsed AST tree for *code*
+            code: Source code string (unused by default, kept for subclass use)
+            chunk_metadata: Same as :meth:`extract`
+
+        Returns:
+            List of RelationshipEdge objects found in the code
+        """
+        self._reset_state()
+        self._extract_from_tree(tree, chunk_metadata)
+        self._log_extraction_result(chunk_metadata)
+        return self.edges
+
+    @abstractmethod
+    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
+        """
+        Walk the AST and populate ``self.edges``.
+
+        This is the primary extension point.  Called by both :meth:`extract`
+        (after parsing ``code``) and :meth:`extract_from_tree` (with a
+        shared pre-parsed tree).
+
+        Args:
+            tree: Parsed AST for the chunk
+            chunk_metadata: Metadata about the code chunk
         """
         pass
 
@@ -344,6 +397,11 @@ class MultiPassExtractor(BaseRelationshipExtractor):
         """Reset state including context."""
         super()._reset_state()
         self.context = {}
+
+    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
+        """Run both passes in sequence with the shared AST."""
+        self._extract_pass_1(tree, chunk_metadata)
+        self._extract_pass_2(tree, chunk_metadata)
 
     def _extract_pass_1(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """

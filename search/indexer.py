@@ -202,8 +202,16 @@ class CodeIndexManager:
         for i, result in enumerate(embedding_results):
             chunk_id = result.chunk_id
 
-            # Store in metadata database
-            self.metadata_store.set(chunk_id, start_id + i, result.metadata)
+            # Strip full `content` before persisting (#55). It is an in-memory
+            # carrier only — BM25 reads it upstream (hybrid path) and query-time
+            # output uses `content_preview`; nothing reads persisted `content`.
+            # Mirrors the hybrid_searcher strip so the dense-only path doesn't
+            # bloat the MetadataStore (~6 KB/chunk). The live `result.metadata`
+            # (with content) is still passed to the graph layer below unchanged.
+            persisted_metadata = {
+                k: v for k, v in result.metadata.items() if k != "content"
+            }
+            self.metadata_store.set(chunk_id, start_id + i, persisted_metadata)
 
             # Populate call graph via integration layer
             if self._graph.is_available:

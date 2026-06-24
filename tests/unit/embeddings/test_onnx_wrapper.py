@@ -27,6 +27,9 @@ def _make_tokenizer(batch_size: int = 1, seq_len: int = 8) -> MagicMock:
         "input_ids": torch.ones(batch_size, seq_len, dtype=torch.long),
         "attention_mask": torch.ones(batch_size, seq_len, dtype=torch.long),
     }
+    # Set a realistic model_max_length so encode()'s max_length cap produces a
+    # deterministic int rather than a MagicMock auto-attribute.
+    tokenizer.model_max_length = 512
     return tokenizer
 
 
@@ -74,10 +77,13 @@ class TestONNXEmbeddingModelEncodeCLS:
 
     def test_encode_cls_calls_tokenizer_with_correct_args(self, model_cls):
         model_cls.encode(["sentence one"])
+        # max_length is now passed explicitly; value = min(tokenizer.model_max_length, 2048)
+        # The test tokenizer has model_max_length=512 → max_length=512 (#46).
         model_cls.tokenizer.assert_called_once_with(
             ["sentence one"],
             padding=True,
             truncation=True,
+            max_length=512,
             return_tensors="pt",
         )
 

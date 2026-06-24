@@ -57,6 +57,7 @@ class TestGraphSaveDuringReindex(TestCase):
         mock_searcher.search_executor = Mock()
         mock_searcher.multi_hop_searcher = Mock()
         mock_searcher._graph_storage = Mock()  # Old reference
+        mock_searcher._metadata_cache = {}  # Added by BaseSearcher.__init__; cleared by clear_index()
 
         # Call the REAL clear_index method
         HybridSearcher.clear_index(mock_searcher)

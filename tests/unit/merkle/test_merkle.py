@@ -216,6 +216,80 @@ class TestMerkleDAG(TestCase):
         assert dag2.get_root_hash() == dag1.get_root_hash()
         assert dag2.get_all_files() == dag1.get_all_files()
 
+    # --- #21 traversal-correctness tests ---
+
+    def test_symlink_dir_is_skipped(self):
+        """build_node must skip symlinked directories to prevent cycle recursion (#21a)."""
+        import os
+
+        self.create_test_files()
+        real_target = self.test_path / "src"
+        link = self.test_path / "src_link"
+        try:
+            os.symlink(str(real_target), str(link))
+        except (OSError, NotImplementedError):
+            pytest.skip("Symlinks not supported on this platform/filesystem")
+
+        dag = MerkleDAG(self.temp_dir)
+        dag.build()  # Must terminate — no RecursionError
+
+        all_files = dag.get_all_files()
+        # Files under the symlinked dir must NOT appear (link is skipped)
+        assert not any("src_link" in f for f in all_files), (
+            f"Symlinked dir should be skipped, but found: "
+            f"{[f for f in all_files if 'src_link' in f]}"
+        )
+        # Files under the real dir ARE still indexed via the real path
+        assert "src/main.py" in all_files or any("src" in f for f in all_files), (
+            "Real src/ contents should still be indexed"
+        )
+
+    def test_unreadable_child_does_not_drop_siblings(self):
+        """An unreadable entry must only skip itself; siblings must still be indexed (#21b)."""
+        from unittest.mock import patch
+
+        self.create_test_files()
+        dag = MerkleDAG(self.temp_dir)
+
+        original_build_node = dag.build_node
+
+        call_count = [0]
+
+        def patched_build_node(path, base_path=None):
+            call_count[0] += 1
+            # Raise OSError for the second child encountered (one sibling fails)
+            if call_count[0] == 2:
+                raise OSError("simulated permission error")
+            return original_build_node(path, base_path)
+
+        with patch.object(dag, "build_node", side_effect=patched_build_node):
+            dag.build()
+
+        # The build should have completed and indexed remaining files
+        # (not zero files just because one child failed)
+        all_files = dag.get_all_files()
+        assert len(all_files) > 0, "Siblings of a failing entry should still be indexed"
+
+    def test_multi_segment_ignore_pattern_excludes_nested_dir(self):
+        """A separator-bearing ignore pattern excludes a nested directory (#21c)."""
+        self.create_test_files()
+        # Create a nested snapshot dir inside the project
+        nested = self.test_path / "snapshots" / "merkle"
+        nested.mkdir(parents=True)
+        (nested / "snap.json").write_text('{"version": "1.0"}')
+
+        dag = MerkleDAG(self.temp_dir)
+        # Add the multi-segment ignore pattern exactly as change_detector does
+        # (forward-slash normalised via .as_posix())
+        dag.ignore_patterns.add("snapshots/merkle")
+        dag.build()
+
+        all_files = dag.get_all_files()
+        assert not any("snapshots" in f for f in all_files), (
+            f"Nested snapshot dir should be excluded, but found: "
+            f"{[f for f in all_files if 'snapshots' in f]}"
+        )
+
 
 class TestSnapshotManager(TestCase):
     """Test SnapshotManager class."""
@@ -649,6 +723,45 @@ class TestSnapshotManagerStorageDir:
 
         expected = Path.home() / ".claude_code_search" / "merkle"
         assert sm.storage_dir == expected
+
+
+class TestChangeDetectorSnapshotIgnore(TestCase):
+    """Snapshot-dir ignore works when the snapshot dir is inside the project (#21c)."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.project_path = Path(self.temp_dir) / "project"
+        self.project_path.mkdir()
+        (self.project_path / "real_file.py").write_text("x = 1")
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_snapshot_dir_inside_project_is_excluded(self):
+        """When snapshot_dir lives inside the project, its contents must not be
+        indexed and must not cause spurious hash changes (#21c)."""
+        # Place the snapshot dir inside the project root
+        snapshot_dir = self.project_path / "snapshots" / "merkle"
+        snapshot_dir.mkdir(parents=True)
+        (snapshot_dir / "snap.json").write_text('{"version":"1.0"}')
+
+        manager = SnapshotManager(
+            storage_dir=self.project_path / "snapshots" / "merkle"
+        )
+        detector = ChangeDetector(snapshot_manager=manager)
+
+        dag = MerkleDAG(str(self.project_path))
+        detector._add_snapshot_ignore(dag, str(self.project_path))
+        dag.build()
+
+        all_files = dag.get_all_files()
+        assert not any("snap.json" in f for f in all_files), (
+            f"Snapshot file should be excluded, but found: "
+            f"{[f for f in all_files if 'snap' in f]}"
+        )
+        assert "real_file.py" in all_files
 
 
 if __name__ == "__main__":

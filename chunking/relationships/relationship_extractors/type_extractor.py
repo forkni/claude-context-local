@@ -57,39 +57,6 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
         self.current_function_id: str | None = None
         self.current_class_id: str | None = None
 
-    def extract(
-        self, code: str, chunk_metadata: dict[str, Any]
-    ) -> list[RelationshipEdge]:
-        """
-        Extract type annotation usage from code.
-
-        Args:
-            code: Source code string
-            chunk_metadata: Metadata about the code chunk
-
-        Returns:
-            List of RelationshipEdge objects for type usage
-        """
-        self._reset_state()
-
-        # Parse code
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            # DEBUG: Method chunks often fail to parse standalone but parent class chunks succeed
-            self.logger.debug(
-                f"Failed to parse code in {chunk_metadata.get('file_path')}: {e}"
-            )
-            return []
-
-        # Extract type annotations
-        self._extract_from_tree(tree, chunk_metadata)
-
-        # Log results
-        self._log_extraction_result(chunk_metadata)
-
-        return self.edges
-
     def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
         Walk AST and extract type annotations.
@@ -108,7 +75,9 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
                 self._extract_from_annotated_assignment(node, chunk_metadata)
 
     def _extract_from_function(
-        self, func_node: ast.FunctionDef, chunk_metadata: dict[str, Any]
+        self,
+        func_node: ast.FunctionDef | ast.AsyncFunctionDef,
+        chunk_metadata: dict[str, Any],
     ) -> None:
         """
         Extract type annotations from function/method definition.
@@ -189,6 +158,8 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
         """
         # Get source ID (current class or module)
         source_id = self.current_class_id or chunk_metadata.get("chunk_id")
+        if not source_id:
+            return
 
         # Get attribute name
         if isinstance(ann_assign_node.target, ast.Name):

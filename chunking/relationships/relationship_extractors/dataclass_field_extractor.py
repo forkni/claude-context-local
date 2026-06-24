@@ -20,7 +20,7 @@ from typing import Any
 from chunking.relationships.relationship_extractors.base_extractor import (
     BaseRelationshipExtractor,
 )
-from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
+from chunking.relationships.relationship_types import RelationshipType
 
 
 class DataclassFieldExtractor(BaseRelationshipExtractor):
@@ -41,38 +41,10 @@ class DataclassFieldExtractor(BaseRelationshipExtractor):
         super().__init__()
         self.relationship_type = RelationshipType.DEFINES_FIELD
 
-    def extract(
-        self, code: str, chunk_metadata: dict[str, Any]
-    ) -> list[RelationshipEdge]:
-        """
-        Extract dataclass field relationships from code.
-
-        Args:
-            code: Source code string to analyze
-            chunk_metadata: Metadata about the code chunk
-                - chunk_id: Unique identifier
-                - chunk_type: Type of chunk
-
-        Returns:
-            List of RelationshipEdge objects for dataclass field relationships
-        """
-        self._reset_state()
-
-        try:
-            tree = ast.parse(code)
-        except SyntaxError:
-            self.logger.debug(
-                f"Syntax error parsing code in {chunk_metadata.get('chunk_id', 'unknown')}"
-            )
-            return []
-
-        # Walk the tree to find class definitions
+    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef) and self._has_dataclass_decorator(node):
                 self._extract_dataclass_fields(node, chunk_metadata)
-
-        self._log_extraction_result(chunk_metadata)
-        return self.edges
 
     def _has_dataclass_decorator(self, node: ast.ClassDef) -> bool:
         """

@@ -16,7 +16,9 @@ Usage:
     reset_state()
 """
 
+import asyncio
 import os
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -63,10 +65,19 @@ class ApplicationState:
         )
     )
 
+    # Concurrency guards — intentionally NOT reset by reset() so that in-flight
+    # threads always share the same stable lock instance across state resets.
+    _lock: threading.RLock = field(default_factory=threading.RLock)
+    # Per-project asyncio reindex locks.  Only touched on the event loop; no
+    # extra threading lock needed.  reset() replaces this with a fresh dict.
+    _reindex_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
+
     def reset(self) -> None:
         """Reset all state to initial values.
 
         Useful for testing to ensure clean state between tests.
+        Note: _lock is deliberately NOT reset — it must survive resets so that
+        any in-flight threads keep a stable lock reference.
         """
         self.embedders = {}
         self.current_model_key = None
@@ -76,8 +87,21 @@ class ApplicationState:
         self.searcher = None
         self.storage_dir = None
         self.current_project = None
+        # Per-project reindex locks are project-scoped; reset with fresh dict.
+        self._reindex_locks = {}
         # Re-read from config with env override
         self._reset_multi_model_from_config()
+
+    def get_reindex_lock(self, project_path: str) -> asyncio.Lock:
+        """Return the per-project asyncio.Lock for reindex serialization.
+
+        Creates a new Lock on first access for a given project path.
+        Safe to call from any coroutine; must NOT be called from a thread
+        (asyncio.Lock is event-loop-bound and only touched on the loop).
+        """
+        if project_path not in self._reindex_locks:
+            self._reindex_locks[project_path] = asyncio.Lock()
+        return self._reindex_locks[project_path]
 
     def _reset_multi_model_from_config(self) -> None:
         """Reset multi_model_enabled from config file with env override."""
@@ -123,10 +147,11 @@ class ApplicationState:
         Args:
             path: Absolute path to the project directory
         """
-        self.current_project = path
-        # Reset project-specific components
-        self.index_manager = None
-        self.searcher = None
+        with self._lock:
+            self.current_project = path
+            # Reset project-specific components
+            self.index_manager = None
+            self.searcher = None
 
     def switch_model(self, model_key: str) -> None:
         """Switch to a different embedding model.
@@ -137,10 +162,11 @@ class ApplicationState:
         Args:
             model_key: Model key (e.g., 'qwen3_0.6b', 'bge_m3')
         """
-        self.current_model_key = model_key
-        self.current_index_model_key = None  # Force index reload on model switch
-        # Searcher needs to be recreated with new model
-        self.searcher = None
+        with self._lock:
+            self.current_model_key = model_key
+            self.current_index_model_key = None  # Force index reload on model switch
+            # Searcher needs to be recreated with new model
+            self.searcher = None
 
     def get_embedder(self, model_key: str | None = None) -> Any | None:
         """Get embedder for a specific model key.
@@ -171,19 +197,24 @@ class ApplicationState:
 
         logger = logging.getLogger(__name__)
 
-        # Call cleanup on each embedder to release GPU memory
-        for model_key, embedder in self.embedders.items():
+        # Atomically swap out the embedder dict and null the searcher under the
+        # lock so construction paths see a consistent state.  Cleanup (which can
+        # be slow — VRAM release) is performed outside the lock.
+        with self._lock:
+            old_embedders = self.embedders
+            self.embedders = {}
+            # Every searcher component stashes embedder refs that are now dead.
+            # Force rebuild on next search request.
+            self.searcher = None
+
+        # Call cleanup on each embedder to release GPU memory (outside lock)
+        for model_key, embedder in old_embedders.items():
             if hasattr(embedder, "cleanup"):
                 try:
                     logger.info(f"[CLEANUP] Releasing embedder: {model_key}")
                     embedder.cleanup()
                 except Exception as e:
                     logger.warning(f"[CLEANUP] Failed to cleanup {model_key}: {e}")
-
-        self.embedders = {}
-        # Every searcher component stashes embedder refs that are now dead.
-        # Force rebuild on next search request.
-        self.searcher = None
 
     def reset_search_components(self) -> None:
         """Reset index_manager and searcher to force re-initialization.
@@ -193,8 +224,9 @@ class ApplicationState:
         - After multi-model batch indexing
         - When search components need to be recreated
         """
-        self.index_manager = None
-        self.searcher = None
+        with self._lock:
+            self.index_manager = None
+            self.searcher = None
 
     def reset_searcher(self) -> None:
         """Reset only the searcher (preserves index_manager).
@@ -203,7 +235,8 @@ class ApplicationState:
         - Search configuration changes (hybrid settings, weights, etc.)
         - Searcher needs refresh but index is still valid
         """
-        self.searcher = None
+        with self._lock:
+            self.searcher = None
 
     def reset_for_model_switch(self) -> None:
         """Full reset including embedders for model switch.
@@ -212,9 +245,12 @@ class ApplicationState:
         - Switching embedding models
         - Need to reload all model-dependent components
         """
+        # clear_embedders() acquires _lock internally to snapshot+null embedders.
         self.clear_embedders()
-        self.index_manager = None
-        self.searcher = None
+        # Null index_manager under lock as a separate step (searcher already
+        # nulled by clear_embedders).
+        with self._lock:
+            self.index_manager = None
 
     def __repr__(self) -> str:
         return (

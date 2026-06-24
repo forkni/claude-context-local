@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
@@ -103,6 +103,11 @@ def _patch_execute(real_sc=None, project="/test"):
             st = Mock()
             st.current_project = project
             st.searcher = None
+            # get_reindex_lock must return an async context manager
+            _reindex_lock_cm = MagicMock()
+            _reindex_lock_cm.__aenter__ = AsyncMock(return_value=None)
+            _reindex_lock_cm.__aexit__ = AsyncMock(return_value=False)
+            st.get_reindex_lock = Mock(return_value=_reindex_lock_cm)
             mock_state.return_value = st
             mock_cm.return_value.get_search_mode_for_query.return_value = "hybrid"
             mock_cfg.return_value.performance.use_parallel_search = False

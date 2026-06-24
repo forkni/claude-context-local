@@ -55,52 +55,6 @@ class InheritanceExtractor(BaseRelationshipExtractor):
         super().__init__()
         self.relationship_type = RelationshipType.INHERITS
 
-    def extract(
-        self, code: str, chunk_metadata: dict[str, Any]
-    ) -> list[RelationshipEdge]:
-        """
-        Extract inheritance relationships from code.
-
-        Args:
-            code: Source code string
-            chunk_metadata: Metadata about the code chunk
-                - chunk_id: Unique identifier
-                - file_path: File path
-                - name: Symbol name
-                - chunk_type: Type (function/class/etc)
-
-        Returns:
-            List of RelationshipEdge objects representing inheritance
-
-        Example:
-            >>> extractor = InheritanceExtractor()
-            >>> code = "class Child(Parent):\\n    pass"
-            >>> edges = extractor.extract(code, {"chunk_id": "test.py:1-2:class:Child"})
-            >>> len(edges)
-            1
-            >>> edges[0].target_name
-            'Parent'
-        """
-        self._reset_state()
-
-        # Parse code
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            # DEBUG: Method chunks often fail to parse standalone but parent class chunks succeed
-            self.logger.debug(
-                f"Failed to parse code in {chunk_metadata.get('file_path')}: {e}"
-            )
-            return []
-
-        # Extract inheritance relationships
-        self._extract_from_tree(tree, chunk_metadata)
-
-        # Log results
-        self._log_extraction_result(chunk_metadata)
-
-        return self.edges
-
     def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         """
         Walk AST and extract inheritance relationships.

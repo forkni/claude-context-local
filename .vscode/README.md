@@ -34,7 +34,7 @@ Instructions for updating your global VSCode settings to work optimally with thi
 When you save a Python file (`Ctrl+S`):
 
 1. **Imports organized** (isort-compatible)
-2. **Code formatted** (Black-compatible, 88 chars)
+2. **Code formatted** (ruff format — Black-compatible style, 88 chars)
 3. **Linting issues fixed** (Ruff auto-fix)
 
 All using the same rules as:
