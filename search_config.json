@@ -21,7 +21,7 @@
     "min_bm25_score": 0.1,
     "rrf_k_parameter": 100,
     "enable_result_reranking": true,
-    "default_k": 4,
+    "default_k": 7,
     "max_k": 50,
     "default_max_context_tokens": 0
   },
