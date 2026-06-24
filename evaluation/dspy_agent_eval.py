@@ -59,9 +59,33 @@ class CodeNavQA(dspy.Signature):
 
     Code-navigation questions typically have MULTIPLE relevant locations: a class and
     its methods, both halves of a paired operation (encode + decode), a config struct
-    and its loader, etc.  Use search_code to retrieve semantically relevant code chunks,
-    then return ALL chunk IDs from the results that plausibly answer the question and a
-    brief explanation.  Err toward inclusion — when in doubt, include the chunk.
+    and its loader, same-named symbols across multiple subsystems, etc.  Err HARD toward
+    inclusion — when in doubt, include the chunk.
+
+    Search strategy:
+    1. Call search_code with search_mode="hybrid", k=10, include_context=True.
+       Phrase the query with the key symbol/operation names from the question.
+       search_code returns metadata rows (chunk_id, type, name, scores) — the response
+       does NOT include source bodies.  Do NOT burn extra calls to "confirm" chunk content.
+    2. Rank by reranker_score first, then blended_score (higher = better).
+    3. Issue a SECOND search with alternate phrasings whenever the question describes a
+       generic operation (validate/normalize/encode/decode/load/save/id-handling) that
+       could exist in multiple subsystems, or when the first result set is concentrated in
+       one module but the concept plausibly also lives in a sibling file.  Use synonyms,
+       the names of likely-related symbols/files, and subsystem names as the second query.
+       Aim for at least 2–3 diverse queries; do NOT finish after one.
+
+    Selection (cast a wide net):
+    Include the directly-named symbol AND closely-related siblings (definition + methods
+    implementing the behavior), relevant config/dataclass chunks, and same-named symbols
+    across multiple files.  Include every plausibly-relevant chunk your searches surfaced;
+    the most common failure is treating a chunk as relevant in reasoning and then omitting it.
+
+    Ordering — MRR (position 0 matters most):
+    Lead with the DEFINITION-level chunk whose name most directly matches the question's
+    core symbol.  Prefer class or method/function chunks over split_block, module, or
+    decorated_definition fragments — even when those fragments score high.  Do NOT let a
+    high-scoring fragment outrank the canonical definition.
     """
 
     question: str = dspy.InputField()
@@ -69,17 +93,25 @@ class CodeNavQA(dspy.Signature):
         desc=(
             "Return EVERY chunk_id from your search results that is relevant to the "
             "question — a class AND its methods, both halves of a paired operation, a "
-            "config AND its loader.  Prefer recall: when unsure whether a result is "
-            "relevant, INCLUDE it.  Do NOT return only the single best match. "
+            "config AND its loader, same-named symbols across subsystems.  Prefer recall: "
+            "when unsure whether a result is relevant, INCLUDE it.  Do NOT return only "
+            "the single best match. "
             "Copy the 'chunk_id' field VERBATIM from each relevant search_code result "
             "(including its line-range segment, e.g. "
             "'search/config.py:148-161:decorated_definition:EmbeddingConfig'). "
-            "Do NOT rewrite, abbreviate, or reformat chunk IDs. "
-            "List most-relevant first; return up to 10 IDs."
+            "Scoring matches on file:type:name only (line numbers are ignored) but always "
+            "copy chunk_ids verbatim.  Do NOT rewrite, abbreviate, or reformat them. "
+            "Lead with the canonical class/method/function chunk whose name most directly "
+            "matches the question — never a split_block, module, or decorated_definition "
+            "fragment — then remaining relevant chunks in descending relevance. "
+            "Return up to 12 IDs."
         )
     )
     answer: str = dspy.OutputField(
-        desc="One-line explanation of where the relevant code lives."
+        desc=(
+            "Brief (1–2 sentence) explanation naming the primary file(s)/symbol(s) "
+            "and what each does in relation to the question."
+        )
     )
 
 
