@@ -107,16 +107,21 @@ def _parse_args() -> argparse.Namespace:
 
 def _print_per_query_table(per_query: list[dict]) -> None:
     """Print a compact per-query results table to stdout."""
-    header = f"{'ID':<6}  {'Cat':<3}  {'R@7':>5}  {'MRR':>5}  {'Tool':>4}  {'ToolUsed'}"
+    header = (
+        f"{'ID':<6}  {'Cat':<3}  {'R@7':>5}  {'Traj':>5}  {'MRR':>5}  "
+        f"{'Tool':>4}  {'ToolUsed'}"
+    )
     print(header)
     print("-" * len(header))
     for row in per_query:
         tool_sel = row.get("tool_selection", float("nan"))
         tool_used = ", ".join(row.get("tool_used", [])) or "(none)"
+        traj_recall = row.get("trajectory_recall@7", float("nan"))
         print(
             f"{row.get('query_id', '?'):<6}  "
             f"{row.get('category', '?'):<3}  "
             f"{row.get('recall@7', 0.0):>5.3f}  "
+            f"{traj_recall:>5.3f}  "
             f"{row.get('mrr', 0.0):>5.3f}  "
             f"{tool_sel:>4.1f}  "
             f"{tool_used}"
@@ -130,6 +135,10 @@ def _print_aggregate(agg: dict, k: int, failed: int, total: int) -> None:
     print("=" * 55)
     print(f"  Queries run  : {total - failed}/{total}  (failed: {failed})")
     print(f"  Recall@{k:<2}    : {agg.get(f'recall@{k}', 0.0):.4f}")
+    traj_recall = agg.get(f"trajectory_recall@{k}")
+    if traj_recall is not None:
+        gap = traj_recall - agg.get(f"recall@{k}", 0.0)
+        print(f"  Traj recall  : {traj_recall:.4f}  (tool ceiling; gap={gap:+.4f})")
     print(f"  MRR          : {agg.get('mrr', 0.0):.4f}")
     print(f"  NDCG@5       : {agg.get('ndcg@5', 0.0):.4f}")
     print(f"  Hit@7        : {agg.get('hit_rate@7', 0.0):.4f}")

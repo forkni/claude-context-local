@@ -15,11 +15,13 @@ import pytest
 from evaluation.dspy_agent_eval import (
     CodeNavQA,
     _extract_chunk_ids,
+    _extract_chunk_ids_from_observations,
     _extract_tools_from_trajectory,
     load_examples,
     mrr_metric,
     recall_at_k_metric,
     tool_selection_metric,
+    trajectory_recall_metric,
 )
 
 
@@ -325,3 +327,152 @@ class TestCodeNavQASignature:
 
     def test_has_answer_output_field(self):
         assert "answer" in CodeNavQA.output_fields
+
+    def test_relevant_chunk_ids_desc_says_verbatim(self):
+        """The fix: desc must instruct copying chunk_id verbatim."""
+        field = CodeNavQA.output_fields["relevant_chunk_ids"]
+        desc = field.json_schema_extra.get("desc", "")
+        assert "verbatim" in desc.lower(), (
+            "OutputField desc must tell the agent to copy chunk_id verbatim; "
+            f"got: {desc!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# _extract_chunk_ids_from_observations
+# ---------------------------------------------------------------------------
+
+
+def _make_observation_trajectory(observations: list[str]) -> dict:
+    """Build a minimal trajectory dict with observation_N keys."""
+    return {f"observation_{i}": obs for i, obs in enumerate(observations)}
+
+
+class TestExtractChunkIdsFromObservations:
+    def test_extracts_chunk_id_from_json_observation(self):
+        obs = '{"chunks": [{"chunk_id": "search/config.py:10-20:function:foo", "score": 0.9}]}'
+        traj = _make_observation_trajectory([obs])
+        result = _extract_chunk_ids_from_observations(traj)
+        assert "search/config.py:function:foo" in result
+
+    def test_normalises_line_range_from_observation(self):
+        """Line ranges are stripped during normalization."""
+        obs = '{"chunk_id": "a/b.py:100-200:method:Bar.baz"}'
+        traj = _make_observation_trajectory([obs])
+        result = _extract_chunk_ids_from_observations(traj)
+        assert "a/b.py:method:Bar.baz" in result
+
+    def test_multiple_observations_merged(self):
+        obs1 = '{"chunk_id": "a.py:1-5:function:alpha"}'
+        obs2 = '{"chunk_id": "b.py:6-10:function:beta"}'
+        traj = _make_observation_trajectory([obs1, obs2])
+        result = _extract_chunk_ids_from_observations(traj)
+        assert "a.py:function:alpha" in result
+        assert "b.py:function:beta" in result
+
+    def test_deduplicates_after_normalisation(self):
+        """Two observations with the same chunk (different line range) deduplicate."""
+        obs1 = '{"chunk_id": "x.py:1-10:method:Foo.run"}'
+        obs2 = '{"chunk_id": "x.py:1-15:method:Foo.run"}'  # same after normalisation
+        traj = _make_observation_trajectory([obs1, obs2])
+        result = _extract_chunk_ids_from_observations(traj)
+        assert result.count("x.py:method:Foo.run") == 1
+
+    def test_ignores_non_observation_keys(self):
+        traj = {
+            "thought_0": '{"chunk_id": "should/be/ignored.py:1-2:function:ghost"}',
+            "tool_name_0": "search_code",
+            "observation_0": '{"chunk_id": "real/file.py:5-10:function:real"}',
+        }
+        result = _extract_chunk_ids_from_observations(traj)
+        assert "real/file.py:function:real" in result
+        assert "should/be/ignored.py:function:ghost" not in result
+
+    def test_empty_trajectory_returns_empty(self):
+        assert _extract_chunk_ids_from_observations({}) == []
+        assert _extract_chunk_ids_from_observations(None) == []
+
+    def test_observation_with_no_chunk_ids_returns_empty(self):
+        traj = _make_observation_trajectory(['{"error": "no results"}'])
+        assert _extract_chunk_ids_from_observations(traj) == []
+
+
+# ---------------------------------------------------------------------------
+# trajectory_recall_metric
+# ---------------------------------------------------------------------------
+
+
+def _make_pred_with_trajectory(
+    observations: list[str], chunk_ids: list[str] | None = None
+) -> MagicMock:
+    """Build a Prediction stub with a trajectory and optional emitted chunk IDs."""
+    pred = MagicMock(spec=dspy.Prediction)
+    pred.relevant_chunk_ids = chunk_ids or []
+    pred.trajectory = _make_observation_trajectory(observations)
+    return pred
+
+
+class TestTrajectoryRecallMetric:
+    def test_full_trajectory_recall(self):
+        """Tool surfaced all expected chunks — ceiling is 1.0."""
+        ex = _make_example(expected=["a.py:function:foo"])
+        obs = '{"chunk_id": "a.py:1-5:function:foo"}'
+        pred = _make_pred_with_trajectory([obs])
+        assert trajectory_recall_metric(ex, pred, k=7) == pytest.approx(1.0)
+
+    def test_partial_trajectory_recall(self):
+        ex = _make_example(expected=["a.py:function:foo", "b.py:class:Bar"])
+        obs = '{"chunk_id": "a.py:1-5:function:foo"}'
+        pred = _make_pred_with_trajectory([obs])
+        assert trajectory_recall_metric(ex, pred, k=7) == pytest.approx(0.5)
+
+    def test_zero_trajectory_recall(self):
+        ex = _make_example(expected=["target.py:function:missing"])
+        obs = '{"chunk_id": "other.py:1-5:function:irrelevant"}'
+        pred = _make_pred_with_trajectory([obs])
+        assert trajectory_recall_metric(ex, pred, k=7) == pytest.approx(0.0)
+
+    def test_empty_trajectory_returns_zero(self):
+        ex = _make_example(expected=["a.py:function:foo"])
+        pred = _make_pred_with_trajectory([])
+        assert trajectory_recall_metric(ex, pred, k=7) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Regression: verbatim raw chunk IDs still score correctly after normalisation
+# ---------------------------------------------------------------------------
+
+
+class TestVerbatimChunkIdNormalization:
+    """Locks in that raw (line-range-bearing) chunk IDs from search_code
+    normalise to the golden shape so 'copy verbatim' is safe for the agent."""
+
+    def test_raw_line_range_id_scores_recall_one(self):
+        """An emitted ID with a line range still hits the golden after normalization."""
+        ex = _make_example(
+            expected=[
+                "search/incremental_indexer.py:method:IncrementalIndexer.needs_reindex"
+            ]
+        )
+        # Raw form as search_code would return it:
+        raw_id = "search/incremental_indexer.py:1253-1273:method:IncrementalIndexer.needs_reindex"
+        pred = _make_pred(chunk_ids=[raw_id])
+        assert recall_at_k_metric(ex, pred, k=7) == pytest.approx(1.0)
+
+    def test_split_block_id_normalises_to_method(self):
+        ex = _make_example(
+            expected=[
+                "graph/graph_integration.py:method:GraphIntegration.populate_from_embeddings"
+            ]
+        )
+        raw_id = "graph/graph_integration.py:276-310:split_block:GraphIntegration.populate_from_embeddings"
+        pred = _make_pred(chunk_ids=[raw_id])
+        assert recall_at_k_metric(ex, pred, k=7) == pytest.approx(1.0)
+
+    def test_decorated_definition_id_passes_through_unchanged(self):
+        ex = _make_example(
+            expected=["search/config.py:decorated_definition:EmbeddingConfig"]
+        )
+        raw_id = "search/config.py:148-161:decorated_definition:EmbeddingConfig"
+        pred = _make_pred(chunk_ids=[raw_id])
+        assert recall_at_k_metric(ex, pred, k=7) == pytest.approx(1.0)
