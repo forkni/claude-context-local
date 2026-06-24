@@ -33,7 +33,8 @@ dependencies = [
     "faiss-cpu>=1.13.2",
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
     "huggingface-hub>=0.36.0",
-    "mcp>=1.27.0",
+    "mcp>=1.27.0,<2",  # <2: mcp v2 (beta 2026-06-30) has breaking changes
+    "starlette>=1.3.1",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
     "networkx>=3.0",  # Required for graph storage and community detection
     "nltk>=3.9.4",  # Security: Fixes CVE-2025-14009 (path traversal in downloader)
     "psutil>=7.2.1",
@@ -138,14 +139,15 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-06-24 (pip-audit - 11 advisories remain: starlette 6 CVEs deferred for major-version compat testing,
-#             transformers 2×RCE blocked by optimum-onnx <4.58.0 pin, diskcache/sqlitedict/pyjwt 3 with no upstream fix)
+# Last audit: 2026-06-24 (pip-audit - 5 advisories remain: transformers 2×RCE blocked by optimum-onnx pin,
+#             diskcache/sqlitedict/pyjwt 3 with no upstream fix)
 #
 # Direct dependency security updates:
-# mcp>=1.27.0          # Fixes CVE-2025-66416 (DNS rebinding vulnerability)
+# mcp>=1.27.0,<2       # Fixes CVE-2025-66416 (DNS rebinding); <2 guards against mcp v2 breaking changes (beta 2026-06-30)
 # nltk>=3.9.4          # Fixes CVE-2025-14009 (path traversal in zipfile.extractall)
 # aiohttp>=3.14.1      # Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1)
 # python-dotenv>=1.2.2 # Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)
+# starlette>=1.3.1     # Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
 #
 # Transitive dependency security updates:
 # cryptography>=46.0.7     # Fixes CVE-2026-34073 (46.0.6 DNS name-constraint), CVE-2026-39892 (46.0.7 buffer overflow)
@@ -158,14 +160,12 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # pyjwt>=2.13.0            # Fixes CVE-2026-32597 (2.12.0), 4× CVEs (2.13.0: 48522/48524/48525/48526)
 # python-multipart>=0.0.32 # Fixes CVE-2026-24486, CVE-2026-40347, CVE-2026-42561, CVE-2026-53538, CVE-2026-53539, CVE-2026-53540 (DoS)
 # requests>=2.34.2         # Fixes CVE-2026-25645 (predictable tempfile name)
-# starlette>=0.52.1        # Partial fixes (0.47.3→0.52.1); 1.3.1 fixes PYSEC-2026-161+5 others (deferred: major version, ASGI compat risk)
 # urllib3>=2.7.0           # Fixes CVE-2026-44431 (cross-origin redirect), CVE-2026-44432 (decompression)
 # uv>=0.11.24              # Fixes GHSA-4gg8-gxpx-9rph (0.11.15, malicious-wheel path traversal)
 # werkzeug>=3.1.4          # Fixes CVE-2025-66221 (Windows device name handling)
 # wheel>=0.46.3            # Fixes CVE-2026-24049 (path traversal in unpack)
 #
-# Deferred (major version or no fix):
-# * starlette 0.52.1 → 1.3.1 (6 CVEs: PYSEC-2026-161 host-header injection, CVE-2026-48817/48818, CVE-2026-54282/54283) — major version, ASGI compat unknown
+# Deferred (no upstream fix):
 # * transformers CVE-2026-1839, PYSEC-2025-217 (Trainer/X-CLIP RCE) — fix needs 5.0.0rc3, blocked by optimum-onnx <4.58.0 pin; not applicable (no Trainer use)
 # * diskcache CVE-2025-69872, sqlitedict CVE-2024-35515 (pickle RCE) — no upstream fix; sqlitedict mitigated via JSON serialization (metadata.py)
 # * pyjwt PYSEC-2025-183 (disputed weak encryption) — no upstream fix
@@ -173,12 +173,16 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Verification: .venv/Scripts/pip-audit --format json | .venv/Scripts/python.exe tools/summarize_audit.py
 #
 # Safe patch updates (tested 2026-06-24):
+# * starlette (0.52.1 → 1.3.1): Starlette 1.x breaking changes (on_startup/on_shutdown removal, @app.route()
+#   decorator) do not apply — server.py uses Starlette(routes=[Route(...)], lifespan=) which is the 1.0 canonical
+#   API. Live HTTP transport verified: POST /cleanup 200, POST /mcp 406 (correct MCP protocol rejection, not 307),
+#   sse-starlette 3.2.0 ping confirmed. pip check passed.
 # * aiohttp (3.13.5 → 3.14.1), cryptography (46.0.5 → 46.0.7), idna (3.11 → 3.18), msgpack (1.1.2 → 1.2.1)
 # * pydantic-settings (2.12.0 → 2.14.2), pygments (2.19.2 → 2.20.0), pyjwt (2.10.1 → 2.13.0)
 # * python-dotenv (1.2.1 → 1.2.2), python-multipart (0.0.22 → 0.0.32), requests (2.32.5 → 2.34.2)
 # * urllib3 (2.6.3 → 2.7.0), uv (0.11.6 → 0.11.24)
-# Tested: pending (full unit suite + CUDA smoke)
-# Remaining CVEs: 11 (down from 53)
+# Tested: 2620 unit tests pass, pip check passed.
+# Remaining CVEs: 5 (down from 53)
 #
 # Safe patch updates (tested 2026-06-03):
 # * pyjwt (2.12.1 -> 2.13.0), uv (0.11.6 -> 0.11.18).
