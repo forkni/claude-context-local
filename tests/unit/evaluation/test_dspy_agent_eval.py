@@ -337,6 +337,28 @@ class TestCodeNavQASignature:
             f"got: {desc!r}"
         )
 
+    def test_relevant_chunk_ids_desc_says_inclusive(self):
+        """Inclusion instruction: desc must tell agent to return ALL relevant chunks."""
+        field = CodeNavQA.output_fields["relevant_chunk_ids"]
+        desc = field.json_schema_extra.get("desc", "")
+        # Check that both the inclusion language and the recall-preference are present.
+        assert "every" in desc.lower() or "all" in desc.lower(), (
+            "OutputField desc must instruct agent to return every/all relevant chunks "
+            f"(recall-oriented inclusion); got: {desc!r}"
+        )
+        assert "recall" in desc.lower() or "include" in desc.lower(), (
+            "OutputField desc must express a recall / inclusion preference; "
+            f"got: {desc!r}"
+        )
+
+    def test_codenavqa_docstring_mentions_multiple_locations(self):
+        """Docstring must acknowledge that answers can have multiple relevant locations."""
+        doc = CodeNavQA.__doc__ or ""
+        assert "multiple" in doc.lower(), (
+            "CodeNavQA docstring should mention that answers have multiple relevant "
+            f"locations; got: {doc!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # _extract_chunk_ids_from_observations

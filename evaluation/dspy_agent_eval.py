@@ -57,13 +57,20 @@ _SEARCH_CODE_CATEGORIES = {"A", "B", "C"}
 class CodeNavQA(dspy.Signature):
     """Answer a code-navigation question using the local semantic-search MCP tools.
 
-    Use search_code to retrieve semantically relevant code chunks, then return
-    the most relevant chunk IDs and a brief explanation.
+    Code-navigation questions typically have MULTIPLE relevant locations: a class and
+    its methods, both halves of a paired operation (encode + decode), a config struct
+    and its loader, etc.  Use search_code to retrieve semantically relevant code chunks,
+    then return ALL chunk IDs from the results that plausibly answer the question and a
+    brief explanation.  Err toward inclusion — when in doubt, include the chunk.
     """
 
     question: str = dspy.InputField()
     relevant_chunk_ids: list[str] = dspy.OutputField(
         desc=(
+            "Return EVERY chunk_id from your search results that is relevant to the "
+            "question — a class AND its methods, both halves of a paired operation, a "
+            "config AND its loader.  Prefer recall: when unsure whether a result is "
+            "relevant, INCLUDE it.  Do NOT return only the single best match. "
             "Copy the 'chunk_id' field VERBATIM from each relevant search_code result "
             "(including its line-range segment, e.g. "
             "'search/config.py:148-161:decorated_definition:EmbeddingConfig'). "
