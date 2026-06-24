@@ -194,6 +194,83 @@ Do not pass the session or tools to another thread or a separate event loop.
   contextvars so it is async-task-safe: multiple concurrent tasks can each
   hold their own LM reference without interference.
 
+## GEPA prompt optimisation
+
+`dspy.GEPA` (Genetic-Pareto reflective prompt evolution) can automatically improve
+the `CodeNavQA` signature instructions to close the agent-judgment recall gap.
+
+### When to use it
+
+The standard eval harness (`run_dspy_eval.py`) measures a *tool ceiling* — how
+many expected chunks the tools surfaced — versus what the agent actually returned.
+When the gap (ceiling − agent recall) is > 0.1 it is worth running GEPA to
+discover a better instruction.
+
+### Prerequisites
+
+Same as the agent eval (server running, project indexed, no `ANTHROPIC_API_KEY`).
+Additionally:
+
+- Set `CLAUDE_CODE_OAUTH_TOKEN` for unattended auth (GEPA runs are long — minutes
+  to ~1 h for `auto="light"`).
+- Set `CLAUDE_CODE_RETRY_WATCHDOG=1` to auto-retry on `claude` CLI transient errors.
+
+### Quick start
+
+```powershell
+# Light budget (~6 candidate evaluations, good first run):
+.venv/Scripts/python.exe scripts/benchmark/run_dspy_gepa.py `
+    --project-path D:/claude-context-local
+
+# Medium budget (12 candidates):
+.venv/Scripts/python.exe scripts/benchmark/run_dspy_gepa.py `
+    --project-path D:/claude-context-local --budget medium
+```
+
+### Key parameters
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--budget` | `light` | `light`=6 / `medium`=12 / `heavy`=18 candidates |
+| `--reflection-model` | `claude-opus-4-8` | Stronger model for instruction proposals |
+| `--model` | `claude-sonnet-4-6` | Rollout model (agent invocations) |
+| `--num-threads` | `4` | Keep ≤ 4; MCP I/O is serialised on the single session |
+
+### Billing
+
+Both rollout and reflection LMs use `ClaudeCodeLM` (subscription billing).
+No `ANTHROPIC_API_KEY` required or desired.
+
+### Async→sync bridge
+
+`dspy.GEPA.compile()` is synchronous and thread-parallel; the MCP `ClientSession`
+is bound to one asyncio event loop.  `evaluation/dspy_gepa_optimize.gepa_tool_bridge`
+solves this by running the event loop on a daemon thread, entering the session there,
+and exposing sync wrappers that marshal calls via `asyncio.run_coroutine_threadsafe`.
+A `threading.Lock` serialises tool I/O; LM calls still run in parallel.
+
+### Artifacts
+
+Written to gitignored `results/gepa/`:
+
+- `optimized_codenavqa_<ts>.json` — the saved `dspy.load()`-able program.
+- `gepa_stats_<ts>.json` — seed score, best score, evolved instruction text.
+- `latest_summary.json` — same summary, always at a stable path.
+
+### After the run
+
+1. Read the printed "Discovered instruction".
+2. If `best_score > seed_score`: manually port the text into `CodeNavQA` in
+   `evaluation/dspy_agent_eval.py` (docstring + `relevant_chunk_ids` desc).
+3. Re-run `run_dspy_eval.py` to confirm the lift.
+4. Commit: `feat: adopt GEPA-discovered CodeNavQA instruction (Recall@7 X→Y)`.
+
+### In-sample caveat
+
+The golden dataset has only 13 queries.  GEPA uses `trainset = valset = all 13`
+(in-sample prompt discovery).  The discovered instruction is plausibly better but
+overfits the dataset.  True generalisation requires a larger dataset (deferred work).
+
 ## Troubleshooting
 
 | Symptom | Fix |
