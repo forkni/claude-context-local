@@ -27,7 +27,7 @@ Ensures all MCP semantic search operations follow correct workflows for accurate
 
 **SSCG benchmark (searcher-only):** 100% Hit@7 (k=7 hybrid, 2026-05-25): MRR 0.806, Recall@5 0.646, Recall@7 0.700. Recommended operating k: **7** (some targets rank 6–7). Engine default is `k=7` (changed from 4 on 2026-06-24); pass it explicitly when correctness matters. Use `k=10` for architectural/global queries. See [references/performance.md](references/performance.md) for full results.
 
-**DSPy agent eval (2026-06-25, 45-query dataset, GEPA-optimised instruction):** Recall@7=0.785, MRR=0.792, Hit@7=1.000, tool_sel=1.000 on the held-out test split (8 queries). See [references/performance.md](references/performance.md).
+**DSPy agent eval (2026-06-25, 49-query dataset, GEPA-optimised + E/F instruction):** Recall@7=0.779, MRR=0.740, Hit@7=1.000, tool_sel=1.000 on the held-out test split (8 queries, avg 2 runs). Train-split 4-tool (31 q): tool_sel_acc=0.968 (30/31). See [references/performance.md](references/performance.md).
 
 ---
 
