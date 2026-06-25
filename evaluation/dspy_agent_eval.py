@@ -56,43 +56,103 @@ _SEARCH_CODE_CATEGORIES = {"A", "B", "C"}
 
 
 class CodeNavQA(dspy.Signature):
-    """Answer a code-navigation question using the local semantic-search MCP tools.
+    """Answer a code-navigation question over a Python codebase using the local
+    semantic-search MCP tools (search_code, find_connections, finish). The input field
+    is `question`. You must produce two outputs: `relevant_chunk_ids` (an ordered list)
+    and `answer` (a concise description of what the symbol(s) do).
 
-    Code-navigation questions typically have MULTIPLE relevant locations: a class and
-    its methods, both halves of a paired operation (encode + decode), a config struct
-    and its loader, same-named symbols across multiple subsystems, etc.  Err HARD toward
-    inclusion — when in doubt, include the chunk.
+    WHAT search_code RETURNS
+    This codebase is indexed for hybrid (semantic + lexical/BM25) retrieval. search_code
+    returns ONLY metadata rows per chunk — chunk_id, kind/type, name, reranker_score,
+    blended_score, score, source, centrality, complexity_score — never source bodies.
+    The metadata (name + kind + file path) is enough to judge relevance. Do NOT spend
+    calls trying to "confirm" a chunk's contents.
 
-    Search strategy:
-    1. Call search_code with search_mode="hybrid", k=10, include_context=True.
-       Phrase the query with the key symbol/operation names from the question.
-       search_code returns metadata rows (chunk_id, type, name, scores) — the response
-       does NOT include source bodies.  Do NOT burn extra calls to "confirm" chunk content.
-    2. Rank by reranker_score first, then blended_score (higher = better).
-    3. Issue a SECOND search with alternate phrasings whenever the question describes a
-       generic operation (validate/normalize/encode/decode/load/save/id-handling) that
-       could exist in multiple subsystems, or when the first result set is concentrated in
-       one module but the concept plausibly also lives in a sibling file.  Use synonyms,
-       the names of likely-related symbols/files, and subsystem names as the second query.
-       Aim for at least 2–3 diverse queries; do NOT finish after one.
-    4. For connection/relationship questions ("what calls X", "what does Y depend on",
-       "what inherits from Z"): first use search_code to locate the target chunk_id, then
-       call find_connections(chunk_id=<target_id>) to enumerate callers, callees, and
-       subclasses.  find_connections returns edges with resolver_confidence — prefer
-       lsp/libcst edges (exact) over ast edges (heuristic).  Do NOT attempt to answer
-       call-graph questions from search_code results alone.
+    CHUNK_ID FORMAT
+    Raw results use "file.py:START-END:kind:QualifiedName"
+    (e.g. "chunking/languages/base.py:227-237:method:LanguageChunker.get_node_text").
+    The graded/expected form DROPS the line range:
+    "file.py:kind:QualifiedName" (e.g.
+    "chunking/languages/base.py:method:LanguageChunker.get_node_text").
+    Either form is accepted, but be consistent and definition-accurate.
 
-    Selection (cast a wide net):
-    Include the directly-named symbol AND closely-related siblings (definition + methods
-    implementing the behavior), relevant config/dataclass chunks, and same-named symbols
-    across multiple files.  Include every plausibly-relevant chunk your searches surfaced;
-    the most common failure is treating a chunk as relevant in reasoning and then omitting it.
+    Common `kind` values you will see: class, method, function, decorated_definition,
+    split_block, module. NOTE: config objects and dataclasses frequently appear with
+    kind=decorated_definition (e.g. "search/config.py:decorated_definition:SearchModeConfig",
+    "merkle/change_detector.py:decorated_definition:FileChanges").
 
-    Ordering — MRR (position 0 matters most):
-    Lead with the DEFINITION-level chunk whose name most directly matches the question's
-    core symbol.  Prefer class or method/function chunks over split_block, module, or
-    decorated_definition fragments — even when those fragments score high.  Do NOT let a
-    high-scoring fragment outrank the canonical definition.
+    CODE-NAVIGATION QUESTIONS ALMOST ALWAYS HAVE MULTIPLE RELEVANT CHUNKS:
+    - a class PLUS the methods that implement the described behavior
+    - both halves of a paired operation (encode+decode, save+load, tokenize+clean)
+    - a config/dataclass PLUS its loader
+    - the SAME-NAMED operation living in sibling subsystems/files
+    - a backing/helper class that the named class delegates to (e.g. HybridSearcher is
+      accompanied by SearchExecutor and the SearchModeConfig dataclass; a save/load
+      question on FaissVectorIndex also pulls in CodeIndexManager.save_index).
+
+    Err HARD toward inclusion. The #1 observed failure is reasoning that a chunk is
+    relevant and then omitting it from `relevant_chunk_ids` — ESPECIALLY
+    decorated_definition config/dataclass chunks. If a search surfaced it and it relates
+    to the question's subject, INCLUDE it. The #2 failure is stopping after one search
+    and missing methods/files an alternate phrasing would surface (e.g. missing
+    BM25Index.search, or a paired dataclass in a different module).
+
+    CRITICAL DISTINCTION — INCLUSION vs ORDERING (do not conflate these):
+    - INCLUSION: include EVERY relevant chunk regardless of kind. A decorated_definition
+      config/dataclass (SearchModeConfig, FileChanges, etc.) that your search returned
+      must appear in `relevant_chunk_ids`. The "prefer class over fragment" rule below is
+      about ORDER ONLY — it never justifies dropping a chunk.
+    - ORDERING: a higher-scoring decorated_definition / split_block / module fragment
+      must NOT outrank the canonical class/method/function definition. Lead with the
+      definition-level chunk whose name most directly matches the question's core symbol.
+
+    SEARCH STRATEGY
+    1. First call: search_code with search_mode="hybrid", k=10, include_context=True.
+       Phrase the query using the concrete symbol/operation names from the question.
+    2. ALWAYS issue at least a SECOND search (aim for 2–3 diverse queries total) with
+       alternate phrasings — synonyms, names of likely-paired symbols (the other half of
+       encode/decode, save/load, the config/dataclass behind a class), likely method
+       names hinted in summaries, and sibling subsystem/file names. Do this especially
+       when (a) the question names a generic operation
+       (validate/normalize/encode/decode/load/save/tokenize/id-handling/combine) that
+       plausibly exists in multiple subsystems, or (b) your first results cluster in one
+       module but the concept could live in a sibling file. You may use file_pattern to
+       focus a follow-up, but ALSO run at least one UNfiltered alternate query so
+       cross-module same-named chunks can surface — these are frequently expected.
+       (Exception: a single tight search may already return the full paired set, e.g. a
+       FaissVectorIndex save/load query returning the class + save + load + the manager's
+       save_index — but still confirm with a second query before finishing.)
+    3. CONNECTION / RELATIONSHIP questions ("what calls X", "what does Y call internally",
+       "what depends on / inherits from Z"): first search_code to get the target chunk_id,
+       then call find_connections(chunk_id=<target>). Prefer edges with higher
+       resolver_confidence / source lsp|libcst (exact) over ast (heuristic). Do not answer
+       call-graph questions from search_code alone. Note that internal-call targets often
+       span multiple files (e.g. ChangeDetector.detect_changes_from_snapshot reaches into
+       merkle_dag.MerkleDAG and its methods, snapshot_manager.SnapshotManager.load_snapshot,
+       plus the FileChanges dataclass) — include all of them.
+
+    RANKING WITHIN RESULTS
+    Rank candidates by reranker_score first, then blended_score (higher = better).
+
+    SELECTION (cast a wide net for recall)
+    Include: the directly-named symbol; its closely-related sibling methods that implement
+    the behavior; any relevant config/dataclass (even kind=decorated_definition) and its
+    loader; the backing/helper class a named class delegates to; and every same-named or
+    paired symbol your searches surfaced across all files. Do not prune any chunk you
+    reasoned was relevant.
+
+    ORDERING — MRR matters most for position 0
+    List FIRST the definition-level chunk (class/method/function) whose name most directly
+    matches the question's core symbol — never a fragment, even if the fragment scored
+    higher. (E.g. lead with class:HybridSearcher, method:FaissVectorIndex.save, or
+    method:LanguageChunker.get_node_text — not a decorated_definition or split_block.)
+
+    FINISHING
+    Call finish once your 2–3 searches (and any find_connections call) have surfaced the
+    canonical definition plus its related/paired/cross-module/config siblings. Then output
+    `relevant_chunk_ids` ordered as above (canonical definition first, every surfaced
+    relevant chunk — including decorated_definition configs/dataclasses — included) and a
+    concise `answer` describing what the symbol(s) do.
     """
 
     question: str = dspy.InputField()

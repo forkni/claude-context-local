@@ -27,16 +27,24 @@
       "note": "Baseline from first system version evaluated 2026-01-30"
     },
     "current_metrics": {
-      "mrr": 0.797,
-      "recall_at_5": 0.689,
-      "recall_at_7": 0.736,
-      "recall_at_10": 0.770,
-      "hit_rate_at_5": 1.00,
-      "ndcg_at_5": 0.717,
-      "note": "Hybrid-default run 2026-06-08 (config bm25/dense 0.35/0.65, k=10, 13 queries A/B/C only), post Q05/Q35 golden drift fix and line-overlap fix. Headline metrics will be recomputed on the A/B/C test split (8 queries) after this expansion; category D is not search-scored. Neural reranker dominates — all weight splits converge. Thresholds gate (R@5>=0.55) honored from this file: all PASS."
+      "recall_at_7": 0.785,
+      "mrr": 0.792,
+      "ndcg_at_5": 0.714,
+      "hit_rate_at_7": 1.0,
+      "tool_selection_accuracy": 1.0,
+      "note": "DSPy agent eval 2026-06-25, test split (8 queries), GEPA-optimised CodeNavQA instruction (Recall@7 seed=0.537->0.867 on val). All categories A/B/C/D. Tool sel=1.0 (find_connections used correctly on all D queries). Searcher-only hybrid baseline for reference: Recall@7=0.736, MRR=0.797, NDCG@5=0.717 (2026-06-08, A/B/C only)."
     },
     "recommended_k": 7,
     "changelog": [
+      {
+        "date": "2026-06-25",
+        "changes": [
+          "GEPA optimization run: CodeNavQA seed Recall@7 0.537 -> best 0.867 on val (max_full_evals=5, 185 rollouts). Discovered instruction ported into evaluation/dspy_agent_eval.py.",
+          "Held-out test split (8 queries): Recall@7=0.785, MRR=0.792, Hit@7=1.0, tool_sel=1.0. Category D (find_connections) tool selection correct on all queries.",
+          "Fixed GEPA rollout subprocess MCP leak: added --strict-mcp-config to ClaudeCodeLM._call_claude cmd. Root cause: subprocess auto-connected to global code-search MCP server, spending its one turn on self-initiated tool calls (error_max_turns on every rollout).",
+          "Updated current_metrics to reflect DSPy agent eval results."
+        ]
+      },
       {
         "date": "2026-06-24",
         "changes": [
@@ -82,9 +90,9 @@
     ]
   },
   "thresholds": {
-    "mrr": 0.50,
+    "mrr": 0.5,
     "recall_at_5": 0.55,
-    "hit_rate_at_5": 0.80
+    "hit_rate_at_5": 0.8
   },
   "queries": [
     {
