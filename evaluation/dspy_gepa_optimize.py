@@ -168,6 +168,7 @@ def gepa_tool_bridge(
                     try:
                         return future.result(timeout=tool_timeout_s + 5)
                     except TimeoutError:
+                        future.cancel()  # prevent coroutine leak on the loop
                         msg = (
                             f"Execution error in {tool_name}: "
                             f"timeout after {tool_timeout_s:.0f}s"

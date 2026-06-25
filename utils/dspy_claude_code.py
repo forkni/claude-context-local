@@ -266,6 +266,14 @@ class ClaudeCodeLM(dspy.BaseLM):
             # want the CLI's built-in Bash/Edit/etc. tools competing with it.
             "--tools",
             "",
+            # Suppress globally-registered MCP servers (e.g. code-search).
+            # Without this flag the subprocess auto-connects to every MCP
+            # server in ~/.claude.json and is handed all their tools; it then
+            # spends its one turn on a self-initiated tool call instead of
+            # returning DSPy's expected text output → error_max_turns on every
+            # rollout.  With --strict-mcp-config and no --mcp-config provided,
+            # the effective MCP set is empty and the subprocess is a pure LM.
+            "--strict-mcp-config",
         ]
         if system:
             cmd += ["--system-prompt", system]
