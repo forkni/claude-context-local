@@ -111,8 +111,8 @@ def _parse_args() -> argparse.Namespace:
         choices=["train", "val", "test", "all"],
         default="test",
         help=(
-            "Dataset split to evaluate: train (27), val (10), test (8, default), "
-            "or all (45).  Default 'test' evaluates the held-out split."
+            "Dataset split to evaluate: train (31), val (10), test (8, default), "
+            "or all (49).  Default 'test' evaluates the held-out split."
         ),
     )
     p.add_argument(

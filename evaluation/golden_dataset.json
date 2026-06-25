@@ -29,12 +29,12 @@
       "note": "Baseline from first system version evaluated 2026-01-30"
     },
     "current_metrics": {
-      "recall_at_7": 0.785,
-      "mrr": 0.792,
-      "ndcg_at_5": 0.714,
+      "recall_at_7": 0.7229,
+      "mrr": 0.8542,
+      "ndcg_at_5": 0.749,
       "hit_rate_at_7": 1.0,
       "tool_selection_accuracy": 1.0,
-      "note": "DSPy agent eval 2026-06-25, test split (8 queries), GEPA-optimised CodeNavQA instruction (Recall@7 seed=0.537->0.867 on val). All categories A/B/C/D. Tool sel=1.0 (find_connections used correctly on all D queries). Searcher-only hybrid baseline for reference: Recall@7=0.736, MRR=0.797, NDCG@5=0.717 (2026-06-08, A/B/C only)."
+      "note": "DSPy agent eval 2026-06-25 (post-WS2 D-hardening), test split (8 queries A/B/C/D), 2-tool agent. MRR up 0.792->0.854 from D-query ordering improvement. Q66 R@7=0.800 (was 0 server-timeout), MRR=0.333 ordering gap persists. Tool sel=1.0. Train-split 4-tool eval (31 queries): Recall@7=0.739, MRR=0.765, Hit@7=1.000, tool_sel_acc=0.871. E/F tool_sel=0: agent substitutes find_connections/search_code (recall high; MRR low 0.2-0.25 for F). Searcher-only hybrid baseline: Recall@7=0.736, MRR=0.797, NDCG@5=0.717 (2026-06-08, A/B/C only)."
     },
     "recommended_k": 7,
     "changelog": [
