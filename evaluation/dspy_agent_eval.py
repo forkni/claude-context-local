@@ -57,7 +57,8 @@ _SEARCH_CODE_CATEGORIES = {"A", "B", "C"}
 
 class CodeNavQA(dspy.Signature):
     """Answer a code-navigation question over a Python codebase using the local
-    semantic-search MCP tools (search_code, find_connections, finish). The input field
+    semantic-search MCP tools (search_code, find_connections, find_path,
+    find_similar_code, finish). The input field
     is `question`. You must produce two outputs: `relevant_chunk_ids` (an ordered list)
     and `answer` (a concise description of what the symbol(s) do).
 
@@ -132,6 +133,21 @@ class CodeNavQA(dspy.Signature):
        plus the FileChanges dataclass) — include all of them. EMIT EVERY RETURNED EDGE
        TARGET in relevant_chunk_ids, even cross-file ones; do not prune based on file
        location. Lead with the named symbol's canonical definition, then all connections.
+    4. PATH / FLOW questions ("how does X reach Y", "trace the call path from A to B",
+       "what is the execution path between X and Y"): first call search_code to resolve
+       the chunk_id for BOTH the source and target symbols. Then call
+       find_path(source_chunk_id=<src>, target_chunk_id=<tgt>) to retrieve the shortest
+       call path between them. Emit every node on the returned path in
+       relevant_chunk_ids. If find_path returns an empty path, fall back to
+       find_connections on the source chunk. Lead with the source symbol's canonical
+       definition, then every path node in order.
+    5. SIMILARITY questions ("find implementations similar to X", "other constructors like
+       Y", "code similar to Z"): first call search_code to find the seed chunk_id for the
+       named symbol. Then call find_similar_code(chunk_id=<seed>) to retrieve
+       structurally/semantically similar chunks. Lead ordering with the highest-similarity
+       neighbors returned — these should appear first in relevant_chunk_ids, as ordering
+       is critical for similarity queries (MRR is the primary signal). Include the seed
+       chunk's canonical definition plus all returned similar chunks.
 
     RANKING WITHIN RESULTS
     Rank candidates by reranker_score first, then blended_score (higher = better).
@@ -235,13 +251,13 @@ def load_examples(
 
         category = item.get("category", "")
         if category == "D":
-            expected_tool = "find_connections"
+            expected_tool = ["find_connections"]
         elif category == "E":
-            expected_tool = "find_path"
+            expected_tool = ["find_path"]
         elif category == "F":
-            expected_tool = "find_similar_code"
+            expected_tool = ["find_similar_code"]
         elif category in _SEARCH_CODE_CATEGORIES:
-            expected_tool = "search_code"
+            expected_tool = ["search_code"]
         else:
             expected_tool = None
 
@@ -363,31 +379,35 @@ def tool_selection_metric(
     pred: Any,
     trace: Any = None,
 ) -> float:
-    """DSPy metric: whether the agent used the expected MCP tool.
+    """DSPy metric: whether the agent used an acceptable MCP tool.
 
-    Scores 1.0 if the expected tool appears anywhere in the ReAct trajectory
-    (recovery across the whole trajectory, not just step 0).  Scores 0.0 if
-    not used.  Returns 1.0 for examples with no ``expected_tool`` set.
+    Scores 1.0 if any tool from the ``expected_tool`` list appears anywhere in
+    the ReAct trajectory (recovery across the whole trajectory, not just step 0).
+    Scores 0.0 if none used.  Returns 1.0 for examples with no ``expected_tool``.
 
-    Categories A/B/C expect ``search_code``; category D expects
-    ``find_connections``.  Examples without an ``expected_tool`` field are
-    excluded from tool-selection accuracy (counted as 1.0 so they do not
-    penalise the mean).
+    ``expected_tool`` is a list of acceptable tool names per category:
+    A/B/C → ["search_code"]; D → ["find_connections"]; E → ["find_path"];
+    F → ["find_similar_code"].  Accepts either a list or a bare string for
+    backwards compatibility.  Examples without an ``expected_tool`` field are
+    excluded from tool-selection accuracy (counted as 1.0).
 
     Args:
-        example: A DSPy example with an ``expected_tool`` field.
+        example: A DSPy example with an ``expected_tool`` field (list or str).
         pred: A DSPy Prediction with a ``trajectory`` dict.
         trace: Unused.
 
     Returns:
-        1.0 (correct tool used or no expected_tool set), 0.0 (wrong tool used).
+        1.0 (an acceptable tool used, or no expected_tool set), 0.0 otherwise.
     """
     expected = example.get("expected_tool")
     if not expected:
         return 1.0  # no expected_tool set — excluded from accuracy mean
 
     used = _extract_tools_from_trajectory(getattr(pred, "trajectory", None))
-    return 1.0 if expected.lower() in used else 0.0
+    acceptable = [
+        t.lower() for t in (expected if isinstance(expected, list) else [expected])
+    ]
+    return 1.0 if any(t in used for t in acceptable) else 0.0
 
 
 # ---------------------------------------------------------------------------
