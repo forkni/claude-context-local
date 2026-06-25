@@ -8,15 +8,17 @@
     "relevance_scale": "0=not_relevant, 1=marginal, 2=relevant, 3=highly_relevant",
     "expected": "chunk IDs with label >= 2 (used for Recall@k, NDCG@k)",
     "expected_primary": "chunk IDs with label == 3 (used for MRR)",
-    "total_queries": 45,
+    "total_queries": 49,
     "categories": {
       "A": "Small Function Discovery",
       "B": "Sibling Context (paired operations)",
       "C": "Class Overview",
-      "D": "Connection Queries (use find_connections, not ranked search)"
+      "D": "Connection Queries (use find_connections, not ranked search)",
+      "E": "Path/Flow Queries (use find_path to trace call-graph route between two symbols)",
+      "F": "Similarity Queries (use find_similar_code to find near-duplicate implementations)"
     },
     "splits": {
-      "train": 27,
+      "train": 31,
       "val": 10,
       "test": 8,
       "note": "Stratified by category: A=7/3/2, B=6/2/2, C=8/3/2, D=6/2/2. Existing 13 queries assigned train=10/val=3/test=0; new 32 queries fill remaining val/test slots. Category D excluded from run_sscg_benchmark.py by default (searcher cannot traverse call graph); include with --category D."
@@ -36,6 +38,13 @@
     },
     "recommended_k": 7,
     "changelog": [
+      {
+        "date": "2026-06-25",
+        "changes": [
+          "Added categories E (path/flow, expected_tool=find_path) and F (similarity, expected_tool=find_similar_code) — Q68-Q71 (4 entries, all train split). E queries require find_path(source_chunk_id, target_chunk_id); F queries require find_similar_code(chunk_id). All chunk_ids verified live via MCP tools against D:\\claude-context-local project (2026-06-25).",
+          "Updated total_queries: 45 → 49; splits.train: 27 → 31."
+        ]
+      },
       {
         "date": "2026-06-25",
         "changes": [
@@ -1185,6 +1194,98 @@
         "mcp_server/utils/config_helpers.py:function:get_config_via_service_locator": 2,
         "merkle/snapshot_manager.py:method:SnapshotManager._get_model_slug_and_dimension": 1,
         "scripts/benchmark/run_sscg_benchmark.py:function:_apply_weight_overrides": 1
+      }
+    },
+    {
+      "id": "Q68",
+      "query": "how does SearchOrchestrator internally reach CodeIndexManager — what helper bridges the MCP orchestrator to the index manager?",
+      "category": "E",
+      "split": "train",
+      "expected": [
+        "mcp_server/tools/search_handlers.py:function:_get_index_manager_from_searcher",
+        "mcp_server/tools/search_orchestrator.py:class:SearchOrchestrator",
+        "search/indexer.py:class:CodeIndexManager"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/search_handlers.py:function:_get_index_manager_from_searcher"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/search_handlers.py:function:_get_index_manager_from_searcher": 3,
+        "mcp_server/tools/search_orchestrator.py:class:SearchOrchestrator": 2,
+        "search/indexer.py:class:CodeIndexManager": 2,
+        "search/indexer.py:method:CodeIndexManager.__init__": 1
+      }
+    },
+    {
+      "id": "Q69",
+      "query": "trace the call path from IncrementalIndexer._add_new_chunks to CodeEmbedder — what is the sequence of calls from the incremental index write stage down to the embedding model?",
+      "category": "E",
+      "split": "train",
+      "expected": [
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
+        "embeddings/embedder.py:class:CodeEmbedder",
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunks"
+      ],
+      "expected_primary": [
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunks"
+      ],
+      "relevance_grades": {
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks": 3,
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunks": 3,
+        "embeddings/embedder.py:class:CodeEmbedder": 2,
+        "search/index_write_stage.py:split_block:IndexWriteStage.run": 1
+      }
+    },
+    {
+      "id": "Q70",
+      "query": "find language chunker constructors similar to PythonChunker.__init__ — I want all the concrete language-specific chunker initializers across the codebase",
+      "category": "F",
+      "split": "train",
+      "expected": [
+        "chunking/languages/cpp.py:method:CppChunker.__init__",
+        "chunking/languages/javascript.py:method:JavaScriptChunker.__init__",
+        "chunking/languages/c.py:method:CChunker.__init__",
+        "chunking/languages/go.py:method:GoChunker.__init__",
+        "chunking/languages/rust.py:method:RustChunker.__init__",
+        "chunking/languages/typescript.py:method:TypeScriptChunker.__init__",
+        "chunking/languages/base.py:method:LanguageChunker.__init__"
+      ],
+      "expected_primary": [
+        "chunking/languages/cpp.py:method:CppChunker.__init__",
+        "chunking/languages/javascript.py:method:JavaScriptChunker.__init__",
+        "chunking/languages/c.py:method:CChunker.__init__"
+      ],
+      "relevance_grades": {
+        "chunking/languages/cpp.py:method:CppChunker.__init__": 3,
+        "chunking/languages/javascript.py:method:JavaScriptChunker.__init__": 3,
+        "chunking/languages/c.py:method:CChunker.__init__": 3,
+        "chunking/languages/go.py:method:GoChunker.__init__": 2,
+        "chunking/languages/rust.py:method:RustChunker.__init__": 2,
+        "chunking/languages/typescript.py:method:TypeScriptChunker.__init__": 2,
+        "chunking/languages/base.py:method:LanguageChunker.__init__": 2,
+        "chunking/languages/python.py:method:PythonChunker.__init__": 1
+      }
+    },
+    {
+      "id": "Q71",
+      "query": "find implementations similar to InheritanceExtractor._extract_from_tree — other relationship extractors that override the same abstract tree-walk hook",
+      "category": "F",
+      "split": "train",
+      "expected": [
+        "chunking/relationships/relationship_extractors/implements_extractor.py:method:ImplementsExtractor._extract_from_tree",
+        "chunking/relationships/relationship_extractors/override_extractor.py:method:OverrideExtractor._extract_from_tree",
+        "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      ],
+      "expected_primary": [
+        "chunking/relationships/relationship_extractors/implements_extractor.py:method:ImplementsExtractor._extract_from_tree",
+        "chunking/relationships/relationship_extractors/override_extractor.py:method:OverrideExtractor._extract_from_tree"
+      ],
+      "relevance_grades": {
+        "chunking/relationships/relationship_extractors/implements_extractor.py:method:ImplementsExtractor._extract_from_tree": 3,
+        "chunking/relationships/relationship_extractors/override_extractor.py:method:OverrideExtractor._extract_from_tree": 3,
+        "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree": 2,
+        "chunking/relationships/relationship_extractors/inheritance_extractor.py:method:InheritanceExtractor._extract_from_tree": 1
       }
     }
   ]

@@ -212,10 +212,17 @@ full_pool:
 # Models: BGE-M3 + GTE-ModernBERT (proven combination)
 
 lightweight_pool:
-  # Default for lightweight pools
+  # Default fallback model when confidence gate is not cleared.
   default_model: bge_m3
 
-  # Lightweight precedence (2-model tier breaking)
+  # Confidence threshold for routing — lower than full_pool (0.35) because
+  # code_model has weight=1.5, so 2 matching keywords = 0.30 which should
+  # route to code_model rather than falling back to the bge_m3 default.
+  # With 0.20: 2 matches × 0.10 × 1.5 = 0.30 > 0.20 → code_model selected.
+  # With 0.35 (old fallback): same 0.30 < 0.35 → silently rejected → bge_m3.
+  confidence_threshold: 0.20
+
+  # Lightweight precedence (2-model tie-breaking)
   precedence:
     - code_model
     - bge_m3

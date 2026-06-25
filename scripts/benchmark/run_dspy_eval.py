@@ -120,6 +120,15 @@ def _parse_args() -> argparse.Namespace:
         default=str(Path(_ROOT) / "results"),
         help="Directory for the JSON output file (default: results/).",
     )
+    p.add_argument(
+        "--tool-names",
+        default=None,
+        help=(
+            "Comma-separated MCP tool names to expose to the agent "
+            "(default: search_code,find_connections). "
+            "Example: --tool-names search_code,find_connections,find_path,find_similar_code"
+        ),
+    )
     return p.parse_args()
 
 
@@ -210,6 +219,8 @@ def main() -> None:
         eval_kwargs["server_url"] = args.server_url
     if args.model:
         eval_kwargs["model"] = args.model
+    if args.tool_names:
+        eval_kwargs["tool_names"] = tuple(args.tool_names.split(","))
 
     result = asyncio.run(run_eval(**eval_kwargs))
 

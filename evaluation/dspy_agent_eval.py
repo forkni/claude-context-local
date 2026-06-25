@@ -129,7 +129,9 @@ class CodeNavQA(dspy.Signature):
        call-graph questions from search_code alone. Note that internal-call targets often
        span multiple files (e.g. ChangeDetector.detect_changes_from_snapshot reaches into
        merkle_dag.MerkleDAG and its methods, snapshot_manager.SnapshotManager.load_snapshot,
-       plus the FileChanges dataclass) — include all of them.
+       plus the FileChanges dataclass) — include all of them. EMIT EVERY RETURNED EDGE
+       TARGET in relevant_chunk_ids, even cross-file ones; do not prune based on file
+       location. Lead with the named symbol's canonical definition, then all connections.
 
     RANKING WITHIN RESULTS
     Rank candidates by reranker_score first, then blended_score (higher = better).
@@ -234,6 +236,10 @@ def load_examples(
         category = item.get("category", "")
         if category == "D":
             expected_tool = "find_connections"
+        elif category == "E":
+            expected_tool = "find_path"
+        elif category == "F":
+            expected_tool = "find_similar_code"
         elif category in _SEARCH_CODE_CATEGORIES:
             expected_tool = "search_code"
         else:
