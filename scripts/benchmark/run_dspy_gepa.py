@@ -81,7 +81,29 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "GEPA auto budget preset: "
             "light=6, medium=12, heavy=18 candidate evaluations. "
+            "Ignored when --max-full-evals or --max-metric-calls is set. "
             "Default: light."
+        ),
+    )
+    p.add_argument(
+        "--max-full-evals",
+        type=int,
+        default=None,
+        dest="max_full_evals",
+        help=(
+            "Override budget: cap as max_full_evals × (len(trainset) + len(valset)). "
+            "E.g. --max-full-evals 5 → ~185 rollouts on train=27/val=10. "
+            "Overrides --budget."
+        ),
+    )
+    p.add_argument(
+        "--max-metric-calls",
+        type=int,
+        default=None,
+        dest="max_metric_calls",
+        help=(
+            "Override budget: hard rollout ceiling passed directly to dspy.GEPA. "
+            "Overrides both --budget and --max-full-evals."
         ),
     )
     p.add_argument(
@@ -137,8 +159,18 @@ def _print_prereq_banner(args: argparse.Namespace) -> None:
     print("\n" + "=" * 65)
     print("GEPA OPTIMISATION — PREREQUISITES")
     print("=" * 65)
+    if args.max_metric_calls is not None:
+        budget_display = f"max_metric_calls={args.max_metric_calls} (hard ceiling)"
+    elif args.max_full_evals is not None:
+        budget_display = (
+            f"max_full_evals={args.max_full_evals} "
+            f"(~{args.max_full_evals * 37} rollouts on train=27/val=10)"
+        )
+    else:
+        budget_display = f"auto={args.budget}"
+
     print(f"  Project path    : {args.project_path}")
-    print(f"  Budget          : {args.budget}")
+    print(f"  Budget          : {budget_display}")
     print(f"  Rollout model   : {args.model or 'DSPY_LM_MODEL or claude-sonnet-4-6'}")
     print(f"  Reflection model: {args.reflection_model}")
     print(f"  Num threads     : {args.num_threads}")
@@ -188,6 +220,12 @@ def main() -> None:
         "max_iters": args.max_iters,
         "output_dir": Path(args.output_dir),
     }
+    # Explicit budget overrides: pass through when set (run_gepa_optimization
+    # resolves priority: max_metric_calls > max_full_evals > budget).
+    if args.max_full_evals is not None:
+        kwargs["max_full_evals"] = args.max_full_evals
+    if args.max_metric_calls is not None:
+        kwargs["max_metric_calls"] = args.max_metric_calls
     if args.server_url:
         kwargs["server_url"] = args.server_url
 

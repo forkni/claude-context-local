@@ -305,7 +305,9 @@ def gepa_metric(
 def run_gepa_optimization(
     project_path: str,
     *,
-    budget: str = "light",
+    budget: str | None = "light",
+    max_full_evals: int | None = None,
+    max_metric_calls: int | None = None,
     reflection_model: str = "claude-opus-4-8",
     rollout_model: str | None = None,
     num_threads: int = 4,
@@ -327,7 +329,14 @@ def run_gepa_optimization(
     Args:
         project_path: Absolute path to the indexed project directory.
         budget: GEPA ``auto`` preset — ``"light"`` (6), ``"medium"`` (12),
-            or ``"heavy"`` (18) candidate evaluations.
+            or ``"heavy"`` (18) candidate evaluations.  Ignored when
+            ``max_full_evals`` or ``max_metric_calls`` is set.
+        max_full_evals: Explicit full-evaluation cap passed as
+            ``dspy.GEPA(max_full_evals=...)``.  Computes metric calls as
+            ``max_full_evals × (len(trainset) + len(valset))``, e.g. 5 → 185
+            on train=27 / val=10.  Overrides ``budget`` when set.
+        max_metric_calls: Hard rollout ceiling passed directly to GEPA.
+            Overrides both ``budget`` and ``max_full_evals`` when set.
         reflection_model: Claude model for GEPA's reflective step.
             Default ``"claude-opus-4-8"`` (strong instruction proposer).
         rollout_model: Claude model for agent rollouts.  ``None`` falls back
@@ -390,9 +399,19 @@ def run_gepa_optimization(
     ) as sync_tools:
         student = dspy.ReAct(CodeNavQA, tools=sync_tools, max_iters=max_iters)
 
+        # Resolve budget: explicit knobs take priority over the auto preset.
+        # dspy.GEPA enforces exactly-one-of {auto, max_full_evals, max_metric_calls}.
+        if max_metric_calls is not None:
+            budget_kwargs: dict[str, Any] = {"max_metric_calls": max_metric_calls}
+        elif max_full_evals is not None:
+            budget_kwargs = {"max_full_evals": max_full_evals}
+        else:
+            budget_kwargs = {"auto": budget}
+        logger.info("GEPA: budget_kwargs=%s", budget_kwargs)
+
         gepa = dspy.GEPA(
             metric=gepa_metric,
-            auto=budget,
+            **budget_kwargs,
             reflection_lm=reflection_lm,
             num_threads=num_threads,
             track_stats=True,
@@ -466,7 +485,7 @@ def run_gepa_optimization(
     stats: dict[str, Any] = {
         "timestamp": ts,
         "project_path": project_path,
-        "budget": budget,
+        "budget": budget_kwargs,
         "rollout_model": task_lm.model,
         "reflection_model": reflection_model,
         "num_threads": num_threads,
