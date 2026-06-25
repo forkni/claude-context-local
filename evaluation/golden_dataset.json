@@ -29,12 +29,12 @@
       "note": "Baseline from first system version evaluated 2026-01-30"
     },
     "current_metrics": {
-      "recall_at_7": 0.7792,
-      "mrr": 0.74,
-      "ndcg_at_5": 0.715,
+      "recall_at_7": 0.7979,
+      "mrr": 0.8125,
+      "ndcg_at_5": 0.7423,
       "hit_rate_at_7": 1.0,
       "tool_selection_accuracy": 1.0,
-      "note": "DSPy agent eval 2026-06-25 (post-E/F instruction + tool_sel fix), test split (8 queries A/B/C/D), 2-tool agent, averaged over 2 runs. Recall@7=0.779 MRR=0.740 NDCG@5=0.715 Hit@7=1.0 tool_sel=1.0. MRR lower than prior run (0.854) because prior run had a Q66 server-crash zero that inflated it. Train-split 4-tool eval (31 queries, 2026-06-25): Recall@7=0.742 MRR=0.755 Hit@7=1.0 tool_sel_acc=0.9677 (30/31). E/F now fire find_path/find_similar_code; residual gaps: Q68 prefers find_connections (recall 1.0 either way), Q70 F-MRR 0.200 (ordering: abstract LanguageChunker not ranked first). find_path verdict: KEEP (triggerable on Q69; quality same as find_connections). Searcher-only hybrid baseline: Recall@7=0.736 MRR=0.797 NDCG@5=0.717 (2026-06-08, A/B/C only)."
+      "note": "DSPy agent eval 2026-06-25 (D-ordering fix: lead connection-query answers with callers/callees, not the named symbol), test split (8 queries A/B/C/D), 2-tool agent, 1 run. Recall@7=0.798 MRR=0.813 NDCG@5=0.742 Hit@7=1.0 tool_sel=1.0. D-query test MRR=1.0 (Q66/Q67 both 1.0 vs prior 0.333/1.0). Train-split 4-tool eval (31 queries, 2026-06-25 post-fix): Recall@7=0.696 MRR=0.863 Hit@7=1.0 tool_sel_acc=1.000 (31/31). D-MRR avg 0.39->0.917 (Q58/Q59/Q61/Q62/Q63 all 1.0; Q60 0.500). Residual recall gap Q60/Q62 R@7=0.333: graph-edge coverage issue (find_connections missing IndexWriteStage.run + IncrementalIndexer callers), not addressable by instruction tuning. E/F: find_path/find_similar_code fire correctly, tool_sel_acc=1.0. Searcher-only hybrid baseline: Recall@7=0.736 MRR=0.797 NDCG@5=0.717 (2026-06-08)."
     },
     "recommended_k": 7,
     "changelog": [

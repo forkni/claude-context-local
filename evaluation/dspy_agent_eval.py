@@ -132,7 +132,14 @@ class CodeNavQA(dspy.Signature):
        merkle_dag.MerkleDAG and its methods, snapshot_manager.SnapshotManager.load_snapshot,
        plus the FileChanges dataclass) — include all of them. EMIT EVERY RETURNED EDGE
        TARGET in relevant_chunk_ids, even cross-file ones; do not prune based on file
-       location. Lead with the named symbol's canonical definition, then all connections.
+       location. ORDERING for connection/relationship queries: the named symbol is the
+       SUBJECT of the question, not the answer — for "what calls X", "what does X call",
+       "what inherits from X" the named symbol is usually NOT among the relevant chunks.
+       Do NOT place the named symbol's own definition first. Instead lead
+       relevant_chunk_ids with the connection targets find_connections returned (the
+       actual callers / callees / subclasses), highest resolver_confidence
+       (lsp|libcst exact) first. This overrides the general ORDERING rule below for
+       connection/relationship questions.
     4. PATH / FLOW questions ("how does X reach Y", "trace the call path from A to B",
        "what is the execution path between X and Y"): first call search_code to resolve
        the chunk_id for BOTH the source and target symbols. Then call
@@ -164,6 +171,9 @@ class CodeNavQA(dspy.Signature):
     matches the question's core symbol — never a fragment, even if the fragment scored
     higher. (E.g. lead with class:HybridSearcher, method:FaissVectorIndex.save, or
     method:LanguageChunker.get_node_text — not a decorated_definition or split_block.)
+    (EXCEPTION — connection/relationship questions: see item 3. The named symbol is the
+    question's subject and is typically not in the relevant set; lead with the connection
+    targets returned by find_connections, not with the named symbol's definition.)
 
     FINISHING
     Call finish once your 2–3 searches (and any find_connections call) have surfaced the
