@@ -275,7 +275,6 @@
       "relevance_grades": {
         "embeddings/embedder.py:class:CodeEmbedder": 2,
         "embeddings/__init__.py:module": 1,
-        "embeddings/__init__.py:module:embeddings": 1,
         "search/hybrid_searcher.py:method:HybridSearcher.index_documents": 1,
         "embeddings/embedder.py:method:CodeEmbedder.embed_chunks": 3,
         "embeddings/embedder.py:split_block:CodeEmbedder.embed_chunks": 3,
@@ -301,7 +300,6 @@
         "merkle/merkle_dag.py:method:MerkleDAG.build": 3,
         "merkle/merkle_dag.py:method:MerkleDAG.build_node": 3,
         "merkle/__init__.py:module": 1,
-        "merkle/__init__.py:module:merkle": 1,
         "merkle/merkle_dag.py:decorated_definition:MerkleDAG.from_dict": 1,
         "merkle/merkle_dag.py:decorated_definition:MerkleNode": 2
       }
@@ -368,7 +366,6 @@
       "relevance_grades": {
         "search/incremental_indexer.py:class:IncrementalIndexer": 3,
         "merkle/__init__.py:module": 1,
-        "merkle/__init__.py:module:merkle": 1,
         "search/incremental_indexer.py:method:IncrementalIndexer.incremental_index": 2,
         "merkle/snapshot_manager.py:method:SnapshotManager.has_snapshot": 2,
         "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot": 3
