@@ -1309,8 +1309,8 @@ echo.
 echo   2. EmbeddingGemma ^(768d, 300M params^)
 echo      Lightweight alternative, minimal VRAM
 echo.
-echo   3. Lightweight Multi-Model ^(1.65GB^)
-echo      BGE-M3 + gte-modernbert, smart routing
+echo   3. Multi-Model Routing ^(1.65GB, 2 models^)
+echo      BGE-M3 + gte-modernbert -- enables routing across 2 models; NOT a single-model choice
 echo.
 echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+, RTX 4090^)
 echo   4. Qwen3-Embedding-0.6B ^(1024d, ~1.1GB^)
@@ -1379,7 +1379,7 @@ set "confirm_lightweight_speed="
 set /p confirm_lightweight_speed="Enable lightweight-speed multi-model? (y/N): "
 if /i "!confirm_lightweight_speed!"=="y" (
     REM Persist to config file via Python
-    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; cfg.routing.multi_model_pool = 'lightweight-speed'; cfg.reranker.enabled = True; cfg.reranker.model_name = 'Alibaba-NLP/gte-reranker-modernbert-base'; mgr.save_config(cfg); print('[OK] Lightweight-speed multi-model enabled and saved to config')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; cfg.routing.multi_model_pool = 'lightweight-speed'; cfg.embedding.model_name = 'BAAI/bge-m3'; cfg.reranker.enabled = True; cfg.reranker.model_name = 'Alibaba-NLP/gte-reranker-modernbert-base'; mgr.save_config(cfg); print('[OK] Lightweight-speed multi-model enabled and saved to config')" 2>nul
     if errorlevel 1 (
         echo [ERROR] Failed to save to config file
     ) else (
@@ -1913,14 +1913,17 @@ echo.
 echo   2. EmbeddingGemma ^(768d, 300M params^)
 echo      Lightweight alternative, minimal VRAM
 echo.
-echo   3. Lightweight Multi-Model ^(1.65GB^)
-echo      BGE-M3 + gte-modernbert, smart routing
+echo   3. Multi-Model Routing ^(1.65GB, 2 models^)
+echo      BGE-M3 + gte-modernbert -- enables routing across 2 models; NOT a single-model choice
 echo.
 echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+, RTX 4090^)
 echo   4. Qwen3-Embedding-0.6B ^(1024d, ~1.1GB^)
 echo      Single model + Jina v3 reranker ^(MRR 0.94 SSCG baseline^)
 echo.
 echo   0. Back to Main Menu
+echo.
+echo [NOTE] Option 3 enables MULTI-MODEL routing -- it indexes 2 models, not just BGE-M3.
+echo        Use options 1, 2 or 4 to select a single model.
 echo.
 set "model_choice="
 set /p model_choice="Select model (0-4): "
@@ -1944,7 +1947,7 @@ if defined SELECTED_MODEL (
     echo.
 
     REM Use Python to switch model
-    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.embedding.dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; cfg.routing.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model switched successfully'); print(f'[INFO] Dimension: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"dimension\"]}d'); print(f'[INFO] VRAM: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"vram_gb\"]}')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.embedding.dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; cfg.routing.multi_model_enabled = False; cfg.routing.multi_model_pool = None; mgr.save_config(cfg); print('[OK] Model switched successfully'); print(f'[INFO] Dimension: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"dimension\"]}d'); print(f'[INFO] VRAM: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"vram_gb\"]}')" 2>nul
 
     if errorlevel 1 (
         echo [ERROR] Failed to switch model
