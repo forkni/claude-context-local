@@ -300,7 +300,7 @@ class OutputConfig:
     format: str = (
         "ultra"  # verbose, compact, ultra (default: ultra for 45-55% token reduction)
     )
-    source_order_output: bool = True  # Reorder results by file position (DOS RAG)
+    source_order_output: bool = False  # Emit results in relevance order (blended_score desc); set True to restore DOS-RAG file/line ordering
     include_subgraph: bool = (
         False  # Serialize ego_graph subgraph_* blocks into the response
     )
