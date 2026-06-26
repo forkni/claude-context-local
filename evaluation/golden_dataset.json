@@ -29,12 +29,12 @@
       "note": "Baseline from first system version evaluated 2026-01-30"
     },
     "current_metrics": {
-      "recall_at_7": 0.7979,
-      "mrr": 0.8125,
-      "ndcg_at_5": 0.7423,
+      "recall_at_7": 0.9046,
+      "mrr": 0.8519,
+      "ndcg_at_5": 0.8116,
       "hit_rate_at_7": 1.0,
       "tool_selection_accuracy": 1.0,
-      "note": "DSPy agent eval 2026-06-25 (D-ordering fix: lead connection-query answers with callers/callees, not the named symbol), test split (8 queries A/B/C/D), 2-tool agent, 1 run. Recall@7=0.798 MRR=0.813 NDCG@5=0.742 Hit@7=1.0 tool_sel=1.0. D-query test MRR=1.0 (Q66/Q67 both 1.0 vs prior 0.333/1.0). Train-split 4-tool eval (31 queries, 2026-06-25 post-fix): Recall@7=0.696 MRR=0.863 Hit@7=1.0 tool_sel_acc=1.000 (31/31). D-MRR avg 0.39->0.917 (Q58/Q59/Q61/Q62/Q63 all 1.0; Q60 0.500). Residual recall gap Q60/Q62 R@7=0.333: graph-edge coverage issue (find_connections missing IndexWriteStage.run + IncrementalIndexer callers), not addressable by instruction tuning. E/F: find_path/find_similar_code fire correctly, tool_sel_acc=1.0. Searcher-only hybrid baseline: Recall@7=0.736 MRR=0.797 NDCG@5=0.717 (2026-06-08)."
+      "note": "DSPy agent eval 2026-06-26, 4-tool (search_code,find_connections,find_path,find_similar_code), 18 test queries (A-F coverage, 77-query dataset). Recall@7=0.9046 MRR=0.8519 NDCG@5=0.8116 Hit@7=1.0 tool_sel=1.0. Traj_recall=0.9537 (gap=+0.049). Phase C reranker experiment: gte-reranker-modernbert-base validated as best available on laptop (bge-v2-m3 scored worse: R@7 0.621 vs 0.696 gte baseline; jina-v3 OOM on 8GB GPU — listwise single-pass fires 3x/query, no fp16, batch_size silently dropped). Searcher-only SSCG baseline (63q, 2026-06-26): MRR=0.700 R@7=0.696 Hit@5=0.984 R@10=0.734."
     },
     "recommended_k": 7,
     "changelog": [
