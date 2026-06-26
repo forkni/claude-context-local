@@ -85,7 +85,7 @@ def gepa_tool_bridge(
     *,
     server_url: str = _DEFAULT_SERVER_URL,
     tool_names: tuple[str, ...] = ("search_code", "find_connections"),
-    tool_timeout_s: float = 45.0,
+    tool_timeout_s: float = 120.0,
 ):
     """Synchronous context manager: expose MCP tools as sync callables.
 
