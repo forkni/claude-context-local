@@ -186,11 +186,12 @@ class CodeNavQA(dspy.Signature):
     question: str = dspy.InputField()
     relevant_chunk_ids: list[str] = dspy.OutputField(
         desc=(
-            "Return EVERY chunk_id from your search results that is relevant to the "
-            "question — a class AND its methods, both halves of a paired operation, a "
-            "config AND its loader, same-named symbols across subsystems.  Prefer recall: "
-            "when unsure whether a result is relevant, INCLUDE it.  Do NOT return only "
-            "the single best match. "
+            "Return at most 7 chunk_ids, most relevant first.  Include every chunk you "
+            "surfaced that is relevant to the question — a class AND its methods, both "
+            "halves of a paired operation, a config AND its loader, same-named symbols "
+            "across subsystems — up to 7 total.  Prefer recall within that cap: when "
+            "unsure whether a result is relevant, INCLUDE it rather than dropping it. "
+            "Do NOT return only the single best match. "
             "Copy the 'chunk_id' field VERBATIM from each relevant search_code result "
             "(including its line-range segment, e.g. "
             "'search/config.py:148-161:decorated_definition:EmbeddingConfig'). "
@@ -198,8 +199,8 @@ class CodeNavQA(dspy.Signature):
             "copy chunk_ids verbatim.  Do NOT rewrite, abbreviate, or reformat them. "
             "Lead with the canonical class/method/function chunk whose name most directly "
             "matches the question — never a split_block, module, or decorated_definition "
-            "fragment — then remaining relevant chunks in descending relevance. "
-            "Return up to 12 IDs."
+            "fragment — then remaining relevant chunks in descending reranker_score order. "
+            "Return at most 7 IDs."
         )
     )
     answer: str = dspy.OutputField(
@@ -351,7 +352,7 @@ def recall_at_k_metric(
     Returns:
         Recall@k in [0.0, 1.0].
     """
-    retrieved = _extract_chunk_ids(pred)
+    retrieved = _extract_chunk_ids_ranked(pred)
     scores = calculate_metrics_from_results(
         retrieved=retrieved,
         expected=example.expected,
@@ -375,7 +376,7 @@ def mrr_metric(
     Returns:
         MRR in [0.0, 1.0].
     """
-    retrieved = _extract_chunk_ids(pred)
+    retrieved = _extract_chunk_ids_ranked(pred)
     scores = calculate_metrics_from_results(
         retrieved=retrieved,
         expected=example.expected,
@@ -462,6 +463,164 @@ def _parse_ultra_chunk_ids(text: str) -> list[str]:
     except (json.JSONDecodeError, TypeError, KeyError):
         pass
     return chunk_ids
+
+
+def _extract_reranker_scores_from_observations(
+    trajectory: dict | None,
+) -> dict[str, float]:
+    """Build a chunk_id → reranker_score map from all tool observations.
+
+    Supports three observation formats emitted by the MCP output formatter:
+
+    1. **Ultra/TOON dense column** — ``results[N]{...,chunk_id,...,reranker_score,...}``
+       header with row arrays; ``chunk_id`` and ``reranker_score`` are positional columns.
+    2. **Ultra/TOON sparse fallback** — when reranker_score fill <25 % it moves to a
+       separate ``{"reranker_score": [[row_idx, score], ...]}`` structure alongside the
+       main TOON table.  Row indices are mapped back via the chunk_id column.
+    3. **Compact/verbose JSON** — ``"chunk_id": "..."`` and ``"reranker_score": N`` appear
+       as sibling keys inside each result object.
+
+    Returns a ``dict`` mapping *normalised* chunk IDs to their highest-seen
+    ``reranker_score`` float.  Returns an empty dict when the trajectory is absent
+    or no scores are found.
+    """
+    if not trajectory:
+        return {}
+
+    from evaluation.metrics import (
+        normalize_chunk_id,  # local import — already on sys.path
+    )
+
+    scores: dict[str, float] = {}
+
+    for key, val in trajectory.items():
+        if "observation" not in key:
+            continue
+        val_str = val if isinstance(val, str) else json.dumps(val, default=str)
+
+        # --- Format 3: compact/verbose JSON objects with sibling keys ---
+        try:
+            parsed = json.loads(val_str)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            parsed = None
+
+        if isinstance(parsed, dict):
+            # Walk every list-of-dicts array in the parsed response looking for
+            # objects that carry both chunk_id and reranker_score.
+            def _walk(obj: Any) -> None:
+                if isinstance(obj, list):
+                    for item in obj:
+                        if isinstance(item, dict):
+                            cid = item.get("chunk_id")
+                            rs = item.get("reranker_score")
+                            if cid and isinstance(rs, (int, float)):
+                                norm = normalize_chunk_id(str(cid))
+                                if norm not in scores or scores[norm] < float(rs):
+                                    scores[norm] = float(rs)
+                            _walk(item)
+                elif isinstance(obj, dict):
+                    for v in obj.values():
+                        _walk(v)
+
+            _walk(parsed)
+
+            # --- Formats 1 & 2: TOON/ultra table ---
+            # Scan all keys for the results[N]{...} header pattern.
+            for hdr_key, rows in parsed.items():
+                if not (isinstance(rows, list) and "chunk_id" in hdr_key):
+                    continue
+                m = _ULTRA_HEADER_RE.match(f'"{hdr_key}"')
+                if not m:
+                    # Try search rather than match (header key may not start with '"')
+                    m2 = re.search(r"\{([^}]+)\}", hdr_key)
+                    if not m2:
+                        continue
+                    columns = [c.strip() for c in m2.group(1).split(",")]
+                else:
+                    columns = [c.strip() for c in m.group(1).split(",")]
+
+                if "chunk_id" not in columns:
+                    continue
+                cid_idx = columns.index("chunk_id")
+                rs_idx = (
+                    columns.index("reranker_score")
+                    if "reranker_score" in columns
+                    else None
+                )
+
+                # Build a row_index → chunk_id map (needed for sparse fallback).
+                row_cids: dict[int, str] = {}
+                for row_i, row in enumerate(rows):
+                    if isinstance(row, list) and cid_idx < len(row):
+                        cid_val = row[cid_idx]
+                        if isinstance(cid_val, str) and cid_val:
+                            row_cids[row_i] = cid_val
+                            # Format 1: dense reranker_score column.
+                            if rs_idx is not None and rs_idx < len(row):
+                                rs_val = row[rs_idx]
+                                if isinstance(rs_val, (int, float)):
+                                    norm = normalize_chunk_id(cid_val)
+                                    if norm not in scores or scores[norm] < float(
+                                        rs_val
+                                    ):
+                                        scores[norm] = float(rs_val)
+
+                # Format 2: sparse reranker_score structure.
+                # Look for a sibling key "reranker_score" whose value is [[idx, score], ...].
+                sparse_rs = parsed.get("reranker_score")
+                if isinstance(sparse_rs, list) and row_cids:
+                    for entry in sparse_rs:
+                        if isinstance(entry, list) and len(entry) == 2:
+                            row_i, rs_val = entry
+                            if (
+                                isinstance(row_i, int)
+                                and isinstance(rs_val, (int, float))
+                                and row_i in row_cids
+                            ):
+                                norm = normalize_chunk_id(row_cids[row_i])
+                                if norm not in scores or scores[norm] < float(rs_val):
+                                    scores[norm] = float(rs_val)
+
+    return scores
+
+
+def _extract_chunk_ids_ranked(pred: Any) -> list[str]:
+    """Return the agent's emitted ``relevant_chunk_ids``, reordered by reranker score.
+
+    This is a **post-agent ordering layer**: it only reorders chunk IDs that the
+    agent itself emitted — it never injects chunks that were not in
+    ``pred.relevant_chunk_ids``.  The trajectory ceiling metric is unchanged.
+
+    **Tool guard (D/E/F queries):** if the trajectory used ``find_connections``,
+    ``find_path``, or ``find_similar_code`` the IDs are returned in the agent's
+    original order.  Those tools return relationship targets ranked by
+    ``resolver_confidence``, not ``reranker_score``, so reordering by search
+    scores would be incorrect.
+
+    For A/B/C (``search_code``-dominant) queries: IDs with a known
+    ``reranker_score`` from trajectory observations float to the top (highest
+    score first, stable sort).  IDs with no score keep their original relative
+    order at the end.
+    """
+    ids = _extract_chunk_ids(pred)
+    if not ids:
+        return ids
+
+    # Tool guard: skip reorder for connection/path/similarity queries.
+    traj = getattr(pred, "trajectory", None)
+    used = _extract_tools_from_trajectory(traj)
+    if used & {"find_connections", "find_path", "find_similar_code"}:
+        return ids
+
+    scores = _extract_reranker_scores_from_observations(traj)
+    if not scores:
+        return ids
+
+    # Stable sort: IDs with a score come first (descending), unscored keep order.
+    scored = [(scores[cid], i, cid) for i, cid in enumerate(ids) if cid in scores]
+    unscored = [cid for cid in ids if cid not in scores]
+    scored.sort(key=lambda t: t[0], reverse=True)
+    return [cid for _, _, cid in scored] + unscored
 
 
 def _extract_chunk_ids_from_observations(trajectory: dict | None) -> list[str]:
@@ -564,7 +723,7 @@ async def _eval_one(
 
             # Retrieval metrics (reuse evaluation/metrics.py — do not reimplement)
             traj = getattr(pred, "trajectory", None)
-            retrieved = _extract_chunk_ids(pred)
+            retrieved = _extract_chunk_ids_ranked(pred)
             scores = calculate_metrics_from_results(
                 retrieved=retrieved,
                 expected=example.expected,
