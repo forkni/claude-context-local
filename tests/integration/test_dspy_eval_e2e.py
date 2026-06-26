@@ -81,7 +81,7 @@ def test_run_eval_returns_results():
     assert "per_query" in result
     assert "aggregate" in result
     assert "total_queries" in result
-    assert result["total_queries"] == 49
+    assert result["total_queries"] == 77
 
     # At least some queries should have succeeded
     assert len(result["per_query"]) > 0, "All queries failed — check server/CLI"

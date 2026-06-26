@@ -198,7 +198,7 @@ def _print_prereq_banner(args: argparse.Namespace) -> None:
         print("    [  ] CLAUDE_CODE_RETRY_WATCHDOG not set (recommended for long runs)")
 
     print()
-    print("  NOTE: Using train/val split (train=27, val=10, test=8 held out).")
+    print("  NOTE: Using train/val split (train=43, val=16, test=18 held out).")
     print(
         "  Validate on the held-out test split by re-running run_dspy_eval.py "
         "after\n  porting the discovered instruction into CodeNavQA."
