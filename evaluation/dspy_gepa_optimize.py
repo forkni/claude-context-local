@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Any
 
 import dspy
+from gepa.utils.stop_condition import NoImprovementStopper, TimeoutStopCondition
 
 from evaluation.dspy_agent_eval import (
     CodeNavQA,
@@ -315,12 +316,14 @@ def run_gepa_optimization(
     max_iters: int = 6,
     output_dir: Path | str = Path("results"),
     server_url: str = _DEFAULT_SERVER_URL,
+    max_stale_iters: int | None = None,
+    timeout_min: float | None = None,
 ) -> dict[str, Any]:
     """Run GEPA to evolve the ``CodeNavQA`` instructions for higher Recall@7.
 
-    Runs ``dspy.GEPA`` with the train split (27 queries) and validates on the
-    val split (10 queries) from the golden dataset (45 queries total).  The
-    held-out test split (8 queries) is reserved for ``run_dspy_eval.py``.
+    Runs ``dspy.GEPA`` with the train split (43 queries) and validates on the
+    val split (16 queries) from the golden dataset (77 queries total).  The
+    held-out test split (18 queries) is reserved for ``run_dspy_eval.py``.
     The discovered instruction should be compared to the hand-written seed in
     ``evaluation/dspy_agent_eval.py``.
 
@@ -334,7 +337,7 @@ def run_gepa_optimization(
             ``max_full_evals`` or ``max_metric_calls`` is set.
         max_full_evals: Explicit full-evaluation cap passed as
             ``dspy.GEPA(max_full_evals=...)``.  Computes metric calls as
-            ``max_full_evals × (len(trainset) + len(valset))``, e.g. 5 → 185
+            ``max_full_evals × (len(trainset) + len(valset))``, e.g. 5 → 295
             on train=43 / val=16.  Overrides ``budget`` when set.
         max_metric_calls: Hard rollout ceiling passed directly to GEPA.
             Overrides both ``budget`` and ``max_full_evals`` when set.
@@ -348,6 +351,12 @@ def run_gepa_optimization(
         output_dir: Directory for GEPA artifacts (program JSON + stats JSON).
             Defaults to ``results/`` which is gitignored.
         server_url: Full MCP HTTP endpoint URL (must include ``/mcp``).
+        max_stale_iters: Stop after this many consecutive full-eval iterations
+            with no improvement in val Recall@7.  ``None`` disables this early-
+            stop condition.  Composes with ``timeout_min`` and the budget
+            ceiling — whichever fires first wins (GEPA uses ``mode="any"``).
+        timeout_min: Stop after this many minutes of wall-clock time since
+            ``compile()`` was called.  ``None`` disables this condition.
 
     Returns:
         Dict with keys:
@@ -412,6 +421,23 @@ def run_gepa_optimization(
             budget_kwargs = {"auto": budget}
         logger.info("GEPA: budget_kwargs=%s", budget_kwargs)
 
+        # Build optional early-stop callbacks.
+        # The gepa engine composes these with the budget MaxMetricCallsStopper and
+        # the auto-wired FileStopper (<log_dir>/gepa.stop) using mode="any" — the
+        # first stopper that fires ends the run and returns best-so-far.
+        stop_callbacks: list[Any] = []
+        if max_stale_iters is not None:
+            stop_callbacks.append(NoImprovementStopper(max_stale_iters))
+            logger.info(
+                "GEPA: NoImprovementStopper(max_stale_iters=%d)", max_stale_iters
+            )
+        if timeout_min is not None:
+            stop_callbacks.append(TimeoutStopCondition(timeout_min * 60))
+            logger.info("GEPA: TimeoutStopCondition(timeout_min=%.1f)", timeout_min)
+        extra_gepa_kwargs: dict[str, Any] = {}
+        if stop_callbacks:
+            extra_gepa_kwargs["stop_callbacks"] = stop_callbacks
+
         gepa = dspy.GEPA(
             metric=gepa_metric,  # pyrefly: ignore[bad-argument-type]  # DSPy GEPA stub uses GEPAFeedbackMetric; callable metric is valid at runtime
             **budget_kwargs,
@@ -420,9 +446,13 @@ def run_gepa_optimization(
             track_stats=True,
             log_dir=str(log_dir),
             seed=0,
+            gepa_kwargs=extra_gepa_kwargs if extra_gepa_kwargs else None,
         )
         logger.info(
-            "GEPA: starting compile (budget=%s, num_threads=%d)…", budget, num_threads
+            "GEPA: starting compile (budget=%s, num_threads=%d, stoppers=%d)…",
+            budget,
+            num_threads,
+            len(stop_callbacks),
         )
 
         optimized = gepa.compile(
