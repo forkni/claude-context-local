@@ -17,6 +17,9 @@ from typing import TYPE_CHECKING
 
 import networkx as nx
 
+from search.chunk_id import extract_name as _chunk_id_name
+from search.chunk_id import normalize as _normalize_chunk_id
+
 
 if TYPE_CHECKING:
     from graph.graph_storage import CodeGraphStorage
@@ -159,18 +162,19 @@ class SubgraphExtractor:
                 logger.debug(f"[SUBGRAPH] Node {chunk_id} not found in graph")
                 continue
 
-            # Extract relative file path from chunk_id (format: "relative/path/file.py:lines:type:name")
-            # chunk_id already uses relative forward-slash paths, so we can extract the file path directly
+            # Extract relative file path and name from chunk_id
+            # (format: "relative/path/file.py:lines:type:name")
+            _normalized = _normalize_chunk_id(chunk_id)
             file_path = (
-                chunk_id.split(":")[0] if ":" in chunk_id else node_data.get("file", "")
+                _normalized.split(":")[0]
+                if ":" in _normalized
+                else node_data.get("file", "")
             )
 
             # Create node with optional centrality score
             node = SubgraphNode(
                 chunk_id=chunk_id,
-                name=node_data.get(
-                    "name", chunk_id.split(":")[-1] if ":" in chunk_id else chunk_id
-                ),
+                name=node_data.get("name", _chunk_id_name(chunk_id) or chunk_id),
                 kind=node_data.get("type", "unknown"),
                 file=file_path,
                 is_search_result=True,
@@ -195,10 +199,11 @@ class SubgraphExtractor:
                     )
                     continue
 
-                # Extract relative file path from chunk_id (same pattern as search result nodes)
+                # Extract relative file path and name from chunk_id
+                _norm_nb = _normalize_chunk_id(neighbor_id)
                 file_path = (
-                    neighbor_id.split(":")[0]
-                    if ":" in neighbor_id
+                    _norm_nb.split(":")[0]
+                    if ":" in _norm_nb
                     else node_data.get("file", "")
                 )
 
@@ -206,10 +211,7 @@ class SubgraphExtractor:
                 node = SubgraphNode(
                     chunk_id=neighbor_id,
                     name=node_data.get(
-                        "name",
-                        neighbor_id.split(":")[-1]
-                        if ":" in neighbor_id
-                        else neighbor_id,
+                        "name", _chunk_id_name(neighbor_id) or neighbor_id
                     ),
                     kind=node_data.get("type", "unknown"),
                     file=file_path,
@@ -379,8 +381,9 @@ class SubgraphExtractor:
         for cid, chunk_ids in communities.items():
             dirs = []
             for chunk_id in chunk_ids:
-                # Extract file path from chunk_id (format: "file.py:lines:type:name")
-                parts = chunk_id.replace("\\", "/").split(":")
+                # Extract file path from chunk_id via the chunk_id module
+                # (handles Windows backslashes, format: "file.py:lines:type:name")
+                parts = _normalize_chunk_id(chunk_id).split(":")
                 if parts:
                     file_path = parts[0]
                     path_parts = file_path.split("/")

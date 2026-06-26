@@ -13,6 +13,7 @@ from typing import Any
 
 from sqlitedict import SqliteDict
 
+from search.chunk_id import normalize as _normalize_chunk_id
 from search.filters import normalize_path
 from search.symbol_cache import SymbolHashCache
 
@@ -320,15 +321,7 @@ class MetadataStore:
             >>> MetadataStore.normalize_chunk_id("search\\reranker.py:36-137:method:rerank")
             "search/reranker.py:36-137:method:rerank"
         """
-        # Split by chunk_id structure (file:lines:type:name)
-        parts = chunk_id.split(":")
-        if len(parts) >= 4:
-            # First part is the file path - normalize it
-            file_path = normalize_path(parts[0])
-            # Reconstruct chunk_id
-            return f"{file_path}:{':'.join(parts[1:])}"
-        # Fallback: just normalize backslashes
-        return normalize_path(chunk_id)
+        return _normalize_chunk_id(chunk_id)
 
     @staticmethod
     def get_chunk_id_variants(chunk_id: str) -> list[str]:

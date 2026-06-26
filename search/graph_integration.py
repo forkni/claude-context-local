@@ -17,6 +17,7 @@ except ImportError:
     CodeGraphStorage = None
 
 from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
+from search.chunk_id import is_chunk_id as _is_chunk_id
 
 
 def is_chunk_id(node_id: str) -> bool:
@@ -31,7 +32,7 @@ def is_chunk_id(node_id: str) -> bool:
     Returns:
         True if node_id is a valid chunk ID, False if it's a bare symbol
     """
-    return node_id.count(":") >= 3
+    return _is_chunk_id(node_id)
 
 
 # Semantic chunk types that can have relationships

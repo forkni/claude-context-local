@@ -12,6 +12,9 @@ from typing import TYPE_CHECKING
 
 import networkx as nx
 
+from search.chunk_id import extract_line_count as _extract_chunk_lines_impl
+from search.chunk_id import extract_name as _extract_name_impl
+
 
 if TYPE_CHECKING:
     from graph.graph_queries import GraphQueryEngine
@@ -32,8 +35,7 @@ def _extract_name_from_chunk_id(chunk_id: str) -> str:
     Returns:
         The qualified name (fourth component), or empty string if invalid format.
     """
-    parts = chunk_id.split(":")
-    return parts[3] if len(parts) >= 4 else ""
+    return _extract_name_impl(chunk_id)
 
 
 def _tokenize_for_matching(text: str) -> set[str]:
@@ -74,20 +76,7 @@ def _extract_chunk_lines(chunk_id: str) -> int:
     Returns:
         Number of lines in chunk, or 0 if format is invalid.
     """
-    parts = chunk_id.split(":")
-    if len(parts) < 2:
-        logger.warning(f"Malformed chunk_id (insufficient parts): {chunk_id}")
-        return 0
-    line_range = parts[1]  # "start-end" format
-    if "-" not in line_range:
-        logger.warning(f"Malformed chunk_id (no line range): {chunk_id}")
-        return 0
-    try:
-        start, end = map(int, line_range.split("-"))
-        return end - start + 1  # Inclusive range
-    except (ValueError, IndexError):
-        logger.warning(f"Malformed chunk_id (invalid line range): {chunk_id}")
-        return 0
+    return _extract_chunk_lines_impl(chunk_id)
 
 
 class CentralityRanker:
