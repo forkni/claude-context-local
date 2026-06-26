@@ -78,11 +78,11 @@ def _make_example(
 
 
 class TestLoadExamples:
-    def test_returns_13_examples(self, golden_dataset_path):
+    def test_returns_77_examples(self, golden_dataset_path):
         if not golden_dataset_path.exists():
             pytest.skip("golden_dataset.json not found")
         examples, _ = load_examples(golden_dataset_path)
-        assert len(examples) == 13
+        assert len(examples) == 77
 
     def test_thresholds_dict_returned(self, golden_dataset_path):
         if not golden_dataset_path.exists():

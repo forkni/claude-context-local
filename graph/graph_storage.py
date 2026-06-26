@@ -13,6 +13,21 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from graph.schema import (
+    EDGE_ATTR_CONFIDENCE,
+    EDGE_ATTR_IS_METHOD,
+    EDGE_ATTR_IS_RESOLVED,
+    EDGE_ATTR_LINE,
+    EDGE_ATTR_TYPE,
+    NODE_ATTR_FILE,
+    NODE_ATTR_IS_CALL_TARGET,
+    NODE_ATTR_IS_TARGET_NAME,
+    NODE_ATTR_LANGUAGE,
+    NODE_ATTR_NAME,
+    NODE_ATTR_TYPE,
+    NODE_TYPE_SYMBOL_NAME,
+    get_reverse_relation,
+)
 from utils.atomic_io import write_json_atomic
 from utils.path_utils import normalize_path
 
@@ -225,22 +240,26 @@ class CodeGraphStorage:
         if callee_name not in self.graph:
             self.graph.add_node(
                 callee_name,
-                name=callee_name,
-                type="symbol_name",  # Distinguish from full chunk nodes
-                is_target_name=True,  # Flag for query filtering
-                is_call_target=True,  # New flag: distinguishes from relationship targets
-                file="",  # Unknown file (will be resolved if chunk exists)
-                language="",  # Unknown language
+                **{
+                    NODE_ATTR_NAME: callee_name,
+                    NODE_ATTR_TYPE: NODE_TYPE_SYMBOL_NAME,  # Distinguish from full chunk nodes
+                    NODE_ATTR_IS_TARGET_NAME: True,  # Flag for query filtering
+                    NODE_ATTR_IS_CALL_TARGET: True,  # New flag: distinguishes from relationship targets
+                    NODE_ATTR_FILE: "",  # Unknown file (will be resolved if chunk exists)
+                    NODE_ATTR_LANGUAGE: "",  # Unknown language
+                },
             )
 
         self.graph.add_edge(
             caller_id,
             callee_name,
             key="calls",  # MultiDiGraph: dedups within-type; different types are parallel edges
-            type="calls",
-            line=line_number,
-            is_method=is_method_call,
-            is_resolved=is_resolved,
+            **{
+                EDGE_ATTR_TYPE: "calls",
+                EDGE_ATTR_LINE: line_number,
+                EDGE_ATTR_IS_METHOD: is_method_call,
+                EDGE_ATTR_IS_RESOLVED: is_resolved,
+            },
             **kwargs,
         )
 
@@ -311,11 +330,13 @@ class CodeGraphStorage:
         if edge.target_name not in self.graph:
             self.graph.add_node(
                 edge.target_name,
-                name=edge.target_name,
-                type="symbol_name",  # Distinguish from full chunk nodes
-                is_target_name=True,  # Flag for query filtering if needed
-                file="",  # Unknown file (symbol might be external or not yet indexed)
-                language="",  # Unknown language
+                **{
+                    NODE_ATTR_NAME: edge.target_name,
+                    NODE_ATTR_TYPE: NODE_TYPE_SYMBOL_NAME,  # Distinguish from full chunk nodes
+                    NODE_ATTR_IS_TARGET_NAME: True,  # Flag for query filtering if needed
+                    NODE_ATTR_FILE: "",  # Unknown file (symbol might be external or not yet indexed)
+                    NODE_ATTR_LANGUAGE: "",  # Unknown language
+                },
             )
 
         # Add edge to graph with all attributes.
@@ -324,9 +345,11 @@ class CodeGraphStorage:
             normalized_source,
             edge.target_name,
             key=edge.relationship_type.value,
-            type=edge.relationship_type.value,
-            line=edge.line_number,
-            confidence=edge.confidence,
+            **{
+                EDGE_ATTR_TYPE: edge.relationship_type.value,
+                EDGE_ATTR_LINE: edge.line_number,
+                EDGE_ATTR_CONFIDENCE: edge.confidence,
+            },
             **edge.metadata,  # Include all additional metadata
         )
 
@@ -539,36 +562,8 @@ class CodeGraphStorage:
             Most verb-based types need past participle form + "_by".
             Special irregular forms are handled explicitly.
         """
-        # Comprehensive mapping for all relationship types
-        reverse_mapping = {
-            "calls": "called_by",
-            "inherits": "inherited_by",
-            "uses_type": "used_as_type_by",
-            "imports": "imported_by",
-            "decorates": "decorated_by",
-            "raises": "raised_by",
-            "catches": "caught_by",
-            "instantiates": "instantiated_by",
-            "implements": "implemented_by",
-            "overrides": "overridden_by",
-            "assigns_to": "assigned_by",
-            "reads_from": "read_by",
-            "defines_constant": "constant_defined_by",
-            "defines_enum_member": "enum_member_defined_by",
-            "defines_class_attr": "class_attr_defined_by",
-            "defines_field": "field_defined_by",
-            "uses_constant": "constant_used_by",
-            "uses_default": "default_used_by",
-            "uses_global": "global_used_by",
-            "asserts_type": "type_asserted_by",
-            "uses_context_manager": "context_manager_used_by",
-        }
-
-        if relation_type in reverse_mapping:
-            return reverse_mapping[relation_type]
-
-        # Fallback: append "_by" (should not be reached if mapping is complete)
-        return f"{relation_type}_by"
+        # Delegate to the single owner of the reverse-relation mapping.
+        return get_reverse_relation(relation_type)
 
     def _should_exclude_edge(
         self,

@@ -82,6 +82,10 @@ async def test_clear_index_clears_bm25_and_dense(mock_embedder):
         # Step 3: Clear index
         clear_result = await handle_clear_index({})
         assert clear_result.get("success") is True
+        # clear_index must keep the project active — only index files are removed.
+        assert get_state().current_project is not None, (
+            "clear_index must not null current_project (project dir still exists)"
+        )
 
         # Step 4: Verify zero counts after clear
         status_after = await handle_get_index_status({})
@@ -132,6 +136,10 @@ async def test_clear_index_persists_after_searcher_recreation(mock_embedder):
         # Step 4: Clear index
         clear_result = await handle_clear_index({})
         assert clear_result.get("success") is True
+        # clear_index must keep the project active — only index files are removed.
+        assert get_state().current_project is not None, (
+            "clear_index must not null current_project (project dir still exists)"
+        )
 
         # Step 5: Simulate server restart - clear in-memory state
         state.searcher = None

@@ -25,13 +25,15 @@ allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_conn
 
 Ensures all MCP semantic search operations follow correct workflows for accurate results. The key behavioral rule: **search results are ranked candidates, not definitive answers — always scan all returned results.**
 
-**SSCG benchmark:** 100% Hit@5 (k=7 hybrid, 2026-06-08): MRR 0.797, Recall@5 0.689, Recall@7 0.736. Recommended operating k: **7** (consistent coverage; targets may rank 6–7 on complex queries). Default is `k=4`. See [references/performance.md](references/performance.md) for full results.
+**SSCG benchmark (searcher-only, 63-query, 2026-06-26, gte-reranker):** MRR 0.700, Recall@5 0.625, Recall@7 0.696, Hit@5 0.984. Recommended operating k: **7** (some targets rank 6–7). Engine default is `k=7`; pass it explicitly when correctness matters. Use `k=10` for architectural/global queries. See [references/performance.md](references/performance.md) for full results.
+
+**DSPy agent eval (2026-06-26, 77-query dataset, 4-tool):** Recall@7=0.9046, MRR=0.8519, Hit@7=1.000, tool_sel=1.000 on the held-out test split (18 queries, A–F coverage). Use all 4 tools: search_code, find_connections, find_path, find_similar_code. See [references/performance.md](references/performance.md).
 
 ---
 
 ## Critical: Results Are Candidates, Not Answers
 
-MCP search returns **ranked candidates**, not definitive answers. On the 2026-06-08 13-query SSCG benchmark (hybrid, k=7) Hit@5 = 100% — but the correct result is **not always ranked first**, and this is not a general reliability guarantee for arbitrary queries or codebases.
+MCP search returns **ranked candidates**, not definitive answers. On the 2026-05-25 13-query SSCG benchmark (hybrid, k=7) Hit@7 = 100% — but the correct result is **not always ranked first**, and this is not a general reliability guarantee for arbitrary queries or codebases.
 
 **Baseline rule:** **pass `k=7` explicitly when correctness matters.** The engine default is `k=7` (changed from 4 on 2026-06-24 based on SSCG benchmark: MRR +0.093, R@7 +0.122 vs k=4); targets may still rank 6–7 on complex or multi-target queries, so passing it explicitly is good defensive practice. Use `k=10` for architectural / global queries.
 
@@ -151,13 +153,31 @@ Failing to sort is why a result at array position 0 isn't always rank-1.  For a 
 
 **Call edges carry resolver provenance (v0.14.0+).** Every entry in `direct_callers` and `direct_callees` includes `resolver_source` (`"ast"` / `"pyan"` / `"libcst"` / `"lsp"`), `resolver_confidence` (0.5–0.98), and `confidence` tag (`"exact"` / `"recovered"` / `"ambiguous"`). Top-level `caller_confidence` / `callee_confidence` breakdowns show counts per tag. The confidence ladder (AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98) means edges are upgraded in-place to the highest-confidence resolver — `resolver_source: "lsp"` means basedpyright confirmed the call. Configure via `call_graph.min_confidence` (drops low-confidence edges) and see `docs/CALL_GRAPH_TUNING.md` for tuning recipes.
 
-**Community and module summary chunks surface at rank-1 on class-overview queries.** They have IDs like `__community__/label:0-0:community:label` or `file.py:0-0:module:name`. Add `chunk_type="function"` or `chunk_type="class"` to filter them when you need a specific implementation.
+**INCLUSION vs ORDERING — do not conflate (top-2 failure modes from GEPA eval).** Two rules that work together but are often confused:
+- **INCLUSION:** include *every* relevant chunk you surfaced, regardless of `kind`. A `decorated_definition` config/dataclass (`SearchModeConfig`, `FileChanges`, etc.) that appeared in your results must appear in your answer if it is relevant to the question. The ordering rule below is about ORDER ONLY — it never justifies *dropping* a chunk you judged relevant.
+- **ORDERING:** lead with the definition-level chunk (`class`/`method`/`function`) whose name most directly matches the question's core symbol. `split_block`, `module`, and `decorated_definition` chunks often score higher due to compactness, but they must not outrank the canonical definition. Put the canonical definition first; then include all remaining relevant chunks (including those fragments).
 
-**For ranking (MRR), lead with the canonical definition — not the highest-scoring fragment.** `split_block`, `module`, and `decorated_definition` chunks often outscore a `class` or `method` chunk on `reranker_score`/`blended_score` due to their compactness, but MRR rewards putting the single most directly relevant chunk first.  When ordering results, prefer the canonical `class` or `method`/`function` whose name most directly matches the question's core symbol — even if a sibling fragment scores slightly higher.
+For **connection/relationship queries** (find_connections output): emit EVERY returned edge target in `relevant_chunk_ids`, even cross-file ones. The named symbol is the question's *subject*, usually **not** in the relevant set — do **not** lead with it. Lead with the connection targets `find_connections` returned (the actual callers / callees / subclasses), highest `resolver_confidence` first. Do not prune based on file location or kind.
 
-**Unicode symbols crash on Windows cp1252 terminals.** `✓`/`✗` cause `UnicodeEncodeError` in any script that writes to stdout in a cmd/PowerShell window without UTF-8. Use plain ASCII (`PASS`/`FAIL`) or run with `PYTHONUTF8=1`. The smoke test in this skill uses plain ASCII for this reason.
+**Community and module summary chunks surface at rank-1 on class-overview queries.** They have IDs like `__community__/label:0-0:community:label` or `file.py:0-0:module:name`. When this happens: **first scan the remaining lower-ranked results** in the current set — the specific implementation is often already present at rank 2-4. If not found there, re-run with `chunk_type="function"` or `chunk_type="class"` to explicitly filter summary chunks out.
+
+**Unicode symbols crash on Windows cp1252 terminals.** `✓`/`✗` cause `UnicodeEncodeError` in any script that writes to stdout in a cmd/PowerShell window without UTF-8. Use plain ASCII (`PASS`/`FAIL`) or run with `PYTHONUTF8=1`.
 
 **Torch dynamo INFO logs spam stderr** when importing `search.hybrid_searcher`. Suppress with `2>nul` (Windows) or `2>/dev/null` (Linux/WSL).
+
+---
+
+## Pre-Flight: Verify Project Before Searching
+
+**Mandatory when switching context or opening a new session:** before the first `search_code` call, confirm the active project matches the codebase you're working with:
+
+```
+code-search:get_index_status   # confirms active project path, chunk count, staleness
+code-search:list_projects      # if unsure which project is active
+code-search:switch_project     # if the active project is wrong
+```
+
+If returned chunk_ids have file paths that don't match the expected project, call `switch_project` **before trusting any results**. Ignoring a wrong active project is a common silent error — results look plausible but are from the wrong codebase.
 
 ---
 
@@ -165,11 +185,14 @@ Failing to sort is why a result at array position 0 isn't always rank-1.  For a 
 
 | Issue | Solution |
 |-------|----------|
-| **No results** | Check project: `code-search:list_projects`, `code-search:switch_project` if needed. Verify index: `code-search:get_index_status`. Re-index: `code-search:index_directory(path)` |
-| **Bad results** | Try different mode: hybrid → semantic → bm25. Add filters: `file_pattern`, `chunk_type`. Increase k |
+| **No results** | 1. Check active project: `code-search:list_projects` → `code-search:switch_project` if needed. 2. Verify index not empty/stale: `code-search:get_index_status`. 3. If index is missing or stale: **rebuild with `code-search:index_directory(path)`**. |
+| **Bad results / wrong project** | Run pre-flight checks above. If the project was recently changed, re-run `switch_project` to confirm. |
+| **Bad results (right project)** | Try different mode: hybrid → semantic → bm25. Add filters: `file_pattern`, `chunk_type`. Increase k |
 | **Wrong result at rank-1** | Scan all k results — answer likely at rank 2-4. Use `chunk_type` filter to exclude module/community summary chunks |
 | **Too slow** | Use `search_mode="bm25"` for exact symbols (fastest). Check: `code-search:get_memory_status`. Free: `code-search:cleanup_resources` |
 | **Memory issues** | `code-search:cleanup_resources`. Switch to a lighter model: `code-search:switch_embedding_model("google/embeddinggemma-300m")` (~1.2GB, default) or `code-search:switch_embedding_model("Alibaba-NLP/gte-modernbert-base")` (0.28GB, lightest) |
+| **Code model never selected (multi-model setup)** | The routing confidence gate may be too aggressive. Check routing block in `search_code` response: if `routing.confidence < threshold`, the code model was rejected. Use `configure_query_routing` to lower the threshold or add keywords to the routing config. For the lightweight-speed pool (bge_m3 + gte_modernbert), the threshold in `config/routing_keywords.yaml` → `lightweight_pool.confidence_threshold` controls this. |
+| **find_similar_code use-case** | Use when you have a seed chunk_id and want to find structural/semantic near-duplicates: sibling method overrides, parallel implementations across language backends, or copied-with-variation functions. Call `search_code` first to get the seed chunk_id, then `find_similar_code(chunk_id=...)`. Returns top-N similar chunks ranked by embedding similarity. |
 
 ---
 

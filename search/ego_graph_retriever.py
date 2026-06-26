@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from search.config import EgoGraphConfig
 from search.graph_integration import is_chunk_id
+from search.graph_view import GraphView, PPRConvergenceError
 
 
 if TYPE_CHECKING:
@@ -40,6 +41,7 @@ class EgoGraphRetriever:
             graph_storage: CodeGraphStorage instance with get_neighbors() method
         """
         self.graph = graph_storage
+        self._gv = GraphView(graph_storage)
         self._centrality_scores: dict[str, float] = {}
         self._community_map: dict[str, int] = graph_storage.load_community_map() or {}
         logger.info("EgoGraphRetriever initialized")
@@ -191,17 +193,10 @@ class EgoGraphRetriever:
             Dict mapping each anchor -> list of top-k PPR neighbours.
             Falls back to BFS if PPR fails to converge or graph is empty.
         """
-        try:
-            import networkx as nx
-        except ImportError:
-            logger.warning("networkx not available — falling back to BFS")
-            return self.retrieve_ego_graph(anchor_chunk_ids, config)
-
-        nx_graph = self.graph.get_graph()
-        if nx_graph is None or len(nx_graph) == 0:
+        if self._gv.is_empty():
             return {a: [] for a in anchor_chunk_ids}
 
-        valid_anchors = [a for a in anchor_chunk_ids if a in nx_graph]
+        valid_anchors = [a for a in anchor_chunk_ids if self._gv.contains(a)]
         if not valid_anchors:
             return {a: [] for a in anchor_chunk_ids}
 
@@ -210,14 +205,11 @@ class EgoGraphRetriever:
         personalization = dict.fromkeys(valid_anchors, weight)
 
         try:
-            ppr_scores: dict[str, float] = nx.pagerank(
-                nx_graph,
+            ppr_scores: dict[str, float] = self._gv.personalized_pagerank(
+                personalization,
                 alpha=config.ppr_alpha,
-                personalization=personalization,
-                max_iter=100,
-                tol=1e-6,
             )
-        except nx.PowerIterationFailedConvergence:
+        except PPRConvergenceError:
             logger.warning(
                 "[PPR] Power iteration failed to converge — falling back to BFS"
             )
@@ -249,7 +241,7 @@ class EgoGraphRetriever:
         for neighbor in top_neighbors:
             assigned = default_anchor
             for anchor in valid_anchors:
-                if nx_graph.has_edge(anchor, neighbor) or nx_graph.has_edge(
+                if self._gv.has_edge(anchor, neighbor) or self._gv.has_edge(
                     neighbor, anchor
                 ):
                     assigned = anchor

@@ -45,7 +45,8 @@ logger = logging.getLogger(__name__)
 # Absolute path to the golden dataset shipped with this package.
 _GOLDEN_DATASET = Path(__file__).parent / "golden_dataset.json"
 
-# Categories whose expected tool is search_code (all categories with ground truth).
+# Categories whose expected tool is search_code (A/B/C).
+# Category D uses find_connections instead (connection/relationship queries).
 _SEARCH_CODE_CATEGORIES = {"A", "B", "C"}
 
 
@@ -55,37 +56,131 @@ _SEARCH_CODE_CATEGORIES = {"A", "B", "C"}
 
 
 class CodeNavQA(dspy.Signature):
-    """Answer a code-navigation question using the local semantic-search MCP tools.
+    """Answer a code-navigation question over a Python codebase using the local
+    semantic-search MCP tools (search_code, find_connections, find_path,
+    find_similar_code, finish). The input field
+    is `question`. You must produce two outputs: `relevant_chunk_ids` (an ordered list)
+    and `answer` (a concise description of what the symbol(s) do).
 
-    Code-navigation questions typically have MULTIPLE relevant locations: a class and
-    its methods, both halves of a paired operation (encode + decode), a config struct
-    and its loader, same-named symbols across multiple subsystems, etc.  Err HARD toward
-    inclusion — when in doubt, include the chunk.
+    WHAT search_code RETURNS
+    This codebase is indexed for hybrid (semantic + lexical/BM25) retrieval. search_code
+    returns ONLY metadata rows per chunk — chunk_id, kind/type, name, reranker_score,
+    blended_score, score, source, centrality, complexity_score — never source bodies.
+    The metadata (name + kind + file path) is enough to judge relevance. Do NOT spend
+    calls trying to "confirm" a chunk's contents.
 
-    Search strategy:
-    1. Call search_code with search_mode="hybrid", k=10, include_context=True.
-       Phrase the query with the key symbol/operation names from the question.
-       search_code returns metadata rows (chunk_id, type, name, scores) — the response
-       does NOT include source bodies.  Do NOT burn extra calls to "confirm" chunk content.
-    2. Rank by reranker_score first, then blended_score (higher = better).
-    3. Issue a SECOND search with alternate phrasings whenever the question describes a
-       generic operation (validate/normalize/encode/decode/load/save/id-handling) that
-       could exist in multiple subsystems, or when the first result set is concentrated in
-       one module but the concept plausibly also lives in a sibling file.  Use synonyms,
-       the names of likely-related symbols/files, and subsystem names as the second query.
-       Aim for at least 2–3 diverse queries; do NOT finish after one.
+    CHUNK_ID FORMAT
+    Raw results use "file.py:START-END:kind:QualifiedName"
+    (e.g. "chunking/languages/base.py:227-237:method:LanguageChunker.get_node_text").
+    The graded/expected form DROPS the line range:
+    "file.py:kind:QualifiedName" (e.g.
+    "chunking/languages/base.py:method:LanguageChunker.get_node_text").
+    Either form is accepted, but be consistent and definition-accurate.
 
-    Selection (cast a wide net):
-    Include the directly-named symbol AND closely-related siblings (definition + methods
-    implementing the behavior), relevant config/dataclass chunks, and same-named symbols
-    across multiple files.  Include every plausibly-relevant chunk your searches surfaced;
-    the most common failure is treating a chunk as relevant in reasoning and then omitting it.
+    Common `kind` values you will see: class, method, function, decorated_definition,
+    split_block, module. NOTE: config objects and dataclasses frequently appear with
+    kind=decorated_definition (e.g. "search/config.py:decorated_definition:SearchModeConfig",
+    "merkle/change_detector.py:decorated_definition:FileChanges").
 
-    Ordering — MRR (position 0 matters most):
-    Lead with the DEFINITION-level chunk whose name most directly matches the question's
-    core symbol.  Prefer class or method/function chunks over split_block, module, or
-    decorated_definition fragments — even when those fragments score high.  Do NOT let a
-    high-scoring fragment outrank the canonical definition.
+    CODE-NAVIGATION QUESTIONS ALMOST ALWAYS HAVE MULTIPLE RELEVANT CHUNKS:
+    - a class PLUS the methods that implement the described behavior
+    - both halves of a paired operation (encode+decode, save+load, tokenize+clean)
+    - a config/dataclass PLUS its loader
+    - the SAME-NAMED operation living in sibling subsystems/files
+    - a backing/helper class that the named class delegates to (e.g. HybridSearcher is
+      accompanied by SearchExecutor and the SearchModeConfig dataclass; a save/load
+      question on FaissVectorIndex also pulls in CodeIndexManager.save_index).
+
+    Err HARD toward inclusion. The #1 observed failure is reasoning that a chunk is
+    relevant and then omitting it from `relevant_chunk_ids` — ESPECIALLY
+    decorated_definition config/dataclass chunks. If a search surfaced it and it relates
+    to the question's subject, INCLUDE it. The #2 failure is stopping after one search
+    and missing methods/files an alternate phrasing would surface (e.g. missing
+    BM25Index.search, or a paired dataclass in a different module).
+
+    CRITICAL DISTINCTION — INCLUSION vs ORDERING (do not conflate these):
+    - INCLUSION: include EVERY relevant chunk regardless of kind. A decorated_definition
+      config/dataclass (SearchModeConfig, FileChanges, etc.) that your search returned
+      must appear in `relevant_chunk_ids`. The "prefer class over fragment" rule below is
+      about ORDER ONLY — it never justifies dropping a chunk.
+    - ORDERING: a higher-scoring decorated_definition / split_block / module fragment
+      must NOT outrank the canonical class/method/function definition. Lead with the
+      definition-level chunk whose name most directly matches the question's core symbol.
+
+    SEARCH STRATEGY
+    1. First call: search_code with search_mode="hybrid", k=10, include_context=True.
+       Phrase the query using the concrete symbol/operation names from the question.
+    2. ALWAYS issue at least a SECOND search (aim for 2–3 diverse queries total) with
+       alternate phrasings — synonyms, names of likely-paired symbols (the other half of
+       encode/decode, save/load, the config/dataclass behind a class), likely method
+       names hinted in summaries, and sibling subsystem/file names. Do this especially
+       when (a) the question names a generic operation
+       (validate/normalize/encode/decode/load/save/tokenize/id-handling/combine) that
+       plausibly exists in multiple subsystems, or (b) your first results cluster in one
+       module but the concept could live in a sibling file. You may use file_pattern to
+       focus a follow-up, but ALSO run at least one UNfiltered alternate query so
+       cross-module same-named chunks can surface — these are frequently expected.
+       (Exception: a single tight search may already return the full paired set, e.g. a
+       FaissVectorIndex save/load query returning the class + save + load + the manager's
+       save_index — but still confirm with a second query before finishing.)
+    3. CONNECTION / RELATIONSHIP questions ("what calls X", "what does Y call internally",
+       "what depends on / inherits from Z"): first search_code to get the target chunk_id,
+       then call find_connections(chunk_id=<target>). Prefer edges with higher
+       resolver_confidence / source lsp|libcst (exact) over ast (heuristic). Do not answer
+       call-graph questions from search_code alone. Note that internal-call targets often
+       span multiple files (e.g. ChangeDetector.detect_changes_from_snapshot reaches into
+       merkle_dag.MerkleDAG and its methods, snapshot_manager.SnapshotManager.load_snapshot,
+       plus the FileChanges dataclass) — include all of them. EMIT EVERY RETURNED EDGE
+       TARGET in relevant_chunk_ids, even cross-file ones; do not prune based on file
+       location. ORDERING for connection/relationship queries: the named symbol is the
+       SUBJECT of the question, not the answer — for "what calls X", "what does X call",
+       "what inherits from X" the named symbol is usually NOT among the relevant chunks.
+       Do NOT place the named symbol's own definition first. Instead lead
+       relevant_chunk_ids with the connection targets find_connections returned (the
+       actual callers / callees / subclasses), highest resolver_confidence
+       (lsp|libcst exact) first. This overrides the general ORDERING rule below for
+       connection/relationship questions.
+    4. PATH / FLOW questions ("how does X reach Y", "trace the call path from A to B",
+       "what is the execution path between X and Y"): first call search_code to resolve
+       the chunk_id for BOTH the source and target symbols. Then call
+       find_path(source_chunk_id=<src>, target_chunk_id=<tgt>) to retrieve the shortest
+       call path between them. Emit every node on the returned path in
+       relevant_chunk_ids. If find_path returns an empty path, fall back to
+       find_connections on the source chunk. Lead with the source symbol's canonical
+       definition, then every path node in order.
+    5. SIMILARITY questions ("find implementations similar to X", "other constructors like
+       Y", "code similar to Z"): first call search_code to find the seed chunk_id for the
+       named symbol. Then call find_similar_code(chunk_id=<seed>) to retrieve
+       structurally/semantically similar chunks. Lead ordering with the highest-similarity
+       neighbors returned — these should appear first in relevant_chunk_ids, as ordering
+       is critical for similarity queries (MRR is the primary signal). Include the seed
+       chunk's canonical definition plus all returned similar chunks.
+
+    RANKING WITHIN RESULTS
+    Rank candidates by reranker_score first, then blended_score (higher = better).
+
+    SELECTION (cast a wide net for recall)
+    Include: the directly-named symbol; its closely-related sibling methods that implement
+    the behavior; any relevant config/dataclass (even kind=decorated_definition) and its
+    loader; the backing/helper class a named class delegates to; and every same-named or
+    paired symbol your searches surfaced across all files. Do not prune any chunk you
+    reasoned was relevant.
+
+    ORDERING — MRR matters most for position 0
+    List FIRST the definition-level chunk (class/method/function) whose name most directly
+    matches the question's core symbol — never a fragment, even if the fragment scored
+    higher. (E.g. lead with class:HybridSearcher, method:FaissVectorIndex.save, or
+    method:LanguageChunker.get_node_text — not a decorated_definition or split_block.)
+    (EXCEPTION — connection/relationship questions: see item 3. The named symbol is the
+    question's subject and is typically not in the relevant set; lead with the connection
+    targets returned by find_connections, not with the named symbol's definition.)
+
+    FINISHING
+    Call finish once your 2–3 searches (and any find_connections call) have surfaced the
+    canonical definition plus its related/paired/cross-module/config siblings. Then output
+    `relevant_chunk_ids` ordered as above (canonical definition first, every surfaced
+    relevant chunk — including decorated_definition configs/dataclasses — included) and a
+    concise `answer` describing what the symbol(s) do.
     """
 
     question: str = dspy.InputField()
@@ -103,7 +198,7 @@ class CodeNavQA(dspy.Signature):
             "copy chunk_ids verbatim.  Do NOT rewrite, abbreviate, or reformat them. "
             "Lead with the canonical class/method/function chunk whose name most directly "
             "matches the question — never a split_block, module, or decorated_definition "
-            "fragment — then remaining relevant chunks in descending relevance. "
+            "fragment — then remaining relevant chunks in descending reranker_score order. "
             "Return up to 12 IDs."
         )
     )
@@ -122,6 +217,7 @@ class CodeNavQA(dspy.Signature):
 
 def load_examples(
     path: str | Path | None = None,
+    split: str | None = None,
 ) -> tuple[list[dspy.Example], dict]:
     """Load the SSCG golden dataset as a list of DSPy examples.
 
@@ -132,6 +228,9 @@ def load_examples(
     Args:
         path: Path to a golden-dataset JSON file.  Defaults to
             ``evaluation/golden_dataset.json`` relative to this module.
+        split: Optional split filter — ``"train"``, ``"val"``, or ``"test"``.
+            When ``None`` (default) all rows are returned (back-compatible).
+            Rows without a ``split`` field are included in all splits.
 
     Returns:
         A tuple ``(examples, thresholds)`` where ``examples`` is a list of
@@ -142,9 +241,11 @@ def load_examples(
         - ``question`` (InputField) — the query string.
         - ``expected`` — list of relevant chunk IDs (label ≥ 2).
         - ``expected_primary`` — list of highly-relevant chunk IDs (label = 3).
-        - ``category`` — ``"A"``, ``"B"``, or ``"C"``.
-        - ``expected_tool`` — ``"search_code"`` for all present categories.
+        - ``category`` — ``"A"``, ``"B"``, ``"C"``, or ``"D"``.
+        - ``expected_tool`` — ``"search_code"`` for A/B/C; ``"find_connections"``
+          for D (connection/relationship queries).
         - ``query_id`` — the ID string from the JSON (e.g. ``"Q01"``).
+        - ``split`` — ``"train"``, ``"val"``, or ``"test"`` (when present).
     """
     dataset_path = Path(path) if path else _GOLDEN_DATASET
     with open(dataset_path, encoding="utf-8") as fh:
@@ -152,8 +253,24 @@ def load_examples(
 
     examples = []
     for item in dataset.get("queries", []):
+        # Apply split filter when requested; rows without a split field pass through.
+        if split is not None:
+            row_split = item.get("split")
+            if row_split is not None and row_split != split:
+                continue
+
         category = item.get("category", "")
-        expected_tool = "search_code" if category in _SEARCH_CODE_CATEGORIES else None
+        if category == "D":
+            expected_tool = ["find_connections"]
+        elif category == "E":
+            expected_tool = ["find_path"]
+        elif category == "F":
+            expected_tool = ["find_similar_code"]
+        elif category in _SEARCH_CODE_CATEGORIES:
+            expected_tool = ["search_code"]
+        else:
+            expected_tool = None
+
         ex = dspy.Example(
             question=item["query"],
             expected=item.get("expected", []),
@@ -161,14 +278,16 @@ def load_examples(
             category=category,
             expected_tool=expected_tool,
             query_id=item.get("id", ""),
+            split=item.get("split", ""),
         ).with_inputs("question")
         examples.append(ex)
 
     thresholds = dataset.get("thresholds", {})
     logger.info(
-        "Loaded %d examples from %s (thresholds=%s)",
+        "Loaded %d examples from %s (split=%s, thresholds=%s)",
         len(examples),
         dataset_path,
+        split or "all",
         thresholds,
     )
     return examples, thresholds
@@ -232,7 +351,7 @@ def recall_at_k_metric(
     Returns:
         Recall@k in [0.0, 1.0].
     """
-    retrieved = _extract_chunk_ids(pred)
+    retrieved = _extract_chunk_ids_ranked(pred)
     scores = calculate_metrics_from_results(
         retrieved=retrieved,
         expected=example.expected,
@@ -256,7 +375,7 @@ def mrr_metric(
     Returns:
         MRR in [0.0, 1.0].
     """
-    retrieved = _extract_chunk_ids(pred)
+    retrieved = _extract_chunk_ids_ranked(pred)
     scores = calculate_metrics_from_results(
         retrieved=retrieved,
         expected=example.expected,
@@ -270,27 +389,35 @@ def tool_selection_metric(
     pred: Any,
     trace: Any = None,
 ) -> float:
-    """DSPy metric: whether the agent used the expected MCP tool.
+    """DSPy metric: whether the agent used an acceptable MCP tool.
 
-    Scores 1.0 if the expected tool appears anywhere in the ReAct trajectory
-    (recovery across the whole trajectory, not just step 0).  Scores 0.0 if
-    not used.  Returns 1.0 for examples with no ``expected_tool`` (category D,
-    which has no ground truth in the current dataset).
+    Scores 1.0 if any tool from the ``expected_tool`` list appears anywhere in
+    the ReAct trajectory (recovery across the whole trajectory, not just step 0).
+    Scores 0.0 if none used.  Returns 1.0 for examples with no ``expected_tool``.
+
+    ``expected_tool`` is a list of acceptable tool names per category:
+    A/B/C → ["search_code"]; D → ["find_connections"]; E → ["find_path"];
+    F → ["find_similar_code"].  Accepts either a list or a bare string for
+    backwards compatibility.  Examples without an ``expected_tool`` field are
+    excluded from tool-selection accuracy (counted as 1.0).
 
     Args:
-        example: A DSPy example with an ``expected_tool`` field.
+        example: A DSPy example with an ``expected_tool`` field (list or str).
         pred: A DSPy Prediction with a ``trajectory`` dict.
         trace: Unused.
 
     Returns:
-        1.0 (correct tool used or no ground truth), 0.0 (wrong tool used).
+        1.0 (an acceptable tool used, or no expected_tool set), 0.0 otherwise.
     """
     expected = example.get("expected_tool")
     if not expected:
-        return 1.0  # no ground truth for this category — not counted
+        return 1.0  # no expected_tool set — excluded from accuracy mean
 
     used = _extract_tools_from_trajectory(getattr(pred, "trajectory", None))
-    return 1.0 if expected.lower() in used else 0.0
+    acceptable = [
+        t.lower() for t in (expected if isinstance(expected, list) else [expected])
+    ]
+    return 1.0 if any(t in used for t in acceptable) else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +462,164 @@ def _parse_ultra_chunk_ids(text: str) -> list[str]:
     except (json.JSONDecodeError, TypeError, KeyError):
         pass
     return chunk_ids
+
+
+def _extract_reranker_scores_from_observations(
+    trajectory: dict | None,
+) -> dict[str, float]:
+    """Build a chunk_id → reranker_score map from all tool observations.
+
+    Supports three observation formats emitted by the MCP output formatter:
+
+    1. **Ultra/TOON dense column** — ``results[N]{...,chunk_id,...,reranker_score,...}``
+       header with row arrays; ``chunk_id`` and ``reranker_score`` are positional columns.
+    2. **Ultra/TOON sparse fallback** — when reranker_score fill <25 % it moves to a
+       separate ``{"reranker_score": [[row_idx, score], ...]}`` structure alongside the
+       main TOON table.  Row indices are mapped back via the chunk_id column.
+    3. **Compact/verbose JSON** — ``"chunk_id": "..."`` and ``"reranker_score": N`` appear
+       as sibling keys inside each result object.
+
+    Returns a ``dict`` mapping *normalised* chunk IDs to their highest-seen
+    ``reranker_score`` float.  Returns an empty dict when the trajectory is absent
+    or no scores are found.
+    """
+    if not trajectory:
+        return {}
+
+    from evaluation.metrics import (
+        normalize_chunk_id,  # local import — already on sys.path
+    )
+
+    scores: dict[str, float] = {}
+
+    for key, val in trajectory.items():
+        if "observation" not in key:
+            continue
+        val_str = val if isinstance(val, str) else json.dumps(val, default=str)
+
+        # --- Format 3: compact/verbose JSON objects with sibling keys ---
+        try:
+            parsed = json.loads(val_str)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            parsed = None
+
+        if isinstance(parsed, dict):
+            # Walk every list-of-dicts array in the parsed response looking for
+            # objects that carry both chunk_id and reranker_score.
+            def _walk(obj: Any) -> None:
+                if isinstance(obj, list):
+                    for item in obj:
+                        if isinstance(item, dict):
+                            cid = item.get("chunk_id")
+                            rs = item.get("reranker_score")
+                            if cid and isinstance(rs, (int, float)):
+                                norm = normalize_chunk_id(str(cid))
+                                if norm not in scores or scores[norm] < float(rs):
+                                    scores[norm] = float(rs)
+                            _walk(item)
+                elif isinstance(obj, dict):
+                    for v in obj.values():
+                        _walk(v)
+
+            _walk(parsed)
+
+            # --- Formats 1 & 2: TOON/ultra table ---
+            # Scan all keys for the results[N]{...} header pattern.
+            for hdr_key, rows in parsed.items():
+                if not (isinstance(rows, list) and "chunk_id" in hdr_key):
+                    continue
+                m = _ULTRA_HEADER_RE.match(f'"{hdr_key}"')
+                if not m:
+                    # Try search rather than match (header key may not start with '"')
+                    m2 = re.search(r"\{([^}]+)\}", hdr_key)
+                    if not m2:
+                        continue
+                    columns = [c.strip() for c in m2.group(1).split(",")]
+                else:
+                    columns = [c.strip() for c in m.group(1).split(",")]
+
+                if "chunk_id" not in columns:
+                    continue
+                cid_idx = columns.index("chunk_id")
+                rs_idx = (
+                    columns.index("reranker_score")
+                    if "reranker_score" in columns
+                    else None
+                )
+
+                # Build a row_index → chunk_id map (needed for sparse fallback).
+                row_cids: dict[int, str] = {}
+                for row_i, row in enumerate(rows):
+                    if isinstance(row, list) and cid_idx < len(row):
+                        cid_val = row[cid_idx]
+                        if isinstance(cid_val, str) and cid_val:
+                            row_cids[row_i] = cid_val
+                            # Format 1: dense reranker_score column.
+                            if rs_idx is not None and rs_idx < len(row):
+                                rs_val = row[rs_idx]
+                                if isinstance(rs_val, (int, float)):
+                                    norm = normalize_chunk_id(cid_val)
+                                    if norm not in scores or scores[norm] < float(
+                                        rs_val
+                                    ):
+                                        scores[norm] = float(rs_val)
+
+                # Format 2: sparse reranker_score structure.
+                # Look for a sibling key "reranker_score" whose value is [[idx, score], ...].
+                sparse_rs = parsed.get("reranker_score")
+                if isinstance(sparse_rs, list) and row_cids:
+                    for entry in sparse_rs:
+                        if isinstance(entry, list) and len(entry) == 2:
+                            row_i, rs_val = entry
+                            if (
+                                isinstance(row_i, int)
+                                and isinstance(rs_val, (int, float))
+                                and row_i in row_cids
+                            ):
+                                norm = normalize_chunk_id(row_cids[row_i])
+                                if norm not in scores or scores[norm] < float(rs_val):
+                                    scores[norm] = float(rs_val)
+
+    return scores
+
+
+def _extract_chunk_ids_ranked(pred: Any) -> list[str]:
+    """Return the agent's emitted ``relevant_chunk_ids``, reordered by reranker score.
+
+    This is a **post-agent ordering layer**: it only reorders chunk IDs that the
+    agent itself emitted — it never injects chunks that were not in
+    ``pred.relevant_chunk_ids``.  The trajectory ceiling metric is unchanged.
+
+    **Tool guard (D/E/F queries):** if the trajectory used ``find_connections``,
+    ``find_path``, or ``find_similar_code`` the IDs are returned in the agent's
+    original order.  Those tools return relationship targets ranked by
+    ``resolver_confidence``, not ``reranker_score``, so reordering by search
+    scores would be incorrect.
+
+    For A/B/C (``search_code``-dominant) queries: IDs with a known
+    ``reranker_score`` from trajectory observations float to the top (highest
+    score first, stable sort).  IDs with no score keep their original relative
+    order at the end.
+    """
+    ids = _extract_chunk_ids(pred)
+    if not ids:
+        return ids
+
+    # Tool guard: skip reorder for connection/path/similarity queries.
+    traj = getattr(pred, "trajectory", None)
+    used = _extract_tools_from_trajectory(traj)
+    if used & {"find_connections", "find_path", "find_similar_code"}:
+        return ids
+
+    scores = _extract_reranker_scores_from_observations(traj)
+    if not scores:
+        return ids
+
+    # Stable sort: IDs with a score come first (descending), unscored keep order.
+    scored = [(scores[cid], i, cid) for i, cid in enumerate(ids) if cid in scores]
+    unscored = [cid for cid in ids if cid not in scores]
+    scored.sort(key=lambda t: t[0], reverse=True)
+    return [cid for _, _, cid in scored] + unscored
 
 
 def _extract_chunk_ids_from_observations(trajectory: dict | None) -> list[str]:
@@ -437,7 +722,7 @@ async def _eval_one(
 
             # Retrieval metrics (reuse evaluation/metrics.py — do not reimplement)
             traj = getattr(pred, "trajectory", None)
-            retrieved = _extract_chunk_ids(pred)
+            retrieved = _extract_chunk_ids_ranked(pred)
             scores = calculate_metrics_from_results(
                 retrieved=retrieved,
                 expected=example.expected,
@@ -496,6 +781,7 @@ async def run_eval(
     project_path: str,
     *,
     dataset_path: str | Path | None = None,
+    split: str | None = None,
     k: int = 7,
     concurrency: int = 4,
     max_iters: int = 6,
@@ -518,6 +804,10 @@ async def run_eval(
         project_path: Absolute path to the already-indexed project directory.
         dataset_path: Path to the golden-dataset JSON.  Defaults to
             ``evaluation/golden_dataset.json``.
+        split: Dataset split to evaluate — ``"train"``, ``"val"``, ``"test"``,
+            or ``None`` (all 45 rows, default).  Pass ``"test"`` for the
+            held-out evaluation; ``None`` preserves the full-dataset assertion
+            in the e2e integration test.
         k: Recall cut-off for reporting (default 7).
         concurrency: Maximum parallel agent calls (default 4).
         max_iters: Maximum DSPy ReAct iterations per query (default 6).
@@ -544,7 +834,7 @@ async def run_eval(
             - ``failed_count``: number of queries that raised an exception.
             - ``total_queries``: total input queries.
     """
-    examples, thresholds = load_examples(dataset_path)
+    examples, thresholds = load_examples(dataset_path, split=split)
     lm = ClaudeCodeLM(model=model, **lm_kwargs)
     sem = asyncio.Semaphore(concurrency)
 

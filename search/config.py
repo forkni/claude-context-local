@@ -285,7 +285,9 @@ class RerankerConfig:
     """Neural reranker settings (5 fields)."""
 
     enabled: bool = True  # Enabled by default (Quality First)
-    model_name: str = "BAAI/bge-reranker-v2-m3"  # Cross-encoder reranker model
+    model_name: str = (
+        "Alibaba-NLP/gte-reranker-modernbert-base"  # Cross-encoder reranker model
+    )
     top_k_candidates: int = 50  # Rerank top 50 from RRF
     min_vram_gb: float = 2.0  # Auto-disable below this threshold (reranker uses ~1.5GB)
     batch_size: int = 16  # Reranker inference batch size
@@ -298,7 +300,7 @@ class OutputConfig:
     format: str = (
         "ultra"  # verbose, compact, ultra (default: ultra for 45-55% token reduction)
     )
-    source_order_output: bool = True  # Reorder results by file position (DOS RAG)
+    source_order_output: bool = False  # Emit results in relevance order (blended_score desc); set True to restore DOS-RAG file/line ordering
     include_subgraph: bool = (
         False  # Serialize ego_graph subgraph_* blocks into the response
     )

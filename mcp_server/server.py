@@ -182,6 +182,9 @@ def _configure_logging() -> None:
     root.addHandler(console_handler)
     root.addHandler(file_handler)
     root._code_search_logging_configured = True  # type: ignore[attr-defined]
+    # Suppress per-attempt DEBUG spam from the filelock library (bge-m3 blob
+    # locks generate hundreds of lines per cold load; WARNING+ is sufficient).
+    logging.getLogger("filelock").setLevel(logging.WARNING)
 
 
 _configure_logging()

@@ -81,7 +81,29 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "GEPA auto budget preset: "
             "light=6, medium=12, heavy=18 candidate evaluations. "
+            "Ignored when --max-full-evals or --max-metric-calls is set. "
             "Default: light."
+        ),
+    )
+    p.add_argument(
+        "--max-full-evals",
+        type=int,
+        default=None,
+        dest="max_full_evals",
+        help=(
+            "Override budget: cap as max_full_evals × (len(trainset) + len(valset)). "
+            "E.g. --max-full-evals 5 → ~295 rollouts on train=43/val=16. "
+            "Overrides --budget."
+        ),
+    )
+    p.add_argument(
+        "--max-metric-calls",
+        type=int,
+        default=None,
+        dest="max_metric_calls",
+        help=(
+            "Override budget: hard rollout ceiling passed directly to dspy.GEPA. "
+            "Overrides both --budget and --max-full-evals."
         ),
     )
     p.add_argument(
@@ -125,6 +147,27 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Override MCP HTTP server URL (default: http://localhost:8765/mcp).",
     )
+    p.add_argument(
+        "--max-stale-iters",
+        type=int,
+        default=None,
+        dest="max_stale_iters",
+        help=(
+            "Early-stop after this many consecutive full-eval iterations with no "
+            "improvement in val Recall@7 (default: disabled). Composes with "
+            "--timeout-min and the budget ceiling — first to fire wins."
+        ),
+    )
+    p.add_argument(
+        "--timeout-min",
+        type=float,
+        default=None,
+        dest="timeout_min",
+        help=(
+            "Early-stop after this many minutes of wall-clock time (default: "
+            "disabled). Composes with --max-stale-iters and the budget ceiling."
+        ),
+    )
     return p.parse_args()
 
 
@@ -137,8 +180,26 @@ def _print_prereq_banner(args: argparse.Namespace) -> None:
     print("\n" + "=" * 65)
     print("GEPA OPTIMISATION — PREREQUISITES")
     print("=" * 65)
+    if args.max_metric_calls is not None:
+        budget_display = f"max_metric_calls={args.max_metric_calls} (hard ceiling)"
+    elif args.max_full_evals is not None:
+        budget_display = (
+            f"max_full_evals={args.max_full_evals} "
+            f"(~{args.max_full_evals * 59} rollouts on train=43/val=16)"
+        )
+    else:
+        budget_display = f"auto={args.budget}"
+
+    stop_display_parts = []
+    if args.max_stale_iters is not None:
+        stop_display_parts.append(f"max_stale_iters={args.max_stale_iters}")
+    if args.timeout_min is not None:
+        stop_display_parts.append(f"timeout={args.timeout_min:.0f}min")
+    stop_display = ", ".join(stop_display_parts) if stop_display_parts else "disabled"
+
     print(f"  Project path    : {args.project_path}")
-    print(f"  Budget          : {args.budget}")
+    print(f"  Budget          : {budget_display}")
+    print(f"  Early stop      : {stop_display}")
     print(f"  Rollout model   : {args.model or 'DSPY_LM_MODEL or claude-sonnet-4-6'}")
     print(f"  Reflection model: {args.reflection_model}")
     print(f"  Num threads     : {args.num_threads}")
@@ -166,17 +227,20 @@ def _print_prereq_banner(args: argparse.Namespace) -> None:
         print("    [  ] CLAUDE_CODE_RETRY_WATCHDOG not set (recommended for long runs)")
 
     print()
+    print("  NOTE: Using train/val split (train=43, val=16, test=18 held out).")
     print(
-        "  NOTE: This is in-sample prompt discovery (trainset = valset = 13 queries)."
-    )
-    print(
-        "  Validate the result by re-running run_dspy_eval.py after porting "
-        "the\n  discovered instruction into CodeNavQA."
+        "  Validate on the held-out test split by re-running run_dspy_eval.py "
+        "after\n  porting the discovered instruction into CodeNavQA."
     )
     print("=" * 65 + "\n")
 
 
 def main() -> None:
+    import sys
+
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")
+
     args = _parse_args()
     _print_prereq_banner(args)
 
@@ -190,8 +254,18 @@ def main() -> None:
         "max_iters": args.max_iters,
         "output_dir": Path(args.output_dir),
     }
+    # Explicit budget overrides: pass through when set (run_gepa_optimization
+    # resolves priority: max_metric_calls > max_full_evals > budget).
+    if args.max_full_evals is not None:
+        kwargs["max_full_evals"] = args.max_full_evals
+    if args.max_metric_calls is not None:
+        kwargs["max_metric_calls"] = args.max_metric_calls
     if args.server_url:
         kwargs["server_url"] = args.server_url
+    if args.max_stale_iters is not None:
+        kwargs["max_stale_iters"] = args.max_stale_iters
+    if args.timeout_min is not None:
+        kwargs["timeout_min"] = args.timeout_min
 
     print("[gepa] Starting optimisation (first call may take 60–120 s)…\n")
     result = run_gepa_optimization(args.project_path, **kwargs)

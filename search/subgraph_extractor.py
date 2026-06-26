@@ -15,7 +15,8 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-import networkx as nx
+from search.chunk_id import normalize as _normalize_chunk_id
+from search.graph_view import GraphView
 
 
 if TYPE_CHECKING:
@@ -113,7 +114,7 @@ class SubgraphExtractor:
             graph_storage: CodeGraphStorage with the full code graph
         """
         self.graph_storage = graph_storage
-        self.graph = graph_storage.graph
+        self._gv = GraphView(graph_storage)
         self.project_root = getattr(graph_storage, "project_root", None)
 
     def extract_subgraph(
@@ -153,26 +154,18 @@ class SubgraphExtractor:
 
         # Build node list with metadata from graph
         for chunk_id in chunk_ids:
-            node_data = self.graph.nodes.get(chunk_id, {})
-            if not node_data:
-                # Try to find the node (path normalization issues)
+            nr = self._gv.node(chunk_id)
+            if nr is None:
+                # Node absent — may be a path normalization miss
                 logger.debug(f"[SUBGRAPH] Node {chunk_id} not found in graph")
                 continue
-
-            # Extract relative file path from chunk_id (format: "relative/path/file.py:lines:type:name")
-            # chunk_id already uses relative forward-slash paths, so we can extract the file path directly
-            file_path = (
-                chunk_id.split(":")[0] if ":" in chunk_id else node_data.get("file", "")
-            )
 
             # Create node with optional centrality score
             node = SubgraphNode(
                 chunk_id=chunk_id,
-                name=node_data.get(
-                    "name", chunk_id.split(":")[-1] if ":" in chunk_id else chunk_id
-                ),
-                kind=node_data.get("type", "unknown"),
-                file=file_path,
+                name=nr.name,
+                kind=nr.kind,
+                file=nr.file,
                 is_search_result=True,
             )
 
@@ -188,31 +181,19 @@ class SubgraphExtractor:
                 if neighbor_id in chunk_id_set:
                     continue  # Already a search result node, skip duplication
 
-                node_data = self.graph.nodes.get(neighbor_id, {})
-                if not node_data:
+                nr = self._gv.node(neighbor_id)
+                if nr is None:
                     logger.debug(
                         f"[SUBGRAPH] Ego-graph neighbor {neighbor_id} not found in graph"
                     )
                     continue
 
-                # Extract relative file path from chunk_id (same pattern as search result nodes)
-                file_path = (
-                    neighbor_id.split(":")[0]
-                    if ":" in neighbor_id
-                    else node_data.get("file", "")
-                )
-
                 # Create ego-graph neighbor node
                 node = SubgraphNode(
                     chunk_id=neighbor_id,
-                    name=node_data.get(
-                        "name",
-                        neighbor_id.split(":")[-1]
-                        if ":" in neighbor_id
-                        else neighbor_id,
-                    ),
-                    kind=node_data.get("type", "unknown"),
-                    file=file_path,
+                    name=nr.name,
+                    kind=nr.kind,
+                    file=nr.file,
                     is_search_result=False,  # KEY: marks as ego-graph neighbor
                 )
 
@@ -234,14 +215,12 @@ class SubgraphExtractor:
         ego_neighbor_id_set = set(ego_neighbor_ids) if ego_neighbor_ids else set()
 
         for chunk_id in chunk_id_set:
-            if chunk_id not in self.graph:
+            if not self._gv.contains(chunk_id):
                 continue
 
             # Outgoing edges
-            for _, target, edge_data in self.graph.out_edges(chunk_id, data=True):
-                rel_type = edge_data.get("type", "calls")
-                line = edge_data.get("line", 0)
-                is_boundary = target not in chunk_id_set
+            for er in self._gv.out_edges(chunk_id):
+                is_boundary = er.target not in chunk_id_set
 
                 # Skip boundary edges from ego-graph neighbors (2+ hops from query = noise)
                 if is_boundary and chunk_id in ego_neighbor_id_set:
@@ -257,28 +236,26 @@ class SubgraphExtractor:
                     edges.append(
                         SubgraphEdge(
                             source=chunk_id,
-                            target=target,
-                            rel_type=rel_type,
-                            line=line,
+                            target=er.target,
+                            rel_type=er.rel_type,
+                            line=er.line,
                             is_boundary=is_boundary,
                         )
                     )
 
             # Incoming edges (to avoid duplicates, only add if source is NOT in chunk_id_set)
-            for source, _, edge_data in self.graph.in_edges(chunk_id, data=True):
-                if source in chunk_id_set:
+            for er in self._gv.in_edges(chunk_id):
+                if er.source in chunk_id_set:
                     # Already captured in outgoing edges above
                     continue
 
                 if include_boundary_edges:
-                    rel_type = edge_data.get("type", "calls")
-                    line = edge_data.get("line", 0)
                     edges.append(
                         SubgraphEdge(
-                            source=source,
+                            source=er.source,
                             target=chunk_id,
-                            rel_type=rel_type,
-                            line=line,
+                            rel_type=er.rel_type,
+                            line=er.line,
                             is_boundary=True,
                         )
                     )
@@ -302,7 +279,8 @@ class SubgraphExtractor:
     def _build_topology_order(self, chunk_ids: list[str]) -> list[str]:
         """Build topological ordering of chunk_ids.
 
-        Uses SCC condensation for cycles. Dependencies appear before their users.
+        Delegates to GraphView.induced_topology which owns the NX logic.
+        Uses SCC condensation for cycles so dependencies appear before users.
 
         Args:
             chunk_ids: Chunk IDs to order
@@ -310,31 +288,7 @@ class SubgraphExtractor:
         Returns:
             Topologically sorted list of chunk_ids
         """
-        # Extract induced subgraph
-        induced = self.graph.subgraph(chunk_ids)
-
-        try:
-            # Try direct topological sort (works if DAG)
-            return list(nx.topological_sort(induced))
-        except nx.NetworkXUnfeasible:
-            # Graph has cycles, use SCC condensation
-            logger.debug("[SUBGRAPH] Cycles detected, using SCC condensation")
-
-            # Create SCC-based DAG
-            scc_graph = nx.condensation(induced)
-
-            # Topological sort the condensation
-            scc_order = list(nx.topological_sort(scc_graph))
-
-            # Expand SCCs back to individual nodes
-            # SCCs are stored in 'members' attribute of condensation nodes
-            result = []
-            for scc_id in scc_order:
-                scc_members = scc_graph.nodes[scc_id].get("members", [])
-                # Within an SCC, order doesn't matter (they're mutually recursive)
-                result.extend(scc_members)
-
-            return result
+        return self._gv.induced_topology(chunk_ids)
 
     def _annotate_communities(self, nodes: list[SubgraphNode]) -> dict[int, dict]:
         """Load community map and annotate nodes with community IDs.
@@ -379,8 +333,9 @@ class SubgraphExtractor:
         for cid, chunk_ids in communities.items():
             dirs = []
             for chunk_id in chunk_ids:
-                # Extract file path from chunk_id (format: "file.py:lines:type:name")
-                parts = chunk_id.replace("\\", "/").split(":")
+                # Extract file path from chunk_id via the chunk_id module
+                # (handles Windows backslashes, format: "file.py:lines:type:name")
+                parts = _normalize_chunk_id(chunk_id).split(":")
                 if parts:
                     file_path = parts[0]
                     path_parts = file_path.split("/")

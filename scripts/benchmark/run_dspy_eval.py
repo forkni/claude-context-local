@@ -1,17 +1,27 @@
 """CLI entry point: run the DSPy agent evaluation harness.
 
 Connects to the already-running code-search HTTP server, runs the DSPy ReAct
-agent over all 13 golden-dataset queries, and reports tool-selection accuracy
-plus Recall@7/MRR/NDCG.  Results are written to results/dspy_eval_<ts>.json.
+agent over the SSCG golden dataset (45 queries, categories A–D), and reports
+tool-selection accuracy plus Recall@7/MRR/NDCG.  Results are written to
+results/dspy_eval_<ts>.json.
+
+By default evaluates only the held-out **test split** (8 queries) so the
+result is a genuine out-of-sample measurement.  Use ``--split all`` for a
+full 45-query run (e.g. as a drift check), or ``--split train``/``val`` during
+development.
 
 Usage::
 
-    # Default (project = this repo, k=7, concurrency=4):
+    # Default (held-out test split, k=7, concurrency=4):
     .venv/Scripts/python.exe scripts/benchmark/run_dspy_eval.py
+
+    # Full dataset:
+    .venv/Scripts/python.exe scripts/benchmark/run_dspy_eval.py --split all
 
     # Custom:
     .venv/Scripts/python.exe scripts/benchmark/run_dspy_eval.py \\
         --project-path D:/claude-context-local \\
+        --split test \\
         --k 7 \\
         --concurrency 4 \\
         --max-iters 6
@@ -25,9 +35,8 @@ Prerequisites:
 Cost: $0 — ClaudeCodeLM bills to the Claude Code Max subscription.
       (Usage counters in the JSON are intentionally zero.)
 
-Baseline for comparison:
-    evaluation/golden_dataset.json._meta.current_metrics.recall_at_7 = 0.736
-    (searcher-only benchmark, hybrid mode, 2026-06-08)
+Baseline for comparison (searcher-only, hybrid mode, 2026-06-08, all 45 queries):
+    Recall@7=0.736  MRR=0.797  NDCG@5=0.717
 """
 
 import argparse
@@ -98,9 +107,27 @@ def _parse_args() -> argparse.Namespace:
         help="Claude model ID (default: DSPY_LM_MODEL env or claude-sonnet-4-6).",
     )
     p.add_argument(
+        "--split",
+        choices=["train", "val", "test", "all"],
+        default="test",
+        help=(
+            "Dataset split to evaluate: train (43), val (16), test (18, default), "
+            "or all (77).  Default 'test' evaluates the held-out split."
+        ),
+    )
+    p.add_argument(
         "--output-dir",
         default=str(Path(_ROOT) / "results"),
         help="Directory for the JSON output file (default: results/).",
+    )
+    p.add_argument(
+        "--tool-names",
+        default=None,
+        help=(
+            "Comma-separated MCP tool names to expose to the agent "
+            "(default: search_code,find_connections). "
+            "Example: --tool-names search_code,find_connections,find_path,find_similar_code"
+        ),
     )
     return p.parse_args()
 
@@ -167,8 +194,12 @@ def main() -> None:
 
     from evaluation.dspy_agent_eval import run_eval  # lazy import (heavy)
 
+    split_display = args.split  # "train"/"val"/"test"/"all"
+    split_val: str | None = None if args.split == "all" else args.split
+
     print(
         f"\n[dspy-eval] project  : {args.project_path}\n"
+        f"[dspy-eval] split    : {split_display}\n"
         f"[dspy-eval] k        : {args.k}\n"
         f"[dspy-eval] concurrency: {args.concurrency}\n"
         f"[dspy-eval] max_iters: {args.max_iters}\n"
@@ -177,6 +208,7 @@ def main() -> None:
 
     eval_kwargs: dict = {
         "project_path": args.project_path,
+        "split": split_val,
         "k": args.k,
         "concurrency": args.concurrency,
         "max_iters": args.max_iters,
@@ -187,6 +219,8 @@ def main() -> None:
         eval_kwargs["server_url"] = args.server_url
     if args.model:
         eval_kwargs["model"] = args.model
+    if args.tool_names:
+        eval_kwargs["tool_names"] = tuple(args.tool_names.split(","))
 
     result = asyncio.run(run_eval(**eval_kwargs))
 

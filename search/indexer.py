@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
+from embeddings.chunk_metadata import resolve_chunk_path
+
 
 if TYPE_CHECKING:
     from embeddings.embedder import CodeEmbedder
@@ -485,7 +487,7 @@ class CodeIndexManager:
             metadata = metadata_entry["metadata"]
 
             # Check if this chunk belongs to the file
-            chunk_file = metadata.get("file_path") or metadata.get("relative_path")
+            chunk_file = resolve_chunk_path(metadata)
             if not chunk_file:
                 continue
 

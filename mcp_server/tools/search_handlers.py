@@ -8,6 +8,7 @@ import logging
 from typing import Any
 
 from chunking.multi_language_chunker import MultiLanguageChunker
+from graph.schema import get_reverse_relation
 from mcp_server.guidance import add_system_message
 from mcp_server.model_pool_manager import get_embedder
 from mcp_server.server import (
@@ -493,35 +494,12 @@ async def _resolve_symbol_to_chunk_id(
 # Full Relationship Enrichment Per Result
 # ============================================================================
 
-# Reverse relation names for incoming edge enrichment
-# Matches graph_storage._get_reverse_relation_type() naming convention
-_REVERSE_RELATION_MAP: dict[str, str] = {
-    "calls": "called_by",
-    "inherits": "inherited_by",
-    "uses_type": "used_as_type_by",
-    "imports": "imported_by",
-    "decorates": "decorated_by",
-    "raises": "raised_by",
-    "catches": "caught_by",
-    "instantiates": "instantiated_by",
-    "implements": "implemented_by",
-    "overrides": "overridden_by",
-    "assigns_to": "assigned_by",
-    "reads_from": "read_by",
-    "defines_constant": "constant_defined_by",
-    "defines_enum_member": "enum_member_defined_by",
-    "defines_class_attr": "class_attr_defined_by",
-    "defines_field": "field_defined_by",
-    "uses_constant": "constant_used_by",
-    "uses_default": "default_used_by",
-    "uses_global": "global_used_by",
-    "asserts_type": "type_asserted_by",
-    "uses_context_manager": "context_manager_used_by",
-}
-
 
 def _get_reverse_relation_name(rel_type: str) -> str:
     """Get the reverse name for a relationship type.
+
+    Delegates to ``graph.schema.get_reverse_relation`` — the single owner
+    of the forward→reverse mapping.
 
     Args:
         rel_type: Forward relationship type (e.g., "calls", "inherits")
@@ -529,7 +507,7 @@ def _get_reverse_relation_name(rel_type: str) -> str:
     Returns:
         Reverse relationship name (e.g., "called_by", "inherited_by")
     """
-    return _REVERSE_RELATION_MAP.get(rel_type, f"{rel_type}_by")
+    return get_reverse_relation(rel_type)
 
 
 def _get_graph_data_for_chunk(

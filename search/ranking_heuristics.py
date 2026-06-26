@@ -3,6 +3,16 @@
 import re
 from typing import TYPE_CHECKING
 
+from search.ranking_policy import (
+    ACTION_WORDS,
+    LIFECYCLE_METHODS,  # noqa: F401  (re-exported for any callers that used to import it here)
+    NAME_OVERLAP_TIERS,
+    TYPE_BOOSTS_CLASS_KEYWORD,
+    TYPE_BOOSTS_CODE,
+    TYPE_BOOSTS_ENTITY,
+    lifecycle_demotion,
+)
+
 
 if TYPE_CHECKING:
     from .searcher import SearchResult
@@ -29,50 +39,18 @@ class RankingHeuristics:
         has_class_keyword = "class" in query.lower()
 
         if has_class_keyword:
-            type_boosts = {
-                "class": 1.4,
-                "function": 1.2,
-                "method": 1.2,
-                "module": 0.82,
-                "community": 0.82,
-            }
+            type_boosts = TYPE_BOOSTS_CLASS_KEYWORD
         elif is_entity_query:
-            type_boosts = {
-                "class": 1.35,
-                "function": 1.15,
-                "method": 1.15,
-                "module": 0.85,
-                "community": 0.85,
-            }
+            type_boosts = TYPE_BOOSTS_ENTITY
         else:
-            type_boosts = {
-                "function": 1.2,
-                "method": 1.2,
-                "class": 1.35,
-                "module": 0.90,
-                "community": 0.90,
-            }
+            type_boosts = TYPE_BOOSTS_CODE
 
         score *= type_boosts.get(result.chunk_type, 1.0)
 
         score *= self._calculate_name_boost(result.name, query, query_tokens)
         score *= self._calculate_path_boost(result.relative_path, query_tokens)
 
-        lifecycle_methods = {
-            "__init__",
-            "__enter__",
-            "__exit__",
-            "__del__",
-            "__repr__",
-            "__str__",
-        }
-        if result.name in lifecycle_methods:
-            query_has_lifecycle_intent = any(
-                word in query.lower()
-                for word in ("init", "enter", "exit", "del", "repr", "lifecycle")
-            )
-            if not query_has_lifecycle_intent:
-                score *= 0.85
+        score *= lifecycle_demotion(result.name, query.lower())
 
         if result.docstring:
             if is_entity_query and result.chunk_type == "module":
@@ -96,26 +74,7 @@ class RankingHeuristics:
         if len(query_tokens) > 3:
             return False
 
-        action_words = {
-            "find",
-            "search",
-            "get",
-            "show",
-            "list",
-            "how",
-            "what",
-            "where",
-            "when",
-            "create",
-            "build",
-            "make",
-            "handle",
-            "process",
-            "manage",
-            "implement",
-        }
-
-        if any(token in action_words for token in query_tokens):
+        if any(token in ACTION_WORDS for token in query_tokens):
             return False
 
         if re.search(r"[A-Z][a-z]+[A-Z]", query):
@@ -148,14 +107,10 @@ class RankingHeuristics:
             return 1.0
 
         overlap_ratio = overlap / total_query_tokens
-        if overlap_ratio >= 0.8:
-            return 1.3
-        elif overlap_ratio >= 0.5:
-            return 1.2
-        elif overlap_ratio >= 0.3:
-            return 1.1
-        else:
-            return 1.05
+        for min_ratio, multiplier in NAME_OVERLAP_TIERS:
+            if overlap_ratio >= min_ratio:
+                return multiplier
+        return 1.05  # below lowest tier: weak partial overlap
 
     def _calculate_path_boost(
         self, relative_path: str, query_tokens: list[str]

@@ -3,6 +3,7 @@
 All tools use the `code-search:` server prefix. Always use fully qualified names.
 
 ## Contents
+
 - Essential Tools (search_code, find_connections, find_path)
 - Project Management (6 tools)
 - Search Configuration (3 tools)
@@ -15,6 +16,7 @@ All tools use the `code-search:` server prefix. Always use fully qualified names
 ## Essential Tools (Use These Most)
 
 ### code-search:search_code
+
 Find code with natural language query or direct chunk lookup. Use for all initial code searches.
 
 **Key options:** `query`, `chunk_id` (direct O(1) lookup), `k` (results count, default 4, **recommended 7**), `search_mode` ("hybrid"/"semantic"/"bm25"/"auto"), `model_key` ("qwen3_0.6b"/"bge_m3"/"coderankembed"/"gte_modernbert"), `use_routing` (default true), `file_pattern`, `include_dirs`, `exclude_dirs`, `chunk_type` (see below), `include_context` (default true), `auto_reindex` (default true), `max_age_minutes` (default 5), `ego_graph_enabled` (default false), `ego_graph_k_hops` (default 2, range 1-5), `ego_graph_max_neighbors_per_hop` (default 10, range 1-50), `include_parent` (default false), `output_format` ("compact"/"verbose"/"ultra", default "compact"), `max_context_tokens` (token-budget cap). Full parameter reference in [parameters.md](parameters.md).
@@ -27,6 +29,7 @@ Find code with natural language query or direct chunk lookup. Use for all initia
 **Result fields (optional):** `complexity_score`, `graph`, `reranker_score`, `summary`
 
 ### code-search:find_connections
+
 Find all callers, callees, dependencies, and relationships for a given symbol. Returns `direct_callers` (inbound) and `direct_callees` (outbound) with per-entry provenance (`resolver_source`, `resolver_confidence`). Preferred over Grep for caller/dependency discovery.
 
 **Key options:** `chunk_id` (preferred), `symbol_name` (fallback — may be ambiguous), `max_depth` (default 3, range 1-5), `exclude_dirs`, `relationship_types`, `output_format`
@@ -34,6 +37,7 @@ Find all callers, callees, dependencies, and relationships for a given symbol. R
 **Valid relationship types (21):** calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, assigns_to, reads_from, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager
 
 ### code-search:find_path
+
 Find shortest path between two code entities via the relationship graph. Uses bidirectional BFS.
 
 **Key options:** `source_chunk_id`, `target_chunk_id` (preferred), `source`/`target` symbol names (fallback), `edge_types`, `max_hops` (default 10, range 1-20), `output_format`

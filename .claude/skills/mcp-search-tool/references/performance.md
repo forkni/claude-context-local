@@ -1,8 +1,47 @@
 # Search Performance & Benchmark Reference
 
-## Latest Validation (2026-06-08, hybrid k=10)
+## Latest Validation (2026-06-26, hybrid k=7, 63-query SSCG, gte-reranker)
 
-Post golden-set drift fix (`b5cfc24`) and line-overlap harness fix (`184e13b`). Thresholds enforced from `evaluation/golden_dataset.json`. Metrics auto-computed by `scripts/benchmark/run_sscg_benchmark.py`.
+Expanded benchmark: 63 queries (A–F coverage, from `scripts/benchmark/run_sscg_benchmark.py`).
+Active reranker: `Alibaba-NLP/gte-reranker-modernbert-base` (validated best-available on laptop;
+Phase C experiment: bge-reranker-v2-m3 was worse, jina-reranker-v3 OOM on 8GB GPU — see Phase C note below).
+
+| MRR | Recall@5 | Recall@7 | Recall@10 | Hit@5 | NDCG@5 | Line Recall | Line Precision | Line IoU | Lat |
+|-----|----------|----------|-----------|-------|--------|-------------|----------------|----------|-----|
+| **0.700** | **0.625** | **0.696** | **0.734** | **0.984** (62/63) | **0.625** | 0.947 | 0.203 | 0.233 | 617ms |
+
+All thresholds pass: MRR ≥ 0.50 ✓ | Recall@5 ≥ 0.55 ✓ | Hit@5 ≥ 0.80 ✓. Recommended operating point: **k=7**.
+
+Note: the 2026-06-08 13-query baseline (MRR 0.797) used a smaller query set; numbers not directly comparable to this 63-query run.
+
+## DSPy Agent Eval (2026-06-26, 77-query dataset, 4-tool, 18 test queries)
+
+Full 4-tool harness (search_code, find_connections, find_path, find_similar_code) against the 18-query held-out test split (A–F coverage). Prior baselines used 2 tools — those were an eval artifact; this is the corrected reference.
+
+| Recall@7 | Traj Recall | MRR | NDCG@5 | Hit@7 | Tool Sel Acc |
+|----------|-------------|-----|--------|-------|--------------|
+| **0.9046** | 0.9537 | **0.8519** | **0.8116** | **1.000** | **1.000** |
+
+Gap traj→final: +0.049 (chunks seen-but-dropped by agent, down from +0.167 with 2-tool harness).
+
+## Phase C Reranker Experiment (2026-06-26) — NULL RESULT
+
+Tested two stronger rerankers against R0 gte baseline (SSCG R@7 0.696 / MRR 0.700):
+- **`jinaai/jina-reranker-v3`** — OOM on 8GB laptop GPU. Listwise single-pass (131K context), fires 3×/query
+  (Hop-1 + multi-hop merge + post-ego-graph), `batch_size` silently dropped by factory, no fp16, idle ~5.7GB.
+  Structurally incompatible with this hardware. Do not attempt without code changes (fp16, CPU device override,
+  single-pass gating).
+- **`BAAI/bge-reranker-v2-m3`** — loaded fine (~1.1GB batched cross-encoder) but **scored worse**: SSCG
+  MRR 0.602 (−0.098), R@7 0.621 (−0.075), Hit@5 0.952 (−0.032). 5× slower (3301ms vs 617ms).
+  bge-v2-m3 is a general-purpose model; gte-reranker-modernbert-base is better tuned for this code corpus.
+
+**Conclusion:** `Alibaba-NLP/gte-reranker-modernbert-base` is validated as the best available reranker on this laptop for this corpus. The active config is already optimal among tested alternatives.
+
+---
+
+## Archived: SSCG 13-Query Baseline (2026-06-08, hybrid k=10)
+
+---
 
 | MRR | Recall@5 | Recall@7 | Recall@10 | Hit@5 | NDCG@5 | Line Recall | Line Precision | Line IoU |
 |-----|----------|----------|-----------|-------|--------|-------------|----------------|----------|

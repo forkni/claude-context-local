@@ -122,7 +122,7 @@ def _cleanup_previous_resources() -> None:
         logger.warning(f"Error flushing OTel spans: {e}")
 
 
-def close_project_resources(project_path: str) -> bool:
+def close_project_resources(project_path: str, *, clear_current: bool = True) -> bool:
     """Close all resources associated with a specific project.
 
     This function ensures all database connections and file handles
@@ -131,6 +131,13 @@ def close_project_resources(project_path: str) -> bool:
 
     Args:
         project_path: Absolute path to the project directory
+        clear_current: Whether to null state.current_project after cleanup.
+            True (default) for deletion — the project is gone, so the
+            current-project pointer must be cleared.
+            False for clear-index — only the index files are removed; the
+            project directory still exists and stays the active project, so
+            nulling the pointer would cause subsequent get_index_status calls
+            to hit the ValueError early-return path and drop bm25_documents.
 
     Returns:
         True if cleanup successful
@@ -143,7 +150,8 @@ def close_project_resources(project_path: str) -> bool:
     # If this is the current project, clean up state
     if state.current_project == project_path_resolved:
         _cleanup_previous_resources()
-        state.current_project = None
+        if clear_current:
+            state.current_project = None
         logger.info(f"Cleaned up resources for current project: {project_path}")
     else:
         logger.debug(

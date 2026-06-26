@@ -15,10 +15,10 @@ single :class:`threading.Lock` serialises MCP I/O (the session cannot serve two
 in-flight requests simultaneously); the expensive ``claude -p`` LM calls still
 run in parallel.
 
-*In-sample optimisation.*  The golden dataset has only 13 queries — too small for
-a train/val split.  ``trainset = valset = all 13``.  This is honest prompt
-discovery, not a held-out generalisation test.  A caveat is logged at runtime.
-The real generalisation check is a larger dataset (deferred work).
+*Train/val split.*  The golden dataset has 77 queries with a ``split`` field
+(``"train"``/``"val"``/``"test"``).  GEPA uses the train split (43 rows) for
+optimisation and the val split (16 rows) for evaluation; ``run_dspy_eval.py``
+reports the held-out test split (18 rows) as the final generalisation check.
 
 *Subscription billing.*  Both the rollout LM (``claude-sonnet-4-6``) and the
 reflection LM (``claude-opus-4-8``) are driven through
@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Any
 
 import dspy
+from gepa.utils.stop_condition import NoImprovementStopper, TimeoutStopCondition
 
 from evaluation.dspy_agent_eval import (
     CodeNavQA,
@@ -85,7 +86,7 @@ def gepa_tool_bridge(
     *,
     server_url: str = _DEFAULT_SERVER_URL,
     tool_names: tuple[str, ...] = ("search_code", "find_connections"),
-    tool_timeout_s: float = 45.0,
+    tool_timeout_s: float = 120.0,
 ):
     """Synchronous context manager: expose MCP tools as sync callables.
 
@@ -168,6 +169,7 @@ def gepa_tool_bridge(
                     try:
                         return future.result(timeout=tool_timeout_s + 5)
                     except TimeoutError:
+                        future.cancel()  # prevent coroutine leak on the loop
                         msg = (
                             f"Execution error in {tool_name}: "
                             f"timeout after {tool_timeout_s:.0f}s"
@@ -305,22 +307,25 @@ def gepa_metric(
 def run_gepa_optimization(
     project_path: str,
     *,
-    budget: str = "light",
+    budget: str | None = "light",
+    max_full_evals: int | None = None,
+    max_metric_calls: int | None = None,
     reflection_model: str = "claude-opus-4-8",
     rollout_model: str | None = None,
     num_threads: int = 4,
     max_iters: int = 6,
     output_dir: Path | str = Path("results"),
     server_url: str = _DEFAULT_SERVER_URL,
+    max_stale_iters: int | None = None,
+    timeout_min: float | None = None,
 ) -> dict[str, Any]:
     """Run GEPA to evolve the ``CodeNavQA`` instructions for higher Recall@7.
 
-    Runs ``dspy.GEPA`` with the project's golden dataset (13 queries) as both
-    trainset and valset.  This is documented in-sample prompt discovery — the
-    dataset is too small for a held-out split (deferred: grow the dataset).
-    The discovered instruction should be validated by re-running
-    ``scripts/benchmark/run_dspy_eval.py`` and compared to the hand-written
-    seed in ``evaluation/dspy_agent_eval.py``.
+    Runs ``dspy.GEPA`` with the train split (43 queries) and validates on the
+    val split (16 queries) from the golden dataset (77 queries total).  The
+    held-out test split (18 queries) is reserved for ``run_dspy_eval.py``.
+    The discovered instruction should be compared to the hand-written seed in
+    ``evaluation/dspy_agent_eval.py``.
 
     Both rollout and reflection LMs use :class:`~utils.dspy_claude_code.ClaudeCodeLM`
     (subscription billing; no ``ANTHROPIC_API_KEY`` required).
@@ -328,7 +333,14 @@ def run_gepa_optimization(
     Args:
         project_path: Absolute path to the indexed project directory.
         budget: GEPA ``auto`` preset — ``"light"`` (6), ``"medium"`` (12),
-            or ``"heavy"`` (18) candidate evaluations.
+            or ``"heavy"`` (18) candidate evaluations.  Ignored when
+            ``max_full_evals`` or ``max_metric_calls`` is set.
+        max_full_evals: Explicit full-evaluation cap passed as
+            ``dspy.GEPA(max_full_evals=...)``.  Computes metric calls as
+            ``max_full_evals × (len(trainset) + len(valset))``, e.g. 5 → 295
+            on train=43 / val=16.  Overrides ``budget`` when set.
+        max_metric_calls: Hard rollout ceiling passed directly to GEPA.
+            Overrides both ``budget`` and ``max_full_evals`` when set.
         reflection_model: Claude model for GEPA's reflective step.
             Default ``"claude-opus-4-8"`` (strong instruction proposer).
         rollout_model: Claude model for agent rollouts.  ``None`` falls back
@@ -339,6 +351,12 @@ def run_gepa_optimization(
         output_dir: Directory for GEPA artifacts (program JSON + stats JSON).
             Defaults to ``results/`` which is gitignored.
         server_url: Full MCP HTTP endpoint URL (must include ``/mcp``).
+        max_stale_iters: Stop after this many consecutive full-eval iterations
+            with no improvement in val Recall@7.  ``None`` disables this early-
+            stop condition.  Composes with ``timeout_min`` and the budget
+            ceiling — whichever fires first wins (GEPA uses ``mode="any"``).
+        timeout_min: Stop after this many minutes of wall-clock time since
+            ``compile()`` was called.  ``None`` disables this condition.
 
     Returns:
         Dict with keys:
@@ -356,14 +374,18 @@ def run_gepa_optimization(
 
     ts = _time.strftime("%Y%m%d_%H%M%S")
 
-    logger.warning(
-        "GEPA: trainset = valset = all 13 queries (in-sample prompt discovery). "
-        "Overfitting is expected. Validate result with run_dspy_eval.py."
+    logger.info(
+        "GEPA: using train/val split from golden dataset (train=43, val=16, test=18 held out)."
     )
 
-    # Load golden dataset.
-    examples, _thresholds = load_examples()
-    logger.info("GEPA: loaded %d training examples.", len(examples))
+    # Load golden dataset — train and val splits separately.
+    examples, _thresholds = load_examples(split="train")
+    val_examples, _ = load_examples(split="val")
+    logger.info(
+        "GEPA: loaded %d train examples, %d val examples.",
+        len(examples),
+        len(val_examples),
+    )
 
     # Configure the global DSPy LM for rollouts.
     task_lm = ClaudeCodeLM(model=rollout_model)
@@ -383,27 +405,58 @@ def run_gepa_optimization(
     with gepa_tool_bridge(
         project_path=project_path,
         server_url=server_url,
-        tool_timeout_s=45.0,
+        tool_timeout_s=120.0,
     ) as sync_tools:
-        student = dspy.ReAct(CodeNavQA, tools=sync_tools, max_iters=max_iters)
+        student = dspy.ReAct(CodeNavQA, tools=sync_tools, max_iters=max_iters)  # pyrefly: ignore[bad-argument-type]  # DSPy stub requires Callable but list[Tool] is the real API
+
+        # Resolve budget: explicit knobs take priority over the auto preset.
+        # dspy.GEPA enforces exactly-one-of {auto, max_full_evals, max_metric_calls}.
+        if max_metric_calls is not None:
+            budget_kwargs: dict[str, Any] = {"max_metric_calls": max_metric_calls}
+        elif max_full_evals is not None:
+            budget_kwargs = {"max_full_evals": max_full_evals}
+        else:
+            budget_kwargs = {"auto": budget}
+        logger.info("GEPA: budget_kwargs=%s", budget_kwargs)
+
+        # Build optional early-stop callbacks.
+        # The gepa engine composes these with the budget MaxMetricCallsStopper and
+        # the auto-wired FileStopper (<log_dir>/gepa.stop) using mode="any" — the
+        # first stopper that fires ends the run and returns best-so-far.
+        stop_callbacks: list[Any] = []
+        if max_stale_iters is not None:
+            stop_callbacks.append(NoImprovementStopper(max_stale_iters))
+            logger.info(
+                "GEPA: NoImprovementStopper(max_stale_iters=%d)", max_stale_iters
+            )
+        if timeout_min is not None:
+            stop_callbacks.append(TimeoutStopCondition(timeout_min * 60))
+            logger.info("GEPA: TimeoutStopCondition(timeout_min=%.1f)", timeout_min)
+        extra_gepa_kwargs: dict[str, Any] = {}
+        if stop_callbacks:
+            extra_gepa_kwargs["stop_callbacks"] = stop_callbacks
 
         gepa = dspy.GEPA(
-            metric=gepa_metric,
-            auto=budget,
-            reflection_lm=reflection_lm,
+            metric=gepa_metric,  # pyrefly: ignore[bad-argument-type]  # DSPy GEPA stub uses GEPAFeedbackMetric; callable metric is valid at runtime
+            **budget_kwargs,
+            reflection_lm=reflection_lm,  # pyrefly: ignore[bad-argument-type]  # DSPy stub expects LM | None; ClaudeCodeLM inherits BaseLM at runtime
             num_threads=num_threads,
             track_stats=True,
             log_dir=str(log_dir),
             seed=0,
+            gepa_kwargs=extra_gepa_kwargs if extra_gepa_kwargs else None,
         )
         logger.info(
-            "GEPA: starting compile (budget=%s, num_threads=%d)…", budget, num_threads
+            "GEPA: starting compile (budget=%s, num_threads=%d, stoppers=%d)…",
+            budget,
+            num_threads,
+            len(stop_callbacks),
         )
 
         optimized = gepa.compile(
             student,
             trainset=examples,
-            valset=examples,
+            valset=val_examples,
         )
 
     # Extract the evolved instruction.
@@ -463,7 +516,7 @@ def run_gepa_optimization(
     stats: dict[str, Any] = {
         "timestamp": ts,
         "project_path": project_path,
-        "budget": budget,
+        "budget": budget_kwargs,
         "rollout_model": task_lm.model,
         "reflection_model": reflection_model,
         "num_threads": num_threads,

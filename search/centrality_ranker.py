@@ -12,6 +12,15 @@ from typing import TYPE_CHECKING
 
 import networkx as nx
 
+from search.chunk_id import extract_line_count as _extract_chunk_lines_impl
+from search.chunk_id import extract_name as _extract_name_impl
+from search.ranking_policy import (
+    NAME_OVERLAP_TIERS,
+    TYPE_BOOSTS_CODE,
+    TYPE_BOOSTS_ENTITY,
+    lifecycle_demotion,
+)
+
 
 if TYPE_CHECKING:
     from graph.graph_queries import GraphQueryEngine
@@ -32,8 +41,7 @@ def _extract_name_from_chunk_id(chunk_id: str) -> str:
     Returns:
         The qualified name (fourth component), or empty string if invalid format.
     """
-    parts = chunk_id.split(":")
-    return parts[3] if len(parts) >= 4 else ""
+    return _extract_name_impl(chunk_id)
 
 
 def _tokenize_for_matching(text: str) -> set[str]:
@@ -74,20 +82,7 @@ def _extract_chunk_lines(chunk_id: str) -> int:
     Returns:
         Number of lines in chunk, or 0 if format is invalid.
     """
-    parts = chunk_id.split(":")
-    if len(parts) < 2:
-        logger.warning(f"Malformed chunk_id (insufficient parts): {chunk_id}")
-        return 0
-    line_range = parts[1]  # "start-end" format
-    if "-" not in line_range:
-        logger.warning(f"Malformed chunk_id (no line range): {chunk_id}")
-        return 0
-    try:
-        start, end = map(int, line_range.split("-"))
-        return end - start + 1  # Inclusive range
-    except (ValueError, IndexError):
-        logger.warning(f"Malformed chunk_id (invalid line range): {chunk_id}")
-        return 0
+    return _extract_chunk_lines_impl(chunk_id)
 
 
 class CentralityRanker:
@@ -311,24 +306,17 @@ class CentralityRanker:
             w in query_lower for w in ("class", "module", "struct", "enum")
         )
         if is_entity_query:
+            # Shared base from ranking_policy + centrality-specific entries
             type_boosts = {
-                "class": 1.35,
-                "function": 1.15,
-                "method": 1.15,
+                **TYPE_BOOSTS_ENTITY,
                 "decorated_definition": 1.1,
                 "split_block": 1.1,  # Function/method fragments
-                "module": 0.85,  # File-level summaries (A2) - strengthened demotion
-                "community": 0.85,  # Community-level summaries (B1) - strengthened demotion
             }
         else:
             type_boosts = {
-                "function": 1.2,
-                "method": 1.2,
+                **TYPE_BOOSTS_CODE,
                 "decorated_definition": 1.0,  # Neutral — includes dataclasses, not just functions
                 "split_block": 1.1,  # Function/method fragments
-                "class": 1.35,
-                "module": 0.90,  # File-level summaries (A2) - strengthened demotion
-                "community": 0.90,  # Community-level summaries (B1) - strengthened demotion
             }
         result["blended_score"] = round(
             result["blended_score"] * type_boosts.get(chunk_type, 1.0), 4
@@ -425,22 +413,10 @@ class CentralityRanker:
         when the query does not have explicit lifecycle intent.
         """
         # Lifecycle method demotion (prevents boilerplate from displacing core logic)
-        lifecycle_methods = {
-            "__init__",
-            "__enter__",
-            "__exit__",
-            "__del__",
-            "__repr__",
-            "__str__",
-        }
         terminal_name = name.split(".")[-1] if "." in name else name
-        if terminal_name in lifecycle_methods:
-            query_has_lifecycle_intent = any(
-                w in query_lower
-                for w in ("init", "enter", "exit", "del", "repr", "lifecycle")
-            )
-            if not query_has_lifecycle_intent:
-                result["blended_score"] = round(result["blended_score"] * 0.85, 4)
+        demotion = lifecycle_demotion(terminal_name, query_lower)
+        if demotion != 1.0:
+            result["blended_score"] = round(result["blended_score"] * demotion, 4)
 
         if name and query_lower:
             query_tokens = _tokenize_for_matching(
@@ -453,15 +429,14 @@ class CentralityRanker:
                 overlap = len(query_tokens & name_tokens) / len(name_tokens)
                 pre_boost_score = result["blended_score"]
                 boost_multiplier = 1.0
-                if overlap >= 0.8:
-                    result["blended_score"] = round(result["blended_score"] * 1.3, 4)
-                    boost_multiplier = 1.3
-                elif overlap >= 0.5:
-                    result["blended_score"] = round(result["blended_score"] * 1.2, 4)
-                    boost_multiplier = 1.2
-                elif overlap >= 0.3:
-                    result["blended_score"] = round(result["blended_score"] * 1.1, 4)
-                    boost_multiplier = 1.1
+                # NAME_OVERLAP_TIERS = ((0.8, 1.3), (0.5, 1.2), (0.3, 1.1)) — ranking_policy
+                for min_ratio, tier_mult in NAME_OVERLAP_TIERS:
+                    if overlap >= min_ratio:
+                        result["blended_score"] = round(
+                            result["blended_score"] * tier_mult, 4
+                        )
+                        boost_multiplier = tier_mult
+                        break
 
                 if boost_multiplier > 1.0:
                     logger.debug(

@@ -2,18 +2,26 @@
   "_meta": {
     "description": "SSCG golden dataset for automated retrieval benchmarking",
     "source": "benchmark_results/sscg_evaluation/ground_truth.md",
-    "labeled_by": "Claude Sonnet 4.5",
-    "labeled_date": "2026-04-10",
+    "labeled_by": "Claude Sonnet 4.5 (Q01-Q35), Claude Opus 4.8 (Q36-Q67)",
+    "labeled_date": "2026-06-24",
     "normalization": "Chunk IDs have line-range portions stripped (e.g., 'file.py:10-20:type:name' -> 'file.py:type:name') for stability across code churn",
     "relevance_scale": "0=not_relevant, 1=marginal, 2=relevant, 3=highly_relevant",
     "expected": "chunk IDs with label >= 2 (used for Recall@k, NDCG@k)",
     "expected_primary": "chunk IDs with label == 3 (used for MRR)",
-    "total_queries": 13,
+    "total_queries": 77,
     "categories": {
       "A": "Small Function Discovery",
       "B": "Sibling Context (paired operations)",
       "C": "Class Overview",
-      "D": "Connection Queries (use find_connections, not ranked search)"
+      "D": "Connection Queries (use find_connections, not ranked search)",
+      "E": "Path/Flow Queries (use find_path to trace call-graph route between two symbols)",
+      "F": "Similarity Queries (use find_similar_code to find near-duplicate implementations)"
+    },
+    "splits": {
+      "train": 43,
+      "val": 16,
+      "test": 18,
+      "note": "Stratified by category: A=9/3/3, B=8/3/3, C=10/3/3, D=8/3/3, E=4/2/3, F=4/2/3. Category D excluded from run_sscg_benchmark.py by default (searcher cannot traverse call graph); include with --category D."
     },
     "baseline_metrics": {
       "mrr": 0.73,
@@ -21,16 +29,53 @@
       "note": "Baseline from first system version evaluated 2026-01-30"
     },
     "current_metrics": {
-      "mrr": 0.797,
-      "recall_at_5": 0.689,
-      "recall_at_7": 0.736,
-      "recall_at_10": 0.770,
-      "hit_rate_at_5": 1.00,
-      "ndcg_at_5": 0.717,
-      "note": "Hybrid-default run 2026-06-08 (config bm25/dense 0.35/0.65, k=10, 13 queries), post Q05/Q35 golden drift fix and line-overlap fix. Matches the figures cited across README / BENCHMARKS.md / skill performance.md. Neural reranker dominates — all weight splits converge. Thresholds gate (R@5>=0.55) honored from this file: all PASS."
+      "recall_at_7": 0.9046,
+      "mrr": 0.8519,
+      "ndcg_at_5": 0.8116,
+      "hit_rate_at_7": 1.0,
+      "tool_selection_accuracy": 1.0,
+      "note": "DSPy agent eval 2026-06-26, 4-tool (search_code,find_connections,find_path,find_similar_code), 18 test queries (A-F coverage, 77-query dataset). Recall@7=0.9046 MRR=0.8519 NDCG@5=0.8116 Hit@7=1.0 tool_sel=1.0. Traj_recall=0.9537 (gap=+0.049). Phase C reranker experiment: gte-reranker-modernbert-base validated as best available on laptop (bge-v2-m3 scored worse: R@7 0.621 vs 0.696 gte baseline; jina-v3 OOM on 8GB GPU — listwise single-pass fires 3x/query, no fp16, batch_size silently dropped). Searcher-only SSCG baseline (63q, 2026-06-26): MRR=0.700 R@7=0.696 Hit@5=0.984 R@10=0.734."
     },
     "recommended_k": 7,
     "changelog": [
+      {
+        "date": "2026-06-26",
+        "changes": [
+          "Expanded dataset from 49 to 77 queries: +3A, +4B, +3C, +4D, +7E, +7F (Q72–Q99). All chunk IDs grounded via live MCP tools against D:/claude-context-local project (2026-06-26).",
+          "A/B/C: gold labels via search_code(k=10, include_context=true), graded by reranker_score/blended_score (3=≥0.90, 2=≥0.80, 1=≥0.70).",
+          "D: gold labels via find_connections; resolver_confidence: lsp(0.98)=grade 3, libcst(0.9)=grade 3, pyan(0.75)=grade 2, ast(0.5)=grade 1.",
+          "E: gold labels via find_path (all 7 paths confirmed live); key path nodes grade 3, supporting endpoint classes grade 1–2.",
+          "F: gold labels via find_similar_code; cross-file similar chunks grade 3, same-class siblings grade 2, seed chunk grade 1.",
+          "Updated _meta: total_queries 49→77, splits train 31→43/val 10→16/test 8→18. Updated splits.note to include E/F stratification."
+        ]
+      },
+      {
+        "date": "2026-06-25",
+        "changes": [
+          "Added categories E (path/flow, expected_tool=find_path) and F (similarity, expected_tool=find_similar_code) — Q68-Q71 (4 entries, all train split). E queries require find_path(source_chunk_id, target_chunk_id); F queries require find_similar_code(chunk_id). All chunk_ids verified live via MCP tools against D:\\claude-context-local project (2026-06-25).",
+          "Updated total_queries: 45 → 49; splits.train: 27 → 31."
+        ]
+      },
+      {
+        "date": "2026-06-25",
+        "changes": [
+          "GEPA optimization run: CodeNavQA seed Recall@7 0.537 -> best 0.867 on val (max_full_evals=5, 185 rollouts). Discovered instruction ported into evaluation/dspy_agent_eval.py.",
+          "Held-out test split (8 queries): Recall@7=0.785, MRR=0.792, Hit@7=1.0, tool_sel=1.0. Category D (find_connections) tool selection correct on all queries.",
+          "Fixed GEPA rollout subprocess MCP leak: added --strict-mcp-config to ClaudeCodeLM._call_claude cmd. Root cause: subprocess auto-connected to global code-search MCP server, spending its one turn on self-initiated tool calls (error_max_turns on every rollout).",
+          "Updated current_metrics to reflect DSPy agent eval results."
+        ]
+      },
+      {
+        "date": "2026-06-24",
+        "changes": [
+          "Expanded dataset from 13 to 45 queries: +7A, +7B, +8C, +10D (category D new)",
+          "Category D: Connection Queries answered by find_connections MCP tool, not ranked search. Gold graded by resolver_confidence: lsp (0.98)=grade 3, libcst (0.9)=grade 3, pyan (0.75)=grade 2, ast (0.5)=grade 1. Queries Q58-Q67.",
+          "Added 'split' field to all 45 rows (train/val/test). Distribution: train=27, val=10, test=8. Existing 13 queries: Q01/Q04/Q05/Q07/Q16/Q19/Q20/Q31/Q32/Q33 -> train; Q12/Q34/Q35 -> val.",
+          "All new chunk IDs grounded via live MCP search_code/find_connections against the indexed D:/claude-context-local project (2026-06-24). Candidates sorted by reranker_score then blended_score; IDs normalized (line ranges stripped).",
+          "Category D excluded from run_sscg_benchmark.py by default to preserve A/B/C aggregate comparability. DSPy dspy_agent_eval.py maps D->find_connections for tool_selection_metric.",
+          "Added 'splits' summary to _meta; updated labeled_by, labeled_date, total_queries."
+        ]
+      },
       {
         "date": "2026-06-08",
         "changes": [
@@ -65,15 +110,16 @@
     ]
   },
   "thresholds": {
-    "mrr": 0.50,
+    "mrr": 0.5,
     "recall_at_5": 0.55,
-    "hit_rate_at_5": 0.80
+    "hit_rate_at_5": 0.8
   },
   "queries": [
     {
       "id": "Q01",
       "query": "get embedding model name from config",
       "category": "A",
+      "split": "train",
       "expected": [
         "embeddings/embedder.py:method:CodeEmbedder._get_model_config",
         "search/config.py:function:get_model_config",
@@ -101,6 +147,7 @@
       "id": "Q04",
       "query": "validate chunk id format",
       "category": "A",
+      "split": "train",
       "expected": [
         "search/graph_integration.py:function:is_chunk_id",
         "search/indexer.py:method:CodeIndexManager.validate_index_consistency",
@@ -125,6 +172,7 @@
       "id": "Q05",
       "query": "normalize file path separators",
       "category": "A",
+      "split": "train",
       "expected": [
         "utils/path_utils.py:function:normalize_path",
         "search/filters.py:function:normalize_path_lower"
@@ -145,6 +193,7 @@
       "id": "Q07",
       "query": "get node text from tree sitter",
       "category": "A",
+      "split": "train",
       "expected": [
         "chunking/languages/base.py:method:LanguageChunker.get_node_text"
       ],
@@ -163,6 +212,7 @@
       "id": "Q12",
       "query": "check if index exists for project",
       "category": "A",
+      "split": "val",
       "expected": [
         "merkle/snapshot_manager.py:method:SnapshotManager.has_snapshot",
         "search/incremental_indexer.py:method:IncrementalIndexer.needs_reindex",
@@ -185,6 +235,7 @@
       "id": "Q16",
       "query": "save and load search configuration",
       "category": "B",
+      "split": "train",
       "expected": [
         "search/config.py:method:SearchConfigManager.load_config",
         "search/config.py:method:SearchConfigManager.save_config",
@@ -208,6 +259,7 @@
       "id": "Q19",
       "query": "encode and decode embeddings",
       "category": "B",
+      "split": "train",
       "expected": [
         "embeddings/embedder.py:class:CodeEmbedder",
         "embeddings/embedder.py:method:CodeEmbedder.embed_chunks",
@@ -223,7 +275,6 @@
       "relevance_grades": {
         "embeddings/embedder.py:class:CodeEmbedder": 2,
         "embeddings/__init__.py:module": 1,
-        "embeddings/__init__.py:module:embeddings": 1,
         "search/hybrid_searcher.py:method:HybridSearcher.index_documents": 1,
         "embeddings/embedder.py:method:CodeEmbedder.embed_chunks": 3,
         "embeddings/embedder.py:split_block:CodeEmbedder.embed_chunks": 3,
@@ -235,6 +286,7 @@
       "id": "Q20",
       "query": "build and query merkle tree",
       "category": "B",
+      "split": "train",
       "expected": [
         "merkle/merkle_dag.py:method:MerkleDAG.build",
         "merkle/merkle_dag.py:method:MerkleDAG.build_node",
@@ -248,7 +300,6 @@
         "merkle/merkle_dag.py:method:MerkleDAG.build": 3,
         "merkle/merkle_dag.py:method:MerkleDAG.build_node": 3,
         "merkle/__init__.py:module": 1,
-        "merkle/__init__.py:module:merkle": 1,
         "merkle/merkle_dag.py:decorated_definition:MerkleDAG.from_dict": 1,
         "merkle/merkle_dag.py:decorated_definition:MerkleNode": 2
       }
@@ -257,6 +308,7 @@
       "id": "Q31",
       "query": "how does HybridSearcher combine BM25 and semantic search",
       "category": "C",
+      "split": "train",
       "expected": [
         "search/hybrid_searcher.py:class:HybridSearcher",
         "search/search_executor.py:class:SearchExecutor",
@@ -278,6 +330,7 @@
       "id": "Q32",
       "query": "what does CodeEmbedder do with batch processing",
       "category": "C",
+      "split": "train",
       "expected": [
         "embeddings/embedder.py:class:CodeEmbedder",
         "embeddings/embedder.py:method:CodeEmbedder.embed_chunks",
@@ -299,6 +352,7 @@
       "id": "Q33",
       "query": "explain IncrementalIndexer change detection",
       "category": "C",
+      "split": "train",
       "expected": [
         "search/incremental_indexer.py:class:IncrementalIndexer",
         "search/incremental_indexer.py:method:IncrementalIndexer.incremental_index",
@@ -312,7 +366,6 @@
       "relevance_grades": {
         "search/incremental_indexer.py:class:IncrementalIndexer": 3,
         "merkle/__init__.py:module": 1,
-        "merkle/__init__.py:module:merkle": 1,
         "search/incremental_indexer.py:method:IncrementalIndexer.incremental_index": 2,
         "merkle/snapshot_manager.py:method:SnapshotManager.has_snapshot": 2,
         "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot": 3
@@ -322,6 +375,7 @@
       "id": "Q34",
       "query": "how does FaissVectorIndex store embeddings",
       "category": "C",
+      "split": "val",
       "expected": [
         "search/faiss_index.py:method:FaissVectorIndex.__init__",
         "search/faiss_index.py:class:FaissVectorIndex",
@@ -343,6 +397,7 @@
       "id": "Q35",
       "query": "what is SearchConfigManager responsible for",
       "category": "C",
+      "split": "val",
       "expected": [
         "search/config.py:class:SearchConfigManager",
         "search/config.py:function:get_config_manager",
@@ -356,6 +411,1499 @@
         "search/config.py:class:SearchConfigManager": 3,
         "search/config.py:function:get_config_manager": 3,
         "search/config.py:method:SearchConfigManager.load_config": 2
+      }
+    },
+    {
+      "id": "Q36",
+      "query": "tokenize code text into keywords for BM25 search",
+      "category": "A",
+      "split": "train",
+      "expected": [
+        "search/bm25_index.py:class:TextPreprocessor",
+        "search/bm25_index.py:method:TextPreprocessor.tokenize",
+        "search/centrality_ranker.py:function:_tokenize_for_matching"
+      ],
+      "expected_primary": [
+        "search/bm25_index.py:class:TextPreprocessor",
+        "search/bm25_index.py:method:TextPreprocessor.tokenize"
+      ],
+      "relevance_grades": {
+        "search/bm25_index.py:class:TextPreprocessor": 3,
+        "search/bm25_index.py:method:TextPreprocessor.tokenize": 3,
+        "search/centrality_ranker.py:function:_tokenize_for_matching": 2,
+        "search/bm25_index.py:class:BM25Index": 1
+      }
+    },
+    {
+      "id": "Q37",
+      "query": "get language-specific tree-sitter chunker for a file",
+      "category": "A",
+      "split": "train",
+      "expected": [
+        "chunking/tree_sitter.py:method:TreeSitterChunker.get_chunker",
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker.chunk_file",
+        "chunking/tree_sitter.py:class:TreeSitterChunker"
+      ],
+      "expected_primary": [
+        "chunking/tree_sitter.py:method:TreeSitterChunker.get_chunker"
+      ],
+      "relevance_grades": {
+        "chunking/tree_sitter.py:method:TreeSitterChunker.get_chunker": 3,
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker.chunk_file": 2,
+        "chunking/tree_sitter.py:class:TreeSitterChunker": 2,
+        "chunking/tree_sitter.py:decorated_definition:TreeSitterChunker.get_supported_extensions": 1
+      }
+    },
+    {
+      "id": "Q38",
+      "query": "compute file hash for merkle change tracking",
+      "category": "A",
+      "split": "train",
+      "expected": [
+        "merkle/merkle_dag.py:method:MerkleDAG.hash_file",
+        "search/filters.py:function:compute_drive_agnostic_hash",
+        "search/filters.py:function:compute_legacy_hash"
+      ],
+      "expected_primary": [
+        "merkle/merkle_dag.py:method:MerkleDAG.hash_file"
+      ],
+      "relevance_grades": {
+        "merkle/merkle_dag.py:method:MerkleDAG.hash_file": 3,
+        "search/filters.py:function:compute_drive_agnostic_hash": 2,
+        "search/filters.py:function:compute_legacy_hash": 2,
+        "search/symbol_cache.py:decorated_definition:SymbolHashCache.fnv1a_hash": 1
+      }
+    },
+    {
+      "id": "Q39",
+      "query": "fast check if project files changed without full merkle comparison",
+      "category": "A",
+      "split": "val",
+      "expected": [
+        "merkle/change_detector.py:method:ChangeDetector.quick_check",
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes"
+      ],
+      "expected_primary": [
+        "merkle/change_detector.py:method:ChangeDetector.quick_check"
+      ],
+      "relevance_grades": {
+        "merkle/change_detector.py:method:ChangeDetector.quick_check": 3,
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes": 2,
+        "merkle/merkle_dag.py:method:MerkleDAG.hash_file": 1
+      }
+    },
+    {
+      "id": "Q40",
+      "query": "get list of deleted files to remove from index",
+      "category": "A",
+      "split": "val",
+      "expected": [
+        "merkle/change_detector.py:method:ChangeDetector.get_files_to_remove",
+        "merkle/change_detector.py:method:ChangeDetector.get_files_to_reindex"
+      ],
+      "expected_primary": [
+        "merkle/change_detector.py:method:ChangeDetector.get_files_to_remove"
+      ],
+      "relevance_grades": {
+        "merkle/change_detector.py:method:ChangeDetector.get_files_to_remove": 3,
+        "merkle/change_detector.py:method:ChangeDetector.get_files_to_reindex": 2,
+        "search/incremental_indexer.py:method:IncrementalIndexer._remove_old_chunks": 1
+      }
+    },
+    {
+      "id": "Q41",
+      "query": "estimate FAISS index memory usage before loading",
+      "category": "A",
+      "split": "test",
+      "expected": [
+        "search/faiss_index.py:function:estimate_index_memory_usage",
+        "search/faiss_index.py:class:FaissVectorIndex"
+      ],
+      "expected_primary": [
+        "search/faiss_index.py:function:estimate_index_memory_usage"
+      ],
+      "relevance_grades": {
+        "search/faiss_index.py:function:estimate_index_memory_usage": 3,
+        "search/faiss_index.py:class:FaissVectorIndex": 2,
+        "search/indexer.py:class:CodeIndexManager": 1
+      }
+    },
+    {
+      "id": "Q42",
+      "query": "create SearchResult from BM25 search results",
+      "category": "A",
+      "split": "test",
+      "expected": [
+        "search/result_factory.py:decorated_definition:ResultFactory.from_bm25_results",
+        "search/result_factory.py:decorated_definition:ResultFactory.from_dense_results"
+      ],
+      "expected_primary": [
+        "search/result_factory.py:decorated_definition:ResultFactory.from_bm25_results"
+      ],
+      "relevance_grades": {
+        "search/result_factory.py:decorated_definition:ResultFactory.from_bm25_results": 3,
+        "search/result_factory.py:decorated_definition:ResultFactory.from_dense_results": 2,
+        "search/reranker.py:decorated_definition:SearchResult": 1
+      }
+    },
+    {
+      "id": "Q43",
+      "query": "index and remove documents from BM25 index",
+      "category": "B",
+      "split": "train",
+      "expected": [
+        "search/bm25_index.py:method:BM25Index.index_documents",
+        "search/bm25_index.py:method:BM25Index.remove_documents",
+        "search/bm25_index.py:class:BM25Index"
+      ],
+      "expected_primary": [
+        "search/bm25_index.py:method:BM25Index.index_documents",
+        "search/bm25_index.py:method:BM25Index.remove_documents"
+      ],
+      "relevance_grades": {
+        "search/bm25_index.py:method:BM25Index.index_documents": 3,
+        "search/bm25_index.py:method:BM25Index.remove_documents": 3,
+        "search/bm25_index.py:class:BM25Index": 2,
+        "search/hybrid_searcher.py:method:HybridSearcher.index_documents": 1
+      }
+    },
+    {
+      "id": "Q44",
+      "query": "save and load FAISS vector index to disk",
+      "category": "B",
+      "split": "train",
+      "expected": [
+        "search/faiss_index.py:method:FaissVectorIndex.save",
+        "search/faiss_index.py:method:FaissVectorIndex.load",
+        "search/indexer.py:method:CodeIndexManager.save_index",
+        "search/faiss_index.py:class:FaissVectorIndex"
+      ],
+      "expected_primary": [
+        "search/faiss_index.py:method:FaissVectorIndex.save",
+        "search/faiss_index.py:method:FaissVectorIndex.load",
+        "search/indexer.py:method:CodeIndexManager.save_index"
+      ],
+      "relevance_grades": {
+        "search/faiss_index.py:method:FaissVectorIndex.save": 3,
+        "search/faiss_index.py:method:FaissVectorIndex.load": 3,
+        "search/indexer.py:method:CodeIndexManager.save_index": 3,
+        "search/faiss_index.py:class:FaissVectorIndex": 2,
+        "search/bm25_index.py:method:BM25Index.save": 1
+      }
+    },
+    {
+      "id": "Q45",
+      "query": "add new chunks and remove old chunks during incremental indexing",
+      "category": "B",
+      "split": "train",
+      "expected": [
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
+        "search/incremental_indexer.py:method:IncrementalIndexer._remove_old_chunks",
+        "search/incremental_indexer.py:split_block:IncrementalIndexer.incremental_index",
+        "merkle/change_detector.py:method:ChangeDetector.get_files_to_remove"
+      ],
+      "expected_primary": [
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
+        "search/incremental_indexer.py:method:IncrementalIndexer._remove_old_chunks"
+      ],
+      "relevance_grades": {
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks": 3,
+        "search/incremental_indexer.py:method:IncrementalIndexer._remove_old_chunks": 3,
+        "search/incremental_indexer.py:split_block:IncrementalIndexer.incremental_index": 2,
+        "merkle/change_detector.py:method:ChangeDetector.get_files_to_remove": 2,
+        "search/incremental_indexer.py:class:IncrementalIndexer": 1
+      }
+    },
+    {
+      "id": "Q46",
+      "query": "retrieve and expand ego graph for search result enrichment",
+      "category": "B",
+      "split": "val",
+      "expected": [
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.retrieve_ego_graph",
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.expand_search_results",
+        "search/ego_graph_retriever.py:class:EgoGraphRetriever",
+        "search/hybrid_searcher.py:split_block:HybridSearcher._apply_ego_graph_expansion"
+      ],
+      "expected_primary": [
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.retrieve_ego_graph",
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.expand_search_results"
+      ],
+      "relevance_grades": {
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.retrieve_ego_graph": 3,
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.expand_search_results": 3,
+        "search/ego_graph_retriever.py:class:EgoGraphRetriever": 2,
+        "search/hybrid_searcher.py:split_block:HybridSearcher._apply_ego_graph_expansion": 2,
+        "search/config.py:decorated_definition:EgoGraphConfig": 1
+      }
+    },
+    {
+      "id": "Q47",
+      "query": "get and set chunk metadata in metadata store",
+      "category": "B",
+      "split": "val",
+      "expected": [
+        "search/metadata.py:method:MetadataStore.get_chunk_metadata",
+        "search/metadata.py:method:MetadataStore.set",
+        "search/metadata.py:class:MetadataStore"
+      ],
+      "expected_primary": [
+        "search/metadata.py:method:MetadataStore.get_chunk_metadata",
+        "search/metadata.py:method:MetadataStore.set"
+      ],
+      "relevance_grades": {
+        "search/metadata.py:method:MetadataStore.get_chunk_metadata": 3,
+        "search/metadata.py:method:MetadataStore.set": 3,
+        "search/metadata.py:class:MetadataStore": 2,
+        "search/metadata.py:method:MetadataStore.get": 1,
+        "search/metadata.py:method:MetadataStore.exists": 1
+      }
+    },
+    {
+      "id": "Q48",
+      "query": "initialize model pool and load pool embedder",
+      "category": "B",
+      "split": "test",
+      "expected": [
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.initialize_pool",
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager._load_pool_embedder",
+        "mcp_server/model_pool_manager.py:class:ModelPoolManager",
+        "mcp_server/model_pool_manager.py:function:get_embedder"
+      ],
+      "expected_primary": [
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.initialize_pool",
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager._load_pool_embedder"
+      ],
+      "relevance_grades": {
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.initialize_pool": 3,
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager._load_pool_embedder": 3,
+        "mcp_server/model_pool_manager.py:class:ModelPoolManager": 2,
+        "mcp_server/model_pool_manager.py:function:get_embedder": 2,
+        "mcp_server/model_pool_manager.py:function:initialize_model_pool": 1
+      }
+    },
+    {
+      "id": "Q49",
+      "query": "save and load BM25 index to disk",
+      "category": "B",
+      "split": "test",
+      "expected": [
+        "search/bm25_index.py:method:BM25Index.save",
+        "search/bm25_index.py:method:BM25Index.load",
+        "search/bm25_index.py:class:BM25Index"
+      ],
+      "expected_primary": [
+        "search/bm25_index.py:method:BM25Index.save",
+        "search/bm25_index.py:method:BM25Index.load"
+      ],
+      "relevance_grades": {
+        "search/bm25_index.py:method:BM25Index.save": 3,
+        "search/bm25_index.py:method:BM25Index.load": 3,
+        "search/bm25_index.py:class:BM25Index": 2,
+        "search/index_sync.py:class:IndexSynchronizer": 1,
+        "search/hybrid_searcher.py:method:HybridSearcher._load_bm25_index": 1
+      }
+    },
+    {
+      "id": "Q50",
+      "query": "how does RRFReranker combine multiple search result lists",
+      "category": "C",
+      "split": "train",
+      "expected": [
+        "search/reranker.py:class:RRFReranker",
+        "search/reranker.py:split_block:RRFReranker.rerank",
+        "search/neural_reranker.py:class:NeuralReranker",
+        "search/reranking_engine.py:class:RerankingEngine"
+      ],
+      "expected_primary": [
+        "search/reranker.py:class:RRFReranker"
+      ],
+      "relevance_grades": {
+        "search/reranker.py:class:RRFReranker": 3,
+        "search/reranker.py:split_block:RRFReranker.rerank": 2,
+        "search/neural_reranker.py:class:NeuralReranker": 2,
+        "search/reranking_engine.py:class:RerankingEngine": 2,
+        "search/reranker.py:method:RRFReranker.rerank_simple": 1
+      }
+    },
+    {
+      "id": "Q51",
+      "query": "what does BM25Index handle",
+      "category": "C",
+      "split": "train",
+      "expected": [
+        "search/bm25_index.py:class:BM25Index",
+        "search/bm25_index.py:class:TextPreprocessor",
+        "search/bm25_index.py:method:BM25Index.search",
+        "search/bm25_index.py:method:BM25Index.index_documents"
+      ],
+      "expected_primary": [
+        "search/bm25_index.py:class:BM25Index"
+      ],
+      "relevance_grades": {
+        "search/bm25_index.py:class:BM25Index": 3,
+        "search/bm25_index.py:class:TextPreprocessor": 2,
+        "search/bm25_index.py:method:BM25Index.search": 2,
+        "search/bm25_index.py:method:BM25Index.index_documents": 2,
+        "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25": 1
+      }
+    },
+    {
+      "id": "Q52",
+      "query": "what is MultiLanguageChunker responsible for",
+      "category": "C",
+      "split": "train",
+      "expected": [
+        "chunking/multi_language_chunker.py:class:MultiLanguageChunker",
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker.chunk_file",
+        "chunking/tree_sitter.py:class:TreeSitterChunker"
+      ],
+      "expected_primary": [
+        "chunking/multi_language_chunker.py:class:MultiLanguageChunker"
+      ],
+      "relevance_grades": {
+        "chunking/multi_language_chunker.py:class:MultiLanguageChunker": 3,
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker.chunk_file": 2,
+        "chunking/tree_sitter.py:class:TreeSitterChunker": 2,
+        "chunking/languages/base.py:class:LanguageChunker": 1
+      }
+    },
+    {
+      "id": "Q53",
+      "query": "what does ModelPoolManager handle",
+      "category": "C",
+      "split": "train",
+      "expected": [
+        "mcp_server/model_pool_manager.py:class:ModelPoolManager",
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.initialize_pool",
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager._load_pool_embedder"
+      ],
+      "expected_primary": [
+        "mcp_server/model_pool_manager.py:class:ModelPoolManager"
+      ],
+      "relevance_grades": {
+        "mcp_server/model_pool_manager.py:class:ModelPoolManager": 3,
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.initialize_pool": 2,
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager._load_pool_embedder": 2,
+        "mcp_server/model_pool_manager.py:function:get_embedder": 1,
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_pool_config": 1
+      }
+    },
+    {
+      "id": "Q54",
+      "query": "explain EgoGraphRetriever and search result expansion",
+      "category": "C",
+      "split": "train",
+      "expected": [
+        "search/ego_graph_retriever.py:class:EgoGraphRetriever",
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.retrieve_ego_graph",
+        "search/hybrid_searcher.py:split_block:HybridSearcher._apply_ego_graph_expansion",
+        "search/config.py:decorated_definition:EgoGraphConfig",
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.expand_search_results",
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever._expand_via_ppr"
+      ],
+      "expected_primary": [
+        "search/ego_graph_retriever.py:class:EgoGraphRetriever",
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.retrieve_ego_graph",
+        "search/hybrid_searcher.py:split_block:HybridSearcher._apply_ego_graph_expansion"
+      ],
+      "relevance_grades": {
+        "search/ego_graph_retriever.py:class:EgoGraphRetriever": 3,
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.retrieve_ego_graph": 3,
+        "search/hybrid_searcher.py:split_block:HybridSearcher._apply_ego_graph_expansion": 3,
+        "search/config.py:decorated_definition:EgoGraphConfig": 2,
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.expand_search_results": 2,
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever._expand_via_ppr": 2,
+        "search/multi_hop_searcher.py:method:MultiHopSearcher._graph_expand": 1
+      }
+    },
+    {
+      "id": "Q55",
+      "query": "how does MerkleDAG work in change detection",
+      "category": "C",
+      "split": "val",
+      "expected": [
+        "merkle/merkle_dag.py:class:MerkleDAG",
+        "merkle/merkle_dag.py:method:MerkleDAG.build",
+        "merkle/merkle_dag.py:method:MerkleDAG.hash_file"
+      ],
+      "expected_primary": [
+        "merkle/merkle_dag.py:class:MerkleDAG"
+      ],
+      "relevance_grades": {
+        "merkle/merkle_dag.py:class:MerkleDAG": 3,
+        "merkle/merkle_dag.py:method:MerkleDAG.build": 2,
+        "merkle/merkle_dag.py:method:MerkleDAG.hash_file": 2,
+        "merkle/change_detector.py:class:ChangeDetector": 1,
+        "merkle/merkle_dag.py:method:MerkleDAG.build_node": 1
+      }
+    },
+    {
+      "id": "Q56",
+      "query": "what does CodeIndexManager orchestrate during indexing",
+      "category": "C",
+      "split": "test",
+      "expected": [
+        "search/indexer.py:class:CodeIndexManager",
+        "search/indexer.py:method:CodeIndexManager.create_index",
+        "search/indexer.py:method:CodeIndexManager.save_index"
+      ],
+      "expected_primary": [
+        "search/indexer.py:class:CodeIndexManager"
+      ],
+      "relevance_grades": {
+        "search/indexer.py:class:CodeIndexManager": 3,
+        "search/indexer.py:method:CodeIndexManager.create_index": 2,
+        "search/indexer.py:method:CodeIndexManager.save_index": 2,
+        "search/faiss_index.py:class:FaissVectorIndex": 1,
+        "search/incremental_indexer.py:class:IncrementalIndexer": 1
+      }
+    },
+    {
+      "id": "Q57",
+      "query": "what is MetadataStore responsible for",
+      "category": "C",
+      "split": "test",
+      "expected": [
+        "search/metadata.py:class:MetadataStore",
+        "search/metadata.py:method:MetadataStore.get_chunk_metadata",
+        "search/metadata.py:decorated_definition:MetadataStore.normalize_chunk_id"
+      ],
+      "expected_primary": [
+        "search/metadata.py:class:MetadataStore"
+      ],
+      "relevance_grades": {
+        "search/metadata.py:class:MetadataStore": 3,
+        "search/metadata.py:method:MetadataStore.get_chunk_metadata": 2,
+        "search/metadata.py:decorated_definition:MetadataStore.normalize_chunk_id": 2,
+        "search/metadata.py:method:MetadataStore.exists": 1,
+        "search/metadata.py:method:MetadataStore.set": 1
+      }
+    },
+    {
+      "id": "Q58",
+      "query": "what calls MetadataStore.normalize_chunk_id",
+      "category": "D",
+      "split": "train",
+      "expected": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code",
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections",
+        "search/metadata.py:decorated_definition:MetadataStore.get_chunk_id_variants",
+        "evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
+        "evaluation/metrics.py:function:normalize_chunk_ids",
+        "evaluation/metrics.py:function:build_chunk_line_lookup",
+        "mcp_server/tools/search_handlers.py:split_block:handle_find_path"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code",
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections",
+        "search/metadata.py:decorated_definition:MetadataStore.get_chunk_id_variants"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code": 3,
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections": 3,
+        "search/metadata.py:decorated_definition:MetadataStore.get_chunk_id_variants": 3,
+        "evaluation/chunk_mapping.py:function:build_line_to_chunk_map": 2,
+        "evaluation/metrics.py:function:normalize_chunk_ids": 2,
+        "evaluation/metrics.py:function:build_chunk_line_lookup": 2,
+        "mcp_server/tools/search_handlers.py:split_block:handle_find_path": 2,
+        "evaluation/metrics.py:function:resolve_chunk_ids_to_ranges": 1,
+        "scripts/benchmark/build_caller_oracle.py:function:build_oracle_for_target": 1,
+        "scripts/benchmark/run_caller_recall.py:function:_get_direct_edges": 1,
+        "tools/analyze_batch_results.py:function:check_match": 1
+      }
+    },
+    {
+      "id": "Q59",
+      "query": "what does ChangeDetector.detect_changes_from_snapshot call internally",
+      "category": "D",
+      "split": "train",
+      "expected": [
+        "merkle/snapshot_manager.py:method:SnapshotManager.load_snapshot",
+        "merkle/merkle_dag.py:class:MerkleDAG",
+        "merkle/merkle_dag.py:method:MerkleDAG.build",
+        "merkle/change_detector.py:decorated_definition:FileChanges",
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes",
+        "merkle/change_detector.py:method:ChangeDetector._add_snapshot_ignore",
+        "merkle/merkle_dag.py:method:MerkleDAG.get_all_files"
+      ],
+      "expected_primary": [
+        "merkle/snapshot_manager.py:method:SnapshotManager.load_snapshot",
+        "merkle/merkle_dag.py:class:MerkleDAG",
+        "merkle/merkle_dag.py:method:MerkleDAG.build",
+        "merkle/change_detector.py:decorated_definition:FileChanges",
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes"
+      ],
+      "relevance_grades": {
+        "merkle/snapshot_manager.py:method:SnapshotManager.load_snapshot": 3,
+        "merkle/merkle_dag.py:class:MerkleDAG": 3,
+        "merkle/merkle_dag.py:method:MerkleDAG.build": 3,
+        "merkle/change_detector.py:decorated_definition:FileChanges": 3,
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes": 3,
+        "merkle/change_detector.py:method:ChangeDetector._add_snapshot_ignore": 2,
+        "merkle/merkle_dag.py:method:MerkleDAG.get_all_files": 2,
+        "merkle/change_detector.py:method:ChangeDetector.__init__": 1,
+        "merkle/merkle_dag.py:method:MerkleDAG.__init__": 1
+      }
+    },
+    {
+      "id": "Q60",
+      "query": "what functions call CodeEmbedder.embed_chunks",
+      "category": "D",
+      "split": "train",
+      "expected": [
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
+        "search/index_write_stage.py:split_block:IndexWriteStage.run",
+        "search/community_refresh_stage.py:split_block:CommunityRefreshStage.run"
+      ],
+      "expected_primary": [
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
+        "search/index_write_stage.py:split_block:IndexWriteStage.run"
+      ],
+      "relevance_grades": {
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks": 3,
+        "search/index_write_stage.py:split_block:IndexWriteStage.run": 3,
+        "search/community_refresh_stage.py:split_block:CommunityRefreshStage.run": 2
+      }
+    },
+    {
+      "id": "Q61",
+      "query": "what classes inherit from LanguageChunker",
+      "category": "D",
+      "split": "train",
+      "expected": [
+        "chunking/languages/c.py:class:CChunker",
+        "chunking/languages/python.py:class:PythonChunker",
+        "chunking/languages/typescript.py:class:TypeScriptChunker",
+        "chunking/languages/javascript.py:class:JavaScriptChunker",
+        "chunking/languages/go.py:class:GoChunker",
+        "chunking/languages/rust.py:class:RustChunker",
+        "chunking/languages/csharp.py:class:CSharpChunker",
+        "chunking/languages/cpp.py:class:CppChunker",
+        "chunking/languages/glsl.py:class:GLSLChunker"
+      ],
+      "expected_primary": [
+        "chunking/languages/c.py:class:CChunker",
+        "chunking/languages/python.py:class:PythonChunker",
+        "chunking/languages/typescript.py:class:TypeScriptChunker",
+        "chunking/languages/javascript.py:class:JavaScriptChunker",
+        "chunking/languages/go.py:class:GoChunker",
+        "chunking/languages/rust.py:class:RustChunker",
+        "chunking/languages/csharp.py:class:CSharpChunker",
+        "chunking/languages/cpp.py:class:CppChunker",
+        "chunking/languages/glsl.py:class:GLSLChunker"
+      ],
+      "relevance_grades": {
+        "chunking/languages/c.py:class:CChunker": 3,
+        "chunking/languages/python.py:class:PythonChunker": 3,
+        "chunking/languages/typescript.py:class:TypeScriptChunker": 3,
+        "chunking/languages/javascript.py:class:JavaScriptChunker": 3,
+        "chunking/languages/go.py:class:GoChunker": 3,
+        "chunking/languages/rust.py:class:RustChunker": 3,
+        "chunking/languages/csharp.py:class:CSharpChunker": 3,
+        "chunking/languages/cpp.py:class:CppChunker": 3,
+        "chunking/languages/glsl.py:class:GLSLChunker": 3,
+        "chunking/tree_sitter.py:class:TreeSitterChunker": 1
+      }
+    },
+    {
+      "id": "Q62",
+      "query": "what code calls SnapshotManager.has_snapshot",
+      "category": "D",
+      "split": "train",
+      "expected": [
+        "mcp_server/tools/search_handlers.py:split_block:_check_auto_reindex",
+        "search/incremental_indexer.py:method:IncrementalIndexer.needs_reindex",
+        "search/incremental_indexer.py:split_block:IncrementalIndexer.incremental_index"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/search_handlers.py:split_block:_check_auto_reindex",
+        "search/incremental_indexer.py:method:IncrementalIndexer.needs_reindex"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/search_handlers.py:split_block:_check_auto_reindex": 3,
+        "search/incremental_indexer.py:method:IncrementalIndexer.needs_reindex": 3,
+        "search/incremental_indexer.py:split_block:IncrementalIndexer.incremental_index": 2
+      }
+    },
+    {
+      "id": "Q63",
+      "query": "what does EgoGraphRetriever.retrieve_ego_graph call",
+      "category": "D",
+      "split": "train",
+      "expected": [
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever._expand_via_ppr",
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever._rank_neighbor",
+        "search/graph_integration.py:function:is_chunk_id",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_neighbors",
+        "search/config.py:decorated_definition:EgoGraphConfig"
+      ],
+      "expected_primary": [
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever._expand_via_ppr",
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever._rank_neighbor",
+        "search/graph_integration.py:function:is_chunk_id"
+      ],
+      "relevance_grades": {
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever._expand_via_ppr": 3,
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever._rank_neighbor": 3,
+        "search/graph_integration.py:function:is_chunk_id": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.get_neighbors": 2,
+        "search/config.py:decorated_definition:EgoGraphConfig": 2,
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.__init__": 1
+      }
+    },
+    {
+      "id": "Q64",
+      "query": "what calls IncrementalIndexer._add_new_chunks",
+      "category": "D",
+      "split": "val",
+      "expected": [
+        "search/incremental_indexer.py:split_block:IncrementalIndexer.incremental_index",
+        "mcp_server/tools/index_handlers.py:function:_run_indexing"
+      ],
+      "expected_primary": [
+        "search/incremental_indexer.py:split_block:IncrementalIndexer.incremental_index"
+      ],
+      "relevance_grades": {
+        "search/incremental_indexer.py:split_block:IncrementalIndexer.incremental_index": 3,
+        "mcp_server/tools/index_handlers.py:function:_run_indexing": 2,
+        "search/incremental_indexer.py:class:IncrementalIndexer": 1
+      }
+    },
+    {
+      "id": "Q65",
+      "query": "what code calls normalize_path in utils",
+      "category": "D",
+      "split": "val",
+      "expected": [
+        "chunking/file_summarizer.py:function:_build_file_summary",
+        "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor._create_edge",
+        "graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_callers",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_callees",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_neighbors",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_node_data",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_all_edge_data",
+        "graph/graph_storage.py:method:CodeGraphStorage.__contains__",
+        "search/filters.py:function:extract_drive_agnostic_path",
+        "search/filters.py:function:matches_directory_filter",
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker._create_chunk_id",
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder._build_chunk_id",
+        "graph/graph_storage.py:class:CodeGraphStorage",
+        "graph/graph_queries.py:class:GraphQueryEngine",
+        "mcp_server/tools/search_handlers.py:function:_get_graph_data_for_chunk",
+        "search/metadata.py:decorated_definition:MetadataStore.normalize_chunk_id",
+        "search/metadata.py:decorated_definition:MetadataStore.get_chunk_id_variants",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._find_similar",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._result_to_dict"
+      ],
+      "expected_primary": [
+        "chunking/file_summarizer.py:function:_build_file_summary",
+        "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor._create_edge",
+        "graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_callers",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_callees",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_neighbors",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_node_data",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_all_edge_data",
+        "graph/graph_storage.py:method:CodeGraphStorage.__contains__",
+        "search/filters.py:function:extract_drive_agnostic_path",
+        "search/filters.py:function:matches_directory_filter"
+      ],
+      "relevance_grades": {
+        "chunking/file_summarizer.py:function:_build_file_summary": 3,
+        "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor._create_edge": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.get_callers": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.get_callees": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.get_neighbors": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.get_node_data": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.get_all_edge_data": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.__contains__": 3,
+        "search/filters.py:function:extract_drive_agnostic_path": 3,
+        "search/filters.py:function:matches_directory_filter": 3,
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker._create_chunk_id": 2,
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder._build_chunk_id": 2,
+        "graph/graph_storage.py:class:CodeGraphStorage": 2,
+        "graph/graph_queries.py:class:GraphQueryEngine": 2,
+        "mcp_server/tools/search_handlers.py:function:_get_graph_data_for_chunk": 2,
+        "search/metadata.py:decorated_definition:MetadataStore.normalize_chunk_id": 2,
+        "search/metadata.py:decorated_definition:MetadataStore.get_chunk_id_variants": 2,
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._find_similar": 2,
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._result_to_dict": 2,
+        "graph/graph_storage.py:split_block:CodeGraphStorage.get_edge_data": 1,
+        "graph/graph_queries.py:split_block:GraphQueryEngine.find_path": 1,
+        "search/bm25_index.py:split_block:BM25Index.remove_multiple_files": 1
+      }
+    },
+    {
+      "id": "Q66",
+      "query": "what does FaissVectorIndex.load call internally",
+      "category": "D",
+      "split": "test",
+      "expected": [
+        "search/faiss_index.py:method:FaissVectorIndex.move_to_gpu",
+        "search/mmap_vectors.py:class:MmapVectorStorage",
+        "search/mmap_vectors.py:method:MmapVectorStorage.load",
+        "search/metadata.py:method:MetadataStore.exists",
+        "search/faiss_index.py:function:estimate_index_memory_usage"
+      ],
+      "expected_primary": [
+        "search/faiss_index.py:method:FaissVectorIndex.move_to_gpu",
+        "search/mmap_vectors.py:class:MmapVectorStorage"
+      ],
+      "relevance_grades": {
+        "search/faiss_index.py:method:FaissVectorIndex.move_to_gpu": 3,
+        "search/mmap_vectors.py:class:MmapVectorStorage": 3,
+        "search/mmap_vectors.py:method:MmapVectorStorage.load": 2,
+        "search/metadata.py:method:MetadataStore.exists": 2,
+        "search/faiss_index.py:function:estimate_index_memory_usage": 2,
+        "search/faiss_index.py:method:FaissVectorIndex.__init__": 1
+      }
+    },
+    {
+      "id": "Q67",
+      "query": "what code calls get_search_config",
+      "category": "D",
+      "split": "test",
+      "expected": [
+        "search/config.py:function:is_hybrid_search_enabled",
+        "search/config.py:function:get_default_search_mode",
+        "search/incremental_indexer.py:method:IncrementalIndexer.__init__",
+        "search/reranking_engine.py:method:RerankingEngine.should_enable_neural_reranking",
+        "search/reranking_engine.py:method:RerankingEngine._ensure_reranker",
+        "search/reranking_engine.py:method:RerankingEngine._run_rerank",
+        "chunking/languages/base.py:method:LanguageChunker._get_chunking_config",
+        "chunking/tree_sitter.py:method:TreeSitterChunker._get_chunking_config",
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_pool_config",
+        "mcp_server/utils/config_helpers.py:function:get_config_via_service_locator"
+      ],
+      "expected_primary": [
+        "search/config.py:function:is_hybrid_search_enabled",
+        "search/config.py:function:get_default_search_mode",
+        "search/incremental_indexer.py:method:IncrementalIndexer.__init__",
+        "search/reranking_engine.py:method:RerankingEngine.should_enable_neural_reranking",
+        "search/reranking_engine.py:method:RerankingEngine._ensure_reranker",
+        "search/reranking_engine.py:method:RerankingEngine._run_rerank"
+      ],
+      "relevance_grades": {
+        "search/config.py:function:is_hybrid_search_enabled": 3,
+        "search/config.py:function:get_default_search_mode": 3,
+        "search/incremental_indexer.py:method:IncrementalIndexer.__init__": 3,
+        "search/reranking_engine.py:method:RerankingEngine.should_enable_neural_reranking": 3,
+        "search/reranking_engine.py:method:RerankingEngine._ensure_reranker": 3,
+        "search/reranking_engine.py:method:RerankingEngine._run_rerank": 3,
+        "chunking/languages/base.py:method:LanguageChunker._get_chunking_config": 2,
+        "chunking/tree_sitter.py:method:TreeSitterChunker._get_chunking_config": 2,
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_pool_config": 2,
+        "mcp_server/utils/config_helpers.py:function:get_config_via_service_locator": 2,
+        "merkle/snapshot_manager.py:method:SnapshotManager._get_model_slug_and_dimension": 1,
+        "scripts/benchmark/run_sscg_benchmark.py:function:_apply_weight_overrides": 1
+      }
+    },
+    {
+      "id": "Q68",
+      "query": "how does SearchOrchestrator internally reach CodeIndexManager — what helper bridges the MCP orchestrator to the index manager?",
+      "category": "E",
+      "split": "train",
+      "expected": [
+        "mcp_server/tools/search_handlers.py:function:_get_index_manager_from_searcher",
+        "mcp_server/tools/search_orchestrator.py:class:SearchOrchestrator",
+        "search/indexer.py:class:CodeIndexManager"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/search_handlers.py:function:_get_index_manager_from_searcher"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/search_handlers.py:function:_get_index_manager_from_searcher": 3,
+        "mcp_server/tools/search_orchestrator.py:class:SearchOrchestrator": 2,
+        "search/indexer.py:class:CodeIndexManager": 2,
+        "search/indexer.py:method:CodeIndexManager.__init__": 1
+      }
+    },
+    {
+      "id": "Q69",
+      "query": "trace the call path from IncrementalIndexer._add_new_chunks to CodeEmbedder — what is the sequence of calls from the incremental index write stage down to the embedding model?",
+      "category": "E",
+      "split": "train",
+      "expected": [
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
+        "embeddings/embedder.py:class:CodeEmbedder",
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunks"
+      ],
+      "expected_primary": [
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunks"
+      ],
+      "relevance_grades": {
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks": 3,
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunks": 3,
+        "embeddings/embedder.py:class:CodeEmbedder": 2,
+        "search/index_write_stage.py:split_block:IndexWriteStage.run": 1
+      }
+    },
+    {
+      "id": "Q70",
+      "query": "find language chunker constructors similar to PythonChunker.__init__ — I want all the concrete language-specific chunker initializers across the codebase",
+      "category": "F",
+      "split": "train",
+      "expected": [
+        "chunking/languages/cpp.py:method:CppChunker.__init__",
+        "chunking/languages/javascript.py:method:JavaScriptChunker.__init__",
+        "chunking/languages/c.py:method:CChunker.__init__",
+        "chunking/languages/go.py:method:GoChunker.__init__",
+        "chunking/languages/rust.py:method:RustChunker.__init__",
+        "chunking/languages/typescript.py:method:TypeScriptChunker.__init__",
+        "chunking/languages/base.py:method:LanguageChunker.__init__"
+      ],
+      "expected_primary": [
+        "chunking/languages/cpp.py:method:CppChunker.__init__",
+        "chunking/languages/javascript.py:method:JavaScriptChunker.__init__",
+        "chunking/languages/c.py:method:CChunker.__init__"
+      ],
+      "relevance_grades": {
+        "chunking/languages/cpp.py:method:CppChunker.__init__": 3,
+        "chunking/languages/javascript.py:method:JavaScriptChunker.__init__": 3,
+        "chunking/languages/c.py:method:CChunker.__init__": 3,
+        "chunking/languages/go.py:method:GoChunker.__init__": 2,
+        "chunking/languages/rust.py:method:RustChunker.__init__": 2,
+        "chunking/languages/typescript.py:method:TypeScriptChunker.__init__": 2,
+        "chunking/languages/base.py:method:LanguageChunker.__init__": 2,
+        "chunking/languages/python.py:method:PythonChunker.__init__": 1
+      }
+    },
+    {
+      "id": "Q71",
+      "query": "find implementations similar to InheritanceExtractor._extract_from_tree — other relationship extractors that override the same abstract tree-walk hook",
+      "category": "F",
+      "split": "train",
+      "expected": [
+        "chunking/relationships/relationship_extractors/implements_extractor.py:method:ImplementsExtractor._extract_from_tree",
+        "chunking/relationships/relationship_extractors/override_extractor.py:method:OverrideExtractor._extract_from_tree",
+        "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      ],
+      "expected_primary": [
+        "chunking/relationships/relationship_extractors/implements_extractor.py:method:ImplementsExtractor._extract_from_tree",
+        "chunking/relationships/relationship_extractors/override_extractor.py:method:OverrideExtractor._extract_from_tree"
+      ],
+      "relevance_grades": {
+        "chunking/relationships/relationship_extractors/implements_extractor.py:method:ImplementsExtractor._extract_from_tree": 3,
+        "chunking/relationships/relationship_extractors/override_extractor.py:method:OverrideExtractor._extract_from_tree": 3,
+        "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree": 2,
+        "chunking/relationships/relationship_extractors/inheritance_extractor.py:method:InheritanceExtractor._extract_from_tree": 1
+      }
+    },
+    {
+      "id": "Q72",
+      "query": "strip line range from chunk_id to get stable normalized identifier",
+      "category": "A",
+      "split": "train",
+      "expected": [
+        "search/chunk_id.py:function:strip_line_range",
+        "search/chunk_id.py:function:normalize",
+        "search/chunk_id.py:decorated_definition:ChunkId",
+        "search/chunk_id.py:function:extract_name",
+        "search/chunk_id.py:function:is_chunk_id"
+      ],
+      "expected_primary": [
+        "search/chunk_id.py:function:strip_line_range",
+        "search/chunk_id.py:function:normalize"
+      ],
+      "relevance_grades": {
+        "search/chunk_id.py:function:strip_line_range": 3,
+        "search/chunk_id.py:function:normalize": 3,
+        "search/chunk_id.py:decorated_definition:ChunkId": 2,
+        "search/chunk_id.py:function:extract_name": 2,
+        "search/chunk_id.py:function:is_chunk_id": 2,
+        "search/centrality_ranker.py:function:_extract_name_from_chunk_id": 1
+      }
+    },
+    {
+      "id": "Q73",
+      "query": "apply neural reranking score to search results",
+      "category": "A",
+      "split": "train",
+      "expected": [
+        "search/neural_reranker.py:method:NeuralReranker.rerank",
+        "search/reranking_engine.py:decorated_definition:RerankingEngine.apply_neural_reranking",
+        "search/neural_reranker.py:method:NeuralReranker._apply_rerank_score",
+        "search/reranking_engine.py:method:RerankingEngine._run_rerank"
+      ],
+      "expected_primary": [
+        "search/neural_reranker.py:method:NeuralReranker.rerank",
+        "search/reranking_engine.py:decorated_definition:RerankingEngine.apply_neural_reranking"
+      ],
+      "relevance_grades": {
+        "search/neural_reranker.py:method:NeuralReranker.rerank": 3,
+        "search/reranking_engine.py:decorated_definition:RerankingEngine.apply_neural_reranking": 3,
+        "search/neural_reranker.py:method:NeuralReranker._apply_rerank_score": 2,
+        "search/reranking_engine.py:method:RerankingEngine._run_rerank": 2,
+        "search/neural_reranker.py:class:NeuralReranker": 1
+      }
+    },
+    {
+      "id": "Q74",
+      "query": "get cached query embedding or compute and store on miss",
+      "category": "A",
+      "split": "test",
+      "expected": [
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.get",
+        "embeddings/query_cache.py:class:QueryEmbeddingCache",
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder.embed_query"
+      ],
+      "expected_primary": [
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.get"
+      ],
+      "relevance_grades": {
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.get": 3,
+        "embeddings/query_cache.py:class:QueryEmbeddingCache": 2,
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder.embed_query": 2
+      }
+    },
+    {
+      "id": "Q75",
+      "query": "add relationship edge and retrieve node neighbors in CodeGraphStorage",
+      "category": "B",
+      "split": "train",
+      "expected": [
+        "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_neighbors",
+        "graph/graph_storage.py:class:CodeGraphStorage",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_node_data"
+      ],
+      "expected_primary": [
+        "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_neighbors"
+      ],
+      "relevance_grades": {
+        "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.get_neighbors": 3,
+        "graph/graph_storage.py:class:CodeGraphStorage": 2,
+        "graph/graph_storage.py:method:CodeGraphStorage.get_node_data": 2,
+        "graph/graph_storage.py:method:CodeGraphStorage.get_callers": 1,
+        "graph/graph_storage.py:method:CodeGraphStorage.get_callees": 1
+      }
+    },
+    {
+      "id": "Q76",
+      "query": "save and load graph integration to and from disk",
+      "category": "B",
+      "split": "train",
+      "expected": [
+        "search/graph_integration.py:method:GraphIntegration.save",
+        "search/graph_integration.py:decorated_definition:GraphIntegration.from_storage",
+        "graph/graph_storage.py:method:CodeGraphStorage.save",
+        "graph/graph_storage.py:method:CodeGraphStorage.load"
+      ],
+      "expected_primary": [
+        "search/graph_integration.py:method:GraphIntegration.save",
+        "search/graph_integration.py:decorated_definition:GraphIntegration.from_storage"
+      ],
+      "relevance_grades": {
+        "search/graph_integration.py:method:GraphIntegration.save": 3,
+        "search/graph_integration.py:decorated_definition:GraphIntegration.from_storage": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.save": 2,
+        "graph/graph_storage.py:method:CodeGraphStorage.load": 2,
+        "search/graph_integration.py:class:GraphIntegration": 1
+      }
+    },
+    {
+      "id": "Q77",
+      "query": "index documents into BM25 and search by keyword",
+      "category": "B",
+      "split": "val",
+      "expected": [
+        "search/bm25_index.py:method:BM25Index.index_documents",
+        "search/bm25_index.py:method:BM25Index.search",
+        "search/bm25_index.py:class:BM25Index"
+      ],
+      "expected_primary": [
+        "search/bm25_index.py:method:BM25Index.index_documents",
+        "search/bm25_index.py:method:BM25Index.search"
+      ],
+      "relevance_grades": {
+        "search/bm25_index.py:method:BM25Index.index_documents": 3,
+        "search/bm25_index.py:method:BM25Index.search": 3,
+        "search/bm25_index.py:class:BM25Index": 2,
+        "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25": 1
+      }
+    },
+    {
+      "id": "Q78",
+      "query": "get cached embedding or embed query and put result in cache",
+      "category": "B",
+      "split": "test",
+      "expected": [
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.get",
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.put",
+        "embeddings/query_cache.py:class:QueryEmbeddingCache",
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder.embed_query"
+      ],
+      "expected_primary": [
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.get",
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.put"
+      ],
+      "relevance_grades": {
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.get": 3,
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.put": 3,
+        "embeddings/query_cache.py:class:QueryEmbeddingCache": 2,
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder.embed_query": 2,
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.__init__": 1
+      }
+    },
+    {
+      "id": "Q79",
+      "query": "what does ChangeDetector handle",
+      "category": "C",
+      "split": "train",
+      "expected": [
+        "merkle/change_detector.py:class:ChangeDetector",
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot",
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes",
+        "search/incremental_indexer.py:method:IncrementalIndexer.detect_changes"
+      ],
+      "expected_primary": [
+        "merkle/change_detector.py:class:ChangeDetector"
+      ],
+      "relevance_grades": {
+        "merkle/change_detector.py:class:ChangeDetector": 3,
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot": 2,
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes": 2,
+        "search/incremental_indexer.py:method:IncrementalIndexer.detect_changes": 2,
+        "merkle/change_detector.py:decorated_definition:FileChanges": 1
+      }
+    },
+    {
+      "id": "Q80",
+      "query": "what does SearchOrchestrator coordinate",
+      "category": "C",
+      "split": "train",
+      "expected": [
+        "mcp_server/tools/search_orchestrator.py:class:SearchOrchestrator",
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run",
+        "mcp_server/tools/search_orchestrator.py:class:SearchPlanner"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/search_orchestrator.py:class:SearchOrchestrator"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/search_orchestrator.py:class:SearchOrchestrator": 3,
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run": 2,
+        "mcp_server/tools/search_orchestrator.py:class:SearchPlanner": 2,
+        "mcp_server/tools/search_orchestrator.py:decorated_definition:SearchPlan": 1
+      }
+    },
+    {
+      "id": "Q81",
+      "query": "what does GraphIntegration handle",
+      "category": "C",
+      "split": "test",
+      "expected": [
+        "search/graph_integration.py:class:GraphIntegration",
+        "search/graph_integration.py:method:GraphIntegration.add_chunk",
+        "search/graph_integration.py:method:GraphIntegration.save",
+        "search/graph_integration.py:decorated_definition:GraphIntegration.from_storage"
+      ],
+      "expected_primary": [
+        "search/graph_integration.py:class:GraphIntegration"
+      ],
+      "relevance_grades": {
+        "search/graph_integration.py:class:GraphIntegration": 3,
+        "search/graph_integration.py:method:GraphIntegration.add_chunk": 2,
+        "search/graph_integration.py:method:GraphIntegration.save": 2,
+        "search/graph_integration.py:decorated_definition:GraphIntegration.from_storage": 2,
+        "graph/graph_storage.py:class:CodeGraphStorage": 1
+      }
+    },
+    {
+      "id": "Q82",
+      "query": "what calls BaseRelationshipExtractor._extract_from_tree",
+      "category": "D",
+      "split": "train",
+      "expected": [
+        "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "chunking/relationships/relationship_extractors/implements_extractor.py:function:extract_implementation_relationships",
+        "chunking/relationships/relationship_extractors/import_extractor.py:function:extract_import_relationships",
+        "chunking/relationships/relationship_extractors/inheritance_extractor.py:function:extract_inheritance_relationships",
+        "chunking/relationships/relationship_extractors/override_extractor.py:function:extract_override_relationships",
+        "chunking/relationships/relationship_extractors/type_extractor.py:function:extract_type_usage_relationships"
+      ],
+      "expected_primary": [
+        "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree"
+      ],
+      "relevance_grades": {
+        "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract": 3,
+        "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree": 3,
+        "chunking/relationships/relationship_extractors/implements_extractor.py:function:extract_implementation_relationships": 2,
+        "chunking/relationships/relationship_extractors/import_extractor.py:function:extract_import_relationships": 2,
+        "chunking/relationships/relationship_extractors/inheritance_extractor.py:function:extract_inheritance_relationships": 2,
+        "chunking/relationships/relationship_extractors/override_extractor.py:function:extract_override_relationships": 2,
+        "chunking/relationships/relationship_extractors/type_extractor.py:function:extract_type_usage_relationships": 2,
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker._extract_phase3_relationships": 1,
+        "chunking/multi_language_chunker.py:class:MultiLanguageChunker": 1
+      }
+    },
+    {
+      "id": "Q83",
+      "query": "what calls MerkleDAG.build",
+      "category": "D",
+      "split": "train",
+      "expected": [
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot",
+        "merkle/change_detector.py:method:ChangeDetector.quick_check",
+        "search/incremental_indexer.py:class:IncrementalIndexer"
+      ],
+      "expected_primary": [
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot",
+        "merkle/change_detector.py:method:ChangeDetector.quick_check"
+      ],
+      "relevance_grades": {
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot": 3,
+        "merkle/change_detector.py:method:ChangeDetector.quick_check": 3,
+        "search/incremental_indexer.py:class:IncrementalIndexer": 2,
+        "search/incremental_indexer.py:split_block:IncrementalIndexer._full_index": 1
+      }
+    },
+    {
+      "id": "Q84",
+      "query": "what does GraphIntegration.add_chunk call",
+      "category": "D",
+      "split": "val",
+      "expected": [
+        "chunking/relationships/relationship_types.py:decorated_definition:RelationshipEdge",
+        "chunking/relationships/relationship_types.py:class:RelationshipType",
+        "search/graph_integration.py:method:GraphIntegration._setup_from_storage"
+      ],
+      "expected_primary": [
+        "chunking/relationships/relationship_types.py:decorated_definition:RelationshipEdge",
+        "chunking/relationships/relationship_types.py:class:RelationshipType"
+      ],
+      "relevance_grades": {
+        "chunking/relationships/relationship_types.py:decorated_definition:RelationshipEdge": 3,
+        "chunking/relationships/relationship_types.py:class:RelationshipType": 3,
+        "search/graph_integration.py:method:GraphIntegration._setup_from_storage": 2,
+        "graph/graph_storage.py:method:CodeGraphStorage.add_node": 1,
+        "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge": 1,
+        "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge": 1
+      }
+    },
+    {
+      "id": "Q85",
+      "query": "what does MerkleDAG.build call internally",
+      "category": "D",
+      "split": "test",
+      "expected": [
+        "merkle/merkle_dag.py:method:MerkleDAG.build_node",
+        "merkle/merkle_dag.py:method:MerkleDAG.__init__"
+      ],
+      "expected_primary": [
+        "merkle/merkle_dag.py:method:MerkleDAG.build_node"
+      ],
+      "relevance_grades": {
+        "merkle/merkle_dag.py:method:MerkleDAG.build_node": 3,
+        "merkle/merkle_dag.py:method:MerkleDAG.__init__": 2
+      }
+    },
+    {
+      "id": "Q86",
+      "query": "trace how MultiLanguageChunker._extract_phase3_relationships reaches BaseRelationshipExtractor._extract_from_tree — what intermediate method bridges them",
+      "category": "E",
+      "split": "train",
+      "expected": [
+        "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker._extract_phase3_relationships",
+        "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      ],
+      "expected_primary": [
+        "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree"
+      ],
+      "relevance_grades": {
+        "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree": 3,
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker._extract_phase3_relationships": 2,
+        "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree": 2,
+        "chunking/multi_language_chunker.py:class:MultiLanguageChunker": 1
+      }
+    },
+    {
+      "id": "Q87",
+      "query": "trace the call path from GraphIntegration.add_chunk to CodeGraphStorage.add_node",
+      "category": "E",
+      "split": "train",
+      "expected": [
+        "search/graph_integration.py:method:GraphIntegration.add_chunk",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_node",
+        "search/graph_integration.py:class:GraphIntegration"
+      ],
+      "expected_primary": [
+        "search/graph_integration.py:method:GraphIntegration.add_chunk",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_node"
+      ],
+      "relevance_grades": {
+        "search/graph_integration.py:method:GraphIntegration.add_chunk": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.add_node": 3,
+        "search/graph_integration.py:class:GraphIntegration": 1,
+        "graph/graph_storage.py:class:CodeGraphStorage": 1
+      }
+    },
+    {
+      "id": "Q88",
+      "query": "trace how GraphIntegration.build_graph_from_chunks calls CodeGraphStorage.add_relationship_edge",
+      "category": "E",
+      "split": "val",
+      "expected": [
+        "search/graph_integration.py:split_block:GraphIntegration.build_graph_from_chunks",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge",
+        "search/graph_integration.py:class:GraphIntegration"
+      ],
+      "expected_primary": [
+        "search/graph_integration.py:split_block:GraphIntegration.build_graph_from_chunks",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge"
+      ],
+      "relevance_grades": {
+        "search/graph_integration.py:split_block:GraphIntegration.build_graph_from_chunks": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge": 3,
+        "search/graph_integration.py:class:GraphIntegration": 1,
+        "graph/graph_storage.py:class:CodeGraphStorage": 1
+      }
+    },
+    {
+      "id": "Q89",
+      "query": "trace the call chain from IncrementalIndexer.detect_changes down to ChangeDetector.detect_changes — what intermediate does it pass through",
+      "category": "E",
+      "split": "val",
+      "expected": [
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot",
+        "search/incremental_indexer.py:method:IncrementalIndexer.detect_changes",
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes"
+      ],
+      "expected_primary": [
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot"
+      ],
+      "relevance_grades": {
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot": 3,
+        "search/incremental_indexer.py:method:IncrementalIndexer.detect_changes": 2,
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes": 2,
+        "merkle/change_detector.py:class:ChangeDetector": 1
+      }
+    },
+    {
+      "id": "Q90",
+      "query": "trace the path from SearchOrchestrator.run to SearchExecutor.search_bm25 via the search factory — what bridges orchestration to BM25 execution",
+      "category": "E",
+      "split": "test",
+      "expected": [
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run",
+        "mcp_server/search_factory.py:split_block:get_searcher",
+        "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25",
+        "search/hybrid_searcher.py:class:HybridSearcher",
+        "search/hybrid_searcher.py:method:HybridSearcher._init_search_components",
+        "search/search_executor.py:class:SearchExecutor"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run",
+        "mcp_server/search_factory.py:split_block:get_searcher",
+        "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run": 3,
+        "mcp_server/search_factory.py:split_block:get_searcher": 3,
+        "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25": 3,
+        "search/hybrid_searcher.py:class:HybridSearcher": 2,
+        "search/hybrid_searcher.py:method:HybridSearcher._init_search_components": 2,
+        "search/search_executor.py:class:SearchExecutor": 2
+      }
+    },
+    {
+      "id": "Q91",
+      "query": "trace the call from ChangeDetector.detect_changes_from_snapshot to MerkleDAG.build",
+      "category": "E",
+      "split": "test",
+      "expected": [
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot",
+        "merkle/merkle_dag.py:method:MerkleDAG.build",
+        "merkle/merkle_dag.py:class:MerkleDAG"
+      ],
+      "expected_primary": [
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot",
+        "merkle/merkle_dag.py:method:MerkleDAG.build"
+      ],
+      "relevance_grades": {
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot": 3,
+        "merkle/merkle_dag.py:method:MerkleDAG.build": 3,
+        "merkle/merkle_dag.py:class:MerkleDAG": 1
+      }
+    },
+    {
+      "id": "Q92",
+      "query": "trace the call from MerkleDAG.build down to MerkleDAG.build_node — what recursive step builds each tree node",
+      "category": "E",
+      "split": "test",
+      "expected": [
+        "merkle/merkle_dag.py:method:MerkleDAG.build",
+        "merkle/merkle_dag.py:method:MerkleDAG.build_node",
+        "merkle/merkle_dag.py:class:MerkleDAG"
+      ],
+      "expected_primary": [
+        "merkle/merkle_dag.py:method:MerkleDAG.build",
+        "merkle/merkle_dag.py:method:MerkleDAG.build_node"
+      ],
+      "relevance_grades": {
+        "merkle/merkle_dag.py:method:MerkleDAG.build": 3,
+        "merkle/merkle_dag.py:method:MerkleDAG.build_node": 3,
+        "merkle/merkle_dag.py:class:MerkleDAG": 1
+      }
+    },
+    {
+      "id": "Q93",
+      "query": "find detect_changes implementations similar to IncrementalIndexer.detect_changes — other change detection routines in the codebase",
+      "category": "F",
+      "split": "train",
+      "expected": [
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes",
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot"
+      ],
+      "expected_primary": [
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes",
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot"
+      ],
+      "relevance_grades": {
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes": 3,
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot": 3,
+        "search/incremental_indexer.py:method:IncrementalIndexer.__init__": 1,
+        "search/incremental_indexer.py:method:IncrementalIndexer._get_supported_files": 1,
+        "search/incremental_indexer.py:method:IncrementalIndexer.detect_changes": 1
+      }
+    },
+    {
+      "id": "Q94",
+      "query": "find add_chunk pattern implementations similar to GraphIntegration.add_chunk — other chunk-insertion routines across indexer and graph storage classes",
+      "category": "F",
+      "split": "train",
+      "expected": [
+        "search/indexer.py:method:CodeIndexManager._add_to_graph",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge"
+      ],
+      "expected_primary": [
+        "search/indexer.py:method:CodeIndexManager._add_to_graph"
+      ],
+      "relevance_grades": {
+        "search/indexer.py:method:CodeIndexManager._add_to_graph": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge": 2,
+        "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge": 2,
+        "search/graph_integration.py:split_block:GraphIntegration.build_graph_from_chunks": 1,
+        "search/graph_integration.py:method:GraphIntegration.add_chunk": 1
+      }
+    },
+    {
+      "id": "Q95",
+      "query": "find BM25 search methods similar to BM25Index.search — other keyword retrieval implementations",
+      "category": "F",
+      "split": "val",
+      "expected": [
+        "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25",
+        "search/bm25_index.py:method:BM25Index.index_documents",
+        "search/result_factory.py:decorated_definition:ResultFactory.from_bm25_results"
+      ],
+      "expected_primary": [
+        "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25"
+      ],
+      "relevance_grades": {
+        "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25": 3,
+        "search/bm25_index.py:method:BM25Index.index_documents": 2,
+        "search/result_factory.py:decorated_definition:ResultFactory.from_bm25_results": 2,
+        "search/bm25_index.py:class:BM25Index": 1,
+        "search/bm25_index.py:method:BM25Index.search": 1
+      }
+    },
+    {
+      "id": "Q96",
+      "query": "find search implementations similar to SearchExecutor.search_bm25 — other methods that wrap BM25 or dense retrieval",
+      "category": "F",
+      "split": "val",
+      "expected": [
+        "search/bm25_index.py:method:BM25Index.search",
+        "search/result_factory.py:decorated_definition:ResultFactory.from_bm25_results",
+        "search/search_executor.py:method:SearchExecutor._sequential_search"
+      ],
+      "expected_primary": [
+        "search/bm25_index.py:method:BM25Index.search"
+      ],
+      "relevance_grades": {
+        "search/bm25_index.py:method:BM25Index.search": 3,
+        "search/result_factory.py:decorated_definition:ResultFactory.from_bm25_results": 2,
+        "search/search_executor.py:method:SearchExecutor._sequential_search": 2,
+        "search/hybrid_searcher.py:class:HybridSearcher": 1,
+        "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25": 1
+      }
+    },
+    {
+      "id": "Q97",
+      "query": "find FaissVectorIndex operations similar to FaissVectorIndex.save — other vector index lifecycle methods",
+      "category": "F",
+      "split": "test",
+      "expected": [
+        "search/faiss_index.py:method:FaissVectorIndex.load",
+        "search/faiss_index.py:method:FaissVectorIndex.create",
+        "search/faiss_index.py:class:FaissVectorIndex"
+      ],
+      "expected_primary": [
+        "search/faiss_index.py:method:FaissVectorIndex.load",
+        "search/faiss_index.py:method:FaissVectorIndex.create"
+      ],
+      "relevance_grades": {
+        "search/faiss_index.py:method:FaissVectorIndex.load": 3,
+        "search/faiss_index.py:method:FaissVectorIndex.create": 3,
+        "search/faiss_index.py:class:FaissVectorIndex": 2,
+        "search/faiss_index.py:method:FaissVectorIndex.__init__": 1,
+        "search/faiss_index.py:method:FaissVectorIndex.save": 1
+      }
+    },
+    {
+      "id": "Q98",
+      "query": "find caching get and put implementations similar to QueryEmbeddingCache.get",
+      "category": "F",
+      "split": "test",
+      "expected": [
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.put",
+        "embeddings/query_cache.py:class:QueryEmbeddingCache",
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder.embed_query"
+      ],
+      "expected_primary": [
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.put"
+      ],
+      "relevance_grades": {
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.put": 3,
+        "embeddings/query_cache.py:class:QueryEmbeddingCache": 2,
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder.embed_query": 2,
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.__init__": 1,
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.get": 1
+      }
+    },
+    {
+      "id": "Q99",
+      "query": "find save and restore implementations similar to GraphIntegration.save — other graph persistence and load methods",
+      "category": "F",
+      "split": "test",
+      "expected": [
+        "search/graph_integration.py:decorated_definition:GraphIntegration.from_storage",
+        "search/graph_integration.py:method:GraphIntegration.clear",
+        "search/graph_integration.py:class:GraphIntegration"
+      ],
+      "expected_primary": [
+        "search/graph_integration.py:decorated_definition:GraphIntegration.from_storage"
+      ],
+      "relevance_grades": {
+        "search/graph_integration.py:decorated_definition:GraphIntegration.from_storage": 3,
+        "search/graph_integration.py:method:GraphIntegration.clear": 2,
+        "search/graph_integration.py:class:GraphIntegration": 2,
+        "search/graph_integration.py:method:GraphIntegration.__init__": 1,
+        "search/graph_integration.py:method:GraphIntegration.save": 1
       }
     }
   ]

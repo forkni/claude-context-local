@@ -13,6 +13,7 @@ import networkx as nx
 from utils.path_utils import normalize_path
 
 from .graph_storage import CodeGraphStorage
+from .schema import EDGE_ATTR_TYPE, NODE_ATTR_FILE, NODE_ATTR_NAME, NODE_ATTR_TYPE
 
 
 @dataclass
@@ -211,13 +212,13 @@ class GraphQueryEngine:
                 target_node_data = self.storage.get_node_data(target_id) or {}
                 result["path"][-1]["node"]["chunk_id"] = target_id
                 result["path"][-1]["node"]["name"] = target_node_data.get(
-                    "name", target_symbol
+                    NODE_ATTR_NAME, target_symbol
                 )
                 result["path"][-1]["node"]["type"] = target_node_data.get(
-                    "type", "unknown"
+                    NODE_ATTR_TYPE, "unknown"
                 )
                 result["path"][-1]["node"]["file"] = target_node_data.get(
-                    "file", target_id.split(":")[0]
+                    NODE_ATTR_FILE, target_id.split(":")[0]
                 )
 
         return result
@@ -237,7 +238,8 @@ class GraphQueryEngine:
         filtered_edges = [
             (u, v, k)
             for u, v, k, d in self.storage.graph.edges(keys=True, data=True)
-            if d.get("relationship_type") in edge_types or d.get("type") in edge_types
+            if d.get("relationship_type") in edge_types
+            or d.get(EDGE_ATTR_TYPE) in edge_types
         ]
         return self.storage.graph.edge_subgraph(filtered_edges)
 

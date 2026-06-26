@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.18.0] - 2026-06-26
+
+### Changed
+
+- **`source_order_output` default `True→False`** (`search/config.py`, `docs/MCP_TOOLS_REFERENCE.md`) —
+  `search_code` now emits results in **relevance order** (centrality-reranked blended_score descending)
+  instead of DOS-RAG file/line order. Module/community summary chunks are demoted to the tail for
+  non-GLOBAL queries; `reranker_score` is preserved per-row for optional consumer re-sort. DOS-RAG order
+  is still available via `source_order_output=true`. The searcher-only SSCG harness
+  (`run_sscg_benchmark.py`, calls `searcher.search()` directly) and the DSPy agent eval (re-sorts by
+  `reranker_score` internally) bypass `SearchOrchestrator._apply_source_order_and_budget` and are
+  unaffected. Validated on MCP-pipeline eval (45 A/B/C golden queries through `SearchOrchestrator.run()`):
+  **MRR 0.700→0.8278** (+0.128), **Hit@7 0.978** (44/45), Recall@7 0.666 (≈flat vs 0.696 baseline).
+
+### Added
+
+- **`scripts/benchmark/run_mcp_pipeline_eval.py`** — emission-order SSCG eval through the real
+  `SearchOrchestrator.run()` pipeline. Measures position-sensitive MRR/Recall@7 using chunk IDs in
+  emission order (no post-sort), testing the full `_apply_source_order_and_budget` code path that
+  `run_sscg_benchmark.py` bypasses.
+
+---
+
 ## [0.17.0] - 2026-06-24
 
 ### Added — DSPy/GEPA agent-evaluation harness

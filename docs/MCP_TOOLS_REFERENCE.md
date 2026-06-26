@@ -532,11 +532,13 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 
 Configured via `search_config.json` or the `start_mcp_server.cmd` UI (Search Configuration → 8).
 
-### Source-Position Reranking (`OutputConfig.source_order_output`, default: True)
+### Source-Position Reranking (`OutputConfig.source_order_output`, default: False)
 
-After retrieval, results from the same file are grouped and sorted by start line. Non-contiguous chunks from the same file get `[... N lines omitted ...]` gap indicators inserted between them. LLMs comprehend code better when chunks appear in logical order (imports → class → methods).
+After retrieval, results emit in **relevance order** (centrality-reranked blended_score descending) by default. Module/community summary chunks are demoted to the tail for non-GLOBAL queries. `reranker_score` is preserved per-row for optional consumer re-sort.
 
-**Research basis**: DOS RAG (EMNLP 2025) — +5.3% LLM accuracy at zero retrieval cost.
+Set `source_order_output=true` to restore **DOS-RAG file/line ordering**: results from the same file are grouped and sorted by start line, with `[... N lines omitted ...]` gap indicators between non-contiguous chunks. Useful when feeding chunks verbatim to a long-context LLM that benefits from reading code in document order.
+
+**Research basis**: DOS RAG (EMNLP 2025) — +5.3% LLM accuracy when an LLM reads chunks in document order. Does not improve agent/ranked-retrieval use cases where the caller re-ranks by score. MCP pipeline eval (2026-06-26, 45 A/B/C queries): switching to relevance order gave MRR 0.700→0.8278, Hit@7 0.978.
 
 ### Centrality-Adaptive BM25 Boost (`GraphEnhancedConfig`)
 

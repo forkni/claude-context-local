@@ -14,6 +14,7 @@ from typing import Any
 from networkx.algorithms.community import louvain_communities, modularity
 
 from graph.graph_storage import CodeGraphStorage
+from graph.schema import NODE_ATTR_IS_TARGET_NAME, NODE_ATTR_TYPE, NODE_TYPE_SYMBOL_NAME
 
 
 logger = logging.getLogger(__name__)
@@ -79,8 +80,8 @@ class CommunityDetector:
         chunk_nodes = [
             n
             for n, attrs in self.nx_graph.nodes(data=True)
-            if attrs.get("type") != "symbol_name"
-            and not attrs.get("is_target_name", False)
+            if attrs.get(NODE_ATTR_TYPE) != NODE_TYPE_SYMBOL_NAME
+            and not attrs.get(NODE_ATTR_IS_TARGET_NAME, False)
         ]
 
         if not chunk_nodes:
@@ -91,7 +92,8 @@ class CommunityDetector:
         phantom_nodes = [
             n
             for n, attrs in self.nx_graph.nodes(data=True)
-            if attrs.get("type") == "symbol_name" or attrs.get("is_target_name", False)
+            if attrs.get(NODE_ATTR_TYPE) == NODE_TYPE_SYMBOL_NAME
+            or attrs.get(NODE_ATTR_IS_TARGET_NAME, False)
         ]
 
         if phantom_nodes:

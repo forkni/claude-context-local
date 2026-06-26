@@ -367,6 +367,32 @@ def _switch_active_model(model_key: str, model_name: str) -> None:
     _invalidate_config_caches()
 
 
+def _release_indexer_resources(indexer: Any) -> None:
+    """Close a per-model indexer's metadata store (and thread pool / reranker).
+
+    Multi-model batch indexing creates one HybridSearcher / CodeIndexManager per
+    model as a loop-local.  Without an explicit close, each model's SQLite
+    metadata.db stays open until GC runs __del__ — on Windows this does not
+    release the WAL file lock promptly, so a subsequent clear_index / delete_project
+    raises [WinError 32] when shutil.rmtree tries to remove the file.
+
+    Called from the per-model finally block in _index_with_all_models so every
+    model's resources are freed before moving to the next model.
+    """
+    if indexer is None:
+        return
+    try:
+        if hasattr(indexer, "shutdown"):
+            # HybridSearcher: closes dense_index metadata store, thread pool,
+            # and reranking engine.  Idempotent (guarded by _is_shutdown flag).
+            indexer.shutdown()
+        elif getattr(indexer, "_metadata_store", None) is not None:
+            # CodeIndexManager (non-hybrid path): close the SQLite handle directly.
+            indexer._metadata_store.close()
+    except Exception as e:
+        logger.warning(f"Failed to release per-model indexer resources: {e}")
+
+
 def _index_with_all_models(
     directory_path: Path, incremental: bool, include_dirs=None, exclude_dirs=None
 ) -> list[dict]:
@@ -395,102 +421,118 @@ def _index_with_all_models(
 
         pool_config = get_model_pool_manager().get_pool_config()
         for model_key, model_name in pool_config.items():
-            logger.info(f"Indexing with model: {model_name} ({model_key})")
+            # Initialise to None so _release_indexer_resources is always safe to
+            # call even if the try body exits before `indexer` is assigned.
+            indexer = None
+            try:
+                logger.info(f"Indexing with model: {model_name} ({model_key})")
 
-            # Switch to this model temporarily
-            _switch_active_model(model_key, model_name)
+                # Switch to this model temporarily
+                _switch_active_model(model_key, model_name)
 
-            # Force garbage collection and GPU memory release
-            _release_gpu_memory()
+                # Force garbage collection and GPU memory release
+                _release_gpu_memory()
 
-            # Get project storage for this model
-            project_dir = get_project_storage_dir(
-                str(directory_path),
-                include_dirs=include_dirs,
-                exclude_dirs=exclude_dirs,
-            )
-            index_dir = project_dir / "index"
-            index_dir.mkdir(exist_ok=True)
+                # Get project storage for this model
+                project_dir = get_project_storage_dir(
+                    str(directory_path),
+                    include_dirs=include_dirs,
+                    exclude_dirs=exclude_dirs,
+                )
+                index_dir = project_dir / "index"
+                index_dir.mkdir(exist_ok=True)
 
-            # Load config for chunker initialization
-            config = get_config()
+                # Load config for chunker initialization
+                config = get_config()
 
-            # Initialize components for this model
-            chunker = MultiLanguageChunker(
-                str(directory_path),
-                include_dirs,
-                exclude_dirs,
-                enable_entity_tracking=config.performance.enable_entity_tracking,
-            )
-            embedder = get_embedder(model_key)
+                # Initialize components for this model
+                chunker = MultiLanguageChunker(
+                    str(directory_path),
+                    include_dirs,
+                    exclude_dirs,
+                    enable_entity_tracking=config.performance.enable_entity_tracking,
+                )
+                embedder = get_embedder(model_key)
 
-            # For force_full reindex, delete index files BEFORE creating HybridSearcher
-            # to avoid WinError 32 (file lock) when MCP server holds references
-            if not incremental:
-                _clear_index_files_before_create(index_dir)
+                # For force_full reindex, delete index files BEFORE creating HybridSearcher
+                # to avoid WinError 32 (file lock) when MCP server holds references
+                if not incremental:
+                    _clear_index_files_before_create(index_dir)
 
-            # Create fresh indexer instance directly (bypass global cache)
-            if config.search_mode.enable_hybrid:
-                project_id = project_dir.name.rsplit("_", 1)[0]
-                indexer = HybridSearcher(
-                    storage_dir=str(index_dir),
+                # Create fresh indexer instance directly (bypass global cache)
+                if config.search_mode.enable_hybrid:
+                    project_id = project_dir.name.rsplit("_", 1)[0]
+                    indexer = HybridSearcher(
+                        storage_dir=str(index_dir),
+                        embedder=embedder,
+                        bm25_weight=config.search_mode.bm25_weight,
+                        dense_weight=config.search_mode.dense_weight,
+                        rrf_k=config.search_mode.rrf_k_parameter,
+                        max_workers=2,
+                        bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
+                        bm25_use_stemming=config.search_mode.bm25_use_stemming,
+                        project_id=project_id,
+                        config=config,
+                    )
+                    logger.info(
+                        f"Created HybridSearcher for {model_name} at {index_dir}"
+                    )
+                else:
+                    project_id = project_dir.name.rsplit("_", 1)[0]
+                    indexer = CodeIndexManager(
+                        str(index_dir), project_id=project_id, config=config
+                    )
+                    logger.info(
+                        f"Created CodeIndexManager for {model_name} at {index_dir}"
+                    )
+
+                # Create incremental indexer and run
+                incremental_indexer = IncrementalIndexer(
+                    indexer=indexer,
                     embedder=embedder,
-                    bm25_weight=config.search_mode.bm25_weight,
-                    dense_weight=config.search_mode.dense_weight,
-                    rrf_k=config.search_mode.rrf_k_parameter,
-                    max_workers=2,
-                    bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
-                    bm25_use_stemming=config.search_mode.bm25_use_stemming,
-                    project_id=project_id,
-                    config=config,
+                    chunker=chunker,
+                    include_dirs=include_dirs,
+                    exclude_dirs=exclude_dirs,
+                    precomputed_repo_profile=cached_repo_profile,
+                    prebuilt_dag=cached_dag if not incremental else None,
                 )
-                logger.info(f"Created HybridSearcher for {model_name} at {index_dir}")
-            else:
-                project_id = project_dir.name.rsplit("_", 1)[0]
-                indexer = CodeIndexManager(
-                    str(index_dir), project_id=project_id, config=config
+
+                start_time = datetime.now()
+                if incremental:
+                    result = incremental_indexer.incremental_index(str(directory_path))
+                else:
+                    result = incremental_indexer.incremental_index(
+                        str(directory_path), force_full=True
+                    )
+                elapsed = (datetime.now() - start_time).total_seconds()
+
+                # Capture repo profile and built DAG after first model pass for reuse
+                # (must happen before _release_indexer_resources closes the indexer)
+                if cached_repo_profile is None:
+                    cached_repo_profile = incremental_indexer.repo_profile
+                if cached_dag is None and not incremental:
+                    cached_dag = incremental_indexer.built_dag
+
+                results.append(
+                    {
+                        "model": model_name,
+                        "model_key": model_key,
+                        "dimension": config.embedding.dimension,
+                        "files_added": result.files_added,
+                        "files_modified": result.files_modified,
+                        "files_removed": result.files_removed,
+                        "chunks_added": result.chunks_added,
+                        "time_taken": round(elapsed, 2),
+                    }
                 )
-                logger.info(f"Created CodeIndexManager for {model_name} at {index_dir}")
+                logger.info(f"Completed indexing with {model_name} in {elapsed:.2f}s")
 
-            # Create incremental indexer and run
-            incremental_indexer = IncrementalIndexer(
-                indexer=indexer,
-                embedder=embedder,
-                chunker=chunker,
-                include_dirs=include_dirs,
-                exclude_dirs=exclude_dirs,
-                precomputed_repo_profile=cached_repo_profile,
-                prebuilt_dag=cached_dag if not incremental else None,
-            )
-
-            start_time = datetime.now()
-            if incremental:
-                result = incremental_indexer.incremental_index(str(directory_path))
-            else:
-                result = incremental_indexer.incremental_index(
-                    str(directory_path), force_full=True
-                )
-            elapsed = (datetime.now() - start_time).total_seconds()
-
-            # Capture repo profile and built DAG after first model pass for reuse
-            if cached_repo_profile is None:
-                cached_repo_profile = incremental_indexer.repo_profile
-            if cached_dag is None and not incremental:
-                cached_dag = incremental_indexer.built_dag
-
-            results.append(
-                {
-                    "model": model_name,
-                    "model_key": model_key,
-                    "dimension": config.embedding.dimension,
-                    "files_added": result.files_added,
-                    "files_modified": result.files_modified,
-                    "files_removed": result.files_removed,
-                    "chunks_added": result.chunks_added,
-                    "time_taken": round(elapsed, 2),
-                }
-            )
-            logger.info(f"Completed indexing with {model_name} in {elapsed:.2f}s")
+            finally:
+                # Release this model's SQLite metadata.db handle before the next
+                # iteration.  Without an explicit close, Windows holds the WAL
+                # lock until GC runs __del__, causing WinError 32 when
+                # clear_index / delete_project later calls shutil.rmtree.
+                _release_indexer_resources(indexer)
 
     finally:
         # Restore to a valid model in the current pool
@@ -551,7 +593,12 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     # blocks (gc.collect, torch.cuda ops, time.sleep(0.3)) — offload.
     import asyncio
 
-    await asyncio.to_thread(close_project_resources, current_project)
+    # clear_current=False: keep state.current_project alive after closing handles.
+    # clear_index only removes index files — the project dir still exists and
+    # must remain the active project so get_index_status can report empty counts.
+    await asyncio.to_thread(
+        close_project_resources, current_project, clear_current=False
+    )
 
     # Get project info for pattern matching
     project_path = Path(current_project).resolve()
