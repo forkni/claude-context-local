@@ -21,6 +21,13 @@ from typing import TYPE_CHECKING
 import networkx as nx
 from networkx.exception import PowerIterationFailedConvergence as PPRConvergenceError
 
+from graph.schema import (
+    EDGE_ATTR_LINE,
+    EDGE_ATTR_TYPE,
+    NODE_ATTR_FILE,
+    NODE_ATTR_NAME,
+    NODE_ATTR_TYPE,
+)
 from search.chunk_id import extract_name as _extract_name
 
 
@@ -43,12 +50,9 @@ logger = logging.getLogger(__name__)
 # which are the *serialisation* layer for MCP consumers)
 # ---------------------------------------------------------------------------
 
-NODE_ATTR_NAME = "name"  # graph node attribute: symbol name
-NODE_ATTR_TYPE = "type"  # graph node attribute: chunk kind
-NODE_ATTR_FILE = "file"  # graph node attribute: file path (may be absolute)
-
-EDGE_ATTR_TYPE = "type"  # graph edge attribute: relationship kind
-EDGE_ATTR_LINE = "line"  # graph edge attribute: call-site line number
+# Constants imported from graph.schema — re-declared here for local reference
+# and backward compatibility (external code that imported them from graph_view).
+# NODE_ATTR_NAME, NODE_ATTR_TYPE, NODE_ATTR_FILE, EDGE_ATTR_TYPE, EDGE_ATTR_LINE
 
 
 @dataclass(frozen=True, slots=True)
