@@ -26,6 +26,7 @@ from rich.progress import (
 )
 
 from chunking.python_ast_chunker import CodeChunk
+from embeddings.chunk_metadata import ChunkMetadata
 from embeddings.model_cache import ModelCacheManager
 from embeddings.model_loader import ModelLoader
 from embeddings.query_cache import QueryEmbeddingCache
@@ -569,7 +570,7 @@ class EmbeddingResult:
 
     embedding: np.ndarray
     chunk_id: str
-    metadata: dict[str, Any]
+    metadata: ChunkMetadata
 
 
 class CodeEmbedder:
@@ -1094,7 +1095,7 @@ class CodeEmbedder:
         return chunk_id
 
     @staticmethod
-    def _build_chunk_metadata(chunk: CodeChunk) -> dict[str, Any]:
+    def _build_chunk_metadata(chunk: CodeChunk) -> ChunkMetadata:
         """Build the metadata dict for an EmbeddingResult from a CodeChunk."""
         return {
             "file_path": chunk.file_path,
