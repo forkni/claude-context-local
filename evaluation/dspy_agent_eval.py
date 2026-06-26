@@ -186,12 +186,11 @@ class CodeNavQA(dspy.Signature):
     question: str = dspy.InputField()
     relevant_chunk_ids: list[str] = dspy.OutputField(
         desc=(
-            "Return at most 7 chunk_ids, most relevant first.  Include every chunk you "
-            "surfaced that is relevant to the question — a class AND its methods, both "
-            "halves of a paired operation, a config AND its loader, same-named symbols "
-            "across subsystems — up to 7 total.  Prefer recall within that cap: when "
-            "unsure whether a result is relevant, INCLUDE it rather than dropping it. "
-            "Do NOT return only the single best match. "
+            "Return EVERY chunk_id from your search results that is relevant to the "
+            "question — a class AND its methods, both halves of a paired operation, a "
+            "config AND its loader, same-named symbols across subsystems.  Prefer recall: "
+            "when unsure whether a result is relevant, INCLUDE it.  Do NOT return only "
+            "the single best match. "
             "Copy the 'chunk_id' field VERBATIM from each relevant search_code result "
             "(including its line-range segment, e.g. "
             "'search/config.py:148-161:decorated_definition:EmbeddingConfig'). "
@@ -200,7 +199,7 @@ class CodeNavQA(dspy.Signature):
             "Lead with the canonical class/method/function chunk whose name most directly "
             "matches the question — never a split_block, module, or decorated_definition "
             "fragment — then remaining relevant chunks in descending reranker_score order. "
-            "Return at most 7 IDs."
+            "Return up to 12 IDs."
         )
     )
     answer: str = dspy.OutputField(
