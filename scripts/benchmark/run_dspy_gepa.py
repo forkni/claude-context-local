@@ -92,7 +92,7 @@ def _parse_args() -> argparse.Namespace:
         dest="max_full_evals",
         help=(
             "Override budget: cap as max_full_evals × (len(trainset) + len(valset)). "
-            "E.g. --max-full-evals 5 → ~185 rollouts on train=27/val=10. "
+            "E.g. --max-full-evals 5 → ~295 rollouts on train=43/val=16. "
             "Overrides --budget."
         ),
     )
@@ -164,7 +164,7 @@ def _print_prereq_banner(args: argparse.Namespace) -> None:
     elif args.max_full_evals is not None:
         budget_display = (
             f"max_full_evals={args.max_full_evals} "
-            f"(~{args.max_full_evals * 37} rollouts on train=27/val=10)"
+            f"(~{args.max_full_evals * 59} rollouts on train=43/val=16)"
         )
     else:
         budget_display = f"auto={args.budget}"

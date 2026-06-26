@@ -335,7 +335,7 @@ def run_gepa_optimization(
         max_full_evals: Explicit full-evaluation cap passed as
             ``dspy.GEPA(max_full_evals=...)``.  Computes metric calls as
             ``max_full_evals × (len(trainset) + len(valset))``, e.g. 5 → 185
-            on train=27 / val=10.  Overrides ``budget`` when set.
+            on train=43 / val=16.  Overrides ``budget`` when set.
         max_metric_calls: Hard rollout ceiling passed directly to GEPA.
             Overrides both ``budget`` and ``max_full_evals`` when set.
         reflection_model: Claude model for GEPA's reflective step.
@@ -366,7 +366,7 @@ def run_gepa_optimization(
     ts = _time.strftime("%Y%m%d_%H%M%S")
 
     logger.info(
-        "GEPA: using train/val split from golden dataset (train=27, val=10, test=8 held out)."
+        "GEPA: using train/val split from golden dataset (train=43, val=16, test=18 held out)."
     )
 
     # Load golden dataset — train and val splits separately.
@@ -396,9 +396,11 @@ def run_gepa_optimization(
     with gepa_tool_bridge(
         project_path=project_path,
         server_url=server_url,
-        tool_timeout_s=45.0,
+        tool_timeout_s=120.0,
     ) as sync_tools:
-        student = dspy.ReAct(CodeNavQA, tools=sync_tools, max_iters=max_iters)  # pyrefly: ignore[bad-argument-type]  # DSPy stub requires Callable but list[Tool] is the real API
+        student = dspy.ReAct(
+            CodeNavQA, tools=sync_tools, max_iters=max_iters
+        )  # pyrefly: ignore[bad-argument-type]  # DSPy stub requires Callable but list[Tool] is the real API
 
         # Resolve budget: explicit knobs take priority over the auto preset.
         # dspy.GEPA enforces exactly-one-of {auto, max_full_evals, max_metric_calls}.
