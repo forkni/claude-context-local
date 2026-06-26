@@ -155,6 +155,8 @@ class QueryIntent(Enum):
 
 
 # Intent-driven BM25/Dense weight profiles
+# NOTE: ranking factor constants (type boosts, lifecycle set, name-overlap tiers) live in
+# search.ranking_policy, not here.  Migrate weight profiles there if a shared owner is needed.
 INTENT_WEIGHT_PROFILES: dict[QueryIntent, tuple[float, float]] = {
     QueryIntent.LOCAL: (
         0.35,
