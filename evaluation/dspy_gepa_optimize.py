@@ -15,10 +15,10 @@ single :class:`threading.Lock` serialises MCP I/O (the session cannot serve two
 in-flight requests simultaneously); the expensive ``claude -p`` LM calls still
 run in parallel.
 
-*Train/val split.*  The golden dataset has 45 queries with a ``split`` field
-(``"train"``/``"val"``/``"test"``).  GEPA uses the train split (27 rows) for
-optimisation and the val split (10 rows) for evaluation; ``run_dspy_eval.py``
-reports the held-out test split (8 rows) as the final generalisation check.
+*Train/val split.*  The golden dataset has 77 queries with a ``split`` field
+(``"train"``/``"val"``/``"test"``).  GEPA uses the train split (43 rows) for
+optimisation and the val split (16 rows) for evaluation; ``run_dspy_eval.py``
+reports the held-out test split (18 rows) as the final generalisation check.
 
 *Subscription billing.*  Both the rollout LM (``claude-sonnet-4-6``) and the
 reflection LM (``claude-opus-4-8``) are driven through
