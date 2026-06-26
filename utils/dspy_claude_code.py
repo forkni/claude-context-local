@@ -65,7 +65,7 @@ class ClaudeCodeLM(dspy.BaseLM):
     # DSPy protocol
     # ------------------------------------------------------------------
 
-    def forward(
+    def forward(  # pyrefly: ignore[bad-override]  # BaseLM stub types return as Never
         self,
         prompt: str | None = None,
         messages: list[dict[str, Any]] | None = None,
@@ -132,7 +132,7 @@ class ClaudeCodeLM(dspy.BaseLM):
         resp._hidden_params = {"response_cost": 0.0}
         return resp
 
-    async def aforward(
+    async def aforward(  # pyrefly: ignore[bad-override]  # BaseLM stub types return as Never
         self,
         prompt: str | None = None,
         messages: list[dict[str, Any]] | None = None,

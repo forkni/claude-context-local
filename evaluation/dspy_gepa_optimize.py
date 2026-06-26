@@ -398,7 +398,7 @@ def run_gepa_optimization(
         server_url=server_url,
         tool_timeout_s=45.0,
     ) as sync_tools:
-        student = dspy.ReAct(CodeNavQA, tools=sync_tools, max_iters=max_iters)
+        student = dspy.ReAct(CodeNavQA, tools=sync_tools, max_iters=max_iters)  # pyrefly: ignore[bad-argument-type]  # DSPy stub requires Callable but list[Tool] is the real API
 
         # Resolve budget: explicit knobs take priority over the auto preset.
         # dspy.GEPA enforces exactly-one-of {auto, max_full_evals, max_metric_calls}.
@@ -411,9 +411,9 @@ def run_gepa_optimization(
         logger.info("GEPA: budget_kwargs=%s", budget_kwargs)
 
         gepa = dspy.GEPA(
-            metric=gepa_metric,
+            metric=gepa_metric,  # pyrefly: ignore[bad-argument-type]  # DSPy GEPA stub uses GEPAFeedbackMetric; callable metric is valid at runtime
             **budget_kwargs,
-            reflection_lm=reflection_lm,
+            reflection_lm=reflection_lm,  # pyrefly: ignore[bad-argument-type]  # DSPy stub expects LM | None; ClaudeCodeLM inherits BaseLM at runtime
             num_threads=num_threads,
             track_stats=True,
             log_dir=str(log_dir),

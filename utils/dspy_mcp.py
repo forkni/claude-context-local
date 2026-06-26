@@ -76,7 +76,9 @@ async def _switch_project(session: ClientSession, project_path: str) -> None:
         RuntimeError: If the server returns an error (e.g. path not indexed).
     """
     result = await session.call_tool("switch_project", {"project_path": project_path})
-    text = result.content[0].text if result.content else "{}"
+    # MCP content[0] can be TextContent | ImageContent | AudioContent | EmbeddedResource;
+    # only TextContent carries .text — use getattr to satisfy the type checker.
+    text = getattr(result.content[0], "text", "{}") if result.content else "{}"
     payload = json.loads(text)
     if "error" in payload:
         raise RuntimeError(
@@ -264,7 +266,7 @@ async def run_code_search_agent(
         logger.info("DSPy LM: model=%s", lm.model)
 
         agent = dspy.ReAct(
-            "question -> answer",
+            "question -> answer",  # pyrefly: ignore[bad-argument-type]  # DSPy stub too strict; string signature is valid at runtime
             tools=dspy_tools,
             max_iters=max_iters,
         )
