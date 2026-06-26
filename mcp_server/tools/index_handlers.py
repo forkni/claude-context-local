@@ -551,7 +551,12 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     # blocks (gc.collect, torch.cuda ops, time.sleep(0.3)) — offload.
     import asyncio
 
-    await asyncio.to_thread(close_project_resources, current_project)
+    # clear_current=False: keep state.current_project alive after closing handles.
+    # clear_index only removes index files — the project dir still exists and
+    # must remain the active project so get_index_status can report empty counts.
+    await asyncio.to_thread(
+        close_project_resources, current_project, clear_current=False
+    )
 
     # Get project info for pattern matching
     project_path = Path(current_project).resolve()
