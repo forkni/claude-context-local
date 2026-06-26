@@ -553,6 +553,11 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
 
     await asyncio.to_thread(close_project_resources, current_project)
 
+    # close_project_resources() nulls state.current_project (designed for deletion),
+    # but clear only removes index files — restore the project context so that
+    # subsequent get_index_status calls can report the cleared (empty) state.
+    state.current_project = current_project
+
     # Get project info for pattern matching
     project_path = Path(current_project).resolve()
     project_name = project_path.name
