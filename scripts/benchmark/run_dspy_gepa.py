@@ -236,6 +236,11 @@ def _print_prereq_banner(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    import sys
+
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")
+
     args = _parse_args()
     _print_prereq_banner(args)
 
