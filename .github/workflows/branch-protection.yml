@@ -92,21 +92,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.1.0
         with:
           python-version: '3.11'
-          cache: 'pip'
+          enable-cache: true  # uploads uv store to GitHub Actions cache (10 GB free tier)
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e .[test,callgraph]
+        run: uv sync --locked --extra test --extra callgraph
+        # Note: uv.lock pins torch to pytorch-cu128 on linux; installs CUDA wheels (~2.3 GB).
+        # Tests mock torch so GPU is not needed; subsequent runs use the Actions cache.
 
-      - name: Run tests
+      - name: Run tests with coverage
         run: |
-          pytest tests/ -v --tb=short --maxfail=20 --ignore=tests/slow_integration/
-        continue-on-error: false
+          uv run pytest tests/ -v --tb=short --maxfail=20 \
+            --ignore=tests/slow_integration/ \
+            --cov --cov-branch --cov-report=term-missing
+        # TODO: add --cov-fail-under=<N> after measuring baseline locally:
+        #   bash scripts/test/run_tests.sh tests/ --cov --cov-branch --cov-report=term-missing
+        # Then set fail_under in [tool.coverage.report] in pyproject.toml and add the flag here.
 
       - name: Upload test results
         if: always()
@@ -125,27 +129,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.1.0
         with:
           python-version: '3.11'
-
-      - name: Install linting tools
-        run: |
-          pip install ruff
+          enable-cache: true
 
       - name: Run ruff check (linting + import sorting)
-        run: ruff check .
-        continue-on-error: true
+        run: uvx ruff check .
+        # Blocking gate — ruff is already enforced locally via commit_enhanced.sh
 
       - name: Check formatting (ruff format)
-        run: ruff format --check .
-        continue-on-error: true
-
-      - name: Install type checker
-        run: pip install pyrefly
+        run: uvx ruff format --check .
+        # Blocking gate — ruff format is already enforced locally
 
       - name: Run type checking (pyrefly)
-        run: pyrefly check
+        run: uvx --from pyrefly pyrefly check
         continue-on-error: true
+        # TODO: flip to blocking (remove continue-on-error) once pyrefly baseline is clean
+
+      - name: Run pre-commit hooks
+        run: uvx pre-commit run --all-files
+        continue-on-error: true
+        # Enforces markdownlint, file hygiene, ruff --fix; flip to blocking once verified green
 

@@ -90,6 +90,9 @@ test = [
     "pytest-cov>=7.1.0",
     "pytest-mock>=3.15.1",
     "pytest-repeat>=0.9.4",
+    "pytest-randomly>=3.15.0",  # Phase 2: order-randomisation; exposes hidden ordering deps
+    "pytest-xdist>=3.6.0",      # Phase 2/CI: parallel test execution (-n auto)
+    "syrupy>=4.0.0",             # Phase 4: snapshot/golden-file regression testing
 ]
 dev = [
     "ruff>=0.15.10",
@@ -332,4 +335,75 @@ errors = { missing-attribute = "warn", bad-argument-type = "warn" }
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+]
+
+# ---------------------------------------------------------------------------
+# Testing infrastructure
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "--disable-warnings",
+    "--color=yes",
+    "--durations=10",
+    "--import-mode=importlib",  # pytest docs recommendation for new projects; avoids sys.path hacks
+]
+pythonpath = ["."]  # project root; makes packages importable without sys.path.insert in conftest
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "slow: Slow running tests",
+    "mcp: MCP server related tests",
+    "embeddings: Embedding generation tests",
+    "chunking: Code chunking tests",
+    "search: Search functionality tests",
+    "asyncio: Mark test as async (pytest-asyncio)",
+    "gpu: Requires CUDA device (skipped when absent)",
+    "e2e: Full end-to-end workflow",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::UserWarning",
+    "ignore:.*unclosed.*:ResourceWarning",
+    "ignore:.*builtin type.*:DeprecationWarning",
+    "ignore:Not enough free disk space.*:UserWarning:huggingface_hub",
+]
+
+# ---------------------------------------------------------------------------
+# Coverage (branch coverage on; run: pytest --cov --cov-branch --cov-report=term-missing)
+# After measuring baseline, set fail_under here and add --cov-fail-under=<N> in CI.
+# ---------------------------------------------------------------------------
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+source = [
+    "chunking",
+    "embeddings",
+    "graph",
+    "mcp_server",
+    "merkle",
+    "search",
+    "utils",
+    "evaluation",
+]
+# core = "sysmon"  # Uncomment for ~3x faster coverage on Python 3.12+
+
+[tool.coverage.report]
+show_missing = true
+# fail_under = XX   # Set after first measurement: pytest --cov --cov-branch --cov-report=term-missing
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
 ]

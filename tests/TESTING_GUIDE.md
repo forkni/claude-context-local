@@ -1588,3 +1588,104 @@ timeout 900 pytest tests/
   - `test_import_resolution_integration.py` - 11 integration tests for end-to-end import resolution
 
 This comprehensive testing guide ensures high-quality, maintainable code through systematic testing practices and clear documentation.
+
+---
+
+## Testing Infrastructure (2026-06 overhaul)
+
+### Summary of changes
+
+| Area | Before | After |
+|------|--------|-------|
+| pytest config | `pytest.ini` (legacy) | `[tool.pytest.ini_options]` in `pyproject.toml` |
+| Import mode | `prepend` (default) + manual `sys.path.insert` in conftest | `importlib` + `pythonpath = ["."]` |
+| New markers | — | `gpu`, `e2e` |
+| New test deps | — | `pytest-randomly`, `pytest-xdist`, `syrupy` |
+| Coverage config | None | `[tool.coverage.*]` in `pyproject.toml` (branch coverage) |
+| CI install | `pip install` | `uv sync --locked` (matches local `uv.lock`) |
+| CI lint gate | non-blocking (`continue-on-error: true`) | `ruff` blocking; `pyrefly` ratchet (non-blocking until baseline clean) |
+| CI pre-commit | not enforced | `uvx pre-commit run --all-files` in CI |
+
+### Order-randomization (Phase 2 — pytest-randomly)
+
+`pytest-randomly` is now a declared test dependency. Use it to expose hidden ordering dependencies:
+
+```bash
+# Run unit tests with randomised order (different seed each time)
+bash scripts/test/run_tests.sh tests/unit -p randomly
+
+# Reproduce a failure with a specific seed
+bash scripts/test/run_tests.sh tests/unit -p randomly --randomly-seed=<N>
+
+# Verify order-independence: 20 consecutive randomised runs
+for i in $(seq 1 20); do
+    bash scripts/test/run_tests.sh tests/unit -p randomly -q || break
+done
+```
+
+Any test that fails under randomisation is an ordering dependency — fix the root cause (typically
+global state not reset between tests). The autouse fixtures `reset_global_state` and
+`preserve_original_project_selection` protect the main globals, but new state mutations need
+function-scoped teardown.
+
+### Measuring and gating coverage
+
+Coverage config lives in `pyproject.toml` `[tool.coverage.*]`. Branch coverage is on.
+
+```bash
+# Measure baseline (no gate)
+bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration/ \
+  --cov --cov-branch --cov-report=term-missing
+
+# Set the gate once you have the number:
+#   1. Add fail_under = <N> in [tool.coverage.report] in pyproject.toml
+#   2. Add --cov-fail-under=<N> to the pytest command in .github/workflows/branch-protection.yml
+#   3. Ratchet upward over time as coverage improves
+```
+
+The CI `test` job already runs coverage but does not enforce a threshold yet. Add
+`--cov-fail-under=<N>` to the `uv run pytest ...` line in `.github/workflows/branch-protection.yml`
+after measuring.
+
+### Snapshot / golden-file regression testing (Phase 4 — Syrupy)
+
+`syrupy` is a declared test dependency. Use it for deterministic complex outputs:
+ranked `search_code` results, MCP tool-handler responses, evaluation metric dicts.
+
+```python
+# Basic snapshot assertion (syrupy fixture injected automatically)
+def test_search_result_shape(snapshot):
+    results = search_code("hybrid searcher init")
+    assert results == snapshot  # generates __snapshots__/test_file.ambr on first run
+
+# Regenerate after intentional output changes:
+#   pytest tests/path/to/test_file.py --snapshot-update
+
+# Mask non-deterministic fields (timestamps, absolute paths)
+from syrupy.extensions.json import JSONSnapshotExtension
+from syrupy.matchers import path_type
+
+def test_result_stable(snapshot):
+    assert result == snapshot.with_defaults(
+        extension_class=JSONSnapshotExtension,
+        matcher=path_type({".*timestamp.*": (str,), ".*path.*": (str,)}),
+    )
+```
+
+Commit the generated `__snapshots__/` files. Regenerate only when output changes are intentional.
+Avoid over-snapshotting — use it for a handful of high-value outputs, not every function.
+
+### Deferred improvements (trigger thresholds documented here)
+
+| Improvement | Add when |
+|-------------|----------|
+| `pytest-xdist -n auto` per job | per-runner wall-clock > ~5 min |
+| `pytest-split` sharding across runners | per-runner wall-clock > ~10 min after xdist |
+| Python 3.12 matrix | validated clean on 3.11 + meaningful new-version diff |
+| Combined cross-runner coverage | matrix sharding is added |
+| `pyrefly` blocking gate | `pyrefly check` exits 0 on `development` branch |
+| `pre-commit` blocking gate | `uvx pre-commit run --all-files` exits 0 on CI |
+
+When adding `pytest-split`: use `--splitting-algorithm least_duration` (compatible with
+`pytest-randomly`); commit `.test_durations` to repo; re-run `--store-durations` after major suite
+changes.

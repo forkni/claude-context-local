@@ -46,9 +46,8 @@ if _venv_path.exists():
             f"Fix: Use ./scripts/test/run_tests.sh instead of 'python -m pytest'"
         )
 
-# Add the package to Python path for testing
-project_root = Path(__file__).parent
-sys.path.insert(0, str(project_root))
+# Note: sys.path manipulation removed — pythonpath = ["."] in pyproject.toml
+# [tool.pytest.ini_options] and editable install handle package discovery.
 
 try:
     from chunking.multi_language_chunker import MultiLanguageChunker
@@ -87,6 +86,10 @@ def pytest_configure(config: Any) -> None:
     config.addinivalue_line("markers", "embeddings: Embedding generation tests")
     config.addinivalue_line("markers", "chunking: Code chunking tests")
     config.addinivalue_line("markers", "search: Search functionality tests")
+    config.addinivalue_line(
+        "markers", "gpu: Requires CUDA device (skipped when absent)"
+    )
+    config.addinivalue_line("markers", "e2e: Full end-to-end workflow")
 
 
 @pytest.fixture(scope="session", autouse=True)
