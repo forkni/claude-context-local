@@ -6,17 +6,16 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 ---
 
-## Available MCP Tools (19)
+## Available MCP Tools (18)
 
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
-| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=4, search_mode="hybrid", model_key, use_routing=True, file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0 |
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=7, search_mode="hybrid", file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0 |
 | **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types |
 | **find_path** | 🟡 **IMPACT** | Trace shortest path between code entities in relationship graph | source OR source_chunk_id, target OR target_chunk_id, edge_types, max_hops=10 |
-| **index_directory** | 🔴 **SETUP** | Index project (multi-model support) | directory_path (required), project_name, incremental=True, multi_model=auto |
+| **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), project_name, incremental=True |
 | **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=4 |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.35, dense_weight=0.65, enable_parallel=True |
-| configure_query_routing | Config | Configure multi-model routing (v0.5.4+) | enable_multi_model, default_model="qwen3", confidence_threshold=0.35 |
 | configure_reranking | Config | Configure neural reranker settings (BGE OR Jina v3, runtime configurable) | enabled, model_name, top_k_candidates=50 |
 | configure_chunking | Config | Configure code chunking settings | enable_community_detection, enable_community_merge, community_resolution, token_estimation, enable_large_node_splitting, max_chunk_lines, split_size_method, max_split_chars, enable_file_summaries, enable_community_summaries |
 | get_search_config_status | Config | View current configuration | *(no parameters)* |
@@ -1198,109 +1197,6 @@ def process_order(order: Order, payment: PaymentGateway):
 - `find_connections`: Impact severity warnings + next steps
 - `index_directory`: Post-indexing workflow suggestions
 - `find_similar_code`: Chunk chaining recommendations
-
----
-
-## Multi-Model Batch Indexing
-
-**Feature**: Automatically index projects with all models in the pool (Qwen3, BGE-M3, CodeRankEmbed)
-
-**Status**: ✅ **Production-Ready** (auto-enabled when `CLAUDE_MULTI_MODEL_ENABLED=true`)
-
-### How It Works
-
-When multi-model mode is enabled, `index_directory` automatically indexes with **all models in the pool** sequentially:
-
-1. **Qwen3-0.6B** (1024d) - Logic specialist: action-oriented queries and algorithms
-2. **BGE-Code-v1** (1536d) - Semantic specialist: workflow and architectural reasoning
-
-### Parameters
-
-- `directory_path` (string, required): Absolute path to project root
-- `project_name` (string, optional): Custom name (defaults to directory name)
-- `incremental` (boolean, default: true): Use incremental indexing if snapshot exists
-- `multi_model` (boolean, default: auto): Index for all models
-  - `null` (default): Auto-detect from `CLAUDE_MULTI_MODEL_ENABLED`
-  - `true`: Force multi-model indexing (all models in the pool)
-  - `false`: Force single-model indexing (current model only)
-
-### Usage Examples
-
-**Automatic Multi-Model** (default when multi-model enabled):
-
-```bash
-/index_directory "C:\Projects\MyProject"
-# Indexes with all models in the pool automatically
-```
-
-**Explicit Control**:
-
-```bash
-# Force multi-model (even if disabled)
-/index_directory "C:\Projects\MyProject" --multi_model true
-
-# Force single-model (even if enabled)
-/index_directory "C:\Projects\MyProject" --multi_model false
-```
-
-### Response Format
-
-**Multi-Model Response**:
-
-```json
-{
-  "success": true,
-  "multi_model": true,
-  "project": "C:\\Projects\\MyProject",
-  "models_indexed": 3,
-  "results": [
-    {
-      "model": "BAAI/bge-m3",
-      "model_key": "bge_m3",
-      "dimension": 1024,
-      "files_added": 40,
-      "files_modified": 14,
-      "files_removed": 8,
-      "chunks_added": 1199,
-      "time_taken": 28.5
-    },
-    // ... results for other models
-  ],
-  "total_time": 82.3,
-  "total_files_added": 120,
-  "total_chunks_added": 3597,
-  "mode": "incremental"
-}
-```
-
-**Single-Model Response**:
-
-```json
-{
-  "success": true,
-  "multi_model": false,
-  "project": "C:\\Projects\\MyProject",
-  "files_added": 40,
-  "files_modified": 14,
-  "files_removed": 8,
-  "chunks_added": 1199,
-  "time_taken": 28.5,
-  "mode": "incremental"
-}
-```
-
-### Performance
-
-- **Sequential Indexing**: 3x time (e.g., 30s → 90s)
-- **Acceptable**: Indexing is infrequent (one-time per project + updates)
-- **Future Optimization**: Parallel chunking planned (2x speedup)
-
-### Benefits
-
-✅ **Single operation** updates all models
-✅ **Optimal search quality** across all query types
-✅ **Per-model isolation** maintained
-✅ **Smart defaults** (auto-enable with multi-model mode)
 
 ---
 

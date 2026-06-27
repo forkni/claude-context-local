@@ -55,7 +55,6 @@ Create a `CLAUDE.md` file in your project root with this content:
 | **find_connections** | 🟡 **IMPACT** | Analyze code dependencies |
 | find_similar_code | Secondary | Find alternative implementations |
 | configure_search_mode | Config | Set search mode (hybrid/semantic/BM25) |
-| configure_query_routing | Config | Configure multi-model routing |
 | configure_reranking | Config | Configure neural reranking |
 | get_search_config_status | Config | View current search configuration |
 | list_embedding_models | Config | List available models |
