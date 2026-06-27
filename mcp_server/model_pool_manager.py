@@ -27,12 +27,8 @@ class ModelPoolManager:
     def __init__(self):
         """Initialize ModelPoolManager."""
 
-    def get_embedder(self, model_key: str | None = None) -> CodeEmbedder:
+    def get_embedder(self) -> CodeEmbedder:
         """Get embedder for the currently configured embedding model.
-
-        Args:
-            model_key: Unused (kept for call-site compatibility during migration).
-                       The active model is always read from config.embedding.model_name.
 
         Returns:
             CodeEmbedder instance for the active model.
@@ -93,12 +89,9 @@ def get_model_pool_manager() -> ModelPoolManager:
     return _model_pool_manager
 
 
-def get_embedder(model_key: str | None = None) -> CodeEmbedder:
-    """Get embedder for the currently configured embedding model.
-
-    Backward-compatible wrapper for ModelPoolManager.get_embedder().
-    """
-    return get_model_pool_manager().get_embedder(model_key)
+def get_embedder() -> CodeEmbedder:
+    """Get embedder for the currently configured embedding model."""
+    return get_model_pool_manager().get_embedder()
 
 
 def reset_pool_manager() -> None:

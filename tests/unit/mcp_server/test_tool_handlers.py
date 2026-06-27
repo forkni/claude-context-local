@@ -167,7 +167,6 @@ async def test_handle_get_index_status_with_hybrid_searcher():
                 with patch("mcp_server.state.get_state") as mock_state:
                     state = mock_state.return_value
                     state.embedders = {"default": None}
-                    state.current_model_key = None
 
                     result = await tool_handlers.handle_get_index_status({})
 
@@ -395,7 +394,7 @@ async def test_handle_list_embedding_models_none_slot_is_not_loaded():
     """A None lazy slot in state.embedders must not report loaded: true.
 
     Regression test for the None-slot false-positive: previously
-    `model_key in state.embedders` returned True even for unloaded slots.
+    a key in state.embedders returned True (loaded) even for unloaded None slots.
     """
     mock_state = Mock()
     mock_state.embedders = {"qwen3_0.6b": None}  # reserved slot, nothing loaded

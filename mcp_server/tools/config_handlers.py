@@ -39,11 +39,6 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
     # Set new project using setter function (required for cross-module globals)
     set_current_project(str(project_path))
 
-    # Reset model state; model is always read from config.embedding.model_name
-    state = get_state()
-    state.current_model_key = None
-    state.current_index_model_key = None
-
     # Save selection for persistence across server restarts
     save_project_selection(str(project_path))
 

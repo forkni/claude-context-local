@@ -77,14 +77,12 @@ class PlanRedirect:
 
     fallback_on_error: when True (SIMILARITY), the handler should fall through to normal
         search if the I/O lookup raises. When False (PATH_TRACING), no fallback.
-    model_key: model to use for the preliminary symbol-lookup search (find_similar only).
     k: k to forward to find_similar_code.
     """
 
     kind: str
     params: dict[str, Any] = field(default_factory=dict)
     fallback_on_error: bool = False
-    model_key: str | None = None
     k: int = 4
 
 

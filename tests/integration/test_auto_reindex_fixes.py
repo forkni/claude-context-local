@@ -300,10 +300,6 @@ class TestUserFilterPreservation:
             # TreeSitterChunker.get_supported_extensions() is called to compute the ChangeDetector arg
             patch("chunking.tree_sitter.TreeSitterChunker", ts_mock),
             patch("search.dimension_validator.validate_embedder_index_compatibility"),
-            patch(
-                "mcp_server.model_pool_manager.get_model_key_from_name",
-                return_value="qwen3_0.6b",
-            ),
         ]
 
         with ExitStack() as stack:

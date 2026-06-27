@@ -290,7 +290,6 @@ class IndexSynchronizer:
                 str(self.storage_dir),
                 embedder=self.embedder,
                 project_id=self.project_id,
-                config=self.config,
             )
 
             self._logger.info("Successfully cleared hybrid indices")

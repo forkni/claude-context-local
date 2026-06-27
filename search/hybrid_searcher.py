@@ -126,7 +126,6 @@ class HybridSearcher(BaseSearcher):
             str(self.storage_dir),
             embedder=embedder,
             project_id=project_id,
-            config=config,
         )
 
         # Load both indices in parallel for faster startup

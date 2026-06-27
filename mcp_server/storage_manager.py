@@ -206,7 +206,6 @@ class StorageManager:
     def get_project_storage_dir(
         self,
         project_path: str,
-        model_key: str | None = None,
         include_dirs: list | None = None,
         exclude_dirs: list | None = None,
     ) -> Path:
@@ -214,8 +213,6 @@ class StorageManager:
 
         Args:
             project_path: Path to the project
-            model_key: Unused (kept for call-site compatibility). Model is always
-                       read from config.embedding.model_name.
             include_dirs: Optional list of directories to include during indexing
             exclude_dirs: Optional list of directories to exclude during indexing
 
@@ -344,7 +341,6 @@ class StorageManager:
         project_path: str,
         include_dirs: list | None = None,
         exclude_dirs: list | None = None,
-        model_key: str | None = None,
     ) -> None:
         """Update filters in project_info.json after filter change with full reindex.
 
@@ -352,11 +348,8 @@ class StorageManager:
             project_path: Path to the project
             include_dirs: New include_dirs filter
             exclude_dirs: New exclude_dirs filter
-            model_key: Optional model key to update specific model's project_info
         """
-        project_storage = self.get_project_storage_dir(
-            project_path, model_key=model_key
-        )
+        project_storage = self.get_project_storage_dir(project_path)
         project_info_file = project_storage / "project_info.json"
 
         if not project_info_file.exists():
@@ -450,7 +443,6 @@ def set_current_project(project_path: str) -> None:
 
 def get_project_storage_dir(
     project_path: str,
-    model_key: str | None = None,
     include_dirs: list | None = None,
     exclude_dirs: list | None = None,
 ) -> Path:
@@ -459,7 +451,7 @@ def get_project_storage_dir(
     Backward-compatible wrapper for StorageManager.get_project_storage_dir().
     """
     return get_storage_manager().get_project_storage_dir(
-        project_path, model_key, include_dirs, exclude_dirs
+        project_path, include_dirs=include_dirs, exclude_dirs=exclude_dirs
     )
 
 
@@ -475,12 +467,11 @@ def update_project_filters(
     project_path: str,
     include_dirs: list | None = None,
     exclude_dirs: list | None = None,
-    model_key: str | None = None,
 ) -> None:
     """Update filters in project_info.json.
 
     Backward-compatible wrapper for StorageManager.update_project_filters().
     """
     return get_storage_manager().update_project_filters(
-        project_path, include_dirs, exclude_dirs, model_key
+        project_path, include_dirs, exclude_dirs
     )

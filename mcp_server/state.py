@@ -28,10 +28,9 @@ class ApplicationState:
     """Centralized application state container.
 
     Replaces the following global variables from server.py:
-    - _embedders: Dict of model_key -> CodeEmbedder instances
+    - _embedders: Dict of CodeEmbedder instances (keyed by "default")
     - _index_manager: CodeIndexManager instance
     - _searcher: HybridSearcher instance
-    - _current_model_key: Currently active embedding model
     - _storage_dir: Base storage directory path
     - _current_project: Currently active project path
     - _model_preload_task_started: Whether preload has started
@@ -40,8 +39,6 @@ class ApplicationState:
 
     # Model management
     embedders: dict[str, Any] = field(default_factory=dict)
-    current_model_key: str | None = None
-    current_index_model_key: str | None = None  # Track index manager's model
     model_preload_task_started: bool = False
 
     # Search components (lazy-initialized)
@@ -67,8 +64,6 @@ class ApplicationState:
         any in-flight threads keep a stable lock reference.
         """
         self.embedders = {}
-        self.current_model_key = None
-        self.current_index_model_key = None
         self.model_preload_task_started = False
         self.index_manager = None
         self.searcher = None
@@ -92,7 +87,7 @@ class ApplicationState:
         """Switch to a different project.
 
         Resets project-specific state (index_manager, searcher) but
-        preserves model state (embedders, current_model_key).
+        preserves model state (embedders).
 
         Args:
             path: Absolute path to the project directory
@@ -103,43 +98,22 @@ class ApplicationState:
             self.index_manager = None
             self.searcher = None
 
-    def switch_model(self, model_key: str) -> None:
-        """Switch to a different embedding model.
-
-        Searcher needs to be recreated with new model, but index_manager
-        may remain if it supports the new model's dimension.
-
-        Args:
-            model_key: Model key (e.g., 'qwen3_0.6b', 'bge_m3')
-        """
-        with self._lock:
-            self.current_model_key = model_key
-            self.current_index_model_key = None  # Force index reload on model switch
-            # Searcher needs to be recreated with new model
-            self.searcher = None
-
-    def get_embedder(self, model_key: str | None = None) -> Any | None:
-        """Get embedder for a specific model key.
-
-        Args:
-            model_key: Model key, or None to use current_model_key
+    def get_embedder(self) -> Any | None:
+        """Get the active embedder.
 
         Returns:
             CodeEmbedder instance or None if not loaded
         """
-        key = model_key or self.current_model_key
-        if key:
-            return self.embedders.get(key)
-        return None
+        return self.embedders.get("default")
 
-    def set_embedder(self, model_key: str, embedder: Any) -> None:
+    def set_embedder(self, key: str, embedder: Any) -> None:
         """Store an embedder instance.
 
         Args:
-            model_key: Model key to associate with embedder
+            key: Key to associate with embedder (always "default")
             embedder: CodeEmbedder instance
         """
-        self.embedders[model_key] = embedder
+        self.embedders[key] = embedder
 
     def clear_embedders(self) -> None:
         """Clear all cached embedder instances and release GPU memory."""
@@ -158,13 +132,13 @@ class ApplicationState:
             self.searcher = None
 
         # Call cleanup on each embedder to release GPU memory (outside lock)
-        for model_key, embedder in old_embedders.items():
+        for key, embedder in old_embedders.items():
             if hasattr(embedder, "cleanup"):
                 try:
-                    logger.info(f"[CLEANUP] Releasing embedder: {model_key}")
+                    logger.info(f"[CLEANUP] Releasing embedder: {key}")
                     embedder.cleanup()
                 except Exception as e:
-                    logger.warning(f"[CLEANUP] Failed to cleanup {model_key}: {e}")
+                    logger.warning(f"[CLEANUP] Failed to cleanup {key}: {e}")
 
     def reset_search_components(self) -> None:
         """Reset index_manager and searcher to force re-initialization.
@@ -206,7 +180,6 @@ class ApplicationState:
         return (
             f"ApplicationState("
             f"project={self.current_project!r}, "
-            f"model={self.current_model_key!r}, "
             f"embedders={list(self.embedders.keys())})"
         )
 

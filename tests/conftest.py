@@ -250,10 +250,7 @@ def preserve_original_project_selection() -> Generator[None, None, None]:
     try:
         if original_selection:
             # Restore saved selection
-            save_project_selection(
-                original_selection["last_project_path"],
-                model_key=original_selection.get("last_model_key"),
-            )
+            save_project_selection(original_selection["last_project_path"])
 
             # Also restore server module global (use setter for cross-module sync)
             try:

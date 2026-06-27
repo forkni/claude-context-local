@@ -77,13 +77,10 @@ def _check_file_accessibility(
     return inaccessible
 
 
-def _create_indexer_for_model(
-    model_key: str | None, directory_path: str, index_dir: Path
-) -> tuple:
-    """Create indexer and embedder for a specific model.
+def _create_indexer_for_model(directory_path: str, index_dir: Path) -> tuple:
+    """Create indexer and embedder for the configured model.
 
     Args:
-        model_key: The model key (e.g., 'qwen3_0.6b', 'bge_m3') or None for default
         directory_path: Path to the project directory
         index_dir: Path to store the index
 
@@ -102,7 +99,7 @@ def _create_indexer_for_model(
         enable_entity_tracking=config.performance.enable_entity_tracking,
         relation_filter=relation_filter,
     )
-    embedder = get_embedder(model_key)
+    embedder = get_embedder()
 
     if config.search_mode.enable_hybrid:
         # Get project_id from index_dir parent
@@ -124,7 +121,7 @@ def _create_indexer_for_model(
     else:
         project_dir = index_dir.parent
         project_id = project_dir.name.rsplit("_", 1)[0]
-        indexer = CodeIndexManager(str(index_dir), project_id=project_id, config=config)
+        indexer = CodeIndexManager(str(index_dir), project_id=project_id)
 
     return indexer, embedder, chunker
 
@@ -309,7 +306,7 @@ def _invalidate_config_caches() -> None:
     state.reset_for_model_switch()
 
 
-def _switch_active_model(model_key: str, model_name: str) -> None:
+def _switch_active_model(model_name: str) -> None:
     """Update the active embedding model in the persisted config and invalidate caches.
 
     Loads the current config, sets ``embedding.model_name`` and the matching
@@ -318,7 +315,6 @@ def _switch_active_model(model_key: str, model_name: str) -> None:
     :func:`get_config` call returns fresh values.
 
     Args:
-        model_key: Pool key (e.g. ``"qwen3_0.6b"``), unused here but passed for logging.
         model_name: Full HuggingFace model identifier to activate.
     """
     config_mgr = SearchConfigManager()

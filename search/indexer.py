@@ -13,7 +13,6 @@ from embeddings.chunk_metadata import resolve_chunk_path
 
 if TYPE_CHECKING:
     from embeddings.embedder import CodeEmbedder
-    from search.config import SearchConfig
     from search.symbol_cache import SymbolHashCache
 
 
@@ -45,7 +44,6 @@ class CodeIndexManager:
         storage_dir: str,
         embedder: "CodeEmbedder | None" = None,
         project_id: str | None = None,
-        config: "SearchConfig | None" = None,
     ):
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)

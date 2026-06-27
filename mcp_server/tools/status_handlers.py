@@ -34,10 +34,9 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
 
     # Check if a project is selected — offload get_index_manager (may init lazily)
     try:
-        current_model_key = state.current_model_key
 
         def _get_index_stats() -> dict:
-            return get_index_manager(model_key=current_model_key).get_stats()
+            return get_index_manager().get_stats()
 
         stats = await asyncio.to_thread(_get_index_stats)
     except ValueError as e:
@@ -292,11 +291,11 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
     per_model_vram = {}
     try:
         state = get_state()
-        for model_key, embedder in state.embedders.items():
+        for key, embedder in state.embedders.items():
             if embedder is not None and hasattr(embedder, "get_vram_usage"):
                 usage = embedder.get_vram_usage()
                 if usage:
-                    per_model_vram[model_key] = usage
+                    per_model_vram[key] = usage
     except (AttributeError, RuntimeError):
         pass
 

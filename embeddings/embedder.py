@@ -1,6 +1,6 @@
-"""Multi-model embedder for generating code embeddings.
+"""Code embedder for generating code embeddings.
 
-Supports multiple embedding models including:
+Supports configurable embedding models including:
 - EmbeddingGemma (google/embeddinggemma-300m)
 - BGE-M3 (BAAI/bge-m3)
 
@@ -574,9 +574,9 @@ class EmbeddingResult:
 
 
 class CodeEmbedder:
-    """Multi-model embedder for generating code embeddings.
+    """Embedder for generating code embeddings.
 
-    Supports multiple embedding models with automatic configuration detection.
+    Supports configurable embedding models with automatic configuration detection.
     Default model is google/embeddinggemma-300m.
     """
 
@@ -637,7 +637,7 @@ class CodeEmbedder:
         )
 
         # Track per-model VRAM usage
-        self._model_vram_usage: dict[str, float] = {}  # model_key -> VRAM MB
+        self._model_vram_usage: dict[str, float] = {}  # model_name -> VRAM MB
 
         # File-content cache for _get_class_signature (#50).
         # Avoids O(chunks × filesize) repeated re-reads when many methods share a file.

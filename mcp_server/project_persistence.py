@@ -27,12 +27,11 @@ def get_selection_file_path() -> Path:
     return Path(storage_path) / _SELECTION_FILE
 
 
-def save_project_selection(project_path: str, model_key: str | None = None) -> bool:
+def save_project_selection(project_path: str) -> bool:
     """Save the current project selection for persistence.
 
     Args:
         project_path: Absolute path to the project directory
-        model_key: Optional model key (e.g., 'bge_m3', 'qwen3_0.6b')
 
     Returns:
         True if saved successfully, False otherwise
@@ -43,7 +42,6 @@ def save_project_selection(project_path: str, model_key: str | None = None) -> b
 
         data = {
             "last_project_path": str(Path(project_path).resolve()),
-            "last_model_key": model_key,
             "updated_at": datetime.now().isoformat(),
         }
 
@@ -62,7 +60,7 @@ def load_project_selection() -> dict | None:
     """Load the last project selection from disk.
 
     Returns:
-        Dict with 'last_project_path', 'last_model_key', 'updated_at'
+        Dict with 'last_project_path', 'updated_at'
         or None if no selection exists or file is invalid
     """
     try:
@@ -89,7 +87,7 @@ def load_project_selection() -> dict | None:
                 logger.info(f"Found project at new location: {alt_path}")
                 data["last_project_path"] = alt_path
                 # Update selection file with new path
-                save_project_selection(alt_path, data.get("last_model_key"))
+                save_project_selection(alt_path)
                 return data
 
             logger.warning(f"Saved project no longer exists: {project_path}")
@@ -141,7 +139,7 @@ def get_selection_for_display() -> dict:
     """Get project selection info formatted for display.
 
     Returns:
-        Dict with 'name', 'path', 'model_key', 'updated_at' (all strings)
+        Dict with 'name', 'path', 'updated_at' (all strings)
         Safe for display even if no selection exists
     """
     selection = load_project_selection()
@@ -150,7 +148,6 @@ def get_selection_for_display() -> dict:
         return {
             "name": "None",
             "path": "",
-            "model_key": "",
             "updated_at": "",
             "exists": False,
         }
@@ -158,7 +155,6 @@ def get_selection_for_display() -> dict:
     return {
         "name": get_project_display_name(selection.get("last_project_path", "")),
         "path": selection.get("last_project_path", ""),
-        "model_key": selection.get("last_model_key", ""),
         "updated_at": selection.get("updated_at", ""),
         "exists": True,
     }

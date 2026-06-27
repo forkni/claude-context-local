@@ -17,13 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 def get_index_manager(
-    project_path: str | None = None, model_key: str | None = None
+    project_path: str | None = None,
 ) -> "CodeIndexManager":
     """Get index manager for specific project or current project.
 
     Args:
         project_path: Path to the project (None = use current project)
-        model_key: Model key for routing (None = use config default)
 
     Returns:
         CodeIndexManager instance for the project
@@ -47,34 +46,19 @@ def get_index_manager(
             project_path = state.current_project
 
     # Double-checked locking: cheap outer test avoids the lock on the hot path.
-    if (
-        state.current_project != project_path
-        or state.current_index_model_key != model_key
-        or state.index_manager is None
-    ):
+    if state.current_project != project_path or state.index_manager is None:
         with state._lock:
             # Re-check inside lock — another thread may have constructed by now.
-            # Invalidate cache if project or model changed
-            if (
-                state.current_project != project_path
-                or state.current_index_model_key != model_key
-            ):
-                if state.current_project != project_path:
-                    logger.info(
-                        f"Switching project from '{state.current_project}' to '{Path(project_path).name}'"
-                    )
-                if state.current_index_model_key != model_key:
-                    logger.info(
-                        f"Switching index model from '{state.current_index_model_key}' to '{model_key}'"
-                    )
+            if state.current_project != project_path:
+                logger.info(
+                    f"Switching project from '{state.current_project}' to '{Path(project_path).name}'"
+                )
                 _cleanup_previous_resources()
-
                 state.current_project = project_path
-                state.current_index_model_key = model_key
                 state.index_manager = None
 
             if state.index_manager is None:
-                project_dir = get_project_storage_dir(project_path, model_key=model_key)
+                project_dir = get_project_storage_dir(project_path)
                 index_dir = project_dir / "index"
                 index_dir.mkdir(exist_ok=True)
 
@@ -84,16 +68,11 @@ def get_index_manager(
                     0
                 ]  # Remove dimension suffix
 
-                # Get config for performance settings (including mmap)
-                from search.config import get_config_manager
-
-                config = get_config_manager().load_config()
-
                 state.index_manager = CodeIndexManager(
-                    str(index_dir), project_id=project_id, config=config
+                    str(index_dir), project_id=project_id
                 )
                 logger.info(
-                    f"Index manager initialized for project: {Path(project_path).name} (ID: {project_id}, model_key: {model_key})"
+                    f"Index manager initialized for project: {Path(project_path).name} (ID: {project_id})"
                 )
 
     return state.index_manager
@@ -101,14 +80,11 @@ def get_index_manager(
 
 def get_searcher(
     project_path: str | None = None,
-    model_key: str | None = None,
 ) -> "BaseSearcher":
     """Get searcher for specific project or current project.
 
     Args:
         project_path: Path to project (None = use current project)
-        model_key: Model key for routing (None = preserve current model,
-                   or use config default if no current model)
 
     Returns:
         HybridSearcher or IntelligentSearcher instance depending on config
@@ -136,30 +112,16 @@ def get_searcher(
         else:
             project_path = state.current_project
 
-    # Use effective model key: passed value OR current value (preserve routing)
-    effective_model_key = (
-        model_key if model_key is not None else state.current_model_key
-    )
-
     # Double-checked locking: cheap outer test avoids the lock on the hot path.
-    if (
-        state.current_project != project_path
-        or state.current_model_key != effective_model_key
-        or state.searcher is None
-    ):
+    if state.current_project != project_path or state.searcher is None:
         with state._lock:
             # Re-check inside lock — another thread may have constructed by now.
-            if (
-                state.current_project != project_path
-                or state.current_model_key != effective_model_key
-                or state.searcher is None
-            ):
-                # Resolve keys that will be committed once construction succeeds (#2).
-                # Do NOT mutate state.current_project / state.current_model_key yet —
+            if state.current_project != project_path or state.searcher is None:
+                # Capture project before construction.
+                # Do NOT mutate state.current_project yet —
                 # if construction raises (e.g. DimensionMismatchError) the old searcher
-                # stays valid under the old keys, preventing a stale-searcher mismatch.
+                # stays valid under the old key, preventing a stale-searcher mismatch.
                 new_project = project_path or state.current_project
-                new_model_key = effective_model_key
                 config = get_search_config()
                 logger.info(
                     f"[GET_SEARCHER] Initializing searcher for project: {new_project}"
@@ -168,7 +130,6 @@ def get_searcher(
                     project_storage = get_project_storage_dir(
                         # pyrefly: ignore [bad-argument-type]
                         new_project,
-                        model_key=new_model_key,
                     )
                     storage_dir = project_storage / "index"
                     logger.info(
@@ -176,7 +137,7 @@ def get_searcher(
                     )
 
                     # Pre-validate dimension compatibility
-                    embedder = get_embedder(new_model_key)
+                    embedder = get_embedder()
 
                     try:
                         validate_embedder_index_compatibility(
@@ -203,22 +164,20 @@ def get_searcher(
                         project_id=project_id,
                         config=config,
                     )
-                    # REMOVED: get_index_manager() call that was causing state corruption
                     # The HybridSearcher already loads existing indices during initialization
                     logger.info(
                         f"HybridSearcher initialized (BM25: {config.search_mode.bm25_weight}, Dense: {config.search_mode.dense_weight})"
                     )
                 else:
                     new_searcher = IntelligentSearcher(
-                        get_index_manager(project_path, model_key=new_model_key),
-                        get_embedder(new_model_key),
+                        get_index_manager(project_path),
+                        get_embedder(),
                         config=config,
                     )
                     logger.info("IntelligentSearcher initialized (semantic-only mode)")
 
-                # Commit all three together only on success — no partial state visible (#2).
+                # Commit both together only on success — no partial state visible (#2).
                 state.current_project = new_project
-                state.current_model_key = new_model_key
                 state.searcher = new_searcher
                 logger.info(
                     f"Searcher initialized for project: {Path(state.current_project).name if state.current_project else 'unknown'}"

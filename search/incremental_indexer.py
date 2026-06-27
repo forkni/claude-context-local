@@ -54,8 +54,6 @@ class IncrementalIndexer:
         snapshot_manager: SnapshotManager | None = None,
         include_dirs: list | None = None,
         exclude_dirs: list | None = None,
-        precomputed_repo_profile: object | None = None,
-        prebuilt_dag: MerkleDAG | None = None,
     ):
         """Initialize incremental indexer.
 
@@ -66,10 +64,6 @@ class IncrementalIndexer:
             snapshot_manager: Snapshot manager instance
             include_dirs: Optional list of directories to include
             exclude_dirs: Optional list of directories to exclude
-            precomputed_repo_profile: Optional pre-computed RepoProfile to skip
-                profiling (used in multi-model indexing to avoid redundant AST scans)
-            prebuilt_dag: Optional already-built MerkleDAG to skip the filesystem
-                walk (used in multi-model indexing to avoid redundant I/O)
         """
         if indexer is None:
             # Create indexer with temporary storage directory for testing
@@ -129,12 +123,7 @@ class IncrementalIndexer:
             summary_stage=self._summary_stage,
         )
         self._build_write_pipeline()
-        self.precomputed_repo_profile = precomputed_repo_profile
-        self.repo_profile: object | None = (
-            None  # Set after full index for caller capture
-        )
-        self.prebuilt_dag = prebuilt_dag
-        self.built_dag: MerkleDAG | None = None  # Captured for multi-model reuse
+        self.repo_profile: object | None = None  # Set during _full_index
 
     def _build_write_pipeline(self) -> None:
         """(Re)build the resource-bound write pipeline.
@@ -564,25 +553,6 @@ class IncrementalIndexer:
         """
         logger.info("[FULL_INDEX] Mandatory pre-reindex resource release starting...")
 
-        # Step 0: Save model key before cleanup destroys embedder
-        # CodeEmbedder doesn't have _model_key attribute - look it up from state.embedders dict
-        model_key = None
-        if self.embedder is not None:
-            from mcp_server.services import get_state
-
-            state = get_state()
-            for key, emb in state.embedders.items():
-                if emb is self.embedder:
-                    model_key = key
-                    break
-            if model_key:
-                logger.info(f"[FULL_INDEX] Preserving model key: {model_key}")
-
-        if model_key is None:
-            logger.info(
-                "[FULL_INDEX] Embedder not in state pool — get_embedder() will use config default"
-            )
-
         # Step 1: Release resources (same operation as UI "Release Resources" command)
         from mcp_server.resource_manager import _cleanup_previous_resources
 
@@ -671,10 +641,8 @@ class IncrementalIndexer:
         # Step 3: Refresh embedder (required since cleanup cleared it)
         from mcp_server.model_pool_manager import get_embedder
 
-        self.embedder = get_embedder(model_key)  # Fresh instance with correct model
-        logger.info(
-            f"[FULL_INDEX] Fresh embedder acquired for reindex (model_key={model_key})"
-        )
+        self.embedder = get_embedder()  # Fresh instance with config model
+        logger.info("[FULL_INDEX] Fresh embedder acquired for reindex")
 
         # Step 4: Refresh indexer/searcher (required since cleanup shut it down)
         # Only refresh if the indexer was actually shut down (has _is_shutdown flag set to True)
@@ -740,21 +708,14 @@ class IncrementalIndexer:
             # Clear existing index
             self.indexer.clear_index()
 
-            # Build DAG for all files (or reuse from a previous model pass)
-            if self.prebuilt_dag is not None:
-                dag = self.prebuilt_dag
-                logger.info(
-                    "[FULL_INDEX] Reusing prebuilt MerkleDAG (shared across models)"
-                )
-            else:
-                dag = MerkleDAG(
-                    project_path,
-                    self.include_dirs,
-                    self.exclude_dirs,
-                    supported_extensions=self.supported_extensions,
-                )
-                dag.build()
-                self.built_dag = dag  # Expose for multi-model caller to reuse
+            # Build DAG for all files
+            dag = MerkleDAG(
+                project_path,
+                self.include_dirs,
+                self.exclude_dirs,
+                supported_extensions=self.supported_extensions,
+            )
+            dag.build()
             all_files = dag.get_all_files()
 
             # Filter supported files
@@ -767,33 +728,24 @@ class IncrementalIndexer:
             repo_profile = None
             _profile_config = get_search_config()
             if _profile_config.chunking.sizing_mode == "adaptive" and supported_files:
-                if self.precomputed_repo_profile is not None:
-                    # Reuse profile from an earlier model pass (multi-model indexing)
-                    repo_profile = self.precomputed_repo_profile
+                from chunking.repo_profiler import profile_repository
+
+                repo_profile = profile_repository(project_path, supported_files)
+                if repo_profile:
                     logger.info(
-                        f"[REPO_PROFILE] Reusing precomputed profile: "
-                        f"{repo_profile.function_count} functions, "  # type: ignore[attr-defined]
-                        f"P75={repo_profile.p75_chars} chars"  # type: ignore[attr-defined]
+                        f"[REPO_PROFILE] {repo_profile.function_count} functions analyzed: "
+                        f"P75={repo_profile.p75_chars} chars, "
+                        f"P90={repo_profile.p90_chars} chars, "
+                        f"max_cc={repo_profile.max_complexity}"
                     )
                 else:
-                    from chunking.repo_profiler import profile_repository
-
-                    repo_profile = profile_repository(project_path, supported_files)
-                    if repo_profile:
-                        logger.info(
-                            f"[REPO_PROFILE] {repo_profile.function_count} functions analyzed: "
-                            f"P75={repo_profile.p75_chars} chars, "
-                            f"P90={repo_profile.p90_chars} chars, "
-                            f"max_cc={repo_profile.max_complexity}"
-                        )
-                    else:
-                        logger.info(
-                            "[REPO_PROFILE] Too few functions for profiling, using static defaults"
-                        )
+                    logger.info(
+                        "[REPO_PROFILE] Too few functions for profiling, using static defaults"
+                    )
                 self._parallel_chunker.chunker.tree_sitter_chunker.repo_profile = (
                     repo_profile
                 )
-            self.repo_profile = repo_profile  # Expose for multi-model capture
+            self.repo_profile = repo_profile
             # ========== END Repository Profiling ==========
 
             # Collect all chunks first, then embed in a single pass for efficiency

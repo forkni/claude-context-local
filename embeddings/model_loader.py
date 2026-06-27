@@ -690,7 +690,7 @@ class ModelLoader:
             if torch and torch.cuda.is_available():
                 vram_after = torch.cuda.memory_allocated()
                 vram_used_mb = (vram_after - vram_before) / (1024 * 1024)
-                # Clamp to 0 minimum to handle multi-model memory accounting
+                # Clamp to 0 minimum (baseline delta can go slightly negative)
                 vram_used_mb = max(0, vram_used_mb)
                 self._model_vram_usage[self.model_name] = round(vram_used_mb, 1)
                 self._logger.info(
@@ -737,7 +737,7 @@ class ModelLoader:
                     if torch and torch.cuda.is_available():
                         vram_after = torch.cuda.memory_allocated()
                         vram_used_mb = (vram_after - vram_before) / (1024 * 1024)
-                        # Clamp to 0 minimum to handle multi-model memory accounting
+                        # Clamp to 0 minimum (baseline delta can go slightly negative)
                         vram_used_mb = max(0, vram_used_mb)
                         self._model_vram_usage[self.model_name] = round(vram_used_mb, 1)
                         self._logger.info(

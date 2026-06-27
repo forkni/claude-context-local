@@ -175,7 +175,7 @@ class TestSwitchActiveModel:
             patch("mcp_server.tools.index_handlers.get_state"),
             patch("mcp_server.tools.index_handlers._invalidate_config_caches"),
         ):
-            _switch_active_model("key_x", "new-model")
+            _switch_active_model("new-model")
 
         mock_mgr.save_config.assert_called_once()
 
@@ -200,7 +200,7 @@ class TestSwitchActiveModel:
                 "mcp_server.tools.index_handlers._invalidate_config_caches"
             ) as mock_inv,
         ):
-            _switch_active_model("key_x", "old-model")
+            _switch_active_model("old-model")
 
         mock_inv.assert_called_once()
 
