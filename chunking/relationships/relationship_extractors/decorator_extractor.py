@@ -14,6 +14,7 @@ Complexity: Low (single-pass, straightforward extraction)
 import ast
 from typing import Any
 
+from chunking.relationships.name_resolution import call_target_name
 from chunking.relationships.relationship_extractors.base_extractor import (
     BaseRelationshipExtractor,
 )
@@ -90,7 +91,7 @@ class DecoratorExtractor(BaseRelationshipExtractor):
                             confidence=1.0,
                         )
 
-    def _get_decorator_name(self, decorator_node) -> str:
+    def _get_decorator_name(self, decorator_node) -> str | None:
         """
         Get the full name of a decorator.
 
@@ -104,37 +105,9 @@ class DecoratorExtractor(BaseRelationshipExtractor):
             decorator_node: AST node representing the decorator
 
         Returns:
-            Full decorator name as string, or empty string if extraction fails
+            Full decorator name as string, or None if extraction fails
         """
-        if isinstance(decorator_node, ast.Name):
-            return decorator_node.id
-        elif isinstance(decorator_node, ast.Attribute):
-            return self._get_full_attribute_name(decorator_node)
-        elif isinstance(decorator_node, ast.Call):
-            # For calls like @decorator(args), get the function being called
-            return self._get_decorator_name(decorator_node.func)
-        return ""
-
-    def _get_full_attribute_name(self, node: ast.Attribute) -> str:
-        """
-        Get the full dotted name from an Attribute node.
-
-        Handles nested attributes like a.b.c.d
-
-        Args:
-            node: ast.Attribute node
-
-        Returns:
-            Full dotted name (e.g., "module.submodule.decorator")
-        """
-        parts = []
-        current: ast.expr = node
-        while isinstance(current, ast.Attribute):
-            parts.append(current.attr)
-            current = current.value
-        if isinstance(current, ast.Name):
-            parts.append(current.id)
-        return ".".join(reversed(parts))
+        return call_target_name(decorator_node)
 
     def _should_skip_decorator(self, decorator_name: str) -> bool:
         """

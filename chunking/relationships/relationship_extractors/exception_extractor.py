@@ -17,6 +17,7 @@ Complexity: Medium (handles two relationship types)
 import ast
 from typing import Any
 
+from chunking.relationships.name_resolution import call_target_name, dotted_name
 from chunking.relationships.relationship_extractors.base_extractor import (
     BaseRelationshipExtractor,
 )
@@ -120,13 +121,12 @@ class ExceptionExtractor(BaseRelationshipExtractor):
 
         exception_name = self._get_exception_name(node.exc)
         if exception_name:
-            # Set relationship type for this edge
-            self.relationship_type = RelationshipType.RAISES
             self._add_edge(
                 source_id=chunk_id,
                 target_name=exception_name,
                 line_number=node.lineno,
                 confidence=1.0,
+                relationship_type=RelationshipType.RAISES,
             )
 
     def _extract_except_handlers(self, node: ast.Try, chunk_id: str) -> None:
@@ -143,16 +143,15 @@ class ExceptionExtractor(BaseRelationshipExtractor):
 
             exception_names = self._get_handler_exception_names(handler.type)
             for exc_name in exception_names:
-                # Set relationship type for this edge
-                self.relationship_type = RelationshipType.CATCHES
                 self._add_edge(
                     source_id=chunk_id,
                     target_name=exc_name,
                     line_number=handler.lineno,
                     confidence=1.0,
+                    relationship_type=RelationshipType.CATCHES,
                 )
 
-    def _get_exception_name(self, exc_node) -> str:
+    def _get_exception_name(self, exc_node) -> str | None:
         """
         Get the name of a raised exception.
 
@@ -166,15 +165,9 @@ class ExceptionExtractor(BaseRelationshipExtractor):
             exc_node: AST node representing the exception
 
         Returns:
-            Exception name as string, or empty string if extraction fails
+            Exception name as string, or None if extraction fails
         """
-        if isinstance(exc_node, ast.Name):
-            return exc_node.id
-        elif isinstance(exc_node, ast.Call):
-            return self._get_exception_name(exc_node.func)
-        elif isinstance(exc_node, ast.Attribute):
-            return self._get_full_attribute_name(exc_node)
-        return ""
+        return call_target_name(exc_node)
 
     def _get_handler_exception_names(self, type_node) -> list[str]:
         """
@@ -196,33 +189,14 @@ class ExceptionExtractor(BaseRelationshipExtractor):
         elif isinstance(type_node, ast.Tuple):
             names = []
             for elt in type_node.elts:
-                if isinstance(elt, ast.Name):
-                    names.append(elt.id)
-                elif isinstance(elt, ast.Attribute):
-                    names.append(self._get_full_attribute_name(elt))
+                name = dotted_name(elt)
+                if name:
+                    names.append(name)
             return names
         elif isinstance(type_node, ast.Attribute):
-            return [self._get_full_attribute_name(type_node)]
+            name = dotted_name(type_node)
+            return [name] if name else []
         return []
-
-    def _get_full_attribute_name(self, node: ast.Attribute) -> str:
-        """
-        Get the full dotted name from an Attribute node.
-
-        Args:
-            node: ast.Attribute node
-
-        Returns:
-            Full dotted name (e.g., "module.CustomError")
-        """
-        parts = []
-        current: ast.expr = node
-        while isinstance(current, ast.Attribute):
-            parts.append(current.attr)
-            current = current.value
-        if isinstance(current, ast.Name):
-            parts.append(current.id)
-        return ".".join(reversed(parts))
 
 
 # For testing

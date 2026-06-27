@@ -407,7 +407,9 @@ def run_gepa_optimization(
         server_url=server_url,
         tool_timeout_s=120.0,
     ) as sync_tools:
-        student = dspy.ReAct(CodeNavQA, tools=sync_tools, max_iters=max_iters)  # pyrefly: ignore[bad-argument-type]  # DSPy stub requires Callable but list[Tool] is the real API
+        student = dspy.ReAct(
+            CodeNavQA, tools=sync_tools, max_iters=max_iters
+        )  # pyrefly: ignore[bad-argument-type]  # DSPy stub requires Callable but list[Tool] is the real API
 
         # Resolve budget: explicit knobs take priority over the auto preset.
         # dspy.GEPA enforces exactly-one-of {auto, max_full_evals, max_metric_calls}.

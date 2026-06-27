@@ -13,6 +13,7 @@ Complexity: Medium (recursive type extraction from complex annotations)
 import ast
 from typing import Any
 
+from chunking.relationships.name_resolution import dotted_name
 from chunking.relationships.relationship_extractors.base_extractor import (
     BaseRelationshipExtractor,
 )
@@ -248,7 +249,7 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
 
         elif isinstance(node, ast.Attribute):
             # Qualified type: module.User
-            full_name = self._get_full_attribute_name(node)
+            full_name = dotted_name(node)
             if full_name:
                 type_names.append(full_name)
 
@@ -282,32 +283,6 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
             type_names.extend(right_types)
 
         return type_names
-
-    def _get_full_attribute_name(self, attr_node: ast.Attribute) -> str | None:
-        """
-        Recursively extract full attribute path.
-
-        Example:
-            typing.Dict -> "typing.Dict"
-            module.submodule.Class -> "module.submodule.Class"
-
-        Args:
-            attr_node: ast.Attribute node
-
-        Returns:
-            Full dotted name or None
-        """
-        if isinstance(attr_node.value, ast.Name):
-            return f"{attr_node.value.id}.{attr_node.attr}"
-
-        elif isinstance(attr_node.value, ast.Attribute):
-            base = self._get_full_attribute_name(attr_node.value)
-            if base:
-                return f"{base}.{attr_node.attr}"
-            return attr_node.attr
-
-        else:
-            return attr_node.attr
 
     def _build_function_chunk_id(
         self, chunk_metadata: dict[str, Any], func_name: str, line_number: int

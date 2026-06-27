@@ -20,6 +20,7 @@ Complexity: Low (similar to inheritance extraction with filtering)
 import ast
 from typing import Any
 
+from chunking.relationships.name_resolution import base_class_name
 from chunking.relationships.relationship_extractors.base_extractor import (
     BaseRelationshipExtractor,
 )
@@ -153,7 +154,9 @@ class ImplementsExtractor(BaseRelationshipExtractor):
 
         # Extract protocol/ABC base classes
         for base_node in class_node.bases:
-            protocol_name = self._get_base_class_name(base_node)
+            # full=False: PROTOCOL_MARKERS matches on the bare leaf name ("Protocol",
+            # not "typing.Protocol"), so we must not include the module prefix.
+            protocol_name = base_class_name(base_node, full=False)
 
             if not protocol_name:
                 continue  # Skip if we can't extract the name
@@ -169,47 +172,6 @@ class ImplementsExtractor(BaseRelationshipExtractor):
                     is_protocol=self._is_protocol_marker(protocol_name),
                     is_abc=self._is_abc_marker(protocol_name),
                 )
-
-    def _get_base_class_name(self, base_node: ast.AST) -> str | None:
-        """
-        Extract base class name from AST node.
-
-        Handles:
-        - Simple names: ast.Name -> "Protocol"
-        - Attributes: ast.Attribute -> "typing.Protocol"
-        - Subscripts: ast.Subscript -> "Protocol" (for Protocol[T])
-
-        Args:
-            base_node: AST node representing a base class
-
-        Returns:
-            Base class name or None if cannot be determined
-
-        Example:
-            ast.Name(id='Protocol') -> "Protocol"
-            ast.Attribute(value=Name('typing'), attr='Protocol') -> "Protocol"
-        """
-        if isinstance(base_node, ast.Name):
-            # Simple name: class Foo(Protocol)
-            return base_node.id
-
-        elif isinstance(base_node, ast.Attribute):
-            # Qualified name: class Foo(typing.Protocol)
-            # Extract just the class name (not module path)
-            return base_node.attr
-
-        elif isinstance(base_node, ast.Subscript):
-            # Generic protocol: class Foo(Protocol[T])
-            # Extract the base type (ignore type parameters)
-            return self._get_base_class_name(base_node.value)
-
-        elif isinstance(base_node, ast.Call):
-            # Metaclass: class Foo(metaclass=ABCMeta)
-            # Extract the function name
-            return self._get_base_class_name(base_node.func)
-
-        # Unknown node type
-        return None
 
     def _is_protocol_or_abc(self, class_name: str) -> bool:
         """

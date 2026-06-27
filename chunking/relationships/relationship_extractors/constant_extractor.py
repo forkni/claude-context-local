@@ -78,11 +78,11 @@ class ConstantExtractor(BaseRelationshipExtractor):
                         and not self._is_trivial_value(node.value)
                     ):
                         # Check if value is trivial (skip all-numeric constants)
-                        self.relationship_type = RelationshipType.DEFINES_CONSTANT
                         self._add_edge(
                             source_id=chunk_metadata["chunk_id"],
                             target_name=target.id,
                             line_number=node.lineno,
+                            relationship_type=RelationshipType.DEFINES_CONSTANT,
                             definition=True,
                         )
                         self.known_constants.add(target.id)
@@ -110,11 +110,11 @@ class ConstantExtractor(BaseRelationshipExtractor):
                 and not self._is_assignment_target(node, tree)
                 and not self._is_builtin(node.id)
             ):
-                self.relationship_type = RelationshipType.USES_CONSTANT
                 self._add_edge(
                     source_id=chunk_metadata["chunk_id"],
                     target_name=node.id,
                     line_number=node.lineno,
+                    relationship_type=RelationshipType.USES_CONSTANT,
                 )
 
     @staticmethod
