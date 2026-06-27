@@ -190,11 +190,14 @@ class IndexSynchronizer:
         for chunk_id in self.dense_index.chunk_ids:
             entry = self.dense_index.metadata_store.get(chunk_id)
             if entry:
-                content = entry["metadata"].get("bm25_text", "")
-                if content:
-                    documents.append(content)
-                    doc_ids.append(chunk_id)
-                    metadata[chunk_id] = entry["metadata"]
+                # Keep empty-content chunks (bm25_text absent or "") as empty
+                # strings — mirrors the add path which appends every doc
+                # unconditionally.  Skipping them here caused a chronic
+                # BM25 < Dense desync for module/community chunks that have
+                # no bm25_text key.
+                documents.append(entry["metadata"].get("bm25_text", ""))
+                doc_ids.append(chunk_id)
+                metadata[chunk_id] = entry["metadata"]
 
         if not documents:
             self._logger.error("[RESYNC] No content found in dense metadata")

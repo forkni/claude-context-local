@@ -197,6 +197,40 @@ class TestIndexSynchronizer:
         # Should return 0 (no chunks)
         assert result == 0
 
+    def test_resync_bm25_preserves_empty_content_chunks(self):
+        """Resync must not drop chunks whose bm25_text is empty or absent.
+
+        The normal add path (BM25Index.index_documents) accepts empty strings
+        and keeps every chunk, so BM25 == Dense after indexing.  The resync
+        path must mirror that behaviour — dropping empty-content chunks here
+        is what causes the chronic BM25=1793, Dense=1801 desync.
+        """
+        # 3 chunks: two with content, one with NO bm25_text key at all
+        self.mock_dense_index.chunk_ids = ["chunk1", "chunk2", "chunk3_empty"]
+        self.mock_dense_index.metadata_store = MagicMock()
+        self.mock_dense_index.metadata_store.get.side_effect = [
+            {"metadata": {"bm25_text": "def foo(): pass", "file": "a.py"}},
+            {"metadata": {"bm25_text": "class Bar: pass", "file": "b.py"}},
+            {"metadata": {"file": "c.py"}},  # no bm25_text — the latent bug
+        ]
+
+        with patch("search.index_sync.BM25Index") as mock_bm25_class:
+            mock_new_bm25 = MagicMock()
+            mock_new_bm25.size = 3
+            mock_bm25_class.return_value = mock_new_bm25
+
+            result = self.synchronizer.resync_bm25_from_dense()
+
+            # Must index ALL 3 doc_ids (including the empty-content one)
+            call_args = mock_new_bm25.index_documents.call_args
+            assert call_args is not None, "index_documents was never called"
+            actual_doc_ids = call_args[0][1]  # positional arg 1 = doc_ids list
+            assert actual_doc_ids == ["chunk1", "chunk2", "chunk3_empty"], (
+                f"Expected all 3 chunk_ids, got {actual_doc_ids}. "
+                "resync_bm25_from_dense is dropping empty-content chunks."
+            )
+            assert result == 3
+
     def test_clear_index_success(self):
         """Test clearing both indices."""
         # clear_index recreates indices using constructors
