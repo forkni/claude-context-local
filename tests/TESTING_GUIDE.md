@@ -1632,20 +1632,17 @@ function-scoped teardown.
 
 Coverage config lives in `pyproject.toml` `[tool.coverage.*]`. Branch coverage is on.
 
-```bash
-# Measure baseline (no gate)
-bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration/ \
-  --cov --cov-branch --cov-report=term-missing
+**Baseline (measured 2026-06-27):** 78% branch+statement combined (2844 tests, 15 821 stmts).
+`fail_under = 78` is set in `[tool.coverage.report]` and `--cov-fail-under=78` is active in CI.
 
-# Set the gate once you have the number:
-#   1. Add fail_under = <N> in [tool.coverage.report] in pyproject.toml
-#   2. Add --cov-fail-under=<N> to the pytest command in .github/workflows/branch-protection.yml
-#   3. Ratchet upward over time as coverage improves
+```bash
+# Re-measure (with gate enforced):
+bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration/ \
+  --cov --cov-branch --cov-report=term-missing --cov-fail-under=78
 ```
 
-The CI `test` job already runs coverage but does not enforce a threshold yet. Add
-`--cov-fail-under=<N>` to the `uv run pytest ...` line in `.github/workflows/branch-protection.yml`
-after measuring.
+Ratchet upward: when coverage improves, bump `fail_under` in `pyproject.toml` and
+`--cov-fail-under` in `.github/workflows/branch-protection.yml`.
 
 ### Snapshot / golden-file regression testing (Phase 4 — Syrupy)
 
