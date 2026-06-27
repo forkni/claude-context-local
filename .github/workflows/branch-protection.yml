@@ -107,10 +107,7 @@ jobs:
         run: |
           uv run pytest tests/ -v --tb=short --maxfail=20 \
             --ignore=tests/slow_integration/ \
-            --cov --cov-branch --cov-report=term-missing
-        # TODO: add --cov-fail-under=<N> after measuring baseline locally:
-        #   bash scripts/test/run_tests.sh tests/ --cov --cov-branch --cov-report=term-missing
-        # Then set fail_under in [tool.coverage.report] in pyproject.toml and add the flag here.
+            --cov --cov-branch --cov-report=term-missing --cov-fail-under=78
 
       - name: Upload test results
         if: always()

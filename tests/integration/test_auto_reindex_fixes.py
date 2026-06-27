@@ -307,7 +307,7 @@ class TestUserFilterPreservation:
                 stack.enter_context(p)
             from mcp_server.tools.search_handlers import _check_auto_reindex
 
-            _check_auto_reindex("/fake/project", "qwen3_0.6b", max_age_minutes=0)
+            _check_auto_reindex("/fake/project", max_age_minutes=0)
 
         assert chunker_calls, "MultiLanguageChunker was never constructed"
         args, kwargs = chunker_calls[0]

@@ -106,7 +106,7 @@ class TestLoadExamples:
         examples, _ = load_examples(golden_dataset_path)
         for ex in examples:
             if ex.category in ("A", "B", "C"):
-                assert ex.expected_tool == "search_code"
+                assert ex.expected_tool == ["search_code"]
 
     def test_with_inputs_marks_question_as_input(self, golden_dataset_path):
         if not golden_dataset_path.exists():
@@ -136,7 +136,7 @@ class TestLoadExamples:
         examples, thresholds = load_examples(p)
         assert len(examples) == 1
         assert examples[0].question == "find the embedder"
-        assert examples[0].expected_tool == "search_code"
+        assert examples[0].expected_tool == ["search_code"]
         assert thresholds["mrr"] == 0.5
 
 

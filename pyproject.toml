@@ -380,7 +380,6 @@ filterwarnings = [
 
 # ---------------------------------------------------------------------------
 # Coverage (branch coverage on; run: pytest --cov --cov-branch --cov-report=term-missing)
-# After measuring baseline, set fail_under here and add --cov-fail-under=<N> in CI.
 # ---------------------------------------------------------------------------
 
 [tool.coverage.run]
@@ -400,7 +399,7 @@ source = [
 
 [tool.coverage.report]
 show_missing = true
-# fail_under = XX   # Set after first measurement: pytest --cov --cov-branch --cov-report=term-missing
+fail_under = 78  # Baseline measured 2026-06-27 (2844 tests, branch coverage)
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
