@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 import networkx as nx
 import pytest
 
+from graph.schema import REVERSE_RELATIONS
 from mcp_server.tools.search_handlers import (
-    _REVERSE_RELATION_MAP,
     _get_graph_data_for_chunk,
     _get_reverse_relation_name,
 )
@@ -175,7 +175,7 @@ def test_reverse_relation_name_unknown():
 
 def test_reverse_relation_map_completeness():
     """Map covers all 21 relationship types."""
-    assert len(_REVERSE_RELATION_MAP) == 21
+    assert len(REVERSE_RELATIONS) == 21
 
 
 def test_node_not_in_graph(mock_index_manager):
