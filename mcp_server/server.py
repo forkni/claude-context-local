@@ -298,15 +298,20 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
             )
 
         # Return both content (backward compat) and structuredContent (native JSON, no double encoding)
-        # MCP SDK 1.25.0+ supports structuredContent - clients can choose which to read
+        # MCP SDK 1.25.0+ supports structuredContent - clients can choose which to read.
+        # structuredContent is attached ONLY for verbose: compact/ultra clients (e.g. Claude Code UI)
+        # pretty-print the dict regardless, making the response appear as full/indented output and
+        # defeating the token-reduction goal. For compact/ultra the content text is canonical.
         from mcp import types as mcp_types
 
         # pyrefly: ignore [bad-return]
         return mcp_types.CallToolResult(
             content=[TextContent(type="text", text=result_text)],
-            structuredContent=formatted_result
-            if isinstance(formatted_result, dict)
-            else None,
+            structuredContent=(
+                formatted_result
+                if output_format == "verbose" and isinstance(formatted_result, dict)
+                else None
+            ),
         )
 
     except asyncio.CancelledError:
