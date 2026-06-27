@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-context-local"
-version = "0.18.0"
-description = "Local semantic code search for Claude Code (MCP) using multi-model routing (Qwen3, BGE-M3, CodeRankEmbed), FAISS, and AST/tree-sitter chunking. 100% local embeddings and indexing."
+version = "0.19.0"
+description = "Local semantic code search for Claude Code (MCP) using FAISS, hybrid BM25+semantic search, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"

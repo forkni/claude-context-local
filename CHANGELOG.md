@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.19.0] - 2026-06-27
+
+### Removed
+
+- **Multi-model embedding routing** — `RoutingConfig` and all `cfg.routing.*` references deleted from
+  `search/config.py`. `MODEL_REGISTRY` pruned from 7 to **5 models**: `BAAI/bge-m3`,
+  `google/embeddinggemma-300m` (default), `nomic-ai/CodeRankEmbed`,
+  `Alibaba-NLP/gte-modernbert-base`, `Qwen/Qwen3-Embedding-0.6B`. Removed models: `BAAI/bge-code-v1`,
+  `Qwen/Qwen3-Embedding-4B`, `jinaai/jina-embeddings-v5*`.
+- **`configure_query_routing` MCP tool** — removed from `mcp_server/tool_registry.py`. Server now
+  exposes exactly **18 tools** (down from 19).
+
+### Changed
+
+- **Launcher UI cleanup** (`5717afd`, `start_mcp_server.cmd`) — dead code blocks deleted
+  (`:install_cuda`, `:force_cpu_mode`, `:test_install`, `:end`); duplicate `:select_embedding_model`
+  menu body replaced with `goto quick_model_switch` (single source of truth); stale SSE tombstone
+  comment block removed. Ten display values corrected to match `search/config.py` actuals:
+  BM25/Dense weights 0.4/0.6→**0.35/0.65**, community_resolution 1.1/1.5→**1.0**,
+  `min_vram_gb` ≥6GB→**≥2GB**, output format default compact→**ultra**, reranker quality
+  +5-15%%→**+15-25%%**.
+- **Docs cleanup** (`ef0b1ba`) — multi-model routing sections deleted from
+  `docs/ADVANCED_FEATURES_GUIDE.md` (~250 lines: §Multi-Model Query Routing + §Multi-Model Batch
+  Indexing), `docs/MCP_TOOLS_REFERENCE.md` (`configure_query_routing` row; §Multi-Model Batch
+  Indexing; `model_key`/`use_routing` params from `search_code`; `k=4`→7 in example),
+  `docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md` (~183 lines: §Multi-Model Query Routing v0.5.4+),
+  and `docs/CLAUDE_MD_TEMPLATE.md` (`configure_query_routing` row; tool count 19→18).
+
+---
+
 ## [0.18.0] - 2026-06-26
 
 ### Changed
