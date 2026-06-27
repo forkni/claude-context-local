@@ -21,10 +21,8 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 |-----------|---------|-------------|
 | `query` | — | Natural language description. Optional if `chunk_id` given. |
 | `chunk_id` | — | Direct chunk ID for O(1) lookup. Format: `"file:lines:type:name"` |
-| `k` | 4 | Number of results to return. **Recommended: pass `k=7` explicitly** — targets may rank 6–7 on complex queries (SSCG benchmark: Hit@5=100% at k=7). Use `k=10` for architectural queries. |
+| `k` | 7 | Number of results to return. **Recommended: pass `k=7` explicitly** — targets may rank 6–7 on complex queries (SSCG benchmark: Hit@5=100% at k=7). Use `k=10` for architectural queries. |
 | `search_mode` | "auto" | "hybrid", "semantic", "bm25", "auto" |
-| `model_key` | — | Force model: "qwen3_0.6b", "bge_m3", "coderankembed", "gte_modernbert" |
-| `use_routing` | true | Enable multi-model query routing |
 | `file_pattern` | — | Filter by filename/path substring (e.g., "auth", "models") |
 | `include_dirs` | — | Whitelist directories, e.g. `["src/"]` |
 | `exclude_dirs` | — | Blacklist directories, e.g. `["tests/"]` |
