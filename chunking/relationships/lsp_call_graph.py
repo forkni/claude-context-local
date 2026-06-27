@@ -65,6 +65,7 @@ from evaluation.chunk_mapping import find_enclosing_chunk
 
 from .call_edge_resolver import (
     ResolvedEdge,
+    ResolverConfidence,
     gather_py_files,
     scope_to_indexed_files,
     validate_py_files,
@@ -301,7 +302,7 @@ class LSPResolver:
     """
 
     name: str = "lsp"
-    base_confidence: float = 0.98
+    base_confidence: float = ResolverConfidence.LSP
 
     def __init__(self, timeout: float = 30.0) -> None:
         self._timeout = timeout

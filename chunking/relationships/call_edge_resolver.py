@@ -1,16 +1,32 @@
 """Resolver protocol, ResolvedEdge, and shared helpers for the call-graph pipeline.
 
-Architecture
-------------
-The resolver pipeline chains multiple static-analysis backends at increasing accuracy::
+Architecture — two namespaces
+------------------------------
+The resolver pipeline chains multiple static-analysis backends at increasing accuracy.
+There are **two distinct confidence namespaces** that must not be conflated:
 
-    AST (0.5/0.7)  →  pyan (0.75)  →  libcst (0.90)  →  lsp (0.98)
+``confidence`` (tag attribute on graph edges)
+    Qualitative label produced by the AST chunking pass: ``"exact"``,
+    ``"recovered"``, or ``"ambiguous"``.  Written via
+    ``graph_storage.add_call_edge`` during chunking.  These are *not* numeric
+    scores and are *not* compared against :class:`ResolverConfidence` thresholds.
 
-*AST edges* are produced during the chunking pass (call_graph_extractor) and already live
-in the graph before injection time.  The pipeline only manages the *additional* resolvers
-that run at full-index time:
+``resolver_confidence`` (numeric score on graph edges)
+    Numeric precedence written by the resolver pipeline (Stage 1–3 below).
+    Edges without this attribute default to ``0.0``, so *every* resolver reliably
+    upgrades them via the keep-max merge in :func:`run_resolvers`.
+
+Resolver ladder (``resolver_confidence`` values; see :class:`ResolverConfidence`)::
+
+    pyan wildcard (0.60)  →  pyan (0.75)  →  libcst (0.90)  →  lsp (0.98)
+
+*AST edges* ride a separate ``add_call_edge`` / ``extract_calls`` rail and are
+written during chunking — they are not :class:`CallEdgeResolver` instances and
+do not participate in the keep-max merge.  The pipeline only manages the
+*additional* resolvers that run at full-index time:
 
 - **PyanResolver** (Stage 1)  — whole-project name resolution; GPL-2.0 optional extra.
+  Wildcard fan-out edges (``expand_unknowns``) get :attr:`ResolverConfidence.PYAN_WILDCARD`.
 - **LibCSTResolver** (Stage 2) — ``FullyQualifiedNameProvider``; MIT, permissive.
 - **LSPResolver** (Stage 3)   — basedpyright JSON-RPC call hierarchy; opt-in.
 
@@ -64,6 +80,38 @@ class ResolvedEdge:
     is_method: bool
     source: str
     confidence: float
+
+
+# ---------------------------------------------------------------------------
+# Confidence constants — single source of truth for all resolvers
+# ---------------------------------------------------------------------------
+
+
+class ResolverConfidence:
+    """Numeric ``resolver_confidence`` values for each resolver stage.
+
+    These are the authoritative constants; each resolver imports the
+    appropriate value rather than hard-coding a float literal.
+
+    Ladder (ascending precision)::
+
+        PYAN_WILDCARD (0.60) — pyan ``expand_unknowns`` fan-out edges
+        PYAN          (0.75) — pyan whole-project name resolution
+        LIBCST        (0.90) — LibCST ``FullyQualifiedNameProvider``
+        LSP           (0.98) — basedpyright type-inference call hierarchy
+    """
+
+    PYAN_WILDCARD: float = 0.60
+    """pyan ``expand_unknowns`` wildcard fan-out: lower-confidence speculative edges."""
+
+    PYAN: float = 0.75
+    """pyan whole-project name resolution."""
+
+    LIBCST: float = 0.90
+    """LibCST ``FullyQualifiedNameProvider`` cross-module resolution."""
+
+    LSP: float = 0.98
+    """basedpyright type-inference–level call hierarchy."""
 
 
 # ---------------------------------------------------------------------------

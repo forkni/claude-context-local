@@ -14,7 +14,7 @@ name-matching.  As a **MIT-licensed pure-Python library**, it is the
 recommended primary resolver for the ``[callgraph]`` optional extra.
 
 Confidence: 0.90 — cross-file FQN resolution with static scope analysis.
-Falls back to pyan (0.75) or in-house AST (0.5/0.7) when unavailable.
+When unavailable, only lower-confidence resolvers (pyan 0.75, AST) contribute edges.
 
 Optional dependency
 -------------------
@@ -36,6 +36,7 @@ from evaluation.chunk_mapping import chunk_id_from_fqn
 
 from .call_edge_resolver import (
     ResolvedEdge,
+    ResolverConfidence,
     gather_py_files,
     scope_to_indexed_files,
     validate_py_files,
@@ -212,7 +213,7 @@ class LibCSTResolver:
     """
 
     name: str = "libcst"
-    base_confidence: float = 0.90
+    base_confidence: float = ResolverConfidence.LIBCST
 
     def __init__(self, use_pyproject_toml: bool = False) -> None:
         """Initialise the resolver.

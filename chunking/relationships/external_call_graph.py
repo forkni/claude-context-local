@@ -46,6 +46,7 @@ from evaluation.chunk_mapping import chunk_id_from_fqn, find_enclosing_chunk
 
 from .call_edge_resolver import (
     ResolvedEdge,
+    ResolverConfidence,
     gather_py_files,
     scope_to_indexed_files,
     validate_py_files,
@@ -192,7 +193,7 @@ class PyanResolver:
     """
 
     name: str = "pyan"
-    base_confidence: float = 0.75
+    base_confidence: float = ResolverConfidence.PYAN
 
     def available(self) -> bool:
         """Return True if pyan3 was successfully imported at module load time."""
@@ -258,7 +259,9 @@ class PyanResolver:
         # so they can be assigned a lower confidence (0.6 vs 0.75).
         visitor = _TrackedVisitor(py_files, root=str(project_root), logger=pyan_logger)
         expanded = getattr(visitor, "expanded_edges", set())
-        wildcard_confidence: float = 0.6  # expand_unknowns fan-out edges
+        wildcard_confidence: float = (
+            ResolverConfidence.PYAN_WILDCARD
+        )  # expand_unknowns fan-out
 
         # 5-tuple: (caller_id, callee_id, line_num, is_method_call, confidence)
         raw_edges: set[tuple[str, str, int, bool, float]] = set()
