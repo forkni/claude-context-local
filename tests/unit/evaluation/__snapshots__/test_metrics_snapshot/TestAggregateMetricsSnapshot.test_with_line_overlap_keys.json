@@ -1,0 +1,28 @@
+{
+  "hit_rate@5": 0.5,
+  "hit_rate@7": 0.5,
+  "line_iou": 0.375,
+  "line_iou_count": 2,
+  "line_precision": 0.45,
+  "line_precision_count": 2,
+  "line_recall": 0.4,
+  "line_recall_count": 2,
+  "mrr": 0.5,
+  "ndcg@10": 0.5,
+  "ndcg@5": 0.5,
+  "pass_fail": {
+    "hit_rate@5": "FAIL",
+    "mrr": "PASS",
+    "recall@5": "FAIL"
+  },
+  "precision@1": 0.5,
+  "precision@10": 0.5,
+  "precision@5": 0.5,
+  "recall@1": 0.5,
+  "recall@10": 0.5,
+  "recall@5": 0.5,
+  "recall@7": 0.5,
+  "success_count": 1,
+  "success_count@7": 1,
+  "total_queries": 2
+}

@@ -1,0 +1,14 @@
+{
+  "hit": true,
+  "hit@7": true,
+  "mrr": 1.0,
+  "ndcg@10": 1.0,
+  "ndcg@5": 1.0,
+  "precision@1": 1.0,
+  "precision@10": 0.2,
+  "precision@5": 0.4,
+  "recall@1": 0.5,
+  "recall@10": 1.0,
+  "recall@5": 1.0,
+  "recall@7": 1.0
+}

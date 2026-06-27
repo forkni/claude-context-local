@@ -1,0 +1,12 @@
+[
+  {
+    "chunk_id": "utils/helpers.py:function:normalize",
+    "complexity_score": 3,
+    "file": "utils/helpers.py",
+    "kind": "function",
+    "lines": "5-15",
+    "name": "normalize",
+    "score": 0.65,
+    "source": "ego_graph"
+  }
+]

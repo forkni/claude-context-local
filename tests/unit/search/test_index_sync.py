@@ -205,14 +205,18 @@ class TestIndexSynchronizer:
         path must mirror that behaviour — dropping empty-content chunks here
         is what causes the chronic BM25=1793, Dense=1801 desync.
         """
-        # 3 chunks: two with content, one with NO bm25_text key at all
+        # 3 chunks: two with content, one with NO bm25_text key at all.
+        # Use a dict-based callable (not a list) for side_effect so the mock
+        # is robust against extra/out-of-order calls that can exhaust an
+        # ordered list under certain test-collection orderings.
+        _metadata_by_id = {
+            "chunk1": {"metadata": {"bm25_text": "def foo(): pass", "file": "a.py"}},
+            "chunk2": {"metadata": {"bm25_text": "class Bar: pass", "file": "b.py"}},
+            "chunk3_empty": {"metadata": {"file": "c.py"}},  # no bm25_text
+        }
         self.mock_dense_index.chunk_ids = ["chunk1", "chunk2", "chunk3_empty"]
         self.mock_dense_index.metadata_store = MagicMock()
-        self.mock_dense_index.metadata_store.get.side_effect = [
-            {"metadata": {"bm25_text": "def foo(): pass", "file": "a.py"}},
-            {"metadata": {"bm25_text": "class Bar: pass", "file": "b.py"}},
-            {"metadata": {"file": "c.py"}},  # no bm25_text — the latent bug
-        ]
+        self.mock_dense_index.metadata_store.get.side_effect = _metadata_by_id.get
 
         with patch("search.index_sync.BM25Index") as mock_bm25_class:
             mock_new_bm25 = MagicMock()

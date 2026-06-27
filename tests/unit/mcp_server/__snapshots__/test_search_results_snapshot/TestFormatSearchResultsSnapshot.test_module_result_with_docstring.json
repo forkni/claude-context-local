@@ -1,0 +1,12 @@
+[
+  {
+    "chunk_id": "search/config.py:module:config",
+    "file": "search/config.py",
+    "kind": "module",
+    "lines": "1-8",
+    "name": "config",
+    "score": 0.75,
+    "source": "hybrid",
+    "summary": "Configuration classes for semantic code search and embedding models. Loaded once from search_config.json at server start."
+  }
+]

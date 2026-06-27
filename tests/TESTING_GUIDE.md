@@ -1647,30 +1647,95 @@ Ratchet upward: when coverage improves, bump `fail_under` in `pyproject.toml` an
 ### Snapshot / golden-file regression testing (Phase 4 — Syrupy)
 
 `syrupy` is a declared test dependency. Use it for deterministic complex outputs:
-ranked `search_code` results, MCP tool-handler responses, evaluation metric dicts.
+pure metric functions, formatter outputs, MCP tool-handler responses.
+
+**Existing snapshot tests:**
+- `tests/unit/evaluation/test_metrics_snapshot.py` — `calculate_metrics_from_results` and
+  `aggregate_metrics` (9 snapshots)
+- `tests/unit/mcp_server/test_search_results_snapshot.py` — `_format_search_results` (4 snapshots)
+
+Snapshot files live in `__snapshots__/` dirs next to each test module and are committed to the
+repo. They are diffable JSON (via `JSONSnapshotExtension`) so diffs in PR reviews are human-readable.
+
+#### Fixture pattern (used in this project)
+
+Override the `snapshot` fixture per module to force JSON extension — do not rely on the default
+`.ambr` format:
 
 ```python
-# Basic snapshot assertion (syrupy fixture injected automatically)
-def test_search_result_shape(snapshot):
-    results = search_code("hybrid searcher init")
-    assert results == snapshot  # generates __snapshots__/test_file.ambr on first run
-
-# Regenerate after intentional output changes:
-#   pytest tests/path/to/test_file.py --snapshot-update
-
-# Mask non-deterministic fields (timestamps, absolute paths)
+import pytest
 from syrupy.extensions.json import JSONSnapshotExtension
+
+@pytest.fixture
+def snapshot(snapshot):
+    return snapshot.use_extension(JSONSnapshotExtension)
+
+def test_some_output(snapshot):
+    assert compute_thing() == snapshot  # stored as JSON, one file per test
+```
+
+#### Workflow
+
+**First run (generate snapshots):**
+```bash
+# Generate snapshots for a new test file:
+bash scripts/test/run_tests.sh tests/unit/evaluation/test_metrics_snapshot.py \
+  --snapshot-update -q
+
+# Then commit the generated __snapshots__/ files along with the test file.
+```
+
+**Normal run (no flag needed — snapshots are in the suite):**
+```bash
+bash scripts/test/run_tests.sh tests/unit/evaluation/test_metrics_snapshot.py -q
+# "N snapshots passed." printed by syrupy if all match
+```
+
+**After intentional output change — regenerate:**
+```bash
+bash scripts/test/run_tests.sh tests/unit/evaluation/test_metrics_snapshot.py \
+  --snapshot-update -q
+# Then review the diff before committing:
+git diff tests/unit/evaluation/__snapshots__/
+```
+
+#### Reading a snapshot diff
+
+When a snapshot test fails, syrupy prints a unified diff between the stored JSON and the new
+output. Example (truncated):
+
+```
+AssertionError: snapshot does not match
++ {"mrr": 0.85, "ndcg@5": 0.72, ...}
+- {"mrr": 0.80, "ndcg@5": 0.72, ...}
+```
+
+`+` is the new value, `-` is the stored value. Review the diff to decide:
+- **Expected change** (intentional refactor) → `--snapshot-update` and commit
+- **Regression** (metric formula broken) → fix the code, do not update
+
+#### Masking volatile fields
+
+For outputs with timestamps, UUIDs, or absolute paths, mask with `path_type`:
+
+```python
 from syrupy.matchers import path_type
 
-def test_result_stable(snapshot):
-    assert result == snapshot.with_defaults(
-        extension_class=JSONSnapshotExtension,
-        matcher=path_type({".*timestamp.*": (str,), ".*path.*": (str,)}),
+def test_with_timestamp(snapshot):
+    assert result == snapshot(
+        matcher=path_type({".*timestamp.*": (str,), ".*path.*": (str,)})
     )
 ```
 
-Commit the generated `__snapshots__/` files. Regenerate only when output changes are intentional.
-Avoid over-snapshotting — use it for a handful of high-value outputs, not every function.
+The pure-function targets in this project have no volatile fields — masking is not needed for
+existing snapshot tests.
+
+#### Guidelines
+
+- Snapshot tests run in the normal suite with no separate marker (no `@pytest.mark.snapshot`).
+- Keep the set small: a handful of high-value pure functions, not every handler.
+- Do NOT snapshot heavily-mocked handlers — mock identity dominates the output, not real behaviour.
+- `--snapshot-update` is the only way to update; the flag is intentionally absent from CI.
 
 ### Deferred improvements (trigger thresholds documented here)
 
