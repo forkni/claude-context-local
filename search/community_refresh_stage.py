@@ -122,7 +122,7 @@ class CommunityRefreshStage:
                 if comm_id in affected_community_ids:
                     file_path = meta.get("file_path") or meta.get("relative_path", "")
                     if file_path:
-                        self._indexer.remove_file_chunks(file_path, project_name)
+                        self._indexer.remove_files({file_path}, project_name)
                     break
 
         # Rebuild member CodeChunks for affected communities from MetadataStore

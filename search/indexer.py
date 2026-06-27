@@ -8,8 +8,6 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 
-from embeddings.chunk_metadata import resolve_chunk_path
-
 
 if TYPE_CHECKING:
     from embeddings.embedder import CodeEmbedder
@@ -462,71 +460,17 @@ class CodeIndexManager:
 
         return results_dict
 
-    def remove_file_chunks(
-        self, file_path: str, project_name: str | None = None
+    def remove_files(
+        self, file_paths: set[str], project_name: str | None = None
     ) -> int:
-        """Remove all chunks from a specific file.
+        """Remove chunks from one or more files, rebuilding the FAISS index.
 
         Args:
-            file_path: Path to the file (relative or absolute)
-            project_name: Optional project name filter
+            file_paths: Set of file paths to remove (relative or absolute).
+            project_name: Optional project name filter.
 
         Returns:
-            Number of chunks removed
-        """
-        chunks_to_remove = []
-
-        # Find chunks to remove
-        for chunk_id in self.chunk_ids:
-            metadata_entry = self.metadata_store.get(chunk_id)
-            if not metadata_entry:
-                continue
-
-            metadata = metadata_entry["metadata"]
-
-            # Check if this chunk belongs to the file
-            chunk_file = resolve_chunk_path(metadata)
-            if not chunk_file:
-                continue
-
-            # Check if paths match (handle both relative and absolute)
-            if file_path in chunk_file or chunk_file in file_path:
-                # Check project name if provided
-                if project_name and metadata.get("project_name") != project_name:
-                    continue
-                chunks_to_remove.append(chunk_id)
-
-        # Remove chunks from metadata
-        for chunk_id in chunks_to_remove:
-            self.metadata_store.delete(chunk_id)
-
-        # Note: We don't remove from FAISS index directly as it's complex
-        # Instead, we'll rebuild the index periodically or on demand
-
-        self._logger.info(f"Removed {len(chunks_to_remove)} chunks from {file_path}")
-
-        # Commit removals in batch
-        with contextlib.suppress(sqlite3.Error):
-            self.metadata_store.commit()
-        return len(chunks_to_remove)
-
-    def remove_multiple_files(
-        self, file_paths: set, project_name: str | None = None
-    ) -> int:
-        """Remove chunks from multiple files in a single pass.
-
-        This is much faster than calling remove_file_chunks() repeatedly,
-        as it only scans through all chunks once instead of once per file.
-
-        IMPORTANT: This method properly removes vectors from FAISS index by rebuilding it,
-        which prevents index corruption and access violations.
-
-        Args:
-            file_paths: Set of file paths to remove
-            project_name: Optional project name filter
-
-        Returns:
-            Total number of chunks removed
+            Number of chunks removed.
         """
         if not file_paths:
             return 0
@@ -534,7 +478,7 @@ class CodeIndexManager:
         # Force lazy loading of index and chunk_ids before accessing them
         _ = self.index
 
-        # Delegate to batch operations handler
+        # Delegate to batch operations handler (the FAISS-rebuild path)
         return self._batch_ops.remove_files(
             file_paths=file_paths,
             chunk_ids=self.chunk_ids,

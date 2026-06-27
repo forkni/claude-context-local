@@ -1304,9 +1304,13 @@ class HybridSearcher(BaseSearcher):
             # needed at query time — content_preview (≤200 chars) covers snippet
             # display, and BM25 reconstructs text from its own _documents list.
             # Saves ~6 KB/chunk × 1755 chunks ≈ 10 MB of MetadataStore bloat.
+            # Exception: persist a `bm25_text` field so resync_bm25_from_dense can
+            # rebuild BM25 from dense authority when desync is detected.
             persisted_metadata = {
                 k: v for k, v in result.metadata.items() if k != "content"
             }
+            if content:
+                persisted_metadata["bm25_text"] = content
             metadata[chunk_id] = persisted_metadata
 
         # Log data extraction
@@ -1390,19 +1394,14 @@ class HybridSearcher(BaseSearcher):
         self._metadata_cache.clear()
         self._logger.debug("[CLEAR] Metadata cache cleared after clear_index()")
 
-    def remove_file_chunks(self, file_path: str, project_name: str) -> int:
-        """Remove chunks for a specific file from both indices. Delegates to IndexSynchronizer."""
-        removed = self.index_sync.remove_file_chunks(file_path, project_name)
-        # Evict all cache entries — a removed chunk's id could be reused after
-        # re-indexing the same file, so a cached-None or stale hit would be wrong (#44).
-        # Clearing wholesale is safe: it's a warm cache, not a source of truth.
+    def remove_files(self, file_paths: set[str], project_name: str) -> int:
+        """Remove chunks for one or more files. Delegates to IndexSynchronizer."""
+        removed = self.index_sync.remove_files(file_paths, project_name)
+        # Evict all cache entries — removed chunk ids could be reused after
+        # re-indexing the same file; a cached-None or stale hit would be wrong (#44).
         if removed > 0:
             self._metadata_cache.clear()
         return removed
-
-    def remove_multiple_files(self, file_paths: set, project_name: str) -> int:
-        """Remove chunks for multiple files from both indices. Delegates to IndexSynchronizer."""
-        return self.index_sync.remove_multiple_files(file_paths, project_name)
 
     def _verify_bm25_files(self) -> None:
         """Verify BM25 files exist and are non-empty. Delegates to IndexSynchronizer."""

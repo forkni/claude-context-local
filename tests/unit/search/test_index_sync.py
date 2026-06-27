@@ -168,8 +168,8 @@ class TestIndexSynchronizer:
         self.mock_dense_index.chunk_ids = ["chunk1", "chunk2"]
         self.mock_dense_index.metadata_store = MagicMock()
         self.mock_dense_index.metadata_store.get.side_effect = [
-            {"metadata": {"content": "def test(): pass", "file": "test.py"}},
-            {"metadata": {"content": "class Test: pass", "file": "test.py"}},
+            {"metadata": {"bm25_text": "def test(): pass", "file": "test.py"}},
+            {"metadata": {"bm25_text": "class Test: pass", "file": "test.py"}},
         ]
 
         # Mock BM25Index constructor and methods
@@ -233,78 +233,63 @@ class TestIndexSynchronizer:
             # Verify rmtree was called
             assert mock_rmtree.call_count >= 0  # May or may not cleanup
 
-    def test_remove_file_chunks_success(self):
-        """Test removing chunks for specific file."""
-        # Configure mocks - both indices have remove_file_chunks
-        self.mock_dense_index.remove_file_chunks = MagicMock(return_value=3)
-        self.mock_bm25_index.remove_file_chunks = MagicMock(return_value=3)
+    def test_remove_files_single_file(self):
+        """Test removing chunks for a single file (set-of-one)."""
+        self.mock_dense_index.remove_files = MagicMock(return_value=3)
+        self.mock_bm25_index.remove_files = MagicMock(return_value=3)
 
-        # Execute removal
-        result = self.synchronizer.remove_file_chunks("test.py", "test_project")
+        result = self.synchronizer.remove_files({"test.py"}, "test_project")
 
-        # Verify removals were called
-        self.mock_dense_index.remove_file_chunks.assert_called_once_with(
-            "test.py", "test_project"
+        self.mock_dense_index.remove_files.assert_called_once_with(
+            {"test.py"}, "test_project"
         )
-        self.mock_bm25_index.remove_file_chunks.assert_called_once_with(
-            "test.py", "test_project"
+        self.mock_bm25_index.remove_files.assert_called_once_with(
+            {"test.py"}, "test_project"
         )
         assert result == 6  # 3 + 3
 
-    def test_remove_file_chunks_not_found(self):
+    def test_remove_files_not_found(self):
         """Test removing chunks when file doesn't exist."""
-        # Configure mocks to return 0
-        self.mock_dense_index.remove_file_chunks = MagicMock(return_value=0)
-        self.mock_bm25_index.remove_file_chunks = MagicMock(return_value=0)
+        self.mock_dense_index.remove_files = MagicMock(return_value=0)
+        self.mock_bm25_index.remove_files = MagicMock(return_value=0)
 
-        # Execute removal
-        result = self.synchronizer.remove_file_chunks("nonexistent.py", "test_project")
+        result = self.synchronizer.remove_files({"nonexistent.py"}, "test_project")
 
-        # Should return 0
         assert result == 0
 
-    def test_remove_multiple_files_success(self):
+    def test_remove_files_batch(self):
         """Test batch removal of multiple files."""
-        # Configure mocks - both have remove_multiple_files
         file_paths = {"test1.py", "test2.py", "test3.py"}
-        self.mock_dense_index.remove_multiple_files = MagicMock(return_value=10)
-        self.mock_bm25_index.remove_multiple_files = MagicMock(return_value=10)
+        self.mock_dense_index.remove_files = MagicMock(return_value=10)
+        self.mock_bm25_index.remove_files = MagicMock(return_value=10)
 
-        # Execute batch removal
-        result = self.synchronizer.remove_multiple_files(file_paths, "test_project")
+        result = self.synchronizer.remove_files(file_paths, "test_project")
 
-        # Verify batch removals were called
-        self.mock_dense_index.remove_multiple_files.assert_called_once_with(
+        self.mock_dense_index.remove_files.assert_called_once_with(
             file_paths, "test_project"
         )
-        self.mock_bm25_index.remove_multiple_files.assert_called_once_with(
+        self.mock_bm25_index.remove_files.assert_called_once_with(
             file_paths, "test_project"
         )
         assert result == 20  # 10 + 10
 
-    def test_remove_multiple_files_empty_list(self):
-        """Test batch removal with empty file list."""
-        self.mock_dense_index.remove_multiple_files = MagicMock(return_value=0)
-        self.mock_bm25_index.remove_multiple_files = MagicMock(return_value=0)
+    def test_remove_files_empty_set(self):
+        """Test batch removal with empty file set."""
+        result = self.synchronizer.remove_files(set(), "test_project")
 
-        # Execute with empty set
-        result = self.synchronizer.remove_multiple_files(set(), "test_project")
-
-        # Should return 0 without errors
         assert result == 0
 
-    def test_remove_multiple_files_partial_failures(self):
-        """Test batch removal with partial failure."""
+    def test_remove_files_partial_failure(self):
+        """Test batch removal with partial failure (BM25 fails, dense succeeds)."""
         file_paths = {"test1.py", "test2.py", "test3.py"}
 
-        # Configure mocks - dense succeeds, BM25 fails
-        self.mock_dense_index.remove_multiple_files = MagicMock(return_value=10)
-        self.mock_bm25_index.remove_multiple_files = MagicMock(
+        self.mock_dense_index.remove_files = MagicMock(return_value=10)
+        self.mock_bm25_index.remove_files = MagicMock(
             side_effect=Exception("BM25 error")
         )
 
-        # Execute batch removal - should not raise (only one failed)
-        result = self.synchronizer.remove_multiple_files(file_paths, "test_project")
+        # Should not raise (only one failed)
+        result = self.synchronizer.remove_files(file_paths, "test_project")
 
         # Should return 10 (only dense succeeded)
         assert result == 10

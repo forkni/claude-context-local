@@ -118,7 +118,7 @@ class TestRefreshEarlyExits:
         """When no community_map JSON exists on disk, run() returns silently."""
         stage = _make_stage(tmp_path)
         stage.run(_changes(added=["a.py"]), "proj")
-        stage._indexer.remove_file_chunks.assert_not_called()
+        stage._indexer.remove_files.assert_not_called()
         stage._indexer.add_embeddings.assert_not_called()
 
     def test_returns_early_when_no_affected_communities(self, tmp_path):
@@ -126,7 +126,7 @@ class TestRefreshEarlyExits:
         _write_community_map(tmp_path, {"other/file.py:1-5:function:foo": 0})
         stage = _make_stage(tmp_path)
         stage.run(_changes(added=["new/file.py"]), "proj")
-        stage._indexer.remove_file_chunks.assert_not_called()
+        stage._indexer.remove_files.assert_not_called()
 
     def test_returns_early_when_metadata_store_unavailable(self, tmp_path):
         """When MetadataStore is inaccessible, run() warns and returns silently."""
@@ -199,8 +199,8 @@ class TestRefreshHappyPath:
         ):
             stage.run(_changes(added=["a.py"]), "proj")
 
-        stage._indexer.remove_file_chunks.assert_called_once_with(
-            "__community_7__.py", "proj"
+        stage._indexer.remove_files.assert_called_once_with(
+            {"__community_7__.py"}, "proj"
         )
         stage._summary_stage.compute_community_summaries.assert_called_once()
         stage._embedder.embed_chunks.assert_called_once()

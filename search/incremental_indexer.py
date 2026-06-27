@@ -1009,32 +1009,14 @@ class IncrementalIndexer:
         """
         files_to_remove = self.change_detector.get_files_to_remove(changes)
 
-        # Use batch removal for efficiency (single pass instead of one per file)
-        # Handles FAISS vector removal and index reconstruction
-        if hasattr(self.indexer, "remove_multiple_files") and files_to_remove:
-            try:
-                chunks_removed = self.indexer.remove_multiple_files(
-                    set(files_to_remove), project_name
-                )
-                logger.info(
-                    f"Batch removed {chunks_removed} chunks from {len(files_to_remove)} files"
-                )
-            except Exception as e:
-                logger.error(f"Batch removal failed: {e}", exc_info=True)
-                logger.warning("Falling back to individual file removal")
-                # Fall back to individual removal on error
-                chunks_removed = 0
-                for file_path in files_to_remove:
-                    removed = self.indexer.remove_file_chunks(file_path, project_name)
-                    chunks_removed += removed
-                    logger.debug(f"Removed {removed} chunks from {file_path}")
-        else:
-            # Fallback to individual removal if batch method not available
-            chunks_removed = 0
-            for file_path in files_to_remove:
-                removed = self.indexer.remove_file_chunks(file_path, project_name)
-                chunks_removed += removed
-                logger.debug(f"Removed {removed} chunks from {file_path}")
+        chunks_removed = 0
+        if files_to_remove:
+            chunks_removed = self.indexer.remove_files(
+                set(files_to_remove), project_name
+            )
+            logger.info(
+                f"Removed {chunks_removed} chunks from {len(files_to_remove)} files"
+            )
 
         # Prune stale call-graph nodes for all removed/modified files.
         # The call graph and the metadata store are maintained independently; without

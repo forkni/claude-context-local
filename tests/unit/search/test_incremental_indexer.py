@@ -280,9 +280,7 @@ class TestIncrementalIndexer:
         )
 
         # Mock batch removal (now enabled by default)
-        self.mock_indexer.remove_multiple_files = Mock(
-            return_value=10
-        )  # 2 files * 5 chunks
+        self.mock_indexer.remove_files = Mock(return_value=10)  # 2 files * 5 chunks
 
         # Mock successful validation
         self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
@@ -640,9 +638,7 @@ class TestIncrementalIndexer:
         indexer.change_detector.get_files_to_reindex = Mock(return_value=[])
 
         # Mock batch removal
-        self.mock_indexer.remove_multiple_files = Mock(
-            return_value=10
-        )  # 2 files * 5 chunks
+        self.mock_indexer.remove_files = Mock(return_value=10)  # 2 files * 5 chunks
 
         # Mock successful validation
         self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
@@ -683,7 +679,7 @@ class TestIncrementalIndexer:
         indexer.change_detector.get_files_to_reindex = Mock(return_value=[])
 
         # Mock file removal
-        self.mock_indexer.remove_file_chunks.return_value = 5
+        self.mock_indexer.remove_files = Mock(return_value=5)
 
         # Mock FAILED validation (index corrupted)
         self.mock_indexer.validate_index_consistency = Mock(
@@ -784,7 +780,7 @@ class TestIncrementalIndexer:
         indexer.change_detector.get_files_to_reindex = Mock(return_value=[])
 
         # Mock batch removal returns 30 chunks total (10 files * 3 chunks each)
-        self.mock_indexer.remove_multiple_files = Mock(return_value=30)
+        self.mock_indexer.remove_files = Mock(return_value=30)
 
         # Mock successful validation
         self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
@@ -795,7 +791,7 @@ class TestIncrementalIndexer:
         assert result.files_removed == 10
         assert result.chunks_removed == 30  # 10 files * 3 chunks each
         # Verify batch removal was called once with all files
-        self.mock_indexer.remove_multiple_files.assert_called_once()
+        self.mock_indexer.remove_files.assert_called_once()
 
     def test_recovery_failure_returns_error(self):
         """Test that recovery failure is properly reported."""
