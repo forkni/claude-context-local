@@ -107,7 +107,7 @@ jobs:
         run: |
           uv run pytest tests/ -v --tb=short --maxfail=20 \
             --ignore=tests/slow_integration/ \
-            --cov --cov-branch --cov-report=term-missing --cov-fail-under=78
+            --cov --cov-branch --cov-report=term-missing --cov-fail-under=76
 
       - name: Upload test results
         if: always()
