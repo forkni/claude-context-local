@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from mcp_server.storage_manager import (
     STORAGE_SENTINEL,
@@ -125,63 +124,3 @@ class TestGetStorageDir:
         # Second call (state already set) doesn't re-write, but test the file stays
         assert (storage / STORAGE_SENTINEL).exists()
         assert (storage / STORAGE_SENTINEL).stat().st_mtime == mtime1
-
-
-# ---------------------------------------------------------------------------
-# get_project_storage_dir — cross-pool key resolution
-# ---------------------------------------------------------------------------
-
-
-class TestGetProjectStorageDirCrossPool:
-    """get_project_storage_dir must not ERROR for keys from a non-active pool."""
-
-    def _make_pool_manager_with_active_pool(self, pool: dict[str, str]):
-        from mcp_server.model_pool_manager import ModelPoolManager
-
-        mgr = ModelPoolManager()
-        mgr._cached_pool_config = pool
-        return mgr
-
-    def test_cross_pool_key_no_error_log(self, tmp_path: Path, caplog) -> None:
-        """qwen3_0.6b must resolve without ERROR when active pool is lightweight-speed.
-
-        Regression test for: storage_manager erroneously logged ERROR for any key
-        from a non-active pool, hiding a latent wrong-model-loaded bug.
-        """
-        from mcp_server import model_pool_manager as mpm
-        from mcp_server.storage_manager import StorageManager
-        from search.config import MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
-
-        mgr = self._make_pool_manager_with_active_pool(
-            MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED
-        )
-
-        storage_root = tmp_path / ".claude_code_search"
-        storage_root.mkdir()
-        (storage_root / STORAGE_SENTINEL).write_text("sentinel")
-
-        fake_state = MagicMock()
-        fake_state.storage_dir = storage_root
-
-        project_dir = tmp_path / "myproject"
-        project_dir.mkdir()
-
-        sm = StorageManager()
-
-        with (
-            patch.object(mpm, "_model_pool_manager", mgr),
-            patch("mcp_server.storage_manager.get_state", return_value=fake_state),
-            caplog.at_level(logging.ERROR, logger="mcp_server.storage_manager"),
-        ):
-            result = sm.get_project_storage_dir(
-                str(project_dir), model_key="qwen3_0.6b"
-            )
-
-        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
-        assert not error_records, (
-            f"Expected no ERROR logs for cross-pool key 'qwen3_0.6b', got: "
-            f"{[r.message for r in error_records]}"
-        )
-        assert "qwen3-0.6b" in result.name or "qwen3" in result.name.lower(), (
-            f"Storage dir should use the Qwen3 model slug, got: {result.name}"
-        )

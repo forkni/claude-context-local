@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -20,7 +19,6 @@ from search.exceptions import DimensionMismatchError
 def _make_plan(
     query="test query",
     k=4,
-    model_key="qwen3_0.6b",
     intent_decision=None,
     search_mode="hybrid",
     ego_graph_enabled=False,
@@ -43,8 +41,6 @@ def _make_plan(
     return SearchPlan(
         query=query,
         k=k,
-        selected_model_key=model_key,
-        routing_info=None,
         intent_decision=intent_decision,
         search_mode=search_mode,
         ego_graph_enabled=ego_graph_enabled,
@@ -331,24 +327,6 @@ class TestBuildResponse:
         assert "subgraph_nodes" in response
         assert "subgraph_order" not in response
         assert "subgraph_communities" not in response
-
-    def test_build_response_routing_gated_by_confidence(self):
-        """routing key included when confidence<0.9 or reason contains 'Fallback'/'routed'."""
-        plan_low = dataclasses.replace(
-            _make_plan(),
-            routing_info={"confidence": 0.7, "reason": "routed to model"},
-        )
-        plan_high = dataclasses.replace(
-            _make_plan(),
-            routing_info={"confidence": 0.95, "reason": "direct match"},
-        )
-        with patch(
-            "mcp_server.guidance.add_system_message", side_effect=lambda r, **kw: r
-        ):
-            r_low = SearchOrchestrator._build_response(plan_low, [], None)
-            r_high = SearchOrchestrator._build_response(plan_high, [], None)
-        assert "routing" in r_low
-        assert "routing" not in r_high
 
 
 class TestApplySourceOrderAndBudget:

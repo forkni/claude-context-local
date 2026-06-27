@@ -104,7 +104,6 @@ async def test_handle_get_index_status_success():
         with patch("mcp_server.state.get_state") as mock_state:
             state = mock_state.return_value
             state.embedders = {"default": None}
-            state.multi_model_enabled = False
             result = await tool_handlers.handle_get_index_status({})
 
             assert "index_statistics" in result
@@ -168,7 +167,6 @@ async def test_handle_get_index_status_with_hybrid_searcher():
                 with patch("mcp_server.state.get_state") as mock_state:
                     state = mock_state.return_value
                     state.embedders = {"default": None}
-                    state.multi_model_enabled = False
                     state.current_model_key = None
 
                     result = await tool_handlers.handle_get_index_status({})
@@ -328,15 +326,12 @@ async def test_handle_get_search_config_status():
         mock_cfg.embedding.model_name = "BAAI/bge-m3"
         mock_config.return_value = mock_cfg
 
-        with patch("mcp_server.tools.status_handlers.get_state") as mock_state:
-            state = mock_state.return_value
-            state.multi_model_enabled = True
+        with patch("mcp_server.tools.status_handlers.get_state"):
             result = await tool_handlers.handle_get_search_config_status({})
 
             assert result["search_mode"] == "hybrid"
             assert result["bm25_weight"] == 0.4
             assert result["embedding_model"] == "BAAI/bge-m3"
-            assert result["multi_model_enabled"] is True
 
 
 @pytest.mark.asyncio
@@ -666,10 +661,6 @@ async def test_handle_search_code_no_index():
         patch("mcp_server.tools.search_orchestrator.get_config"),
         patch("mcp_server.tools.search_orchestrator.IntentClassifier") as mock_ic,
         patch(
-            "mcp_server.tools.search_handlers._route_query_to_model",
-            return_value=(None, None),
-        ),
-        patch(
             "mcp_server.tools.search_handlers._check_auto_reindex",
             return_value=(False, None),
         ),
@@ -721,10 +712,6 @@ async def test_handle_search_code_hybrid_searcher_ready():
         patch("mcp_server.tools.search_orchestrator.get_config_manager") as mock_cm,
         patch("mcp_server.tools.search_orchestrator.get_config") as mock_cfg,
         patch("mcp_server.tools.search_orchestrator.IntentClassifier") as mock_ic,
-        patch(
-            "mcp_server.tools.search_handlers._route_query_to_model",
-            return_value=("qwen3_0.6b", None),
-        ),
         patch(
             "mcp_server.tools.search_handlers._check_auto_reindex",
             return_value=(False, None),
@@ -804,10 +791,6 @@ async def test_handle_search_code_hybrid_searcher_not_ready():
         patch("mcp_server.tools.search_orchestrator.get_config_manager"),
         patch("mcp_server.tools.search_orchestrator.get_config"),
         patch("mcp_server.tools.search_orchestrator.IntentClassifier") as mock_ic,
-        patch(
-            "mcp_server.tools.search_handlers._route_query_to_model",
-            return_value=(None, None),
-        ),
         patch(
             "mcp_server.tools.search_handlers._check_auto_reindex",
             return_value=(False, None),

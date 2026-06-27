@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from mcp_server import tool_handlers
-from mcp_server.state import get_state, reset_state
+from mcp_server.state import reset_state
 
 
 def _create_test_project(project_dir: Path):
@@ -181,46 +181,36 @@ async def test_delete_project_missing_path():
 
 
 @pytest.mark.asyncio
-async def test_delete_project_multi_model(mock_embedder):
-    """Test deleting project with multiple model indices."""
+async def test_delete_project_clears_all_model_dirs(mock_embedder):
+    """Test deleting project removes all model-specific storage directories."""
     with tempfile.TemporaryDirectory() as tmpdir:
         project_dir = Path(tmpdir) / "multi_model_project"
         _create_test_project(project_dir)
 
-        # Enable multi-model mode
-        state = get_state()
-        original_multi_model = state.multi_model_enabled
-        state.multi_model_enabled = True
+        # Step 1: Index with default model
+        print("\n[STEP 1] Indexing project...")
+        index_result = await tool_handlers.handle_index_directory(
+            {"directory_path": str(project_dir)}
+        )
+        if "error" in index_result:
+            pytest.fail(f"Indexing failed: {index_result['error']}")
+        print("  [OK] Indexed project")
 
-        try:
-            # Step 1: Index with default model
-            print("\n[STEP 1] Indexing with first model...")
-            index_result = await tool_handlers.handle_index_directory(
-                {"directory_path": str(project_dir), "multi_model": False}
-            )
-            if "error" in index_result:
-                pytest.fail(f"Indexing failed: {index_result['error']}")
-            print("  [OK] Indexed with first model")
+        # Step 2: List projects to see model directories
+        print("\n[STEP 2] Listing projects...")
+        projects = await tool_handlers.handle_list_projects({})
+        print(f"  [OK] Found {len(projects.get('projects', []))} project(s)")
 
-            # Step 2: List projects to see model directories
-            print("\n[STEP 2] Listing projects...")
-            projects = await tool_handlers.handle_list_projects({})
-            print(f"  [OK] Found {len(projects.get('projects', []))} project(s)")
+        # Step 3: Delete project (should remove all model dirs)
+        print("\n[STEP 3] Deleting project...")
+        delete_result = await tool_handlers.handle_delete_project(
+            {"project_path": str(project_dir), "force": True}
+        )
 
-            # Step 3: Delete project (should remove all model dirs)
-            print("\n[STEP 3] Deleting project...")
-            delete_result = await tool_handlers.handle_delete_project(
-                {"project_path": str(project_dir), "force": True}
-            )
-
-            assert delete_result["success"] is True
-            print(
-                f"  [OK] Deleted {len(delete_result['deleted_directories'])} model directories"
-            )
-
-        finally:
-            # Restore original setting
-            state.multi_model_enabled = original_multi_model
+        assert delete_result["success"] is True
+        print(
+            f"  [OK] Deleted {len(delete_result['deleted_directories'])} model directories"
+        )
 
 
 @pytest.mark.asyncio

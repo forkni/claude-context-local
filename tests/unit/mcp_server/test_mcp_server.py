@@ -171,7 +171,6 @@ class TestToolHandlers:
         # Call handler
         with patch("mcp_server.tools.status_handlers.get_state") as mock_get_state:
             mock_state = MagicMock()
-            mock_state.multi_model_enabled = False
             mock_get_state.return_value = mock_state
 
             result = await handle_get_search_config_status({})
@@ -205,7 +204,6 @@ class TestToolHandlers:
         mock_state = MagicMock()
         mock_state.current_project = "/mock/project/path"
         mock_state.current_model_key = "default"
-        mock_state.multi_model_enabled = False
         mock_state.embedders = {"default": None}
         mock_get_state.return_value = mock_state
 
@@ -275,7 +273,6 @@ class TestToolHandlers:
         # Call handler
         with patch("mcp_server.tools.status_handlers.get_state") as mock_get_state:
             mock_state = MagicMock()
-            mock_state.multi_model_enabled = False
             mock_get_state.return_value = mock_state
 
             result = await handle_get_search_config_status({})
