@@ -3,9 +3,9 @@
 Handlers for creating, updating, and clearing code indices.
 """
 
-import gc
 import json
 import logging
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -270,22 +270,29 @@ def _clear_index_files_before_create(index_dir: Path) -> None:
 
 
 def _release_gpu_memory() -> None:
-    """Release GPU memory and run garbage collection.
+    """Release GPU memory. Thin alias for :func:`search.gpu_monitor.release_gpu_memory`."""
+    from search.gpu_monitor import release_gpu_memory
 
-    Calls :func:`gc.collect` unconditionally, then clears the PyTorch CUDA cache if
-    available.  Safe to call when CUDA/torch is not installed — the :exc:`ImportError`
-    is silently swallowed.  This is the single source of truth for the GPU-memory
-    release ritual that appears in per-model indexing and cleanup paths.
+    release_gpu_memory(synchronize=True)
+
+
+def _iter_project_model_dirs(project_path: Path) -> Iterator[Path]:
+    """Yield each model-dir matching *project_path*'s dual-hash patterns, deduped.
+
+    Checks both the drive-agnostic hash (current) and the legacy hash for
+    backward compatibility.  Deduplication ensures each directory is yielded
+    at most once even when both hash patterns resolve to the same dir.
     """
-    gc.collect()
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-    except ImportError:
-        pass
+    project_name = project_path.name
+    new_hash = compute_drive_agnostic_hash(str(project_path))
+    legacy_hash = compute_legacy_hash(str(project_path))
+    projects_dir = get_storage_dir() / "projects"
+    seen: set[Path] = set()
+    for pattern in [f"{project_name}_{new_hash}_*", f"{project_name}_{legacy_hash}_*"]:
+        for model_dir in projects_dir.glob(pattern):
+            if model_dir not in seen:
+                seen.add(model_dir)
+                yield model_dir
 
 
 def _invalidate_config_caches() -> None:
@@ -376,48 +383,29 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
         close_project_resources, current_project, clear_current=False
     )
 
-    # Get project info for pattern matching
     project_path = Path(current_project).resolve()
-    project_name = project_path.name
-
-    # Check both hashes for backward compatibility
-    new_hash = compute_drive_agnostic_hash(str(project_path))
-    legacy_hash = compute_legacy_hash(str(project_path))
 
     # File deletion and snapshot removal can block on I/O — offload to thread pool.
     def _delete_index_files() -> tuple[list[str], int]:
         """Delete index files + Merkle snapshots; returns (cleared_dirs, snapshots_cleared)."""
-        _patterns = [
-            f"{project_name}_{new_hash}_*",
-            f"{project_name}_{legacy_hash}_*",
-        ]
-        _base_dir = get_storage_dir()
-        _projects_dir = _base_dir / "projects"
-
         _cleared: list[str] = []
-        _seen: set = set()
 
-        for _pat in _patterns:
-            for _model_dir in _projects_dir.glob(_pat):
-                if _model_dir in _seen:
-                    continue
-                _seen.add(_model_dir)
+        for _model_dir in _iter_project_model_dirs(project_path):
+            # Delete BM25 directory
+            _bm25 = _model_dir / "index" / "bm25"
+            if _bm25.exists():
+                shutil.rmtree(_bm25)
+                logger.info(f"Deleted BM25 directory: {_bm25}")
 
-                # Delete BM25 directory
-                _bm25 = _model_dir / "index" / "bm25"
-                if _bm25.exists():
-                    shutil.rmtree(_bm25)
-                    logger.info(f"Deleted BM25 directory: {_bm25}")
+            # Delete dense index files
+            _idx_dir = _model_dir / "index"
+            for _fname in ["code.index", "chunks_metadata.db", "stats.json"]:
+                _fp = _idx_dir / _fname
+                if _fp.exists():
+                    _fp.unlink()
+                    logger.info(f"Deleted: {_fp}")
 
-                # Delete dense index files
-                _idx_dir = _model_dir / "index"
-                for _fname in ["code.index", "chunks_metadata.db", "stats.json"]:
-                    _fp = _idx_dir / _fname
-                    if _fp.exists():
-                        _fp.unlink()
-                        logger.info(f"Deleted: {_fp}")
-
-                _cleared.append(_model_dir.name)
+            _cleared.append(_model_dir.name)
 
         _snaps = 0
         try:
@@ -501,42 +489,27 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
     close_project_resources(str(project_path_resolved))
 
     # 4. Find and delete all model directories for this project
-    project_name = project_path_resolved.name
-
-    # Check both hashes for backward compatibility
-    new_hash = compute_drive_agnostic_hash(str(project_path_resolved))
-    legacy_hash = compute_legacy_hash(str(project_path_resolved))
-
-    base_dir = get_storage_dir()
-    projects_dir = base_dir / "projects"
-    patterns = [f"{project_name}_{new_hash}_*", f"{project_name}_{legacy_hash}_*"]
+    projects_dir = get_storage_dir() / "projects"
 
     deleted_dirs = []
     errors = []
-    seen_dirs = set()  # Avoid processing same dir twice
 
-    logger.info(f"Searching for project directories with patterns: {patterns}")
+    logger.info(f"Searching for project directories: {project_path_resolved}")
 
-    for pattern in patterns:
-        for model_dir in projects_dir.glob(pattern):
-            # Skip if already processed
-            if model_dir in seen_dirs:
-                continue
-            seen_dirs.add(model_dir)
-
-            logger.info(f"Deleting project directory: {model_dir}")
-            try:
-                shutil.rmtree(model_dir)
-                deleted_dirs.append(model_dir.name)
-                logger.info(f"Successfully deleted: {model_dir}")
-            except PermissionError as e:
-                error_msg = f"{model_dir.name}: File locked - {e}"
-                errors.append(error_msg)
-                logger.error(f"Permission error deleting {model_dir}: {e}")
-            except Exception as e:
-                error_msg = f"{model_dir.name}: {e}"
-                errors.append(error_msg)
-                logger.error(f"Unexpected error deleting {model_dir}: {e}")
+    for model_dir in _iter_project_model_dirs(project_path_resolved):
+        logger.info(f"Deleting project directory: {model_dir}")
+        try:
+            shutil.rmtree(model_dir)
+            deleted_dirs.append(model_dir.name)
+            logger.info(f"Successfully deleted: {model_dir}")
+        except PermissionError as e:
+            error_msg = f"{model_dir.name}: File locked - {e}"
+            errors.append(error_msg)
+            logger.error(f"Permission error deleting {model_dir}: {e}")
+        except Exception as e:
+            error_msg = f"{model_dir.name}: {e}"
+            errors.append(error_msg)
+            logger.error(f"Unexpected error deleting {model_dir}: {e}")
 
     # 5. Delete Merkle snapshots for this project
     logger.info(f"Deleting Merkle snapshots for: {project_path_resolved}")

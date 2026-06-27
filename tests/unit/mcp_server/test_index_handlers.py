@@ -122,13 +122,11 @@ class TestReleaseGpuMemory:
         """gc.collect() is always called regardless of CUDA availability."""
         from mcp_server.tools.index_handlers import _release_gpu_memory
 
-        with patch("mcp_server.tools.index_handlers.gc") as mock_gc:
+        with patch("search.gpu_monitor.gc") as mock_gc:
             mock_gc.collect = __import__(
                 "unittest.mock", fromlist=["MagicMock"]
             ).MagicMock()
-            with patch(
-                "mcp_server.tools.index_handlers.torch", create=True
-            ) as mock_torch:
+            with patch("search.gpu_monitor.torch") as mock_torch:
                 mock_torch.cuda.is_available.return_value = False
                 _release_gpu_memory()
 
@@ -136,11 +134,9 @@ class TestReleaseGpuMemory:
 
     def test_no_error_when_torch_unavailable(self):
         """Survives gracefully when torch is not installed (ImportError)."""
-        import sys
-
         from mcp_server.tools.index_handlers import _release_gpu_memory
 
-        with patch.dict(sys.modules, {"torch": None}):
+        with patch("search.gpu_monitor.torch", None):
             _release_gpu_memory()  # Must not raise
 
 

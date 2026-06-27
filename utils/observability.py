@@ -85,6 +85,21 @@ def is_enabled() -> bool:
     return _enabled
 
 
+def force_flush(timeout_millis: int = 30000) -> bool:
+    """Flush pending spans without shutting down the tracer provider.
+
+    Respects ADR-0004: never calls shutdown_observability(); shutdown belongs
+    at server exit only.  No-op (returns True) when tracing is disabled.
+    """
+    if not _enabled or _tracer_provider is None:
+        return True
+    try:
+        return bool(_tracer_provider.force_flush(timeout_millis))
+    except Exception as exc:
+        logger.debug(f"[OTEL] force_flush error (ignored): {exc}")
+        return False
+
+
 def get_tracer(name: str = "claude-context-local") -> Any:
     """Return the active OTel tracer, or a no-op tracer when disabled."""
     if not _enabled or _tracer_provider is None:

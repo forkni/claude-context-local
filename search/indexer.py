@@ -797,6 +797,20 @@ class CodeIndexManager:
             self._metadata_store.close()
         return False  # Don't suppress exceptions
 
+    def close(self) -> None:
+        """Close database connections without deleting index files.
+
+        Idempotent: safe to call multiple times.  Closes the MetadataStore
+        and clears the BatchOperations reference so no dangling file handles
+        remain.  Does not touch the FAISS index or graph storage.
+        """
+        if self._metadata_store is not None:
+            self._metadata_store.close()
+            # pyrefly: ignore [bad-assignment]
+            self._metadata_store = None
+        if hasattr(self, "_batch_ops") and self._batch_ops is not None:
+            self._batch_ops._metadata_store = None
+
     def __del__(self) -> None:
         """Cleanup when object is destroyed."""
         if hasattr(self, "_metadata_store") and self._metadata_store is not None:
