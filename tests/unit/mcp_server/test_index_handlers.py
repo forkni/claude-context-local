@@ -123,14 +123,10 @@ class TestReleaseGpuMemory:
         from mcp_server.tools.index_handlers import _release_gpu_memory
 
         with patch("search.gpu_monitor.gc") as mock_gc:
-            mock_gc.collect = __import__(
-                "unittest.mock", fromlist=["MagicMock"]
-            ).MagicMock()
             with patch("search.gpu_monitor.torch") as mock_torch:
                 mock_torch.cuda.is_available.return_value = False
                 _release_gpu_memory()
-
-        mock_gc.collect.assert_called_once()
+            mock_gc.collect.assert_called_once()
 
     def test_no_error_when_torch_unavailable(self):
         """Survives gracefully when torch is not installed (ImportError)."""
