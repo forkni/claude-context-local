@@ -6,7 +6,6 @@ from typing import Any
 
 import numpy as np
 
-from embeddings.chunk_metadata import resolve_chunk_path
 from utils.path_utils import normalize_path, path_matches
 
 
@@ -74,18 +73,26 @@ class BatchOperations:
 
             metadata = metadata_entry["metadata"]
 
-            # Check if this chunk belongs to any of the files
-            chunk_file = resolve_chunk_path(metadata)
-            if not chunk_file:
+            # Check if this chunk belongs to any of the files.
+            # Match against BOTH file_path (absolute) and relative_path (relative).
+            # Incremental removal targets are project-relative (MerkleDAG keys), but
+            # resolve_chunk_path prefers the absolute file_path, which can never
+            # exact-match a relative target.  BM25 removal uses the relative chunk_id
+            # path, so matching only the absolute value here caused dense to silently
+            # keep stale vectors for every modified file (dense > bm25 desync).
+            # The remove_files docstring already promises support for "relative or
+            # absolute" paths — this makes the predicate honour that contract.
+            if not any(
+                p and path_matches(p, normalized_targets)
+                for p in (metadata.get("file_path"), metadata.get("relative_path"))
+            ):
                 continue
 
-            # Exact normalized-path match — no bidirectional substring
-            if path_matches(chunk_file, normalized_targets):
-                # Check project name if provided
-                if project_name and metadata.get("project_name") != project_name:
-                    continue
-                chunks_to_remove_ids.add(chunk_id)
-                chunks_to_remove_positions.append(position)
+            # Check project name if provided
+            if project_name and metadata.get("project_name") != project_name:
+                continue
+            chunks_to_remove_ids.add(chunk_id)
+            chunks_to_remove_positions.append(position)
 
         if not chunks_to_remove_ids:
             self._logger.info("No chunks found to remove")
