@@ -24,61 +24,6 @@ from search.config import (
 logger = logging.getLogger(__name__)
 
 
-def _detect_indexed_model(project_path: str) -> str | None:
-    """Detect which model has a valid index for this project.
-
-    Reads project_info.json first (pool-agnostic path); falls back to
-    scanning the active-pool directories for legacy projects that predate
-    project_info.json or where the JSON read fails.
-
-    Args:
-        project_path: Path to the project directory
-
-    Returns:
-        Model key if found, None otherwise
-    """
-    import json as _json
-
-    from mcp_server.model_pool_manager import (
-        get_model_key_from_name,
-        get_model_pool_manager,
-    )
-    from mcp_server.storage_manager import get_canonical_project_info
-
-    # Primary: read the stored embedding_model from project_info.json (pool-agnostic).
-    # get_canonical_project_info returns the Path to the first project_info.json found
-    # across ALL model storage dirs, regardless of the currently active pool.
-    info_path = get_canonical_project_info(project_path)
-    if info_path and info_path.exists():
-        try:
-            with open(info_path) as f:
-                project_info = _json.load(f)
-            stored_model_name = project_info.get("embedding_model")
-            if stored_model_name:
-                model_key = get_model_key_from_name(stored_model_name)
-                if model_key:
-                    # Verify this model's index actually exists before committing to it.
-                    # A project_info.json can exist for a model whose index was later
-                    # cleared or never fully built (only the metadata file was written).
-                    project_dir = get_project_storage_dir(
-                        project_path, model_key=model_key
-                    )
-                    if (project_dir / "index" / "code.index").exists():
-                        logger.info(f"Detected indexed model for project: {model_key}")
-                        return model_key
-        except Exception as e:
-            logger.warning(f"Failed to read project_info.json at {info_path}: {e}")
-
-    # Fallback: scan active-pool dirs (legacy projects without project_info.json)
-    pool_config = get_model_pool_manager().get_pool_config()
-    for model_key in pool_config:
-        project_dir = get_project_storage_dir(project_path, model_key=model_key)
-        if (project_dir / "index" / "code.index").exists():
-            logger.info(f"Detected indexed model for project: {model_key}")
-            return model_key
-    return None
-
-
 @error_handler("Project switch")
 async def handle_switch_project(arguments: dict[str, Any]) -> dict:
     """Switch to a different indexed project."""
@@ -94,24 +39,16 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
     # Set new project using setter function (required for cross-module globals)
     set_current_project(str(project_path))
 
-    # Reset and auto-detect model key to ensure correct index is used
+    # Reset model state; model is always read from config.embedding.model_name
     state = get_state()
     state.current_model_key = None
     state.current_index_model_key = None
-
-    # Auto-detect which model was used to index this project
-    indexed_model = _detect_indexed_model(str(project_path))
-    if indexed_model:
-        state.current_model_key = indexed_model
-        logger.info(f"Auto-detected and set model key to: {indexed_model}")
-    else:
-        logger.warning(f"No indexed model detected for project: {project_path}")
 
     # Save selection for persistence across server restarts
     save_project_selection(str(project_path))
 
     # Verify project is indexed
-    project_dir = get_project_storage_dir(str(project_path), model_key=indexed_model)
+    project_dir = get_project_storage_dir(str(project_path))
     index_dir = project_dir / "index"
 
     if not index_dir.exists() or not (index_dir / "code.index").exists():
@@ -127,57 +64,6 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
         "project": str(project_path),
         "indexed": True,
         "message": f"Switched to project: {project_path.name}",
-    }
-
-
-@error_handler("Configure routing")
-async def handle_configure_query_routing(arguments: dict[str, Any]) -> dict:
-    """Configure query routing behavior."""
-    enable_multi_model = arguments.get("enable_multi_model")
-    default_model = arguments.get("default_model")
-    confidence_threshold = arguments.get("confidence_threshold")
-
-    config_manager = get_config_manager()
-    config = config_manager.load_config()
-    changes = {}
-
-    if enable_multi_model is not None:
-        # Persist to config file
-        config.routing.multi_model_enabled = enable_multi_model
-        changes["multi_model_enabled"] = enable_multi_model
-
-        # Update runtime state
-        state = get_state()
-        state.multi_model_enabled = enable_multi_model
-
-        # Save config
-        config_manager.save_config(config)
-
-    if default_model is not None:
-        from mcp_server.model_pool_manager import get_model_pool_manager
-
-        pool_config = get_model_pool_manager().get_pool_config()
-        if default_model in pool_config:
-            # Persist to config file
-            config.routing.default_model = default_model
-            changes["default_model"] = default_model
-
-            # Save config
-            config_manager.save_config(config)
-        else:
-            return {"error": f"Invalid model: {default_model}"}
-
-    if confidence_threshold is not None:
-        changes["confidence_threshold"] = confidence_threshold
-        # Note: confidence_threshold is runtime-only for now
-
-    return {
-        "success": True,
-        "changes": changes,
-        "message": "Configuration updated and persisted",
-        "current_state": {
-            "multi_model_enabled": get_state().multi_model_enabled,
-        },
     }
 
 

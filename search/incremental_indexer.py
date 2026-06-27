@@ -579,22 +579,9 @@ class IncrementalIndexer:
                 logger.info(f"[FULL_INDEX] Preserving model key: {model_key}")
 
         if model_key is None:
-            # Embedder not found in state pool — derive from config as fallback
-            from mcp_server.model_pool_manager import get_model_key_from_name
-
-            config = get_search_config()
-            model_key = get_model_key_from_name(config.embedding.model_name)
-            if model_key:
-                logger.warning(
-                    f"[FULL_INDEX] Embedder not in state pool, "
-                    f"derived model_key from config: {model_key}"
-                )
-            else:
-                logger.warning(
-                    "[FULL_INDEX] Could not determine model_key — "
-                    "get_embedder(None) will use default model; "
-                    "verify embedding dimension compatibility"
-                )
+            logger.info(
+                "[FULL_INDEX] Embedder not in state pool — get_embedder() will use config default"
+            )
 
         # Step 1: Release resources (same operation as UI "Release Resources" command)
         from mcp_server.resource_manager import _cleanup_previous_resources
@@ -1347,40 +1334,9 @@ class IncrementalIndexer:
 
             # Refresh embedder after cleanup - old one can't reload (model loader cleared)
             # This ensures cleanup happens before model is loaded for reindex
-            from mcp_server.model_pool_manager import (
-                get_embedder,
-                get_model_key_from_name,
-            )
-            from search.dimension_validator import read_index_metadata
+            from mcp_server.model_pool_manager import get_embedder
 
-            # CRITICAL: Read the model from the existing index to ensure we use the SAME model
-            # that was used to create the index (prevents dimension mismatch errors)
-            model_key = None
-            try:
-                # Get storage_dir from indexer (CodeIndexManager or HybridSearcher.dense_index)
-                if hasattr(self.indexer, "storage_dir"):
-                    storage_dir = self.indexer.storage_dir
-                elif hasattr(self.indexer, "dense_index") and hasattr(
-                    self.indexer.dense_index, "storage_dir"
-                ):
-                    storage_dir = self.indexer.dense_index.storage_dir
-                else:
-                    storage_dir = None
-
-                if storage_dir:
-                    metadata = read_index_metadata(storage_dir)
-                    if metadata and metadata.get("embedding_model"):
-                        model_name = metadata["embedding_model"]
-                        model_key = get_model_key_from_name(model_name)
-                        logger.info(
-                            f"Using model from index: {model_name} (key: {model_key})"
-                        )
-            except Exception as e:
-                logger.warning(
-                    f"Could not read model from index metadata: {e}", exc_info=True
-                )
-
-            self.embedder = get_embedder(model_key)
+            self.embedder = get_embedder()
             logger.info("Embedder refreshed after cleanup - ready for reindex")
 
             return self.incremental_index(project_path, project_name)

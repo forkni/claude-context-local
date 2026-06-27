@@ -17,15 +17,10 @@ Usage:
 """
 
 import asyncio
-import os
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-
-if TYPE_CHECKING:
-    from search.config import SearchConfig
+from typing import Any
 
 
 @dataclass
@@ -40,7 +35,7 @@ class ApplicationState:
     - _storage_dir: Base storage directory path
     - _current_project: Currently active project path
     - _model_preload_task_started: Whether preload has started
-    - _multi_model_enabled: Whether multi-model mode is active
+
     """
 
     # Model management
@@ -56,14 +51,6 @@ class ApplicationState:
     # Storage and project
     storage_dir: Path | None = None
     current_project: str | None = None
-
-    # Configuration
-    multi_model_enabled: bool = field(
-        default_factory=lambda: (
-            os.getenv("CLAUDE_MULTI_MODEL_ENABLED", "false").lower()
-            in ("true", "1", "yes")
-        )
-    )
 
     # Concurrency guards — intentionally NOT reset by reset() so that in-flight
     # threads always share the same stable lock instance across state resets.
@@ -89,8 +76,6 @@ class ApplicationState:
         self.current_project = None
         # Per-project reindex locks are project-scoped; reset with fresh dict.
         self._reindex_locks = {}
-        # Re-read from config with env override
-        self._reset_multi_model_from_config()
 
     def get_reindex_lock(self, project_path: str) -> asyncio.Lock:
         """Return the per-project asyncio.Lock for reindex serialization.
@@ -102,41 +87,6 @@ class ApplicationState:
         if project_path not in self._reindex_locks:
             self._reindex_locks[project_path] = asyncio.Lock()
         return self._reindex_locks[project_path]
-
-    def _reset_multi_model_from_config(self) -> None:
-        """Reset multi_model_enabled from config file with env override."""
-        try:
-            from search.config import get_search_config
-
-            config = get_search_config()
-            self.sync_from_config(config)
-        except (AttributeError, KeyError, RuntimeError):
-            # Fallback to env var if config unavailable
-            self.multi_model_enabled = os.getenv(
-                "CLAUDE_MULTI_MODEL_ENABLED", "false"
-            ).lower() in ("true", "1", "yes")
-
-    def sync_from_config(self, config: "SearchConfig") -> None:
-        """Sync multi_model_enabled from config file.
-
-        Config file takes precedence for disabling multi-model. The env var
-        CLAUDE_MULTI_MODEL_ENABLED can only enable multi-model when the config
-        also enables it, preventing stale OS-level env vars from overriding the
-        user's explicit config choice.
-        Called during server startup in app_lifespan().
-
-        Args:
-            config: SearchConfig instance to sync from
-        """
-        env_value = os.getenv("CLAUDE_MULTI_MODEL_ENABLED")
-        if env_value is not None:
-            env_wants_enabled = env_value.lower() in ("true", "1", "yes")
-            # Config file can always disable multi-model regardless of env var
-            self.multi_model_enabled = (
-                env_wants_enabled and config.routing.multi_model_enabled
-            )
-        else:
-            self.multi_model_enabled = config.routing.multi_model_enabled
 
     def switch_project(self, path: str) -> None:
         """Switch to a different project.
@@ -257,8 +207,7 @@ class ApplicationState:
             f"ApplicationState("
             f"project={self.current_project!r}, "
             f"model={self.current_model_key!r}, "
-            f"embedders={list(self.embedders.keys())}, "
-            f"multi_model={self.multi_model_enabled})"
+            f"embedders={list(self.embedders.keys())})"
         )
 
 
@@ -293,8 +242,3 @@ def get_current_project() -> str | None:
 def set_current_project_compat(path: str) -> None:
     """Set current project path (backward compatibility)."""
     _app_state.switch_project(path)
-
-
-def is_multi_model_enabled() -> bool:
-    """Check if multi-model mode is enabled (backward compatibility)."""
-    return _app_state.multi_model_enabled

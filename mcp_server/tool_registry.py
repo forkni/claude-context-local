@@ -95,21 +95,6 @@ WHEN NOT TO USE:
                     "default": 5,
                     "description": "Maximum age of index before auto-reindex (default: 5 minutes)",
                 },
-                "use_routing": {
-                    "type": "boolean",
-                    "default": True,
-                    "description": "Enable intelligent model routing based on query type (default: True)",
-                },
-                "model_key": {
-                    "type": "string",
-                    "enum": [
-                        "qwen3_0.6b",
-                        "bge_m3",
-                        "coderankembed",
-                        "gte_modernbert",
-                    ],
-                    "description": 'Override model selection. Full pool: "qwen3_0.6b", "coderankembed". Lightweight: "bge_m3", "gte_modernbert". If None, uses routing or config default.',
-                },
                 "output_format": {
                     "type": "string",
                     "enum": ["verbose", "compact", "ultra"],
@@ -181,10 +166,6 @@ PROCESS:
                     "type": "boolean",
                     "default": True,
                     "description": "Use incremental indexing if snapshot exists (default: True)",
-                },
-                "multi_model": {
-                    "type": "boolean",
-                    "description": "Index for all models in pool (Qwen3, BGE-M3, CodeRankEmbed). Default: auto-detect from CLAUDE_MULTI_MODEL_ENABLED environment variable",
                 },
                 "include_dirs": {
                     "type": "array",
@@ -343,46 +324,6 @@ Shows available RAM/VRAM, current index memory usage, and whether GPU accelerati
         "input_schema": {
             "type": "object",
             "properties": {
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
-                },
-            },
-            "required": [],
-        },
-    },
-    "configure_query_routing": {
-        "description": """Configure query routing behavior for multi-model semantic search.
-
-Args:
-    enable_multi_model: Enable/disable multi-model mode (default: True via env var)
-    default_model: Set default model key ("qwen3_0.6b", "bge_m3", "coderankembed")
-    confidence_threshold: Minimum confidence for routing (0.0-1.0, default: 0.35)""",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "enable_multi_model": {
-                    "type": "boolean",
-                    "description": "Enable/disable multi-model mode",
-                },
-                "default_model": {
-                    "type": "string",
-                    "enum": [
-                        "qwen3_0.6b",
-                        "bge_m3",
-                        "coderankembed",
-                        "gte_modernbert",
-                    ],
-                    "description": 'Set default model key. Full pool: "qwen3_0.6b", "coderankembed". Lightweight: "bge_m3", "gte_modernbert".',
-                },
-                "confidence_threshold": {
-                    "type": "number",
-                    "minimum": 0.0,
-                    "maximum": 1.0,
-                    "description": "Minimum confidence for routing (0.0-1.0, default: 0.35)",
-                },
                 "output_format": {
                     "type": "string",
                     "enum": ["verbose", "compact", "ultra"],

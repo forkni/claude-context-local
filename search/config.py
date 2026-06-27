@@ -14,30 +14,6 @@ from search.config_paths import resolve_config_path
 from utils.atomic_io import write_json_atomic
 
 
-# Model registry with specifications
-# Multi-model pool configuration for query routing
-# Maps model keys to full model names in MODEL_REGISTRY
-# Note: Using 0.6B variant for systems with limited VRAM (<18GB)
-MODEL_POOL_CONFIG = {
-    "qwen3_0.6b": "Qwen/Qwen3-Embedding-0.6B",  # 1024d, ~1.1GB VRAM, MRR 0.94 on SSCG benchmark
-    "coderankembed": "nomic-ai/CodeRankEmbed",  # Code localization, function-level search (CoRNStack/ICLR 2025)
-}
-
-# Lightweight pool configuration for 8GB VRAM GPUs
-# Speed-focused with proven performance (1.65GB total VRAM)
-MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED = {
-    "gte_modernbert": "Alibaba-NLP/gte-modernbert-base",
-    "bge_m3": "BAAI/bge-m3",
-}
-
-# Union of all known pool configs — used for cross-pool reverse lookups so that
-# an index built with one pool's model can still be identified when the active
-# pool changes.  Update this whenever a new pool dict is added.
-ALL_POOL_MODELS: dict[str, str] = {
-    **MODEL_POOL_CONFIG,
-    **MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED,
-}
-
 # MODEL_REGISTRY convention for ONNX support:
 # - "onnx_supported": False  -> ONNX path is skipped in _should_use_onnx().
 #   Use this when the upstream pooling mode is not handled by
@@ -64,17 +40,6 @@ MODEL_REGISTRY = {
         "fallback_batch_size": 256,  # Used when dynamic sizing disabled
         "onnx_pooling": "cls",  # BGE uses CLS pooling (confirmed by Optimum notebook)
     },
-    "BAAI/bge-code-v1": {
-        "dimension": 1536,
-        "max_context": 4096,  # 4k context
-        "description": "SOTA Code Retrieval (CoIR 81.77), 2B params, Qwen2-based",
-        "vram_gb": "4GB",  # ~4GB in FP16
-        "fallback_batch_size": 32,  # Conservative batch size for 2B model
-        "trust_remote_code": False,
-        # Upstream uses lasttoken pooling, which the ONNX wrapper does not yet support.
-        # Gate ONNX off for this model until lasttoken support lands in onnx_wrapper.py.
-        "onnx_supported": False,
-    },
     "Qwen/Qwen3-Embedding-0.6B": {
         "dimension": 1024,
         "max_context": 32768,
@@ -90,20 +55,6 @@ MODEL_REGISTRY = {
         "instruction_mode": "custom",  # "custom" or "prompt_name"
         "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
         "prompt_name": "query",  # Alternative: use model's built-in prompt (generic)
-    },
-    "Qwen/Qwen3-Embedding-4B": {
-        "dimension": 2560,
-        "max_context": 32768,
-        "description": "High-performance general model, MTEB code retrieval rank #3 (80.07)",
-        "vram_gb": "~10GB",
-        "fallback_batch_size": 16,
-        "vram_tier": "high",  # Requires 12GB+ GPU
-        "onnx_pooling": "mean",
-        "mrl_dimensions": [2560, 1024, 512, 256, 128, 64, 32],
-        "truncate_dim": None,
-        "instruction_mode": "custom",
-        "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
-        "prompt_name": "query",
     },
     # Code-specific models (optimized for Python, C++, and programming languages)
     "nomic-ai/CodeRankEmbed": {
@@ -126,19 +77,6 @@ MODEL_REGISTRY = {
         "fallback_batch_size": 256,
         "model_type": "code-optimized",
         "onnx_pooling": "cls",  # GTE-ModernBERT uses CLS pooling
-    },
-    "jinaai/jina-embeddings-v5-text-small-retrieval": {
-        "dimension": 1024,
-        "max_context": 32768,
-        "description": "0.6B distilled from Qwen3-Embedding-4B; near-4B quality at 0.6B size (1.2-1.5GB VRAM)",
-        "vram_gb": "1.2-1.5GB",
-        "fallback_batch_size": 256,
-        "trust_remote_code": True,
-        # Last-token pooling: ONNX wrapper supports only cls/mean — gate ONNX off.
-        "onnx_supported": False,
-        "instruction_mode": "prompt_name",  # passes prompt_name="query" to encode for queries
-        "prompt_name": "query",
-        "passage_prefix": "",  # -retrieval task adapter merged in; no explicit doc prefix needed
     },
 }
 
@@ -254,17 +192,6 @@ class MultiHopConfig:
     multi_hop_mode: str = "hybrid"  # "semantic" | "graph" | "hybrid"
     edge_weights: dict[str, float] | None = (
         None  # Intent-specific weights (None = DEFAULT_EDGE_WEIGHTS)
-    )
-
-
-@dataclass
-class RoutingConfig:
-    """Multi-model routing settings (3 fields)."""
-
-    multi_model_enabled: bool = True  # Enable intelligent query routing across models
-    default_model: str = "qwen3_0.6b"  # Default model key for routing (best quality)
-    multi_model_pool: str | None = (
-        None  # Pool type: "full", "lightweight-speed", or "lightweight-accuracy"
     )
 
 
@@ -542,8 +469,8 @@ class SearchConfig:
     """Root configuration with nested sub-configs.
 
     Configuration organization:
-    - Split into 8 focused sub-configs for better organization
-    - embedding, search_mode, performance, multi_hop, routing, intent, reranker, output, chunking
+    - Split into focused sub-configs for better organization
+    - embedding, search_mode, performance, multi_hop, intent, reranker, output, chunking
 
     Initialization style (nested configs only):
         config = SearchConfig(embedding=EmbeddingConfig(model_name="..."))
@@ -555,7 +482,6 @@ class SearchConfig:
         search_mode: SearchModeConfig | None = None,
         performance: PerformanceConfig | None = None,
         multi_hop: MultiHopConfig | None = None,
-        routing: RoutingConfig | None = None,
         intent: IntentConfig | None = None,
         reranker: RerankerConfig | None = None,
         output: OutputConfig | None = None,
@@ -573,7 +499,6 @@ class SearchConfig:
             search_mode: SearchModeConfig instance (optional, defaults to SearchModeConfig())
             performance: PerformanceConfig instance (optional, defaults to PerformanceConfig())
             multi_hop: MultiHopConfig instance (optional, defaults to MultiHopConfig())
-            routing: RoutingConfig instance (optional, defaults to RoutingConfig())
             intent: IntentConfig instance (optional, defaults to IntentConfig())
             reranker: RerankerConfig instance (optional, defaults to RerankerConfig())
             output: OutputConfig instance (optional, defaults to OutputConfig())
@@ -593,7 +518,6 @@ class SearchConfig:
             performance if performance is not None else PerformanceConfig()
         )
         self.multi_hop = multi_hop if multi_hop is not None else MultiHopConfig()
-        self.routing = routing if routing is not None else RoutingConfig()
         self.intent = intent if intent is not None else IntentConfig()
         self.reranker = reranker if reranker is not None else RerankerConfig()
         self.output = output if output is not None else OutputConfig()
@@ -623,7 +547,6 @@ class SearchConfig:
         "search_mode",
         "performance",
         "multi_hop",
-        "routing",
         "intent",
         "reranker",
         "output",
@@ -643,7 +566,6 @@ class SearchConfig:
         "search_mode": SearchModeConfig,
         "performance": PerformanceConfig,
         "multi_hop": MultiHopConfig,
-        "routing": RoutingConfig,
         "intent": IntentConfig,
         "reranker": RerankerConfig,
         "output": OutputConfig,
@@ -706,10 +628,6 @@ class SearchConfig:
         "multi_hop_expansion": ("multi_hop", "expansion"),
         "multi_hop_initial_k_multiplier": ("multi_hop", "initial_k_multiplier"),
         "multi_hop_mode": ("multi_hop", "multi_hop_mode"),
-        # RoutingConfig
-        "multi_model_enabled": ("routing", "multi_model_enabled"),
-        "routing_default_model": ("routing", "default_model"),
-        "routing_multi_model_pool": ("routing", "multi_model_pool"),
         # IntentConfig
         "intent_enabled": ("intent", "enabled"),
         "intent_confidence_threshold": ("intent", "confidence_threshold"),
@@ -988,11 +906,6 @@ class SearchConfigManager:
             ),
             "CLAUDE_DEFAULT_K": ("default_k", int),
             "CLAUDE_MAX_K": ("max_k", int),
-            "CLAUDE_MULTI_MODEL_ENABLED": (
-                "multi_model_enabled",
-                self._bool_from_env,
-            ),
-            "CLAUDE_ROUTING_DEFAULT_MODEL": ("routing_default_model", str),
             "CLAUDE_RERANKER_ENABLED": ("reranker_enabled", self._bool_from_env),
             "CLAUDE_RERANKER_MODEL": ("reranker_model_name", str),
             "CLAUDE_RERANKER_TOP_K": ("reranker_top_k_candidates", int),

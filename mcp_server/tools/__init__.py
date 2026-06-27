@@ -11,7 +11,6 @@ from mcp_server.tools.code_relationship_analyzer import (
 
 # Handler modules
 from mcp_server.tools.config_handlers import (
-    handle_configure_query_routing,
     handle_configure_reranking,
     handle_configure_search_mode,
     handle_switch_embedding_model,
@@ -52,9 +51,8 @@ __all__ = [
     "handle_cleanup_resources",
     "handle_get_search_config_status",
     "handle_list_embedding_models",
-    # Config handlers (5)
+    # Config handlers (4)
     "handle_switch_project",
-    "handle_configure_query_routing",
     "handle_configure_reranking",
     "handle_configure_search_mode",
     "handle_switch_embedding_model",

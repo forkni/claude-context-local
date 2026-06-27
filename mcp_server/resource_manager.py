@@ -187,12 +187,11 @@ def initialize_server_state() -> None:
 
     state = get_state()
 
-    # 1. Sync multi_model_enabled from config file
+    # 1. Load config
     try:
         config_manager = get_config_manager()
         config = config_manager.load_config()
-        state.sync_from_config(config)
-        logger.info("[INIT] Config synced from file")
+        logger.info("[INIT] Config loaded")
         from utils.observability import init_observability
 
         init_observability(config.observability)
@@ -216,10 +215,6 @@ def initialize_server_state() -> None:
 
     # 3. Lazy model loading
     logger.info("[INIT] Model loading deferred until first use (lazy mode)")
-    from mcp_server.model_pool_manager import get_model_pool_manager
-
-    pool_config = get_model_pool_manager().get_pool_config()
-    logger.info(f"[INIT] Available models: {list(pool_config.keys())}")
 
     # 3.5. VRAM tier detection - DEFERRED to first model load
     logger.info("[INIT] VRAM tier detection deferred until first model request")

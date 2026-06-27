@@ -74,15 +74,7 @@ def main():
         else:
             mode_desc = "Force (full reindex, bypass snapshot)"
 
-    # Check multi-model mode from config file (priority) or environment
-    from search.config import get_search_config
-
-    config = get_search_config()
-    multi_model_config = config.routing.multi_model_enabled  # From search_config.json
-
-    # CLI flag overrides, then config, then env var fallback
-    # Explicit --multi-model flag or use config file setting (user's menu selection)
-    multi_model = True if args.multi_model else multi_model_config
+    multi_model = False  # Multi-model removed; always single-model
 
     # Parse directory filters
     include_dirs = None
@@ -100,23 +92,7 @@ def main():
     print(f"Path: {project_path}")
     print(f"Mode: {mode_desc}")
     print(f"Incremental: {incremental}")
-    if multi_model:
-        # Show correct pool based on config
-        from search.config import get_search_config
-
-        try:
-            config = get_search_config()
-            pool_type = config.routing.multi_model_pool or "full"
-        except Exception as e:
-            print(f"Config unavailable, using full pool: {e}")
-            pool_type = "full"
-
-        if pool_type == "lightweight-speed":
-            print("Multi-Model: Enabled (BGE-M3 + gte-modernbert, 1.65GB)")
-        else:
-            print("Multi-Model: Enabled (Qwen3, BGE-Code)")
-    else:
-        print("Multi-Model: Disabled (single model only)")
+    print("Mode: Single-model")
     if include_dirs:
         print(f"Include dirs: {include_dirs}")
     if exclude_dirs:

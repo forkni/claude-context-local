@@ -214,7 +214,8 @@ class StorageManager:
 
         Args:
             project_path: Path to the project
-            model_key: Model key for routing (None = use config default)
+            model_key: Unused (kept for call-site compatibility). Model is always
+                       read from config.embedding.model_name.
             include_dirs: Optional list of directories to include during indexing
             exclude_dirs: Optional list of directories to exclude during indexing
 
@@ -235,33 +236,10 @@ class StorageManager:
         new_hash = compute_drive_agnostic_hash(str(project_path))
         legacy_hash = compute_legacy_hash(str(project_path))
 
-        # Get configured pool (respects user's multi_model_pool setting)
-        from mcp_server.model_pool_manager import get_model_pool_manager
-
-        pool_config = get_model_pool_manager().get_pool_config()
-
-        # Determine which model to use
-        if model_key:
-            # Resolve key → name: active pool first, then all known pools (cross-pool path)
-            from mcp_server.model_pool_manager import get_model_name_from_key
-
-            model_name = get_model_name_from_key(model_key)
-            if model_name is None:
-                logger.error(
-                    f"Invalid model_key: {model_key}, falling back to config default"
-                )
-                config = get_search_config()
-                model_name = config.embedding.model_name
-            elif model_key in pool_config:
-                logger.info(
-                    f"[ROUTING] Using routed model: {model_name} (key: {model_key})"
-                )
-            # else: cross-pool INFO already emitted by get_model_name_from_key
-        else:
-            # Use config default
-            config = get_search_config()
-            model_name = config.embedding.model_name
-            logger.info(f"[CONFIG] Using config default model: {model_name}")
+        # Always use the configured model (single-model mode)
+        config = get_search_config()
+        model_name = config.embedding.model_name
+        logger.info(f"[CONFIG] Using model: {model_name}")
 
         # Validate model exists in registry (prevent silent 768d fallback)
         model_config = MODEL_REGISTRY.get(model_name)

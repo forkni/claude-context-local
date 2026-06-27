@@ -179,53 +179,33 @@ def _run_indexing(
 
 
 def _build_index_response(
-    results: list[dict], directory_path: str, multi_model: bool, incremental: bool
+    results: list[dict], directory_path: str, incremental: bool
 ) -> dict:
     """Build the final index response.
 
     Args:
-        results: List of per-model indexing results
+        results: List with one indexing result dict
         directory_path: The indexed directory
-        multi_model: Whether multi-model mode was used
         incremental: Whether incremental mode was used
 
     Returns:
         dict: Complete response with success status and statistics
     """
-    if multi_model:
-        total_time = sum(r["time_taken"] for r in results)
-        total_files_added = sum(r["files_added"] for r in results)
-        total_chunks_added = sum(r["chunks_added"] for r in results)
-
-        response = {
-            "success": True,
-            "multi_model": True,
-            "models_indexed": len(results),
-            "project": str(directory_path),
-            "results": results,
-            "total_time": round(total_time, 2),
-            "total_files_added": total_files_added,
-            "total_chunks_added": total_chunks_added,
-            "mode": "incremental" if incremental else "full",
-        }
-        return response
-    else:
-        # Single model - results has one item
-        r = results[0]
-        response = {
-            "success": True,
-            "project": str(directory_path),
-            "files_added": r["files_added"],
-            "chunks_added": r["chunks_added"],
-            "time_taken": r["time_taken"],
-            "mode": "incremental" if incremental else "full",
-        }
-        # Only include modified/removed counts when non-zero (token optimization)
-        if r["files_modified"] > 0:
-            response["files_modified"] = r["files_modified"]
-        if r["files_removed"] > 0:
-            response["files_removed"] = r["files_removed"]
-        return response
+    r = results[0]
+    response = {
+        "success": True,
+        "project": str(directory_path),
+        "files_added": r["files_added"],
+        "chunks_added": r["chunks_added"],
+        "time_taken": r["time_taken"],
+        "mode": "incremental" if incremental else "full",
+    }
+    # Only include modified/removed counts when non-zero (token optimization)
+    if r["files_modified"] > 0:
+        response["files_modified"] = r["files_modified"]
+    if r["files_removed"] > 0:
+        response["files_removed"] = r["files_removed"]
+    return response
 
 
 def _clear_index_files_before_create(index_dir: Path) -> None:
@@ -365,206 +345,6 @@ def _switch_active_model(model_key: str, model_name: str) -> None:
         config.embedding.dimension = new_dimension
 
     _invalidate_config_caches()
-
-
-def _release_indexer_resources(indexer: Any) -> None:
-    """Close a per-model indexer's metadata store (and thread pool / reranker).
-
-    Multi-model batch indexing creates one HybridSearcher / CodeIndexManager per
-    model as a loop-local.  Without an explicit close, each model's SQLite
-    metadata.db stays open until GC runs __del__ — on Windows this does not
-    release the WAL file lock promptly, so a subsequent clear_index / delete_project
-    raises [WinError 32] when shutil.rmtree tries to remove the file.
-
-    Called from the per-model finally block in _index_with_all_models so every
-    model's resources are freed before moving to the next model.
-    """
-    if indexer is None:
-        return
-    try:
-        if hasattr(indexer, "shutdown"):
-            # HybridSearcher: closes dense_index metadata store, thread pool,
-            # and reranking engine.  Idempotent (guarded by _is_shutdown flag).
-            indexer.shutdown()
-        elif getattr(indexer, "_metadata_store", None) is not None:
-            # CodeIndexManager (non-hybrid path): close the SQLite handle directly.
-            indexer._metadata_store.close()
-    except Exception as e:
-        logger.warning(f"Failed to release per-model indexer resources: {e}")
-
-
-def _index_with_all_models(
-    directory_path: Path, incremental: bool, include_dirs=None, exclude_dirs=None
-) -> list[dict]:
-    """Index a project with all models in MODEL_POOL_CONFIG.
-
-    Args:
-        directory_path: Resolved path to the project directory
-        incremental: Whether to use incremental indexing
-        include_dirs: Optional list of directories to include
-        exclude_dirs: Optional list of directories to exclude
-
-    Returns:
-        list: Results for each model with timing and statistics
-    """
-    results = []
-    original_config = get_config()
-    original_model = original_config.embedding.model_name
-    cached_repo_profile: Any = (
-        None  # Captured after first model; reused by subsequent models
-    )
-    cached_dag: Any = None  # Built MerkleDAG shared across models (avoids re-hashing)
-
-    try:
-        # Use pool from manager (respects config file setting)
-        from mcp_server.model_pool_manager import get_model_pool_manager
-
-        pool_config = get_model_pool_manager().get_pool_config()
-        for model_key, model_name in pool_config.items():
-            # Initialise to None so _release_indexer_resources is always safe to
-            # call even if the try body exits before `indexer` is assigned.
-            indexer = None
-            try:
-                logger.info(f"Indexing with model: {model_name} ({model_key})")
-
-                # Switch to this model temporarily
-                _switch_active_model(model_key, model_name)
-
-                # Force garbage collection and GPU memory release
-                _release_gpu_memory()
-
-                # Get project storage for this model
-                project_dir = get_project_storage_dir(
-                    str(directory_path),
-                    include_dirs=include_dirs,
-                    exclude_dirs=exclude_dirs,
-                )
-                index_dir = project_dir / "index"
-                index_dir.mkdir(exist_ok=True)
-
-                # Load config for chunker initialization
-                config = get_config()
-
-                # Initialize components for this model
-                chunker = MultiLanguageChunker(
-                    str(directory_path),
-                    include_dirs,
-                    exclude_dirs,
-                    enable_entity_tracking=config.performance.enable_entity_tracking,
-                )
-                embedder = get_embedder(model_key)
-
-                # For force_full reindex, delete index files BEFORE creating HybridSearcher
-                # to avoid WinError 32 (file lock) when MCP server holds references
-                if not incremental:
-                    _clear_index_files_before_create(index_dir)
-
-                # Create fresh indexer instance directly (bypass global cache)
-                if config.search_mode.enable_hybrid:
-                    project_id = project_dir.name.rsplit("_", 1)[0]
-                    indexer = HybridSearcher(
-                        storage_dir=str(index_dir),
-                        embedder=embedder,
-                        bm25_weight=config.search_mode.bm25_weight,
-                        dense_weight=config.search_mode.dense_weight,
-                        rrf_k=config.search_mode.rrf_k_parameter,
-                        max_workers=2,
-                        bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
-                        bm25_use_stemming=config.search_mode.bm25_use_stemming,
-                        project_id=project_id,
-                        config=config,
-                    )
-                    logger.info(
-                        f"Created HybridSearcher for {model_name} at {index_dir}"
-                    )
-                else:
-                    project_id = project_dir.name.rsplit("_", 1)[0]
-                    indexer = CodeIndexManager(
-                        str(index_dir), project_id=project_id, config=config
-                    )
-                    logger.info(
-                        f"Created CodeIndexManager for {model_name} at {index_dir}"
-                    )
-
-                # Create incremental indexer and run
-                incremental_indexer = IncrementalIndexer(
-                    indexer=indexer,
-                    embedder=embedder,
-                    chunker=chunker,
-                    include_dirs=include_dirs,
-                    exclude_dirs=exclude_dirs,
-                    precomputed_repo_profile=cached_repo_profile,
-                    prebuilt_dag=cached_dag if not incremental else None,
-                )
-
-                start_time = datetime.now()
-                if incremental:
-                    result = incremental_indexer.incremental_index(str(directory_path))
-                else:
-                    result = incremental_indexer.incremental_index(
-                        str(directory_path), force_full=True
-                    )
-                elapsed = (datetime.now() - start_time).total_seconds()
-
-                # Capture repo profile and built DAG after first model pass for reuse
-                # (must happen before _release_indexer_resources closes the indexer)
-                if cached_repo_profile is None:
-                    cached_repo_profile = incremental_indexer.repo_profile
-                if cached_dag is None and not incremental:
-                    cached_dag = incremental_indexer.built_dag
-
-                results.append(
-                    {
-                        "model": model_name,
-                        "model_key": model_key,
-                        "dimension": config.embedding.dimension,
-                        "files_added": result.files_added,
-                        "files_modified": result.files_modified,
-                        "files_removed": result.files_removed,
-                        "chunks_added": result.chunks_added,
-                        "time_taken": round(elapsed, 2),
-                    }
-                )
-                logger.info(f"Completed indexing with {model_name} in {elapsed:.2f}s")
-
-            finally:
-                # Release this model's SQLite metadata.db handle before the next
-                # iteration.  Without an explicit close, Windows holds the WAL
-                # lock until GC runs __del__, causing WinError 32 when
-                # clear_index / delete_project later calls shutil.rmtree.
-                _release_indexer_resources(indexer)
-
-    finally:
-        # Restore to a valid model in the current pool
-        config_mgr = SearchConfigManager()
-        config = config_mgr.load_config()
-
-        # Validate original_model is in active pool; if not, use first pool model
-        pool_models = set(pool_config.values())
-        if original_model not in pool_models:
-            fallback_model = next(iter(pool_config.values()))
-            logger.warning(
-                f"Original model '{original_model}' not in active pool "
-                f"{list(pool_config.values())}, using '{fallback_model}'"
-            )
-            original_model = fallback_model
-
-        config.embedding.model_name = original_model
-        config_mgr.save_config(config)
-
-        # Clear cached components
-        state = get_state()
-        state.reset_search_components()
-        logger.info(f"Restored original model: {original_model}")
-
-        # Set current_model_key for subsequent operations
-        # (same pattern used in model_pool_manager.py:151-155)
-        for key, name in pool_config.items():
-            if name == original_model:
-                state.current_model_key = key
-                break
-
-    return results
 
 
 # ----------------------------------------------------------------------------
@@ -820,28 +600,14 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
 
 @error_handler("Index")
 async def handle_index_directory(arguments: dict[str, Any]) -> dict:
-    """Index a directory for code search with multi-model support.
-
-    Uses extracted helper functions for clarity:
-    - _index_with_all_models(): Multi-model batch indexing
-    - _create_indexer_for_model(): Create indexer/embedder for a model
-    - _run_indexing(): Execute the indexing process
-    - _build_index_response(): Format the final response
-    """
+    """Index a directory for code search."""
     directory_path = arguments["directory_path"]
     arguments.get("project_name")
     incremental = arguments.get("incremental", True)
-    multi_model = arguments.get("multi_model")  # None = auto-detect
     include_dirs = arguments.get("include_dirs")
     exclude_dirs = arguments.get("exclude_dirs")
 
-    # Auto-detect multi-model mode if not explicitly specified
-    if multi_model is None:
-        multi_model = get_state().multi_model_enabled
-
-    logger.info(
-        f"[INDEX] directory={directory_path}, incremental={incremental}, multi_model={multi_model}"
-    )
+    logger.info(f"[INDEX] directory={directory_path}, incremental={incremental}")
 
     # Step 1: Cleanup previous resources BEFORE starting indexing
     logger.info("[INDEX] Releasing previous resources before indexing...")
@@ -932,23 +698,7 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
             exclude_dirs=exclude_dirs,
         )
 
-        # Update all model-specific project_info.json files
-        # (needed for both first index AND filter changes in multi-model setup)
-        if get_state().multi_model_enabled:
-            # Update each model's project_info.json
-            from mcp_server.model_pool_manager import get_model_pool_manager
-
-            pool_config = get_model_pool_manager().get_pool_config()
-            for model_key in pool_config:
-                update_project_filters(
-                    str(directory_path),
-                    include_dirs,
-                    exclude_dirs,
-                    model_key=model_key,
-                )
-        else:
-            # Single model - update default model's project_info
-            update_project_filters(str(directory_path), include_dirs, exclude_dirs)
+        update_project_filters(str(directory_path), include_dirs, exclude_dirs)
 
     # Set as current project (using setter for proper cross-module sync)
     set_current_project(str(directory_path))
@@ -964,78 +714,55 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
         # (or a concurrent search_code auto-reindex) from reindexing the same
         # project simultaneously.
         async with get_state().get_reindex_lock(str(directory_path)):
-            # Multi-model batch indexing
-            if multi_model and get_state().multi_model_enabled:
-                logger.info(f"Multi-model batch indexing for: {directory_path}")
-                # Run in thread pool to avoid blocking asyncio event loop
-                import asyncio
+            logger.info(f"Indexing for: {directory_path}")
 
-                results = await asyncio.to_thread(
-                    _index_with_all_models,
-                    directory_path,
-                    incremental,
-                    include_dirs,
-                    exclude_dirs,
+            # Get or create project storage
+            project_dir = get_project_storage_dir(str(directory_path))
+            index_dir = project_dir / "index"
+            index_dir.mkdir(exist_ok=True)
+
+            # Load config for chunker initialization
+            config = get_config()
+
+            # Initialize chunker eagerly (cheap, no I/O or model load).
+            chunker = MultiLanguageChunker(
+                str(directory_path),
+                include_dirs,
+                exclude_dirs,
+                enable_entity_tracking=config.performance.enable_entity_tracking,
+            )
+
+            # Capture loop-local values before entering the thread.
+            _dir = str(directory_path)
+            _enable_hybrid = config.search_mode.enable_hybrid
+            _incremental = incremental
+            _include = include_dirs
+            _exclude = exclude_dirs
+
+            # get_embedder() and get_searcher() can trigger multi-second model/
+            # index loads on first use — offload together with the indexing work
+            # so the event loop is never blocked during component initialisation.
+            import asyncio
+
+            def _setup_and_run():
+                _embedder = get_embedder()
+                _searcher = get_searcher(_dir)
+                _indexer = _searcher if _enable_hybrid else get_index_manager(_dir)
+                return _run_indexing(
+                    _indexer,
+                    _embedder,
+                    chunker,
+                    _dir,
+                    _incremental,
+                    _include,
+                    _exclude,
                 )
-                return _build_index_response(
-                    results,
-                    str(directory_path),
-                    multi_model=True,
-                    incremental=incremental,
-                )
 
-            # Single model indexing (original behavior)
-            else:
-                logger.info(f"Single-model indexing for: {directory_path}")
+            result = await asyncio.to_thread(_setup_and_run)
 
-                # Get or create project storage
-                project_dir = get_project_storage_dir(str(directory_path))
-                index_dir = project_dir / "index"
-                index_dir.mkdir(exist_ok=True)
-
-                # Load config for chunker initialization
-                config = get_config()
-
-                # Initialize chunker eagerly (cheap, no I/O or model load).
-                chunker = MultiLanguageChunker(
-                    str(directory_path),
-                    include_dirs,
-                    exclude_dirs,
-                    enable_entity_tracking=config.performance.enable_entity_tracking,
-                )
-
-                # Capture loop-local values before entering the thread.
-                _dir = str(directory_path)
-                _enable_hybrid = config.search_mode.enable_hybrid
-                _incremental = incremental
-                _include = include_dirs
-                _exclude = exclude_dirs
-
-                # get_embedder() and get_searcher() can trigger multi-second model/
-                # index loads on first use — offload together with the indexing work
-                # so the event loop is never blocked during component initialisation.
-                import asyncio
-
-                def _setup_and_run():
-                    _embedder = get_embedder()
-                    _searcher = get_searcher(_dir)
-                    _indexer = _searcher if _enable_hybrid else get_index_manager(_dir)
-                    return _run_indexing(
-                        _indexer,
-                        _embedder,
-                        chunker,
-                        _dir,
-                        _incremental,
-                        _include,
-                        _exclude,
-                    )
-
-                result = await asyncio.to_thread(_setup_and_run)
-
-                # Build response (using helper)
-                return _build_index_response(
-                    [result],
-                    str(directory_path),
-                    multi_model=False,
-                    incremental=incremental,
-                )
+            # Build response (using helper)
+            return _build_index_response(
+                [result],
+                str(directory_path),
+                incremental=incremental,
+            )

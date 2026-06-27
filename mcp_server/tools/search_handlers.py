@@ -26,7 +26,6 @@ from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
 from search.metadata import MetadataStore
-from search.query_router import QueryRouter
 from search.relationship_analyzer import RelationshipAnalyzer
 
 
@@ -91,155 +90,21 @@ def _handle_chunk_id_lookup(chunk_id: str) -> dict:
         return {"error": str(e), "chunk_id": chunk_id}
 
 
-def _route_query_to_model(
-    query: str, use_routing: bool, model_key: str | None
-) -> tuple[str | None, dict | None]:
-    """Route query to optimal embedding model.
-
-    Validates that the routed model has an index for the current project.
-    Falls back to auto-detected model if routing selects unindexed model.
-
-    Args:
-        query: The search query
-        use_routing: Whether to use automatic model routing
-        model_key: User-specified model override (None for auto)
-
-    Returns:
-        tuple: (selected_model_key, routing_info_dict)
-    """
-    # User-specified override always wins
-    if model_key is not None:
-        return model_key, {
-            "model_selected": model_key,
-            "confidence": 1.0,
-            "reason": "User-specified override",
-        }
-
-    # Try query routing if enabled
-    if get_state().multi_model_enabled and use_routing:
-        router = QueryRouter(enable_logging=True)
-        decision = router.route(query)
-
-        # Validate routed model has an index for current project
-        current_project = get_state().current_project
-        if current_project:
-            project_dir = get_project_storage_dir(
-                current_project, model_key=decision.model_key
-            )
-            code_index_file = project_dir / "index" / "code.index"
-
-            if code_index_file.exists():
-                # Routed model has valid index.
-                # Include rejected_model/rejected_score when the router fell back to the
-                # default due to low confidence — avoids the ambiguity where `confidence`
-                # is the *rejected* model's score but `model_selected` is the default.
-                routing_info: dict = {
-                    "model_selected": decision.model_key,
-                    "confidence": decision.confidence,
-                    "reason": decision.reason,
-                    "scores": decision.scores,
-                }
-                if decision.rejected_model is not None:
-                    routing_info["rejected_model"] = decision.rejected_model
-                    routing_info["rejected_score"] = decision.rejected_score
-                return decision.model_key, routing_info
-            else:
-                logger.warning(
-                    f"Routed model '{decision.model_key}' has no index. "
-                    f"Falling back to auto-detected model."
-                )
-
-        # Routed model doesn't have index, fall back to auto-detected
-        fallback_model = get_state().current_model_key
-        if fallback_model:
-            return fallback_model, {
-                "model_selected": fallback_model,
-                "confidence": decision.confidence,
-                "reason": f"Fallback to indexed model (routed '{decision.model_key}' not indexed)",
-                "routed_model": decision.model_key,
-            }
-
-        # Last resort: Try configured default model first, then scan remaining models
-        # GUARD: Skip model scanning if no project is selected
-        if current_project is None:
-            logger.warning(
-                "No project selected and no fallback model available. "
-                "Cannot determine model for routing."
-            )
-            return None, None
-
-        from search.config import get_search_config
-
-        config = get_search_config()
-        default_model = config.routing.default_model
-
-        # Validate default_model against active pool before trying it
-        from mcp_server.model_pool_manager import get_model_pool_manager
-
-        pool_config = get_model_pool_manager().get_pool_config()
-
-        if default_model in pool_config:
-            # Try default model first
-            logger.info(f"Trying configured default model: {default_model}")
-            project_dir = get_project_storage_dir(
-                current_project, model_key=default_model
-            )
-            code_index_file = project_dir / "index" / "code.index"
-            if code_index_file.exists():
-                logger.info(f"Using configured default model: {default_model}")
-                return default_model, {
-                    "model_selected": default_model,
-                    "confidence": 0.0,
-                    "reason": f"Fallback to configured default ({default_model}), routed '{decision.model_key}' not indexed",
-                    "routed_model": decision.model_key,
-                }
-        else:
-            logger.info(
-                f"Configured default '{default_model}' not in active pool "
-                f"{list(pool_config.keys())}, scanning pool models"
-            )
-
-        # Then scan remaining models (excluding default since we already checked it)
-        for model_key_candidate in pool_config:
-            if model_key_candidate == default_model:
-                continue  # Already checked above
-            project_dir = get_project_storage_dir(
-                current_project, model_key=model_key_candidate
-            )
-            code_index_file = project_dir / "index" / "code.index"
-            if code_index_file.exists():
-                logger.info(f"Found indexed model: {model_key_candidate}")
-                return model_key_candidate, {
-                    "model_selected": model_key_candidate,
-                    "confidence": 0.0,
-                    "reason": f"Auto-detected from indices (routed '{decision.model_key}' not indexed)",
-                    "routed_model": decision.model_key,
-                }
-
-    return None, None
-
-
-def _check_auto_reindex(
-    project_path: str, selected_model_key: str | None, max_age_minutes: int
-) -> tuple[bool, str | None]:
+def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, None]:
     """Check if auto-reindex is needed and perform if necessary.
 
     Args:
         project_path: Path to the project
-        selected_model_key: The selected model key for embeddings
         max_age_minutes: Maximum age of index before reindex
 
     Returns:
-        Tuple of (reindexed: bool, stored_model_key: str | None)
+        Tuple of (reindexed: bool, None)
         - reindexed: True if reindex was performed
-        - stored_model_key: The model key from project_info.json (for cache consistency)
     """
     # Load filters from project_info.json to ensure consistent filtering
     import json
 
-    project_storage = get_project_storage_dir(
-        project_path, model_key=selected_model_key
-    )
+    project_storage = get_project_storage_dir(project_path)
     project_info_file = project_storage / "project_info.json"
 
     include_dirs = None
@@ -260,29 +125,6 @@ def _check_auto_reindex(
                 )
         except Exception as e:
             logger.warning(f"[AUTO_REINDEX] Failed to load filters: {e}")
-
-    # CRITICAL: For existing indexes, use the model that created the index
-    # NOT the routing-selected model (prevents dimension mismatch errors)
-    model_key_for_embedder = selected_model_key
-    if project_info and project_info.get("embedding_model"):
-        from mcp_server.model_pool_manager import get_model_key_from_name
-
-        stored_model_name = project_info["embedding_model"]
-        stored_model_key = get_model_key_from_name(stored_model_name)
-        if stored_model_key:
-            model_key_for_embedder = stored_model_key
-            logger.info(
-                f"[AUTO_REINDEX] Using stored model from index: {stored_model_name} "
-                f"(key: {stored_model_key}) instead of routing selection"
-            )
-        else:
-            logger.error(
-                f"[AUTO_REINDEX] Stored model '{stored_model_name}' is not registered in "
-                f"MODEL_POOL_CONFIG or MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED. Existing index "
-                f"will be discarded and rebuilt with routing-selected model "
-                f"'{selected_model_key}'. Update search/config.py:ALL_POOL_MODELS to "
-                f"register this model and prevent data loss."
-            )
 
     # Phase 1: Lightweight freshness check (no HybridSearcher/embedder needed)
     from chunking.tree_sitter import TreeSitterChunker
@@ -310,7 +152,7 @@ def _check_auto_reindex(
                 f"[AUTO_REINDEX] Index for {project_path} is fresh (age: {age:.1f}s, "
                 f"max: {max_age_minutes * 60}s), skipping reindex"
             )
-            return False, model_key_for_embedder
+            return False, None
 
     # Phase 2: Index is stale — create full machinery and reindex
     logger.debug(
@@ -320,7 +162,7 @@ def _check_auto_reindex(
     # Validate dimension compatibility BEFORE creating searcher
     from search.dimension_validator import validate_embedder_index_compatibility
 
-    embedder = get_embedder(model_key_for_embedder, allow_cross_pool=True)
+    embedder = get_embedder()
 
     try:
         validate_embedder_index_compatibility(
@@ -352,15 +194,10 @@ def _check_auto_reindex(
         # Searcher bind is deferred until after auto_reindex_if_needed so we never
         # cache a HybridSearcher whose embedder was just nulled by clear_embedders().
         state = get_state()
-        if (
-            state.searcher is None
-            or state.current_project != project_path
-            or state.current_model_key != model_key_for_embedder
-        ):
+        if state.searcher is None or state.current_project != project_path:
             state.current_project = project_path
-            state.current_model_key = model_key_for_embedder
     else:
-        indexer = get_index_manager(project_path, model_key=selected_model_key)
+        indexer = get_index_manager(project_path)
     chunker = MultiLanguageChunker(
         project_path,
         include_dirs,
@@ -391,14 +228,12 @@ def _check_auto_reindex(
     # construct a fresh HybridSearcher from the new embedder.
     if (
         config.search_mode.enable_hybrid
-        and model_key_for_embedder
         and get_state().searcher is None
-        and get_state().embedders.get(model_key_for_embedder) is embedder
+        and get_state().embedders.get("default") is embedder
     ):
         get_state().searcher = indexer
 
-    # Return stored model key for searcher cache consistency
-    return reindexed, model_key_for_embedder
+    return reindexed, None
 
 
 def _get_index_manager_from_searcher(searcher) -> CodeIndexManager | None:

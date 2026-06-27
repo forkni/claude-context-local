@@ -70,24 +70,10 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
         except Exception as e:
             logger.warning(f"Could not get hybrid searcher stats: {e}")
 
-    # Collect model info
+    # Collect model info (single-model mode)
     model_info = {}
-    if state.multi_model_enabled:
-        loaded_models = []
-        for model_key, embedder in state.embedders.items():
-            if embedder is not None:
-                info = embedder.get_model_info()
-                info["model_key"] = model_key
-                loaded_models.append(info)
-        model_info = {
-            "multi_model_mode": True,
-            "loaded_models": loaded_models,
-            "total_loaded": len(loaded_models),
-        }
-    else:
-        if "default" in state.embedders and state.embedders["default"] is not None:
-            model_info = state.embedders["default"].get_model_info()
-            model_info["multi_model_mode"] = False
+    if "default" in state.embedders and state.embedders["default"] is not None:
+        model_info = state.embedders["default"].get_model_info()
 
     # Add last indexed time from Merkle metadata
     last_indexed_time = None
@@ -344,7 +330,6 @@ async def handle_get_search_config_status(arguments: dict[str, Any]) -> dict:
         "rrf_k": config.search_mode.rrf_k_parameter,
         "use_parallel": config.performance.use_parallel_search,
         "embedding_model": config.embedding.model_name,
-        "multi_model_enabled": get_state().multi_model_enabled,
         "auto_reindex_enabled": config.performance.enable_auto_reindex,
         "max_index_age_minutes": config.performance.max_index_age_minutes,
         "bm25_use_stemming": config.search_mode.bm25_use_stemming,

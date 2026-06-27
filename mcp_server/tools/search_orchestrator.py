@@ -47,8 +47,6 @@ class SearchPlan:
 
     query: str
     k: int
-    selected_model_key: str
-    routing_info: dict[str, Any] | None
     intent_decision: IntentDecision | None
     search_mode: str
     ego_graph_enabled: bool
@@ -126,21 +124,12 @@ class SearchPlanner:
         Args:
             arguments: raw MCP tool arguments dict; must contain "query".
         """
-        from mcp_server.tools.search_handlers import _route_query_to_model
-
         query: str = arguments["query"]
 
         # k: respect per-request arg, clamp to max_k
         search_config = get_search_config()
         k = int(arguments.get("k", search_config.search_mode.default_k))
         k = min(k, search_config.search_mode.max_k)
-
-        # Model routing
-        use_routing = bool(arguments.get("use_routing", True))
-        model_key: str | None = arguments.get("model_key")
-        selected_model_key, routing_info = _route_query_to_model(
-            query, use_routing, model_key
-        )
 
         # Ego-graph defaults (may be overridden by CONTEXTUAL intent below)
         ego_graph_enabled = bool(arguments.get("ego_graph_enabled", False))
@@ -199,7 +188,6 @@ class SearchPlanner:
                         kind="find_similar",
                         params={"symbol_name": symbol_name},
                         fallback_on_error=True,
-                        model_key=selected_model_key,
                         k=k,
                     )
 
@@ -257,8 +245,6 @@ class SearchPlanner:
         return SearchPlan(
             query=query,
             k=k,
-            selected_model_key=selected_model_key,
-            routing_info=routing_info,
             intent_decision=intent_decision,
             search_mode=search_mode,
             ego_graph_enabled=ego_graph_enabled,
@@ -320,7 +306,6 @@ class SearchOrchestrator:
 
         # ===== Block A: Auto-reindex =====
         current_project = get_state().current_project
-        stored_model_key = None
         if plan.auto_reindex and current_project:
             try:
                 # Per-project asyncio.Lock prevents two concurrent search/index
@@ -328,10 +313,9 @@ class SearchOrchestrator:
                 # _check_auto_reindex is blocking (can run a full incremental
                 # reindex + HybridSearcher construction), so offload to a thread.
                 async with get_state().get_reindex_lock(current_project):
-                    reindexed, stored_model_key = await asyncio.to_thread(
+                    reindexed, _ = await asyncio.to_thread(
                         _check_auto_reindex,
                         current_project,
-                        plan.selected_model_key,
                         plan.max_age_minutes,
                     )
                 if reindexed:
@@ -349,21 +333,10 @@ class SearchOrchestrator:
                 }
 
         # ===== Block B: Searcher acquisition + readiness check =====
-        effective_search_model = (
-            stored_model_key if stored_model_key else plan.selected_model_key
-        )
-        if stored_model_key and stored_model_key != plan.selected_model_key:
-            logger.info(
-                f"[SEARCH] Using stored index model '{stored_model_key}' instead of "
-                f"routed model '{plan.selected_model_key}' to preserve searcher cache"
-            )
-
         try:
             # get_searcher can construct a HybridSearcher on cache-miss — offload
             # to avoid blocking the event loop during model/index init.
-            searcher = await asyncio.to_thread(
-                lambda: get_searcher(model_key=effective_search_model)
-            )
+            searcher = await asyncio.to_thread(get_searcher)
         except DimensionMismatchError as e:
             return {
                 "error": "Dimension mismatch",
@@ -604,12 +577,6 @@ class SearchOrchestrator:
             if subgraph_data.get("communities"):
                 response["subgraph_communities"] = subgraph_data["communities"]
 
-        if plan.routing_info:
-            confidence = plan.routing_info.get("confidence", 0.0)
-            reason = plan.routing_info.get("reason", "")
-            if confidence < 0.9 or "Fallback" in reason or "routed" in reason.lower():
-                response["routing"] = plan.routing_info
-
         response = add_system_message(
             response, tool_name="search_code", query=plan.query, chunk_id=None
         )
@@ -681,8 +648,7 @@ class SearchOrchestrator:
 
         # SearchPlanner.plan() calls IntentClassifier.classify() which, when
         # semantic_enabled=True (the default), runs embed_query() — a GPU forward
-        # pass per request.  It also probes the filesystem via _route_query_to_model.
-        # Offload to avoid blocking the event loop. plan() stays synchronous.
+        # pass per request.  Offload to avoid blocking the event loop. plan() stays synchronous.
         plan = await asyncio.to_thread(lambda: SearchPlanner().plan(arguments))
 
         if plan.redirect is not None:
@@ -703,9 +669,7 @@ class SearchOrchestrator:
                 try:
                     # get_searcher() can construct a HybridSearcher on cache-miss —
                     # same reason the call 35 lines above is wrapped in to_thread.
-                    _redirect_searcher = await asyncio.to_thread(
-                        lambda: get_searcher(model_key=redirect.model_key)
-                    )
+                    _redirect_searcher = await asyncio.to_thread(get_searcher)
                     _redirect_result = await asyncio.to_thread(
                         _redirect_searcher.search,
                         redirect.params["symbol_name"],
