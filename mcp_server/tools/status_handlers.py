@@ -67,8 +67,22 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
                 stats["bm25_documents"] = hybrid_stats.get("bm25_documents")
                 stats["dense_vectors"] = hybrid_stats.get("dense_vectors")
                 stats["synced"] = hybrid_stats.get("synced")
+            else:
+                # No live HybridSearcher available (e.g. post-clear state where index
+                # files are deleted but project is still active). When total_chunks is
+                # already 0 from the index manager, reflect that consistently so callers
+                # see bm25_documents=0 rather than the key being absent.
+                if stats.get("total_chunks", 0) == 0:
+                    stats.setdefault("bm25_documents", 0)
+                    stats.setdefault("dense_vectors", 0)
+                    stats.setdefault("synced", True)
         except Exception as e:
             logger.warning(f"Could not get hybrid searcher stats: {e}")
+            # Same fallback: if searcher creation fails after a clear, reflect 0 counts.
+            if stats.get("total_chunks", 0) == 0:
+                stats.setdefault("bm25_documents", 0)
+                stats.setdefault("dense_vectors", 0)
+                stats.setdefault("synced", True)
 
     # Collect model info
     model_info = {}
