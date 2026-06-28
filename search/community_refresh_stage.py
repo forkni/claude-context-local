@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from chunking.python_ast_chunker import CodeChunk
 from merkle.change_detector import FileChanges
+from utils.path_utils import normalize_path
 
 from .graph_integration import GraphIntegration
 from .summary_stage import SummaryStage
@@ -80,7 +81,7 @@ class CommunityRefreshStage:
 
         # Normalise changed file paths to forward-slash relative form for comparison
         changed_file_set = {
-            str(f).replace("\\", "/")
+            normalize_path(str(f))
             for f in (*changes.added, *changes.modified, *changes.removed)
         }
 
@@ -132,7 +133,7 @@ class CommunityRefreshStage:
             chunk_type = meta.get("chunk_type", "")
             if chunk_type in ("community", "module"):
                 continue
-            rel_path = str(meta.get("relative_path") or "").replace("\\", "/")
+            rel_path = normalize_path(str(meta.get("relative_path") or ""))
             comm_id = file_to_community.get(rel_path)
             if comm_id is None or comm_id not in affected_community_ids:
                 continue

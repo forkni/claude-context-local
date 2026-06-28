@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from tree_sitter import Language, Parser
 
+from utils.path_utils import normalize_path
+
 
 if TYPE_CHECKING:
     from chunking.python_ast_chunker import CodeChunk
@@ -453,7 +455,7 @@ class LanguageChunker(ABC):
         for chunk in chunks:
             chunk_id = chunk.chunk_id
             if chunk_id is None:
-                normalized_path = chunk.relative_path.replace("\\", "/")
+                normalized_path = normalize_path(chunk.relative_path)
                 if chunk.parent_name and chunk.name:
                     lookup_key = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}:{chunk.parent_name}.{chunk.name}"
                 elif chunk.name:
@@ -569,9 +571,9 @@ class LanguageChunker(ABC):
                 # Compute the merged chunk_id so relationship edges are attributed to the
                 # right graph node.  Mirrors Embedder._build_chunk_id:
                 #   "{relative_path}:{start}-{end}:{chunk_type}[:{qualified_name}]"
-                rel_path = str(
-                    representative.relative_path or merged_file or ""
-                ).replace("\\", "/")
+                rel_path = normalize_path(
+                    str(representative.relative_path or merged_file or "")
+                )
                 name = ts_chunk.metadata.get("name") or ""
                 parent = ts_chunk.parent_class or ""
                 qualified = f"{parent}.{name}" if parent and name else name

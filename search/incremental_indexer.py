@@ -23,6 +23,7 @@ from utils.otel_attributes import (
     ATTR_INDEX_TYPE,
     ATTR_PROJECT_ID,
 )
+from utils.path_utils import normalize_path
 from utils.timing import timed
 
 from .bm25_sync import BM25SyncManager
@@ -902,7 +903,7 @@ class IncrementalIndexer:
                     rel_path = chunk_path.name
 
             # Normalize path separators to forward slash
-            normalized_path = str(rel_path).replace("\\", "/")
+            normalized_path = normalize_path(str(rel_path))
 
             # Build chunk_id: path:lines:type:name
             chunk_id = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"

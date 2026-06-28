@@ -61,8 +61,8 @@ class GraphQueryEngine:
         # Normalize path separators before graph lookup (#40). chunk_ids on
         # Windows may use backslashes while the graph was built with forward
         # slashes (or vice-versa), causing spurious "not in graph" misses.
-        start_chunk_id = start_chunk_id.replace("\\", "/")
-        end_chunk_id = end_chunk_id.replace("\\", "/")
+        start_chunk_id = normalize_path(start_chunk_id)
+        end_chunk_id = normalize_path(end_chunk_id)
 
         if start_chunk_id not in self.storage.graph:
             self.logger.warning(f"Start chunk {start_chunk_id} not in graph")

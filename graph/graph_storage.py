@@ -888,7 +888,7 @@ class CodeGraphStorage:
             Number of nodes removed.
         """
         # Normalize to forward slashes, matching chunk_id construction in chunker
-        normalized = file_path.replace("\\", "/").rstrip("/")
+        normalized = normalize_path(file_path).rstrip("/")
         prefix = normalized + ":"
 
         # Collect IDs first to avoid mutating the graph during iteration

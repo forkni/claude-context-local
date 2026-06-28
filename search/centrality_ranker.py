@@ -20,6 +20,7 @@ from search.ranking_policy import (
     TYPE_BOOSTS_ENTITY,
     lifecycle_demotion,
 )
+from utils.path_utils import normalize_path
 
 
 if TYPE_CHECKING:
@@ -342,7 +343,7 @@ class CentralityRanker:
 
         if indexed_role is None:
             # Normalize to forward slashes so patterns work on Windows paths too
-            norm_path = file_path.replace("\\", "/").lower()
+            norm_path = normalize_path(file_path).lower()
             if any(
                 p in norm_path
                 for p in ("test_", "_test.", "tests/", "verify_", "verification")

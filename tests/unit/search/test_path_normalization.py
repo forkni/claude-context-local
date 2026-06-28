@@ -278,3 +278,88 @@ class TestRegressionIssue1:
             "Issue 1 regression: Chunk not found with double-escaped path!"
         )
         assert result["name"] == "rerank"
+
+
+class TestNormalizePathOwnership:
+    """P1a completeness gate: exactly two canonical normalize-path owners exist.
+
+    If this test fails you have either:
+    - Added a new stray ``normalize_path`` / ``normalize_chunk_id`` definition
+      outside the two owner modules, OR
+    - Deleted an owner (regression).
+
+    Fix: route any new normalizer through ``utils.path_utils.normalize_path``
+    (path flavour) or ``search.chunk_id.normalize`` (chunk-id flavour).
+    See plan vast-whistling-pinwheel.md § P1b for the deferred boundary step.
+    """
+
+    def test_normalize_path_defined_only_in_path_utils(self):
+        """Only utils/path_utils.py should define normalize_path."""
+        import ast
+        import glob
+        from pathlib import Path
+
+        stray: list[str] = []
+        for fpath in glob.glob("**/*.py", recursive=True):
+            if fpath.startswith(".venv") or fpath.startswith("tests"):
+                continue
+            if fpath.replace("\\", "/") == "utils/path_utils.py":
+                continue
+            try:
+                tree = ast.parse(Path(fpath).read_text(encoding="utf-8"))
+            except (SyntaxError, OSError):
+                continue
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == "normalize_path"
+                ):
+                    stray.append(f"{fpath}:{node.lineno}")
+
+        assert not stray, (
+            f"Stray normalize_path definitions (route through utils.path_utils): {stray}"
+        )
+
+    def test_normalize_chunk_id_defined_only_in_allowed_modules(self):
+        """normalize_chunk_id must not grow outside its approved owners.
+
+        - ``evaluation/metrics.py`` — strips line ranges for eval comparison.
+        - ``tools/analyze_batch_results.py`` — strips path+line for batch analysis.
+        - ``search/metadata.py`` — thin public-API wrapper delegating to chunk_id.normalize.
+
+        These serve a *different purpose* from path-separator normalization.
+        Any new normalize_chunk_id elsewhere should use search.chunk_id.normalize.
+        """
+        import ast
+        import glob
+        from pathlib import Path
+
+        allowed = {
+            "evaluation/metrics.py",
+            "tools/analyze_batch_results.py",
+            # MetadataStore.normalize_chunk_id is a thin public-API wrapper
+            # that delegates to search.chunk_id.normalize — not a stray copy.
+            "search/metadata.py",
+        }
+
+        stray: list[str] = []
+        for fpath in glob.glob("**/*.py", recursive=True):
+            if fpath.startswith(".venv") or fpath.startswith("tests"):
+                continue
+            norm = fpath.replace("\\", "/")
+            if any(norm.endswith(a) for a in allowed):
+                continue
+            try:
+                tree = ast.parse(Path(fpath).read_text(encoding="utf-8"))
+            except (SyntaxError, OSError):
+                continue
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == "normalize_chunk_id"
+                ):
+                    stray.append(f"{fpath}:{node.lineno}")
+
+        assert not stray, (
+            f"Stray normalize_chunk_id definitions (use search.chunk_id.normalize): {stray}"
+        )

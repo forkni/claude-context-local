@@ -11,6 +11,8 @@ import re
 from statistics import mean
 from typing import Any
 
+from utils.path_utils import normalize_path
+
 
 # Regex to strip line-number ranges from chunk IDs.
 # Matches: "file/path.py:123-456:type:name" → "file/path.py:type:name"
@@ -450,7 +452,7 @@ def build_chunk_line_lookup(
     lookup: dict[str, tuple[str, int, int]] = {}
     for raw_id, entry in metadata_store.items():
         meta = entry.get("metadata", {})
-        path = (meta.get("relative_path", "") or "").replace("\\", "/")
+        path = normalize_path(meta.get("relative_path", "") or "")
         # Same as chunk_mapping: get() without default so None and 0 are
         # both filtered by the truthiness test below (#48).
         start = meta.get("start_line")

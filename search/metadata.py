@@ -14,8 +14,8 @@ from typing import Any
 from sqlitedict import SqliteDict
 
 from search.chunk_id import normalize as _normalize_chunk_id
-from search.filters import normalize_path
 from search.symbol_cache import SymbolHashCache
+from utils.path_utils import normalize_path
 
 
 class MetadataStore:
@@ -324,7 +324,9 @@ class MetadataStore:
         return _normalize_chunk_id(chunk_id)
 
     @staticmethod
-    def get_chunk_id_variants(chunk_id: str) -> list[str]:
+    def get_chunk_id_variants(
+        chunk_id: str,
+    ) -> list[str]:  # TODO(P1b): remove once paths canonicalized at write time
         """Get all possible chunk_id variants for robust lookup.
 
         Returns list of chunk_id variants to try during lookup, handling:
