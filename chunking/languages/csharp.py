@@ -15,13 +15,11 @@ class CSharpChunker(LanguageChunker):
 
     def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract C#-specific metadata."""
-        metadata = {"node_type": node.type}
+        metadata: dict[str, Any] = {"node_type": node.type}
 
-        # Extract name
-        for child in node.children:
-            if child.type == "identifier":
-                metadata["name"] = self.get_node_text(child, source)
-                break
+        name = self._extract_name(node, source)
+        if name is not None:
+            metadata["name"] = name
 
         # Extract access modifiers
         modifiers = []

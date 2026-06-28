@@ -17,13 +17,13 @@ class TypeScriptChunker(LanguageChunker):
 
     def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract TypeScript-specific metadata."""
-        metadata = {"node_type": node.type}
+        metadata: dict[str, Any] = {"node_type": node.type}
 
-        # Extract name
-        for child in node.children:
-            if child.type in ["identifier", "type_identifier"]:
-                metadata["name"] = self.get_node_text(child, source)
-                break
+        name = self._extract_name(
+            node, source, id_types=("identifier", "type_identifier")
+        )
+        if name is not None:
+            metadata["name"] = name
 
         # Check for async
         if node.children and self.get_node_text(node.children[0], source) == "async":

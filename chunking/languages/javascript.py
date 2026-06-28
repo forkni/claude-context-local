@@ -15,13 +15,11 @@ class JavaScriptChunker(LanguageChunker):
 
     def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract JavaScript-specific metadata."""
-        metadata = {"node_type": node.type}
+        metadata: dict[str, Any] = {"node_type": node.type}
 
-        # Extract function/class name
-        for child in node.children:
-            if child.type == "identifier":
-                metadata["name"] = self.get_node_text(child, source)
-                break
+        name = self._extract_name(node, source)
+        if name is not None:
+            metadata["name"] = name
 
         # Check for async
         if node.children and self.get_node_text(node.children[0], source) == "async":

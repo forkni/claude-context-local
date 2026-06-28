@@ -258,6 +258,38 @@ class LanguageChunker(ABC):
         """
         return source[node.start_byte : node.end_byte].decode("utf-8")
 
+    def _extract_name(
+        self,
+        node: Any,
+        source: bytes,
+        *,
+        id_types: tuple[str, ...] = ("identifier",),
+    ) -> str | None:
+        """Find the first child whose type is in *id_types* and return its text.
+
+        This is the shared name-finding loop used by simple leaf chunkers:
+        walk ``node.children``, match the first child whose ``.type`` is in
+        *id_types*, and return its decoded text.
+
+        Complex leaves (C, C++, GLSL, Python) that need declarator-aware or
+        typedef/template traversal should keep their own name logic instead of
+        calling this helper.
+
+        Args:
+            node: Tree-sitter node whose children to search.
+            source: Source code bytes.
+            id_types: Tuple of tree-sitter node type strings to match.
+                Defaults to ``("identifier",)`` (Pattern 1 — JS, Go, C#).
+                Pass ``("identifier", "type_identifier")`` for Pattern 2 — Rust, TS.
+
+        Returns:
+            Decoded text of the first matching child, or ``None`` if not found.
+        """
+        for child in node.children:
+            if child.type in id_types:
+                return self.get_node_text(child, source)
+        return None
+
     def get_line_numbers(self, node: Any) -> tuple[int, int]:
         """Get start and end line numbers for a node.
 
