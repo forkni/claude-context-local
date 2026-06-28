@@ -62,8 +62,8 @@ class _NoopTracer:
 class _NoopExporter:
     def export(self, spans: Any) -> Any:
         try:
-            from opentelemetry.sdk.trace.export import (
-                SpanExportResult,  # pyrefly: ignore [missing-import]
+            from opentelemetry.sdk.trace.export import (  # pyrefly: ignore [missing-import]
+                SpanExportResult,
             )
 
             return SpanExportResult.SUCCESS
@@ -158,8 +158,8 @@ def wrap_in_context(fn: Any) -> Any:
         return fn
 
     try:
-        from opentelemetry import (
-            context as otel_context,  # pyrefly: ignore [missing-import]
+        from opentelemetry import (  # pyrefly: ignore [missing-import]
+            context as otel_context,
         )
 
         ctx = otel_context.get_current()
@@ -220,18 +220,18 @@ def init_observability(cfg: ObservabilityConfig) -> None:
             SERVICE_NAME,
             Resource,
         )
-        from opentelemetry.sdk.trace import (
-            TracerProvider,  # pyrefly: ignore [missing-import]
+        from opentelemetry.sdk.trace import (  # pyrefly: ignore [missing-import]
+            TracerProvider,
         )
-        from opentelemetry.sdk.trace.export import (
-            BatchSpanProcessor,  # pyrefly: ignore [missing-import]
+        from opentelemetry.sdk.trace.export import (  # pyrefly: ignore [missing-import]
+            BatchSpanProcessor,
         )
 
         resource = Resource(attributes={SERVICE_NAME: cfg.service_name})
 
         if cfg.sample_ratio < 1.0:
-            from opentelemetry.sdk.trace.sampling import (
-                TraceIdRatioBased,  # pyrefly: ignore [missing-import]
+            from opentelemetry.sdk.trace.sampling import (  # pyrefly: ignore [missing-import]
+                TraceIdRatioBased,
             )
 
             provider = TracerProvider(
@@ -270,8 +270,8 @@ def _build_exporter(cfg: ObservabilityConfig, exporter_name: str) -> Any:
     name = exporter_name.lower()
 
     if name == "console":
-        from opentelemetry.sdk.trace.export import (
-            ConsoleSpanExporter,  # pyrefly: ignore [missing-import]
+        from opentelemetry.sdk.trace.export import (  # pyrefly: ignore [missing-import]
+            ConsoleSpanExporter,
         )
 
         # Always stderr — stdout is the MCP stdio protocol channel.

@@ -20,11 +20,34 @@ CODE_TERM_BLOCKLIST
 from __future__ import annotations
 
 import re
+from typing import Literal, overload
 
 
 # ---------------------------------------------------------------------------
 # Token splitter
 # ---------------------------------------------------------------------------
+
+
+@overload
+def normalize_to_tokens(
+    text: str,
+    *,
+    split_acronyms: bool = ...,
+    split_dots: bool = ...,
+    min_len: int = ...,
+    as_set: Literal[False] = ...,
+) -> list[str]: ...
+
+
+@overload
+def normalize_to_tokens(
+    text: str,
+    *,
+    split_acronyms: bool = ...,
+    split_dots: bool = ...,
+    min_len: int = ...,
+    as_set: Literal[True],
+) -> set[str]: ...
 
 
 def normalize_to_tokens(

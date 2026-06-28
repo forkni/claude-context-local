@@ -959,7 +959,7 @@ class IncrementalIndexer:
         Returns:
             Metadata dictionary for snapshot
         """
-        metadata = {
+        metadata: dict[str, Any] = {
             "project_name": project_name,
             "incremental_update": not is_full,
             "total_files": len(all_files),
@@ -977,7 +977,6 @@ class IncrementalIndexer:
 
         # Cache repo profile for incremental indexing reuse
         if repo_profile is not None:
-            # pyrefly: ignore [bad-typed-dict-key]
             metadata["repo_profile"] = {
                 # pyrefly: ignore [missing-attribute]
                 "function_count": repo_profile.function_count,

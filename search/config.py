@@ -922,12 +922,11 @@ class SearchConfigManager:
             ),
         }
 
-        config_dict = {}
+        config_dict: dict[str, Any] = {}
         for env_var, (config_key, converter) in env_mapping.items():
             env_value = os.environ.get(env_var)
             if env_value is not None:
                 try:
-                    # pyrefly: ignore [unsupported-operation]
                     config_dict[config_key] = converter(env_value)
                     self.logger.debug(
                         f"Set {config_key} = {config_dict[config_key]} from {env_var}"

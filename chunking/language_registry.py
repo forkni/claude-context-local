@@ -10,6 +10,10 @@ import importlib
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Literal
+
+
+WarningAction = Literal["default", "error", "ignore", "always", "module", "once"]
 
 
 # Extension → tree-sitter grammar name.  Single source of truth for both
@@ -186,7 +190,7 @@ class LanguageSpec:
     grammar_module: str
     splittable_node_types: set[str] = field(default_factory=set)
     grammar_loader: Callable[[], object] | None = None
-    load_warning_filter: tuple[str, str] | None = None
+    load_warning_filter: tuple[WarningAction, str] | None = None
     install_hint: str = ""
 
     def load_grammar(self) -> object:

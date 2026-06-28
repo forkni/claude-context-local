@@ -1232,7 +1232,7 @@ class HybridSearcher(BaseSearcher):
         self._logger.debug(f"[ADD_EMBEDDINGS] Dense index path: {self.storage_dir}")
 
         # Extract data for both indices
-        documents = []
+        documents: list[str] = []
         doc_ids = []
         embeddings = []
         metadata = {}
@@ -1242,12 +1242,12 @@ class HybridSearcher(BaseSearcher):
             doc_ids.append(chunk_id)
 
             # Extract text content for BM25 (from metadata or content)
-            content = result.metadata.get("content", "")
+            content = str(result.metadata.get("content") or "")
             if not content:
                 # Fallback: try other content fields
-                content = (
-                    result.metadata.get("content_preview", "")
-                    or result.metadata.get("raw_content", "")
+                content = str(
+                    result.metadata.get("content_preview")
+                    or result.metadata.get("raw_content")
                     or ""
                 )
             documents.append(content)
