@@ -219,16 +219,12 @@ def aggregate_metrics(
         "success_count": sum(
             1
             for q in per_query
-            if q.get(
-                "hit", False
-            )  # pragma: no mutate -- default unreachable; callers always supply "hit"
+            if q.get("hit", False)  # pragma: no mutate
         ),
         "success_count@7": sum(
             1
             for q in per_query
-            if q.get(
-                "hit@7", False
-            )  # pragma: no mutate -- default unreachable; callers always supply "hit@7"
+            if q.get("hit@7", False)  # pragma: no mutate
         ),
     }
     for key in float_keys:
@@ -327,16 +323,12 @@ def intersect_ranges(
     """
     result: list[tuple[int, int]] = []
     i = j = 0
-    while i < len(a) and j < len(
-        b
-    ):  # pragma: no mutate -- < ≡ != for monotonically-incrementing index
+    while i < len(a) and j < len(b):  # pragma: no mutate
         lo = max(a[i][0], b[j][0])
         hi = min(a[i][1], b[j][1])
         if lo <= hi:
             result.append((lo, hi))
-        if (
-            a[i][1] < b[j][1]
-        ):  # pragma: no mutate -- < ≡ <= for merged inputs; equal endpoints mean both pointers advance
+        if a[i][1] < b[j][1]:  # pragma: no mutate
             i += 1
         else:
             j += 1
