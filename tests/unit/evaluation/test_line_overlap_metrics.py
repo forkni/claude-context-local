@@ -105,6 +105,18 @@ class TestIntersectRanges:
     def test_single_line_overlap(self):
         assert intersect_ranges([(1, 5)], [(5, 10)]) == [(5, 5)]
 
+    def test_two_element_b_forces_j_advance(self):
+        # single wide a, two b ranges → j advances twice while i stays at 0
+        assert intersect_ranges([(1, 20)], [(3, 5), (8, 10)]) == [(3, 5), (8, 10)]
+
+    def test_both_pointers_advance_with_overlaps(self):
+        # i and j both advance, interleaved: kills i/j-pointer-advance mutants
+        assert intersect_ranges([(1, 5), (8, 15)], [(3, 10), (12, 20)]) == [
+            (3, 5),
+            (8, 10),
+            (12, 15),
+        ]
+
 
 # ---------------------------------------------------------------------------
 # count_lines
@@ -218,6 +230,12 @@ class TestCalculateLinePrecision:
         retrieved = {"file.py": [(1, 10)]}
         assert calculate_line_precision(retrieved, golden) == pytest.approx(6 / 10)
 
+    def test_denominator_inclusive_length_start_gt_1(self):
+        # (3,5) = 3 lines inclusive; Add→Mod mutant `end-start%1` yields 5 → precision 3/5
+        golden = {"file.py": [(3, 5)]}
+        retrieved = {"file.py": [(3, 5)]}
+        assert calculate_line_precision(retrieved, golden) == 1.0
+
 
 # ---------------------------------------------------------------------------
 # calculate_line_iou
@@ -326,6 +344,16 @@ class TestBuildChunkLineLookup:
     def test_empty_store(self):
         lookup = build_chunk_line_lookup(self._make_store({}))
         assert lookup == {}
+
+    def test_truthy_path_start_but_falsy_end_excluded(self):
+        # path & start truthy, end=0 falsy: original (and) excludes;
+        # and→or mutant on second `and` would include → this kills it
+        store_data = {
+            "a.py:10-0:function:foo": {
+                "metadata": {"relative_path": "a.py", "start_line": 10, "end_line": 0}
+            }
+        }
+        assert build_chunk_line_lookup(self._make_store(store_data)) == {}
 
 
 # ---------------------------------------------------------------------------
