@@ -31,7 +31,7 @@ dependencies = [
     "aiohttp>=3.14.1",  # Security: Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1)
     "cryptography>=46.0.7",  # Security: PYSEC-2026-35/36 (DNS name-constraint bypass, buffer overflow). Defer GHSA-537c (OpenSSL wheel, needs 48.x major bump).
     "einops>=0.8.0",  # Required for CodeRankEmbed model
-    "faiss-cpu>=1.13.2",
+    "faiss-cpu>=1.14.3",
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
     "huggingface-hub>=0.36.0",
     "idna>=3.15",  # Security: CVE-2026-45409
@@ -48,15 +48,15 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "requests>=2.33.0",  # Security: CVE-2026-25645 (predictable temp filename in extract_zipped_paths)
     "rich>=14.3.3",
-    "sentence-transformers>=5.2.2",
+    "sentence-transformers>=5.6.0",
     "sqlitedict>=2.1.0",
     "starlette>=1.3.1",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
     "tiktoken>=0.12.0",
     "torch>=2.8.0,<2.9.0",  # 2.9.x breaks ModernBERT torch.compile (template conflict)
     "transformers>=4.51.0,<4.58.0",  # >=4.51 for Qwen3; <4.58 required by optimum-onnx ONNX compatibility
     "tree-sitter>=0.25.0",
-    "tree-sitter-c>=0.24.1",
-    "tree-sitter-c-sharp>=0.23.1",
+    "tree-sitter-c>=0.24.2",
+    "tree-sitter-c-sharp>=0.23.5",
     "tree-sitter-cpp>=0.23.4",
     "tree-sitter-glsl>=0.2.0",
     "tree-sitter-go>=0.25.0",
@@ -95,7 +95,7 @@ lsp = [
 ]
 test = [
     "pytest>=9.0.3",
-    "pytest-asyncio>=1.3.0",
+    "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "pytest-mock>=3.15.1",
     "pytest-repeat>=0.9.4",
@@ -104,12 +104,12 @@ test = [
     "syrupy>=4.0.0",             # Phase 4: snapshot/golden-file regression testing
 ]
 dev = [
-    "ruff>=0.15.10",
-    "pip-audit>=2.10.0",
+    "ruff>=0.15.20",
+    "pip-audit>=2.10.1",
     "pip-licenses>=5.5.5",
     "pipdeptree>=2.34.0",
-    "pre-commit>=4.5.1",
-    "pyrefly>=1.0",
+    "pre-commit>=4.6.0",
+    "pyrefly>=1.1.1",
     "mutmut>=2.5.1",  # Phase 4.2: mutation testing; run periodically, not per-commit (Linux CI only)
     "cosmic-ray>=8.4",  # Phase 4.2: mutation testing; local cross-platform runner
 ]
