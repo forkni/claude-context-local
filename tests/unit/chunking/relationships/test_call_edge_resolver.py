@@ -139,6 +139,23 @@ class TestGatherPyFiles:
         files = gather_py_files(tmp_path)
         assert files == sorted(files)
 
+    def test_excludes_deep_nested_excluded_dir(self, tmp_path: Path) -> None:
+        """parts[:-1] must exclude ALL intermediate path segments, not just the first.
+
+        This test kills USub (→UAdd / Delete) mutations on the slice index.
+        With parts[:1] only the top-level dir is checked; a file nested under
+        src/pkg/tests/ would be incorrectly included despite 'tests' being
+        in excluded_segments.
+        """
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "pkg").mkdir()
+        (tmp_path / "src" / "pkg" / "tests").mkdir()
+        (tmp_path / "src" / "pkg" / "tests" / "mod.py").write_text("")
+        (tmp_path / "src" / "real.py").write_text("")
+        names = {Path(f).name for f in gather_py_files(tmp_path)}
+        assert "real.py" in names
+        assert "mod.py" not in names  # 'tests' is an excluded_segment
+
 
 # ---------------------------------------------------------------------------
 # scope_to_indexed_files
@@ -307,15 +324,51 @@ class TestRunResolvers:
         assert len(result) == 2
 
     def test_equal_confidence_incumbent_kept(self) -> None:
-        """When two resolvers report the same confidence, keep the first."""
+        """When two resolvers report the same confidence, keep the first (strict >)."""
         e1 = ResolvedEdge("a", "b", 1, False, "res1", 0.75)
         e2 = ResolvedEdge("a", "b", 2, False, "res2", 0.75)
         r1 = _make_resolver("res1", 0.75, [e1])
         r2 = _make_resolver("res2", 0.75, [e2])
         result = run_resolvers([r1, r2], self._root, self._rlm, self._logger)
-        # Both have the same base_confidence so the lower sort key runs first;
-        # the second cannot overwrite (confidence not *strictly* greater).
-        assert result[("a", "b")].line in (1, 2)  # deterministic for same confidence
+        # Python sort is stable: equal base_confidence preserves insertion order.
+        # res1 runs first; res2's edge has confidence=0.75, NOT strictly > 0.75
+        # → res1 is kept.  ">=" would incorrectly overwrite; this pin catches that.
+        assert result[("a", "b")].source == "res1"
+
+    def test_higher_base_lower_edge_confidence_not_overwritten(self) -> None:
+        """An edge must NOT overwrite an existing one with HIGHER confidence,
+        even when the new edge's resolver has a higher base_confidence.
+
+        Scenario: pyan (base=0.75) produces a high-confidence edge (0.85).
+        libcst (base=0.90) produces a low-confidence edge (0.70) for the same
+        pair.  Since 0.70 < 0.85, pyan's edge must survive.
+
+        This test kills the Gt→NotEq mutation on the edge.confidence comparison
+        (line 324 in run_resolvers): != would incorrectly overwrite.
+        """
+        e_pyan = ResolvedEdge("a", "b", 1, False, "pyan", 0.85)  # high confidence
+        e_libcst = ResolvedEdge("a", "b", 2, False, "libcst", 0.70)  # lower confidence
+        r_pyan = _make_resolver("pyan", 0.75, [e_pyan])
+        r_libcst = _make_resolver("libcst", 0.90, [e_libcst])
+        # Ascending sort: pyan (0.75) runs first, libcst (0.90) runs second.
+        result = run_resolvers([r_pyan, r_libcst], self._root, self._rlm, self._logger)
+        assert result[("a", "b")].confidence == 0.85
+        assert result[("a", "b")].source == "pyan"
+
+    def test_unavailable_resolver_allows_subsequent_resolvers(self) -> None:
+        """An unavailable resolver must not prevent subsequent resolvers from running.
+
+        This test kills the continue→break mutation in run_resolvers (line 305):
+        break would exit the loop, silently skipping the libcst resolver.
+        """
+        e = ResolvedEdge("a", "b", 0, False, "libcst", 0.90)
+        r_unavail = _make_resolver("pyan", 0.75, [], available=False)
+        r_avail = _make_resolver("libcst", 0.90, [e])
+        result = run_resolvers(
+            [r_unavail, r_avail], self._root, self._rlm, self._logger
+        )
+        assert ("a", "b") in result
+        assert result[("a", "b")].source == "libcst"
 
 
 # ---------------------------------------------------------------------------

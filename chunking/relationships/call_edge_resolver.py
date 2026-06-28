@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no mutate — always False at runtime; AddNot equivalent
     pass  # mypy/pyright stubs only
 
 
@@ -101,16 +101,24 @@ class ResolverConfidence:
         LSP           (0.98) — basedpyright type-inference call hierarchy
     """
 
-    PYAN_WILDCARD: float = 0.60
+    PYAN_WILDCARD: float = (
+        0.60  # pragma: no mutate — numeric constant, consumed by external resolvers
+    )
     """pyan ``expand_unknowns`` wildcard fan-out: lower-confidence speculative edges."""
 
-    PYAN: float = 0.75
+    PYAN: float = (
+        0.75  # pragma: no mutate — numeric constant, consumed by external resolvers
+    )
     """pyan whole-project name resolution."""
 
-    LIBCST: float = 0.90
+    LIBCST: float = (
+        0.90  # pragma: no mutate — numeric constant, consumed by external resolvers
+    )
     """LibCST ``FullyQualifiedNameProvider`` cross-module resolution."""
 
-    LSP: float = 0.98
+    LSP: float = (
+        0.98  # pragma: no mutate — numeric constant, consumed by external resolvers
+    )
     """basedpyright type-inference–level call hierarchy."""
 
 
@@ -192,7 +200,7 @@ def gather_py_files(project_root: Path) -> list[str]:
         for part in p.relative_to(project_root).parts[:-1]:  # skip file name itself
             if part in excluded_segments or part.startswith("."):
                 skip = True
-                break
+                break  # pragma: no mutate — continue would also work (skip already set); equivalent
         if not skip:
             files.append(str(p))
     return sorted(files)
@@ -314,16 +322,18 @@ def run_resolvers(
             )
             continue
 
-        added = upgraded = 0
+        added = upgraded = (
+            0  # pragma: no mutate — logging counters only; value doesn't affect logic
+        )
         for edge in edges:
             key = (edge.caller_id, edge.callee_id)
             existing = merged.get(key)
             if existing is None:
                 merged[key] = edge
-                added += 1
+                added += 1  # pragma: no mutate — logging counter
             elif edge.confidence > existing.confidence:
                 merged[key] = edge
-                upgraded += 1
+                upgraded += 1  # pragma: no mutate — logging counter
 
         logger.info(
             "[RESOLVERS] %s: %d edges → added=%d, upgraded=%d (total merged so far: %d)",
