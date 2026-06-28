@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 import networkx as nx
 import pytest
 
+from graph.schema import REVERSE_RELATIONS as _REVERSE_RELATION_MAP
 from mcp_server.tools.search_handlers import (
-    _REVERSE_RELATION_MAP,
     _get_graph_data_for_chunk,
     _get_reverse_relation_name,
 )
