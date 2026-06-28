@@ -57,6 +57,15 @@ class TestMergeRanges:
     def test_identical_ranges(self):
         assert merge_ranges([(5, 10), (5, 10)]) == [(5, 10)]
 
+    def test_third_range_overlaps_second_not_first(self):
+        """Kills merged[-1→0] mutation: 3rd range overlaps 2nd group, not 1st.
+
+        With mutation merged[0]=... instead of merged[-1]=..., the 3rd range
+        incorrectly updates the first group instead of the last.
+        """
+        # (1,3) and (5,7) don't overlap → two groups. (6,9) overlaps (5,7) → extends it.
+        assert merge_ranges([(1, 3), (5, 7), (6, 9)]) == [(1, 3), (5, 9)]
+
 
 # ---------------------------------------------------------------------------
 # intersect_ranges

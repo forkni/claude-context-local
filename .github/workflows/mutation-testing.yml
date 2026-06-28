@@ -1,0 +1,92 @@
+name: Mutation Testing (Periodic)
+
+# Manually triggered — not part of the per-commit CI gate.
+# Run periodically (e.g. before releases, after major test refactors) to check
+# that the deterministic-core test suites still kill mutants.
+#
+# Targets (Phase 4.2 Tier 1+2 — zero-mock deterministic cores):
+#   evaluation/metrics.py        recall/MRR/NDCG/line-overlap scoring
+#   search/reranker.py           RRF ranking math
+#   chunking/relationships/call_edge_resolver.py   confidence-ladder merge
+#
+# Windows note: mutmut refuses to run on native Windows (needs WSL).
+# This job runs on ubuntu-latest where mutmut works natively.
+# For local Windows runs use cosmic-ray (cr-*.toml configs, gitignored).
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Module to mutate (or "all")'
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - evaluation/metrics.py
+          - search/reranker.py
+          - chunking/relationships/call_edge_resolver.py
+
+jobs:
+  mutation-test:
+    name: Mutation Testing — ${{ github.event.inputs.target || 'all' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          python-version: '3.11'
+          enable-cache: true
+
+      - name: Install dev + test dependencies
+        run: uv sync --locked --extra dev --extra test --extra callgraph
+
+      - name: Baseline — verify tests pass before mutating
+        run: |
+          uv run pytest \
+            tests/unit/evaluation/test_benchmark_metrics.py \
+            tests/unit/evaluation/test_line_overlap_metrics.py \
+            tests/unit/evaluation/test_metrics_snapshot.py \
+            tests/unit/search/test_reranker.py \
+            tests/unit/chunking/relationships/ \
+            -q --no-header --tb=short
+
+      - name: Run mutmut — evaluation/metrics.py
+        if: github.event.inputs.target == 'all' || github.event.inputs.target == 'evaluation/metrics.py'
+        run: |
+          uv run mutmut run \
+            --paths-to-mutate evaluation/metrics.py \
+            --test-time-multiplier 3
+          echo "=== metrics.py mutation results ==="
+          uv run mutmut results || true
+
+      - name: Run mutmut — search/reranker.py
+        if: github.event.inputs.target == 'all' || github.event.inputs.target == 'search/reranker.py'
+        run: |
+          uv run mutmut run \
+            --paths-to-mutate search/reranker.py \
+            --test-time-multiplier 3
+          echo "=== reranker.py mutation results ==="
+          uv run mutmut results || true
+
+      - name: Run mutmut — call_edge_resolver.py
+        if: github.event.inputs.target == 'all' || github.event.inputs.target == 'chunking/relationships/call_edge_resolver.py'
+        run: |
+          uv run mutmut run \
+            --paths-to-mutate chunking/relationships/call_edge_resolver.py \
+            --test-time-multiplier 3
+          echo "=== call_edge_resolver.py mutation results ==="
+          uv run mutmut results || true
+
+      - name: Upload mutmut cache (surviving mutants)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutmut-cache-${{ github.run_id }}
+          path: .mutmut-cache
+          retention-days: 14
+          if-no-files-found: ignore

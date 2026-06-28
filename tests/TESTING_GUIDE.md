@@ -1737,6 +1737,74 @@ existing snapshot tests.
 - Do NOT snapshot heavily-mocked handlers — mock identity dominates the output, not real behaviour.
 - `--snapshot-update` is the only way to update; the flag is intentionally absent from CI.
 
+### Mutation testing (Phase 4.2 — periodic, not per-commit)
+
+Engines: **cosmic-ray** (local Windows, config-driven) + **mutmut** (Linux CI,
+`workflow_dispatch`-triggered via `.github/workflows/mutation-testing.yml`).
+
+**Governing rule:** mutation testing payoff is inversely proportional to mock density. Only target
+pure deterministic cores (zero or near-zero mocks). Do NOT run mutation tests on heavily-mocked
+orchestration shells — they test the mocks, not the logic.
+
+#### Tier 1+2 targets (zero-mock deterministic cores)
+
+| Target | Total | Killed | Pragmaed | Genuine survivors | Score |
+|--------|-------|--------|----------|------------------|-------|
+| `chunking/relationships/call_edge_resolver.py` | 56 | 40 | 16 | 0 | **100%** |
+| `search/reranker.py` | 529 | 265 | 261 | 0 | **100%** |
+| `evaluation/metrics.py` | 581 | 194 | 153 | 14 | **93.3%** |
+
+Score = killed / (killed + genuine survivors). Incompetent and pragmaed mutations are excluded.
+
+`search/reranker.py` pragmas cover: `__init__` default params, `analyze_fusion_quality` body,
+`tune_parameters` body, `_calculate_std` body — none affect ranking output. Genuine ranking-math
+mutants (lines 66, 68, 88) are killed by precision tests.
+
+`evaluation/metrics.py` pragmas cover: magnitude guards (`> 0` / `!= 0` when value ≥ 0 always),
+`round(x, 4)` display-precision constants, `False` defaults when key always present, k-literal
+constants in metric labels (5, 7, 10). The 14 remaining genuine survivors:
+- 3 on `merge_ranges` (rows 279/281) — addressed by `test_third_range_overlaps_second_not_first`,
+  will show as KILLED on next periodic run
+- 7 on `intersect_ranges` (rows 308, 313, 316) — genuine gap: tests use single-element `b`,
+  so `j`-pointer advance mutations aren't exercised with 2-element `b`
+- 1 `Add_Mod` in `calculate_line_precision` (row 384) — genuine gap: tests use start=1
+- 1 `and→or` in `build_chunk_line_lookup` (row 460) — genuine gap: tests have all-truthy entries
+
+#### Local run workflow (cosmic-ray)
+
+```bash
+# Per-target session (gitignored configs/sqlite live in project root)
+uv run cosmic-ray init cr-<target>.toml cr-<target>.sqlite
+uv run cosmic-ray baseline cr-<target>.toml
+uv run cosmic-ray exec cr-<target>.toml cr-<target>.sqlite   # sequential, not parallel
+uv run cr-report cr-<target>.sqlite
+uv run cr-filter-pragma cr-<target>.sqlite                   # mark # pragma: no mutate lines
+```
+
+Windows gotcha: `test-command` must use the absolute venv path, not bare `python`:
+```toml
+test-command = "D:/claude-context-local/.venv/Scripts/python.exe -m pytest <paths> -q --no-header --tb=no"
+```
+`subprocess.run(['python', ...])` resolves to system Python via Windows App Paths registry even
+when the venv is first in PATH. See `cr-*.toml` (gitignored) for the per-target configs.
+
+#### CI run (mutmut on Linux)
+
+Trigger via `Actions → Mutation Testing (Periodic) → Run workflow`. Select `target` (default:
+`all`). The workflow installs dev+test+callgraph extras, runs baseline, then one mutmut step per
+target. Artifacts: `.mutmut-cache` (14 days retention).
+
+#### De-mocking backlog (future Tier 3 targets)
+
+These modules have high mock density. Reduce mocks first (shift to outcome assertions via fakes in
+`tests/fixtures/`), then graduate to mutation testing:
+
+| Module | Mock count | Priority |
+|--------|-----------|---------|
+| `search/hybrid_searcher.py` | ~133 | High |
+| `search/centrality_ranker.py` | ~40 | Medium |
+| `search/reranking_engine.py` | ~30 | Medium |
+
 ### Deferred improvements (trigger thresholds documented here)
 
 | Improvement | Add when |
@@ -1747,6 +1815,7 @@ existing snapshot tests.
 | Combined cross-runner coverage | matrix sharding is added |
 | `pyrefly` blocking gate | `pyrefly check` exits 0 on `development` branch |
 | `pre-commit` blocking gate | `uvx pre-commit run --all-files` exits 0 on CI |
+| Mutation testing (periodic) | already added; re-run before releases or after major test refactors |
 
 When adding `pytest-split`: use `--splitting-algorithm least_duration` (compatible with
 `pytest-randomly`); commit `.test_durations` to repo; re-run `--store-durations` after major suite

@@ -189,6 +189,69 @@ class TestRRFReranker:
 
         assert abs(actual_rrf - expected_rrf) < 1e-6
 
+    def test_rrf_exact_score_rank2(self):
+        """Verify exact RRF score at rank=2.
+
+        Kills the Mul→Mod mutation on line 88 (`weight * (1/(k+rank))`):
+        `1.0 % (1/102) = 0.0` whereas `1.0 * (1/102) = 1/102`. The test at
+        rank=1 doesn't catch this because `weight % (1/(k+1))` coincidentally
+        equals `weight * (1/(k+1))` when `weight * (k+1)` is a half-integer.
+        """
+        list1 = [
+            SearchResult("doc1", 1.0, {}, "list1", 1),  # rank=1
+            SearchResult("doc2", 0.8, {}, "list1", 2),  # rank=2
+        ]
+        results = self.reranker.rerank([list1], weights=[1.0], max_results=2)
+        doc2 = next(r for r in results if r.chunk_id == "doc2")
+        # 1.0 * (1.0 / (100 + 2)) = 1/102
+        expected = 1.0 / (100 + 2)
+        assert abs(doc2.metadata["rrf_score"] - expected) < 1e-9
+
+    def test_rrf_exact_score_rank4(self):
+        """Kills Add→BitOr mutation on line 88 (self.k + rank): 100|4=100≠104."""
+        list1 = [
+            SearchResult("doc1", 1.0, {}, "list1", 1),
+            SearchResult("doc2", 0.9, {}, "list1", 2),
+            SearchResult("doc3", 0.8, {}, "list1", 3),
+            SearchResult("doc4", 0.7, {}, "list1", 4),
+        ]
+        results = self.reranker.rerank([list1], weights=[1.0], max_results=4)
+        doc4 = next(r for r in results if r.chunk_id == "doc4")
+        # 1.0 * (1.0 / (100 + 4)) = 1/104
+        # Add→BitOr gives: 100 | 4 = 100 (bit 2 already set), so 1/100 ≠ 1/104
+        expected = 1.0 / (100 + 4)
+        assert abs(doc4.metadata["rrf_score"] - expected) < 1e-9
+
+    def test_rrf_exact_score_unnormalized_weights(self):
+        """Verify exact RRF score when weights are NOT pre-normalized.
+
+        Kills Div→Mul and Div→Pow mutations on line 66 (weight normalization):
+        with unnormalized input [2.0], `w / total` = 1.0 but `w * total` = 4.0,
+        producing a score 4× larger than correct.
+        """
+        list1 = [SearchResult("doc1", 1.0, {}, "list1", 1)]
+        # un-normalized single weight; after normalization it should become 1.0
+        results = self.reranker.rerank([list1], weights=[2.0], max_results=1)
+        # normalized weight = 2.0 / 2.0 = 1.0; RRF = 1.0 * (1/(100+1)) = 1/101
+        expected = 1.0 / (100 + 1)
+        assert abs(results[0].metadata["rrf_score"] - expected) < 1e-9
+
+    def test_zero_weights_exact_fallback_scores(self):
+        """Verify exact RRF score when all weights are zero (equal-weight fallback).
+
+        Kills Div→Mod mutation on line 68: `1.0 % len(lists)` ≠ `1.0 / len(lists)`
+        for len=2 (`1.0 % 2 = 1.0` vs `1.0 / 2 = 0.5`).
+        """
+        list1 = [SearchResult("doc1", 1.0, {}, "list1", 1)]
+        list2 = [SearchResult("doc2", 0.8, {}, "list2", 1)]
+        results = self.reranker.rerank(
+            [list1, list2], weights=[0.0, 0.0], max_results=2
+        )
+        # fallback: equal weight = 1.0 / 2 = 0.5 per list; RRF = 0.5 * (1/(100+1))
+        expected = 0.5 / (100 + 1)
+        for r in results:
+            assert abs(r.metadata["rrf_score"] - expected) < 1e-9
+
     def test_analyze_fusion_quality(self):
         """Test fusion quality analysis."""
         results = self.reranker.rerank(
