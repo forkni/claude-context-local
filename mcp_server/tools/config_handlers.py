@@ -14,6 +14,7 @@ from mcp_server.storage_manager import (
     get_project_storage_dir,
     set_current_project,
 )
+from mcp_server.tools import responses
 from mcp_server.tools.decorators import error_handler
 from search.config import (
     MODEL_REGISTRY,
@@ -31,7 +32,7 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
 
     project_path = Path(project_path).resolve()
     if not project_path.exists():
-        return {"error": f"Project path does not exist: {project_path}"}
+        return responses.error(f"Project path does not exist: {project_path}")
 
     # Cleanup previous resources
     _cleanup_previous_resources()
@@ -47,19 +48,19 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
     index_dir = project_dir / "index"
 
     if not index_dir.exists() or not (index_dir / "code.index").exists():
-        return {
-            "success": True,
-            "project": str(project_path),
-            "warning": "Project not indexed yet. Run index_directory first.",
-            "indexed": False,
-        }
+        return responses.ok(
+            success=True,
+            project=str(project_path),
+            warning="Project not indexed yet. Run index_directory first.",
+            indexed=False,
+        )
 
-    return {
-        "success": True,
-        "project": str(project_path),
-        "indexed": True,
-        "message": f"Switched to project: {project_path.name}",
-    }
+    return responses.ok(
+        success=True,
+        project=str(project_path),
+        indexed=True,
+        message=f"Switched to project: {project_path.name}",
+    )
 
 
 @error_handler("Configure search mode")
@@ -87,17 +88,17 @@ async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
         state = get_state()
         state.reset_searcher()
 
-        return {
-            "success": True,
-            "config": {
+        return responses.ok(
+            success=True,
+            config={
                 "search_mode": search_mode,
                 "bm25_weight": bm25_weight,
                 "dense_weight": dense_weight,
                 "enable_parallel": enable_parallel,
             },
-        }
+        )
     else:
-        return {"error": f"Invalid search_mode: {search_mode}"}
+        return responses.error(f"Invalid search_mode: {search_mode}")
 
 
 @error_handler(
@@ -109,10 +110,10 @@ async def handle_switch_embedding_model(arguments: dict[str, Any]) -> dict:
     model_name = arguments["model_name"]
 
     if model_name not in MODEL_REGISTRY:
-        return {
-            "error": f"Unknown model: {model_name}",
-            "available_models": list(MODEL_REGISTRY.keys()),
-        }
+        return responses.error(
+            f"Unknown model: {model_name}",
+            available_models=list(MODEL_REGISTRY.keys()),
+        )
 
     config_manager = get_config_manager()
     config = config_manager.load_config()
@@ -125,13 +126,13 @@ async def handle_switch_embedding_model(arguments: dict[str, Any]) -> dict:
     state = get_state()
     state.reset_for_model_switch()
 
-    return {
-        "success": True,
-        "old_model": old_model,
-        "new_model": model_name,
-        "message": f"Switched to {model_name}. Indexes will use this model.",
-        "note": "Existing indices for other models are preserved (per-model storage)",
-    }
+    return responses.ok(
+        success=True,
+        old_model=old_model,
+        new_model=model_name,
+        message=f"Switched to {model_name}. Indexes will use this model.",
+        note="Existing indices for other models are preserved (per-model storage)",
+    )
 
 
 @error_handler("Configure reranking")
@@ -163,17 +164,17 @@ async def handle_configure_reranking(arguments: dict[str, Any]) -> dict:
 
     config_manager.save_config(config)
 
-    return {
-        "success": True,
-        "config": {
+    return responses.ok(
+        success=True,
+        config={
             "enabled": config.reranker.enabled,
             "model_name": config.reranker.model_name,
             "top_k_candidates": config.reranker.top_k_candidates,
             "min_vram_gb": config.reranker.min_vram_gb,
             "batch_size": config.reranker.batch_size,
         },
-        "system_message": "Reranker configuration updated. Changes take effect on next search.",
-    }
+        system_message="Reranker configuration updated. Changes take effect on next search.",
+    )
 
 
 @error_handler("Configure chunking")
@@ -231,21 +232,21 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
         if 0.1 <= community_resolution <= 2.0:
             config.chunking.community_resolution = community_resolution
         else:
-            return {
-                "error": f"Invalid community_resolution: {community_resolution}. Must be between 0.1 and 2.0"
-            }
+            return responses.error(
+                f"Invalid community_resolution: {community_resolution}. Must be between 0.1 and 2.0"
+            )
     if max_phantom_degree is not None:
         if 1 <= max_phantom_degree <= 1000:
             config.chunking.max_phantom_degree = max_phantom_degree
         else:
-            return {
-                "error": f"Invalid max_phantom_degree: {max_phantom_degree}. Must be between 1 and 1000"
-            }
+            return responses.error(
+                f"Invalid max_phantom_degree: {max_phantom_degree}. Must be between 1 and 1000"
+            )
     if token_estimation is not None:
         if token_estimation in ["whitespace", "tiktoken"]:
             config.chunking.token_estimation = token_estimation
         else:
-            return {"error": f"Invalid token_estimation: {token_estimation}"}
+            return responses.error(f"Invalid token_estimation: {token_estimation}")
     if enable_large_node_splitting is not None:
         config.chunking.enable_large_node_splitting = enable_large_node_splitting
     if max_chunk_lines is not None:
@@ -254,16 +255,16 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
         if split_size_method in ["lines", "characters"]:
             config.chunking.split_size_method = split_size_method
         else:
-            return {
-                "error": f"Invalid split_size_method: {split_size_method}. Must be 'lines' or 'characters'"
-            }
+            return responses.error(
+                f"Invalid split_size_method: {split_size_method}. Must be 'lines' or 'characters'"
+            )
     if max_split_chars is not None:
         if 1000 <= max_split_chars <= 10000:
             config.chunking.max_split_chars = max_split_chars
         else:
-            return {
-                "error": f"Invalid max_split_chars: {max_split_chars}. Must be between 1000 and 10000"
-            }
+            return responses.error(
+                f"Invalid max_split_chars: {max_split_chars}. Must be between 1000 and 10000"
+            )
     if enable_file_summaries is not None:
         config.chunking.enable_file_summaries = enable_file_summaries
     if enable_community_summaries is not None:
@@ -272,36 +273,36 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
         if sizing_mode in ["fixed", "adaptive"]:
             config.chunking.sizing_mode = sizing_mode
         else:
-            return {
-                "error": f"Invalid sizing_mode: {sizing_mode}. Must be 'fixed' or 'adaptive'"
-            }
+            return responses.error(
+                f"Invalid sizing_mode: {sizing_mode}. Must be 'fixed' or 'adaptive'"
+            )
     if adaptive_multiplier_max is not None:
         if 1.0 <= adaptive_multiplier_max <= 2.0:
             config.chunking.adaptive_multiplier_max = adaptive_multiplier_max
         else:
-            return {
-                "error": f"Invalid adaptive_multiplier_max: {adaptive_multiplier_max}. Must be between 1.0 and 2.0"
-            }
+            return responses.error(
+                f"Invalid adaptive_multiplier_max: {adaptive_multiplier_max}. Must be between 1.0 and 2.0"
+            )
     if adaptive_multiplier_min is not None:
         if 0.1 <= adaptive_multiplier_min <= 1.0:
             config.chunking.adaptive_multiplier_min = adaptive_multiplier_min
         else:
-            return {
-                "error": f"Invalid adaptive_multiplier_min: {adaptive_multiplier_min}. Must be between 0.1 and 1.0"
-            }
+            return responses.error(
+                f"Invalid adaptive_multiplier_min: {adaptive_multiplier_min}. Must be between 0.1 and 1.0"
+            )
     if max_complexity_cap is not None:
         if 5 <= max_complexity_cap <= 100:
             config.chunking.max_complexity_cap = max_complexity_cap
         else:
-            return {
-                "error": f"Invalid max_complexity_cap: {max_complexity_cap}. Must be between 5 and 100"
-            }
+            return responses.error(
+                f"Invalid max_complexity_cap: {max_complexity_cap}. Must be between 5 and 100"
+            )
 
     config_manager.save_config(config)
 
-    return {
-        "success": True,
-        "config": {
+    return responses.ok(
+        success=True,
+        config={
             "enable_community_detection": config.chunking.enable_community_detection,
             "enable_community_merge": config.chunking.enable_community_merge,
             "community_resolution": config.chunking.community_resolution,
@@ -318,5 +319,5 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
             "adaptive_multiplier_min": config.chunking.adaptive_multiplier_min,
             "max_complexity_cap": config.chunking.max_complexity_cap,
         },
-        "system_message": "Chunking configuration updated. Re-index project to apply changes.",
-    }
+        system_message="Chunking configuration updated. Re-index project to apply changes.",
+    )

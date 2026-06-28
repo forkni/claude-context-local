@@ -24,6 +24,7 @@ from mcp_server.storage_manager import (
     set_current_project,
     update_project_filters,
 )
+from mcp_server.tools import responses
 from mcp_server.tools.decorators import error_handler
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import (
@@ -189,19 +190,17 @@ def _build_index_response(
         dict: Complete response with success status and statistics
     """
     r = results[0]
-    response = {
-        "success": True,
-        "project": str(directory_path),
-        "files_added": r["files_added"],
-        "chunks_added": r["chunks_added"],
-        "time_taken": r["time_taken"],
-        "mode": "incremental" if incremental else "full",
-    }
-    # Only include modified/removed counts when non-zero (token optimization)
-    if r["files_modified"] > 0:
-        response["files_modified"] = r["files_modified"]
-    if r["files_removed"] > 0:
-        response["files_removed"] = r["files_removed"]
+    response = responses.ok(
+        success=True,
+        project=str(directory_path),
+        files_added=r["files_added"],
+        chunks_added=r["chunks_added"],
+        time_taken=r["time_taken"],
+        mode="incremental" if incremental else "full",
+        # Only include modified/removed counts when non-zero (token optimization)
+        files_modified=r["files_modified"] if r["files_modified"] > 0 else None,
+        files_removed=r["files_removed"] if r["files_removed"] > 0 else None,
+    )
     return response
 
 
@@ -366,7 +365,7 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     state = get_state()
     current_project = state.current_project
     if current_project is None:
-        return {"error": "No active project to clear"}
+        return responses.error("No active project to clear")
 
     # Close all open DB/index handles BEFORE deleting files. Without this,
     # SQLite and FAISS file handles are still open when unlink() runs, which
@@ -424,14 +423,12 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
 
     logger.info(f"Cleared indices for {len(cleared_dirs)} models: {cleared_dirs}")
 
-    result = {
-        "success": True,
-        "cleared_models": cleared_dirs,
-    }
-    # Only include snapshot count when non-zero (token optimization)
-    if snapshots_cleared > 0:
-        # pyrefly: ignore [bad-typed-dict-key]
-        result["snapshots_cleared"] = snapshots_cleared
+    result = responses.ok(
+        success=True,
+        cleared_models=cleared_dirs,
+        # Only include snapshot count when non-zero (token optimization)
+        snapshots_cleared=snapshots_cleared if snapshots_cleared > 0 else None,
+    )
     return result
 
 
@@ -466,23 +463,23 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
     force = arguments.get("force", False)
 
     if not project_path:
-        return {"error": "project_path is required"}
+        return responses.error("project_path is required")
 
     # 1. Validate project exists
     project_path_resolved = Path(project_path).resolve()
     if not project_path_resolved.exists():
-        return {"error": f"Project path does not exist: {project_path}"}
+        return responses.error(f"Project path does not exist: {project_path}")
 
     # 2. Check if this is the current project
     state = get_state()
     is_current = state.current_project == str(project_path_resolved)
 
     if is_current and not force:
-        return {
-            "error": "Cannot delete current project without force=True",
-            "hint": "Set force=True or switch to another project first",
-            "is_current_project": True,
-        }
+        return responses.error(
+            "Cannot delete current project without force=True",
+            hint="Set force=True or switch to another project first",
+            is_current_project=True,
+        )
 
     # 3. Close all resources for this project
     logger.info(f"Closing resources for project: {project_path}")
@@ -537,14 +534,12 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
 
     # 7. Build response
     success = len(errors) == 0
-    result = {
-        "success": success,
-        "deleted_directories": deleted_dirs,
-    }
-    # Only include snapshot count when non-zero (token optimization)
-    if deleted_snapshots > 0:
-        # pyrefly: ignore [bad-typed-dict-key]
-        result["deleted_snapshots"] = deleted_snapshots
+    result = responses.ok(
+        success=success,
+        deleted_directories=deleted_dirs,
+        # Only include snapshot count when non-zero (token optimization)
+        deleted_snapshots=deleted_snapshots if deleted_snapshots > 0 else None,
+    )
 
     if errors:
         result["errors"] = errors
@@ -586,7 +581,7 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
 
     directory_path = Path(directory_path).resolve()
     if not directory_path.exists():
-        return {"error": f"Directory does not exist: {directory_path}"}
+        return responses.error(f"Directory does not exist: {directory_path}")
 
     # Step 2: Optional pre-index accessibility check (sample files for locks)
     try:

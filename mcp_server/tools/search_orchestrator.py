@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from mcp_server.server import get_searcher
 from mcp_server.services import get_config, get_state
+from mcp_server.tools import responses
 from search.config import (
     EgoGraphConfig,
     ParentRetrievalConfig,
@@ -319,16 +320,7 @@ class SearchOrchestrator:
                 if reindexed:
                     get_state().reset_searcher()
             except DimensionMismatchError as e:
-                return {
-                    "error": "Dimension mismatch",
-                    "message": str(e),
-                    "recovery_suggestion": (
-                        f"Run index_directory with force_reindex=True to rebuild "
-                        f"the index for model {e.embedder_model}"
-                    ),
-                    "embedder_dimension": e.embedder_dim,
-                    "index_dimension": e.index_dim,
-                }
+                return responses.dimension_mismatch(e)
 
         # ===== Block B: Searcher acquisition + readiness check =====
         try:
@@ -336,16 +328,7 @@ class SearchOrchestrator:
             # to avoid blocking the event loop during model/index init.
             searcher = await asyncio.to_thread(get_searcher)
         except DimensionMismatchError as e:
-            return {
-                "error": "Dimension mismatch",
-                "message": str(e),
-                "recovery_suggestion": (
-                    f"Run index_directory with force_reindex=True to rebuild "
-                    f"the index for model {e.embedder_model}"
-                ),
-                "embedder_dimension": e.embedder_dim,
-                "index_dimension": e.index_dim,
-            }
+            return responses.dimension_mismatch(e)
 
         total_chunks = 0
         is_ready = False
@@ -368,11 +351,11 @@ class SearchOrchestrator:
             is_ready = total_chunks > 0
 
         if not is_ready or total_chunks == 0:
-            return {
-                "error": "No indexed project found",
-                "message": "You must index a project before searching",
-                "current_project": current_project or "None",
-            }
+            return responses.error(
+                "No indexed project found",
+                message="You must index a project before searching",
+                current_project=current_project or "None",
+            )
 
         # ===== Block C: Filter build + config assembly =====
         filters: dict = {}
@@ -629,15 +612,15 @@ class SearchOrchestrator:
         chunk_id = arguments.get("chunk_id")
 
         if not query and not chunk_id:
-            return {
-                "error": "Missing required parameter",
-                "message": "Provide either query or chunk_id parameter",
-            }
+            return responses.error(
+                "Missing required parameter",
+                message="Provide either query or chunk_id parameter",
+            )
         if query and chunk_id:
-            return {
-                "error": "Invalid parameters",
-                "message": "Provide either query OR chunk_id, not both",
-            }
+            return responses.error(
+                "Invalid parameters",
+                message="Provide either query OR chunk_id, not both",
+            )
 
         if chunk_id:
             from mcp_server.tools.search_handlers import _handle_chunk_id_lookup

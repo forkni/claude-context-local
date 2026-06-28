@@ -49,6 +49,7 @@ from mcp_server.model_pool_manager import (  # noqa: E402
 
 # Output formatting
 from mcp_server.output_formatter import format_response  # noqa: E402
+from mcp_server.tools import responses  # noqa: E402
 
 
 # Configure logging — dual-handler: console (colored) + rotating file (plain)
@@ -322,11 +323,11 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
         logger.error(f"[TOOL_ERROR] {name}: {e}", exc_info=True)
         # Echo only argument keys (not values) to keep error payloads compact and avoid
         # doubling log noise — exc_info=True above already captures full context (#62).
-        error_response = {
-            "error": str(e),
-            "tool": name,
-            "arguments_keys": list((arguments or {}).keys()),
-        }
+        error_response = responses.error(
+            str(e),
+            tool=name,
+            arguments_keys=list((arguments or {}).keys()),
+        )
         return [TextContent(type="text", text=json.dumps(error_response, indent=2))]
 
 
@@ -360,11 +361,11 @@ async def handle_read_resource(uri: str) -> str:
             stats = index_manager.get_stats()
             return json.dumps(stats, indent=2)
         except Exception as e:
-            error = {"error": f"Failed to get statistics: {str(e)}"}
-            return json.dumps(error, indent=2)
+            return json.dumps(
+                responses.error(f"Failed to get statistics: {str(e)}"), indent=2
+            )
     else:
-        error = {"error": f"Unknown resource URI: {uri}"}
-        return json.dumps(error, indent=2)
+        return json.dumps(responses.error(f"Unknown resource URI: {uri}"), indent=2)
 
 
 # ============================================================================

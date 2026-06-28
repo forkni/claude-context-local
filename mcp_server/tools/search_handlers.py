@@ -17,6 +17,7 @@ from mcp_server.server import (
 )
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_project_storage_dir
+from mcp_server.tools import responses
 from mcp_server.tools.decorators import error_handler, require_indexed_project
 from mcp_server.tools.search_orchestrator import SearchOrchestrator
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
@@ -53,11 +54,11 @@ def _handle_chunk_id_lookup(chunk_id: str) -> dict:
         result = searcher.get_by_chunk_id(chunk_id)
 
         if result is None:
-            return {
-                "error": "Chunk not found",
-                "message": f"No chunk found with ID: {chunk_id}",
-                "chunk_id": chunk_id,
-            }
+            return responses.error(
+                "Chunk not found",
+                message=f"No chunk found with ID: {chunk_id}",
+                chunk_id=chunk_id,
+            )
 
         # Reuse existing formatting function for consistency
         formatted_results = _format_search_results([result])
@@ -87,7 +88,7 @@ def _handle_chunk_id_lookup(chunk_id: str) -> dict:
 
     except Exception as e:
         logger.error(f"Direct lookup failed: {e}", exc_info=True)
-        return {"error": str(e), "chunk_id": chunk_id}
+        return responses.error(str(e), chunk_id=chunk_id)
 
 
 def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, None]:
@@ -606,10 +607,10 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
 
     # Validate inputs
     if not chunk_id and not symbol_name:
-        return {
-            "error": "Missing required parameter",
-            "message": "Provide either chunk_id or symbol_name",
-        }
+        return responses.error(
+            "Missing required parameter",
+            message="Provide either chunk_id or symbol_name",
+        )
 
     # Normalize chunk_id path separators for cross-platform compatibility
     if chunk_id:
@@ -667,15 +668,15 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
 
     # Validate: need at least one source and one target identifier
     if not source and not source_chunk_id:
-        return {
-            "error": "Missing source",
-            "message": "Provide either source (symbol name) or source_chunk_id",
-        }
+        return responses.error(
+            "Missing source",
+            message="Provide either source (symbol name) or source_chunk_id",
+        )
     if not target and not target_chunk_id:
-        return {
-            "error": "Missing target",
-            "message": "Provide either target (symbol name) or target_chunk_id",
-        }
+        return responses.error(
+            "Missing target",
+            message="Provide either target (symbol name) or target_chunk_id",
+        )
 
     # Normalize chunk_ids
     if source_chunk_id:
@@ -722,10 +723,10 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
         graph_storage = searcher.graph_storage
 
     if not graph_storage:
-        return {
-            "error": "Graph not available",
-            "message": "Call graph not initialized. Re-index the project.",
-        }
+        return responses.error(
+            "Graph not available",
+            message="Call graph not initialized. Re-index the project.",
+        )
 
     # Create query engine and find path
     from graph.graph_queries import GraphQueryEngine

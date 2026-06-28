@@ -16,6 +16,7 @@ from mcp_server.server import (
 )
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_storage_dir
+from mcp_server.tools import responses
 from mcp_server.tools.decorators import error_handler
 from merkle.snapshot_manager import SnapshotManager
 from search.config import (
@@ -41,12 +42,12 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
         stats = await asyncio.to_thread(_get_index_stats)
     except ValueError as e:
         # No project selected - return clear error
-        return {
-            "error": str(e),
-            "index_statistics": {"total_chunks": 0},
-            "current_project": None,
-            "system_message": "No project indexed. Use index_directory to index a project first.",
-        }
+        return responses.error(
+            str(e),
+            index_statistics={"total_chunks": 0},
+            current_project=None,
+            system_message="No project indexed. Use index_directory to index a project first.",
+        )
 
     # Include hybrid searcher sync status
     # Use get_config() to check if hybrid is enabled
@@ -315,7 +316,7 @@ async def handle_cleanup_resources(arguments: dict[str, Any]) -> dict:
     # _cleanup_previous_resources() runs gc.collect() + torch.cuda.synchronize()
     # + empty_cache() — can take hundreds of ms; offload to thread pool.
     await asyncio.to_thread(_cleanup_previous_resources)
-    return {"success": True, "message": "Resources cleaned up successfully"}
+    return responses.ok(success=True, message="Resources cleaned up successfully")
 
 
 @error_handler("Config status check")

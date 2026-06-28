@@ -12,6 +12,7 @@ from typing import Any
 import anyio
 
 from mcp_server.services import get_state
+from mcp_server.tools import responses
 from utils.observability import traced_block
 from utils.otel_attributes import ATTR_TOOL_NAME
 
@@ -69,10 +70,10 @@ def error_handler(
                 except (anyio.BrokenResourceError, anyio.ClosedResourceError) as e:
                     # Client disconnected while processing - graceful degradation
                     logger.warning(f"{action_name} failed - client disconnected: {e}")
-                    return {"error": "Client disconnected", "status": "cancelled"}
+                    return responses.client_disconnected()
                 except Exception as e:
                     logger.error(f"{action_name} failed: {e}", exc_info=True)
-                    error_response = {"error": str(e)}
+                    error_response = responses.error(str(e))
                     if error_context:
                         try:
                             context_fields = error_context(arguments)
@@ -105,12 +106,7 @@ def require_indexed_project(func: Callable) -> Callable:
     @functools.wraps(func)
     async def wrapper(arguments: dict[str, Any]) -> dict:
         if not get_state().current_project:
-            return {
-                "error": "No indexed project found",
-                "message": "Use index_directory to index a project first.",
-                "current_project": None,
-                "system_message": "No project indexed. Use index_directory to index a project first.",
-            }
+            return responses.no_indexed_project()
         return await func(arguments)
 
     return wrapper
