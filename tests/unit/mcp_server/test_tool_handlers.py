@@ -618,15 +618,18 @@ async def test_handle_find_similar_code():
         mock_get_state.return_value = mock_state
         mock_dec_state.return_value = mock_state
 
-        # Mock search results
+        # Mock search results (thin SearchResult format)
         mock_result = Mock()
         mock_result.chunk_id = "file.py:10-20:function:test_func"
-        mock_result.relative_path = "file.py"
-        mock_result.start_line = 10
-        mock_result.end_line = 20
-        mock_result.chunk_type = "function"
-        mock_result.similarity_score = 0.95
-        mock_result.name = "test_func"
+        mock_result.score = 0.95
+        mock_result.source = "similarity"
+        mock_result.metadata = {
+            "relative_path": "file.py",
+            "start_line": 10,
+            "end_line": 20,
+            "chunk_type": "function",
+            "name": "test_func",
+        }
 
         # Create mock searcher instance
         mock_searcher_instance = Mock()

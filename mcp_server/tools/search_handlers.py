@@ -413,49 +413,32 @@ def _format_search_results(results: list) -> list[dict]:
     """
     formatted_results = []
     for result in results:
-        if hasattr(result, "relative_path"):
-            # IntelligentSearcher result format
-            item = {
-                "file": result.relative_path,
-                "lines": f"{result.start_line}-{result.end_line}",
-                "kind": result.chunk_type,
-                "score": round(result.similarity_score, 2),
-                "chunk_id": result.chunk_id,
-            }
-            # Note: name field omitted (redundant with chunk_id last component)
-            # Add complexity score if available (functions only)
-            if hasattr(result, "complexity_score") and result.complexity_score:
-                item["complexity_score"] = result.complexity_score
-            # Propagate source field for ego-graph neighbor identification
-            if hasattr(result, "source") and result.source:
-                item["source"] = result.source
-        else:
-            # HybridSearcher result format
-            item = {
-                "file": result.metadata.get("relative_path", ""),
-                "lines": f"{result.metadata.get('start_line', 0)}-{result.metadata.get('end_line', 0)}",
-                "kind": result.metadata.get("chunk_type", "unknown"),
-                "score": round(result.score, 2),
-                "chunk_id": result.chunk_id,
-            }
-            # Add name for module-type results (helps identify what the chunk represents)
-            name = result.metadata.get("name", "")
-            if name:
-                item["name"] = name
-            # Add docstring preview for module summaries (compressed context)
-            if result.metadata.get("chunk_type") in ("module", "community"):
-                doc = result.metadata.get("docstring", "")
-                if doc:
-                    item["summary"] = doc[:200]
-            # Add reranker score if available (neural reranking)
-            if "reranker_score" in result.metadata:
-                item["reranker_score"] = round(result.metadata["reranker_score"], 4)
-            # Add complexity score if available (functions only)
-            if result.metadata.get("complexity_score"):
-                item["complexity_score"] = result.metadata["complexity_score"]
-            # Propagate source field for ego-graph neighbor identification
-            if hasattr(result, "source") and result.source:
-                item["source"] = result.source
+        # Unified thin SearchResult format (reranker.SearchResult — all results)
+        item = {
+            "file": result.metadata.get("relative_path", ""),
+            "lines": f"{result.metadata.get('start_line', 0)}-{result.metadata.get('end_line', 0)}",
+            "kind": result.metadata.get("chunk_type", "unknown"),
+            "score": round(result.score, 2),
+            "chunk_id": result.chunk_id,
+        }
+        # Add name for module-type results (helps identify what the chunk represents)
+        name = result.metadata.get("name", "")
+        if name:
+            item["name"] = name
+        # Add docstring preview for module summaries (compressed context)
+        if result.metadata.get("chunk_type") in ("module", "community"):
+            doc = result.metadata.get("docstring", "")
+            if doc:
+                item["summary"] = doc[:200]
+        # Add reranker score if available (neural reranking)
+        if "reranker_score" in result.metadata:
+            item["reranker_score"] = round(result.metadata["reranker_score"], 4)
+        # Add complexity score if available (functions only)
+        if result.metadata.get("complexity_score"):
+            item["complexity_score"] = result.metadata["complexity_score"]
+        # Propagate source field for ego-graph neighbor identification
+        if hasattr(result, "source") and result.source:
+            item["source"] = result.source
         formatted_results.append(item)
     return formatted_results
 
@@ -590,13 +573,13 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     for result in results:
         item = {
             "chunk_id": result.chunk_id,
-            "file": result.relative_path,
-            "lines": f"{result.start_line}-{result.end_line}",
-            "kind": result.chunk_type,
-            "score": round(result.similarity_score, 2),
+            "file": result.metadata.get("relative_path", ""),
+            "lines": f"{result.metadata.get('start_line', 0)}-{result.metadata.get('end_line', 0)}",
+            "kind": result.metadata.get("chunk_type", "unknown"),
+            "score": round(result.score, 2),
         }
-        if hasattr(result, "name") and result.name:
-            item["name"] = result.name
+        if result.metadata.get("name"):
+            item["name"] = result.metadata["name"]
         formatted_results.append(item)
 
     return {

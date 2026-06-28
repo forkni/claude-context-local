@@ -125,6 +125,32 @@ class ResultFactory:
         )
 
     @staticmethod
+    def from_expansion(
+        chunk_id: str, score: float, metadata: dict, source: str
+    ) -> SearchResult:
+        """Create SearchResult for ego-graph or parent-expansion hits.
+
+        Args:
+            chunk_id: Chunk identifier
+            score: Expansion score (anchor × similarity, or 0.0 for parents)
+            metadata: Chunk metadata dictionary
+            source: Source tag ("ego_graph", "parent_expansion", ...)
+
+        Returns:
+            SearchResult with rank=0
+
+        Example:
+            >>> result = ResultFactory.from_expansion(
+            ...     "file.py:1-10:function:foo", 0.7, {"file": "file.py"}, "ego_graph"
+            ... )
+            >>> result.source
+            'ego_graph'
+        """
+        return SearchResult(
+            chunk_id=chunk_id, score=score, metadata=metadata, source=source, rank=0
+        )
+
+    @staticmethod
     def from_similarity_results(
         similar_chunks: list[tuple[str, float, dict]], source: str = "similarity"
     ) -> list[SearchResult]:

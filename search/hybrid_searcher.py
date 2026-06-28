@@ -912,12 +912,11 @@ class HybridSearcher(BaseSearcher):
                                 anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
                             )
                             neighbor_results.append(
-                                SearchResult(
-                                    chunk_id=chunk_id,
-                                    score=anchor_score * similarity,
-                                    metadata=metadata,
-                                    source="ego_graph",
-                                    rank=0,
+                                ResultFactory.from_expansion(
+                                    chunk_id,
+                                    anchor_score * similarity,
+                                    metadata,
+                                    "ego_graph",
                                 )
                             )
                     except (RuntimeError, AttributeError, IndexError) as e:
@@ -936,12 +935,8 @@ class HybridSearcher(BaseSearcher):
                         anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
                     )
                     neighbor_results.append(
-                        SearchResult(
-                            chunk_id=chunk_id,
-                            score=anchor_score * 0.5,
-                            metadata=metadata,
-                            source="ego_graph",
-                            rank=0,
+                        ResultFactory.from_expansion(
+                            chunk_id, anchor_score * 0.5, metadata, "ego_graph"
                         )
                     )
             else:
@@ -952,12 +947,8 @@ class HybridSearcher(BaseSearcher):
                         anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
                     )
                     neighbor_results.append(
-                        SearchResult(
-                            chunk_id=chunk_id,
-                            score=anchor_score * 0.5,
-                            metadata=metadata,
-                            source="ego_graph",
-                            rank=0,
+                        ResultFactory.from_expansion(
+                            chunk_id, anchor_score * 0.5, metadata, "ego_graph"
                         )
                     )
 
@@ -1037,14 +1028,11 @@ class HybridSearcher(BaseSearcher):
                 try:
                     metadata = self.dense_index.get_chunk_by_id(parent_id)
                     if metadata:
-                        parent_result = SearchResult(
-                            chunk_id=parent_id,
-                            score=0.0,  # Parents are context, no similarity score
-                            metadata=metadata,
-                            source="parent_expansion",  # Mark source
-                            rank=0,
+                        parent_results.append(
+                            ResultFactory.from_expansion(
+                                parent_id, 0.0, metadata, "parent_expansion"
+                            )
                         )
-                        parent_results.append(parent_result)
                 except (KeyError, TypeError) as e:
                     self._logger.debug(
                         f"Failed to retrieve parent chunk {parent_id}: {e}"
@@ -1086,34 +1074,10 @@ class HybridSearcher(BaseSearcher):
         fetch_k = k * 2 if rerank else k
         similar_chunks = self.dense_index.get_similar_chunks(chunk_id, fetch_k)
 
-        # Convert to SearchResult format expected by MCP tool
-        # Import here to avoid circular dependency
-        from .searcher import SearchResult
-
-        results = []
-        for cid, similarity, metadata in similar_chunks:
-            result = SearchResult(
-                chunk_id=cid,
-                similarity_score=similarity,
-                content_preview=metadata.get("content_preview", ""),
-                file_path=metadata.get("file_path", ""),
-                relative_path=metadata.get("relative_path", ""),
-                folder_structure=metadata.get("folder_structure", []),
-                chunk_type=metadata.get("chunk_type", "unknown"),
-                name=metadata.get("name"),
-                parent_name=metadata.get("parent_name"),
-                start_line=metadata.get("start_line", 0),
-                end_line=metadata.get("end_line", 0),
-                docstring=metadata.get("docstring"),
-                tags=metadata.get("tags", []),
-                context_info={},
-                metadata={"content_preview": metadata.get("content_preview", "")},
-            )
-            results.append(result)
+        results = ResultFactory.from_similarity_results(similar_chunks)
 
         # Apply neural reranking if requested and available
-        if rerank and len(results) > 0:
-            # Get reference chunk content to use as "query" for reranking
+        if rerank and results:
             ref_metadata = self.dense_index.get_chunk_by_id(chunk_id)
             query_content = (
                 ref_metadata.get("content_preview", "") if ref_metadata else ""
@@ -1124,36 +1088,19 @@ class HybridSearcher(BaseSearcher):
                     f"[RERANK-SIMILAR] Reranking {len(results)} candidates "
                     f"using reference chunk as query (length: {len(query_content)} chars)"
                 )
-                # Convert to reranker.SearchResult (has .score) for the reranking pipeline.
-                # searcher.SearchResult uses .similarity_score, which reranker doesn't know.
-                from .reranker import SearchResult as RankerResult
-
-                rich_by_id = {r.chunk_id: r for r in results}
-                ranker_inputs = [
-                    RankerResult(
-                        chunk_id=r.chunk_id,
-                        score=r.similarity_score,
-                        metadata=r.metadata,
-                        source="similarity",
-                    )
-                    for r in results
-                ]
+                # Save original vector similarity scores — reranker overwrites .score
+                # with the neural relevance score.
+                similarity_by_id = {r.chunk_id: r.score for r in results}
                 reranked = self.reranking_engine.apply_neural_reranking(
-                    query_content, ranker_inputs, k, context="similarity"
+                    query_content, results, k, context="similarity"
                 )
-                # Restore rich searcher.SearchResult objects in reranked order.
-                # Attach reranker_score to metadata so order and score agree:
-                # similarity_score retains the original vector similarity while
-                # reranker_score reflects the neural relevance judgment.
-                results = []
+                # Attach neural reranker_score to metadata; restore original vector
+                # similarity as .score so downstream formatters display it consistently.
                 for rr in reranked:
-                    rich = rich_by_id.get(rr.chunk_id)
-                    if rich:
-                        rich.metadata = {
-                            **(rich.metadata or {}),
-                            "reranker_score": rr.score,
-                        }
-                        results.append(rich)
+                    neural = rr.score
+                    rr.score = similarity_by_id.get(rr.chunk_id, neural)
+                    rr.metadata = {**(rr.metadata or {}), "reranker_score": neural}
+                results = reranked
             else:
                 self._logger.warning(
                     f"[RERANK-SIMILAR] No content found for reference chunk {chunk_id}, "

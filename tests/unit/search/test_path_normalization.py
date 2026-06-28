@@ -363,3 +363,41 @@ class TestNormalizePathOwnership:
         assert not stray, (
             f"Stray normalize_chunk_id definitions (use search.chunk_id.normalize): {stray}"
         )
+
+
+class TestSearchResultOwnership:
+    """P2 completeness gate: exactly one SearchResult dataclass definition exists.
+
+    If this test fails you have either:
+    - Added a second ``SearchResult`` dataclass outside ``search/reranker.py``, OR
+    - Deleted the canonical definition (regression).
+
+    The canonical owner is ``search.reranker.SearchResult`` (thin: chunk_id, score,
+    metadata, source, rank). All rich fields live in ``metadata``. Route every
+    ``SearchResult(...)`` construction through ``ResultFactory``.
+    """
+
+    def test_search_result_defined_only_in_reranker(self):
+        """Only search/reranker.py should define a SearchResult dataclass."""
+        import ast
+        import glob
+        from pathlib import Path
+
+        stray: list[str] = []
+        for fpath in glob.glob("**/*.py", recursive=True):
+            if fpath.startswith(".venv") or fpath.startswith("tests"):
+                continue
+            norm = fpath.replace("\\", "/")
+            if norm == "search/reranker.py":
+                continue
+            try:
+                tree = ast.parse(Path(fpath).read_text(encoding="utf-8"))
+            except (SyntaxError, OSError):
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef) and node.name == "SearchResult":
+                    stray.append(f"{fpath}:{node.lineno}")
+
+        assert not stray, (
+            f"Stray SearchResult class definitions (canonical owner is search/reranker.py): {stray}"
+        )
