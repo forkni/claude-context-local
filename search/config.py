@@ -1058,6 +1058,19 @@ def get_search_config() -> SearchConfig:
     return get_config_manager().load_config()
 
 
+def get_chunking_config():
+    """Get ChunkingConfig from the current search config, or None if unavailable.
+
+    Safe to call from ``chunking/`` modules — uses a try/except guard so the
+    chunker can still function when the search config is not yet initialised.
+    """
+    try:
+        config = get_search_config()
+        return config.chunking if config else None
+    except AttributeError:
+        return None
+
+
 def is_hybrid_search_enabled() -> bool:
     """Check if hybrid search is enabled."""
     config = get_search_config()

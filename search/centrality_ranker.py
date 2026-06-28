@@ -30,20 +30,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _extract_name_from_chunk_id(chunk_id: str) -> str:
-    """Extract name from 'file:lines:type:Name' format.
-
-    Examples:
-        "embeddings/embedder.py:276-1330:class:CodeEmbedder" -> "CodeEmbedder"
-        "search/searcher.py:37-52:method:IntelligentSearcher.__init__" -> "IntelligentSearcher.__init__"
-        "scripts/list_projects_display.py:24-85:function:main" -> "main"
-
-    Returns:
-        The qualified name (fourth component), or empty string if invalid format.
-    """
-    return _extract_name_impl(chunk_id)
-
-
 def _tokenize_for_matching(text: str) -> set[str]:
     """Tokenize text splitting CamelCase, snake_case, and dot-separated names.
 
@@ -69,20 +55,6 @@ def _tokenize_for_matching(text: str) -> set[str]:
     # Extract lowercase tokens, filter single-char tokens
     tokens = {t for t in re.findall(r"[a-zA-Z0-9]+", text.lower()) if len(t) > 1}
     return tokens
-
-
-def _extract_chunk_lines(chunk_id: str) -> int:
-    """Extract line count from 'file:start-end:type:name' format.
-
-    Examples:
-        "embeddings/embedder.py:276-1330:class:CodeEmbedder" -> 1054 lines
-        "search/filters.py:22-31:function:normalize_path" -> 9 lines
-        "invalid:format" -> 0 (fallback)
-
-    Returns:
-        Number of lines in chunk, or 0 if format is invalid.
-    """
-    return _extract_chunk_lines_impl(chunk_id)
 
 
 class CentralityRanker:
@@ -241,7 +213,7 @@ class CentralityRanker:
                 chunk_type = result.get("kind", "")
                 chunk_id = result.get("chunk_id", "")
                 tags = result.get("tags", [])
-                name = result.get("name", "") or _extract_name_from_chunk_id(chunk_id)
+                name = result.get("name", "") or _extract_name_impl(chunk_id)
                 self._apply_type_boost(result, chunk_type, query_lower)
                 self._apply_synthetic_demotion(result, chunk_type, chunk_id)
                 self._apply_core_dir_boost(result, chunk_id)
@@ -265,7 +237,7 @@ class CentralityRanker:
         from drowning out focused, well-scoped code.
         """
         chunk_id = result.get("chunk_id", "")
-        chunk_lines = _extract_chunk_lines(chunk_id)
+        chunk_lines = _extract_chunk_lines_impl(chunk_id)
         if chunk_lines > self.config.size_norm_target_lines:  # type: ignore[union-attr]
             size_factor = 1.0 / (
                 1.0

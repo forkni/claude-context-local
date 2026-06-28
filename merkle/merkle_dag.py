@@ -73,12 +73,10 @@ class MerkleDAG:
         self.directory_filter = DirectoryFilter(include_dirs, exclude_dirs)
 
         # Import default ignored directories from canonical source
-        from chunking.multi_language_chunker import MultiLanguageChunker
+        from chunking.language_registry import DEFAULT_IGNORED_DIRS
 
         # Combine default ignored directories with file-specific patterns
-        self.ignore_patterns: set[str] = set(
-            MultiLanguageChunker.DEFAULT_IGNORED_DIRS
-        ) | {
+        self.ignore_patterns: set[str] = set(DEFAULT_IGNORED_DIRS) | {
             "*.pyc",
             "*.pyo",
             ".DS_Store",

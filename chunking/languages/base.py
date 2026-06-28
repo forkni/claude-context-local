@@ -1135,15 +1135,7 @@ class LanguageChunker(ABC):
         return chunks
 
     def _get_chunking_config(self) -> Optional["ChunkingConfig"]:
-        """Get ChunkingConfig from the current search config.
+        """Get ChunkingConfig from the current search config, or None if unavailable."""
+        from search.config import get_chunking_config
 
-        Returns:
-            ChunkingConfig if available, None otherwise
-        """
-        try:
-            from search.config import get_search_config
-
-            config = get_search_config()
-            return config.chunking if config else None
-        except (ImportError, AttributeError):
-            return None
+        return get_chunking_config()

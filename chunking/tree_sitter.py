@@ -353,18 +353,10 @@ class TreeSitterChunker:
             return []
 
     def _get_chunking_config(self):
-        """Get ChunkingConfig from the current search config.
+        """Get ChunkingConfig from the current search config, or None if unavailable."""
+        from search.config import get_chunking_config
 
-        Returns:
-            ChunkingConfig if available, None otherwise
-        """
-        try:
-            from search.config import get_search_config
-
-            config = get_search_config()
-            return config.chunking if config else None
-        except (ImportError, AttributeError):
-            return None
+        return get_chunking_config()
 
     def is_supported(self, file_path: str) -> bool:
         """Check if a file type is supported.

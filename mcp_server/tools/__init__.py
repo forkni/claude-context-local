@@ -4,11 +4,6 @@ Additional tool implementations for specialized functionality.
 """
 
 # Specialized tools
-from mcp_server.tools.code_relationship_analyzer import (
-    CodeRelationshipAnalyzer,
-    ImpactReport,
-)
-
 # Handler modules
 from mcp_server.tools.config_handlers import (
     handle_configure_reranking,
@@ -36,6 +31,10 @@ from mcp_server.tools.status_handlers import (
     handle_list_embedding_models,
     handle_list_projects,
 )
+from search.relationship_analyzer import (
+    RelationshipAnalyzer as CodeRelationshipAnalyzer,
+)
+from search.types import ImpactReport
 
 
 __all__ = [
