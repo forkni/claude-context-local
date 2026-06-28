@@ -26,7 +26,6 @@ from utils.otel_attributes import (
 from utils.path_utils import normalize_path
 from utils.timing import timed
 
-from .bm25_sync import BM25SyncManager
 from .community_refresh_stage import CommunityRefreshStage
 from .community_stage import CommunityStage
 from .config import get_search_config
@@ -130,15 +129,13 @@ class IncrementalIndexer:
         """(Re)build the resource-bound write pipeline.
 
         Call from __init__ and again immediately after _release_and_verify_resources()
-        so IndexWriteStage and BM25SyncManager are always bound to the current
-        self.embedder / self.indexer — never to released objects.
+        so IndexWriteStage is always bound to the current self.embedder / self.indexer
+        — never to released objects.
         """
-        self._bm25_sync = BM25SyncManager(indexer=self.indexer)
         self._index_write_stage = IndexWriteStage(
             embedder=self.embedder,
             indexer=self.indexer,
             snapshot_manager=self.snapshot_manager,
-            bm25_sync=self._bm25_sync,
             build_metadata_fn=self._build_snapshot_metadata,
             clear_gpu_fn=self._clear_gpu_cache,
         )
@@ -363,7 +360,9 @@ class IncrementalIndexer:
             logger.info("[INCREMENTAL] Index saved")
 
             # Auto-sync BM25 if significant desync detected (>10% difference)
-            bm25_resynced, bm25_resync_count = self._sync_bm25_if_needed("INCREMENTAL")
+            bm25_resynced, bm25_resync_count = self.indexer.resync_if_desynced(
+                "INCREMENTAL"
+            )
 
             # Clear GPU cache to free intermediate tensors from embedding batches
             self._clear_gpu_cache("INCREMENTAL")
@@ -1125,17 +1124,6 @@ class IncrementalIndexer:
             logger.info("[INCREMENTAL] Successfully added embeddings")
 
         return len(all_embedding_results)
-
-    def _sync_bm25_if_needed(self, log_prefix: str = "INCREMENTAL") -> tuple[bool, int]:
-        """Auto-sync BM25 if significant desync detected (>10% difference).
-
-        Args:
-            log_prefix: Prefix for log messages (e.g., "INCREMENTAL" or "FULL_INDEX")
-
-        Returns:
-            tuple[bool, int]: (bm25_resynced, bm25_resync_count)
-        """
-        return self._bm25_sync.sync_if_needed(log_prefix)
 
     def _clear_gpu_cache(self, log_prefix: str = "INCREMENTAL") -> None:
         """Clear GPU cache to free intermediate tensors from embedding batches.

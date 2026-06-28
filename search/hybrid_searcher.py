@@ -1199,6 +1199,13 @@ class HybridSearcher(BaseSearcher):
         self.bm25_index = self.index_sync.bm25_index
         return count
 
+    def resync_if_desynced(self, log_prefix: str = "INCREMENTAL") -> tuple[bool, int]:
+        """Auto-sync BM25 if >10% desync detected. Delegates to IndexSynchronizer."""
+        result = self.index_sync.resync_if_desynced(log_prefix)
+        # Sync modified bm25_index reference back (resync rebuilds the BM25 ref)
+        self.bm25_index = self.index_sync.bm25_index
+        return result
+
     def load_indices(self) -> bool:
         """Load both BM25 and dense indices. Delegates to IndexSynchronizer."""
         return self.index_sync.load_indices()

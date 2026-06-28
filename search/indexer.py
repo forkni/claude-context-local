@@ -628,6 +628,16 @@ class CodeIndexManager:
         """Get the number of chunks in the index."""
         return len(self.chunk_ids)
 
+    def resync_if_desynced(self, log_prefix: str = "INCREMENTAL") -> tuple[bool, int]:
+        """No-op stub: CodeIndexManager manages only the dense index.
+
+        BM25/dense desync detection is owned by IndexSynchronizer (accessed via
+        HybridSearcher.resync_if_desynced).  When the indexer is a bare
+        CodeIndexManager (e.g. in integration tests), there is no BM25 counterpart
+        to sync — return the no-resync sentinel.
+        """
+        return False, 0
+
     def validate_index_consistency(self) -> tuple[bool, list[str]]:
         """Validate consistency between FAISS index, chunk_ids, and metadata.
 

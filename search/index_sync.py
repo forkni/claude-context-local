@@ -13,6 +13,11 @@ from .bm25_index import BM25Index
 from .indexer import CodeIndexManager
 
 
+# Threshold ratio above which a BM25/Dense count difference triggers resync.
+# Example: 10% = if |dense - bm25| / dense > 0.10, auto-rebuild BM25.
+DESYNC_THRESHOLD = 0.10
+
+
 class IndexSynchronizer:
     """Manages synchronization and persistence of BM25 and dense indices."""
 
@@ -142,6 +147,20 @@ class IndexSynchronizer:
             self._logger.error(f"[SAVE] Failed to save indices: {e}")
             raise
 
+    def _live_counts(self) -> tuple[int, int]:
+        """Return (bm25_count, dense_count) from live in-memory structures.
+
+        Both callers (validate_index_sync and resync_if_desynced) use the same
+        data source so the two can never silently disagree.
+        """
+        bm25_count = len(self.bm25_index._doc_ids) if self.bm25_index else 0
+        dense_count = (
+            self.dense_index.ntotal
+            if self.dense_index and self.dense_index.index
+            else 0
+        )
+        return bm25_count, dense_count
+
     def validate_index_sync(self) -> bool:
         """
         Validate BM25 and Dense indices are synchronized.
@@ -152,12 +171,7 @@ class IndexSynchronizer:
         Returns:
             True if indices are synced, False otherwise
         """
-        bm25_count = len(self.bm25_index._doc_ids) if self.bm25_index else 0
-        dense_count = (
-            self.dense_index.ntotal
-            if self.dense_index and self.dense_index.index
-            else 0
-        )
+        bm25_count, dense_count = self._live_counts()
 
         if bm25_count != dense_count:
             self._logger.warning(
@@ -167,6 +181,41 @@ class IndexSynchronizer:
 
         self._logger.info(f"[SYNC_CHECK] Indices synced at {bm25_count} documents")
         return True
+
+    def resync_if_desynced(self, log_prefix: str = "INCREMENTAL") -> tuple[bool, int]:
+        """Auto-sync BM25 if a significant desync is detected (>10% difference).
+
+        Uses the same live in-memory count source as validate_index_sync to
+        avoid the two-data-source disagreement that previously caused silent
+        desync bugs.  This is the single owner of the resync-trigger decision;
+        callers (IncrementalIndexer, IndexWriteStage) reach it via the
+        HybridSearcher delegate.
+
+        Args:
+            log_prefix: Label for log lines (e.g. "INCREMENTAL" or "FULL_INDEX").
+
+        Returns:
+            tuple[bool, int]: (bm25_resynced, bm25_resync_count)
+        """
+        bm25_count, dense_count = self._live_counts()
+
+        if dense_count > 0:
+            desync_ratio = abs(dense_count - bm25_count) / dense_count
+            if desync_ratio > DESYNC_THRESHOLD:
+                self._logger.warning(
+                    f"[{log_prefix}] Significant desync detected: BM25={bm25_count}, "
+                    f"Dense={dense_count} ({desync_ratio:.1%} difference)"
+                )
+                self._logger.info(
+                    f"[{log_prefix}] Auto-syncing BM25 from dense metadata..."
+                )
+                count = self.resync_bm25_from_dense()
+                self._logger.info(
+                    f"[{log_prefix}] BM25 resync complete: {count} documents"
+                )
+                return True, count
+
+        return False, 0
 
     def resync_bm25_from_dense(self) -> int:
         """

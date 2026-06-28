@@ -26,9 +26,8 @@ def _make_stage(
     embedder.embed_chunks.return_value = embed_results
 
     indexer = Mock()
+    indexer.resync_if_desynced.return_value = bm25_result
     snapshot_manager = Mock()
-    bm25_sync = Mock()
-    bm25_sync.sync_if_needed.return_value = bm25_result
     build_metadata_fn = Mock(return_value={"project_name": "test"})
     clear_gpu_fn = Mock()
     dag = Mock()
@@ -37,7 +36,6 @@ def _make_stage(
         embedder=embedder,
         indexer=indexer,
         snapshot_manager=snapshot_manager,
-        bm25_sync=bm25_sync,
         build_metadata_fn=build_metadata_fn,
         clear_gpu_fn=clear_gpu_fn,
     )
@@ -46,7 +44,6 @@ def _make_stage(
         embedder,
         indexer,
         snapshot_manager,
-        bm25_sync,
         build_metadata_fn,
         clear_gpu_fn,
         dag,
@@ -60,7 +57,7 @@ class TestIndexWriteStageResult:
         chunk = _make_chunk()
         embed_result = Mock()
         embed_result.metadata = {}
-        stage, _, _, _, _, _, _, dag = _make_stage(embed_results=[embed_result])
+        stage, _, _, _, _, _, dag = _make_stage(embed_results=[embed_result])
 
         start = time.time()
         result = stage.run(
@@ -141,13 +138,12 @@ class TestIndexWriteStageOrdering:
         indexer.save_indices.side_effect = lambda *a, **kw: call_order.append(
             "save_indices"
         )
+        indexer.resync_if_desynced.side_effect = lambda *a, **kw: (
+            call_order.append("bm25") or (False, 0)
+        )
         snapshot_manager = Mock()
         snapshot_manager.save_snapshot.side_effect = lambda *a, **kw: call_order.append(
             "save_snapshot"
-        )
-        bm25_sync = Mock()
-        bm25_sync.sync_if_needed.side_effect = lambda *a, **kw: (
-            call_order.append("bm25") or (False, 0)
         )
         clear_gpu_fn = Mock(side_effect=lambda *a, **kw: call_order.append("gpu"))
 
@@ -155,7 +151,6 @@ class TestIndexWriteStageOrdering:
             embedder=embedder,
             indexer=indexer,
             snapshot_manager=snapshot_manager,
-            bm25_sync=bm25_sync,
             build_metadata_fn=Mock(return_value={}),
             clear_gpu_fn=clear_gpu_fn,
         )
@@ -181,7 +176,7 @@ class TestIndexWriteStageOrdering:
     def test_snapshot_metadata_passes_is_full_true(self):
         embed_result = Mock()
         embed_result.metadata = {}
-        stage, _, _, _, _, build_metadata_fn, _, dag = _make_stage(
+        stage, _, _, _, build_metadata_fn, _, dag = _make_stage(
             embed_results=[embed_result]
         )
 
@@ -274,7 +269,6 @@ class TestInjectCallEdgesMinConfidence:
             embedder=Mock(),
             indexer=indexer,
             snapshot_manager=Mock(),
-            bm25_sync=Mock(),
             build_metadata_fn=Mock(return_value={}),
             clear_gpu_fn=Mock(),
         )
@@ -408,7 +402,6 @@ class TestInjectCallEdgesMultiGraph:
             embedder=Mock(),
             indexer=indexer,
             snapshot_manager=Mock(),
-            bm25_sync=Mock(),
             build_metadata_fn=Mock(return_value={}),
             clear_gpu_fn=Mock(),
         )
@@ -492,15 +485,12 @@ class TestIndexWriteStageEmbeddingFailure:
         embedder.embed_chunks.side_effect = RuntimeError("CUDA OOM")
         indexer = Mock()
         snapshot_manager = Mock()
-        bm25_sync = Mock()
-        bm25_sync.sync_if_needed.return_value = (False, 0)
         clear_gpu_fn = Mock()
 
         stage = IndexWriteStage(
             embedder=embedder,
             indexer=indexer,
             snapshot_manager=snapshot_manager,
-            bm25_sync=bm25_sync,
             build_metadata_fn=Mock(return_value={}),
             clear_gpu_fn=clear_gpu_fn,
         )
