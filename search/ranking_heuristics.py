@@ -12,6 +12,7 @@ from search.ranking_policy import (
     TYPE_BOOSTS_ENTITY,
     lifecycle_demotion,
 )
+from search.tokenization import normalize_to_tokens
 
 
 if TYPE_CHECKING:
@@ -71,9 +72,7 @@ class RankingHeuristics:
 
     def _normalize_to_tokens(self, text: str) -> list[str]:
         """Convert text to normalized tokens, handling CamelCase."""
-        text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-        text = text.replace("_", " ").replace("-", " ")
-        return re.findall(r"\w+", text.lower())
+        return normalize_to_tokens(text)
 
     def _is_entity_like_query(self, query: str, query_tokens: list[str]) -> bool:
         """Detect if query looks like an entity/type name."""

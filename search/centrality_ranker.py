@@ -7,7 +7,6 @@ structurally important code in search results.
 
 import logging
 import math
-import re
 from typing import TYPE_CHECKING
 
 import networkx as nx
@@ -20,6 +19,7 @@ from search.ranking_policy import (
     TYPE_BOOSTS_ENTITY,
     lifecycle_demotion,
 )
+from search.tokenization import normalize_to_tokens
 from utils.path_utils import normalize_path
 
 
@@ -45,17 +45,9 @@ def _tokenize_for_matching(text: str) -> set[str]:
     Returns:
         Set of lowercase alphanumeric tokens (length > 1).
     """
-    # Split dot-separated qualified names (e.g., "Class.method")
-    text = text.replace(".", " ")
-    # Split CamelCase: "CodeEmbedder" -> "Code Embedder"
-    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-    # Split uppercase runs: "HTMLParser" -> "HTML Parser"
-    text = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", text)
-    # Split snake_case and kebab-case
-    text = text.replace("_", " ").replace("-", " ")
-    # Extract lowercase tokens, filter single-char tokens
-    tokens = {t for t in re.findall(r"[a-zA-Z0-9]+", text.lower()) if len(t) > 1}
-    return tokens
+    return normalize_to_tokens(
+        text, split_acronyms=True, split_dots=True, min_len=2, as_set=True
+    )
 
 
 class CentralityRanker:
