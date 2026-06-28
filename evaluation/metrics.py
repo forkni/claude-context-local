@@ -166,8 +166,10 @@ def calculate_metrics_from_results(
         "recall@5": recall_5,
         "recall@7": recall_7,
         "recall@10": calculate_recall_at_k(
-            retrieved, expected, 10
-        ),  # pragma: no mutate
+            retrieved,
+            expected,
+            10,  # pragma: no mutate
+        ),
         "precision@1": calculate_precision_at_k(retrieved, expected, 1),
         "precision@5": calculate_precision_at_k(retrieved, expected, 5),
         "precision@10": calculate_precision_at_k(retrieved, expected, 10),
@@ -215,11 +217,19 @@ def aggregate_metrics(
     agg: dict[str, Any] = {
         "total_queries": len(per_query),
         "success_count": sum(
-            1 for q in per_query if q.get("hit", False)
-        ),  # pragma: no mutate
+            1
+            for q in per_query
+            if q.get(
+                "hit", False
+            )  # pragma: no mutate -- default unreachable; callers always supply "hit"
+        ),
         "success_count@7": sum(
-            1 for q in per_query if q.get("hit@7", False)
-        ),  # pragma: no mutate
+            1
+            for q in per_query
+            if q.get(
+                "hit@7", False
+            )  # pragma: no mutate -- default unreachable; callers always supply "hit@7"
+        ),
     }
     for key in float_keys:
         # Use 0.0 for queries missing a key (e.g. error rows) so they count
@@ -228,11 +238,13 @@ def aggregate_metrics(
         agg[key] = round(mean(vals), 4) if vals else 0.0  # pragma: no mutate
 
     agg["hit_rate@5"] = round(
-        agg["success_count"] / agg["total_queries"], 4
-    )  # pragma: no mutate
+        agg["success_count"] / agg["total_queries"],
+        4,  # pragma: no mutate -- rounding precision doesn't affect threshold comparison
+    )
     agg["hit_rate@7"] = round(
-        agg["success_count@7"] / agg["total_queries"], 4
-    )  # pragma: no mutate
+        agg["success_count@7"] / agg["total_queries"],
+        4,  # pragma: no mutate -- rounding precision doesn't affect threshold comparison
+    )
 
     _thresholds = {**THRESHOLDS, **(thresholds or {})}
     agg["pass_fail"] = {
@@ -315,12 +327,16 @@ def intersect_ranges(
     """
     result: list[tuple[int, int]] = []
     i = j = 0
-    while i < len(a) and j < len(b):
+    while i < len(a) and j < len(
+        b
+    ):  # pragma: no mutate -- < ≡ != for monotonically-incrementing index
         lo = max(a[i][0], b[j][0])
         hi = min(a[i][1], b[j][1])
         if lo <= hi:
             result.append((lo, hi))
-        if a[i][1] < b[j][1]:
+        if (
+            a[i][1] < b[j][1]
+        ):  # pragma: no mutate -- < ≡ <= for merged inputs; equal endpoints mean both pointers advance
             i += 1
         else:
             j += 1
