@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from search.filters import normalize_path
+from search.chunk_id import build as _build_chunk_id
 
 
 if TYPE_CHECKING:
@@ -389,15 +389,10 @@ class MultiLanguageChunker:
         Returns:
             Normalized chunk ID string
         """
-        # Normalize path to forward slashes (cross-platform)
-        normalized_path = normalize_path(str(relative_path))
-        chunk_id = f"{normalized_path}:{start_line}-{end_line}:{chunk_type}"
-
-        # Use qualified name (ClassName.method_name) for better disambiguation
-        if qualified_name:
-            chunk_id += f":{qualified_name}"
-
-        return chunk_id
+        # Route through the canonical wire-format builder (P5: chunk_id.build).
+        return _build_chunk_id(
+            str(relative_path), start_line, end_line, chunk_type, qualified_name or None
+        )
 
     def _extract_call_relationships(
         self, chunk: CodeChunk, tchunk: TreeSitterChunk, chunk_id: str

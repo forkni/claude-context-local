@@ -211,3 +211,36 @@ def strip_line_range(raw: str) -> str:
     if len(parts) < 4:
         return raw
     return f"{parts[0]}:{parts[2]}:{parts[3]}"
+
+
+def build(
+    file_path: str,
+    line_start: int,
+    line_end: int,
+    kind: str,
+    name: str | None = None,
+) -> str:
+    """Build a canonical chunk_id string.
+
+    The ``:name`` suffix is omitted when *name* is falsy (``None`` or ``""``),
+    replicating the conditional-suffix behaviour of the three hand-rolled copies
+    in the chunker.  ``ChunkId.__str__()`` cannot be used here because it
+    always appends ``:name`` even when empty.
+
+    This is the **single forward builder** for the wire format owned by this
+    module.  Route all new chunk_id construction through ``build()``; use
+    ``ChunkId.parse()`` / ``normalize()`` for reading/normalising existing ids.
+
+    Examples:
+        >>> build("search/filters.py", 22, 31, "function", "normalize_path")
+        'search/filters.py:22-31:function:normalize_path'
+        >>> build("src/foo.py", 1, 5, "merged", None)
+        'src/foo.py:1-5:merged'
+        >>> build("src/foo.py", 1, 5, "merged", "Bar.foo")
+        'src/foo.py:1-5:merged:Bar.foo'
+        >>> build("src/foo.py", 1, 5, "merged", "")   # empty → omitted
+        'src/foo.py:1-5:merged'
+    """
+    normalized = _canonical_path_sep(file_path)
+    base = f"{normalized}:{line_start}-{line_end}:{kind}"
+    return f"{base}:{name}" if name else base
