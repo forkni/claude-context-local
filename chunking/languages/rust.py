@@ -10,19 +10,16 @@ from .base import LanguageChunker
 class RustChunker(LanguageChunker):
     """Rust-specific chunker using tree-sitter."""
 
+    # Rust grammars use type_identifier for struct/enum/trait names
+    _NAME_ID_TYPES: tuple[str, ...] = ("identifier", "type_identifier")
+
     def __init__(self, language: Language | None = None) -> None:
         super().__init__("rust", language)
 
-    def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
-        """Extract Rust-specific metadata."""
-        metadata: dict[str, Any] = {"node_type": node.type}
-
-        name = self._extract_name(
-            node, source, id_types=("identifier", "type_identifier")
-        )
-        if name is not None:
-            metadata["name"] = name
-
+    def _extra_metadata(
+        self, node: Any, source: bytes, metadata: dict[str, Any]
+    ) -> None:
+        """Add Rust-specific extras: is_async for functions, impl_type for impl blocks."""
         # Check for async functions
         if node.type == "function_item":
             for child in node.children:
@@ -39,5 +36,3 @@ class RustChunker(LanguageChunker):
                 if child.type in ["type_identifier", "generic_type"]:
                     metadata["impl_type"] = self.get_node_text(child, source)
                     break
-
-        return metadata

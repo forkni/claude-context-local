@@ -5,7 +5,7 @@ for all language-specific chunkers.
 """
 
 import logging
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -141,7 +141,7 @@ class TreeSitterChunk:
         }
 
 
-class LanguageChunker(ABC):
+class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_metadata is an intentional no-op hook
     """Abstract base class for language-specific chunkers."""
 
     def __init__(self, language_name: str, language: Language | None = None) -> None:
@@ -207,9 +207,27 @@ class LanguageChunker(ABC):
             )
         return set(spec.splittable_node_types)  # defensive copy
 
-    @abstractmethod
+    #: Tuple of tree-sitter node type strings used by the default
+    #: :meth:`extract_metadata` template to identify the name child.
+    #: Defaults to ``("identifier",)`` — suitable for JS, Go, C#.
+    #: Override to ``("identifier", "type_identifier")`` in leaves whose
+    #: grammar uses ``type_identifier`` for type/struct names (Rust, TS).
+    _NAME_ID_TYPES: tuple[str, ...] = ("identifier",)
+
     def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract metadata from a node.
+
+        Default template-method implementation:
+
+        1. Seeds *metadata* with ``{"node_type": node.type}``.
+        2. Finds the node name via :meth:`_extract_name` using
+           :attr:`_NAME_ID_TYPES`.
+        3. Delegates language-specific extras to :meth:`_extra_metadata`.
+        4. Returns *metadata*.
+
+        Complex leaves (C, C++, GLSL, Python) that need declarator-aware
+        name logic override this method entirely.  Simple leaves (JS, TS,
+        Go, Rust, C#) implement only :meth:`_extra_metadata`.
 
         Args:
             node: Tree-sitter node
@@ -218,7 +236,34 @@ class LanguageChunker(ABC):
         Returns:
             Metadata dictionary
         """
-        pass
+        metadata: dict[str, Any] = {"node_type": node.type}
+        name = self._extract_name(node, source, id_types=self._NAME_ID_TYPES)
+        if name is not None:
+            metadata["name"] = name
+        self._extra_metadata(node, source, metadata)
+        return metadata
+
+    def _extra_metadata(  # noqa: B027 — intentional no-op hook; complex leaves override extract_metadata instead
+        self,
+        node: Any,
+        source: bytes,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Language-specific extras hook called by the template :meth:`extract_metadata`.
+
+        Simple leaf chunkers implement this instead of overriding
+        :meth:`extract_metadata` directly.  The *metadata* dict already
+        contains ``node_type`` and ``name`` when this hook fires; add any
+        additional keys in-place.
+
+        Complex leaves that override :meth:`extract_metadata` entirely never
+        call this hook — the default no-op body is never executed for them.
+
+        Args:
+            node: Tree-sitter node.
+            source: Source code bytes.
+            metadata: Mutable metadata dict to update in-place.
+        """
 
     def get_node_complexity(self, node: Any) -> int:
         """Get cyclomatic complexity for a node.

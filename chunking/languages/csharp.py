@@ -13,14 +13,10 @@ class CSharpChunker(LanguageChunker):
     def __init__(self, language: Language | None = None) -> None:
         super().__init__("csharp", language)
 
-    def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
-        """Extract C#-specific metadata."""
-        metadata: dict[str, Any] = {"node_type": node.type}
-
-        name = self._extract_name(node, source)
-        if name is not None:
-            metadata["name"] = name
-
+    def _extra_metadata(
+        self, node: Any, source: bytes, metadata: dict[str, Any]
+    ) -> None:
+        """Add C#-specific extras: modifiers (inc. is_async) and has_generics."""
         # Extract access modifiers
         modifiers = []
         for child in node.children:
@@ -49,5 +45,3 @@ class CSharpChunker(LanguageChunker):
             if child.type == "type_parameter_list":
                 metadata["has_generics"] = True
                 break
-
-        return metadata

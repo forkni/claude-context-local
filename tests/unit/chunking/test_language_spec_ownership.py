@@ -49,6 +49,23 @@ LEAF_CLASSES = [
     GLSLChunker,
 ]
 
+# Simple leaves use the base template-method and must NOT define extract_metadata.
+SIMPLE_LEAF_CLASSES = [
+    JavaScriptChunker,
+    TypeScriptChunker,
+    GoChunker,
+    RustChunker,
+    CSharpChunker,
+]
+
+# Complex leaves have declarator-aware name logic and MUST define extract_metadata.
+COMPLEX_LEAF_CLASSES = [
+    PythonChunker,
+    CChunker,
+    CppChunker,
+    GLSLChunker,
+]
+
 EXPECTED_LANGUAGES = {
     "python",
     "javascript",
@@ -185,4 +202,46 @@ class TestLeafChunkerASTWalk:
         assert not violations, (
             f"{leaf_file.name} still defines banned methods (should be in LANGUAGE_SPECS):\n"
             + "\n".join(violations)
+        )
+
+
+class TestExtractMetadataOwnership:
+    """P4 Phase B gate: enforce the template-method / full-override split.
+
+    Simple leaves (JS, TS, Go, Rust, C#) use the base template and must NOT
+    define ``extract_metadata``.  Complex leaves (C, C++, GLSL, Python) keep
+    full declarator-aware overrides and MUST define ``extract_metadata``.
+
+    Adding a new leaf without updating the right set here is caught immediately.
+    """
+
+    def _get_own_methods(self, cls) -> set[str]:
+        return {name for name in cls.__dict__ if callable(cls.__dict__.get(name))}
+
+    @pytest.mark.parametrize("leaf_cls", SIMPLE_LEAF_CLASSES, ids=lambda c: c.__name__)
+    def test_simple_leaf_does_not_own_extract_metadata(self, leaf_cls):
+        """Simple leaves inherit the base template; they must NOT define extract_metadata."""
+        assert "extract_metadata" not in self._get_own_methods(leaf_cls), (
+            f"{leaf_cls.__name__} defines extract_metadata but should use the base "
+            f"template — remove it and implement _extra_metadata instead"
+        )
+
+    @pytest.mark.parametrize("leaf_cls", COMPLEX_LEAF_CLASSES, ids=lambda c: c.__name__)
+    def test_complex_leaf_owns_extract_metadata(self, leaf_cls):
+        """Complex leaves have their own name logic; they MUST define extract_metadata."""
+        assert "extract_metadata" in self._get_own_methods(leaf_cls), (
+            f"{leaf_cls.__name__} does not define extract_metadata — "
+            f"complex leaves must provide a full override for declarator-aware name extraction"
+        )
+
+    def test_base_owns_extra_metadata(self):
+        """_extra_metadata default no-op must be defined in LanguageChunker."""
+        assert "_extra_metadata" in LanguageChunker.__dict__, (
+            "LanguageChunker must define the _extra_metadata hook"
+        )
+
+    def test_base_owns_name_id_types(self):
+        """_NAME_ID_TYPES class attribute must be defined in LanguageChunker."""
+        assert "_NAME_ID_TYPES" in LanguageChunker.__dict__, (
+            "LanguageChunker must define _NAME_ID_TYPES"
         )

@@ -13,15 +13,10 @@ class GoChunker(LanguageChunker):
     def __init__(self, language: Language | None = None) -> None:
         super().__init__("go", language)
 
-    def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
-        """Extract Go-specific metadata."""
-        metadata: dict[str, Any] = {"node_type": node.type}
-
-        name = self._extract_name(node, source)
-        if name is not None:
-            metadata["name"] = name
-
-        # For methods, extract receiver type
+    def _extra_metadata(
+        self, node: Any, source: bytes, metadata: dict[str, Any]
+    ) -> None:
+        """Add Go-specific extras: receiver_type for method declarations."""
         if node.type == "method_declaration":
             for child in node.children:
                 if child.type == "parameter_list":
@@ -40,5 +35,3 @@ class GoChunker(LanguageChunker):
                                     break
                             break
                     break
-
-        return metadata
