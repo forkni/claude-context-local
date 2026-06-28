@@ -172,6 +172,31 @@ class TestNormalize:
         raw = "login"
         assert normalize(raw) == "login"
 
+    def test_double_escaped_backslash(self):
+        """Double-escaped backslash (JSON transport bug) → single forward slash."""
+        raw = "search\\\\reranker.py:36-137:method:rerank"
+        assert normalize(raw) == "search/reranker.py:36-137:method:rerank"
+
+    def test_collapses_double_slash(self):
+        """Double slash produced by naive backslash→slash conversion is collapsed."""
+        raw = "search//reranker.py:36-137:method:rerank"
+        assert normalize(raw) == "search/reranker.py:36-137:method:rerank"
+
+    def test_idempotent_forward_slash(self):
+        """normalize(normalize(x)) == normalize(x) for canonical input."""
+        canonical = "search/reranker.py:36-137:method:rerank"
+        assert normalize(normalize(canonical)) == normalize(canonical)
+
+    def test_idempotent_backslash(self):
+        """normalize(normalize(x)) == normalize(x) for backslash input."""
+        raw = "search\\reranker.py:36-137:method:rerank"
+        assert normalize(normalize(raw)) == normalize(raw)
+
+    def test_idempotent_double_escape(self):
+        """normalize(normalize(x)) == normalize(x) for double-escaped input."""
+        raw = "search\\\\reranker.py:36-137:method:rerank"
+        assert normalize(normalize(raw)) == normalize(raw)
+
 
 # ---------------------------------------------------------------------------
 # extract_name

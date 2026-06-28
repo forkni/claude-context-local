@@ -383,15 +383,11 @@ class CodeIndexManager:
         original_to_variant = {}  # Track mapping for correct key lookup
 
         for original_chunk_id in chunk_ids:
-            # Try all path variants to handle Windows/Unix differences
-            metadata_entry = None
-            resolved_chunk_id = original_chunk_id  # Default to original
-
-            for variant in MetadataStore.get_chunk_id_variants(original_chunk_id):
-                metadata_entry = self.metadata_store.get(variant)
-                if metadata_entry:
-                    resolved_chunk_id = variant  # Use the variant that worked
-                    break
+            # Canonicalize once — MetadataStore.get() also canonicalizes, but
+            # we need the canonical form for self-skip comparison and the
+            # original_to_variant mapping that keys results for the caller.
+            resolved_chunk_id = MetadataStore.normalize_chunk_id(original_chunk_id)
+            metadata_entry = self.metadata_store.get(resolved_chunk_id)
 
             if not metadata_entry:
                 continue

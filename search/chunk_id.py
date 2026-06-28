@@ -107,21 +107,50 @@ def is_chunk_id(raw: str) -> bool:
     return raw.count(":") >= MIN_CHUNK_ID_COLONS
 
 
+def _canonical_path_sep(path: str) -> str:
+    """Backslashes (single or double/JSON-escaped) → '/', then collapse repeats.
+
+    Idempotent.  A relative path never legitimately contains '//' or '\\', so
+    collapsing is lossless.  Fixes the gap where ``normalize_path`` turns the
+    double-escaped ``\\\\`` into ``//`` instead of ``/``.
+
+    Examples:
+        >>> _canonical_path_sep("search\\\\reranker.py")   # double-escaped
+        "search/reranker.py"
+        >>> _canonical_path_sep("search//reranker.py")     # repeated slash
+        "search/reranker.py"
+    """
+    p = normalize_path(path)  # "\\" and "\" → "/" (double-backslash becomes "//")
+    while "//" in p:
+        p = p.replace("//", "/")
+    return p
+
+
 def normalize(raw: str) -> str:
-    """Normalize path separators in *raw* to forward slashes.
+    """Normalize path separators in *raw* to a single canonical forward slash.
 
-    Handles the common case where a Windows chunk_id contains backslashes in
-    the file-path component.  Reconstructs the colon-delimited structure so only
-    the file path is touched.
+    Handles Windows backslashes (single and JSON-double-escaped) in the
+    file-path component and collapses any repeated slashes introduced by the
+    double-escape round-trip.  Reconstructs the colon-delimited structure so
+    only the file path is touched.
 
-    Example:
+    This is the **single owner** of chunk_id path canonicalization.  Route all
+    callers here rather than reimplementing.
+
+    Idempotent: ``normalize(normalize(x)) == normalize(x)``
+
+    Examples:
         >>> normalize("search\\\\reranker.py:36-137:method:rerank")
+        "search/reranker.py:36-137:method:rerank"
+        >>> normalize("search\\reranker.py:36-137:method:rerank")
+        "search/reranker.py:36-137:method:rerank"
+        >>> normalize("search/reranker.py:36-137:method:rerank")
         "search/reranker.py:36-137:method:rerank"
     """
     parts = raw.split(":")
     if len(parts) >= 4:
-        return f"{normalize_path(parts[0])}:{':'.join(parts[1:])}"
-    return normalize_path(raw)
+        return f"{_canonical_path_sep(parts[0])}:{':'.join(parts[1:])}"
+    return _canonical_path_sep(raw)
 
 
 def extract_name(raw: str) -> str:

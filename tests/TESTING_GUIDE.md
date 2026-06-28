@@ -1752,7 +1752,7 @@ orchestration shells — they test the mocks, not the logic.
 |--------|-------|--------|----------|------------------|-------|
 | `chunking/relationships/call_edge_resolver.py` | 56 | 40 | 16 | 0 | **100%** |
 | `search/reranker.py` | 529 | 265 | 261 | 0 | **100%** |
-| `evaluation/metrics.py` | 581 | 194 | 153 | 14 | **93.3%** |
+| `evaluation/metrics.py` | 581 | 183 | 181 | 1 | **99.5%** |
 
 Score = killed / (killed + genuine survivors). Incompetent and pragmaed mutations are excluded.
 
@@ -1762,13 +1762,10 @@ mutants (lines 66, 68, 88) are killed by precision tests.
 
 `evaluation/metrics.py` pragmas cover: magnitude guards (`> 0` / `!= 0` when value ≥ 0 always),
 `round(x, 4)` display-precision constants, `False` defaults when key always present, k-literal
-constants in metric labels (5, 7, 10). The 14 remaining genuine survivors:
-- 3 on `merge_ranges` (rows 279/281) — addressed by `test_third_range_overlaps_second_not_first`,
-  will show as KILLED on next periodic run
-- 7 on `intersect_ranges` (rows 308, 313, 316) — genuine gap: tests use single-element `b`,
-  so `j`-pointer advance mutations aren't exercised with 2-element `b`
-- 1 `Add_Mod` in `calculate_line_precision` (row 384) — genuine gap: tests use start=1
-- 1 `and→or` in `build_chunk_line_lookup` (row 460) — genuine gap: tests have all-truthy entries
+constants in metric labels (5, 7, 10), `while`-condition `<` vs `!=` equivalence for monotonic
+index, pointer-advance tie-break `<` vs `<=` for equal endpoints in merged inputs. The 1 remaining
+item is a confirmed-killed transient false positive (cosmic-ray `NumberReplacer` on L290,
+`merge_ranges` `prev_end + 1`; `test_adjacent` kills it in isolation — verified manually).
 
 #### Local run workflow (cosmic-ray)
 

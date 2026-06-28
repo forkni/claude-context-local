@@ -55,51 +55,6 @@ class TestChunkIdNormalization:
         assert result == "file.py:10-20:function:my_func"
 
 
-class TestChunkIdVariants:
-    """Test get_chunk_id_variants() helper function."""
-
-    def test_variants_include_original(self):
-        """First variant should always be the original chunk_id."""
-        chunk_id = "search/reranker.py:36-137:method:rerank"
-        variants = MetadataStore.get_chunk_id_variants(chunk_id)
-        assert variants[0] == chunk_id
-
-    def test_variants_include_un_double_escaped(self):
-        """Should include un-double-escaped variant to fix MCP bug."""
-        chunk_id = r"search\\reranker.py:36-137:method:rerank"
-        variants = MetadataStore.get_chunk_id_variants(chunk_id)
-        # Un-double-escape: \\\\ -> \\
-        assert r"search\reranker.py:36-137:method:rerank" in variants
-
-    def test_variants_include_forward_slash(self):
-        """Should include forward slash variant for cross-platform compat."""
-        chunk_id = r"search\reranker.py:36-137:method:rerank"
-        variants = MetadataStore.get_chunk_id_variants(chunk_id)
-        assert "search/reranker.py:36-137:method:rerank" in variants
-
-    def test_variants_include_backslash(self):
-        """Should include backslash variant to match Windows storage."""
-        chunk_id = "search/reranker.py:36-137:method:rerank"
-        variants = MetadataStore.get_chunk_id_variants(chunk_id)
-        assert r"search\reranker.py:36-137:method:rerank" in variants
-
-    def test_variants_deduplicated(self):
-        """Duplicate variants should be removed."""
-        chunk_id = "search/reranker.py:36-137:method:rerank"
-        variants = MetadataStore.get_chunk_id_variants(chunk_id)
-        # Should not have duplicates
-        assert len(variants) == len(set(variants))
-
-    def test_variants_order_preserved(self):
-        """Variants should be in priority order: original, un-escaped, forward, back."""
-        chunk_id = r"search\reranker.py:36-137:method:rerank"
-        variants = MetadataStore.get_chunk_id_variants(chunk_id)
-        # Original first
-        assert variants[0] == chunk_id
-        # Others follow (exact order may vary due to deduplication)
-        assert len(variants) >= 2
-
-
 class TestChunkIdLookup:
     """Test get_chunk_by_id() multi-variant lookup."""
 
@@ -205,23 +160,6 @@ class TestCrossPlatformPaths:
         assert "/" in normalized
         assert "\\" not in normalized
 
-    def test_cross_platform_lookup(self):
-        """Chunk indexed on Windows should be findable with Unix paths."""
-        # Indexed on Windows
-        indexed_id = r"search\reranker.py:36-137:method:rerank"
-
-        # Looked up from Unix or after normalization
-        lookup_id = "search/reranker.py:36-137:method:rerank"
-
-        # Get variants for lookup
-        variants = MetadataStore.get_chunk_id_variants(lookup_id)
-
-        # Windows indexed path should be in variants
-        assert (
-            indexed_id in variants
-            or r"search\reranker.py:36-137:method:rerank" in variants
-        )
-
 
 class TestRegressionIssue1:
     """Regression tests for Issue 1: Direct chunk_id lookup failure.
@@ -290,7 +228,6 @@ class TestNormalizePathOwnership:
 
     Fix: route any new normalizer through ``utils.path_utils.normalize_path``
     (path flavour) or ``search.chunk_id.normalize`` (chunk-id flavour).
-    See plan vast-whistling-pinwheel.md § P1b for the deferred boundary step.
     """
 
     def test_normalize_path_defined_only_in_path_utils(self):

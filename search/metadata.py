@@ -15,7 +15,6 @@ from sqlitedict import SqliteDict
 
 from search.chunk_id import normalize as _normalize_chunk_id
 from search.symbol_cache import SymbolHashCache
-from utils.path_utils import normalize_path
 
 
 class MetadataStore:
@@ -68,15 +67,17 @@ class MetadataStore:
     # CRUD Operations
 
     def get(self, chunk_id: str) -> dict[str, Any] | None:
-        """Get metadata for a chunk with path variant handling.
+        """Get metadata for a chunk.
 
-        Tries multiple chunk_id variants to handle path separator differences
-        (Windows backslash vs Unix forward slash) and MCP transport escaping bugs.
-
-        Uses symbol hash cache for O(1) lookup before falling back to variant checking.
+        Canonicalizes *chunk_id* once at the read boundary (P1b), then performs
+        a single hash-cache lookup followed by a single direct DB lookup.  All
+        stored keys are canonical (enforced by :meth:`set`), so no multi-variant
+        fallback is needed.
 
         Args:
-            chunk_id: Chunk identifier in format "file:lines:type:name"
+            chunk_id: Chunk identifier in format "file:lines:type:name" —
+                any path-separator variant is accepted; it is canonicalized
+                before lookup.
 
         Returns:
             Metadata dictionary with "index_id" and "metadata" keys, or None if not found
@@ -86,22 +87,21 @@ class MetadataStore:
             {"index_id": 0, "metadata": {"relative_path": "search/indexer.py", ...}}
         """
         self._ensure_open()
+        canonical = _normalize_chunk_id(chunk_id)
 
-        # Fast path: Try hash cache lookup (O(1))
-        cached_chunk_id = self._symbol_cache.get_by_chunk_id(chunk_id)
+        # Fast path: O(1) hash-cache lookup (canonical key always hits if stored)
+        cached_chunk_id = self._symbol_cache.get_by_chunk_id(canonical)
         # pyrefly: ignore [not-iterable]
         if cached_chunk_id and cached_chunk_id in self._db:
             # pyrefly: ignore [unsupported-operation]
             return self._db[cached_chunk_id]
 
-        # Slow path: Try variants (backward compatibility)
-        for variant in self.get_chunk_id_variants(chunk_id):
-            # pyrefly: ignore [not-iterable]
-            if variant in self._db:
-                # Cache the successful variant for future lookups
-                self._symbol_cache.add(variant)
-                # pyrefly: ignore [unsupported-operation]
-                return self._db[variant]
+        # Direct DB lookup (handles the first access before cache is warm)
+        # pyrefly: ignore [not-iterable]
+        if canonical in self._db:
+            self._symbol_cache.add(canonical)
+            # pyrefly: ignore [unsupported-operation]
+            return self._db[canonical]
 
         return None
 
@@ -128,8 +128,13 @@ class MetadataStore:
     def set(self, chunk_id: str, index_id: int, metadata: dict[str, Any]) -> None:
         """Set metadata for a chunk.
 
+        Canonicalizes *chunk_id* at write time so all stored keys are in
+        consistent forward-slash form.  This is the write boundary enforced by
+        the P1b architecture step — callers may pass any path-separator variant;
+        only the canonical form is stored.
+
         Args:
-            chunk_id: Chunk identifier
+            chunk_id: Chunk identifier (canonicalized before storage)
             index_id: Position in FAISS index
             metadata: Chunk metadata dictionary containing relative_path, chunk_type, etc.
 
@@ -141,28 +146,30 @@ class MetadataStore:
             ... })
         """
         self._ensure_open()
+        canonical = _normalize_chunk_id(chunk_id)
         # pyrefly: ignore [unsupported-operation]
-        self._db[chunk_id] = {"index_id": index_id, "metadata": metadata}
+        self._db[canonical] = {"index_id": index_id, "metadata": metadata}
 
-        # Add to symbol cache for O(1) lookups
-        self._symbol_cache.add(chunk_id)
+        # Add canonical form to symbol cache for O(1) lookups
+        self._symbol_cache.add(canonical)
 
     def delete(self, chunk_id: str) -> bool:
         """Delete metadata for a chunk.
 
         Args:
-            chunk_id: Chunk identifier to delete
+            chunk_id: Chunk identifier to delete (canonicalized before lookup)
 
         Returns:
             True if chunk was deleted, False if not found
         """
         self._ensure_open()
+        canonical = _normalize_chunk_id(chunk_id)
         # pyrefly: ignore [not-iterable]
-        if chunk_id in self._db:
+        if canonical in self._db:
             # pyrefly: ignore [unsupported-operation]
-            del self._db[chunk_id]
+            del self._db[canonical]
             # Remove from symbol cache
-            self._symbol_cache.remove(chunk_id)
+            self._symbol_cache.remove(canonical)
             return True
         return False
 
@@ -186,18 +193,19 @@ class MetadataStore:
         """Update the FAISS index ID for a chunk.
 
         Args:
-            chunk_id: Chunk identifier
+            chunk_id: Chunk identifier (canonicalized before lookup + write)
             new_id: New FAISS index position
 
         Returns:
             True if updated, False if chunk not found
         """
         self._ensure_open()
-        entry = self.get(chunk_id)
+        canonical = _normalize_chunk_id(chunk_id)
+        entry = self.get(canonical)
         if entry:
             entry["index_id"] = new_id
             # pyrefly: ignore [unsupported-operation]
-            self._db[chunk_id] = entry
+            self._db[canonical] = entry
             return True
         return False
 
@@ -223,14 +231,14 @@ class MetadataStore:
         """Check if a chunk exists in metadata.
 
         Args:
-            chunk_id: Chunk identifier to check
+            chunk_id: Chunk identifier to check (canonicalized before lookup)
 
         Returns:
             True if chunk exists, False otherwise
         """
         self._ensure_open()
         # pyrefly: ignore [not-iterable]
-        return chunk_id in self._db
+        return _normalize_chunk_id(chunk_id) in self._db
 
     def __len__(self) -> int:
         """Return number of chunks in metadata store.
@@ -246,14 +254,14 @@ class MetadataStore:
         """Support 'chunk_id in store' syntax.
 
         Args:
-            chunk_id: Chunk identifier to check
+            chunk_id: Chunk identifier to check (canonicalized before lookup)
 
         Returns:
             True if chunk exists, False otherwise
         """
         self._ensure_open()
         # pyrefly: ignore [not-iterable]
-        return chunk_id in self._db
+        return _normalize_chunk_id(chunk_id) in self._db
 
     def keys(self) -> Iterator[str]:
         """Iterate over chunk IDs.
@@ -322,54 +330,6 @@ class MetadataStore:
             "search/reranker.py:36-137:method:rerank"
         """
         return _normalize_chunk_id(chunk_id)
-
-    @staticmethod
-    def get_chunk_id_variants(
-        chunk_id: str,
-    ) -> list[str]:  # TODO(P1b): remove once paths canonicalized at write time
-        """Get all possible chunk_id variants for robust lookup.
-
-        Returns list of chunk_id variants to try during lookup, handling:
-        - Original format (exact match)
-        - Un-double-escaped (fixes MCP JSON transport bug on Windows)
-        - Forward slash normalized (cross-platform)
-        - Backslash normalized (Windows native)
-
-        Args:
-            chunk_id: Original chunk ID to generate variants for
-
-        Returns:
-            List of chunk_id variants to try in lookup order
-
-        Example:
-            >>> MetadataStore.get_chunk_id_variants("search\\\\indexer.py:1-10:function:foo")
-            ["search\\\\indexer.py:1-10:function:foo",
-             "search\\indexer.py:1-10:function:foo",
-             "search/indexer.py:1-10:function:foo",
-             ...]
-        """
-        variants = [
-            chunk_id,  # Original (exact match)
-            chunk_id.replace(
-                "\\\\", "\\"
-            ),  # Handle double-escaped backslashes from JSON transport
-            normalize_path(chunk_id),  # Normalize to forward slash
-            chunk_id.replace("/", "\\"),  # Try backslash variant
-            MetadataStore.normalize_chunk_id(chunk_id),  # Properly normalized
-            MetadataStore.normalize_chunk_id(
-                chunk_id.replace("\\\\", "\\")
-            ),  # Normalized un-double-escaped
-        ]
-
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_variants = []
-        for variant in variants:
-            if variant not in seen:
-                seen.add(variant)
-                unique_variants.append(variant)
-
-        return unique_variants
 
     # Context Manager Support
 
