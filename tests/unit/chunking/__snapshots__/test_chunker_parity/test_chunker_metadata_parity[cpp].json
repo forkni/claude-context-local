@@ -1,0 +1,35 @@
+[
+  {
+    "content": "template<typename T>\nT add(T a, T b) {\n    return a + b;\n}",
+    "end_line": 6,
+    "language": "cpp",
+    "metadata": {
+      "is_template": true,
+      "name": "add",
+      "node_type": "template_declaration"
+    },
+    "start_line": 3,
+    "type": "template_declaration"
+  },
+  {
+    "content": "class Vector {\npublic:\n    float x, y;\n    Vector(float xi, float yi) : x(xi), y(yi) {}\n}",
+    "end_line": 12,
+    "language": "cpp",
+    "metadata": {
+      "name": "Vector",
+      "node_type": "class_specifier"
+    },
+    "start_line": 8,
+    "type": "class_specifier"
+  },
+  {
+    "content": "namespace math {\n    int square(int n) {\n        return n * n;\n    }\n}",
+    "end_line": 18,
+    "language": "cpp",
+    "metadata": {
+      "node_type": "namespace_definition"
+    },
+    "start_line": 14,
+    "type": "namespace_definition"
+  }
+]

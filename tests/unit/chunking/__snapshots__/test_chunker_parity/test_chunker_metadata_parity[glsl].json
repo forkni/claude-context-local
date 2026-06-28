@@ -1,0 +1,16 @@
+[
+  {
+    "content": "void main() {\n    vec3 n = normalize(gl_Normal);\n    gl_Position = uModel * vec4(n, 1.0);\n    gl_FragColor = texture2D(uTexture, vec2(0.5));\n}",
+    "end_line": 10,
+    "language": "glsl",
+    "metadata": {
+      "has_builtin_vars": true,
+      "has_math_ops": true,
+      "has_texture_ops": true,
+      "name": "main",
+      "node_type": "function_definition"
+    },
+    "start_line": 6,
+    "type": "function_definition"
+  }
+]

@@ -1,0 +1,61 @@
+[
+  {
+    "content": "async function fetchData(url) {\n    return url;\n}",
+    "end_line": 5,
+    "language": "javascript",
+    "metadata": {
+      "is_async": true,
+      "name": "fetchData",
+      "node_type": "function_declaration"
+    },
+    "start_line": 3,
+    "type": "function_declaration"
+  },
+  {
+    "content": "function* counter() {\n    let n = 0;\n    yield n++;\n}",
+    "end_line": 10,
+    "language": "javascript",
+    "metadata": {
+      "is_generator": true,
+      "name": "counter",
+      "node_type": "generator_function_declaration"
+    },
+    "start_line": 7,
+    "type": "generator_function_declaration"
+  },
+  {
+    "content": "class Animal {\n    constructor(name) {\n        this.name = name;\n    }\n\n    speak() {\n        return this.name;\n    }\n}",
+    "end_line": 20,
+    "language": "javascript",
+    "metadata": {
+      "name": "Animal",
+      "node_type": "class_declaration"
+    },
+    "start_line": 12,
+    "type": "class_declaration"
+  },
+  {
+    "content": "constructor(name) {\n        this.name = name;\n    }",
+    "end_line": 15,
+    "language": "javascript",
+    "metadata": {
+      "node_type": "method_definition",
+      "parent_name": "Animal",
+      "parent_type": "class"
+    },
+    "start_line": 13,
+    "type": "method_definition"
+  },
+  {
+    "content": "speak() {\n        return this.name;\n    }",
+    "end_line": 19,
+    "language": "javascript",
+    "metadata": {
+      "node_type": "method_definition",
+      "parent_name": "Animal",
+      "parent_type": "class"
+    },
+    "start_line": 17,
+    "type": "method_definition"
+  }
+]
