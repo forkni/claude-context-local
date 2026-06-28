@@ -56,7 +56,7 @@ async def test_missing_target_returns_error(dec_state, passthrough_metadata):
 async def test_graph_not_available_returns_error(dec_state, passthrough_metadata):
     """Returns error when graph_storage is absent from the searcher."""
     mock_searcher = Mock()
-    mock_searcher.dense_index.graph_storage = None  # falsy → triggers the guard
+    mock_searcher.graph_storage = None  # falsy → triggers the guard
 
     with (
         patch("mcp_server.tools.decorators.get_state", return_value=dec_state),
@@ -92,7 +92,7 @@ async def test_path_found_attaches_endpoints_and_system_message(
     mock_gs = Mock()
     mock_gs.get_node_data.return_value = None
     mock_searcher = Mock()
-    mock_searcher.dense_index.graph_storage = mock_gs
+    mock_searcher.graph_storage = mock_gs
 
     mock_engine = Mock()
     mock_engine.find_path.return_value = path_result
@@ -128,7 +128,7 @@ async def test_no_path_returns_path_found_false_and_hint(
     mock_gs.get_node_data.return_value = None
     mock_gs.graph.__contains__ = Mock(return_value=False)
     mock_searcher = Mock()
-    mock_searcher.dense_index.graph_storage = mock_gs
+    mock_searcher.graph_storage = mock_gs
 
     mock_engine = Mock()
     mock_engine.find_path.return_value = None  # no path found
@@ -174,7 +174,7 @@ async def test_symbol_resolution_via_semantic_search(dec_state):
 
     mock_searcher = Mock()
     mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
-    mock_searcher.dense_index.graph_storage = mock_gs
+    mock_searcher.graph_storage = mock_gs
     # Return different results for source vs target resolution calls
     mock_searcher.search.side_effect = [[source_result], [target_result]]
 
@@ -227,7 +227,7 @@ async def test_resolve_tier2_graph_name_exact():
 
     mock_searcher = Mock()
     mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
-    mock_searcher.dense_index.graph_storage = mock_gs
+    mock_searcher.graph_storage = mock_gs
 
     chunk_id, info = await _resolve_symbol_to_chunk_id("my_func", mock_searcher)
 
@@ -249,7 +249,7 @@ async def test_resolve_tier2_suffix_colon():
 
     mock_searcher = Mock()
     mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
-    mock_searcher.dense_index.graph_storage = mock_gs
+    mock_searcher.graph_storage = mock_gs
 
     chunk_id, info = await _resolve_symbol_to_chunk_id("my_func", mock_searcher)
 
@@ -275,7 +275,7 @@ async def test_resolve_tier2_suffix_dot():
 
     mock_searcher = Mock()
     mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
-    mock_searcher.dense_index.graph_storage = mock_gs
+    mock_searcher.graph_storage = mock_gs
 
     chunk_id, info = await _resolve_symbol_to_chunk_id("my_method", mock_searcher)
 
@@ -302,7 +302,7 @@ async def test_resolve_tier3_semantic_name_match_preferred():
 
     mock_searcher = Mock()
     mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
-    mock_searcher.dense_index.graph_storage = mock_gs
+    mock_searcher.graph_storage = mock_gs
     mock_searcher.search.return_value = [first_result, exact_match]
 
     chunk_id, info = await _resolve_symbol_to_chunk_id("my_func", mock_searcher)
@@ -322,7 +322,7 @@ async def test_resolve_not_found_returns_none_none():
 
     mock_searcher = Mock()
     mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
-    mock_searcher.dense_index.graph_storage = mock_gs
+    mock_searcher.graph_storage = mock_gs
     mock_searcher.search.return_value = []
 
     chunk_id, info = await _resolve_symbol_to_chunk_id("nonexistent", mock_searcher)

@@ -330,25 +330,13 @@ class SearchOrchestrator:
         except DimensionMismatchError as e:
             return responses.dimension_mismatch(e)
 
-        total_chunks = 0
-        is_ready = False
-        if hasattr(searcher, "is_ready"):
-            is_ready = searcher.is_ready
-            if (
-                hasattr(searcher, "dense_index")
-                and searcher.dense_index
-                and hasattr(searcher.dense_index, "index")
-                and searcher.dense_index.index
-            ):
-                total_chunks = searcher.dense_index.index.ntotal
-        elif hasattr(searcher, "index_manager") and searcher.index_manager:
-            stats = searcher.index_manager.get_stats()
-            total_chunks = stats.get("total_chunks", 0)
-            is_ready = total_chunks > 0
-        elif hasattr(searcher, "get_stats"):
-            stats = searcher.get_stats()
-            total_chunks = stats.get("total_chunks", 0)
-            is_ready = total_chunks > 0
+        from mcp_server.tools.searcher_view import SearcherView
+
+        _view = SearcherView(searcher)
+        is_ready = _view.is_ready
+        # Only compute total_chunks when the index is ready — avoids accessing
+        # a partially-initialised index and simplifies mock setup in tests.
+        total_chunks = _view.total_chunks if is_ready else 0
 
         if not is_ready or total_chunks == 0:
             return responses.error(

@@ -113,9 +113,14 @@ def _patch_execute(real_sc=None, project="/test"):
 
 
 def _make_ready_searcher():
-    """Create a mock HybridSearcher that is ready (1000 chunks)."""
+    """Create a mock HybridSearcher that is ready (1000 chunks).
+
+    ``index_manager`` is set to None explicitly so that SearcherView falls
+    through to ``dense_index`` (the HybridSearcher attribute name).
+    """
     s = Mock()
     s.is_ready = True
+    s.index_manager = None  # HybridSearcher: manager is at .dense_index
     s.bm25_weight = 0.35
     s.dense_weight = 0.65
     dense = Mock()
@@ -165,6 +170,7 @@ class TestExecuteReadinessCheck:
         plan = _make_plan()
         s = Mock()
         s.is_ready = False
+        s.index_manager = None  # HybridSearcher-like mock; manager is at .dense_index
         dense = Mock()
         dense.index = Mock()
         dense.index.ntotal = 0

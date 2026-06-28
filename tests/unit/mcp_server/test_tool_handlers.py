@@ -759,9 +759,12 @@ async def test_handle_search_code_hybrid_searcher_ready():
             suggested_params={},
         )
 
-        # Mock HybridSearcher with is_ready property and dense_index
+        # Mock HybridSearcher with is_ready property and dense_index.
+        # index_manager is set to None explicitly so SearcherView falls
+        # through to dense_index (the HybridSearcher attribute name).
         mock_searcher = Mock()
         mock_searcher.is_ready = True
+        mock_searcher.index_manager = None
 
         # Mock dense_index with FAISS index containing vectors
         mock_dense_index = Mock()

@@ -22,7 +22,6 @@ from merkle.snapshot_manager import SnapshotManager
 from search.config import (
     MODEL_REGISTRY,
 )
-from search.hybrid_searcher import HybridSearcher
 
 
 logger = logging.getLogger(__name__)
@@ -56,8 +55,10 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
         try:
             # Offload get_searcher + stats fetch off the event loop.
             def _get_hybrid_stats() -> dict | None:
+                from mcp_server.tools.searcher_view import SearcherView
+
                 _searcher = get_searcher()
-                if isinstance(_searcher, HybridSearcher):
+                if SearcherView(_searcher).is_hybrid:
                     return _searcher.get_stats()
                 return None
 

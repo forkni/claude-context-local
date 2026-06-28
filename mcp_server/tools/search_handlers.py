@@ -240,17 +240,18 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
 def _get_index_manager_from_searcher(searcher) -> CodeIndexManager | None:
     """Extract index_manager from searcher (handles different searcher types).
 
+    Delegates to :class:`~mcp_server.tools.searcher_view.SearcherView`, which
+    owns the HybridSearcher/IntelligentSearcher attribute-extraction seam.
+
     Args:
         searcher: HybridSearcher or IntelligentSearcher instance
 
     Returns:
         CodeIndexManager or None
     """
-    if hasattr(searcher, "index_manager"):
-        return searcher.index_manager
-    elif hasattr(searcher, "dense_index"):
-        return searcher.dense_index
-    return None
+    from mcp_server.tools.searcher_view import SearcherView
+
+    return SearcherView(searcher).index_manager
 
 
 async def _resolve_symbol_to_chunk_id(
@@ -284,27 +285,28 @@ async def _resolve_symbol_to_chunk_id(
             }
 
     # Tier 2 — graph node name index + suffix scan
-    if hasattr(searcher, "dense_index"):
-        gs = getattr(searcher.dense_index, "graph_storage", None)
-        if gs:
-            matches = (
-                gs.get_nodes_by_name(symbol_name)
-                if hasattr(gs, "get_nodes_by_name")
-                else []
-            )
-            if not matches:
-                # Plain ":name" (chunk_id suffix) or class-qualified ".name"
-                matches = [
-                    n
-                    for n in gs.graph.nodes()
-                    if n.endswith(f":{symbol_name}") or n.endswith(f".{symbol_name}")
-                ]
-            if matches:
-                return matches[0], {
-                    "resolved_from": symbol_name,
-                    "chunk_id": matches[0],
-                    "resolution_method": "graph_lookup",
-                }
+    from mcp_server.tools.searcher_view import SearcherView
+
+    gs = SearcherView(searcher).graph_storage
+    if gs:
+        matches = (
+            gs.get_nodes_by_name(symbol_name)
+            if hasattr(gs, "get_nodes_by_name")
+            else []
+        )
+        if not matches:
+            # Plain ":name" (chunk_id suffix) or class-qualified ".name"
+            matches = [
+                n
+                for n in gs.graph.nodes()
+                if n.endswith(f":{symbol_name}") or n.endswith(f".{symbol_name}")
+            ]
+        if matches:
+            return matches[0], {
+                "resolved_from": symbol_name,
+                "chunk_id": matches[0],
+                "resolution_method": "graph_lookup",
+            }
 
     # Tier 3 — semantic search with name-preference filter
     results = await asyncio.to_thread(searcher.search, symbol_name, k=5)
@@ -714,13 +716,9 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
             }
 
     # Get graph query engine
-    graph_storage = None
-    if hasattr(searcher, "dense_index") and hasattr(
-        searcher.dense_index, "graph_storage"
-    ):
-        graph_storage = searcher.dense_index.graph_storage
-    elif hasattr(searcher, "graph_storage"):
-        graph_storage = searcher.graph_storage
+    from mcp_server.tools.searcher_view import SearcherView
+
+    graph_storage = SearcherView(searcher).graph_storage
 
     if not graph_storage:
         return responses.error(
