@@ -101,6 +101,8 @@ dev = [
     "pipdeptree>=2.34.0",
     "pre-commit>=4.5.1",
     "pyrefly>=1.0",
+    "mutmut>=2.5.1",  # Phase 4.2: mutation testing; run periodically, not per-commit (Linux CI only)
+    "cosmic-ray>=8.4",  # Phase 4.2: mutation testing; local cross-platform runner
 ]
 profile = [
     "snoop>=0.6.0",

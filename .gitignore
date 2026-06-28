@@ -392,6 +392,11 @@ gha-creds-*.json
 .cgw.conf
 cgw.conf.example
 
+# Mutation testing artifacts (cosmic-ray sessions — regenerate, never commit)
+cosmic-ray.toml
+cr-*.toml
+*.sqlite
+
 # Local-only project files (not for version control)
 SESSION_LOG.md
 CONTEXT.md
