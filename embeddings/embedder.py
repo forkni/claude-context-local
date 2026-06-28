@@ -1108,10 +1108,10 @@ class CodeEmbedder:
             "parent_name": chunk.parent_name,
             "parent_chunk_id": chunk.parent_chunk_id,
             "docstring": chunk.docstring,
-            "decorators": chunk.decorators,
-            "imports": chunk.imports,
+            "decorators": chunk.decorators or [],
+            "imports": chunk.imports or [],
             "complexity_score": chunk.complexity_score,
-            "tags": chunk.tags,
+            "tags": chunk.tags or [],
             # In-memory carrier for downstream BM25 document indexing (read in
             # hybrid_searcher / indexer); stripped before persist so the
             # MetadataStore keeps only content_preview (#55). NOT used for token

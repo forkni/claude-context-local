@@ -62,7 +62,9 @@ class _NoopTracer:
 class _NoopExporter:
     def export(self, spans: Any) -> Any:
         try:
-            from opentelemetry.sdk.trace.export import SpanExportResult
+            from opentelemetry.sdk.trace.export import (
+                SpanExportResult,  # pyrefly: ignore [missing-import]
+            )
 
             return SpanExportResult.SUCCESS
         except ImportError:
@@ -105,7 +107,7 @@ def get_tracer(name: str = "claude-context-local") -> Any:
     if not _enabled or _tracer_provider is None:
         return _NoopTracer()
     try:
-        from opentelemetry import trace
+        from opentelemetry import trace  # pyrefly: ignore [missing-import]
 
         return trace.get_tracer(name)
     except Exception:
@@ -128,7 +130,7 @@ def traced_block(name: str, **attrs: Any) -> Generator[Any, None, None]:
 
     # Separate setup (safe to catch) from the yield (must propagate caller exceptions).
     try:
-        from opentelemetry import trace
+        from opentelemetry import trace  # pyrefly: ignore [missing-import]
 
         tracer = trace.get_tracer("claude-context-local")
     except Exception:
@@ -156,7 +158,9 @@ def wrap_in_context(fn: Any) -> Any:
         return fn
 
     try:
-        from opentelemetry import context as otel_context
+        from opentelemetry import (
+            context as otel_context,  # pyrefly: ignore [missing-import]
+        )
 
         ctx = otel_context.get_current()
 
@@ -211,15 +215,24 @@ def init_observability(cfg: ObservabilityConfig) -> None:
         return
 
     try:
-        from opentelemetry import trace
-        from opentelemetry.sdk.resources import SERVICE_NAME, Resource
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry import trace  # pyrefly: ignore [missing-import]
+        from opentelemetry.sdk.resources import (  # pyrefly: ignore [missing-import]
+            SERVICE_NAME,
+            Resource,
+        )
+        from opentelemetry.sdk.trace import (
+            TracerProvider,  # pyrefly: ignore [missing-import]
+        )
+        from opentelemetry.sdk.trace.export import (
+            BatchSpanProcessor,  # pyrefly: ignore [missing-import]
+        )
 
         resource = Resource(attributes={SERVICE_NAME: cfg.service_name})
 
         if cfg.sample_ratio < 1.0:
-            from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
+            from opentelemetry.sdk.trace.sampling import (
+                TraceIdRatioBased,  # pyrefly: ignore [missing-import]
+            )
 
             provider = TracerProvider(
                 resource=resource,
@@ -257,13 +270,15 @@ def _build_exporter(cfg: ObservabilityConfig, exporter_name: str) -> Any:
     name = exporter_name.lower()
 
     if name == "console":
-        from opentelemetry.sdk.trace.export import ConsoleSpanExporter
+        from opentelemetry.sdk.trace.export import (
+            ConsoleSpanExporter,  # pyrefly: ignore [missing-import]
+        )
 
         # Always stderr — stdout is the MCP stdio protocol channel.
         return ConsoleSpanExporter(out=sys.stderr)
 
     if name == "otlp":
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # pyrefly: ignore [missing-import]
             OTLPSpanExporter,
         )
 

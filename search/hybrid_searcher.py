@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 import numpy as np
 
@@ -14,6 +14,9 @@ if TYPE_CHECKING:
     from embeddings.embedder import CodeEmbedder, EmbeddingResult
 
     from .config import EgoGraphConfig, ParentRetrievalConfig, SearchConfig
+
+from embeddings.chunk_metadata import ChunkMetadata
+
 
 try:
     import torch
@@ -593,7 +596,9 @@ class HybridSearcher(BaseSearcher):
             result = EmbeddingResult(
                 embedding=np.array(embedding, dtype=np.float32),
                 chunk_id=chunk_id,
-                metadata=metadata.get(chunk_id, {}) if metadata else {},
+                metadata=cast(
+                    ChunkMetadata, metadata.get(chunk_id, {}) if metadata else {}
+                ),
             )
             embedding_results.append(result)
 

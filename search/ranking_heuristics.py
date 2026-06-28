@@ -53,7 +53,8 @@ class RankingHeuristics:
         score *= self._calculate_name_boost(name, query, query_tokens)
         score *= self._calculate_path_boost(relative_path, query_tokens)
 
-        score *= lifecycle_demotion(name, query.lower())
+        if name is not None:
+            score *= lifecycle_demotion(name, query.lower())
 
         docstring = result.metadata.get("docstring")
         if docstring:

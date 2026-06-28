@@ -4,7 +4,7 @@ import json
 import logging
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 import numpy as np
 
@@ -213,7 +213,7 @@ class CodeIndexManager:
 
             # Populate call graph via integration layer
             if self._graph.is_available:
-                self._graph.add_chunk(chunk_id, result.metadata)
+                self._graph.add_chunk(chunk_id, cast(dict[str, Any], result.metadata))
                 self._logger.debug(
                     f"Graph storage check: chunk_id={chunk_id}, type={result.metadata.get('chunk_type')}, graph_nodes={len(self._graph)}"
                 )
