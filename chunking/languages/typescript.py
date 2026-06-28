@@ -15,35 +15,6 @@ class TypeScriptChunker(LanguageChunker):
         language_name = "tsx" if use_tsx else "typescript"
         super().__init__(language_name, language)
 
-    def _load_language(self) -> Language:
-        """Load tree-sitter-typescript language binding."""
-        try:
-            import tree_sitter_typescript as tstypescript
-
-            if self.use_tsx:
-                return Language(tstypescript.language_tsx())
-            return Language(tstypescript.language_typescript())
-        except ImportError as err:
-            raise ValueError(
-                "tree-sitter-typescript not installed. "
-                "Install with: pip install tree-sitter-typescript"
-            ) from err
-
-    def _get_splittable_node_types(self) -> set[str]:
-        """TypeScript-specific splittable node types."""
-        return {
-            "function_declaration",
-            "function",
-            "arrow_function",
-            "class_declaration",
-            "method_definition",
-            "generator_function",
-            "generator_function_declaration",
-            "interface_declaration",
-            "type_alias_declaration",
-            "enum_declaration",
-        }
-
     def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract TypeScript-specific metadata."""
         metadata = {"node_type": node.type}

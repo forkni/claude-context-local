@@ -13,31 +13,6 @@ class CppChunker(LanguageChunker):
     def __init__(self, language: Language | None = None) -> None:
         super().__init__("cpp", language)
 
-    def _load_language(self) -> Language:
-        """Load tree-sitter-cpp language binding."""
-        try:
-            import tree_sitter_cpp as tscpp
-
-            return Language(tscpp.language())
-        except ImportError as err:
-            raise ValueError(
-                "tree-sitter-cpp not installed. "
-                "Install with: pip install tree-sitter-cpp"
-            ) from err
-
-    def _get_splittable_node_types(self) -> set[str]:
-        """C++-specific splittable node types."""
-        return {
-            "function_definition",
-            "class_specifier",
-            "struct_specifier",
-            "union_specifier",
-            "enum_specifier",
-            "namespace_definition",
-            "template_declaration",
-            "concept_definition",
-        }
-
     def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract C++-specific metadata."""
         metadata = {"node_type": node.type}

@@ -13,30 +13,6 @@ class JavaScriptChunker(LanguageChunker):
     def __init__(self, language: Language | None = None) -> None:
         super().__init__("javascript", language)
 
-    def _load_language(self) -> Language:
-        """Load tree-sitter-javascript language binding."""
-        try:
-            import tree_sitter_javascript as tsjavascript
-
-            return Language(tsjavascript.language())
-        except ImportError as err:
-            raise ValueError(
-                "tree-sitter-javascript not installed. "
-                "Install with: pip install tree-sitter-javascript"
-            ) from err
-
-    def _get_splittable_node_types(self) -> set[str]:
-        """JavaScript-specific splittable node types."""
-        return {
-            "function_declaration",
-            "function",
-            "arrow_function",
-            "class_declaration",
-            "method_definition",
-            "generator_function",
-            "generator_function_declaration",
-        }
-
     def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract JavaScript-specific metadata."""
         metadata = {"node_type": node.type}

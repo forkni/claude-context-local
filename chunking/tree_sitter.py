@@ -17,14 +17,13 @@ Supported languages (8 tree-sitter + 1 AST):
 
 import logging
 import threading
-import warnings
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
 
 from tree_sitter import Language
 
-from .language_registry import EXT_TO_LANGUAGE
+from .language_registry import EXT_TO_LANGUAGE, LANGUAGE_SPECS
 
 # Import base classes and language chunkers from languages package
 from .languages import (
@@ -44,75 +43,24 @@ from .languages import (
 
 logger = logging.getLogger(__name__)
 
-# Try to import language bindings
+# Build AVAILABLE_LANGUAGES from LANGUAGE_SPECS — single grammar-loading owner.
+# Each spec's load_grammar() is called once at import time; ImportError means
+# the package is not installed (skip silently, log at DEBUG).
 AVAILABLE_LANGUAGES: dict[str, Language] = {}
 
-try:
-    import tree_sitter_python as tspython
+for _lang_name, _spec in LANGUAGE_SPECS.items():
+    try:
+        AVAILABLE_LANGUAGES[_lang_name] = _spec.load_grammar()  # type: ignore[assignment]
+    except (ImportError, ValueError):
+        logger.debug(
+            "%s not installed (tree-sitter-%s). Install with: %s",
+            _spec.grammar_module,
+            _lang_name,
+            _spec.install_hint
+            or f"pip install {_spec.grammar_module.replace('_', '-')}",
+        )
 
-    AVAILABLE_LANGUAGES["python"] = Language(tspython.language())
-except ImportError:
-    logger.debug("tree-sitter-python not installed")
-
-try:
-    import tree_sitter_javascript as tsjavascript
-
-    AVAILABLE_LANGUAGES["javascript"] = Language(tsjavascript.language())
-except ImportError:
-    logger.debug("tree-sitter-javascript not installed")
-
-try:
-    import tree_sitter_typescript as tstypescript
-
-    # TypeScript has two grammars: typescript and tsx
-    AVAILABLE_LANGUAGES["typescript"] = Language(tstypescript.language_typescript())
-    AVAILABLE_LANGUAGES["tsx"] = Language(tstypescript.language_tsx())
-except ImportError:
-    logger.debug("tree-sitter-typescript not installed")
-
-try:
-    import tree_sitter_go as tsgo
-
-    AVAILABLE_LANGUAGES["go"] = Language(tsgo.language())
-except ImportError:
-    logger.debug("tree-sitter-go not installed")
-
-try:
-    import tree_sitter_rust as tsrust
-
-    AVAILABLE_LANGUAGES["rust"] = Language(tsrust.language())
-except ImportError:
-    logger.debug("tree-sitter-rust not installed")
-
-try:
-    import tree_sitter_c as tsc
-
-    AVAILABLE_LANGUAGES["c"] = Language(tsc.language())
-except ImportError:
-    logger.debug("tree-sitter-c not installed")
-
-try:
-    import tree_sitter_cpp as tscpp
-
-    AVAILABLE_LANGUAGES["cpp"] = Language(tscpp.language())
-except ImportError:
-    logger.debug("tree-sitter-cpp not installed")
-
-try:
-    import tree_sitter_c_sharp as tscsharp
-
-    AVAILABLE_LANGUAGES["csharp"] = Language(tscsharp.language())
-except ImportError:
-    logger.debug("tree-sitter-c-sharp not installed")
-
-try:
-    import tree_sitter_glsl as tsglsl
-
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message="int argument support is deprecated")
-        AVAILABLE_LANGUAGES["glsl"] = Language(tsglsl.language())
-except ImportError:
-    logger.debug("tree-sitter-glsl not installed")
+del _lang_name, _spec  # don't pollute module namespace
 
 # Re-export for backwards compatibility
 __all__ = [

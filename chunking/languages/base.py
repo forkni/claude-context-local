@@ -159,29 +159,53 @@ class LanguageChunker(ABC):
         self.splittable_node_types = self._get_splittable_node_types()
 
     def _load_language(self) -> Language:
-        """Load the tree-sitter language binding.
+        """Load the tree-sitter language binding from the LANGUAGE_SPECS table.
 
-        Override in subclasses to provide language-specific loading.
+        Reads the grammar spec for ``self.language_name`` from
+        ``chunking.language_registry.LANGUAGE_SPECS`` and delegates to
+        ``LanguageSpec.load_grammar()``.  Subclasses that need custom loading
+        (e.g. TypeScriptChunker's tsx/non-tsx branching) can still override
+        this method — but most leaves no longer need to.
 
         Returns:
             Language object
 
         Raises:
-            ValueError: If language binding not available
+            ValueError: If the language spec or grammar package is not available.
         """
-        raise ValueError(
-            f"Language {self.language_name} not available. "
-            f"Install tree-sitter-{self.language_name} or pass language explicitly."
-        )
+        from chunking.language_registry import LANGUAGE_SPECS  # avoid circular import
 
-    @abstractmethod
+        spec = LANGUAGE_SPECS.get(self.language_name)
+        if spec is None:
+            raise ValueError(
+                f"No LanguageSpec registered for {self.language_name!r}. "
+                f"Add an entry to LANGUAGE_SPECS in chunking/language_registry.py."
+            )
+        return spec.load_grammar()  # type: ignore[return-value]
+
     def _get_splittable_node_types(self) -> set[str]:
         """Get node types that should be split into chunks.
 
+        Reads ``splittable_node_types`` from the LANGUAGE_SPECS entry for
+        ``self.language_name``.  Subclasses may still override this method
+        if they need dynamic or context-sensitive node-type selection, but
+        most leaves can rely on this default.
+
         Returns:
             Set of node type names
+
+        Raises:
+            ValueError: If no spec is registered for this language.
         """
-        pass
+        from chunking.language_registry import LANGUAGE_SPECS  # avoid circular import
+
+        spec = LANGUAGE_SPECS.get(self.language_name)
+        if spec is None:
+            raise ValueError(
+                f"No LanguageSpec registered for {self.language_name!r}. "
+                f"Add an entry to LANGUAGE_SPECS in chunking/language_registry.py."
+            )
+        return set(spec.splittable_node_types)  # defensive copy
 
     @abstractmethod
     def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:

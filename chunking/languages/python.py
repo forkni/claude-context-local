@@ -18,26 +18,6 @@ class PythonChunker(LanguageChunker):
     def __init__(self, language: Language | None = None) -> None:
         super().__init__("python", language)
 
-    def _load_language(self) -> Language:
-        """Load tree-sitter-python language binding."""
-        try:
-            import tree_sitter_python as tspython
-
-            return Language(tspython.language())
-        except ImportError as err:
-            raise ValueError(
-                "tree-sitter-python not installed. "
-                "Install with: pip install tree-sitter-python"
-            ) from err
-
-    def _get_splittable_node_types(self) -> set[str]:
-        """Python-specific splittable node types."""
-        return {
-            "function_definition",
-            "class_definition",
-            "decorated_definition",
-        }
-
     def _get_block_boundary_types(self) -> set[str]:
         """Python-specific block boundary types for splitting large functions.
 

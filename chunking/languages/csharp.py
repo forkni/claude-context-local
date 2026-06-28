@@ -13,33 +13,6 @@ class CSharpChunker(LanguageChunker):
     def __init__(self, language: Language | None = None) -> None:
         super().__init__("csharp", language)
 
-    def _load_language(self) -> Language:
-        """Load tree-sitter-c-sharp language binding."""
-        try:
-            import tree_sitter_c_sharp as tscsharp
-
-            return Language(tscsharp.language())
-        except ImportError as err:
-            raise ValueError(
-                "tree-sitter-c-sharp not installed. "
-                "Install with: pip install tree-sitter-c-sharp"
-            ) from err
-
-    def _get_splittable_node_types(self) -> set[str]:
-        """C#-specific splittable node types."""
-        return {
-            "method_declaration",
-            "constructor_declaration",
-            "destructor_declaration",
-            "class_declaration",
-            "struct_declaration",
-            "interface_declaration",
-            "enum_declaration",
-            "namespace_declaration",
-            "property_declaration",
-            "event_declaration",
-        }
-
     def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract C#-specific metadata."""
         metadata = {"node_type": node.type}
