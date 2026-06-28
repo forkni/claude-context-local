@@ -29,21 +29,31 @@ keywords = [
 ]
 dependencies = [
     "aiohttp>=3.14.1",  # Security: Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1)
+    "cryptography>=46.0.7",  # Security: PYSEC-2026-35/36 (DNS name-constraint bypass, buffer overflow). Defer GHSA-537c (OpenSSL wheel, needs 48.x major bump).
     "einops>=0.8.0",  # Required for CodeRankEmbed model
     "faiss-cpu>=1.13.2",
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
     "huggingface-hub>=0.36.0",
+    "idna>=3.15",  # Security: CVE-2026-45409
     "mcp>=1.27.0,<2",  # <2: mcp v2 (beta 2026-06-30) has breaking changes
-    "starlette>=1.3.1",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
+    "msgpack>=1.2.1",  # Security: GHSA-6v7p-g79w-8964 (SEGV on repeated unpack after error)
     "networkx>=3.0",  # Required for graph storage and community detection
     "nltk>=3.9.4",  # Security: Fixes CVE-2025-14009 (path traversal in downloader)
     "psutil>=7.2.1",
+    "pydantic-settings>=2.14.2",  # Security: GHSA-4xgf-cpjx-pc3j (symlink follow in secrets_dir)
+    "pygments>=2.20.0",  # Security: CVE-2026-4539 (ReDoS in AdlLexer)
+    "pyjwt>=2.13.0",  # Security: 9 CVEs incl CVE-2026-32597 crit-header, CVE-2026-48522..48526
+    "python-dotenv>=1.2.2",  # Security: Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)
+    "python-multipart>=0.0.31",  # Security: CVE-2026-40347/42561/53538/53539/53540 (multipart DoS)
     "rank-bm25>=0.2.2",
-    "torch>=2.8.0,<2.9.0",  # 2.9.x breaks ModernBERT torch.compile (template conflict)
+    "requests>=2.33.0",  # Security: CVE-2026-25645 (predictable temp filename in extract_zipped_paths)
     "rich>=14.3.3",
     "sentence-transformers>=5.2.2",
-    "transformers>=4.51.0,<4.58.0",  # >=4.51 for Qwen3; <4.58 required by optimum-onnx ONNX compatibility
     "sqlitedict>=2.1.0",
+    "starlette>=1.3.1",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
+    "tiktoken>=0.12.0",
+    "torch>=2.8.0,<2.9.0",  # 2.9.x breaks ModernBERT torch.compile (template conflict)
+    "transformers>=4.51.0,<4.58.0",  # >=4.51 for Qwen3; <4.58 required by optimum-onnx ONNX compatibility
     "tree-sitter>=0.25.0",
     "tree-sitter-c>=0.24.1",
     "tree-sitter-c-sharp>=0.23.1",
@@ -55,9 +65,8 @@ dependencies = [
     "tree-sitter-python>=0.25.0",
     "tree-sitter-rust>=0.24.2",
     "tree-sitter-typescript>=0.23.2",
-    "tiktoken>=0.12.0",
+    "urllib3>=2.7.0",  # Security: CVE-2026-44431/44432 (redirect + over-decompression)
     "dspy>=3.2.1",
-    "python-dotenv>=1.2.2",  # Security: Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)
 ]
 
 classifiers = [
