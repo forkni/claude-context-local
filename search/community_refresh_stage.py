@@ -55,50 +55,19 @@ class CommunityRefreshStage:
             return
         project_id, storage_dir = storage_info
 
-        graph = GraphIntegration(project_id=project_id, storage_dir=storage_dir)
-        if graph.storage is None:
-            return
-        community_map = graph.storage.load_community_map()
+        community_map = self._load_community_map(project_id, storage_dir)
         if community_map is None:
-            logger.debug(
-                "[INCR_COMM] No persisted community_map found; skipping refresh "
-                "(run a full index first)"
-            )
             return
 
-        # Build file → primary community mapping from pre-remerge community_map
-        file_comm_counts: dict[str, dict[int, int]] = {}
-        for chunk_id, comm_id in community_map.items():
-            rel_path = chunk_id.split(":")[0]
-            file_comm_counts.setdefault(rel_path, {})
-            file_comm_counts[rel_path][comm_id] = (
-                file_comm_counts[rel_path].get(comm_id, 0) + 1
-            )
-        file_to_community: dict[str, int] = {
-            rel_path: max(comm_counts, key=comm_counts.__getitem__)
-            for rel_path, comm_counts in file_comm_counts.items()
-        }
-
-        # Normalise changed file paths to forward-slash relative form for comparison
-        changed_file_set = {
-            normalize_path(str(f))
-            for f in (*changes.added, *changes.modified, *changes.removed)
-        }
-
-        affected_community_ids: set[int] = {
-            comm_id
-            for rel_path, comm_id in file_to_community.items()
-            if rel_path in changed_file_set
-        }
-        if not affected_community_ids:
+        file_to_community = self._map_files_to_communities(community_map)
+        affected = self._affected_community_ids(file_to_community, changes)
+        if not affected:
             logger.debug(
                 "[INCR_COMM] No affected communities for changed files; nothing to refresh"
             )
             return
-
         logger.info(
-            f"[INCR_COMM] {len(affected_community_ids)} community(ies) affected by "
-            f"{len(changed_file_set)} changed file(s); refreshing summaries"
+            f"[INCR_COMM] {len(affected)} community(ies) affected; refreshing summaries"
         )
 
         metadata_store = self._get_metadata_store()
@@ -108,7 +77,89 @@ class CommunityRefreshStage:
             )
             return
 
-        # Remove stale community summary chunks for affected communities
+        self._remove_stale_summaries(metadata_store, affected, project_name)
+        member_chunks, sub_map = self._collect_member_chunks(
+            metadata_store, file_to_community, affected
+        )
+        if not member_chunks:
+            logger.info(
+                "[INCR_COMM] No surviving member chunks for affected communities; "
+                "stale summaries removed and not regenerated"
+            )
+            return
+
+        self._regenerate_summaries(member_chunks, sub_map, project_name)
+
+    # ------------------------------------------------------------------
+    # Phase helpers (decomposed from run)
+    # ------------------------------------------------------------------
+
+    def _load_community_map(
+        self,
+        project_id: str,
+        storage_dir: Path,
+    ) -> dict | None:
+        """Construct GraphIntegration and load the persisted community_map.
+
+        Returns None (and logs debug) if graph storage is unavailable or the map
+        has not been written yet (requires a prior full index pass).
+        """
+        graph = GraphIntegration(project_id=project_id, storage_dir=storage_dir)
+        if graph.storage is None:
+            return None
+        community_map = graph.storage.load_community_map()
+        if community_map is None:
+            logger.debug(
+                "[INCR_COMM] No persisted community_map found; skipping refresh "
+                "(run a full index first)"
+            )
+            return None
+        return community_map
+
+    def _map_files_to_communities(
+        self,
+        community_map: dict,
+    ) -> dict[str, int]:
+        """Derive a file → primary-community mapping from the pre-remerge community_map.
+
+        When a file spans multiple communities, the community with the most chunks in
+        that file wins (tie-break: max by chunk count).
+        """
+        file_comm_counts: dict[str, dict[int, int]] = {}
+        for chunk_id, comm_id in community_map.items():
+            rel_path = chunk_id.split(":")[0]
+            file_comm_counts.setdefault(rel_path, {})
+            file_comm_counts[rel_path][comm_id] = (
+                file_comm_counts[rel_path].get(comm_id, 0) + 1
+            )
+        return {
+            rel_path: max(comm_counts, key=comm_counts.__getitem__)
+            for rel_path, comm_counts in file_comm_counts.items()
+        }
+
+    def _affected_community_ids(
+        self,
+        file_to_community: dict[str, int],
+        changes: FileChanges,
+    ) -> set[int]:
+        """Return the set of community IDs whose files were added, modified, or removed."""
+        changed_file_set = {
+            normalize_path(str(f))
+            for f in (*changes.added, *changes.modified, *changes.removed)
+        }
+        return {
+            comm_id
+            for rel_path, comm_id in file_to_community.items()
+            if rel_path in changed_file_set
+        }
+
+    def _remove_stale_summaries(
+        self,
+        metadata_store: Any,
+        affected_community_ids: set[int],
+        project_name: str,
+    ) -> None:
+        """Remove community summary chunks for affected communities from the index."""
         for _chunk_id, meta in list(metadata_store.items()):
             if meta.get("chunk_type") != "community":
                 continue
@@ -126,7 +177,17 @@ class CommunityRefreshStage:
                         self._indexer.remove_files({file_path}, project_name)
                     break
 
-        # Rebuild member CodeChunks for affected communities from MetadataStore
+    def _collect_member_chunks(
+        self,
+        metadata_store: Any,
+        file_to_community: dict[str, int],
+        affected_community_ids: set[int],
+    ) -> tuple[list[CodeChunk], dict[str, int]]:
+        """Rebuild CodeChunks for affected communities from the MetadataStore.
+
+        Returns (member_chunks, sub_map) where sub_map maps chunk_id → community_id
+        for the affected members.
+        """
         member_chunks: list[CodeChunk] = []
         sub_map: dict[str, int] = {}
         for chunk_id, meta in metadata_store.items():
@@ -139,14 +200,15 @@ class CommunityRefreshStage:
                 continue
             member_chunks.append(self._chunk_from_metadata(chunk_id, meta))
             sub_map[chunk_id] = comm_id
+        return member_chunks, sub_map
 
-        if not member_chunks:
-            logger.info(
-                "[INCR_COMM] No surviving member chunks for affected communities; "
-                "stale summaries removed and not regenerated"
-            )
-            return
-
+    def _regenerate_summaries(
+        self,
+        member_chunks: list[CodeChunk],
+        sub_map: dict[str, int],
+        project_name: str,
+    ) -> None:
+        """Recompute, embed, and index community summaries for affected communities."""
         # Regenerate summaries (no centrality in incremental — approximate refresh)
         new_summaries = self._summary_stage.compute_community_summaries(
             member_chunks, sub_map, None
