@@ -4,6 +4,9 @@ Covers the validation branches in handle_configure_search_mode and
 handle_configure_chunking that each return specific error dicts on bad input.
 """
 
+import ast
+import dataclasses
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -12,6 +15,7 @@ from mcp_server.tools.config_handlers import (
     handle_configure_chunking,
     handle_configure_search_mode,
 )
+from search.config import ChunkingConfig, SearchModeConfig
 
 
 @pytest.fixture
@@ -217,3 +221,110 @@ async def test_chunking_all_valid_saves_config(mock_config_manager):
     assert "error" not in result
     assert result.get("success") is True
     mock_config_manager.save_config.assert_called_once()
+
+
+# ============================================================================
+# TestConfigValidationOwnership — P3-C gate
+# ============================================================================
+
+
+class TestConfigValidationOwnership:
+    """Completeness gate: field-spec validation must live on the dataclass fields,
+    not as inline bounds/enum checks in config_handlers.py.
+
+    Mirrors TestTokenizationOwnership (tests/unit/search/test_tokenization.py).
+    """
+
+    _HANDLER_FILE = Path("mcp_server/tools/config_handlers.py")
+    _CONFIG_FILE = Path("search/config.py")
+
+    # ------------------------------------------------------------------
+    # 1. Specs live on ChunkingConfig and SearchModeConfig fields
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "field_name,spec_key,expected",
+        [
+            ("community_resolution", "range", (0.1, 2.0)),
+            ("max_phantom_degree", "range", (1, 1000)),
+            ("max_split_chars", "range", (1000, 10000)),
+            ("adaptive_multiplier_max", "range", (1.0, 2.0)),
+            ("adaptive_multiplier_min", "range", (0.1, 1.0)),
+            ("max_complexity_cap", "range", (5, 100)),
+            ("token_estimation", "choices", ("whitespace", "tiktoken")),
+            ("split_size_method", "choices", ("lines", "characters")),
+            ("sizing_mode", "choices", ("fixed", "adaptive")),
+        ],
+    )
+    def test_chunking_field_carries_spec(self, field_name, spec_key, expected):
+        """Each constrained ChunkingConfig field must have its spec in field metadata."""
+        fields = {f.name: f for f in dataclasses.fields(ChunkingConfig)}
+        assert field_name in fields, f"ChunkingConfig has no field '{field_name}'"
+        meta = fields[field_name].metadata
+        assert spec_key in meta, (
+            f"ChunkingConfig.{field_name}.metadata missing '{spec_key}' — "
+            "spec must live on the field, not in the handler."
+        )
+        assert meta[spec_key] == expected, (
+            f"ChunkingConfig.{field_name}.metadata['{spec_key}'] = {meta[spec_key]!r}, "
+            f"expected {expected!r}"
+        )
+
+    def test_search_mode_default_mode_carries_choices(self):
+        """SearchModeConfig.default_mode must carry choices metadata."""
+        fields = {f.name: f for f in dataclasses.fields(SearchModeConfig)}
+        meta = fields["default_mode"].metadata
+        assert "choices" in meta, (
+            "SearchModeConfig.default_mode.metadata missing 'choices' — "
+            "spec must live on the field."
+        )
+        assert set(meta["choices"]) == {"hybrid", "semantic", "bm25", "auto"}
+
+    # ------------------------------------------------------------------
+    # 2. No chained comparison (lo <= x <= hi) in handler bodies
+    # ------------------------------------------------------------------
+
+    def test_no_chained_bounds_in_handlers(self):
+        """config_handlers.py must not contain inline chained comparisons (lo <= x <= hi).
+
+        All validation is routed through validate_field_value / apply_config_patch.
+        """
+        source = self._HANDLER_FILE.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        violations: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Compare) and len(node.ops) >= 2:
+                violations.append(f"line {node.lineno}: chained comparison")
+        assert not violations, (
+            f"Inline chained bounds check(s) found in {self._HANDLER_FILE}:\n"
+            + "\n".join(violations)
+            + "\nRoute validation through validate_field_value() instead."
+        )
+
+    # ------------------------------------------------------------------
+    # 3. validate_field_value is imported into config_handlers
+    # ------------------------------------------------------------------
+
+    def test_validate_field_value_imported_in_handlers(self):
+        """config_handlers.py must import validate_field_value from search.config."""
+        source = self._HANDLER_FILE.read_text(encoding="utf-8")
+        assert "validate_field_value" in source, (
+            f"{self._HANDLER_FILE} does not import validate_field_value — "
+            "the validation owner is not wired in."
+        )
+
+    # ------------------------------------------------------------------
+    # 4. Owner (validate_field_value) exists in config.py
+    # ------------------------------------------------------------------
+
+    def test_validate_field_value_defined_in_config(self):
+        """validate_field_value must be defined in search/config.py (not deleted)."""
+        source = self._CONFIG_FILE.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        names = {
+            node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+        }
+        assert "validate_field_value" in names, (
+            f"validate_field_value not found in {self._CONFIG_FILE} — "
+            "the validation owner was deleted."
+        )

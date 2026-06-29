@@ -109,7 +109,9 @@ class EmbeddingConfig:
 class SearchModeConfig:
     """Search mode and BM25 settings (12 fields)."""
 
-    default_mode: str = "hybrid"  # hybrid, semantic, bm25, auto
+    default_mode: str = field(
+        default="hybrid", metadata={"choices": ("hybrid", "semantic", "bm25", "auto")}
+    )  # hybrid, semantic, bm25, auto
     enable_hybrid: bool = True
 
     # Hybrid Search Weights
@@ -251,28 +253,32 @@ class ChunkingConfig:
     enable_community_merge: bool = (
         True  # Enable community-based remerge (full index only)
     )
-    community_resolution: float = (
-        1.0  # Resolution parameter (higher = more/smaller communities)
-    )
-    max_phantom_degree: int = (
-        20  # Skip phantom nodes with >N callers during community detection
-    )
+    community_resolution: float = field(
+        default=1.0, metadata={"range": (0.1, 2.0)}
+    )  # Resolution parameter (higher = more/smaller communities)
+    max_phantom_degree: int = field(
+        default=20, metadata={"range": (1, 1000)}
+    )  # Skip phantom nodes with >N callers during community detection
 
     # Large function splitting (cAST paper: AST-aware splitting improves Recall@5 +66%)
     enable_large_node_splitting: bool = True  # Split functions > max_chunk_lines
     max_chunk_lines: int = 100  # Maximum lines before AST block splitting
 
     # Token estimation method
-    token_estimation: str = "whitespace"  # "whitespace" (fast) or "tiktoken" (accurate)
+    token_estimation: str = field(
+        default="whitespace", metadata={"choices": ("whitespace", "tiktoken")}
+    )  # "whitespace" (fast) or "tiktoken" (accurate)
 
     # Size method for chunking (Option A: character-based vs Option B: token-based)
     size_method: str = "tokens"  # "tokens" (default) or "characters" (cAST paper)
 
     # Splitting-specific configs (separate from merging)
-    split_size_method: str = "characters"  # "lines" or "characters"
-    max_split_chars: int = (
-        1600  # Character-based splitting (~400 tokens, optimal for retrieval)
-    )
+    split_size_method: str = field(
+        default="characters", metadata={"choices": ("lines", "characters")}
+    )  # "lines" or "characters"
+    max_split_chars: int = field(
+        default=1600, metadata={"range": (1000, 10000)}
+    )  # Character-based splitting (~400 tokens, optimal for retrieval)
 
     # File-level module summaries (A2: improve GLOBAL query recall)
     enable_file_summaries: bool = True  # Generate module-summary chunks per file
@@ -289,12 +295,18 @@ class ChunkingConfig:
     )
 
     # Adaptive chunk sizing (research: P75 baseline + complexity modulation)
-    sizing_mode: str = "fixed"  # "fixed" (static) or "adaptive" (repo-profiled)
-    adaptive_multiplier_max: float = 1.3  # T_max = P75_baseline × this (low-complexity)
-    adaptive_multiplier_min: float = (
-        0.5  # T_min = P75_baseline × this (high-complexity)
-    )
-    max_complexity_cap: int = 30  # Cv normalization ceiling (CC >= cap → Cv = 1.0)
+    sizing_mode: str = field(
+        default="fixed", metadata={"choices": ("fixed", "adaptive")}
+    )  # "fixed" (static) or "adaptive" (repo-profiled)
+    adaptive_multiplier_max: float = field(
+        default=1.3, metadata={"range": (1.0, 2.0)}
+    )  # T_max = P75_baseline × this (low-complexity)
+    adaptive_multiplier_min: float = field(
+        default=0.5, metadata={"range": (0.1, 1.0)}
+    )  # T_min = P75_baseline × this (high-complexity)
+    max_complexity_cap: int = field(
+        default=30, metadata={"range": (5, 100)}
+    )  # Cv normalization ceiling (CC >= cap → Cv = 1.0)
 
 
 @dataclass
@@ -463,6 +475,32 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> None:
             base[key].update(value)
         else:
             base[key] = value
+
+
+def validate_field_value(spec_cls: type, field_name: str, value: Any) -> str | None:
+    """Return an error message if *value* violates *spec_cls*'s field metadata, else None.
+
+    Reads ``{"range": (lo, hi)}`` (inclusive numeric bounds) or ``{"choices": (...)}``
+    (allowed string values) from :func:`dataclasses.fields` metadata.  Fields with no
+    matching metadata key are accepted unconditionally.
+
+    *spec_cls* is the **real** dataclass type (e.g. ``ChunkingConfig``) — never pass
+    ``type(mock_instance)`` or the function will not find the spec.
+    """
+    for f in dataclasses.fields(spec_cls):
+        if f.name != field_name:
+            continue
+        spec = f.metadata
+        if "range" in spec:
+            lo, hi = spec["range"]
+            if not (lo <= value <= hi):
+                return f"Invalid {field_name}: {value}. Must be between {lo} and {hi}"
+        if "choices" in spec and value not in spec["choices"]:
+            return (
+                f"Invalid {field_name}: {value}. Must be one of {list(spec['choices'])}"
+            )
+        return None  # found the field — spec passes (or no relevant key)
+    return None  # unknown field — no spec to enforce
 
 
 class SearchConfig:
