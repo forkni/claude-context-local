@@ -2792,4 +2792,3 @@ if not defined SELECTED_PROJECT_PATH (
 )
 
 exit /b 0
-

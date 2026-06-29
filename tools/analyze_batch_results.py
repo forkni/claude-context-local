@@ -736,10 +736,7 @@ def analyze_results(batch_num=1):
         top_5 = data["top_5"]
 
         # Support multiple expected chunk IDs (for ambiguous queries)
-        if isinstance(expected, str):
-            expected_list = [expected]
-        else:
-            expected_list = expected
+        expected_list = [expected] if isinstance(expected, str) else expected
 
         # Check if ANY expected chunk is found (exact or fuzzy)
         exact_found = False

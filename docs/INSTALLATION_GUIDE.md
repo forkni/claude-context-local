@@ -974,11 +974,11 @@ if platform.system() == "Windows" and transport == "sse":
 
 ```powershell
 # 1. Check VRAM before first search
-/get_memory_status  
+/get_memory_status
 # Output: {"allocated_vram_mb": 0, "models_loaded": 0}
 
 # 2. Run first search (slow, loads models)
-/search_code "authentication"  
+/search_code "authentication"
 # Takes 8-15s - THIS IS NORMAL
 
 # 3. Check VRAM after first search
@@ -1006,7 +1006,7 @@ if platform.system() == "Windows" and transport == "sse":
 **To free memory after use**:
 
 ```powershell
-/cleanup_resources  
+/cleanup_resources
 # Unloads models, returns to 0 MB VRAM
 # Next search will reload models (5-10s)
 ```

@@ -641,10 +641,10 @@ When indexing a method, the system extracts up to `max_class_signature_lines` fr
 # Original code in file
 class DataProcessor:
     """Handles data preprocessing and validation."""
-    
+
     def __init__(self, config):
         self.config = config
-    
+
     def validate(self, data):  # <-- Indexing this method
         return data.shape[0] > 0
 ```

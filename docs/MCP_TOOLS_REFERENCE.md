@@ -376,7 +376,7 @@ Ultra format optimizes token usage by declaring field names once in a header, th
    ```python
    fields = ["chunk_id", "kind", "score"]
    row1 = ["auth.py:10-25:function:login", "function", 0.95]
-   
+
    # Reconstruct object
    object1 = {
        "chunk_id": row1[0],  # "auth.py:10-25:function:login"
@@ -638,8 +638,8 @@ At index time, every chunk is tagged with its file role via `_classify_file_role
 
 ## cleanup_resources - Manual Memory Cleanup
 
-**Tool**: `cleanup_resources`  
-**Priority**: 🔧 Maintenance  
+**Tool**: `cleanup_resources`
+**Priority**: 🔧 Maintenance
 **Purpose**: Free model memory, GPU cache, and index data
 
 ### When to Use
@@ -676,7 +676,7 @@ At index time, every chunk is tagged with its file role via `_classify_file_role
 # Clean up resources
 /cleanup_resources
 
-# Check memory after cleanup  
+# Check memory after cleanup
 /get_memory_status
 # Output: {"allocated_vram_mb": 0, "models_loaded": 0}
 ```
@@ -692,7 +692,7 @@ At index time, every chunk is tagged with its file role via `_classify_file_role
 /search_code "database connection"
 
 # 3. Done with project - free memory
-/cleanup_resources  
+/cleanup_resources
 # ✓ Models unloaded
 # ✓ GPU cache freed
 # ✓ Index data cleared

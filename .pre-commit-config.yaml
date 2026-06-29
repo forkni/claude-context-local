@@ -17,9 +17,9 @@ repos:
       - id: check-merge-conflict
       - id: detect-private-key
       - id: end-of-file-fixer
-        exclude: ^(tests/test_data/|_archive/)
+        exclude: ^(tests/test_data/|_archive/|search_config\.json$)
       - id: trailing-whitespace
-        exclude: ^(tests/test_data/|_archive/)
+        exclude: ^(tests/test_data/|_archive/|search_config\.json$)
       - id: check-yaml
       - id: check-added-large-files
         args: ['--maxkb=1000']
@@ -31,4 +31,3 @@ repos:
       - id: markdownlint
         args: [--fix, --disable, MD013, MD033]
         exclude: ^(CLAUDE\.md|MEMORY\.md|_archive/)
-
