@@ -821,141 +821,16 @@ class HybridSearcher(BaseSearcher):
             if not expanded_chunk_ids:
                 return results
 
-            # Track which chunks are neighbors (not original anchors)
-            original_chunk_ids = {r.chunk_id for r in results}
-            neighbor_chunk_ids = set(expanded_chunk_ids) - original_chunk_ids
-
-            # Build neighbor→anchor mapping for decay scoring
-            # ego_graphs: dict[anchor_id, list[neighbor_ids]]
-            neighbor_to_anchor = {}
-            for anchor_id, neighbors in ego_graphs.items():
-                for neighbor_id in neighbors:
-                    if neighbor_id not in original_chunk_ids:
-                        neighbor_to_anchor[neighbor_id] = anchor_id
-
-            # Compute query embedding once for all neighbor scoring
-            try:
-                # pyrefly: ignore [missing-attribute]
-                query_embedding = self.embedder.embed_query(query)
-                query_embedding_available = True
-            except Exception as e:
-                self._logger.warning(
-                    f"Failed to compute query embedding for ego-graph scoring: {e}. "
-                    f"Falling back to fixed decay.",
-                    exc_info=True,
-                )
-                query_embedding = None
-                query_embedding_available = False
-
-            # Pre-compute anchor scores for relative scoring
-            anchor_scores = {r.chunk_id: r.score for r in results}
-
-            # Build chunk_id→FAISS-index map once (#52): avoids O(N) list rebuild
-            # + O(N) .index() call *per neighbor* (was O(M×N) total).
-            chunk_id_to_faiss_idx: dict[str, int] = {
-                cid: i for i, cid in enumerate(self.dense_index.chunk_ids)
-            }
-
-            # Pass 1 — fetch metadata and FAISS indices for all valid neighbors.
-            # No embedding work yet; keeps the hot metadata-fetch loop clean.
-            valid_neighbors: list[tuple[str, dict, int | None]] = []
-            for chunk_id in neighbor_chunk_ids:
-                try:
-                    metadata = self.dense_index.get_chunk_by_id(chunk_id)
-                    if not metadata:
-                        continue
-                    faiss_idx = chunk_id_to_faiss_idx.get(chunk_id)
-                    valid_neighbors.append((chunk_id, metadata, faiss_idx))
-                except (KeyError, TypeError) as e:
-                    self._logger.debug(
-                        f"Failed to retrieve metadata for {chunk_id}: {e}"
-                    )
-                    continue
-
-            # Pass 2 — score neighbors, batching FAISS reconstruction and
-            # computing similarities in a single matmul (#52/#59).
-            neighbor_results = []
-            threshold = getattr(ego_config, "min_similarity_threshold", 0.15)
-
-            if query_embedding_available and valid_neighbors:
-                assert query_embedding is not None
-                # Partition: neighbors with a known FAISS index vs. those without.
-                reconstruct_items: list[tuple[str, dict, int]] = []
-                decay_items: list[tuple[str, dict]] = []
-                for chunk_id, metadata, faiss_idx in valid_neighbors:
-                    if faiss_idx is not None:
-                        reconstruct_items.append((chunk_id, metadata, faiss_idx))
-                    else:
-                        decay_items.append((chunk_id, metadata))
-
-                if reconstruct_items:
-                    try:
-                        # Batch-reconstruct all neighbor embeddings in one call (#52+#59).
-                        faiss_indices = np.array(
-                            [idx for _, _, idx in reconstruct_items], dtype=np.int64
-                        )
-                        neighbor_embeddings = np.stack(
-                            [
-                                self.dense_index._faiss_index.reconstruct(int(idx))
-                                for idx in faiss_indices
-                            ]
-                        )
-                        # Vectorised cosine-similarity (embeddings are L2-normalised).
-                        similarities = neighbor_embeddings @ query_embedding  # (M,)
-                        for (chunk_id, metadata, _), similarity in zip(
-                            reconstruct_items, similarities, strict=False
-                        ):
-                            similarity = float(similarity)
-                            if similarity < threshold:
-                                self._logger.debug(
-                                    f"Filtering ego-graph neighbor {chunk_id}: "
-                                    f"similarity={similarity:.3f} < {threshold:.2f}"
-                                )
-                                continue
-                            anchor_id = neighbor_to_anchor.get(chunk_id)
-                            anchor_score = (
-                                anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
-                            )
-                            neighbor_results.append(
-                                ResultFactory.from_expansion(
-                                    chunk_id,
-                                    anchor_score * similarity,
-                                    metadata,
-                                    "ego_graph",
-                                )
-                            )
-                    except (RuntimeError, AttributeError, IndexError) as e:
-                        self._logger.debug(
-                            f"Batch reconstruction failed ({e}); falling back to decay for "
-                            f"{len(reconstruct_items)} neighbors."
-                        )
-                        decay_items.extend(
-                            (cid, meta) for cid, meta, _ in reconstruct_items
-                        )
-
-                # Fixed-decay fallback for neighbors with no FAISS index or batch failure
-                for chunk_id, metadata in decay_items:
-                    anchor_id = neighbor_to_anchor.get(chunk_id)
-                    anchor_score = (
-                        anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
-                    )
-                    neighbor_results.append(
-                        ResultFactory.from_expansion(
-                            chunk_id, anchor_score * 0.5, metadata, "ego_graph"
-                        )
-                    )
-            else:
-                # No query embedding — fixed decay for all neighbors
-                for chunk_id, metadata, _ in valid_neighbors:
-                    anchor_id = neighbor_to_anchor.get(chunk_id)
-                    anchor_score = (
-                        anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
-                    )
-                    neighbor_results.append(
-                        ResultFactory.from_expansion(
-                            chunk_id, anchor_score * 0.5, metadata, "ego_graph"
-                        )
-                    )
+            # Score neighbors (embedding similarity + anchor-score decay)
+            neighbor_results = self.ego_graph_retriever.score_neighbors(  # pyrefly: ignore [missing-attribute]
+                results,
+                ego_graphs,
+                expanded_chunk_ids,
+                query,
+                ego_config,
+                dense_index=self.dense_index,
+                embedder=self.embedder,
+            )
 
             # Cap ego-graph neighbors to prevent token bloat
             max_ego = min(
