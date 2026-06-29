@@ -73,16 +73,15 @@ class TestValidateStoragePath:
 
 
 class TestGetStorageDir:
-    """Tests for StorageManager.get_storage_dir() with env-var handling."""
+    """Tests for get_storage_dir() with env-var handling."""
 
     def _call(self, env_val: str | None, tmp_path: Path) -> Path:
         """Call get_storage_dir() in isolation with a fresh state."""
-        from mcp_server.storage_manager import StorageManager
+        from mcp_server.storage_manager import get_storage_dir
 
         class _FakeState:
             storage_dir = None
 
-        mgr = StorageManager()
         env = dict(os.environ)
         if env_val is not None:
             env["CODE_SEARCH_STORAGE"] = env_val
@@ -93,7 +92,7 @@ class TestGetStorageDir:
             patch("mcp_server.storage_manager.get_state", return_value=_FakeState()),
             patch.dict(os.environ, env, clear=True),
         ):
-            return mgr.get_storage_dir()
+            return get_storage_dir()
 
     def test_custom_safe_path_used(self, tmp_path: Path) -> None:
         storage = tmp_path / ".my_storage"

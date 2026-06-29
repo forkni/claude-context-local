@@ -166,11 +166,9 @@ class TestUserFilterPreservation:
 
     def test_update_project_filters_refuses_null_overwrite(self, tmp_path):
         """update_project_filters must not overwrite stored filters with None."""
-        from mcp_server.storage_manager import StorageManager
+        from mcp_server.storage_manager import update_project_filters
 
-        mgr = StorageManager()
-
-        with patch.object(mgr, "get_storage_dir", return_value=tmp_path):
+        with patch("mcp_server.storage_manager.get_storage_dir", return_value=tmp_path):
             project_path = tmp_path / "myproject"
             project_path.mkdir()
 
@@ -190,8 +188,11 @@ class TestUserFilterPreservation:
             )
 
             # Patch get_project_storage_dir to return the seeded dir
-            with patch.object(mgr, "get_project_storage_dir", return_value=project_dir):
-                mgr.update_project_filters(str(project_path), None, None)
+            with patch(
+                "mcp_server.storage_manager.get_project_storage_dir",
+                return_value=project_dir,
+            ):
+                update_project_filters(str(project_path), None, None)
 
             updated = json.loads(info_file.read_text())
             assert updated["user_excluded_dirs"] == ["secret"], (
@@ -200,11 +201,9 @@ class TestUserFilterPreservation:
 
     def test_get_canonical_project_info_finds_across_model_dirs(self, tmp_path):
         """get_canonical_project_info must find project_info.json from any model dir."""
-        from mcp_server.storage_manager import StorageManager
+        from mcp_server.storage_manager import get_canonical_project_info
 
-        mgr = StorageManager()
-
-        with patch.object(mgr, "get_storage_dir", return_value=tmp_path):
+        with patch("mcp_server.storage_manager.get_storage_dir", return_value=tmp_path):
             project_path = tmp_path / "myproject"
             project_path.mkdir()
 
@@ -220,7 +219,7 @@ class TestUserFilterPreservation:
             qwen_dir = tmp_path / "projects" / f"myproject_{h}_qwen3-0.6b_1024d"
             qwen_dir.mkdir()
 
-            found = mgr.get_canonical_project_info(str(project_path))
+            found = get_canonical_project_info(str(project_path))
             assert found == bge_info, (
                 "get_canonical_project_info must locate bge-v1 project_info.json "
                 "even when qwen3 dir exists without one"
