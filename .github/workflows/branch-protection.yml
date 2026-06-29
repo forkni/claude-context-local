@@ -132,6 +132,12 @@ jobs:
           python-version: '3.11'
           enable-cache: true
 
+      - name: Install dependencies
+        run: uv sync --locked --extra dev --extra callgraph
+        # dev → pyrefly; callgraph → libcst; base deps → numpy/dspy/mcp/etc.
+        # so pyrefly resolves third-party imports (was: uvx isolated env → 50 false
+        # missing-import errors). Torch wheels are heavy (~2.3 GB) but cached by setup-uv.
+
       - name: Run ruff check (linting + import sorting)
         run: uvx ruff check .
         # Blocking gate — ruff is already enforced locally via commit_enhanced.sh
@@ -141,9 +147,9 @@ jobs:
         # Blocking gate — ruff format is already enforced locally
 
       - name: Run type checking (pyrefly)
-        run: uvx --from pyrefly pyrefly check
+        run: uv run pyrefly check
         continue-on-error: true
-        # TODO: flip to blocking (remove continue-on-error) once pyrefly baseline is clean
+        # TODO: flip to blocking (remove continue-on-error) once verified consistently green
 
       - name: Run pre-commit hooks
         run: uvx pre-commit run --all-files

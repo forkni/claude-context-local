@@ -409,8 +409,8 @@ def run_gepa_optimization(
     ) as sync_tools:
         student = dspy.ReAct(
             CodeNavQA,
-            tools=sync_tools,
-            max_iters=max_iters,  # pyrefly: ignore [bad-argument-type]
+            tools=sync_tools,  # pyrefly: ignore[bad-argument-type]  # DSPy stub types tools as list[Callable]; Tool instances valid at runtime
+            max_iters=max_iters,
         )
 
         # Resolve budget: explicit knobs take priority over the auto preset.
