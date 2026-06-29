@@ -122,6 +122,39 @@ class MultiLanguageChunker:
         # trigger a lazy-init on the hot path.
         self._init_thread_extractors()
 
+    @classmethod
+    def for_project(
+        cls,
+        root_path: str,
+        include_dirs: list | None = None,
+        exclude_dirs: list | None = None,
+        *,
+        enable_entity_tracking: bool = False,
+    ) -> "MultiLanguageChunker":
+        """Build a project chunker with import classification wired in.
+
+        Single owner of the RepositoryRelationFilter construction so every live
+        index path classifies import edges (stdlib/builtin/third_party/local)
+        instead of leaving them as ``"unknown"`` — which defeats ego-graph
+        stdlib/third-party import exclusion in
+        ``graph/graph_storage.py:_should_exclude_edge``.
+
+        Always prefer this over the bare constructor when chunking a real
+        project on disk. Use the bare constructor only when ``project_root``
+        is unavailable (e.g. in-memory test fixtures, the rootless
+        ``IncrementalIndexer.__init__`` chunker fallback).
+        """
+        from chunking.relationships.relation_filter import RepositoryRelationFilter
+
+        relation_filter = RepositoryRelationFilter(project_root=Path(root_path))
+        return cls(
+            root_path,
+            include_dirs,
+            exclude_dirs,
+            enable_entity_tracking=enable_entity_tracking,
+            relation_filter=relation_filter,
+        )
+
     def _init_thread_extractors(self) -> None:
         """Build and store per-thread extractor instances on ``self._local``.
 

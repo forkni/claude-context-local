@@ -32,9 +32,7 @@ from search.config import (
     SearchConfigManager,
 )
 from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
-from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
-from search.indexer import CodeIndexManager
 
 
 logger = logging.getLogger(__name__)
@@ -76,55 +74,6 @@ def _check_file_accessibility(
             pass
 
     return inaccessible
-
-
-def _create_indexer_for_model(directory_path: str, index_dir: Path) -> tuple:
-    """Create indexer and embedder for the configured model.
-
-    Args:
-        directory_path: Path to the project directory
-        index_dir: Path to store the index
-
-    Returns:
-        tuple: (indexer, embedder, chunker)
-    """
-    from chunking.relationships.relation_filter import RepositoryRelationFilter
-
-    config = get_config()
-
-    # Create relation filter for import classification (RepoGraph filtering)
-    relation_filter = RepositoryRelationFilter(project_root=Path(directory_path))
-
-    chunker = MultiLanguageChunker(
-        directory_path,
-        enable_entity_tracking=config.performance.enable_entity_tracking,
-        relation_filter=relation_filter,
-    )
-    embedder = get_embedder()
-
-    if config.search_mode.enable_hybrid:
-        # Get project_id from index_dir parent
-        project_dir = index_dir.parent
-        project_id = project_dir.name.rsplit("_", 1)[0]  # Remove dimension suffix
-
-        indexer = HybridSearcher(
-            storage_dir=str(index_dir),
-            embedder=embedder,
-            bm25_weight=config.search_mode.bm25_weight,
-            dense_weight=config.search_mode.dense_weight,
-            rrf_k=config.search_mode.rrf_k_parameter,
-            max_workers=2,
-            bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
-            bm25_use_stemming=config.search_mode.bm25_use_stemming,
-            project_id=project_id,
-            config=config,
-        )
-    else:
-        project_dir = index_dir.parent
-        project_id = project_dir.name.rsplit("_", 1)[0]
-        indexer = CodeIndexManager(str(index_dir), project_id=project_id)
-
-    return indexer, embedder, chunker
 
 
 def _run_indexing(
@@ -689,7 +638,9 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
             config = get_config()
 
             # Initialize chunker eagerly (cheap, no I/O or model load).
-            chunker = MultiLanguageChunker(
+            # for_project() wires RepositoryRelationFilter so import edges are
+            # classified (stdlib/third_party/local) rather than stored as "unknown".
+            chunker = MultiLanguageChunker.for_project(
                 str(directory_path),
                 include_dirs,
                 exclude_dirs,

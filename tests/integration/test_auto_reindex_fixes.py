@@ -255,6 +255,24 @@ class TestUserFilterPreservation:
             def __init__(self, *a, **kw):
                 chunker_calls.append((a, kw))
 
+            @classmethod
+            def for_project(
+                cls,
+                root_path,
+                include_dirs=None,
+                exclude_dirs=None,
+                *,
+                enable_entity_tracking=False,
+            ):
+                # Capture args in the same positional form the assertion expects
+                chunker_calls.append(
+                    (
+                        (root_path, include_dirs, exclude_dirs),
+                        {"enable_entity_tracking": enable_entity_tracking},
+                    )
+                )
+                return cls.__new__(cls)
+
         ii_instance = MagicMock()
         ii_instance.auto_reindex_if_needed.return_value = MagicMock(
             files_modified=0, files_added=0

@@ -188,6 +188,8 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
             dense_weight=config.search_mode.dense_weight,
             rrf_k=config.search_mode.rrf_k_parameter,
             max_workers=2,
+            bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
+            bm25_use_stemming=config.search_mode.bm25_use_stemming,
             project_id=project_id,
             config=config,
         )
@@ -199,7 +201,9 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
             state.current_project = project_path
     else:
         indexer = get_index_manager(project_path)
-    chunker = MultiLanguageChunker(
+    # for_project() wires RepositoryRelationFilter so import edges are
+    # classified (stdlib/third_party/local) rather than stored as "unknown".
+    chunker = MultiLanguageChunker.for_project(
         project_path,
         include_dirs,
         exclude_dirs,
