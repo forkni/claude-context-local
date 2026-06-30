@@ -528,11 +528,10 @@ def mock_snapshot_manager_for_unit_tests(
 
 
 # ============================================================================
-# Shared Test Helper Functions (defined in tests/helpers/embeddings.py)
+# Shared Test Helper Functions (see tests/helpers/embeddings.py)
 # ============================================================================
-# generate_chunk_id and create_test_embeddings are imported above from
-# tests.helpers.embeddings; the names are re-exported here so any conftest
-# fixture that references them by local name continues to work.
+# generate_chunk_id and create_test_embeddings live in tests.helpers.embeddings.
+# Import them directly in test files: from tests.helpers.embeddings import ...
 
 
 @pytest.fixture
