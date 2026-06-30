@@ -13,7 +13,13 @@ import networkx as nx
 from utils.path_utils import normalize_path
 
 from .graph_storage import CodeGraphStorage
-from .schema import EDGE_ATTR_TYPE, NODE_ATTR_FILE, NODE_ATTR_NAME, NODE_ATTR_TYPE
+from .schema import (
+    EDGE_ATTR_TYPE,
+    NODE_ATTR_FILE,
+    NODE_ATTR_NAME,
+    NODE_ATTR_TYPE,
+    edge_relation_type,
+)
 
 
 @dataclass
@@ -268,9 +274,7 @@ class GraphQueryEngine:
                 next_node = path_nodes[i + 1]
                 edge_data = self.storage.get_edge_data(node_id, next_node)
                 if edge_data:
-                    rel_type = edge_data.get("relationship_type") or edge_data.get(
-                        "type"
-                    )
+                    rel_type = edge_relation_type(edge_data)
                     edge_to_next = {
                         "relationship_type": rel_type,
                         "line": edge_data.get("line"),
@@ -611,9 +615,7 @@ class GraphQueryEngine:
             for query_node in current_query:
                 for pred in self.storage.get_callers(query_node):
                     edge_data = self.storage.get_edge_data(pred, query_node) or {}
-                    rel_type = edge_data.get("relationship_type") or edge_data.get(
-                        "type", "unknown"
-                    )
+                    rel_type = edge_relation_type(edge_data) or "unknown"
 
                     # Report once per node on first matching edge (#23).
                     if pred not in reported and (
@@ -668,9 +670,7 @@ class GraphQueryEngine:
             for node in current_nodes:
                 for succ in self.storage.get_callees(node):
                     edge_data = self.storage.get_edge_data(node, succ) or {}
-                    rel_type = edge_data.get("relationship_type") or edge_data.get(
-                        "type", "unknown"
-                    )
+                    rel_type = edge_relation_type(edge_data) or "unknown"
 
                     # Report once per node on first matching edge (#23).
                     if succ not in reported and (

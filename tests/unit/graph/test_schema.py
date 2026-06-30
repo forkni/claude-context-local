@@ -24,6 +24,7 @@ from graph.schema import (
     NODE_ATTR_TYPE,
     NODE_TYPE_SYMBOL_NAME,
     REVERSE_RELATIONS,
+    edge_relation_type,
     get_reverse_relation,
 )
 
@@ -128,3 +129,42 @@ class TestGetReverseRelation:
     @pytest.mark.parametrize("rel_type,expected", list(REVERSE_RELATIONS.items()))
     def test_all_known_types_round_trip(self, rel_type: str, expected: str):
         assert get_reverse_relation(rel_type) == expected
+
+
+# ---------------------------------------------------------------------------
+# edge_relation_type: single reader tolerating both key spellings
+# ---------------------------------------------------------------------------
+
+
+class TestEdgeRelationType:
+    """Ownership gate: edge_relation_type is the single reader of edge type keys.
+
+    Covers relationship_type key, type key (legacy fallback), both present (canonical
+    key wins), and neither present (returns None).
+    """
+
+    def test_canonical_key(self):
+        """Returns value under 'relationship_type' when present."""
+        assert edge_relation_type({"relationship_type": "calls"}) == "calls"
+
+    def test_legacy_key_fallback(self):
+        """Falls back to 'type' when 'relationship_type' is absent."""
+        assert edge_relation_type({"type": "inherits"}) == "inherits"
+
+    def test_canonical_key_wins_over_legacy(self):
+        """'relationship_type' takes precedence over 'type'."""
+        data = {"relationship_type": "calls", "type": "imports"}
+        assert edge_relation_type(data) == "calls"
+
+    def test_neither_key_returns_none(self):
+        """Returns None when neither key is present."""
+        assert edge_relation_type({}) is None
+        assert edge_relation_type({"line": 1, "confidence": 0.9}) is None
+
+    def test_empty_string_canonical_falls_back(self):
+        """An empty string 'relationship_type' is falsy — falls back to 'type'."""
+        assert edge_relation_type({"relationship_type": "", "type": "calls"}) == "calls"
+
+    def test_empty_string_both_returns_none(self):
+        """Both keys empty-string → returns None."""
+        assert edge_relation_type({"relationship_type": "", "type": ""}) is None

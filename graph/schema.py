@@ -88,6 +88,23 @@ REVERSE_RELATIONS: dict[str, str] = {
 }
 
 
+def edge_relation_type(edge_data: dict) -> "str | None":
+    """Single reader of an edge's relation type, tolerating both key spellings.
+
+    On-disk edges may carry the type under ``"relationship_type"`` (the canonical
+    key written at index time) or ``"type"`` (the legacy key used before the schema
+    was unified).  Always call this function instead of inlining the dual-get.
+
+    Args:
+        edge_data: Edge attribute dictionary from the NetworkX graph.
+
+    Returns:
+        The relation-type string (e.g. ``"calls"``), or ``None`` when neither
+        key is present or both resolve to a falsy value.
+    """
+    return edge_data.get("relationship_type") or edge_data.get("type") or None
+
+
 def get_reverse_relation(rel_type: str) -> str:
     """Return the incoming-edge label for a forward relationship type.
 
