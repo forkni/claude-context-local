@@ -97,6 +97,44 @@ def test_alpha_zero_preserves_semantic_order(mock_graph_query_engine, sample_res
     assert result[2]["blended_score"] == pytest.approx(0.5, abs=0.01)
 
 
+def test_rerank_missing_centrality_kills_neg_default_mutant(mock_graph_query_engine):
+    """Result without a 'centrality' key must blend as 0.0, not -1.0.
+
+    Kills L196 NumberReplacer 0.0→-1.0 mutant in rerank():
+      With alpha=0.5: blended = 0.5*score + 0.5*0.0 = 0.5*score
+      Mutant:         blended = 0.5*score + 0.5*(-1.0) → negative for small scores.
+    """
+    # chunk_id not in the compute_centrality return → centrality missing after annotate
+    mock_graph_query_engine.compute_centrality.return_value = {}
+    ranker = CentralityRanker(mock_graph_query_engine, method="pagerank", alpha=0.3)
+    results = [{"chunk_id": "X", "score": 0.6}]
+
+    reranked = ranker.rerank(results, alpha=0.5)
+
+    # Expected: 0.5*0.6 + 0.5*0.0 = 0.30
+    # Mutant:   0.5*0.6 + 0.5*(-1.0) = -0.20  → negative
+    assert reranked[0]["blended_score"] == pytest.approx(0.30, abs=0.001)
+
+
+def test_rerank_sort_missing_blended_default_kills_one_mutant(mock_graph_query_engine):
+    """Result without 'blended_score' must sort last, not first.
+
+    Kills L224 NumberReplacer 0.0→1.0 in the sort key default:
+      default 0.0 → no-blended sinks to bottom
+      default 1.0 → no-blended floats to top (wrong)
+    """
+    mock_graph_query_engine.compute_centrality.return_value = {"A": 1.0}
+    ranker = CentralityRanker(mock_graph_query_engine, method="pagerank", alpha=0.3)
+    # "no_blend" has no "score" → semantic=0.0, centrality=0.0 → blended=0.0
+    # "A" has score=0.9, centrality=1.0 (normalized) → blended=0.5*0.9+0.5*1.0=0.95
+    results2 = [
+        {"chunk_id": "no_blend"},
+        {"chunk_id": "A", "score": 0.9},
+    ]
+    reranked2 = ranker.rerank(results2, alpha=0.5)
+    assert reranked2[0]["chunk_id"] == "A"  # A must rank first (0.95 > 0.0)
+
+
 def test_empty_graph_returns_unchanged(sample_results):
     """Test that empty graph returns results with 0.0 centrality."""
     # Empty graph
@@ -290,6 +328,59 @@ def test_zero_centrality_does_not_affect_real_code():
     assert reranked[2]["blended_score"] == pytest.approx(0.252, abs=0.02)  # module
 
 
+def test_zero_score_centrality_gives_zero_not_error(mock_graph_query_engine):
+    """compute_centrality returning all-zero scores yields centrality=0.0, no ZeroDivisionError.
+
+    Kills Gt_Eq/Gt_LtE/Gt_GtE/Gt_Lt/NumberReplacer at 'if max_score > 0' (genuine gap:
+    mutants either ZeroDivide or skip normalization) and occ=16/17 NumberReplacer at
+    the else-branch 0.0 default.
+    """
+    mock_graph_query_engine.compute_centrality.return_value = {"A": 0.0, "B": 0.0}
+    ranker = CentralityRanker(mock_graph_query_engine, method="pagerank", alpha=0.3)
+    results = [{"chunk_id": "A", "score": 0.5}, {"chunk_id": "B", "score": 0.3}]
+    reranked = ranker.rerank(results, alpha=0.5)
+    # blend = 0.5*score + 0.5*0.0; A (0.25) > B (0.15)
+    assert reranked[0]["blended_score"] == pytest.approx(0.25, abs=0.001)
+    assert reranked[0]["centrality"] == pytest.approx(0.0, abs=0.001)
+
+
+def test_score_default_kills_semantic_score_mutant(mock_graph_query_engine):
+    """Result missing 'score' key uses 0.0 default, not 1.0.
+
+    Kills NumberReplacer occ=22,23 at result.get('score', 0.0): with 1.0 default,
+    noscore blended=0.5 beats scored blended=0.15, inverting rank order.
+    """
+    mock_graph_query_engine.compute_centrality.return_value = {}
+    ranker = CentralityRanker(mock_graph_query_engine, method="pagerank", alpha=0.3)
+    results = [
+        {"chunk_id": "noscore"},
+        {"chunk_id": "scored", "score": 0.3},
+    ]
+    reranked = ranker.rerank(results, alpha=0.5)
+    # noscore: blend=0 (orig) or 0.5 (mutant); scored: blend=0.15 both
+    assert reranked[0]["chunk_id"] == "scored"
+
+
+def test_empty_name_falls_back_to_chunk_id_name_kills_or_mutant(
+    mock_graph_query_engine,
+):
+    """name='' falls back to _extract_name_impl(chunk_id) via 'or'.
+
+    Kills ReplaceOrWithAnd: with 'and', empty name gives '' so name-match boost is skipped.
+    """
+    mock_graph_query_engine.compute_centrality.return_value = {
+        "search/foo.py:1-10:function:cache": 0.5
+    }
+    ranker = CentralityRanker(mock_graph_query_engine, method="pagerank", alpha=0.0)
+    results = [
+        {"chunk_id": "search/foo.py:1-10:function:cache", "score": 0.5, "name": ""},
+    ]
+    reranked = ranker.rerank(results, alpha=0.0, query="cache invalidation logic")
+    # name="" → fallback "cache"; overlap 1/1=1.0 → tier-1 ×1.3; core_dir ×1.1
+    # 0.5 * 1.0(type) * 1.1(core) * 1.3(name) = 0.715
+    assert reranked[0]["blended_score"] == pytest.approx(0.715, abs=0.005)
+
+
 # ---------------------------------------------------------------------------
 # Direct unit tests for the extracted scoring policy helpers
 # ---------------------------------------------------------------------------
@@ -323,6 +414,25 @@ class TestApplySizeNormalization:
         result = {"chunk_id": "file.py:1-10:function:small", "blended_score": 0.8}
         ranker._apply_size_normalization(result)
         assert result["blended_score"] == 0.8  # unchanged
+
+    def test_exact_factor_kills_div_and_mul_mutants(self):
+        """Pin exact normalized score to kill operator-replacement mutants.
+
+        Kills L243 Div_Sub, L245 Add_Div, L246 Mul_*, L248 NumberReplacer(precision).
+        target=50, alpha=0.1, chunk_lines=200:
+          ratio = 200/50 = 4
+          size_factor = 1.0 / (1.0 + 0.1 * log(4)) ≈ 1.0 / 1.1386 ≈ 0.8782
+          blended = round(1.0 * 0.8782, 4) ≈ 0.8782
+        Wrong operators produce wildly different values (negative, >1, or wrong sign).
+        """
+        import math
+
+        ranker = self._make_ranker(target_lines=50, alpha=0.1)
+        result = {"chunk_id": "file.py:1-200:function:big", "blended_score": 1.0}
+        ranker._apply_size_normalization(result)
+
+        expected = 1.0 / (1.0 + 0.1 * math.log(200 / 50))
+        assert result["blended_score"] == pytest.approx(expected, abs=0.0002)
 
 
 class TestApplyBm25Boost:
@@ -382,6 +492,30 @@ class TestApplyTypeBoost:
         result = {"blended_score": 1.0}
         ranker._apply_type_boost(result, "module", "find class")
         assert result["blended_score"] == pytest.approx(0.85, abs=0.001)
+
+    def test_decorated_definition_entity_query_boost(self):
+        """decorated_definition with entity query → ×1.1.
+
+        Kills NumberReplacer occ=40,41 at 'decorated_definition': 1.1 in entity dict
+        (mutation 1.1→0.1 gives 0.1 ≠ 1.1).
+        """
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_type_boost(
+            result, "decorated_definition", "find class constructor"
+        )
+        assert result["blended_score"] == pytest.approx(1.1, abs=0.001)
+
+    def test_decorated_definition_code_query_neutral(self):
+        """decorated_definition with non-entity query → ×1.0 neutral (no change).
+
+        Kills NumberReplacer occ=44,45 at 'decorated_definition': 1.0 in code dict
+        (mutation 1.0→0.0 gives 0.0 ≠ 1.0).
+        """
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_type_boost(result, "decorated_definition", "authentication logic")
+        assert result["blended_score"] == pytest.approx(1.0, abs=0.001)
 
 
 class TestApplySyntheticDemotion:
@@ -464,6 +598,55 @@ class TestApplyRoleDemotion:
         )
         assert result["blended_score"] == pytest.approx(0.85, abs=0.001)
 
+    def test_doc_without_intent_exact_kills_factor_mutants(self):
+        """Doc role without doc intent → ×0.80 (kills L376/L378 NumberReplacer mutants).
+
+        Also kills L375 ReplaceUnaryOperator_Delete_Not (inverted condition would
+        apply ×0.80 WHEN query HAS doc intent, not when it lacks it).
+        """
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_role_demotion(
+            result, "docs/guide.md:1-50:module:guide", [], "search logic"
+        )
+        assert result["blended_score"] == pytest.approx(0.80, abs=0.001)
+
+    def test_doc_with_intent_not_demoted_kills_delete_not_mutant(self):
+        """Doc role WITH doc intent → unchanged score.
+
+        Kills L375 ReplaceUnaryOperator_Delete_Not: without 'not',
+        the condition triggers demotion when intent IS present (wrong).
+        """
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_role_demotion(
+            result, "docs/guide.md:1-50:module:guide", [], "documentation guide"
+        )
+        assert result["blended_score"] == pytest.approx(1.0, abs=0.001)
+
+    def test_config_without_intent_exact_kills_factor_mutants(self):
+        """Config role without config intent → ×0.88 (kills L378 NumberReplacer mutants)."""
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_role_demotion(
+            result, "config.py:1-20:function:load", [], "search logic"
+        )
+        assert result["blended_score"] == pytest.approx(0.88, abs=0.001)
+
+    def test_nonstring_tag_kills_isinstance_or_mutant(self):
+        """Non-string tag is skipped; subsequent string role tag still applies.
+
+        Kills ReplaceAndWithOr: isinstance(42, str) or 42.startswith('role:') raises
+        AttributeError, crashing the test instead of skipping the non-string element.
+        """
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_role_demotion(
+            result, "src/feature.py:1-5:function:x", [42, "role:test"], "search logic"
+        )
+        # Non-string 42 skipped; "role:test" → test role, no test intent → ×0.85
+        assert result["blended_score"] == pytest.approx(0.85, abs=0.001)
+
 
 class TestApplyNameMatchBoost:
     """Tests for CentralityRanker._apply_name_match_boost."""
@@ -490,4 +673,84 @@ class TestApplyNameMatchBoost:
             result, "__init__", "authentication logic", "authentication logic"
         )
         # lifecycle demotion ×0.85 (no init/enter/exit in query)
-        assert result["blended_score"] < 1.0
+        # Exact value kills Mul_Sub mutant (1.0 - 0.85 = 0.15 ≠ 0.85)
+        assert result["blended_score"] == pytest.approx(0.85, abs=0.001)
+
+    def test_dotted_name_lifecycle_kills_index_and_inversion_mutants(self):
+        """Dotted name — terminal component extracted via [-1] must be used.
+
+        Kills:
+          L389 NumberReplacer [-1]→[-2]: 'MyClass.__init__'[-2]='MyClass' → no demotion → 1.0
+          L389 AddNot (invert dot-check): uses whole string 'MyClass.__init__' → no demotion → 1.0
+        """
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        # terminal = "__init__" (via split(".")[-1]) → lifecycle demotion × 0.85
+        ranker._apply_name_match_boost(
+            result, "MyClass.__init__", "some logic", "some logic"
+        )
+        assert result["blended_score"] == pytest.approx(0.85, abs=0.001)
+
+    def test_overlap_fraction_tier2_kills_div_mutants(self):
+        """3/5 name-token overlap (tier 2: ×1.2) kills all / replacement operators.
+
+        Kills L402 mutations: Div→LShift,BitAnd,FloorDiv,Pow,Mul.
+        All give wrong overlap values (>0.8→tier1=1.3x, or 0→no boost) instead of 0.6→1.2x.
+        """
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        # name tokens: {handle, cache, miss, for, request} = 5 tokens (all ≥3 chars)
+        # query tokens: {handle, cache, miss} = 3 tokens
+        # intersection = {handle, cache, miss} = 3 → overlap = 3/5 = 0.6 → tier 2 → ×1.2
+        ranker._apply_name_match_boost(
+            result,
+            "handle_cache_miss_for_request",
+            "handle cache miss",
+            "handle cache miss",
+        )
+        assert result["blended_score"] == pytest.approx(1.2, abs=0.001)
+
+    def test_three_part_dotted_name_kills_index_shift_mutants(self):
+        """3-element dotted name: split('.')[-1] extracts '__init__', not 'A'.
+
+        Kills USub_UAdd ([-1]→[+1]): 'outer.A.__init__'[1]='A' → no lifecycle demotion
+        → result stays 1.0 instead of 0.85.  2-element test_dotted_name_lifecycle only
+        proves [-2] fails; this proves [+1] also fails (they coincide for 2 elements).
+        """
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        # split(".")[-1] = "__init__"; split(".")[1] = "A" (not a lifecycle name)
+        ranker._apply_name_match_boost(
+            result, "outer.A.__init__", "some logic", "some logic"
+        )
+        assert result["blended_score"] == pytest.approx(0.85, abs=0.001)
+
+    def test_exact_half_overlap_kills_gte_and_minlen_mutants(self):
+        """overlap=0.5 exactly at tier-2 boundary; 2-char tokens kept with min_len=2.
+
+        Kills GtE→Gt: >=0.5 → ×1.2 (tier 2), >0.5 → ×1.1 (tier 3).
+        Also kills min_len=2→3: 'go','to' (2-char) are filtered out → empty name_tokens
+        → no boost (result stays 1.0 ≠ 1.2).
+        """
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        # name "go_to" → tokens {"go","to"} (both len=2, kept with min_len=2)
+        # query "go cache" → tokens {"go","cache"}; intersection {"go"}; overlap=1/2=0.5
+        # 0.5 >= 0.5 → tier 2 → ×1.2
+        ranker._apply_name_match_boost(result, "go_to", "go cache", "go cache")
+        assert result["blended_score"] == pytest.approx(1.2, abs=0.001)
+
+    def test_acronym_name_kills_split_acronyms_mutant(self):
+        """All-caps acronym prefix in name splits correctly with split_acronyms=True.
+
+        Kills ReplaceTrueWithFalse at split_acronyms=True in _tokenize_for_matching:
+        without splitting, 'XMLNode' → {'xmlnode'} (1 token, no query match → no boost).
+        """
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        # "XMLNode" with split_acronyms=True → {"xml","node"}; query {"xml","node","data"}
+        # overlap=2/2=1.0 → tier 1 → ×1.3
+        ranker._apply_name_match_boost(
+            result, "XMLNode", "xml node data", "xml node data"
+        )
+        assert result["blended_score"] == pytest.approx(1.3, abs=0.001)
