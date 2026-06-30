@@ -10,6 +10,7 @@ Use cases:
 - Recover from orphaned snapshot issues
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -24,37 +25,30 @@ from merkle.snapshot_manager import SnapshotManager  # noqa: E402
 def _get_full_project_id(project_dir: Path, short_hash: str) -> str | None:
     """Get full 32-char project_id from project directory.
 
-    Tries to extract project path from project_info.json and compute full MD5 hash.
+    Reads project_path from project_info.json and delegates to
+    SnapshotManager.resolve_project_id, which tries the drive-agnostic (v2)
+    id first then the legacy (v1) id — matching whichever scheme produced the
+    on-disk ``short_hash`` prefix.
 
     Args:
         project_dir: Path to project directory
         short_hash: 8-char truncated hash from directory name (for validation)
 
     Returns:
-        Full 32-char MD5 hash of project path, or None if not found
+        Full 32-char project_id, or None if project_info.json is missing,
+        unreadable, or neither hash scheme matches short_hash.
     """
-    import hashlib
-    import json
-
-    # Try to find project path from project_info.json
     project_info_file = project_dir / "project_info.json"
-    if project_info_file.exists():
-        try:
-            project_info = json.loads(project_info_file.read_text())
-            project_path = project_info.get("project_path")
-            if project_path:
-                # Compute full 32-char project_id from normalized path
-                normalized = str(Path(project_path).resolve())
-                full_hash = hashlib.md5(normalized.encode()).hexdigest()
-
-                # Validate that short hash matches first 8 chars
-                if full_hash[:8] == short_hash:
-                    return full_hash
-        except json.JSONDecodeError:
-            # If we can't read/parse project_info, skip this project
-            pass
-
-    return None
+    if not project_info_file.exists():
+        return None
+    try:
+        project_info = json.loads(project_info_file.read_text())
+    except json.JSONDecodeError:
+        return None
+    project_path = project_info.get("project_path")
+    if not project_path:
+        return None
+    return SnapshotManager().resolve_project_id(project_path, short_hash)
 
 
 def get_indexed_projects() -> dict[tuple[str, str], set[str]]:

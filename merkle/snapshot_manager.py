@@ -58,6 +58,34 @@ class SnapshotManager:
         """
         return compute_legacy_hash(project_path, length=32)
 
+    def resolve_project_id(
+        self, project_path: str, short_hash: str | None = None
+    ) -> str | None:
+        """Resolve the full 32-char project_id matching a project's on-disk hash scheme.
+
+        Tries the drive-agnostic (v2) id first, then the legacy (v1) full-path id —
+        mirroring storage_manager's dual-hash lookup. When ``short_hash`` (the 8-char
+        prefix from the storage dir name) is given, returns the candidate whose prefix
+        matches it, or None if neither matches. With no ``short_hash``, returns the
+        drive-agnostic id (the current default scheme).
+
+        Args:
+            project_path: Path to the project directory
+            short_hash: Optional 8-char prefix from the on-disk project dir name.
+                Used to select between the v2 drive-agnostic and v1 legacy ids.
+
+        Returns:
+            Full 32-char project_id, or None when short_hash is given and neither
+            hashing scheme produces a matching prefix.
+        """
+        agnostic = self.get_project_id(project_path)  # drive-agnostic, 32 chars
+        if short_hash is None or agnostic[: len(short_hash)] == short_hash:
+            return agnostic
+        legacy = self._get_legacy_project_id(project_path)  # legacy, 32 chars
+        if legacy[: len(short_hash)] == short_hash:
+            return legacy
+        return None
+
     def _get_model_slug_and_dimension(
         self, dimension: int | None = None
     ) -> tuple[str, int]:
