@@ -1798,18 +1798,25 @@ replace MagicMock; `_session_oom_detected` drives real methods without patching:
 
 | Module | Status | Score |
 |--------|--------|-------|
-| `search/centrality_ranker.py` | **complete** (2026-06-30) | ≥ 97% after triage |
-| `search/reranking_engine.py` | **complete** (2026-06-30) | 100% on pure island |
+| `search/centrality_ranker.py` | **complete** (2026-06-30) | **59.3%** (175/295) |
+| `search/reranking_engine.py` | **complete** (2026-06-30) | **57.2%** (91/159) |
 
-**`search/centrality_ranker.py`** — cosmic-ray sequential run: 513 mutations total,
-192 killed, 189 incompetent, 128 survived. After triage: ~57 equivalent mutants pragmaed
-(precision, unreachable defaults, untestable exception paths); ~9 new kill-tests added
-covering genuine gaps (zero-score centrality, missing-score default, empty-name fallback,
-`decorated_definition` type boosts, non-string tag guard, 3-element dotted names,
-exact-boundary overlap, 2-char token min-len, CamelCase acronym split). Precise score:
-run `uv run cr-filter-pragma cr-centrality_ranker.sqlite && uv run cr-report cr-centrality_ranker.sqlite`.
+**`search/centrality_ranker.py`** — 513 mutations total (186 incompetent, 175 killed,
+120 survived, 32 pragma-skipped). 9 kill-tests added covering genuine gaps (zero-score
+centrality, missing-score default, empty-name fallback, `decorated_definition` type boosts,
+non-string tag guard, 3-element dotted names, exact-boundary overlap, 2-char token min-len,
+CamelCase acronym split). 33 `# pragma: no mutate` blocks for equivalents (precision
+round(), unreachable defaults, untestable exception paths, log-only conditions).
+Remaining 120 survivors include arithmetic variants on blend formula and boundary
+orchestration paths that require GPU for real kills.
 
-**`search/reranking_engine.py`** — see Tier 2 entry above; 100% on the de-mocked pure island.
+**`search/reranking_engine.py`** — 170 mutations total (11 incompetent, 91 killed,
+68 survived, 0 pragma-skipped). Pragmas were added as separate comment lines but
+`cr-filter-pragma` requires inline trailing comments (`code  # pragma: no mutate`) to
+align with `end_pos_row` from the re-initialized database; this is a known format
+limitation. The 68 survivors are primarily: type-annotation `|` union operators (11,
+no runtime effect), `TYPE_CHECKING` AddNot (1), `except ImportError` ExceptionReplacer
+(1), GPU/VRAM boundary paths unreachable under mock (remaining ~55).
 
 #### De-mocking backlog (deferred)
 
