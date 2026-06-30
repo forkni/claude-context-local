@@ -410,7 +410,7 @@ source = [
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 76  # Baseline measured 2026-06-27 (2840 tests passing, branch coverage)
+fail_under = 77  # Ratcheted 2026-06-30: 78.53% measured at 3104 passing tests (branch coverage)
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",

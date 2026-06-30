@@ -1645,11 +1645,20 @@ class CodeEmbedder:
         if self._model is None:
             return {"status": "not_loaded"}
 
+        model = self._model
+        # sentence-transformers >=5 renamed get_sentence_embedding_dimension ->
+        # get_embedding_dimension. Prefer the new name; fall back for the ONNX
+        # wrapper and older ST versions that only expose the old name.
+        if hasattr(model, "get_embedding_dimension"):
+            embedding_dimension = model.get_embedding_dimension()
+        else:
+            embedding_dimension = model.get_sentence_embedding_dimension()
+
         return {
             "model_name": self.model_name,
-            "embedding_dimension": self._model.get_sentence_embedding_dimension(),
-            "max_seq_length": getattr(self._model, "max_seq_length", "unknown"),
-            "device": str(self._model.device),
+            "embedding_dimension": embedding_dimension,
+            "max_seq_length": getattr(model, "max_seq_length", "unknown"),
+            "device": str(model.device),
             "status": "loaded",
         }
 

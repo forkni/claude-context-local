@@ -4,11 +4,11 @@ import shutil
 from pathlib import Path
 
 import pytest
-from conftest import create_test_embeddings
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from search.config import MultiHopConfig, SearchConfig
 from search.hybrid_searcher import HybridSearcher
+from tests.helpers.embeddings import create_test_embeddings
 
 
 @pytest.mark.slow

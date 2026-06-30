@@ -803,7 +803,7 @@ class TestCheckVramStatus:
 
         usage_pct, should_warn, should_abort = embedder._check_vram_status()
 
-        assert usage_pct == 0.5
+        assert usage_pct == pytest.approx(0.5)
         assert should_warn is False
         assert should_abort is False
 
@@ -822,7 +822,7 @@ class TestCheckVramStatus:
 
         usage_pct, should_warn, should_abort = embedder._check_vram_status()
 
-        assert usage_pct == 0.9
+        assert usage_pct == pytest.approx(0.9)
         assert should_warn is True  # > 85%
         assert should_abort is False  # < 95%
 
