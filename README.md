@@ -20,48 +20,48 @@
 ███████╗╚██████╔╝╚██████╗██║  ██║███████╗
 ```
 
-**Local-first semantic code search for Claude Code.** Hybrid search combining semantic understanding with text matching, running 100% locally with multi-model routing (Qwen3, BGE-M3, CodeRankEmbed). No API keys, no costs, your code never leaves your machine.
+**Local-first semantic code search for Claude Code.** Hybrid search combining semantic understanding with text matching, running 100% locally. No API keys, no costs, your code never leaves your machine.
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows-blue.svg)](https://www.microsoft.com/windows)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
+[![codecov](https://codecov.io/gh/forkni/claude-context-local/branch/development/graph/badge.svg)](https://codecov.io/gh/forkni/claude-context-local)
 
 ## Highlights
 
 - **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-06-08, 13 queries, k=7): **Hit@5 100%, MRR 0.797, Recall@7 0.736 (recommended k=7)** - [benchmarks](docs/BENCHMARKS.md)
-- **Neural Reranking**: Cross-encoder models (default: `jinaai/jina-reranker-v3`; alternatives: BGE-reranker-v2-m3, gte-reranker-modernbert-base) improve ranking quality by 5-15% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
+- **Neural Reranking**: Cross-encoder models (default: `jinaai/jina-reranker-v3`; alternatives: BGE-reranker-v2-m3, gte-reranker-modernbert-base) improve ranking quality by 15-25% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
 - **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-06-08, 13 queries, k=10): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); neural reranker active (all modes MRR 0.797); Hybrid best at deep recall (R@7 0.736, R@10 0.770)**
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
-- **Multi-Model Routing**: Intelligent query routing (Qwen3, BGE-M3, CodeRankEmbed) with 100% accuracy - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md)
 - **Layered Call-Graph Resolver Pipeline**: `find_connections` returns callers **and** callees with per-entry provenance (`resolver_source`, `resolver_confidence`). Confidence ladder: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98. Install `pip install -e ".[callgraph]"` for pyan3 + LibCST; core is Apache-2.0-clean — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
 - **OTel Tracing** (opt-in): Zero-overhead `traced_block` / `@timed` spans across the search and index pipeline — export to Jaeger, Tempo, or any OTLP collector. See [Observability](docs/OBSERVABILITY.md).
 - **ONNX Runtime Backend** (opt-in): `performance.use_onnx` loads eligible models via `ORTModelForFeatureExtraction` with `CUDAExecutionProvider` + `gpu_mem_limit` arena cap — prevents WDDM shared-memory spillover on 8 GB laptop GPUs
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
-- **19 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
+- **18 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 - **Source-Position Reranking**: Groups results by file, sorted by line number — LLMs read code in logical order (+5.3% accuracy, DOS RAG)
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 2,853 passing tests | All 19 MCP tools operational | Concurrency-safe | Windows 10/11
+**Status**: ✅ Production-ready | 3,100 passing tests | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
 
-## What's New in v0.17.0
+## What's New in v0.20.0
 
-- **DSPy/GEPA agent-evaluation harness** — full agent-evaluation and optimization loop for the code-search MCP tools: `ClaudeCodeLM` subscription backend (`utils/dspy_claude_code.py`), DSPy ReAct bridge to the live HTTP server, `dspy.Evaluate`/`dspy.GEPA` harness. Zero API cost — runs on a Claude Max subscription. See `docs/DSPY_SETUP.md`.
-- **GEPA-optimized CodeNavQA recall guidance** — GEPA reflective search distilled back into the `CodeNavQA` DSPy signature improved **Recall@7 0.668→0.717**; multi-query strategy, chunk-id verbatim copy, and tool-vs-agent recall diagnostic included.
-- **Search `default_k` 4→7** — SSCG benchmark (k=7 hybrid): MRR 0.806 (+0.093), Recall@7 0.700 (+0.122), Hit@7 100%. Targets that fell at rank 5–7 are now reliably retrieved. Pass `k=7` explicitly in production code.
-- **CVE remediation: 53→5 advisories** — two rounds of dependency upgrades (`aiohttp>=3.14.1`, `starlette>=1.3.1`, `python-dotenv>=1.2.2`, 12 other packages). 5 low/medium advisories remain (documented in `pyproject.toml`).
-- **New `[gpu]` optional extra** — `nvidia-ml-py>=12.535.77` pinned under `[gpu]` for NVML-backed VRAM monitoring.
-- **Performance** — AST parse-once across relationship extractors (#15); single-pass file-accessibility `rglob` (#17, #18); Batch 4 embedding throughput + NVML improvements (#50–#56, #59).
-- **Bug fixes** — merged community chunk edge union (#28, #16); Batch 3 event-loop offloads + ONNX 2048-token contract (#43–#49); Batch 5 routing-metadata fix (#57, #58, #60–#62); RAM-fallback config-singleton decoupling; Windows cp1252 decode on `claude` CLI subprocess; pyrefly type cleanup.
-- **2,853 unit tests** passing (ClaudeCodeLM CLI-format parsing tests added).
+- **Codecov coverage integration** — CI now uploads `coverage.xml` to Codecov on every development CI run; README badge tracks live coverage on the `development` branch. Authoritative gate remains `--cov-fail-under=76` in CI.
+- **Campaign-2 Tier-1 refactors** — Six behavior-preserving internal refactors: project-ID hash single owner, `ResultFactory._from_tuples`, `edge_relation_type()` accessor, `BaseReranker` ABC, resolver scoped-file preamble, `_two_pass_build` graph builder. All cx hotspots decomposed; 3,100+ tests pass.
+- **Test-suite hardening** — Integration tests mock `ModelLoader.load` (no model downloads in CI); pyrefly 0 errors on `development`; snapshot test regression suite (Syrupy, Phase 4) already shipped.
+- **Internal fixes** — Pyrefly narrowing regression in `graph_storage.py`; restored `missing-attribute` / `bad-argument-type` ignores in `graph_integration.py`.
+
+**Previous (v0.19.0)**: Multi-model routing removed (`RoutingConfig` deleted; `MODEL_REGISTRY` pruned to 5 models; `configure_query_routing` MCP tool removed — server exposes **18 tools**); Launcher UI cleanup (dead code removed, 10 display values corrected); Docs cleanup (routing sections deleted from 4 guides).
+
+**Previous (v0.18.0)**: Default `search_code` output to relevance order (`source_order_output=False`); MCP-pipeline eval (45 A/B/C queries): MRR 0.8278, Hit@7 0.978.
+
+**Previous (v0.17.0)**: DSPy/GEPA agent-evaluation harness, GEPA-optimized CodeNavQA recall (Recall@7 0.668→0.717), search `default_k` 4→7 (MRR +0.093, Recall@7 +0.122), CVE remediation 53→5 advisories, `[gpu]` optional extra, performance improvements. 2,853 tests.
 
 **Previous (v0.16.0)**: Concurrency-safe MCP server (`threading.RLock` on `ApplicationState`), event-loop offloads via `asyncio.to_thread`, deterministic parallel chunking, `DiGraph`→`MultiDiGraph`, index integrity fixes (30 total — Batch 1/2A/2B). 2,533 tests.
 
 **Previous (v0.15.0)**: LSP resolver repair (0 → 938 resolved edges), resolver precision tuning, `min_confidence`/`use_pyproject_toml` config knobs, `docs/CALL_GRAPH_TUNING.md`.
 
 **Previous (v0.14.0)**: Layered call-graph resolver pipeline (AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98), optional `[callgraph]`/`[lsp]` extras, `find_connections` bidirectional callees with `resolver_source`/`resolver_confidence` provenance, `CallGraphConfig`, edge-attribute rename `source`→`resolver_source`. 2,451 tests.
-
-**Previous (v0.13.0)**: pyan3 cross-module caller edges in `find_connections`, direct-caller recall 0.57→0.95, `split_block` call edges recovered, Windows backslash normalization. Security: pyjwt 2.13.0, uv 0.11.18.
 
 Previous release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -140,7 +140,7 @@ After the server starts, connect in Claude Code:
 
 This command loads the [mcp-search-tool](.claude/skills/mcp-search-tool/SKILL.md) skill, which provides Claude with:
 
-- Complete MCP tool reference (all 19 tools)
+- Complete MCP tool reference (all 18 tools)
 - Search-first protocol enforcement
 - 2-step workflow for relationship queries (search → find_connections)
 - Project context validation before searches
@@ -168,7 +168,7 @@ Claude Code will automatically use the MCP tools internally to find relevant cod
 
 > **Note**: This is an MCP server designed exclusively for Claude Code integration. It is not a standalone search tool - it requires connection via Claude Code's `/mcp` command.
 
-When connected via `/mcp` → Reconnect, Claude Code gains access to 19 semantic search tools exposed as `mcp__code-search__*` functions.
+When connected via `/mcp` → Reconnect, Claude Code gains access to 18 semantic search tools exposed as `mcp__code-search__*` functions.
 
 A [**SKILL.md**](.claude/skills/mcp-search-tool/SKILL.md) file in the repository provides Claude with workflow guidance for optimal tool usage, including project context validation and search mode selection.
 
@@ -268,7 +268,6 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
 ### Configuration
 
 - `configure_search_mode` - Set hybrid search parameters
-- `configure_query_routing` - Configure multi-model routing
 - `configure_reranking` - Configure neural reranking
 - `configure_chunking` - Configure code chunking settings
 - `get_search_config_status` - View current configuration
@@ -308,9 +307,9 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
 - **Python**: 3.11+ (tested with 3.11 and 3.12)
 - **RAM**: 4GB minimum (8GB+ recommended for large codebases)
 - **Disk**: 2-4GB free space (model cache + embeddings)
-  - Qwen3-0.6B: ~2.3GB (default)
-  - EmbeddingGemma: ~1.2GB (legacy)
-  - BGE-M3: ~2.2GB (optional)
+  - EmbeddingGemma: ~1.2GB (default)
+  - BGE-M3: ~2.2GB
+  - Qwen3-0.6B: ~2.3GB
 - **Windows**: Windows 10/11 with PowerShell
 - **PyTorch**: 2.6.0+ (auto-installed with CUDA 11.8/12.4/12.6 support)
 - **GPU** (optional): NVIDIA GPU with CUDA for 8.6x faster indexing
@@ -329,7 +328,7 @@ Run `start_mcp_server.cmd` and select **3. Search Configuration**:
   1. View Current Configuration       - Show all active settings
   2. Search Mode Configuration        - Mode, weights, parallel search
   3. Select Embedding Model           - Choose model by VRAM (BGE-M3/Qwen3)
-  4. Configure Neural Reranker        - Cross-encoder reranking (+5-15% quality)
+  4. Configure Neural Reranker        - Cross-encoder reranking (+15-25% quality)
   5. Entity Tracking Configuration    - Symbol tracking, import/class context
   6. Configure Chunking Settings      - Greedy merge, AST splitting (+4.3 Recall@5)
   9. Reset to Defaults                - Restore optimal default settings
@@ -360,10 +359,11 @@ Weights should sum to 1.0.
 
 | Model | VRAM | Best For |
 |-------|------|----------|
-| **Qwen3-0.6B** | 2.3GB | Default — high efficiency, excellent value |
+| **EmbeddingGemma-300m** | ~1.2GB | Default — lightweight, low-VRAM systems |
 | **BGE-M3** | 1-1.5GB | Hybrid search, balanced quality/VRAM |
-| **EmbeddingGemma-300m** | ~1.2GB | Lightweight, low-VRAM systems |
-| **Multi-Model Routing** | 6.3GB | BGE-Code-v1 + Qwen3 |
+| **Qwen3-0.6B** | 2.3GB | High efficiency, excellent value |
+| **CodeRankEmbed** | 0.5-0.6GB | Code-specific retrieval |
+| **GTE-ModernBERT** | ~0.28GB | Lightest option |
 
 **Instant switching**: <150ms with no re-indexing required.
 
@@ -378,7 +378,7 @@ Enable/disable parallel execution of BM25 and semantic search:
 
 Cross-encoder model that re-scores results for 15-25% quality improvement:
 
-- **Enable/Disable**: Requires GPU with ≥6GB VRAM
+- **Enable/Disable**: Requires GPU with ≥2GB VRAM
 - **Top-K Candidates**: Number of results to rerank (default: 50, range: 5-100)
 
 #### 7. Configure Entity Tracking
@@ -390,7 +390,7 @@ Extract additional code relationships during indexing:
 
 #### 8. Reset to Defaults
 
-Resets all settings to: hybrid mode, 0.35/0.65 weights, multi-model enabled, GPU auto-detect.
+Resets all settings to: hybrid mode, 0.35/0.65 weights, GPU auto-detect.
 
 ### Quick Access Options
 
@@ -407,14 +407,15 @@ For automation and CI/CD, settings can be overridden via environment variables. 
 
 | Model | Dimensions | VRAM | Best For |
 |-------|------------|------|----------|
-| **Qwen3-0.6B** | 1024 | 2.3GB | Default — high efficiency, excellent value |
+| **EmbeddingGemma-300m** | 768 | ~1.2GB | Default — lightweight, low-VRAM systems |
 | **BGE-M3** | 1024 | 1-1.5GB | Hybrid search, balanced quality/VRAM |
-| **EmbeddingGemma-300m** | 768 | ~1.2GB | Lightweight, low-VRAM systems |
+| **Qwen3-0.6B** | 1024 | 2.3GB | High efficiency, excellent value |
 | **CodeRankEmbed** | 768 | 0.5-0.6GB | Code-specific retrieval |
+| **GTE-ModernBERT** | 768 | ~0.28GB | Lightest option |
 
 **Instant model switching**: <150ms with per-model index storage - no re-indexing needed!
 
-**See also**: [Advanced Features](docs/ADVANCED_FEATURES_GUIDE.md#multi-model-query-routing)
+**See also**: [Advanced Features Guide](docs/ADVANCED_FEATURES_GUIDE.md)
 
 ## Architecture
 
@@ -426,7 +427,7 @@ claude-context-local/
 ├── search/            # FAISS + BM25 hybrid search, graph-scoring stage
 ├── merkle/            # Incremental indexing with change detection
 ├── graph/             # Graph storage, queries & community detection
-├── mcp_server/        # MCP server implementation (19 tools)
+├── mcp_server/        # MCP server implementation (18 tools)
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
@@ -497,7 +498,7 @@ scripts\batch\repair_installation.bat
 
 - [Installation Guide](docs/INSTALLATION_GUIDE.md) - Setup, configuration, troubleshooting
 - [MCP Tools Reference](docs/MCP_TOOLS_REFERENCE.md) - Complete tool documentation
-- [Advanced Features Guide](docs/ADVANCED_FEATURES_GUIDE.md) - Multi-model routing, graph search, optimization
+- [Advanced Features Guide](docs/ADVANCED_FEATURES_GUIDE.md) - Graph search, ego-graph expansion, optimization
 - [Call-Graph Tuning](docs/CALL_GRAPH_TUNING.md) - Resolver pipeline tuning, `min_confidence`, LSP diagnostics
 - [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) - **Setup guide for your projects** (see below)
 
@@ -580,6 +581,6 @@ This project draws inspiration from several excellent semantic code search imple
 | [codanna](https://github.com/bartolli/codanna) | Bartolli | High-performance Rust implementation, memory-mapped storage, profile system |
 | [TOON Format](https://github.com/toon-format/toon) | TOON Format | Tabular Object Output Notation - compact data format inspiration for output formatting |
 
-This Windows-focused implementation builds upon these foundations while adding unique capabilities including multi-model query routing, per-model index storage, and Python call graph analysis.
+This Windows-focused implementation builds upon these foundations while adding unique capabilities including per-model index storage and Python call graph analysis.
 
 I am grateful to these projects and their maintainers for pioneering semantic code search for AI assistants.

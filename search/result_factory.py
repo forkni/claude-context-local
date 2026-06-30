@@ -20,6 +20,31 @@ class ResultFactory:
     """
 
     @staticmethod
+    def _from_tuples(results: list[tuple], source: str) -> list[SearchResult]:
+        """Build SearchResult list from (chunk_id, score, metadata) tuples.
+
+        Single implementation shared by from_bm25_results, from_dense_results,
+        and from_similarity_results — they differ only in the ``source`` label.
+
+        Args:
+            results: List of (chunk_id, score, metadata) tuples
+            source: Source tag written to every SearchResult
+
+        Returns:
+            List of SearchResult objects with the given source and rank=index
+        """
+        return [
+            SearchResult(
+                chunk_id=chunk_id,
+                score=score,
+                metadata=metadata,
+                source=source,
+                rank=i,
+            )
+            for i, (chunk_id, score, metadata) in enumerate(results)
+        ]
+
+    @staticmethod
     def from_bm25_results(bm25_results: list[tuple]) -> list[SearchResult]:
         """Convert BM25 search results to SearchResult format.
 
@@ -40,17 +65,7 @@ class ResultFactory:
             >>> results[0].source
             'bm25'
         """
-        search_results = []
-        for i, (chunk_id, score, metadata) in enumerate(bm25_results):
-            search_result = SearchResult(
-                chunk_id=chunk_id,
-                score=score,
-                metadata=metadata,
-                source="bm25",
-                rank=i,
-            )
-            search_results.append(search_result)
-        return search_results
+        return ResultFactory._from_tuples(bm25_results, "bm25")
 
     @staticmethod
     def from_dense_results(dense_results: list[tuple]) -> list[SearchResult]:
@@ -73,17 +88,7 @@ class ResultFactory:
             >>> results[0].source
             'semantic'
         """
-        search_results = []
-        for i, (chunk_id, score, metadata) in enumerate(dense_results):
-            search_result = SearchResult(
-                chunk_id=chunk_id,
-                score=score,
-                metadata=metadata,
-                source="semantic",
-                rank=i,
-            )
-            search_results.append(search_result)
-        return search_results
+        return ResultFactory._from_tuples(dense_results, "semantic")
 
     @staticmethod
     def from_direct_lookup(chunk_id: str, metadata: dict) -> SearchResult:
@@ -125,6 +130,32 @@ class ResultFactory:
         )
 
     @staticmethod
+    def from_expansion(
+        chunk_id: str, score: float, metadata: dict, source: str
+    ) -> SearchResult:
+        """Create SearchResult for ego-graph or parent-expansion hits.
+
+        Args:
+            chunk_id: Chunk identifier
+            score: Expansion score (anchor × similarity, or 0.0 for parents)
+            metadata: Chunk metadata dictionary
+            source: Source tag ("ego_graph", "parent_expansion", ...)
+
+        Returns:
+            SearchResult with rank=0
+
+        Example:
+            >>> result = ResultFactory.from_expansion(
+            ...     "file.py:1-10:function:foo", 0.7, {"file": "file.py"}, "ego_graph"
+            ... )
+            >>> result.source
+            'ego_graph'
+        """
+        return SearchResult(
+            chunk_id=chunk_id, score=score, metadata=metadata, source=source, rank=0
+        )
+
+    @staticmethod
     def from_similarity_results(
         similar_chunks: list[tuple[str, float, dict]], source: str = "similarity"
     ) -> list[SearchResult]:
@@ -148,14 +179,4 @@ class ResultFactory:
             >>> results[0].source
             'similarity'
         """
-        search_results = []
-        for i, (chunk_id, score, metadata) in enumerate(similar_chunks):
-            search_result = SearchResult(
-                chunk_id=chunk_id,
-                score=score,
-                metadata=metadata,
-                source=source,
-                rank=i,
-            )
-            search_results.append(search_result)
-        return search_results
+        return ResultFactory._from_tuples(similar_chunks, source)

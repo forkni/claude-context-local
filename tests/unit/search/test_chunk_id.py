@@ -5,6 +5,7 @@ import pytest
 from search.chunk_id import (
     MIN_CHUNK_ID_COLONS,
     ChunkId,
+    build,
     extract_line_count,
     extract_name,
     is_chunk_id,
@@ -172,6 +173,31 @@ class TestNormalize:
         raw = "login"
         assert normalize(raw) == "login"
 
+    def test_double_escaped_backslash(self):
+        """Double-escaped backslash (JSON transport bug) → single forward slash."""
+        raw = "search\\\\reranker.py:36-137:method:rerank"
+        assert normalize(raw) == "search/reranker.py:36-137:method:rerank"
+
+    def test_collapses_double_slash(self):
+        """Double slash produced by naive backslash→slash conversion is collapsed."""
+        raw = "search//reranker.py:36-137:method:rerank"
+        assert normalize(raw) == "search/reranker.py:36-137:method:rerank"
+
+    def test_idempotent_forward_slash(self):
+        """normalize(normalize(x)) == normalize(x) for canonical input."""
+        canonical = "search/reranker.py:36-137:method:rerank"
+        assert normalize(normalize(canonical)) == normalize(canonical)
+
+    def test_idempotent_backslash(self):
+        """normalize(normalize(x)) == normalize(x) for backslash input."""
+        raw = "search\\reranker.py:36-137:method:rerank"
+        assert normalize(normalize(raw)) == normalize(raw)
+
+    def test_idempotent_double_escape(self):
+        """normalize(normalize(x)) == normalize(x) for double-escaped input."""
+        raw = "search\\\\reranker.py:36-137:method:rerank"
+        assert normalize(normalize(raw)) == normalize(raw)
+
 
 # ---------------------------------------------------------------------------
 # extract_name
@@ -261,3 +287,66 @@ class TestStripLineRange:
             "search/hybrid_searcher.py:201-350:split_block:HybridSearcher.__init__"
         )
         assert s1 == s2
+
+
+# ---------------------------------------------------------------------------
+# build  (P5: forward builder with conditional name suffix)
+# ---------------------------------------------------------------------------
+
+
+class TestBuild:
+    """build() is the canonical forward builder for the wire format.
+
+    Omits the ``:name`` suffix when name is falsy, unlike ChunkId.__str__()
+    which always appends it.
+    """
+
+    def test_with_name(self):
+        assert (
+            build("search/filters.py", 22, 31, "function", "normalize_path")
+            == "search/filters.py:22-31:function:normalize_path"
+        )
+
+    def test_without_name_none(self):
+        assert build("src/foo.py", 1, 5, "merged", None) == "src/foo.py:1-5:merged"
+
+    def test_without_name_empty_string(self):
+        """Empty string is treated as falsy — suffix is omitted."""
+        assert build("src/foo.py", 1, 5, "merged", "") == "src/foo.py:1-5:merged"
+
+    def test_qualified_name(self):
+        assert (
+            build("src/foo.py", 10, 20, "method", "MyClass.my_method")
+            == "src/foo.py:10-20:method:MyClass.my_method"
+        )
+
+    def test_round_trips_with_parse(self):
+        """build() → ChunkId.parse() → build() is lossless when name is present."""
+        raw = build("a/b.py", 5, 15, "function", "do_thing")
+        parsed = ChunkId.parse(raw)
+        assert parsed is not None
+        assert str(parsed) == raw
+
+    def test_path_normalized_forward_slashes(self):
+        """Windows backslashes are normalized to forward slashes."""
+        result = build("search\\filters.py", 22, 31, "function", "normalize_path")
+        assert result == "search/filters.py:22-31:function:normalize_path"
+
+    def test_no_name_suffix_absent(self):
+        """The wire format has exactly 3 components (no trailing colon) when nameless."""
+        result = build("a.py", 1, 10, "class", None)
+        assert result.count(":") == 2  # file:range:kind
+        assert not result.endswith(":")
+
+    def test_replicate_assign_community_ids_qualified(self):
+        """Replicates _assign_community_ids's qualified-name branch: parent.name."""
+        parent, name = "MyClass", "my_method"
+        qualified = f"{parent}.{name}"
+        result = build("src/a.py", 10, 20, "method", qualified)
+        assert result == "src/a.py:10-20:method:MyClass.my_method"
+
+    def test_replicate_from_treesitter_chunks_merged_no_name(self):
+        """Replicates _from_treesitter_chunks merged path with no qualified name."""
+        result = build("src/a.py", 5, 40, "merged", None)
+        assert "merged" in result
+        assert result == "src/a.py:5-40:merged"

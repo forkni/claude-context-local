@@ -136,3 +136,20 @@ class DimensionMismatchError(ConfigurationError):
         self.index_dim = index_dim
         self.embedder_model = embedder_model
         self.index_model = index_model
+
+    def to_response(self) -> dict:
+        """Return the MCP error envelope for this exception.
+
+        Used by :func:`mcp_server.tools.responses.dimension_mismatch`.
+        Key names are part of the MCP client contract — do not rename them.
+        """
+        return {
+            "error": "Dimension mismatch",
+            "message": str(self),
+            "recovery_suggestion": (
+                f"Run index_directory with force_reindex=True to rebuild "
+                f"the index for model {self.embedder_model}"
+            ),
+            "embedder_dimension": self.embedder_dim,
+            "index_dimension": self.index_dim,
+        }

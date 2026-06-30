@@ -16,12 +16,12 @@ from mcp_server.server import (
 )
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_storage_dir
+from mcp_server.tools import responses
 from mcp_server.tools.decorators import error_handler
 from merkle.snapshot_manager import SnapshotManager
 from search.config import (
     MODEL_REGISTRY,
 )
-from search.hybrid_searcher import HybridSearcher
 
 
 logger = logging.getLogger(__name__)
@@ -34,20 +34,19 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
 
     # Check if a project is selected — offload get_index_manager (may init lazily)
     try:
-        current_model_key = state.current_model_key
 
         def _get_index_stats() -> dict:
-            return get_index_manager(model_key=current_model_key).get_stats()
+            return get_index_manager().get_stats()
 
         stats = await asyncio.to_thread(_get_index_stats)
     except ValueError as e:
         # No project selected - return clear error
-        return {
-            "error": str(e),
-            "index_statistics": {"total_chunks": 0},
-            "current_project": None,
-            "system_message": "No project indexed. Use index_directory to index a project first.",
-        }
+        return responses.error(
+            str(e),
+            index_statistics={"total_chunks": 0},
+            current_project=None,
+            system_message="No project indexed. Use index_directory to index a project first.",
+        )
 
     # Include hybrid searcher sync status
     # Use get_config() to check if hybrid is enabled
@@ -56,8 +55,10 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
         try:
             # Offload get_searcher + stats fetch off the event loop.
             def _get_hybrid_stats() -> dict | None:
+                from mcp_server.tools.searcher_view import SearcherView
+
                 _searcher = get_searcher()
-                if isinstance(_searcher, HybridSearcher):
+                if SearcherView(_searcher).is_hybrid:
                     return _searcher.get_stats()
                 return None
 
@@ -70,24 +71,10 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
         except Exception as e:
             logger.warning(f"Could not get hybrid searcher stats: {e}")
 
-    # Collect model info
+    # Collect model info (single-model mode)
     model_info = {}
-    if state.multi_model_enabled:
-        loaded_models = []
-        for model_key, embedder in state.embedders.items():
-            if embedder is not None:
-                info = embedder.get_model_info()
-                info["model_key"] = model_key
-                loaded_models.append(info)
-        model_info = {
-            "multi_model_mode": True,
-            "loaded_models": loaded_models,
-            "total_loaded": len(loaded_models),
-        }
-    else:
-        if "default" in state.embedders and state.embedders["default"] is not None:
-            model_info = state.embedders["default"].get_model_info()
-            model_info["multi_model_mode"] = False
+    if "default" in state.embedders and state.embedders["default"] is not None:
+        model_info = state.embedders["default"].get_model_info()
 
     # Add last indexed time from Merkle metadata
     last_indexed_time = None
@@ -306,11 +293,11 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
     per_model_vram = {}
     try:
         state = get_state()
-        for model_key, embedder in state.embedders.items():
+        for key, embedder in state.embedders.items():
             if embedder is not None and hasattr(embedder, "get_vram_usage"):
                 usage = embedder.get_vram_usage()
                 if usage:
-                    per_model_vram[model_key] = usage
+                    per_model_vram[key] = usage
     except (AttributeError, RuntimeError):
         pass
 
@@ -330,7 +317,7 @@ async def handle_cleanup_resources(arguments: dict[str, Any]) -> dict:
     # _cleanup_previous_resources() runs gc.collect() + torch.cuda.synchronize()
     # + empty_cache() — can take hundreds of ms; offload to thread pool.
     await asyncio.to_thread(_cleanup_previous_resources)
-    return {"success": True, "message": "Resources cleaned up successfully"}
+    return responses.ok(success=True, message="Resources cleaned up successfully")
 
 
 @error_handler("Config status check")
@@ -344,7 +331,6 @@ async def handle_get_search_config_status(arguments: dict[str, Any]) -> dict:
         "rrf_k": config.search_mode.rrf_k_parameter,
         "use_parallel": config.performance.use_parallel_search,
         "embedding_model": config.embedding.model_name,
-        "multi_model_enabled": get_state().multi_model_enabled,
         "auto_reindex_enabled": config.performance.enable_auto_reindex,
         "max_index_age_minutes": config.performance.max_index_age_minutes,
         "bm25_use_stemming": config.search_mode.bm25_use_stemming,

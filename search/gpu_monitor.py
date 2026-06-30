@@ -5,6 +5,7 @@ This module provides GPU memory monitoring functionality for determining
 optimal batch sizes and checking GPU availability.
 """
 
+import gc
 import logging
 
 
@@ -50,3 +51,17 @@ class GPUMemoryMonitor:
         """Estimate memory usage for a batch."""
         # float32 = 4 bytes, plus overhead
         return batch_size * embedding_dim * 4 * 2  # 2x safety margin
+
+
+def release_gpu_memory(*, synchronize: bool = True) -> None:
+    """Release GPU memory and run garbage collection.
+
+    Calls ``gc.collect()`` unconditionally, then empties the PyTorch CUDA
+    cache and (when *synchronize* is True) blocks until all CUDA kernels
+    complete.  No-op safe when PyTorch / CUDA is absent.
+    """
+    gc.collect()
+    if torch and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        if synchronize:
+            torch.cuda.synchronize()

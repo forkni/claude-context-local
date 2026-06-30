@@ -6,18 +6,16 @@ Complete guide to advanced features in claude-context-local MCP server.
 
 1. [Multi-Hop Search](#multi-hop-search)
 2. [Graph-Enhanced Search](#graph-enhanced-search)
-3. [Multi-Model Query Routing](#multi-model-query-routing)
-4. [Multi-Model Batch Indexing](#multi-model-batch-indexing)
-5. [Per-Model Index Storage](#per-model-index-storage)
-6. [Directory Filtering](#directory-filtering)
-7. [Persistent Project Selection](#persistent-project-selection)
-8. [Model Selection Guide](#model-selection-guide)
-9. [Context Enhancement (v0.8.0+)](#context-enhancement-v080)
-10. [VRAM Tier Management](#vram-tier-management)
-11. [Neural Reranking Configuration](#neural-reranking-configuration)
-12. [Drive-Agnostic Project Paths](#drive-agnostic-project-paths)
-13. [Progress Bar Features](#progress-bar-features)
-14. [Query Cache](#query-cache)
+3. [Per-Model Index Storage](#per-model-index-storage)
+4. [Directory Filtering](#directory-filtering)
+5. [Persistent Project Selection](#persistent-project-selection)
+6. [Model Selection Guide](#model-selection-guide)
+7. [Context Enhancement (v0.8.0+)](#context-enhancement-v080)
+8. [VRAM Tier Management](#vram-tier-management)
+9. [Neural Reranking Configuration](#neural-reranking-configuration)
+10. [Drive-Agnostic Project Paths](#drive-agnostic-project-paths)
+11. [Progress Bar Features](#progress-bar-features)
+12. [Query Cache](#query-cache)
 15. [Symbol ID Lookups (Phase 1.1)](#symbol-id-lookups-phase-11)
 16. [AI Guidance Messages (Phase 1.2)](#ai-guidance-messages-phase-12)
 17. [Dependency Analysis (Phase 1.3)](#dependency-analysis-phase-13)
@@ -129,333 +127,6 @@ When a project is indexed with a `project_id`, `search_code()` automatically inc
 
 ---
 
-## Multi-Model Query Routing
-
-**Feature**: Intelligent query routing to select optimal embedding model based on query characteristics
-
-**Status**: ✅ **Production-Ready** (100% routing accuracy on verification queries)
-
-### Overview
-
-The multi-model routing system automatically selects the best embedding model for each query, leveraging the unique strengths of different models:
-
-- **Qwen3-0.6B** (3/8 wins): Implementation-heavy queries, algorithms, complete systems
-- **BGE-M3** (3/8 wins): Workflow queries, configuration, system plumbing (most consistent baseline)
-- **CodeRankEmbed** (2/8 wins): Specialized algorithms (Merkle trees, RRF reranking)
-
-### How It Works
-
-**Routing Process**:
-
-1. Query analyzed against keyword rules for each model
-2. Confidence scores calculated (weighted by model specialization)
-3. Best model selected if confidence ≥ 0.35 threshold (benchmark-verified optimal value)
-4. Falls back to Qwen3 (default) if confidence too low
-
-**Routing Rules** (empirically validated):
-
-```python
-# Qwen3: Implementation & Algorithms (weight: 1.0)
-Keywords: "implementation", "algorithm", "error handling", "BM25", "multi-hop", "pattern"
-
-# BGE-M3: Workflow & Configuration (weight: 1.0)
-Keywords: "workflow", "configuration", "loading", "indexing", "embedding", "pipeline"
-
-# CodeRankEmbed: Specialized Algorithms (weight: 1.5)
-Keywords: "merkle", "rrf", "reranking", "tree structure", "hybrid search", "rank fusion"
-```
-
-### Natural Query Support (v0.5.5+)
-
-**Enhancement** (2025-11-15): Routing now works with natural language queries without keyword stuffing.
-
-**Improvements**:
-
-- **Optimized confidence threshold**: Raised to 0.35 (benchmark-verified for routing accuracy)
-- **Added 24 single-word keyword variants** across all models in the pool
-- **Natural queries** like "error handling" now trigger routing effectively
-
-**Current Behavior** (v0.9.2+):
-
-| Query Type | Default Model | Routing Behavior |
-|------------|---------------|------------------|
-| "error handling" | Qwen3 | ✅ Routes to Qwen3 (logic specialist) |
-| "configuration loading" | Qwen3 | ✅ Routes to BGE-Code (workflow specialist) |
-| "validation logic" | Qwen3 | ✅ Routes to Qwen3 (validation specialist) |
-
-**Example Natural Queries**:
-
-```bash
-# Implementation queries → Qwen3
-/search_code "error handling"           # Routes to Qwen3 (logic specialist)
-/search_code "algorithm implementation" # Routes to Qwen3 (implementation)
-/search_code "validation logic"         # Routes to Qwen3 (validation)
-
-# Workflow queries → BGE-Code
-/search_code "configuration loading"    # Routes to BGE-Code (workflow)
-/search_code "initialization process"   # Routes to BGE-Code (setup)
-/search_code "indexing pipeline"        # Routes to BGE-Code (system)
-
-# Specialized algorithms → CodeRankEmbed
-/search_code "merkle tree"              # Confidence: 0.21
-/search_code "reranking algorithm"      # Confidence: 0.18
-/search_code "hybrid search"            # Confidence: 0.15
-```
-
-**Routing Transparency**: Every search result includes routing metadata showing which model was selected and why:
-
-```json
-{
-  "routing": {
-    "model_selected": "qwen3",
-    "confidence": 0.08,
-    "reason": "Matched Implementation queries and algorithms with confidence 0.08",
-    "scores": {
-      "coderankembed": 0.0,
-      "qwen3": 0.08,
-      "bge_m3": 0.0
-    }
-  }
-}
-```
-
-### VRAM Requirements
-
-**Multi-Model Pool** (v0.5.17+ with lazy loading):
-
-**Startup (lazy loading enabled)**:
-
-- **VRAM at startup**: 0 MB (models load on first search)
-- **First search delay**: 5-10s one-time model loading
-- **After first search**: 6.3 GB VRAM (all models in the pool loaded)
-
-**Loaded State** (all models in the pool in memory):
-
-- **Total VRAM** (Workstation tier, 18GB+): Up to ~15 GB (on RTX 4090 with 25.8 GB capacity)
-- **Qwen3-0.6B**: ~7.5 GB (workstation tier)
-- **Qwen3-0.6B**: ~2.4 GB (desktop tier, 10-18GB)
-- **BGE-Code**: ~4 GB (additional)
-- **BGE-M3**: ~1.1 GB (additional)
-- **Headroom**: 10+ GB (40%+ free on workstation)
-
-**Minimum Requirements**:
-
-- RTX 3060 12GB: Comfortable (7 GB headroom)
-- RTX 3070 8GB: Tight fit (3 GB headroom)
-- RTX 4060 8GB: Tight fit (3 GB headroom)
-- RTX 4090 24GB: Excellent (19 GB headroom)
-
-**Memory Management**:
-
-- **Lazy loading**: Models load on-demand (0 MB startup VRAM)
-- **Manual cleanup**: Use `/cleanup_resources` to unload models and return to 0 MB
-- **Models reload**: Automatically on next search after cleanup (5-10s)
-- **Automatic cleanup**: When switching projects
-
-### Performance Metrics
-
-**Routing Accuracy** (tested on 8 verification queries):
-
-- **100% accuracy** (8/8 correct routes)
-- **Routing overhead**: <1ms per query (negligible)
-
-**Startup Performance (v0.5.17+)**:
-
-- **Startup**: 0 MB VRAM, 3-5s server start (lazy loading)
-- **First search**: 8-15s total (5-10s model loading + 3-5s search)
-- **Subsequent searches**: 3-5s (models stay loaded)
-- **Model load time** (when needed): 5-10 seconds for all models in the pool
-
-**Expected Quality Improvements** (vs single BGE-M3):
-
-- **15-25% better top-1 relevance** across diverse queries
-- **+25-30% improvement** for error handling queries → Qwen3
-- **+30-35% improvement** for Merkle/RRF queries → CodeRankEmbed
-- **Baseline performance** for workflow queries → BGE-M3
-
-### Configuration
-
-**Enable/Disable Multi-Model Mode**:
-
-```bash
-# Enable (default)
-set CLAUDE_MULTI_MODEL_ENABLED=true
-
-# Disable (single-model fallback)
-set CLAUDE_MULTI_MODEL_ENABLED=false
-```
-
-**Interactive Configuration** (MCP tool):
-
-```bash
-# View current routing configuration
-/get_index_status  # Shows all loaded models
-
-# Configure routing behavior
-/configure_query_routing
-{
-  "multi_model_enabled": false,
-  "default_model": "qwen3_0.6b",
-  "confidence_threshold": 0.35
-}
-```
-
-**Routing Parameters**:
-
-- `multi_model_enabled`: Toggle multi-model routing (default: false — shipped as single-model Qwen3-0.6B; enable as opt-in)
-- `default_model`: Fallback model when routing is disabled or confidence is low (default: `"qwen3_0.6b"`)
-- `confidence_threshold`: Minimum confidence to use non-default model (default: 0.35, benchmark-verified)
-
-### Usage Examples
-
-**Automatic Routing** (default behavior):
-
-```bash
-# Implementation query → Routes to Qwen3
-/search_code "error handling patterns"
-# Returns: {"routing": {"model_selected": "qwen3", "confidence": 0.12, "reason": "Matched Implementation queries and algorithms"}}
-
-# Workflow query → Routes to BGE-M3
-/search_code "configuration loading system"
-# Returns: {"routing": {"model_selected": "bge_m3", "confidence": 0.18, "reason": "Matched Workflow and configuration queries"}}
-
-# Specialized algorithm → Routes to CodeRankEmbed
-/search_code "Merkle tree change detection"
-# Returns: {"routing": {"model_selected": "coderankembed", "confidence": 0.35, "reason": "Matched Specialized algorithms"}}
-```
-
-**Manual Model Selection** (override routing):
-
-```bash
-# Force specific model (bypasses routing)
-/search_code "authentication" --model_key "qwen3"
-```
-
-**Disable Routing** (use single default model):
-
-```bash
-# Disable routing for this query only
-/search_code "authentication" --use_routing false
-```
-
-### Verification Results
-
-**Verification**: Multi-model routing has been extensively tested and validated across diverse query types. All models route correctly based on query characteristics (logic queries → Qwen3, workflow queries → BGE-Code).
-
-### Implementation Details
-
-**Architecture**:
-
-- `mcp_server/server.py` - Multi-model pool management
-- `search/query_router.py` - Routing logic and decision making
-- `tools/test_multi_model_routing.py` - Comprehensive test suite
-
-**Model Pool Configuration**:
-
-```python
-# Lightweight pool (6-10GB VRAM) - Default (8 GB laptop tier, ships in search_config.json)
-MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED = {
-    "gte_modernbert": "Alibaba-NLP/gte-modernbert-base",  # Code-specific queries
-    "bge_m3": "BAAI/bge-m3",                              # General queries
-}
-
-# Full pool (10GB+ VRAM) - Opt-in for desktop/workstation (set routing.multi_model_pool: "full")
-MODEL_POOL_CONFIG = {
-    "qwen3": "Qwen/Qwen3-Embedding-0.6B",  # Logic & implementation specialist
-    "bge_code": "BAAI/bge-code-v1",        # Workflow & code structure specialist
-}
-```
-
-**Key Features**:
-
-- Dictionary-based pool (`_embedders = {}`) replaces singleton pattern
-- Lazy loading: Models load on first use
-- Comprehensive cleanup: All models freed when switching projects
-- Backward compatible: Single-model fallback when disabled
-
----
-
-## Multi-Model Batch Indexing
-
-**Feature**: Index projects with all models in the pool simultaneously
-
-**Status**: ✅ **Production-Ready** (auto-enabled with multi-model mode)
-
-**Per-model storage**: All models write to separate directories, enabling instant model switching without re-indexing.
-
-### Overview
-
-When multi-model query routing is enabled (`CLAUDE_MULTI_MODEL_ENABLED=true`), project indexing automatically updates indices for **all models in the pool**:
-
-- **Qwen3-0.6B** (1024d) - Logic specialist: action-oriented queries and algorithms
-- **BGE-Code-v1** (1536d) - Semantic specialist: workflow and architectural reasoning
-
-### How It Works
-
-**Automatic Multi-Model Indexing**:
-
-1. Detects multi-model mode from environment variable
-2. Indexes project sequentially with each model
-3. Maintains per-model index isolation (fresh HybridSearcher instances per model)
-4. Restores original model after completion
-
-**Implementation**: `mcp_server/tool_handlers.py` - Creates fresh indexer instances bypassing global caches to ensure correct storage paths.
-
-**Index Storage**:
-
-```
-~/.claude_code_search/projects/
-├── myproject_abc123_bge-code_1536d/
-├── myproject_abc123_qwen3-0.6b_1024d/
-└── ...
-```
-
-### Performance
-
-- **Sequential Indexing**: 3x time (e.g., 30s → 90s)
-- **Acceptable**: Indexing is infrequent operation
-- **Future Optimization**: Parallel chunking + sequential embedding (2x speedup)
-
-### Usage
-
-**Automatic** (when multi-model mode enabled):
-
-```bash
-/index_directory "C:\Projects\MyProject"
-# Automatically indexes with all models in the pool
-```
-
-**Explicit Control** (override behavior):
-
-```bash
-# Force multi-model (even if disabled)
-/index_directory "C:\Projects\MyProject" --multi_model true
-
-# Force single-model (even if enabled)
-/index_directory "C:\Projects\MyProject" --multi_model false
-```
-
-### Project Display
-
-Projects are grouped by path with all indexed models shown:
-
-```
-Found 1 project with 3 model indices:
-
-  1. claude-context-local
-     Path: F:\RD_PROJECTS\COMPONENTS\claude-context-local
-     Models: bge-m3 (1024d), Qwen3-0.6B (1024d), CodeRankEmbed (768d)
-```
-
-### Benefits
-
-✅ **Single operation** updates all models
-✅ **Optimal search quality** across all query types
-✅ **Per-model isolation** maintained
-✅ **Clear visibility** of indexed models
-✅ **Smart defaults** (auto-enable with multi-model mode)
-
----
 
 ## Per-Model Index Storage
 
@@ -652,7 +323,6 @@ When filters change during incremental indexing:
 ```json
 {
   "last_project_path": "F:/RD_PROJECTS/COMPONENTS/claude-context-local",
-  "last_model_key": null,
   "updated_at": "2025-11-24T12:30:00"
 }
 ```
@@ -971,10 +641,10 @@ When indexing a method, the system extracts up to `max_class_signature_lines` fr
 # Original code in file
 class DataProcessor:
     """Handles data preprocessing and validation."""
-    
+
     def __init__(self, config):
         self.config = config
-    
+
     def validate(self, data):  # <-- Indexing this method
         return data.shape[0] > 0
 ```
@@ -1046,10 +716,10 @@ The VRAM Tier Management system automatically detects available GPU memory and r
 
 | Tier | VRAM Range | Default Models | Features Enabled |
 |------|------------|----------------|------------------|
-| **Minimal** | <6GB | EmbeddingGemma-300m (fallback) | Single-model only, no multi-model routing, no neural reranking |
-| **Laptop** | 6-10GB | Qwen3-0.6B (shipped default) | Single-model; multi-model routing available as opt-in |
-| **Desktop** | 10-18GB | Qwen3-0.6B (shipped default) | Single-model; full 2-model pool available as opt-in |
-| **Workstation** | 18GB+ | Qwen3-0.6B (shipped default) | Single-model; all features available as opt-in |
+| **Minimal** | <6GB | EmbeddingGemma-300m (fallback) | Single-model only, no neural reranking |
+| **Laptop** | 6-10GB | EmbeddingGemma or BGE-M3 | Single-model; 5 models selectable |
+| **Desktop** | 10-18GB | BGE-M3 or Qwen3-0.6B | Single-model; 5 models selectable |
+| **Workstation** | 18GB+ | Any model | Single-model; all features available |
 
 ### Automatic Configuration
 

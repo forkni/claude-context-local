@@ -8,7 +8,7 @@ import string
 from pathlib import Path
 from typing import Any
 
-from search.filters import normalize_path
+from utils.path_utils import normalize_path, path_matches
 
 
 try:
@@ -647,91 +647,17 @@ class BM25Index:
             ),
         }
 
-    def remove_file_chunks(self, file_path: str, project_name: str) -> int:
-        """
-        Remove documents associated with a specific file.
+    def remove_files(
+        self, file_paths: set[str], project_name: str | None = None
+    ) -> int:
+        """Remove documents associated with one or more files in a single pass.
 
         Args:
-            file_path: Relative path of the file to remove chunks for
-            project_name: Name of the project
+            file_paths: Set of file paths to remove (relative or absolute).
+            project_name: Unused; kept for interface parity with other index levels.
 
         Returns:
-            Number of documents removed
-        """
-        if not self._doc_ids:
-            return 0
-
-        self._logger.debug(f"Removing BM25 documents for file: {file_path}")
-
-        # Track documents to remove
-        indices_to_remove = []
-        removed_count = 0
-
-        # Find documents that belong to this file
-        for i, doc_id in enumerate(self._doc_ids):
-            # Check if document belongs to the file
-            # Document IDs typically include file path information
-            if file_path in doc_id:
-                indices_to_remove.append(i)
-                removed_count += 1
-
-        if not indices_to_remove:
-            return 0
-
-        # Remove documents in reverse order to maintain indices
-        for i in reversed(indices_to_remove):
-            if i < len(self._documents):
-                del self._documents[i]
-            if i < len(self._doc_ids):
-                doc_id = self._doc_ids[i]
-                del self._doc_ids[i]
-                # Remove from metadata if exists
-                if doc_id in self._metadata:
-                    del self._metadata[doc_id]
-            if i < len(self._tokenized_docs):
-                del self._tokenized_docs[i]
-
-        # Rebuild BM25 index if we removed documents
-        if removed_count > 0:
-            try:
-                if self._tokenized_docs:
-                    # Only rebuild if we still have documents
-                    self._bm25 = BM25Okapi(self._tokenized_docs)
-                    self._logger.debug(
-                        f"Rebuilt BM25 index after removing {removed_count} documents"
-                    )
-                else:
-                    # No documents left, clear the index
-                    self._bm25 = None
-                    self._logger.debug("Cleared BM25 index (no documents remaining)")
-            except (ValueError, TypeError) as e:
-                self._logger.warning(f"Failed to rebuild BM25 index: {e}")
-                # Reset to empty state on rebuild failure
-                self._bm25 = None
-                self._documents = []
-                self._doc_ids = []
-                self._tokenized_docs = []
-                self._metadata = {}
-
-        self._logger.info(
-            f"Removed {removed_count} BM25 documents for file: {file_path}"
-        )
-        return removed_count
-
-    def remove_multiple_files(self, file_paths: set, project_name: str) -> int:
-        """
-        Remove documents associated with multiple files in a single pass.
-        Much faster than calling remove_file_chunks repeatedly.
-
-        IMPORTANT: This method properly rebuilds BM25 data structures to prevent
-        index corruption and ensure consistency.
-
-        Args:
-            file_paths: Set of file paths to remove
-            project_name: Name of the project
-
-        Returns:
-            Total number of documents removed
+            Number of documents removed.
         """
         if not self._doc_ids or not file_paths:
             return 0
@@ -740,30 +666,18 @@ class BM25Index:
             f"[BM25_REMOVE] Checking {len(file_paths)} files against {len(self._doc_ids)} docs"
         )
 
-        # Track indices to remove
+        normalized_targets = {normalize_path(fp) for fp in file_paths}
+
+        # Single pass: extract file-path portion of each doc_id and exact-match
         indices_to_remove_set = set()
-
-        # Normalize all file paths for consistent matching
-        normalized_file_paths = {normalize_path(fp) for fp in file_paths}
-
-        # Single pass through all doc_ids to identify documents to remove
         for i, doc_id in enumerate(self._doc_ids):
-            # Normalize doc_id for comparison
-            normalized_doc_id = normalize_path(doc_id)
-
-            # Check if document belongs to any of the files
-            for file_path in normalized_file_paths:
-                if file_path in normalized_doc_id:
-                    indices_to_remove_set.add(i)
-                    break  # Found match, no need to check other files
+            file_part = doc_id.split(":", 1)[0]
+            if path_matches(file_part, normalized_targets):
+                indices_to_remove_set.add(i)
 
         if not indices_to_remove_set:
             self._logger.info("No BM25 documents found to remove")
             return 0
-
-        self._logger.info(
-            f"[BM25_REMOVE] Found {len(indices_to_remove_set)} docs to remove"
-        )
 
         removed_count = len(indices_to_remove_set)
         self._logger.info(
@@ -771,7 +685,6 @@ class BM25Index:
         )
 
         try:
-            # Rebuild all data structures keeping only non-removed items
             new_documents = []
             new_doc_ids = []
             new_tokenized_docs = []
@@ -779,36 +692,29 @@ class BM25Index:
 
             for i, doc_id in enumerate(self._doc_ids):
                 if i not in indices_to_remove_set:
-                    # Keep this document
                     if i < len(self._documents):
                         new_documents.append(self._documents[i])
                     new_doc_ids.append(doc_id)
                     if i < len(self._tokenized_docs):
                         new_tokenized_docs.append(self._tokenized_docs[i])
                 else:
-                    # Mark for metadata removal
                     docs_to_remove_from_metadata.append(doc_id)
 
-            # Update data structures
             self._documents = new_documents
             self._doc_ids = new_doc_ids
             self._tokenized_docs = new_tokenized_docs
 
-            # Remove from metadata
             for doc_id in docs_to_remove_from_metadata:
                 if doc_id in self._metadata:
                     del self._metadata[doc_id]
 
-            # Rebuild BM25 index
             if self._tokenized_docs:
-                # Only rebuild if we still have documents
                 self._bm25 = BM25Okapi(self._tokenized_docs)
                 self._logger.info(
                     f"Rebuilt BM25 index: {len(self._tokenized_docs)} documents "
                     f"(removed {removed_count})"
                 )
             else:
-                # No documents left, clear the index
                 self._bm25 = None
                 self._logger.info("Cleared BM25 index (no documents remaining)")
 
@@ -819,7 +725,6 @@ class BM25Index:
             import traceback
 
             self._logger.error(traceback.format_exc())
-            # Reset to empty state on failure to prevent corruption
             self._logger.warning(
                 "BM25 batch removal failed, clearing index to prevent corruption"
             )

@@ -98,21 +98,17 @@ class TestSemanticSearch:
             assert isinstance(results, list), f"Query '{query}' should return list"
             assert len(results) > 0, f"Query '{query}' should return at least 1 result"
 
-            # Verify result structure
+            # Verify result structure (thin SearchResult: score + metadata)
             first_result = results[0]
-            assert hasattr(first_result, "file_path"), "Result should have file_path"
-            assert hasattr(first_result, "name"), "Result should have name"
-            assert hasattr(first_result, "content_preview"), (
-                "Result should have content_preview"
-            )
-            assert hasattr(first_result, "similarity_score"), (
-                "Result should have similarity_score"
-            )
+            assert hasattr(first_result, "score"), "Result should have score"
+            assert hasattr(first_result, "metadata"), "Result should have metadata"
+            assert (
+                "file_path" in first_result.metadata
+                or "relative_path" in first_result.metadata
+            ), "Result metadata should have file_path or relative_path"
 
             # Verify score is reasonable
-            assert 0 <= first_result.similarity_score <= 1.0, (
-                "Score should be normalized [0,1]"
-            )
+            assert 0 <= first_result.score <= 1.0, "Score should be normalized [0,1]"
 
     def test_semantic_search_ranking(self, indexed_searcher):
         """Test that search results have reasonable similarity scores."""
@@ -123,15 +119,11 @@ class TestSemanticSearch:
 
         # Verify all results have scores
         for result in results:
-            assert hasattr(result, "similarity_score"), (
-                "All results should have similarity_score"
-            )
-            assert 0 <= result.similarity_score <= 1.0, (
-                f"Score {result.similarity_score} should be in [0,1]"
-            )
+            assert hasattr(result, "score"), "All results should have score"
+            assert 0 <= result.score <= 1.0, f"Score {result.score} should be in [0,1]"
 
         # Verify we get a range of scores (not all identical)
-        scores = [r.similarity_score for r in results]
+        scores = [r.score for r in results]
         unique_scores = set(scores)
         assert len(unique_scores) > 1, "Should have varied similarity scores"
 

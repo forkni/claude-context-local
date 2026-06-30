@@ -13,6 +13,7 @@ Complexity: Low (single-pass, straightforward extraction)
 import ast
 from typing import Any
 
+from chunking.relationships.name_resolution import base_class_name
 from chunking.relationships.relationship_extractors.base_extractor import (
     BaseRelationshipExtractor,
 )
@@ -93,7 +94,7 @@ class InheritanceExtractor(BaseRelationshipExtractor):
 
         # Extract parent class names from bases
         for base_node in class_node.bases:
-            parent_name = self._get_base_class_name(base_node)
+            parent_name = base_class_name(base_node, full=True)
 
             if not parent_name:
                 continue  # Skip if we can't extract the name
@@ -110,74 +111,6 @@ class InheritanceExtractor(BaseRelationshipExtractor):
                 confidence=1.0,  # Direct inheritance is always confident
                 is_multiple=len(class_node.bases) > 1,
             )
-
-    def _get_base_class_name(self, base_node: ast.AST) -> str | None:
-        """
-        Extract base class name from AST node.
-
-        Handles:
-        - Simple names: ast.Name -> "Parent"
-        - Attributes: ast.Attribute -> "module.Parent"
-        - Subscripts (generics): ast.Subscript -> "List" (extracts base, ignores type params)
-
-        Args:
-            base_node: AST node representing a base class
-
-        Returns:
-            Base class name or None if cannot be determined
-
-        Example:
-            ast.Name(id='Parent') -> "Parent"
-            ast.Attribute(value=Name('module'), attr='Parent') -> "module.Parent"
-            ast.Subscript(value=Name('Generic'), ...) -> "Generic"
-        """
-        if isinstance(base_node, ast.Name):
-            # Simple name: class Child(Parent)
-            return base_node.id
-
-        elif isinstance(base_node, ast.Attribute):
-            # Qualified name: class Child(module.Parent)
-            return self._get_full_attribute_name(base_node)
-
-        elif isinstance(base_node, ast.Subscript):
-            # Generic base: class Child(Generic[T])
-            # Extract the base type (ignore type parameters)
-            return self._get_base_class_name(base_node.value)
-
-        elif isinstance(base_node, ast.Call):
-            # Metaclass call: class Child(metaclass=Meta)
-            # We extract the function name
-            return self._get_base_class_name(base_node.func)
-
-        # Unknown node type
-        self.logger.debug(f"Unknown base class node type: {type(base_node)}")
-        return None
-
-    def _get_full_attribute_name(self, attr_node: ast.Attribute) -> str:
-        """
-        Recursively extract full attribute path.
-
-        Example:
-            ast.Attribute(value=Attribute(value=Name('a'), attr='b'), attr='c')
-            -> "a.b.c"
-
-        Args:
-            attr_node: ast.Attribute node
-
-        Returns:
-            Full dotted name
-        """
-        if isinstance(attr_node.value, ast.Name):
-            return f"{attr_node.value.id}.{attr_node.attr}"
-
-        elif isinstance(attr_node.value, ast.Attribute):
-            # Recursive case
-            base = self._get_full_attribute_name(attr_node.value)
-            return f"{base}.{attr_node.attr}"
-
-        else:
-            # Fallback: just return the attribute name
-            return attr_node.attr
 
     def _should_skip_parent(self, parent_name: str) -> bool:
         """

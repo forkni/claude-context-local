@@ -7,7 +7,6 @@ structurally important code in search results.
 
 import logging
 import math
-import re
 from typing import TYPE_CHECKING
 
 import networkx as nx
@@ -20,6 +19,8 @@ from search.ranking_policy import (
     TYPE_BOOSTS_ENTITY,
     lifecycle_demotion,
 )
+from search.tokenization import normalize_to_tokens
+from utils.path_utils import normalize_path
 
 
 if TYPE_CHECKING:
@@ -28,20 +29,6 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-
-def _extract_name_from_chunk_id(chunk_id: str) -> str:
-    """Extract name from 'file:lines:type:Name' format.
-
-    Examples:
-        "embeddings/embedder.py:276-1330:class:CodeEmbedder" -> "CodeEmbedder"
-        "search/searcher.py:37-52:method:IntelligentSearcher.__init__" -> "IntelligentSearcher.__init__"
-        "scripts/list_projects_display.py:24-85:function:main" -> "main"
-
-    Returns:
-        The qualified name (fourth component), or empty string if invalid format.
-    """
-    return _extract_name_impl(chunk_id)
 
 
 def _tokenize_for_matching(text: str) -> set[str]:
@@ -58,31 +45,9 @@ def _tokenize_for_matching(text: str) -> set[str]:
     Returns:
         Set of lowercase alphanumeric tokens (length > 1).
     """
-    # Split dot-separated qualified names (e.g., "Class.method")
-    text = text.replace(".", " ")
-    # Split CamelCase: "CodeEmbedder" -> "Code Embedder"
-    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-    # Split uppercase runs: "HTMLParser" -> "HTML Parser"
-    text = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", text)
-    # Split snake_case and kebab-case
-    text = text.replace("_", " ").replace("-", " ")
-    # Extract lowercase tokens, filter single-char tokens
-    tokens = {t for t in re.findall(r"[a-zA-Z0-9]+", text.lower()) if len(t) > 1}
-    return tokens
-
-
-def _extract_chunk_lines(chunk_id: str) -> int:
-    """Extract line count from 'file:start-end:type:name' format.
-
-    Examples:
-        "embeddings/embedder.py:276-1330:class:CodeEmbedder" -> 1054 lines
-        "search/filters.py:22-31:function:normalize_path" -> 9 lines
-        "invalid:format" -> 0 (fallback)
-
-    Returns:
-        Number of lines in chunk, or 0 if format is invalid.
-    """
-    return _extract_chunk_lines_impl(chunk_id)
+    return normalize_to_tokens(
+        text, split_acronyms=True, split_dots=True, min_len=2, as_set=True
+    )
 
 
 class CentralityRanker:
@@ -241,7 +206,7 @@ class CentralityRanker:
                 chunk_type = result.get("kind", "")
                 chunk_id = result.get("chunk_id", "")
                 tags = result.get("tags", [])
-                name = result.get("name", "") or _extract_name_from_chunk_id(chunk_id)
+                name = result.get("name", "") or _extract_name_impl(chunk_id)
                 self._apply_type_boost(result, chunk_type, query_lower)
                 self._apply_synthetic_demotion(result, chunk_type, chunk_id)
                 self._apply_core_dir_boost(result, chunk_id)
@@ -265,7 +230,7 @@ class CentralityRanker:
         from drowning out focused, well-scoped code.
         """
         chunk_id = result.get("chunk_id", "")
-        chunk_lines = _extract_chunk_lines(chunk_id)
+        chunk_lines = _extract_chunk_lines_impl(chunk_id)
         if chunk_lines > self.config.size_norm_target_lines:  # type: ignore[union-attr]
             size_factor = 1.0 / (
                 1.0
@@ -370,7 +335,7 @@ class CentralityRanker:
 
         if indexed_role is None:
             # Normalize to forward slashes so patterns work on Windows paths too
-            norm_path = file_path.replace("\\", "/").lower()
+            norm_path = normalize_path(file_path).lower()
             if any(
                 p in norm_path
                 for p in ("test_", "_test.", "tests/", "verify_", "verification")

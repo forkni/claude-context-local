@@ -167,6 +167,7 @@ class BaseRelationshipExtractor(ABC):
         target_name: str,
         line_number: int = 0,
         confidence: float = 1.0,
+        relationship_type: RelationshipType | None = None,
         **metadata,
     ) -> RelationshipEdge:
         """
@@ -179,6 +180,11 @@ class BaseRelationshipExtractor(ABC):
             target_name: Name of target symbol
             line_number: Line number where relationship occurs
             confidence: Confidence score (0.0-1.0)
+            relationship_type: Per-edge override for the relationship type.
+                If None, falls back to ``self.relationship_type``.  Pass this
+                explicitly for extractors that emit more than one edge type
+                (e.g. ExceptionExtractor emits RAISES and CATCHES) so the
+                slot does not need to be mutated between edges.
             **metadata: Additional metadata fields
 
         Returns:
@@ -192,7 +198,8 @@ class BaseRelationshipExtractor(ABC):
             ...     context="call_argument"
             ... )
         """
-        if self.relationship_type is None:
+        rel_type = relationship_type or self.relationship_type
+        if rel_type is None:
             raise ValueError(
                 f"{self.__class__.__name__} must set self.relationship_type"
             )
@@ -203,7 +210,7 @@ class BaseRelationshipExtractor(ABC):
         return RelationshipEdge(
             source_id=normalized_source_id,
             target_name=target_name,
-            relationship_type=self.relationship_type,
+            relationship_type=rel_type,
             line_number=line_number,
             confidence=confidence,
             metadata=metadata,
@@ -215,6 +222,7 @@ class BaseRelationshipExtractor(ABC):
         target_name: str,
         line_number: int = 0,
         confidence: float = 1.0,
+        relationship_type: RelationshipType | None = None,
         **metadata,
     ):
         """
@@ -227,6 +235,7 @@ class BaseRelationshipExtractor(ABC):
             target_name: Name of target symbol
             line_number: Line number where relationship occurs
             confidence: Confidence score (0.0-1.0)
+            relationship_type: Per-edge override (see ``_create_edge``).
             **metadata: Additional metadata fields
 
         Example:
@@ -237,7 +246,12 @@ class BaseRelationshipExtractor(ABC):
             ... )
         """
         edge = self._create_edge(
-            source_id, target_name, line_number, confidence, **metadata
+            source_id,
+            target_name,
+            line_number,
+            confidence,
+            relationship_type,
+            **metadata,
         )
         self.edges.append(edge)
 
@@ -262,167 +276,3 @@ class BaseRelationshipExtractor(ABC):
         import builtins
 
         return hasattr(builtins, name)
-
-    def _is_standard_library(self, module_name: str) -> bool:
-        """
-        Check if a module name is from the Python standard library.
-
-        Args:
-            module_name: Module name to check (e.g., "os", "sys")
-
-        Returns:
-            True if module is in standard library
-
-        Example:
-            >>> self._is_standard_library("os")
-            True
-            >>> self._is_standard_library("my_custom_module")
-            False
-        """
-        # Common standard library modules
-        stdlib_modules = {
-            "abc",
-            "asyncio",
-            "collections",
-            "datetime",
-            "functools",
-            "io",
-            "itertools",
-            "json",
-            "logging",
-            "os",
-            "pathlib",
-            "re",
-            "sys",
-            "time",
-            "typing",
-            "unittest",
-            "warnings",
-            "copy",
-            "enum",
-            "math",
-            "random",
-            "string",
-            "subprocess",
-            "threading",
-            "queue",
-            "socket",
-            "http",
-            "urllib",
-            "email",
-            "csv",
-            "sqlite3",
-            "pickle",
-            "hashlib",
-            "base64",
-            "uuid",
-            "tempfile",
-            "shutil",
-            "glob",
-            "argparse",
-            "configparser",
-        }
-
-        # Extract top-level module name
-        top_level = module_name.split(".")[0]
-        return top_level in stdlib_modules
-
-    def _should_skip_target(
-        self, target_name: str, include_stdlib: bool = False
-    ) -> bool:
-        """
-        Check if a target should be skipped in relationship extraction.
-
-        Args:
-            target_name: Name of the target symbol/module
-            include_stdlib: If False, skip standard library symbols
-
-        Returns:
-            True if target should be skipped
-
-        Example:
-            >>> self._should_skip_target("print")
-            True  # Builtin
-            >>> self._should_skip_target("os.path")
-            True  # Stdlib (if include_stdlib=False)
-            >>> self._should_skip_target("MyClass")
-            False  # User-defined
-        """
-        # Skip builtins
-        if self._is_builtin(target_name):
-            return True
-
-        # Skip stdlib if requested
-        if not include_stdlib and self._is_standard_library(target_name):
-            return True
-
-        # Skip private/dunder names
-        return bool(target_name.startswith("_"))
-
-
-class MultiPassExtractor(BaseRelationshipExtractor):
-    """
-    Base class for extractors that require multiple passes over the code.
-
-    Some relationship types (e.g., protocol implementation, method overrides)
-    require analyzing the code in multiple passes to build context before
-    extracting relationships.
-
-    Subclasses should override:
-    - extract(): Main entry point (call _extract_pass_1() then _extract_pass_2())
-    - _extract_pass_1(): First pass to build context
-    - _extract_pass_2(): Second pass to extract relationships using context
-
-    Example:
-        class ProtocolExtractor(MultiPassExtractor):
-            def extract(self, code, chunk_metadata):
-                self._reset_state()
-                tree = ast.parse(code)
-
-                # Pass 1: Identify protocols
-                self._extract_pass_1(tree, chunk_metadata)
-
-                # Pass 2: Find implementations
-                self._extract_pass_2(tree, chunk_metadata)
-
-                return self.edges
-    """
-
-    def __init__(self) -> None:
-        """Initialize multi-pass extractor."""
-        super().__init__()
-        self.context: dict[str, Any] = {}  # Context built in first pass
-
-    def _reset_state(self):
-        """Reset state including context."""
-        super()._reset_state()
-        self.context = {}
-
-    def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
-        """Run both passes in sequence with the shared AST."""
-        self._extract_pass_1(tree, chunk_metadata)
-        self._extract_pass_2(tree, chunk_metadata)
-
-    def _extract_pass_1(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
-        """
-        First pass: Build context.
-
-        Override this to collect information needed for the second pass.
-
-        Args:
-            tree: AST tree
-            chunk_metadata: Chunk metadata
-        """
-        pass
-
-    def _extract_pass_2(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
-        """
-        Second pass: Extract relationships using context.
-
-        Override this to extract relationships using information from first pass.
-
-        Args:
-            tree: AST tree
-            chunk_metadata: Chunk metadata
-        """
-        pass

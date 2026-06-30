@@ -107,21 +107,50 @@ def is_chunk_id(raw: str) -> bool:
     return raw.count(":") >= MIN_CHUNK_ID_COLONS
 
 
+def _canonical_path_sep(path: str) -> str:
+    """Backslashes (single or double/JSON-escaped) → '/', then collapse repeats.
+
+    Idempotent.  A relative path never legitimately contains '//' or '\\', so
+    collapsing is lossless.  Fixes the gap where ``normalize_path`` turns the
+    double-escaped ``\\\\`` into ``//`` instead of ``/``.
+
+    Examples:
+        >>> _canonical_path_sep("search\\\\reranker.py")   # double-escaped
+        "search/reranker.py"
+        >>> _canonical_path_sep("search//reranker.py")     # repeated slash
+        "search/reranker.py"
+    """
+    p = normalize_path(path)  # "\\" and "\" → "/" (double-backslash becomes "//")
+    while "//" in p:
+        p = p.replace("//", "/")
+    return p
+
+
 def normalize(raw: str) -> str:
-    """Normalize path separators in *raw* to forward slashes.
+    """Normalize path separators in *raw* to a single canonical forward slash.
 
-    Handles the common case where a Windows chunk_id contains backslashes in
-    the file-path component.  Reconstructs the colon-delimited structure so only
-    the file path is touched.
+    Handles Windows backslashes (single and JSON-double-escaped) in the
+    file-path component and collapses any repeated slashes introduced by the
+    double-escape round-trip.  Reconstructs the colon-delimited structure so
+    only the file path is touched.
 
-    Example:
+    This is the **single owner** of chunk_id path canonicalization.  Route all
+    callers here rather than reimplementing.
+
+    Idempotent: ``normalize(normalize(x)) == normalize(x)``
+
+    Examples:
         >>> normalize("search\\\\reranker.py:36-137:method:rerank")
+        "search/reranker.py:36-137:method:rerank"
+        >>> normalize("search\\reranker.py:36-137:method:rerank")
+        "search/reranker.py:36-137:method:rerank"
+        >>> normalize("search/reranker.py:36-137:method:rerank")
         "search/reranker.py:36-137:method:rerank"
     """
     parts = raw.split(":")
     if len(parts) >= 4:
-        return f"{normalize_path(parts[0])}:{':'.join(parts[1:])}"
-    return normalize_path(raw)
+        return f"{_canonical_path_sep(parts[0])}:{':'.join(parts[1:])}"
+    return _canonical_path_sep(raw)
 
 
 def extract_name(raw: str) -> str:
@@ -182,3 +211,36 @@ def strip_line_range(raw: str) -> str:
     if len(parts) < 4:
         return raw
     return f"{parts[0]}:{parts[2]}:{parts[3]}"
+
+
+def build(
+    file_path: str,
+    line_start: int,
+    line_end: int,
+    kind: str,
+    name: str | None = None,
+) -> str:
+    """Build a canonical chunk_id string.
+
+    The ``:name`` suffix is omitted when *name* is falsy (``None`` or ``""``),
+    replicating the conditional-suffix behaviour of the three hand-rolled copies
+    in the chunker.  ``ChunkId.__str__()`` cannot be used here because it
+    always appends ``:name`` even when empty.
+
+    This is the **single forward builder** for the wire format owned by this
+    module.  Route all new chunk_id construction through ``build()``; use
+    ``ChunkId.parse()`` / ``normalize()`` for reading/normalising existing ids.
+
+    Examples:
+        >>> build("search/filters.py", 22, 31, "function", "normalize_path")
+        'search/filters.py:22-31:function:normalize_path'
+        >>> build("src/foo.py", 1, 5, "merged", None)
+        'src/foo.py:1-5:merged'
+        >>> build("src/foo.py", 1, 5, "merged", "Bar.foo")
+        'src/foo.py:1-5:merged:Bar.foo'
+        >>> build("src/foo.py", 1, 5, "merged", "")   # empty → omitted
+        'src/foo.py:1-5:merged'
+    """
+    normalized = _canonical_path_sep(file_path)
+    base = f"{normalized}:{line_start}-{line_end}:{kind}"
+    return f"{base}:{name}" if name else base

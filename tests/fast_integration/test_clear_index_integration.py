@@ -5,7 +5,7 @@ Uses mocked embeddings for fast execution (~1s) without GPU requirements.
 
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -41,19 +41,24 @@ class TestClass:
 def mock_embedder():
     """Mock embedder to avoid GPU/model requirements."""
 
-    def mock_encode(sentences, **kwargs):
-        if isinstance(sentences, str):
-            return np.random.rand(768).astype(np.float32)
-        return np.random.rand(len(sentences), 768).astype(np.float32)
+    class _FakeEmbeddingModel:
+        max_seq_length = 512
+        device = "cpu"
 
-    with patch("embeddings.embedder.SentenceTransformer") as mock_st:
-        mock_model = MagicMock()
-        mock_model.encode.side_effect = mock_encode
-        mock_model.get_sentence_embedding_dimension.return_value = 768
-        mock_model.max_seq_length = 512
-        mock_model.device = "cpu"
-        mock_st.return_value = mock_model
-        yield mock_st
+        def encode(
+            self, sentences, show_progress_bar=False, convert_to_tensor=False, **kwargs
+        ):
+            n = 1 if isinstance(sentences, str) else len(sentences)
+            return np.zeros((n, 768), dtype=np.float32)
+
+        def get_sentence_embedding_dimension(self):
+            return 768
+
+    with patch(
+        "embeddings.model_loader.ModelLoader.load",
+        return_value=(_FakeEmbeddingModel(), "cpu"),
+    ):
+        yield
 
 
 @pytest.mark.asyncio

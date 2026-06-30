@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-context-local"
-version = "0.18.0"
-description = "Local semantic code search for Claude Code (MCP) using multi-model routing (Qwen3, BGE-M3, CodeRankEmbed), FAISS, and AST/tree-sitter chunking. 100% local embeddings and indexing."
+version = "0.20.0"
+description = "Local semantic code search for Claude Code (MCP) using FAISS, hybrid BM25+semantic search, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
@@ -29,24 +29,34 @@ keywords = [
 ]
 dependencies = [
     "aiohttp>=3.14.1",  # Security: Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1)
+    "cryptography>=46.0.7",  # Security: PYSEC-2026-35/36 (DNS name-constraint bypass, buffer overflow). Defer GHSA-537c (OpenSSL wheel, needs 48.x major bump).
     "einops>=0.8.0",  # Required for CodeRankEmbed model
-    "faiss-cpu>=1.13.2",
+    "faiss-cpu>=1.14.3",
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
     "huggingface-hub>=0.36.0",
+    "idna>=3.15",  # Security: CVE-2026-45409
     "mcp>=1.27.0,<2",  # <2: mcp v2 (beta 2026-06-30) has breaking changes
-    "starlette>=1.3.1",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
+    "msgpack>=1.2.1",  # Security: GHSA-6v7p-g79w-8964 (SEGV on repeated unpack after error)
     "networkx>=3.0",  # Required for graph storage and community detection
     "nltk>=3.9.4",  # Security: Fixes CVE-2025-14009 (path traversal in downloader)
     "psutil>=7.2.1",
+    "pydantic-settings>=2.14.2",  # Security: GHSA-4xgf-cpjx-pc3j (symlink follow in secrets_dir)
+    "pygments>=2.20.0",  # Security: CVE-2026-4539 (ReDoS in AdlLexer)
+    "pyjwt>=2.13.0",  # Security: 9 CVEs incl CVE-2026-32597 crit-header, CVE-2026-48522..48526
+    "python-dotenv>=1.2.2",  # Security: Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)
+    "python-multipart>=0.0.31",  # Security: CVE-2026-40347/42561/53538/53539/53540 (multipart DoS)
     "rank-bm25>=0.2.2",
-    "torch>=2.8.0,<2.9.0",  # 2.9.x breaks ModernBERT torch.compile (template conflict)
+    "requests>=2.33.0",  # Security: CVE-2026-25645 (predictable temp filename in extract_zipped_paths)
     "rich>=14.3.3",
-    "sentence-transformers>=5.2.2",
-    "transformers>=4.51.0,<4.58.0",  # >=4.51 for Qwen3; <4.58 required by optimum-onnx ONNX compatibility
+    "sentence-transformers>=5.6.0",
     "sqlitedict>=2.1.0",
+    "starlette>=1.3.1",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
+    "tiktoken>=0.12.0",
+    "torch>=2.8.0,<2.9.0",  # 2.9.x breaks ModernBERT torch.compile (template conflict)
+    "transformers>=4.51.0,<4.58.0",  # >=4.51 for Qwen3; <4.58 required by optimum-onnx ONNX compatibility
     "tree-sitter>=0.25.0",
-    "tree-sitter-c>=0.24.1",
-    "tree-sitter-c-sharp>=0.23.1",
+    "tree-sitter-c>=0.24.2",
+    "tree-sitter-c-sharp>=0.23.5",
     "tree-sitter-cpp>=0.23.4",
     "tree-sitter-glsl>=0.2.0",
     "tree-sitter-go>=0.25.0",
@@ -55,9 +65,8 @@ dependencies = [
     "tree-sitter-python>=0.25.0",
     "tree-sitter-rust>=0.24.2",
     "tree-sitter-typescript>=0.23.2",
-    "tiktoken>=0.12.0",
+    "urllib3>=2.7.0",  # Security: CVE-2026-44431/44432 (redirect + over-decompression)
     "dspy>=3.2.1",
-    "python-dotenv>=1.2.2",  # Security: Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)
 ]
 
 classifiers = [
@@ -86,18 +95,23 @@ lsp = [
 ]
 test = [
     "pytest>=9.0.3",
-    "pytest-asyncio>=1.3.0",
+    "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "pytest-mock>=3.15.1",
     "pytest-repeat>=0.9.4",
+    "pytest-randomly>=3.15.0",  # Phase 2: order-randomisation; exposes hidden ordering deps
+    "pytest-xdist>=3.6.0",      # Phase 2/CI: parallel test execution (-n auto)
+    "syrupy>=4.0.0",             # Phase 4: snapshot/golden-file regression testing
 ]
 dev = [
-    "ruff>=0.15.10",
-    "pip-audit>=2.10.0",
+    "ruff>=0.15.20",
+    "pip-audit>=2.10.1",
     "pip-licenses>=5.5.5",
     "pipdeptree>=2.34.0",
-    "pre-commit>=4.5.1",
-    "pyrefly>=1.0",
+    "pre-commit>=4.6.0",
+    "pyrefly>=1.1.1",
+    "mutmut>=2.5.1",  # Phase 4.2: mutation testing; run periodically, not per-commit (Linux CI only)
+    "cosmic-ray>=8.4",  # Phase 4.2: mutation testing; local cross-platform runner
 ]
 profile = [
     "snoop>=0.6.0",
@@ -332,4 +346,74 @@ errors = { missing-attribute = "warn", bad-argument-type = "warn" }
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",
+]
+
+# ---------------------------------------------------------------------------
+# Testing infrastructure
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "--disable-warnings",
+    "--color=yes",
+    "--durations=10",
+    "--import-mode=importlib",  # pytest docs recommendation for new projects; avoids sys.path hacks
+]
+pythonpath = ["."]  # project root; makes packages importable without sys.path.insert in conftest
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "slow: Slow running tests",
+    "mcp: MCP server related tests",
+    "embeddings: Embedding generation tests",
+    "chunking: Code chunking tests",
+    "search: Search functionality tests",
+    "asyncio: Mark test as async (pytest-asyncio)",
+    "gpu: Requires CUDA device (skipped when absent)",
+    "e2e: Full end-to-end workflow",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::UserWarning",
+    "ignore:.*unclosed.*:ResourceWarning",
+    "ignore:.*builtin type.*:DeprecationWarning",
+    "ignore:Not enough free disk space.*:UserWarning:huggingface_hub",
+]
+
+# ---------------------------------------------------------------------------
+# Coverage (branch coverage on; run: pytest --cov --cov-branch --cov-report=term-missing)
+# ---------------------------------------------------------------------------
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+source = [
+    "chunking",
+    "embeddings",
+    "graph",
+    "mcp_server",
+    "merkle",
+    "search",
+    "utils",
+    "evaluation",
+]
+# core = "sysmon"  # Uncomment for ~3x faster coverage on Python 3.12+
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 76  # Baseline measured 2026-06-27 (2840 tests passing, branch coverage)
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
 ]

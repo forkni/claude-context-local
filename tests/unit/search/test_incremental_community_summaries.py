@@ -28,6 +28,7 @@ def _make_indexer(tmp_path) -> IncrementalIndexer:
     mock_indexer = MagicMock()
     mock_indexer.storage_dir = str(tmp_path)
     mock_indexer.validate_index_consistency.return_value = (True, [])
+    mock_indexer.resync_if_desynced.return_value = (False, 0)
     mock_embedder = MagicMock()
     mock_chunker = MagicMock()
     mock_snapshot = MagicMock()

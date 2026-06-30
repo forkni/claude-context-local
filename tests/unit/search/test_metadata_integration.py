@@ -45,25 +45,35 @@ class TestMetadataStoreHashCacheIntegration(unittest.TestCase):
         self.assertEqual(result["index_id"], 0)
         self.assertEqual(result["metadata"], metadata)
 
-    def test_get_fallback_to_variants(self):
-        """Test that get() falls back to variant checking if not in cache."""
-        # Add chunk with backslash separator
+    def test_get_cache_miss_then_direct_db_lookup(self):
+        """Test that get() falls back to direct DB lookup if not in cache (P1b).
+
+        Post-P1b, set() stores the canonical (forward-slash) key, so the
+        cache miss always resolves to that canonical key — not a backslash
+        variant.  The backslash input is canonicalized before lookup.
+        """
+        # Add chunk with backslash separator — set() canonicalizes to forward-slash
         chunk_id_backslash = "search\\indexer.py:10-20:function:test_func"
+        chunk_id_canonical = "search/indexer.py:10-20:function:test_func"
         metadata = {"relative_path": "search/indexer.py", "chunk_type": "function"}
         self.store.set(chunk_id_backslash, 0, metadata)
 
-        # Clear hash cache to test fallback
+        # Clear hash cache to test direct-DB fallback path
         self.store._symbol_cache.clear()
 
-        # Get with forward slash should still work via variant checking
-        chunk_id_forward = "search/indexer.py:10-20:function:test_func"
-        result = self.store.get(chunk_id_forward)
-
+        # get() with either separator variant finds the canonical key via direct DB
+        result = self.store.get("search/indexer.py:10-20:function:test_func")
         self.assertIsNotNone(result)
         self.assertEqual(result["index_id"], 0)
 
-        # After fallback, variant should be cached
-        self.assertTrue(chunk_id_backslash in self.store._symbol_cache)
+        # After the miss-then-find, the CANONICAL key is re-cached (not backslash)
+        self.assertTrue(chunk_id_canonical in self.store._symbol_cache)
+
+        # Backslash lookup also resolves via canonicalization
+        self.store._symbol_cache.clear()
+        result2 = self.store.get(chunk_id_backslash)
+        self.assertIsNotNone(result2)
+        self.assertEqual(result2["index_id"], 0)
 
     def test_delete_removes_from_hash_cache(self):
         """Test that delete() removes chunk_id from hash cache."""

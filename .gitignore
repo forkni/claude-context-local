@@ -248,7 +248,6 @@ analysis/
 scripts/git
 CLAUDE.md
 MEMORY.md
-GEMINI.md
 BASH_STYLE_GUIDE.md
 BATCH_STYLE_GUIDE.md
 SHELL_STYLE_GUIDE.md
@@ -384,13 +383,14 @@ local_config.json
 tmp/
 temp/
 
-.gemini/
-gemini-skills/
-gha-creds-*.json
-
 # claude-git-workflow local config (use cgw.conf.example as template)
 .cgw.conf
 cgw.conf.example
+
+# Mutation testing artifacts (cosmic-ray sessions — regenerate, never commit)
+cosmic-ray.toml
+cr-*.toml
+*.sqlite
 
 # Local-only project files (not for version control)
 SESSION_LOG.md

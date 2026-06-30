@@ -104,7 +104,6 @@ async def test_handle_get_index_status_success():
         with patch("mcp_server.state.get_state") as mock_state:
             state = mock_state.return_value
             state.embedders = {"default": None}
-            state.multi_model_enabled = False
             result = await tool_handlers.handle_get_index_status({})
 
             assert "index_statistics" in result
@@ -168,8 +167,6 @@ async def test_handle_get_index_status_with_hybrid_searcher():
                 with patch("mcp_server.state.get_state") as mock_state:
                     state = mock_state.return_value
                     state.embedders = {"default": None}
-                    state.multi_model_enabled = False
-                    state.current_model_key = None
 
                     result = await tool_handlers.handle_get_index_status({})
 
@@ -328,15 +325,12 @@ async def test_handle_get_search_config_status():
         mock_cfg.embedding.model_name = "BAAI/bge-m3"
         mock_config.return_value = mock_cfg
 
-        with patch("mcp_server.tools.status_handlers.get_state") as mock_state:
-            state = mock_state.return_value
-            state.multi_model_enabled = True
+        with patch("mcp_server.tools.status_handlers.get_state"):
             result = await tool_handlers.handle_get_search_config_status({})
 
             assert result["search_mode"] == "hybrid"
             assert result["bm25_weight"] == 0.4
             assert result["embedding_model"] == "BAAI/bge-m3"
-            assert result["multi_model_enabled"] is True
 
 
 @pytest.mark.asyncio
@@ -400,7 +394,7 @@ async def test_handle_list_embedding_models_none_slot_is_not_loaded():
     """A None lazy slot in state.embedders must not report loaded: true.
 
     Regression test for the None-slot false-positive: previously
-    `model_key in state.embedders` returned True even for unloaded slots.
+    a key in state.embedders returned True (loaded) even for unloaded None slots.
     """
     mock_state = Mock()
     mock_state.embedders = {"qwen3_0.6b": None}  # reserved slot, nothing loaded
@@ -624,15 +618,18 @@ async def test_handle_find_similar_code():
         mock_get_state.return_value = mock_state
         mock_dec_state.return_value = mock_state
 
-        # Mock search results
+        # Mock search results (thin SearchResult format)
         mock_result = Mock()
         mock_result.chunk_id = "file.py:10-20:function:test_func"
-        mock_result.relative_path = "file.py"
-        mock_result.start_line = 10
-        mock_result.end_line = 20
-        mock_result.chunk_type = "function"
-        mock_result.similarity_score = 0.95
-        mock_result.name = "test_func"
+        mock_result.score = 0.95
+        mock_result.source = "similarity"
+        mock_result.metadata = {
+            "relative_path": "file.py",
+            "start_line": 10,
+            "end_line": 20,
+            "chunk_type": "function",
+            "name": "test_func",
+        }
 
         # Create mock searcher instance
         mock_searcher_instance = Mock()
@@ -665,10 +662,6 @@ async def test_handle_search_code_no_index():
         patch("mcp_server.tools.search_orchestrator.get_config_manager"),
         patch("mcp_server.tools.search_orchestrator.get_config"),
         patch("mcp_server.tools.search_orchestrator.IntentClassifier") as mock_ic,
-        patch(
-            "mcp_server.tools.search_handlers._route_query_to_model",
-            return_value=(None, None),
-        ),
         patch(
             "mcp_server.tools.search_handlers._check_auto_reindex",
             return_value=(False, None),
@@ -722,10 +715,6 @@ async def test_handle_search_code_hybrid_searcher_ready():
         patch("mcp_server.tools.search_orchestrator.get_config") as mock_cfg,
         patch("mcp_server.tools.search_orchestrator.IntentClassifier") as mock_ic,
         patch(
-            "mcp_server.tools.search_handlers._route_query_to_model",
-            return_value=("qwen3_0.6b", None),
-        ),
-        patch(
             "mcp_server.tools.search_handlers._check_auto_reindex",
             return_value=(False, None),
         ),
@@ -770,9 +759,12 @@ async def test_handle_search_code_hybrid_searcher_ready():
             suggested_params={},
         )
 
-        # Mock HybridSearcher with is_ready property and dense_index
+        # Mock HybridSearcher with is_ready property and dense_index.
+        # index_manager is set to None explicitly so SearcherView falls
+        # through to dense_index (the HybridSearcher attribute name).
         mock_searcher = Mock()
         mock_searcher.is_ready = True
+        mock_searcher.index_manager = None
 
         # Mock dense_index with FAISS index containing vectors
         mock_dense_index = Mock()
@@ -804,10 +796,6 @@ async def test_handle_search_code_hybrid_searcher_not_ready():
         patch("mcp_server.tools.search_orchestrator.get_config_manager"),
         patch("mcp_server.tools.search_orchestrator.get_config"),
         patch("mcp_server.tools.search_orchestrator.IntentClassifier") as mock_ic,
-        patch(
-            "mcp_server.tools.search_handlers._route_query_to_model",
-            return_value=(None, None),
-        ),
         patch(
             "mcp_server.tools.search_handlers._check_auto_reindex",
             return_value=(False, None),

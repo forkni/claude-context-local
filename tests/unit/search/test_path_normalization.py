@@ -55,51 +55,6 @@ class TestChunkIdNormalization:
         assert result == "file.py:10-20:function:my_func"
 
 
-class TestChunkIdVariants:
-    """Test get_chunk_id_variants() helper function."""
-
-    def test_variants_include_original(self):
-        """First variant should always be the original chunk_id."""
-        chunk_id = "search/reranker.py:36-137:method:rerank"
-        variants = MetadataStore.get_chunk_id_variants(chunk_id)
-        assert variants[0] == chunk_id
-
-    def test_variants_include_un_double_escaped(self):
-        """Should include un-double-escaped variant to fix MCP bug."""
-        chunk_id = r"search\\reranker.py:36-137:method:rerank"
-        variants = MetadataStore.get_chunk_id_variants(chunk_id)
-        # Un-double-escape: \\\\ -> \\
-        assert r"search\reranker.py:36-137:method:rerank" in variants
-
-    def test_variants_include_forward_slash(self):
-        """Should include forward slash variant for cross-platform compat."""
-        chunk_id = r"search\reranker.py:36-137:method:rerank"
-        variants = MetadataStore.get_chunk_id_variants(chunk_id)
-        assert "search/reranker.py:36-137:method:rerank" in variants
-
-    def test_variants_include_backslash(self):
-        """Should include backslash variant to match Windows storage."""
-        chunk_id = "search/reranker.py:36-137:method:rerank"
-        variants = MetadataStore.get_chunk_id_variants(chunk_id)
-        assert r"search\reranker.py:36-137:method:rerank" in variants
-
-    def test_variants_deduplicated(self):
-        """Duplicate variants should be removed."""
-        chunk_id = "search/reranker.py:36-137:method:rerank"
-        variants = MetadataStore.get_chunk_id_variants(chunk_id)
-        # Should not have duplicates
-        assert len(variants) == len(set(variants))
-
-    def test_variants_order_preserved(self):
-        """Variants should be in priority order: original, un-escaped, forward, back."""
-        chunk_id = r"search\reranker.py:36-137:method:rerank"
-        variants = MetadataStore.get_chunk_id_variants(chunk_id)
-        # Original first
-        assert variants[0] == chunk_id
-        # Others follow (exact order may vary due to deduplication)
-        assert len(variants) >= 2
-
-
 class TestChunkIdLookup:
     """Test get_chunk_by_id() multi-variant lookup."""
 
@@ -205,23 +160,6 @@ class TestCrossPlatformPaths:
         assert "/" in normalized
         assert "\\" not in normalized
 
-    def test_cross_platform_lookup(self):
-        """Chunk indexed on Windows should be findable with Unix paths."""
-        # Indexed on Windows
-        indexed_id = r"search\reranker.py:36-137:method:rerank"
-
-        # Looked up from Unix or after normalization
-        lookup_id = "search/reranker.py:36-137:method:rerank"
-
-        # Get variants for lookup
-        variants = MetadataStore.get_chunk_id_variants(lookup_id)
-
-        # Windows indexed path should be in variants
-        assert (
-            indexed_id in variants
-            or r"search\reranker.py:36-137:method:rerank" in variants
-        )
-
 
 class TestRegressionIssue1:
     """Regression tests for Issue 1: Direct chunk_id lookup failure.
@@ -278,3 +216,125 @@ class TestRegressionIssue1:
             "Issue 1 regression: Chunk not found with double-escaped path!"
         )
         assert result["name"] == "rerank"
+
+
+class TestNormalizePathOwnership:
+    """P1a completeness gate: exactly two canonical normalize-path owners exist.
+
+    If this test fails you have either:
+    - Added a new stray ``normalize_path`` / ``normalize_chunk_id`` definition
+      outside the two owner modules, OR
+    - Deleted an owner (regression).
+
+    Fix: route any new normalizer through ``utils.path_utils.normalize_path``
+    (path flavour) or ``search.chunk_id.normalize`` (chunk-id flavour).
+    """
+
+    def test_normalize_path_defined_only_in_path_utils(self):
+        """Only utils/path_utils.py should define normalize_path."""
+        import ast
+        import glob
+        from pathlib import Path
+
+        stray: list[str] = []
+        for fpath in glob.glob("**/*.py", recursive=True):
+            if fpath.startswith(".venv") or fpath.startswith("tests"):
+                continue
+            if fpath.replace("\\", "/") == "utils/path_utils.py":
+                continue
+            try:
+                tree = ast.parse(Path(fpath).read_text(encoding="utf-8"))
+            except (SyntaxError, OSError):
+                continue
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == "normalize_path"
+                ):
+                    stray.append(f"{fpath}:{node.lineno}")
+
+        assert not stray, (
+            f"Stray normalize_path definitions (route through utils.path_utils): {stray}"
+        )
+
+    def test_normalize_chunk_id_defined_only_in_allowed_modules(self):
+        """normalize_chunk_id must not grow outside its approved owners.
+
+        - ``evaluation/metrics.py`` — strips line ranges for eval comparison.
+        - ``tools/analyze_batch_results.py`` — strips path+line for batch analysis.
+        - ``search/metadata.py`` — thin public-API wrapper delegating to chunk_id.normalize.
+
+        These serve a *different purpose* from path-separator normalization.
+        Any new normalize_chunk_id elsewhere should use search.chunk_id.normalize.
+        """
+        import ast
+        import glob
+        from pathlib import Path
+
+        allowed = {
+            "evaluation/metrics.py",
+            "tools/analyze_batch_results.py",
+            # MetadataStore.normalize_chunk_id is a thin public-API wrapper
+            # that delegates to search.chunk_id.normalize — not a stray copy.
+            "search/metadata.py",
+        }
+
+        stray: list[str] = []
+        for fpath in glob.glob("**/*.py", recursive=True):
+            if fpath.startswith(".venv") or fpath.startswith("tests"):
+                continue
+            norm = fpath.replace("\\", "/")
+            if any(norm.endswith(a) for a in allowed):
+                continue
+            try:
+                tree = ast.parse(Path(fpath).read_text(encoding="utf-8"))
+            except (SyntaxError, OSError):
+                continue
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == "normalize_chunk_id"
+                ):
+                    stray.append(f"{fpath}:{node.lineno}")
+
+        assert not stray, (
+            f"Stray normalize_chunk_id definitions (use search.chunk_id.normalize): {stray}"
+        )
+
+
+class TestSearchResultOwnership:
+    """P2 completeness gate: exactly one SearchResult dataclass definition exists.
+
+    If this test fails you have either:
+    - Added a second ``SearchResult`` dataclass outside ``search/reranker.py``, OR
+    - Deleted the canonical definition (regression).
+
+    The canonical owner is ``search.reranker.SearchResult`` (thin: chunk_id, score,
+    metadata, source, rank). All rich fields live in ``metadata``. Route every
+    ``SearchResult(...)`` construction through ``ResultFactory``.
+    """
+
+    def test_search_result_defined_only_in_reranker(self):
+        """Only search/reranker.py should define a SearchResult dataclass."""
+        import ast
+        import glob
+        from pathlib import Path
+
+        stray: list[str] = []
+        for fpath in glob.glob("**/*.py", recursive=True):
+            if fpath.startswith(".venv") or fpath.startswith("tests"):
+                continue
+            norm = fpath.replace("\\", "/")
+            if norm == "search/reranker.py":
+                continue
+            try:
+                tree = ast.parse(Path(fpath).read_text(encoding="utf-8"))
+            except (SyntaxError, OSError):
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef) and node.name == "SearchResult":
+                    stray.append(f"{fpath}:{node.lineno}")
+
+        assert not stray, (
+            f"Stray SearchResult class definitions (canonical owner is search/reranker.py): {stray}"
+        )

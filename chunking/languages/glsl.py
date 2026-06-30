@@ -1,6 +1,5 @@
 """GLSL-specific chunker using tree-sitter."""
 
-import warnings
 from typing import Any
 
 from tree_sitter import Language
@@ -13,42 +12,6 @@ class GLSLChunker(LanguageChunker):
 
     def __init__(self, language: Language | None = None) -> None:
         super().__init__("glsl", language)
-
-    def _load_language(self) -> Language:
-        """Load tree-sitter-glsl language binding."""
-        try:
-            import tree_sitter_glsl as tsglsl
-
-            with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore", message="int argument support is deprecated"
-                )
-                return Language(tsglsl.language())
-        except ImportError as err:
-            raise ValueError(
-                "tree-sitter-glsl not installed. "
-                "Install with: pip install tree-sitter-glsl"
-            ) from err
-
-    def _get_splittable_node_types(self) -> set[str]:
-        """GLSL-specific splittable node types."""
-        return {
-            "function_definition",  # Function definitions (main, custom functions)
-            "struct_declaration",  # Struct definitions
-            "variable_declaration",  # Uniform, varying, attribute declarations
-            "preprocessor_define",  # #define statements
-            "preprocessor_function_def",  # #define with parameters
-            "preprocessor_include",  # #include statements
-            "preprocessor_ifdef",  # Conditional compilation
-            "preprocessor_ifndef",  # Conditional compilation
-            "layout_qualifier_statement",  # Layout qualifiers
-            "uniform_block",  # Uniform buffer objects
-            "interface_block",  # Interface blocks
-            "block_statement",  # Large code blocks
-            "compound_statement",  # Compound statements
-            "subroutine_definition",  # Subroutine definitions
-            "precision_statement",  # Precision qualifiers
-        }
 
     def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract GLSL-specific metadata."""

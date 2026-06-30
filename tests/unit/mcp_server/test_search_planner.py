@@ -43,13 +43,12 @@ def _make_intent_decision(intent_value, confidence=0.9, suggested_params=None):
     )
 
 
-def _patch_planner_deps(app_cfg=None, sc=None, route_result=None, intent_decision=None):
+def _patch_planner_deps(app_cfg=None, sc=None, intent_decision=None):
     """Return a context manager that patches all external dependencies of SearchPlanner."""
     import contextlib
 
     app_cfg = app_cfg or _make_app_config()
     sc = sc or _make_search_config()
-    route_result = route_result or ("qwen3_0.6b", None)
 
     @contextlib.contextmanager
     def _ctx():
@@ -62,10 +61,6 @@ def _patch_planner_deps(app_cfg=None, sc=None, route_result=None, intent_decisio
                 return_value=sc,
             ),
             patch("mcp_server.tools.search_orchestrator.get_state") as mock_state,
-            patch(
-                "mcp_server.tools.search_handlers._route_query_to_model",
-                return_value=route_result,
-            ),
             patch(
                 "mcp_server.tools.search_orchestrator.IntentClassifier"
             ) as mock_ic_cls,
@@ -98,19 +93,6 @@ class TestSearchPlannerFieldExtraction:
         with _patch_planner_deps(sc=_make_search_config(default_k=7, max_k=20)):
             plan = SearchPlanner().plan({"query": "test"})
         assert plan.k == 7
-
-    def test_model_key_passed_through(self):
-        with _patch_planner_deps(
-            route_result=("coderankembed", {"model": "coderankembed"})
-        ):
-            plan = SearchPlanner().plan({"query": "test"})
-        assert plan.selected_model_key == "coderankembed"
-
-    def test_routing_info_stored(self):
-        routing = {"model": "qwen3_0.6b", "confidence": 0.95}
-        with _patch_planner_deps(route_result=("qwen3_0.6b", routing)):
-            plan = SearchPlanner().plan({"query": "test"})
-        assert plan.routing_info == routing
 
     def test_file_pattern_extracted(self):
         with _patch_planner_deps():

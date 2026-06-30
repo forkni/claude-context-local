@@ -65,21 +65,6 @@ class TestSaveProjectSelection:
         selection_file = get_selection_file_path()
         assert selection_file.exists()
 
-    def test_save_with_model_key(self, mock_storage_env):
-        """Test saving with model key."""
-        project_path = str(mock_storage_env / "test_project")
-        Path(project_path).mkdir(parents=True, exist_ok=True)
-
-        result = save_project_selection(project_path, model_key="bge_m3")
-        assert result is True
-
-        # Verify content
-        selection_file = get_selection_file_path()
-        with open(selection_file) as f:
-            data = json.load(f)
-
-        assert data["last_model_key"] == "bge_m3"
-
     def test_save_creates_directory(self, mock_storage_env):
         """Test save creates parent directory if it doesn't exist."""
         # Remove storage directory
@@ -106,7 +91,7 @@ class TestSaveProjectSelection:
         project_path = str(mock_storage_env / "test_project")
         Path(project_path).mkdir(parents=True, exist_ok=True)
 
-        save_project_selection(project_path, model_key="qwen3_0.6b")
+        save_project_selection(project_path)
 
         selection_file = get_selection_file_path()
         with open(selection_file) as f:
@@ -114,7 +99,6 @@ class TestSaveProjectSelection:
 
         # Verify all required fields
         assert "last_project_path" in data
-        assert "last_model_key" in data
         assert "updated_at" in data
 
         # Verify path is resolved
@@ -149,13 +133,12 @@ class TestLoadProjectSelection:
         Path(project_path).mkdir(parents=True, exist_ok=True)
 
         # Save first
-        save_project_selection(project_path, model_key="bge_m3")
+        save_project_selection(project_path)
 
         # Load
         result = load_project_selection()
         assert result is not None
         assert "last_project_path" in result
-        assert result["last_model_key"] == "bge_m3"
 
     def test_load_invalid_json(self, mock_storage_env):
         """Test load with invalid JSON."""
@@ -176,7 +159,7 @@ class TestLoadProjectSelection:
 
         # Write JSON without last_project_path
         with open(selection_file, "w") as f:
-            json.dump({"model_key": "test"}, f)
+            json.dump({"updated_at": "2024-01-01"}, f)
 
         result = load_project_selection()
         assert result is None
@@ -189,7 +172,6 @@ class TestLoadProjectSelection:
 
         data = {
             "last_project_path": str(mock_storage_env / "nonexistent_project"),
-            "last_model_key": None,
             "updated_at": datetime.now().isoformat(),
         }
 
@@ -293,7 +275,6 @@ class TestGetSelectionForDisplay:
 
         assert result["name"] == "None"
         assert result["path"] == ""
-        assert result["model_key"] == ""
         assert result["updated_at"] == ""
         assert result["exists"] is False
 
@@ -303,14 +284,13 @@ class TestGetSelectionForDisplay:
         Path(project_path).mkdir(parents=True, exist_ok=True)
 
         # Save selection
-        save_project_selection(project_path, model_key="bge_m3")
+        save_project_selection(project_path)
 
         # Get display format
         result = get_selection_for_display()
 
         assert result["name"] == "test_project"
         assert result["path"] == str(Path(project_path).resolve())
-        assert result["model_key"] == "bge_m3"
         assert result["updated_at"] != ""
         assert result["exists"] is True
 
@@ -318,7 +298,7 @@ class TestGetSelectionForDisplay:
         """Test all expected fields are present in display format."""
         result = get_selection_for_display()
 
-        required_fields = ["name", "path", "model_key", "updated_at", "exists"]
+        required_fields = ["name", "path", "updated_at", "exists"]
         for field in required_fields:
             assert field in result
 
@@ -332,13 +312,12 @@ class TestIntegrationScenarios:
         Path(project_path).mkdir(parents=True, exist_ok=True)
 
         # Save
-        assert save_project_selection(project_path, model_key="qwen3_0.6b") is True
+        assert save_project_selection(project_path) is True
 
         # Load
         selection = load_project_selection()
         assert selection is not None
         assert "test_project" in selection["last_project_path"]
-        assert selection["last_model_key"] == "qwen3_0.6b"
 
         # Clear
         assert clear_project_selection() is True
@@ -354,26 +333,14 @@ class TestIntegrationScenarios:
         Path(project2).mkdir(parents=True, exist_ok=True)
 
         # Save first project
-        save_project_selection(project1, model_key="bge_m3")
+        save_project_selection(project1)
 
         # Save second project (should overwrite)
-        save_project_selection(project2, model_key="qwen3_0.6b")
+        save_project_selection(project2)
 
         # Load should return second project
         selection = load_project_selection()
         assert "project2" in selection["last_project_path"]
-        assert selection["last_model_key"] == "qwen3_0.6b"
-
-    def test_save_without_model_key(self, mock_storage_env):
-        """Test saving without model key (None value)."""
-        project_path = str(mock_storage_env / "test_project")
-        Path(project_path).mkdir(parents=True, exist_ok=True)
-
-        save_project_selection(project_path)
-
-        selection = load_project_selection()
-        assert selection is not None
-        assert selection["last_model_key"] is None
 
     def test_display_after_clear(self, mock_storage_env):
         """Test display format returns safe values after clear."""

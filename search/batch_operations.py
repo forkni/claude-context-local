@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from embeddings.chunk_metadata import resolve_chunk_path
+from utils.path_utils import normalize_path, path_matches
 
 
 class BatchOperations:
@@ -63,6 +63,7 @@ class BatchOperations:
 
         chunks_to_remove_ids = set()
         chunks_to_remove_positions = []
+        normalized_targets = {normalize_path(fp) for fp in file_paths}
 
         # Single pass to identify chunks to remove
         for position, chunk_id in enumerate(chunk_ids):
@@ -72,20 +73,26 @@ class BatchOperations:
 
             metadata = metadata_entry["metadata"]
 
-            # Check if this chunk belongs to any of the files
-            chunk_file = resolve_chunk_path(metadata)
-            if not chunk_file:
+            # Check if this chunk belongs to any of the files.
+            # Match against BOTH file_path (absolute) and relative_path (relative).
+            # Incremental removal targets are project-relative (MerkleDAG keys), but
+            # resolve_chunk_path prefers the absolute file_path, which can never
+            # exact-match a relative target.  BM25 removal uses the relative chunk_id
+            # path, so matching only the absolute value here caused dense to silently
+            # keep stale vectors for every modified file (dense > bm25 desync).
+            # The remove_files docstring already promises support for "relative or
+            # absolute" paths — this makes the predicate honour that contract.
+            if not any(
+                p and path_matches(p, normalized_targets)
+                for p in (metadata.get("file_path"), metadata.get("relative_path"))
+            ):
                 continue
 
-            # Check if chunk matches any file in the set
-            for file_path in file_paths:
-                if file_path in chunk_file or chunk_file in file_path:
-                    # Check project name if provided
-                    if project_name and metadata.get("project_name") != project_name:
-                        continue
-                    chunks_to_remove_ids.add(chunk_id)
-                    chunks_to_remove_positions.append(position)
-                    break  # Found match, no need to check other files
+            # Check project name if provided
+            if project_name and metadata.get("project_name") != project_name:
+                continue
+            chunks_to_remove_ids.add(chunk_id)
+            chunks_to_remove_positions.append(position)
 
         if not chunks_to_remove_ids:
             self._logger.info("No chunks found to remove")

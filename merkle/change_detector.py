@@ -88,6 +88,50 @@ class ChangeDetector:
             # Snapshot dir is outside the project root — nothing to ignore.
             pass
 
+    def _build_current_dag(
+        self, project_path: str, old_dag: "MerkleDAG | None"
+    ) -> MerkleDAG:
+        """Build a fresh DAG for *project_path*'s current state.
+
+        Inherits include/exclude dir filters from *old_dag* when the detector
+        was constructed without them, so the comparison DAG is scoped
+        identically to the stored snapshot.  Sole owner of the
+        snapshot-ignore + build sequence shared by
+        :meth:`detect_changes_from_snapshot` and :meth:`quick_check`.
+        """
+        include_dirs = self.include_dirs
+        exclude_dirs = self.exclude_dirs
+
+        if old_dag is not None:
+            if (
+                include_dirs is None
+                and old_dag.directory_filter
+                and old_dag.directory_filter.include_dirs
+            ):
+                include_dirs = old_dag.directory_filter.include_dirs
+                logger.debug(
+                    f"[CHANGE_DETECTOR] Inheriting include_dirs from snapshot: {include_dirs}"
+                )
+            if (
+                exclude_dirs is None
+                and old_dag.directory_filter
+                and old_dag.directory_filter.exclude_dirs
+            ):
+                exclude_dirs = old_dag.directory_filter.exclude_dirs
+                logger.debug(
+                    f"[CHANGE_DETECTOR] Inheriting exclude_dirs from snapshot: {exclude_dirs}"
+                )
+
+        current_dag = MerkleDAG(
+            project_path,
+            include_dirs,
+            exclude_dirs,
+            supported_extensions=self.supported_extensions,
+        )
+        self._add_snapshot_ignore(current_dag, project_path)
+        current_dag.build()
+        return current_dag
+
     def detect_changes(self, old_dag: MerkleDAG, new_dag: MerkleDAG) -> FileChanges:
         """Detect file changes between two Merkle DAGs.
 
@@ -136,45 +180,7 @@ class ChangeDetector:
         """
         # Load previous snapshot first to potentially inherit filters
         old_dag = self.snapshot_manager.load_snapshot(project_path)
-
-        # Determine filters to use for current DAG
-        include_dirs = self.include_dirs
-        exclude_dirs = self.exclude_dirs
-
-        # If we have a snapshot with filters but none were provided to the detector,
-        # inherit filters from the snapshot to ensure consistent comparison
-        if old_dag is not None:
-            if (
-                include_dirs is None
-                and old_dag.directory_filter
-                and old_dag.directory_filter.include_dirs
-            ):
-                include_dirs = old_dag.directory_filter.include_dirs
-                logger.debug(
-                    f"[CHANGE_DETECTOR] Inheriting include_dirs from snapshot: {include_dirs}"
-                )
-
-            if (
-                exclude_dirs is None
-                and old_dag.directory_filter
-                and old_dag.directory_filter.exclude_dirs
-            ):
-                exclude_dirs = old_dag.directory_filter.exclude_dirs
-                logger.debug(
-                    f"[CHANGE_DETECTOR] Inheriting exclude_dirs from snapshot: {exclude_dirs}"
-                )
-
-        # Build current DAG with inherited or provided filters
-        current_dag = MerkleDAG(
-            project_path,
-            include_dirs,
-            exclude_dirs,
-            supported_extensions=self.supported_extensions,
-        )
-
-        self._add_snapshot_ignore(current_dag, project_path)
-
-        current_dag.build()
+        current_dag = self._build_current_dag(project_path, old_dag)
 
         if old_dag is None:
             # No previous snapshot, treat all files as added
@@ -197,43 +203,12 @@ class ChangeDetector:
         Returns:
             True if project has changed or no snapshot exists
         """
-        # Load previous snapshot
+        # Load previous snapshot; no snapshot means changes are unknown → True
         old_dag = self.snapshot_manager.load_snapshot(project_path)
         if old_dag is None:
             return True
 
-        # Determine filters to use for current DAG
-        include_dirs = self.include_dirs
-        exclude_dirs = self.exclude_dirs
-
-        # Inherit filters from snapshot if none were provided
-        if (
-            include_dirs is None
-            and old_dag.directory_filter
-            and old_dag.directory_filter.include_dirs
-        ):
-            include_dirs = old_dag.directory_filter.include_dirs
-
-        if (
-            exclude_dirs is None
-            and old_dag.directory_filter
-            and old_dag.directory_filter.exclude_dirs
-        ):
-            exclude_dirs = old_dag.directory_filter.exclude_dirs
-
-        # Build current DAG with inherited or provided filters
-        current_dag = MerkleDAG(
-            project_path,
-            include_dirs,
-            exclude_dirs,
-            supported_extensions=self.supported_extensions,
-        )
-
-        self._add_snapshot_ignore(current_dag, project_path)
-
-        current_dag.build()
-
-        # Compare root hashes
+        current_dag = self._build_current_dag(project_path, old_dag)
         return old_dag.get_root_hash() != current_dag.get_root_hash()
 
     def get_changed_directories(

@@ -38,11 +38,7 @@ def _cleanup_previous_resources() -> None:
     # Component 1: Index manager cleanup
     try:
         if state.index_manager is not None:
-            if (
-                hasattr(state.index_manager, "_metadata_store")
-                and state.index_manager._metadata_store is not None
-            ):
-                state.index_manager._metadata_store.close()
+            state.index_manager.close()
             state.index_manager = None
             logger.info("Previous index manager cleaned up")
     except Exception as e:
@@ -51,17 +47,6 @@ def _cleanup_previous_resources() -> None:
     # Component 2: Searcher cleanup
     try:
         if state.searcher is not None:
-            # Close dense_index metadata store FIRST
-            if (
-                hasattr(state.searcher, "dense_index")
-                and state.searcher.dense_index is not None
-            ) and (
-                hasattr(state.searcher.dense_index, "_metadata_store")
-                and state.searcher.dense_index._metadata_store is not None
-            ):
-                state.searcher.dense_index._metadata_store.close()
-                logger.debug("Closed HybridSearcher dense_index metadata store")
-            # Then call shutdown
             if hasattr(state.searcher, "shutdown"):
                 state.searcher.shutdown()
                 logger.info("Searcher shutdown completed (neural reranker released)")
@@ -91,33 +76,22 @@ def _cleanup_previous_resources() -> None:
     except Exception as e:
         logger.warning(f"Error resetting pool manager: {e}")
 
-    # Component 5: Garbage collection (always try)
+    # Component 5+6: GPU memory release (gc.collect + CUDA cache if available)
     try:
-        gc.collect()
-        logger.info("Garbage collection completed")
-    except Exception as e:
-        logger.warning(f"Error during garbage collection: {e}")
+        from search.gpu_monitor import release_gpu_memory
 
-    # Component 6: GPU cache cleanup (always try)
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            logger.info("GPU cache cleared")
-    except ImportError as e:
-        logger.debug(f"GPU cache cleanup skipped: {e}")
+        release_gpu_memory(synchronize=False)
+        logger.info("GPU memory released (gc + CUDA cache)")
     except Exception as e:
-        logger.warning(f"Error during GPU cache cleanup: {e}")
+        logger.warning(f"Error releasing GPU memory: {e}")
 
     # Component 7: OTel force-flush — drain pending spans before resource teardown.
     # Do NOT call shutdown_observability() here: shutdown permanently disables the
     # global TracerProvider and belongs at server exit, not at per-request cleanup.
     try:
-        import utils.observability as _obs
+        from utils.observability import force_flush
 
-        if _obs._enabled and _obs._tracer_provider is not None:
-            _obs._tracer_provider.force_flush()
+        force_flush()
     except Exception as e:
         logger.warning(f"Error flushing OTel spans: {e}")
 
@@ -187,12 +161,11 @@ def initialize_server_state() -> None:
 
     state = get_state()
 
-    # 1. Sync multi_model_enabled from config file
+    # 1. Load config
     try:
         config_manager = get_config_manager()
         config = config_manager.load_config()
-        state.sync_from_config(config)
-        logger.info("[INIT] Config synced from file")
+        logger.info("[INIT] Config loaded")
         from utils.observability import init_observability
 
         init_observability(config.observability)
@@ -216,10 +189,6 @@ def initialize_server_state() -> None:
 
     # 3. Lazy model loading
     logger.info("[INIT] Model loading deferred until first use (lazy mode)")
-    from mcp_server.model_pool_manager import get_model_pool_manager
-
-    pool_config = get_model_pool_manager().get_pool_config()
-    logger.info(f"[INIT] Available models: {list(pool_config.keys())}")
 
     # 3.5. VRAM tier detection - DEFERRED to first model load
     logger.info("[INIT] VRAM tier detection deferred until first model request")

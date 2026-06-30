@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 import numpy as np
 
@@ -14,6 +14,9 @@ if TYPE_CHECKING:
     from embeddings.embedder import CodeEmbedder, EmbeddingResult
 
     from .config import EgoGraphConfig, ParentRetrievalConfig, SearchConfig
+
+from embeddings.chunk_metadata import ChunkMetadata
+
 
 try:
     import torch
@@ -126,7 +129,6 @@ class HybridSearcher(BaseSearcher):
             str(self.storage_dir),
             embedder=embedder,
             project_id=project_id,
-            config=config,
         )
 
         # Load both indices in parallel for faster startup
@@ -594,7 +596,9 @@ class HybridSearcher(BaseSearcher):
             result = EmbeddingResult(
                 embedding=np.array(embedding, dtype=np.float32),
                 chunk_id=chunk_id,
-                metadata=metadata.get(chunk_id, {}) if metadata else {},
+                metadata=cast(
+                    ChunkMetadata, metadata.get(chunk_id, {}) if metadata else {}
+                ),
             )
             embedding_results.append(result)
 
@@ -817,150 +821,16 @@ class HybridSearcher(BaseSearcher):
             if not expanded_chunk_ids:
                 return results
 
-            # Track which chunks are neighbors (not original anchors)
-            original_chunk_ids = {r.chunk_id for r in results}
-            neighbor_chunk_ids = set(expanded_chunk_ids) - original_chunk_ids
-
-            # Build neighbor→anchor mapping for decay scoring
-            # ego_graphs: dict[anchor_id, list[neighbor_ids]]
-            neighbor_to_anchor = {}
-            for anchor_id, neighbors in ego_graphs.items():
-                for neighbor_id in neighbors:
-                    if neighbor_id not in original_chunk_ids:
-                        neighbor_to_anchor[neighbor_id] = anchor_id
-
-            # Compute query embedding once for all neighbor scoring
-            try:
-                # pyrefly: ignore [missing-attribute]
-                query_embedding = self.embedder.embed_query(query)
-                query_embedding_available = True
-            except Exception as e:
-                self._logger.warning(
-                    f"Failed to compute query embedding for ego-graph scoring: {e}. "
-                    f"Falling back to fixed decay.",
-                    exc_info=True,
-                )
-                query_embedding = None
-                query_embedding_available = False
-
-            # Pre-compute anchor scores for relative scoring
-            anchor_scores = {r.chunk_id: r.score for r in results}
-
-            # Build chunk_id→FAISS-index map once (#52): avoids O(N) list rebuild
-            # + O(N) .index() call *per neighbor* (was O(M×N) total).
-            chunk_id_to_faiss_idx: dict[str, int] = {
-                cid: i for i, cid in enumerate(self.dense_index.chunk_ids)
-            }
-
-            # Pass 1 — fetch metadata and FAISS indices for all valid neighbors.
-            # No embedding work yet; keeps the hot metadata-fetch loop clean.
-            valid_neighbors: list[tuple[str, dict, int | None]] = []
-            for chunk_id in neighbor_chunk_ids:
-                try:
-                    metadata = self.dense_index.get_chunk_by_id(chunk_id)
-                    if not metadata:
-                        continue
-                    faiss_idx = chunk_id_to_faiss_idx.get(chunk_id)
-                    valid_neighbors.append((chunk_id, metadata, faiss_idx))
-                except (KeyError, TypeError) as e:
-                    self._logger.debug(
-                        f"Failed to retrieve metadata for {chunk_id}: {e}"
-                    )
-                    continue
-
-            # Pass 2 — score neighbors, batching FAISS reconstruction and
-            # computing similarities in a single matmul (#52/#59).
-            neighbor_results = []
-            threshold = getattr(ego_config, "min_similarity_threshold", 0.15)
-
-            if query_embedding_available and valid_neighbors:
-                assert query_embedding is not None
-                # Partition: neighbors with a known FAISS index vs. those without.
-                reconstruct_items: list[tuple[str, dict, int]] = []
-                decay_items: list[tuple[str, dict]] = []
-                for chunk_id, metadata, faiss_idx in valid_neighbors:
-                    if faiss_idx is not None:
-                        reconstruct_items.append((chunk_id, metadata, faiss_idx))
-                    else:
-                        decay_items.append((chunk_id, metadata))
-
-                if reconstruct_items:
-                    try:
-                        # Batch-reconstruct all neighbor embeddings in one call (#52+#59).
-                        faiss_indices = np.array(
-                            [idx for _, _, idx in reconstruct_items], dtype=np.int64
-                        )
-                        neighbor_embeddings = np.stack(
-                            [
-                                self.dense_index._faiss_index.reconstruct(int(idx))
-                                for idx in faiss_indices
-                            ]
-                        )
-                        # Vectorised cosine-similarity (embeddings are L2-normalised).
-                        similarities = neighbor_embeddings @ query_embedding  # (M,)
-                        for (chunk_id, metadata, _), similarity in zip(
-                            reconstruct_items, similarities, strict=False
-                        ):
-                            similarity = float(similarity)
-                            if similarity < threshold:
-                                self._logger.debug(
-                                    f"Filtering ego-graph neighbor {chunk_id}: "
-                                    f"similarity={similarity:.3f} < {threshold:.2f}"
-                                )
-                                continue
-                            anchor_id = neighbor_to_anchor.get(chunk_id)
-                            anchor_score = (
-                                anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
-                            )
-                            neighbor_results.append(
-                                SearchResult(
-                                    chunk_id=chunk_id,
-                                    score=anchor_score * similarity,
-                                    metadata=metadata,
-                                    source="ego_graph",
-                                    rank=0,
-                                )
-                            )
-                    except (RuntimeError, AttributeError, IndexError) as e:
-                        self._logger.debug(
-                            f"Batch reconstruction failed ({e}); falling back to decay for "
-                            f"{len(reconstruct_items)} neighbors."
-                        )
-                        decay_items.extend(
-                            (cid, meta) for cid, meta, _ in reconstruct_items
-                        )
-
-                # Fixed-decay fallback for neighbors with no FAISS index or batch failure
-                for chunk_id, metadata in decay_items:
-                    anchor_id = neighbor_to_anchor.get(chunk_id)
-                    anchor_score = (
-                        anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
-                    )
-                    neighbor_results.append(
-                        SearchResult(
-                            chunk_id=chunk_id,
-                            score=anchor_score * 0.5,
-                            metadata=metadata,
-                            source="ego_graph",
-                            rank=0,
-                        )
-                    )
-            else:
-                # No query embedding — fixed decay for all neighbors
-                for chunk_id, metadata, _ in valid_neighbors:
-                    anchor_id = neighbor_to_anchor.get(chunk_id)
-                    anchor_score = (
-                        anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
-                    )
-                    neighbor_results.append(
-                        SearchResult(
-                            chunk_id=chunk_id,
-                            score=anchor_score * 0.5,
-                            metadata=metadata,
-                            source="ego_graph",
-                            rank=0,
-                        )
-                    )
+            # Score neighbors (embedding similarity + anchor-score decay)
+            neighbor_results = self.ego_graph_retriever.score_neighbors(  # pyrefly: ignore [missing-attribute]
+                results,
+                ego_graphs,
+                expanded_chunk_ids,
+                query,
+                ego_config,
+                dense_index=self.dense_index,
+                embedder=self.embedder,
+            )
 
             # Cap ego-graph neighbors to prevent token bloat
             max_ego = min(
@@ -1038,14 +908,11 @@ class HybridSearcher(BaseSearcher):
                 try:
                     metadata = self.dense_index.get_chunk_by_id(parent_id)
                     if metadata:
-                        parent_result = SearchResult(
-                            chunk_id=parent_id,
-                            score=0.0,  # Parents are context, no similarity score
-                            metadata=metadata,
-                            source="parent_expansion",  # Mark source
-                            rank=0,
+                        parent_results.append(
+                            ResultFactory.from_expansion(
+                                parent_id, 0.0, metadata, "parent_expansion"
+                            )
                         )
-                        parent_results.append(parent_result)
                 except (KeyError, TypeError) as e:
                     self._logger.debug(
                         f"Failed to retrieve parent chunk {parent_id}: {e}"
@@ -1087,34 +954,10 @@ class HybridSearcher(BaseSearcher):
         fetch_k = k * 2 if rerank else k
         similar_chunks = self.dense_index.get_similar_chunks(chunk_id, fetch_k)
 
-        # Convert to SearchResult format expected by MCP tool
-        # Import here to avoid circular dependency
-        from .searcher import SearchResult
-
-        results = []
-        for cid, similarity, metadata in similar_chunks:
-            result = SearchResult(
-                chunk_id=cid,
-                similarity_score=similarity,
-                content_preview=metadata.get("content_preview", ""),
-                file_path=metadata.get("file_path", ""),
-                relative_path=metadata.get("relative_path", ""),
-                folder_structure=metadata.get("folder_structure", []),
-                chunk_type=metadata.get("chunk_type", "unknown"),
-                name=metadata.get("name"),
-                parent_name=metadata.get("parent_name"),
-                start_line=metadata.get("start_line", 0),
-                end_line=metadata.get("end_line", 0),
-                docstring=metadata.get("docstring"),
-                tags=metadata.get("tags", []),
-                context_info={},
-                metadata={"content_preview": metadata.get("content_preview", "")},
-            )
-            results.append(result)
+        results = ResultFactory.from_similarity_results(similar_chunks)
 
         # Apply neural reranking if requested and available
-        if rerank and len(results) > 0:
-            # Get reference chunk content to use as "query" for reranking
+        if rerank and results:
             ref_metadata = self.dense_index.get_chunk_by_id(chunk_id)
             query_content = (
                 ref_metadata.get("content_preview", "") if ref_metadata else ""
@@ -1125,36 +968,19 @@ class HybridSearcher(BaseSearcher):
                     f"[RERANK-SIMILAR] Reranking {len(results)} candidates "
                     f"using reference chunk as query (length: {len(query_content)} chars)"
                 )
-                # Convert to reranker.SearchResult (has .score) for the reranking pipeline.
-                # searcher.SearchResult uses .similarity_score, which reranker doesn't know.
-                from .reranker import SearchResult as RankerResult
-
-                rich_by_id = {r.chunk_id: r for r in results}
-                ranker_inputs = [
-                    RankerResult(
-                        chunk_id=r.chunk_id,
-                        score=r.similarity_score,
-                        metadata=r.metadata,
-                        source="similarity",
-                    )
-                    for r in results
-                ]
+                # Save original vector similarity scores — reranker overwrites .score
+                # with the neural relevance score.
+                similarity_by_id = {r.chunk_id: r.score for r in results}
                 reranked = self.reranking_engine.apply_neural_reranking(
-                    query_content, ranker_inputs, k, context="similarity"
+                    query_content, results, k, context="similarity"
                 )
-                # Restore rich searcher.SearchResult objects in reranked order.
-                # Attach reranker_score to metadata so order and score agree:
-                # similarity_score retains the original vector similarity while
-                # reranker_score reflects the neural relevance judgment.
-                results = []
+                # Attach neural reranker_score to metadata; restore original vector
+                # similarity as .score so downstream formatters display it consistently.
                 for rr in reranked:
-                    rich = rich_by_id.get(rr.chunk_id)
-                    if rich:
-                        rich.metadata = {
-                            **(rich.metadata or {}),
-                            "reranker_score": rr.score,
-                        }
-                        results.append(rich)
+                    neural = rr.score
+                    rr.score = similarity_by_id.get(rr.chunk_id, neural)
+                    rr.metadata = {**(rr.metadata or {}), "reranker_score": neural}
+                results = reranked
             else:
                 self._logger.warning(
                     f"[RERANK-SIMILAR] No content found for reference chunk {chunk_id}, "
@@ -1248,6 +1074,13 @@ class HybridSearcher(BaseSearcher):
         self.bm25_index = self.index_sync.bm25_index
         return count
 
+    def resync_if_desynced(self, log_prefix: str = "INCREMENTAL") -> tuple[bool, int]:
+        """Auto-sync BM25 if >10% desync detected. Delegates to IndexSynchronizer."""
+        result = self.index_sync.resync_if_desynced(log_prefix)
+        # Sync modified bm25_index reference back (resync rebuilds the BM25 ref)
+        self.bm25_index = self.index_sync.bm25_index
+        return result
+
     def load_indices(self) -> bool:
         """Load both BM25 and dense indices. Delegates to IndexSynchronizer."""
         return self.index_sync.load_indices()
@@ -1274,7 +1107,7 @@ class HybridSearcher(BaseSearcher):
         self._logger.debug(f"[ADD_EMBEDDINGS] Dense index path: {self.storage_dir}")
 
         # Extract data for both indices
-        documents = []
+        documents: list[str] = []
         doc_ids = []
         embeddings = []
         metadata = {}
@@ -1284,12 +1117,12 @@ class HybridSearcher(BaseSearcher):
             doc_ids.append(chunk_id)
 
             # Extract text content for BM25 (from metadata or content)
-            content = result.metadata.get("content", "")
+            content = str(result.metadata.get("content") or "")
             if not content:
                 # Fallback: try other content fields
-                content = (
-                    result.metadata.get("content_preview", "")
-                    or result.metadata.get("raw_content", "")
+                content = str(
+                    result.metadata.get("content_preview")
+                    or result.metadata.get("raw_content")
                     or ""
                 )
             documents.append(content)
@@ -1305,9 +1138,13 @@ class HybridSearcher(BaseSearcher):
             # needed at query time — content_preview (≤200 chars) covers snippet
             # display, and BM25 reconstructs text from its own _documents list.
             # Saves ~6 KB/chunk × 1755 chunks ≈ 10 MB of MetadataStore bloat.
+            # Exception: persist a `bm25_text` field so resync_bm25_from_dense can
+            # rebuild BM25 from dense authority when desync is detected.
             persisted_metadata = {
                 k: v for k, v in result.metadata.items() if k != "content"
             }
+            if content:
+                persisted_metadata["bm25_text"] = content
             metadata[chunk_id] = persisted_metadata
 
         # Log data extraction
@@ -1391,19 +1228,14 @@ class HybridSearcher(BaseSearcher):
         self._metadata_cache.clear()
         self._logger.debug("[CLEAR] Metadata cache cleared after clear_index()")
 
-    def remove_file_chunks(self, file_path: str, project_name: str) -> int:
-        """Remove chunks for a specific file from both indices. Delegates to IndexSynchronizer."""
-        removed = self.index_sync.remove_file_chunks(file_path, project_name)
-        # Evict all cache entries — a removed chunk's id could be reused after
-        # re-indexing the same file, so a cached-None or stale hit would be wrong (#44).
-        # Clearing wholesale is safe: it's a warm cache, not a source of truth.
+    def remove_files(self, file_paths: set[str], project_name: str) -> int:
+        """Remove chunks for one or more files. Delegates to IndexSynchronizer."""
+        removed = self.index_sync.remove_files(file_paths, project_name)
+        # Evict all cache entries — removed chunk ids could be reused after
+        # re-indexing the same file; a cached-None or stale hit would be wrong (#44).
         if removed > 0:
             self._metadata_cache.clear()
         return removed
-
-    def remove_multiple_files(self, file_paths: set, project_name: str) -> int:
-        """Remove chunks for multiple files from both indices. Delegates to IndexSynchronizer."""
-        return self.index_sync.remove_multiple_files(file_paths, project_name)
 
     def _verify_bm25_files(self) -> None:
         """Verify BM25 files exist and are non-empty. Delegates to IndexSynchronizer."""

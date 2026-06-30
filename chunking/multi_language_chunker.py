@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from search.filters import normalize_path
+from search.chunk_id import build as _build_chunk_id
 
 
 if TYPE_CHECKING:
@@ -121,6 +121,39 @@ class MultiLanguageChunker:
         # Pre-populate the main thread's slot so callers on the main thread never
         # trigger a lazy-init on the hot path.
         self._init_thread_extractors()
+
+    @classmethod
+    def for_project(
+        cls,
+        root_path: str,
+        include_dirs: list | None = None,
+        exclude_dirs: list | None = None,
+        *,
+        enable_entity_tracking: bool = False,
+    ) -> "MultiLanguageChunker":
+        """Build a project chunker with import classification wired in.
+
+        Single owner of the RepositoryRelationFilter construction so every live
+        index path classifies import edges (stdlib/builtin/third_party/local)
+        instead of leaving them as ``"unknown"`` — which defeats ego-graph
+        stdlib/third-party import exclusion in
+        ``graph/graph_storage.py:_should_exclude_edge``.
+
+        Always prefer this over the bare constructor when chunking a real
+        project on disk. Use the bare constructor only when ``project_root``
+        is unavailable (e.g. in-memory test fixtures, the rootless
+        ``IncrementalIndexer.__init__`` chunker fallback).
+        """
+        from chunking.relationships.relation_filter import RepositoryRelationFilter
+
+        relation_filter = RepositoryRelationFilter(project_root=Path(root_path))
+        return cls(
+            root_path,
+            include_dirs,
+            exclude_dirs,
+            enable_entity_tracking=enable_entity_tracking,
+            relation_filter=relation_filter,
+        )
 
     def _init_thread_extractors(self) -> None:
         """Build and store per-thread extractor instances on ``self._local``.
@@ -389,15 +422,10 @@ class MultiLanguageChunker:
         Returns:
             Normalized chunk ID string
         """
-        # Normalize path to forward slashes (cross-platform)
-        normalized_path = normalize_path(str(relative_path))
-        chunk_id = f"{normalized_path}:{start_line}-{end_line}:{chunk_type}"
-
-        # Use qualified name (ClassName.method_name) for better disambiguation
-        if qualified_name:
-            chunk_id += f":{qualified_name}"
-
-        return chunk_id
+        # Route through the canonical wire-format builder (P5: chunk_id.build).
+        return _build_chunk_id(
+            str(relative_path), start_line, end_line, chunk_type, qualified_name or None
+        )
 
     def _extract_call_relationships(
         self, chunk: CodeChunk, tchunk: TreeSitterChunk, chunk_id: str

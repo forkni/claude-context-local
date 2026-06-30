@@ -14,13 +14,38 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mcp_server.model_pool_manager import get_model_pool_manager, reset_pool_manager
+from mcp_server.model_pool_manager import reset_pool_manager
 from mcp_server.services import get_state
 from search.config import get_search_config
 from search.incremental_indexer import IncrementalIndexer
 
 
 logger = logging.getLogger(__name__)
+
+
+@pytest.fixture(autouse=True)
+def _mock_model_load():
+    """Prevent real model downloads in all tests in this module."""
+    import numpy as np
+
+    class _FakeEmbeddingModel:
+        max_seq_length = 512
+        device = "cpu"
+
+        def encode(
+            self, sentences, show_progress_bar=False, convert_to_tensor=False, **kwargs
+        ):
+            n = 1 if isinstance(sentences, str) else len(sentences)
+            return np.zeros((n, 768), dtype=np.float32)
+
+        def get_sentence_embedding_dimension(self):
+            return 768
+
+    with patch(
+        "embeddings.model_loader.ModelLoader.load",
+        return_value=(_FakeEmbeddingModel(), "cpu"),
+    ):
+        yield
 
 
 @pytest.fixture
@@ -132,66 +157,7 @@ class TestMaxAgeMinutesConfigRespect:
 
 
 class TestMultiModelCleanupBeforeReindex:
-    """Test that auto-reindex clears ALL models, not just one."""
-
-    @pytest.mark.skipif(
-        not get_search_config().routing.multi_model_enabled,
-        reason="Multi-model mode disabled",
-    )
-    def test_clears_all_models_before_reindex(self, temp_project, cleanup_state):
-        """Verify all models in pool are cleared before auto-reindex."""
-        state = get_state()
-        pool_manager = get_model_pool_manager()
-
-        # Initialize multi-model pool (lazy loading)
-        pool_manager.initialize_pool(lazy_load=True)
-
-        # Load all models in the active pool by requesting them via pool-agnostic keys
-        # (pool may be "full" {qwen3_0.6b, coderankembed} or
-        #  "lightweight-speed" {gte_modernbert, bge_m3} depending on CI config)
-        pool_keys = list(pool_manager.get_pool_config().keys())
-        assert len(pool_keys) >= 2, f"Expected >=2 pool models, got {pool_keys}"
-        first_embedder = pool_manager.get_embedder(pool_keys[0])
-        for key in pool_keys[1:]:
-            pool_manager.get_embedder(key)  # Load but don't need reference
-
-        # Verify all models loaded
-        for key in pool_keys:
-            assert state.embedders.get(key) is not None, (
-                f"Model {key!r} not in embedders"
-            )
-        initial_count = len(state.embedders)
-        assert initial_count >= 2
-
-        # Create indexer and perform initial index
-        indexer = IncrementalIndexer(embedder=first_embedder)
-        result = indexer.incremental_index(str(temp_project), "test_project")
-        assert result.success
-
-        # Mock logger to capture cleanup messages
-        with patch("search.incremental_indexer.logger") as mock_logger:
-            # Trigger auto-reindex with 0 max age (forces reindex)
-            result = indexer.auto_reindex_if_needed(
-                str(temp_project), "test_project", max_age_minutes=0
-            )
-
-            # Verify cleanup messages logged
-            logged_messages = [str(call) for call in mock_logger.info.call_args_list]
-
-            # Should log multi-model cleanup
-            assert any(
-                "Freeing VRAM before auto-reindex (multi-model cleanup)" in msg
-                for msg in logged_messages
-            ), f"Multi-model cleanup not logged. Messages: {logged_messages}"
-
-            assert any(
-                "Clearing" in msg and "cached embedder(s) before reindex" in msg
-                for msg in logged_messages
-            ), f"Embedder clearing not logged. Messages: {logged_messages}"
-
-            # Verify embedders were cleared
-            # Note: They may be reloaded during reindex, so we check the clearing happened
-            # by verifying the log messages above
+    """Test that auto-reindex handles cleanup correctly."""
 
     def test_cleanup_handles_errors_gracefully(self, temp_project, cleanup_state):
         """Verify auto-reindex continues even if cleanup fails."""
@@ -220,74 +186,14 @@ class TestMultiModelCleanupBeforeReindex:
             mock_index.assert_called_once()
 
 
-class TestNoOOMDuringReindex:
-    """Test that auto-reindex doesn't cause OOM with proper cleanup."""
-
-    @pytest.mark.skipif(
-        not get_search_config().routing.multi_model_enabled,
-        reason="Multi-model mode disabled",
-    )
-    @pytest.mark.slow
-    def test_vram_freed_before_reindex(self, temp_project, cleanup_state):
-        """Verify VRAM is actually freed before reindex starts."""
-        try:
-            import torch
-
-            if not torch.cuda.is_available():
-                pytest.skip("CUDA not available")
-        except ImportError:
-            pytest.skip("PyTorch not available")
-
-        state = get_state()
-        pool_manager = get_model_pool_manager()
-
-        # Load all models in the active pool (pool-agnostic: may be "full" or "lightweight-speed")
-        pool_manager.initialize_pool(lazy_load=True)
-        pool_keys = list(pool_manager.get_pool_config().keys())
-        assert len(pool_keys) >= 2, f"Expected >=2 pool models, got {pool_keys}"
-        first_embedder = pool_manager.get_embedder(pool_keys[0])
-        _ = first_embedder.model  # Force model loading into VRAM
-        for key in pool_keys[1:]:
-            other_embedder = pool_manager.get_embedder(key)
-            _ = other_embedder.model  # Force model loading into VRAM
-
-        # Check VRAM before cleanup
-        vram_before = torch.cuda.memory_allocated() / (1024**3)  # GB
-        logger.info(f"VRAM before cleanup: {vram_before:.2f} GB")
-
-        # Should have models loaded
-        assert vram_before > 0
-
-        # Create indexer and index
-        indexer = IncrementalIndexer(embedder=first_embedder)
-        result = indexer.incremental_index(str(temp_project), "test_project")
-        assert result.success
-
-        # Trigger auto-reindex with 0 max age
-        result = indexer.auto_reindex_if_needed(
-            str(temp_project), "test_project", max_age_minutes=0
-        )
-
-        # Check VRAM during reindex (models should be reloaded)
-        # We can't easily check VRAM was freed *between* cleanup and reload,
-        # but we can verify the operation succeeded without OOM
-        assert result.success
-
-        # Verify embedders were cleared and recreated
-        # (they'll be reloaded during reindex)
-        logger.info(f"Embedders after reindex: {list(state.embedders.keys())}")
-
-
 class TestUserFilterPreservation:
     """Regression tests for silent user-filter loss (H1+H2+H3 bug cluster)."""
 
     def test_update_project_filters_refuses_null_overwrite(self, tmp_path):
         """update_project_filters must not overwrite stored filters with None."""
-        from mcp_server.storage_manager import StorageManager
+        from mcp_server.storage_manager import update_project_filters
 
-        mgr = StorageManager()
-
-        with patch.object(mgr, "get_storage_dir", return_value=tmp_path):
+        with patch("mcp_server.storage_manager.get_storage_dir", return_value=tmp_path):
             project_path = tmp_path / "myproject"
             project_path.mkdir()
 
@@ -307,8 +213,11 @@ class TestUserFilterPreservation:
             )
 
             # Patch get_project_storage_dir to return the seeded dir
-            with patch.object(mgr, "get_project_storage_dir", return_value=project_dir):
-                mgr.update_project_filters(str(project_path), None, None)
+            with patch(
+                "mcp_server.storage_manager.get_project_storage_dir",
+                return_value=project_dir,
+            ):
+                update_project_filters(str(project_path), None, None)
 
             updated = json.loads(info_file.read_text())
             assert updated["user_excluded_dirs"] == ["secret"], (
@@ -317,11 +226,9 @@ class TestUserFilterPreservation:
 
     def test_get_canonical_project_info_finds_across_model_dirs(self, tmp_path):
         """get_canonical_project_info must find project_info.json from any model dir."""
-        from mcp_server.storage_manager import StorageManager
+        from mcp_server.storage_manager import get_canonical_project_info
 
-        mgr = StorageManager()
-
-        with patch.object(mgr, "get_storage_dir", return_value=tmp_path):
+        with patch("mcp_server.storage_manager.get_storage_dir", return_value=tmp_path):
             project_path = tmp_path / "myproject"
             project_path.mkdir()
 
@@ -337,7 +244,7 @@ class TestUserFilterPreservation:
             qwen_dir = tmp_path / "projects" / f"myproject_{h}_qwen3-0.6b_1024d"
             qwen_dir.mkdir()
 
-            found = mgr.get_canonical_project_info(str(project_path))
+            found = get_canonical_project_info(str(project_path))
             assert found == bge_info, (
                 "get_canonical_project_info must locate bge-v1 project_info.json "
                 "even when qwen3 dir exists without one"
@@ -372,6 +279,24 @@ class TestUserFilterPreservation:
         class CapturingChunker:
             def __init__(self, *a, **kw):
                 chunker_calls.append((a, kw))
+
+            @classmethod
+            def for_project(
+                cls,
+                root_path,
+                include_dirs=None,
+                exclude_dirs=None,
+                *,
+                enable_entity_tracking=False,
+            ):
+                # Capture args in the same positional form the assertion expects
+                chunker_calls.append(
+                    (
+                        (root_path, include_dirs, exclude_dirs),
+                        {"enable_entity_tracking": enable_entity_tracking},
+                    )
+                )
+                return cls.__new__(cls)
 
         ii_instance = MagicMock()
         ii_instance.auto_reindex_if_needed.return_value = MagicMock(
@@ -417,10 +342,6 @@ class TestUserFilterPreservation:
             # TreeSitterChunker.get_supported_extensions() is called to compute the ChangeDetector arg
             patch("chunking.tree_sitter.TreeSitterChunker", ts_mock),
             patch("search.dimension_validator.validate_embedder_index_compatibility"),
-            patch(
-                "mcp_server.model_pool_manager.get_model_key_from_name",
-                return_value="qwen3_0.6b",
-            ),
         ]
 
         with ExitStack() as stack:
@@ -428,7 +349,7 @@ class TestUserFilterPreservation:
                 stack.enter_context(p)
             from mcp_server.tools.search_handlers import _check_auto_reindex
 
-            _check_auto_reindex("/fake/project", "qwen3_0.6b", max_age_minutes=0)
+            _check_auto_reindex("/fake/project", max_age_minutes=0)
 
         assert chunker_calls, "MultiLanguageChunker was never constructed"
         args, kwargs = chunker_calls[0]

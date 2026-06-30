@@ -577,24 +577,30 @@ def test_analyze_impact_filters_similar_code_by_exclude_dirs(
     # No callers from graph
     mock_graph_engine.get_relationships.return_value = []
 
-    # similar_code results - one from tests/, one from src/
+    # similar_code results (thin SearchResult format) - one from tests/, one from src/
     mock_similar_1 = Mock()
     mock_similar_1.chunk_id = "tests/test_main.py:5-15:function:test_process"
-    mock_similar_1.file_path = "tests/test_main.py"
-    mock_similar_1.relative_path = "tests/test_main.py"
-    mock_similar_1.start_line = 5
-    mock_similar_1.end_line = 15
-    mock_similar_1.chunk_type = "function"
-    mock_similar_1.similarity_score = 0.95
+    mock_similar_1.score = 0.95
+    mock_similar_1.source = "similarity"
+    mock_similar_1.metadata = {
+        "relative_path": "tests/test_main.py",
+        "file_path": "tests/test_main.py",
+        "start_line": 5,
+        "end_line": 15,
+        "chunk_type": "function",
+    }
 
     mock_similar_2 = Mock()
     mock_similar_2.chunk_id = "src/utils.py:30-40:function:helper"
-    mock_similar_2.file_path = "src/utils.py"
-    mock_similar_2.relative_path = "src/utils.py"
-    mock_similar_2.start_line = 30
-    mock_similar_2.end_line = 40
-    mock_similar_2.chunk_type = "function"
-    mock_similar_2.similarity_score = 0.85
+    mock_similar_2.score = 0.85
+    mock_similar_2.source = "similarity"
+    mock_similar_2.metadata = {
+        "relative_path": "src/utils.py",
+        "file_path": "src/utils.py",
+        "start_line": 30,
+        "end_line": 40,
+        "chunk_type": "function",
+    }
 
     mock_searcher.find_similar_to_chunk.return_value = [
         mock_similar_1,

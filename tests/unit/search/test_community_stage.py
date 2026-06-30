@@ -110,8 +110,10 @@ class TestCommunityStageDetectionEnabled:
             mock_detector_cls.return_value.detect_communities.return_value = {
                 "f.py:1-5:function:a": 0
             }
-            with patch("chunking.languages.base.LanguageChunker") as mock_lc:
-                mock_lc.remerge_chunks_with_communities.return_value = chunks
+            with patch(
+                "chunking.community_remerge.remerge_chunks_with_communities"
+            ) as mock_remerge:
+                mock_remerge.return_value = chunks
                 stage.run(chunks, "/project", config)
 
         build_graph_fn.assert_called_once_with(chunks)
@@ -125,8 +127,10 @@ class TestCommunityStageDetectionEnabled:
             mock_detector_cls.return_value.detect_communities.return_value = (
                 community_map
             )
-            with patch("chunking.languages.base.LanguageChunker") as mock_lc:
-                mock_lc.remerge_chunks_with_communities.return_value = chunks
+            with patch(
+                "chunking.community_remerge.remerge_chunks_with_communities"
+            ) as mock_remerge:
+                mock_remerge.return_value = chunks
                 stage.run(chunks, "/project", config)
 
         temp_graph.storage.store_community_map.assert_called_once_with(community_map)
@@ -146,8 +150,10 @@ class TestCommunityStageDetectionEnabled:
             mock_detector_cls.return_value.detect_communities.return_value = (
                 community_map
             )
-            with patch("chunking.languages.base.LanguageChunker") as mock_lc:
-                mock_lc.remerge_chunks_with_communities.side_effect = lambda **kw: (
+            with patch(
+                "chunking.community_remerge.remerge_chunks_with_communities"
+            ) as mock_remerge:
+                mock_remerge.side_effect = lambda **kw: (
                     call_order.append("remerge") or chunks
                 )
                 stage.run(chunks, "/project", config)
@@ -164,8 +170,10 @@ class TestCommunityStageDetectionEnabled:
             mock_detector_cls.return_value.detect_communities.return_value = {
                 "f.py:1-5:function:a": 0
             }
-            with patch("chunking.languages.base.LanguageChunker") as mock_lc:
-                mock_lc.remerge_chunks_with_communities.return_value = chunks
+            with patch(
+                "chunking.community_remerge.remerge_chunks_with_communities"
+            ) as mock_remerge:
+                mock_remerge.return_value = chunks
                 result = stage.run(chunks, "/project", config)
 
         assert module_summary in result
@@ -180,8 +188,10 @@ class TestCommunityStageDetectionEnabled:
             mock_detector_cls.return_value.detect_communities.return_value = {
                 "f.py:1-5:function:a": 0
             }
-            with patch("chunking.languages.base.LanguageChunker") as mock_lc:
-                mock_lc.remerge_chunks_with_communities.return_value = chunks
+            with patch(
+                "chunking.community_remerge.remerge_chunks_with_communities"
+            ) as mock_remerge:
+                mock_remerge.return_value = chunks
                 result = stage.run(chunks, "/project", config)
 
         assert community_summary in result
@@ -231,10 +241,10 @@ class TestCommunityStageGracefulDegradation:
             mock_detector_cls.return_value.detect_communities.return_value = {
                 "f.py:1-5:function:a": 0
             }
-            with patch("chunking.languages.base.LanguageChunker") as mock_lc:
-                mock_lc.remerge_chunks_with_communities.side_effect = RuntimeError(
-                    "remerge failed"
-                )
+            with patch(
+                "chunking.community_remerge.remerge_chunks_with_communities"
+            ) as mock_remerge:
+                mock_remerge.side_effect = RuntimeError("remerge failed")
                 result = stage.run(chunks, "/project", config)
 
         # Chunks unchanged; no exception propagated

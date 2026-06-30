@@ -304,19 +304,6 @@ class TestMetadataStoreUtilities:
         normalized = MetadataStore.normalize_chunk_id(chunk_id)
         assert normalized == "search/sub/indexer.py:1-10:function:foo"
 
-    def test_get_chunk_id_variants(self):
-        """Test getting chunk_id variants for robust lookup."""
-        chunk_id = "search\\\\indexer.py:1-10:function:foo"
-        variants = MetadataStore.get_chunk_id_variants(chunk_id)
-
-        # Should have at least original and normalized variants
-        assert chunk_id in variants  # Original
-        assert "search\\indexer.py:1-10:function:foo" in variants  # Un-double-escaped
-        assert "search/indexer.py:1-10:function:foo" in variants  # Forward slash
-
-        # Should have no duplicates
-        assert len(variants) == len(set(variants))
-
     def test_get_with_variants(self):
         """Test that get() works with path separator variants."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -329,10 +316,59 @@ class TestMetadataStoreUtilities:
                 {"relative_path": "search/indexer.py"},
             )
 
-            # Get with backslash (should work via variant lookup)
+            # Get with backslash (should work via canonicalization at read boundary)
             result = store.get("search\\indexer.py:1-10:function:foo")
             assert result is not None
             assert result["index_id"] == 0
+
+            store.close()
+
+    def test_write_boundary_canonical_key(self):
+        """P1b: set() stores only the canonical (forward-slash) key regardless of input."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MetadataStore(Path(tmpdir) / "test.db")
+
+            # Write with a backslash id (non-canonical)
+            store.set(
+                "search\\indexer.py:1-10:function:foo",
+                0,
+                {"relative_path": "search/indexer.py"},
+            )
+            store.commit()
+
+            # Only one key is stored (the canonical form)
+            stored_keys = list(store.keys())
+            assert len(stored_keys) == 1
+            assert stored_keys[0] == "search/indexer.py:1-10:function:foo"
+
+            # Lookup by forward-slash id succeeds (same canonical key)
+            result = store.get("search/indexer.py:1-10:function:foo")
+            assert result is not None
+            assert result["index_id"] == 0
+
+            # Lookup by backslash id also succeeds (canonicalized at read)
+            result2 = store.get("search\\indexer.py:1-10:function:foo")
+            assert result2 is not None
+            assert result2["index_id"] == 0
+
+            store.close()
+
+    def test_write_boundary_double_escape(self):
+        """P1b: set() collapses double-escaped backslash to canonical forward-slash key."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MetadataStore(Path(tmpdir) / "test.db")
+
+            # Write with double-escaped id (MCP JSON transport artifact)
+            store.set(
+                "search\\\\indexer.py:1-10:function:foo",
+                0,
+                {"relative_path": "search/indexer.py"},
+            )
+            store.commit()
+
+            stored_keys = list(store.keys())
+            assert len(stored_keys) == 1
+            assert stored_keys[0] == "search/indexer.py:1-10:function:foo"
 
             store.close()
 

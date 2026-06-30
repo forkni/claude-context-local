@@ -779,15 +779,16 @@ class RelationshipAnalyzer:
             )
             for result in similar_results:
                 result_id = result.chunk_id
-                file_path = result.relative_path or result.file_path
+                file_path = result.metadata.get("relative_path", "")
                 if result_id == target_id:
                     continue
                 if not matches_directory_filter(file_path, None, exclude_dirs):
                     continue
-                score_value = getattr(result, "score", result.similarity_score)
                 try:
                     final_score = (
-                        round(float(score_value), 2) if score_value is not None else 0.0
+                        round(float(result.score), 2)
+                        if result.score is not None
+                        else 0.0
                     )
                 except (TypeError, ValueError):
                     final_score = 0.0
@@ -795,8 +796,8 @@ class RelationshipAnalyzer:
                     {
                         "chunk_id": result_id,
                         "file": normalize_path(file_path) if file_path else "",
-                        "lines": f"{result.start_line}-{result.end_line}",
-                        "kind": result.chunk_type,
+                        "lines": f"{result.metadata.get('start_line', 0)}-{result.metadata.get('end_line', 0)}",
+                        "kind": result.metadata.get("chunk_type", "unknown"),
                         "score": final_score,
                     }
                 )

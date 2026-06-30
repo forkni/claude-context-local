@@ -15,7 +15,6 @@ from evaluation.chunk_mapping import build_line_to_chunk_map
 from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
 
-from .bm25_sync import BM25SyncManager
 from .indexer import CodeIndexManager as Indexer
 
 
@@ -61,14 +60,12 @@ class IndexWriteStage:
         embedder: Any,
         indexer: Indexer,
         snapshot_manager: SnapshotManager,
-        bm25_sync: BM25SyncManager,
         build_metadata_fn: Callable[..., dict[str, Any]],
         clear_gpu_fn: Callable[[str], None],
     ) -> None:
         self._embedder = embedder
         self._indexer = indexer
         self._snapshot_manager = snapshot_manager
-        self._bm25_sync = bm25_sync
         self._build_metadata = build_metadata_fn
         self._clear_gpu = clear_gpu_fn
 
@@ -165,7 +162,9 @@ class IndexWriteStage:
         self._indexer.save_indices()
         logger.info("[INCREMENTAL] Index saved")
 
-        bm25_resynced, bm25_resync_count = self._bm25_sync.sync_if_needed("FULL_INDEX")
+        bm25_resynced, bm25_resync_count = self._indexer.resync_if_desynced(
+            "FULL_INDEX"
+        )
 
         self._clear_gpu("FULL_INDEX")
 

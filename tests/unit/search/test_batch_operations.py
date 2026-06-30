@@ -269,6 +269,65 @@ class TestBatchOperations(TestCase):
         # Verify commit was called
         self.mock_metadata_store.commit.assert_called_once()
 
+    def test_remove_files_matches_relative_target_against_absolute_file_path(self):
+        """Dense removal must match a relative target against chunks whose
+        persisted file_path is absolute.
+
+        The incremental indexer passes *relative* removal targets (MerkleDAG
+        node keys), but ``_build_chunk_metadata`` stores the absolute path as
+        ``file_path``.  The old predicate used ``resolve_chunk_path`` which
+        prefers absolute ``file_path`` — so an absolute stored value can never
+        exact-match a relative target, and dense removal silently returns 0
+        while BM25 succeeds.  Net result: dense keeps stale vectors for every
+        modified file (BM25=flat, Dense=+N desync).
+        """
+        chunk_ids = [
+            "search/foo.py:1-10:function:bar",
+            "search/other.py:1-5:function:baz",
+        ]
+
+        def get_metadata(chunk_id):
+            if "foo.py" in chunk_id:
+                # file_path is ABSOLUTE (as stored by _build_chunk_metadata);
+                # relative_path is project-relative (as used by BM25 doc_id)
+                return {
+                    "metadata": {
+                        "file_path": "D:/proj/search/foo.py",
+                        "relative_path": "search/foo.py",
+                    }
+                }
+            return {
+                "metadata": {
+                    "file_path": "D:/proj/search/other.py",
+                    "relative_path": "search/other.py",
+                }
+            }
+
+        self.mock_metadata_store.get.side_effect = get_metadata
+        self.mock_metadata_store.__contains__ = lambda self, x: True
+
+        self.mock_faiss_index.index = Mock()
+        self.mock_faiss_index.index.ntotal = 2
+        self.mock_faiss_index.is_on_gpu = False
+        self.mock_faiss_index.chunk_ids = ["search/other.py:1-5:function:baz"]
+
+        def mock_reconstruct(pos):
+            return np.ones(768, dtype=np.float32) * pos
+
+        self.mock_faiss_index.reconstruct.side_effect = mock_reconstruct
+
+        # Target is RELATIVE — as produced by MerkleDAG / get_files_to_remove
+        result = self.batch_ops.remove_files({"search/foo.py"}, chunk_ids)
+
+        # Must find and remove the chunk even though file_path is absolute
+        self.assertEqual(
+            result,
+            1,
+            "remove_files returned 0 — dense removal failed to match the relative "
+            "target 'search/foo.py' against the absolute file_path 'D:/proj/search/foo.py'. "
+            "Fix: also check relative_path in the match predicate.",
+        )
+
 
 if __name__ == "__main__":
     import pytest

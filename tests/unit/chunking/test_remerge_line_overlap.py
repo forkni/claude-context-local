@@ -8,12 +8,17 @@ This test suite verifies the fix for the chunk merging bug where:
 The fix ensures proper line overlap checking and same-file guarantees.
 """
 
-from chunking.languages.base import LanguageChunker
+from chunking.community_remerge import (
+    assign_community_ids,
+    from_treesitter_chunks,
+    remerge_chunks_with_communities,
+    to_treesitter_chunks,
+)
 from chunking.python_ast_chunker import CodeChunk
 
 
 class TestRemergeLineOverlapFix:
-    """Tests for the line overlap logic in remerge_chunks_with_communities."""
+    """Tests for the line overlap logic in community_remerge.remerge_chunks_with_communities."""
 
     def _create_code_chunk(
         self,
@@ -57,7 +62,7 @@ class TestRemergeLineOverlapFix:
             "file.py:30-40:function:bar": 0,  # Same community
         }
 
-        result = LanguageChunker.remerge_chunks_with_communities(
+        result = remerge_chunks_with_communities(
             chunks, community_map, min_tokens=10, max_merged_tokens=5000
         )
 
@@ -82,7 +87,7 @@ class TestRemergeLineOverlapFix:
             "db.py:1-10:function:connect": 1,  # Different communities
         }
 
-        result = LanguageChunker.remerge_chunks_with_communities(
+        result = remerge_chunks_with_communities(
             chunks, community_map, min_tokens=10, max_merged_tokens=5000
         )
 
@@ -111,7 +116,7 @@ class TestRemergeLineOverlapFix:
             "only.py:5-15:function:solo": 0,
         }
 
-        result = LanguageChunker.remerge_chunks_with_communities(
+        result = remerge_chunks_with_communities(
             chunks, community_map, min_tokens=10, max_merged_tokens=5000
         )
 
@@ -141,7 +146,7 @@ class TestRemergeLineOverlapFix:
             "big.py:61-100:function:part3": 0,  # Same community
         }
 
-        result = LanguageChunker.remerge_chunks_with_communities(
+        result = remerge_chunks_with_communities(
             chunks, community_map, min_tokens=10, max_merged_tokens=5000
         )
 
@@ -173,7 +178,7 @@ class TestRemergeLineOverlapFix:
             "fileB.py:1-50:function:related_func": 0,  # Same community (semantically related)
         }
 
-        result = LanguageChunker.remerge_chunks_with_communities(
+        result = remerge_chunks_with_communities(
             chunks, community_map, min_tokens=10, max_merged_tokens=5000
         )
 
@@ -204,7 +209,7 @@ class TestRemergeLineOverlapFix:
             "fileB.py:1-10:function:second": 1,  # Different community
         }
 
-        result = LanguageChunker.remerge_chunks_with_communities(
+        result = remerge_chunks_with_communities(
             chunks, community_map, min_tokens=10, max_merged_tokens=5000
         )
 
@@ -226,7 +231,7 @@ class TestRemergeLineOverlapFix:
         ]
         community_map = {}
 
-        result = LanguageChunker.remerge_chunks_with_communities(
+        result = remerge_chunks_with_communities(
             chunks, community_map, min_tokens=10, max_merged_tokens=5000
         )
 
@@ -242,7 +247,7 @@ class TestRemergeLineOverlapFix:
             "file.py:1-10:function:foo": None,  # No community assigned
         }
 
-        result = LanguageChunker.remerge_chunks_with_communities(
+        result = remerge_chunks_with_communities(
             chunks, community_map, min_tokens=10, max_merged_tokens=5000
         )
 
@@ -251,12 +256,12 @@ class TestRemergeLineOverlapFix:
 
 
 # ---------------------------------------------------------------------------
-# Direct tests for the three static helpers extracted from remerge_chunks_with_communities
+# Direct tests for the three module functions in chunking.community_remerge
 # ---------------------------------------------------------------------------
 
 
 class TestAssignCommunityIds:
-    """Direct tests for LanguageChunker._assign_community_ids static helper."""
+    """Direct tests for assign_community_ids (chunking.community_remerge)."""
 
     def _make_chunk(self, **kwargs):
         defaults = {
@@ -288,7 +293,7 @@ class TestAssignCommunityIds:
             chunk_id=None,
         )
         community_map = {"src/a.py:10-20:method:MyClass.my_method": 42}
-        result = LanguageChunker._assign_community_ids([chunk], community_map)
+        result = assign_community_ids([chunk], community_map)
         assert len(result) == 1
         assert result[0].community_id == 42
 
@@ -296,18 +301,18 @@ class TestAssignCommunityIds:
         """When chunk_id is set, it is used as the lookup key verbatim."""
         chunk = self._make_chunk(chunk_id="file.py:5-10:function:foo")
         community_map = {"file.py:5-10:function:foo": 7}
-        result = LanguageChunker._assign_community_ids([chunk], community_map)
+        result = assign_community_ids([chunk], community_map)
         assert result[0].community_id == 7
 
     def test_community_none_when_key_missing(self):
         """community_id is None when the lookup key is not in community_map."""
         chunk = self._make_chunk(chunk_id="file.py:1-5:function:unknown")
-        result = LanguageChunker._assign_community_ids([chunk], {})
+        result = assign_community_ids([chunk], {})
         assert result[0].community_id is None
 
 
 class TestToTreesitterChunks:
-    """Direct tests for LanguageChunker._to_treesitter_chunks static helper."""
+    """Direct tests for to_treesitter_chunks (chunking.community_remerge)."""
 
     def _make_chunk(self, **kwargs):
         defaults = {
@@ -339,7 +344,7 @@ class TestToTreesitterChunks:
         chunk = self._make_chunk(
             content="hello", start_line=10, end_line=15, community_id=3
         )
-        result = LanguageChunker._to_treesitter_chunks([chunk])
+        result = to_treesitter_chunks([chunk])
         assert len(result) == 1
         ts = result[0]
         assert ts.content == "hello"
@@ -350,13 +355,13 @@ class TestToTreesitterChunks:
     def test_metadata_carries_calls_and_file_path(self):
         """metadata dict includes calls and file_path from the original chunk."""
         chunk = self._make_chunk(calls=["bar", "baz"], file_path="mod/b.py")
-        result = LanguageChunker._to_treesitter_chunks([chunk])
+        result = to_treesitter_chunks([chunk])
         assert result[0].metadata["calls"] == ["bar", "baz"]
         assert result[0].metadata["file_path"] == "mod/b.py"
 
 
 class TestFromTreesitterChunks:
-    """Direct tests for LanguageChunker._from_treesitter_chunks static helper."""
+    """Direct tests for from_treesitter_chunks (chunking.community_remerge)."""
 
     def _make_original(self, file_path, start_line, end_line):
         return CodeChunk(
@@ -412,7 +417,7 @@ class TestFromTreesitterChunks:
         """Pass 1: exact containment → uses the original chunk's file_path."""
         orig = self._make_original("a.py", 5, 10)
         ts = self._make_ts_chunk("a.py", 5, 10)
-        result = LanguageChunker._from_treesitter_chunks([ts], [orig])
+        result = from_treesitter_chunks([ts], [orig])
         assert len(result) == 1
         assert result[0].file_path == "a.py"
         assert result[0].calls == ["dep"]
@@ -421,7 +426,7 @@ class TestFromTreesitterChunks:
         """Pass 2: no exact containment → falls back to any chunk from same file."""
         orig = self._make_original("a.py", 1, 4)
         ts = self._make_ts_chunk("a.py", 5, 10)  # different range
-        result = LanguageChunker._from_treesitter_chunks([ts], [orig])
+        result = from_treesitter_chunks([ts], [orig])
         assert len(result) == 1
         assert result[0].file_path == "a.py"
 
@@ -429,7 +434,7 @@ class TestFromTreesitterChunks:
         """Pass 3: no chunk shares the file_path → chunk skipped, result shorter."""
         orig = self._make_original("b.py", 1, 5)
         ts = self._make_ts_chunk("a.py", 1, 5)  # different file
-        result = LanguageChunker._from_treesitter_chunks([ts], [orig])
+        result = from_treesitter_chunks([ts], [orig])
         assert len(result) == 0
 
 
@@ -520,7 +525,7 @@ class TestMergedChunkEdgeUnion:
         member_b = self._make_member("file.py", 11, 20, "method_b", [call_b], [])
         ts = self._make_merged_ts("file.py", 1, 20)
 
-        result = LanguageChunker._from_treesitter_chunks([ts], [member_a, member_b])
+        result = from_treesitter_chunks([ts], [member_a, member_b])
 
         assert len(result) == 1
         merged = result[0]
@@ -543,7 +548,7 @@ class TestMergedChunkEdgeUnion:
         member_b = self._make_member("file.py", 11, 20, "method_b", [], [rel_b])
         ts = self._make_merged_ts("file.py", 1, 20, name="MyClass")
 
-        result = LanguageChunker._from_treesitter_chunks([ts], [member_a, member_b])
+        result = from_treesitter_chunks([ts], [member_a, member_b])
 
         assert len(result) == 1
         merged = result[0]
@@ -569,7 +574,7 @@ class TestMergedChunkEdgeUnion:
         member_b = self._make_member("file.py", 11, 20, "method_b", [], [])
         ts = self._make_merged_ts("file.py", 1, 20, name="MyClass")
 
-        result = LanguageChunker._from_treesitter_chunks([ts], [member_a, member_b])
+        result = from_treesitter_chunks([ts], [member_a, member_b])
 
         assert len(result) == 1
         merged = result[0]
@@ -597,7 +602,7 @@ class TestMergedChunkEdgeUnion:
         member_b = self._make_member("file.py", 11, 20, "method_b", [call_dup], [])
         ts = self._make_merged_ts("file.py", 1, 20)
 
-        result = LanguageChunker._from_treesitter_chunks([ts], [member_a, member_b])
+        result = from_treesitter_chunks([ts], [member_a, member_b])
 
         merged = result[0]
         calls = merged.calls or []

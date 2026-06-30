@@ -168,8 +168,8 @@ class TestIndexSynchronizer:
         self.mock_dense_index.chunk_ids = ["chunk1", "chunk2"]
         self.mock_dense_index.metadata_store = MagicMock()
         self.mock_dense_index.metadata_store.get.side_effect = [
-            {"metadata": {"content": "def test(): pass", "file": "test.py"}},
-            {"metadata": {"content": "class Test: pass", "file": "test.py"}},
+            {"metadata": {"bm25_text": "def test(): pass", "file": "test.py"}},
+            {"metadata": {"bm25_text": "class Test: pass", "file": "test.py"}},
         ]
 
         # Mock BM25Index constructor and methods
@@ -196,6 +196,44 @@ class TestIndexSynchronizer:
 
         # Should return 0 (no chunks)
         assert result == 0
+
+    def test_resync_bm25_preserves_empty_content_chunks(self):
+        """Resync must not drop chunks whose bm25_text is empty or absent.
+
+        The normal add path (BM25Index.index_documents) accepts empty strings
+        and keeps every chunk, so BM25 == Dense after indexing.  The resync
+        path must mirror that behaviour — dropping empty-content chunks here
+        is what causes the chronic BM25=1793, Dense=1801 desync.
+        """
+        # 3 chunks: two with content, one with NO bm25_text key at all.
+        # Use a dict-based callable (not a list) for side_effect so the mock
+        # is robust against extra/out-of-order calls that can exhaust an
+        # ordered list under certain test-collection orderings.
+        _metadata_by_id = {
+            "chunk1": {"metadata": {"bm25_text": "def foo(): pass", "file": "a.py"}},
+            "chunk2": {"metadata": {"bm25_text": "class Bar: pass", "file": "b.py"}},
+            "chunk3_empty": {"metadata": {"file": "c.py"}},  # no bm25_text
+        }
+        self.mock_dense_index.chunk_ids = ["chunk1", "chunk2", "chunk3_empty"]
+        self.mock_dense_index.metadata_store = MagicMock()
+        self.mock_dense_index.metadata_store.get.side_effect = _metadata_by_id.get
+
+        with patch("search.index_sync.BM25Index") as mock_bm25_class:
+            mock_new_bm25 = MagicMock()
+            mock_new_bm25.size = 3
+            mock_bm25_class.return_value = mock_new_bm25
+
+            result = self.synchronizer.resync_bm25_from_dense()
+
+            # Must index ALL 3 doc_ids (including the empty-content one)
+            call_args = mock_new_bm25.index_documents.call_args
+            assert call_args is not None, "index_documents was never called"
+            actual_doc_ids = call_args[0][1]  # positional arg 1 = doc_ids list
+            assert actual_doc_ids == ["chunk1", "chunk2", "chunk3_empty"], (
+                f"Expected all 3 chunk_ids, got {actual_doc_ids}. "
+                "resync_bm25_from_dense is dropping empty-content chunks."
+            )
+            assert result == 3
 
     def test_clear_index_success(self):
         """Test clearing both indices."""
@@ -233,78 +271,63 @@ class TestIndexSynchronizer:
             # Verify rmtree was called
             assert mock_rmtree.call_count >= 0  # May or may not cleanup
 
-    def test_remove_file_chunks_success(self):
-        """Test removing chunks for specific file."""
-        # Configure mocks - both indices have remove_file_chunks
-        self.mock_dense_index.remove_file_chunks = MagicMock(return_value=3)
-        self.mock_bm25_index.remove_file_chunks = MagicMock(return_value=3)
+    def test_remove_files_single_file(self):
+        """Test removing chunks for a single file (set-of-one)."""
+        self.mock_dense_index.remove_files = MagicMock(return_value=3)
+        self.mock_bm25_index.remove_files = MagicMock(return_value=3)
 
-        # Execute removal
-        result = self.synchronizer.remove_file_chunks("test.py", "test_project")
+        result = self.synchronizer.remove_files({"test.py"}, "test_project")
 
-        # Verify removals were called
-        self.mock_dense_index.remove_file_chunks.assert_called_once_with(
-            "test.py", "test_project"
+        self.mock_dense_index.remove_files.assert_called_once_with(
+            {"test.py"}, "test_project"
         )
-        self.mock_bm25_index.remove_file_chunks.assert_called_once_with(
-            "test.py", "test_project"
+        self.mock_bm25_index.remove_files.assert_called_once_with(
+            {"test.py"}, "test_project"
         )
         assert result == 6  # 3 + 3
 
-    def test_remove_file_chunks_not_found(self):
+    def test_remove_files_not_found(self):
         """Test removing chunks when file doesn't exist."""
-        # Configure mocks to return 0
-        self.mock_dense_index.remove_file_chunks = MagicMock(return_value=0)
-        self.mock_bm25_index.remove_file_chunks = MagicMock(return_value=0)
+        self.mock_dense_index.remove_files = MagicMock(return_value=0)
+        self.mock_bm25_index.remove_files = MagicMock(return_value=0)
 
-        # Execute removal
-        result = self.synchronizer.remove_file_chunks("nonexistent.py", "test_project")
+        result = self.synchronizer.remove_files({"nonexistent.py"}, "test_project")
 
-        # Should return 0
         assert result == 0
 
-    def test_remove_multiple_files_success(self):
+    def test_remove_files_batch(self):
         """Test batch removal of multiple files."""
-        # Configure mocks - both have remove_multiple_files
         file_paths = {"test1.py", "test2.py", "test3.py"}
-        self.mock_dense_index.remove_multiple_files = MagicMock(return_value=10)
-        self.mock_bm25_index.remove_multiple_files = MagicMock(return_value=10)
+        self.mock_dense_index.remove_files = MagicMock(return_value=10)
+        self.mock_bm25_index.remove_files = MagicMock(return_value=10)
 
-        # Execute batch removal
-        result = self.synchronizer.remove_multiple_files(file_paths, "test_project")
+        result = self.synchronizer.remove_files(file_paths, "test_project")
 
-        # Verify batch removals were called
-        self.mock_dense_index.remove_multiple_files.assert_called_once_with(
+        self.mock_dense_index.remove_files.assert_called_once_with(
             file_paths, "test_project"
         )
-        self.mock_bm25_index.remove_multiple_files.assert_called_once_with(
+        self.mock_bm25_index.remove_files.assert_called_once_with(
             file_paths, "test_project"
         )
         assert result == 20  # 10 + 10
 
-    def test_remove_multiple_files_empty_list(self):
-        """Test batch removal with empty file list."""
-        self.mock_dense_index.remove_multiple_files = MagicMock(return_value=0)
-        self.mock_bm25_index.remove_multiple_files = MagicMock(return_value=0)
+    def test_remove_files_empty_set(self):
+        """Test batch removal with empty file set."""
+        result = self.synchronizer.remove_files(set(), "test_project")
 
-        # Execute with empty set
-        result = self.synchronizer.remove_multiple_files(set(), "test_project")
-
-        # Should return 0 without errors
         assert result == 0
 
-    def test_remove_multiple_files_partial_failures(self):
-        """Test batch removal with partial failure."""
+    def test_remove_files_partial_failure(self):
+        """Test batch removal with partial failure (BM25 fails, dense succeeds)."""
         file_paths = {"test1.py", "test2.py", "test3.py"}
 
-        # Configure mocks - dense succeeds, BM25 fails
-        self.mock_dense_index.remove_multiple_files = MagicMock(return_value=10)
-        self.mock_bm25_index.remove_multiple_files = MagicMock(
+        self.mock_dense_index.remove_files = MagicMock(return_value=10)
+        self.mock_bm25_index.remove_files = MagicMock(
             side_effect=Exception("BM25 error")
         )
 
-        # Execute batch removal - should not raise (only one failed)
-        result = self.synchronizer.remove_multiple_files(file_paths, "test_project")
+        # Should not raise (only one failed)
+        result = self.synchronizer.remove_files(file_paths, "test_project")
 
         # Should return 10 (only dense succeeded)
         assert result == 10
@@ -397,3 +420,87 @@ class TestIndexSynchronizer:
             call_kwargs = mock_dense_class.call_args[1]
             assert "embedder" in call_kwargs
             assert call_kwargs["embedder"] is None
+
+
+class TestResyncIfDesynced:
+    """P6 behaviour tests for IndexSynchronizer.resync_if_desynced.
+
+    Verifies the threshold logic, data source (live counts, not get_stats()),
+    and return values.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup(self, tmp_path):
+        self.storage_dir = tmp_path / "storage"
+        self.storage_dir.mkdir(parents=True)
+        self.bm25 = MagicMock()
+        self.dense = MagicMock()
+        self.dense.index = MagicMock()
+        self.sync = IndexSynchronizer(
+            storage_dir=self.storage_dir,
+            bm25_index=self.bm25,
+            dense_index=self.dense,
+        )
+
+    def test_synced_returns_false_zero(self):
+        """No resync when counts match."""
+        self.bm25._doc_ids = list(range(100))
+        self.dense.ntotal = 100
+
+        resynced, count = self.sync.resync_if_desynced("TEST")
+
+        assert resynced is False
+        assert count == 0
+
+    def test_below_threshold_no_resync(self):
+        """9% difference is below DESYNC_THRESHOLD — no action."""
+        self.bm25._doc_ids = list(range(91))
+        self.dense.ntotal = 100  # 9% diff
+
+        resynced, count = self.sync.resync_if_desynced("TEST")
+
+        assert resynced is False
+        assert count == 0
+
+    def test_above_threshold_triggers_resync(self):
+        """11% difference triggers resync and returns (True, rebuild_count)."""
+        self.bm25._doc_ids = list(range(89))
+        self.dense.ntotal = 100  # 11% diff > 0.10
+
+        self.dense.chunk_ids = ["c1", "c2"]
+        self.dense.metadata_store = MagicMock()
+        self.dense.metadata_store.get.side_effect = [
+            {"metadata": {"bm25_text": "def a(): pass"}},
+            {"metadata": {"bm25_text": "def b(): pass"}},
+        ]
+
+        with patch("search.index_sync.BM25Index") as mock_bm25_cls:
+            mock_new_bm25 = MagicMock()
+            mock_new_bm25.size = 2
+            mock_bm25_cls.return_value = mock_new_bm25
+
+            resynced, count = self.sync.resync_if_desynced("TEST")
+
+        assert resynced is True
+        assert count == 2
+
+    def test_dense_empty_skips_resync(self):
+        """Dense count=0 → skip resync (no reference to divide by)."""
+        self.bm25._doc_ids = []
+        self.dense.ntotal = 0
+        self.dense.index = None
+
+        resynced, count = self.sync.resync_if_desynced("TEST")
+
+        assert resynced is False
+        assert count == 0
+
+    def test_uses_live_counts_not_get_stats(self):
+        """resync_if_desynced never calls get_stats() — live counts only."""
+        self.bm25._doc_ids = list(range(100))
+        self.dense.ntotal = 100
+
+        self.sync.resync_if_desynced("TEST")
+
+        self.dense.get_stats.assert_not_called()
+        self.bm25.get_stats.assert_not_called()

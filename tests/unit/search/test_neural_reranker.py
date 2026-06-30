@@ -2,7 +2,12 @@
 
 from unittest.mock import MagicMock, patch
 
-from search.neural_reranker import NeuralReranker
+from search.neural_reranker import (
+    BaseReranker,
+    GenerativeReranker,
+    JinaRerankerV3,
+    NeuralReranker,
+)
 from search.reranker import SearchResult
 
 
@@ -158,3 +163,57 @@ class TestNeuralReranker:
 
         # Verify batch_size was used
         assert mock_model.predict.call_args[1]["batch_size"] == 32
+
+
+# ---------------------------------------------------------------------------
+# T4 ownership gate — BaseReranker owns lifecycle, no per-class copies
+# ---------------------------------------------------------------------------
+
+
+class TestBaseRerankerOwnership:
+    """AST-free ownership gate: lifecycle methods resolve to BaseReranker.
+
+    If any concrete class re-defines is_loaded, get_vram_usage, or cleanup the
+    assertion fails — they must inherit the single implementation from BaseReranker.
+    """
+
+    CONCRETE_CLASSES = [NeuralReranker, GenerativeReranker, JinaRerankerV3]
+    LIFECYCLE_METHODS = ["is_loaded", "get_vram_usage", "cleanup"]
+
+    def test_lifecycle_methods_owned_by_base(self):
+        """All three lifecycle methods must resolve to BaseReranker, not concrete classes."""
+        for cls in self.CONCRETE_CLASSES:
+            for method_name in self.LIFECYCLE_METHODS:
+                owner = vars(cls).get(method_name)
+                assert owner is None, (
+                    f"{cls.__name__}.{method_name} is defined directly on the class "
+                    f"instead of being inherited from BaseReranker. "
+                    f"Delete the copy from {cls.__name__}."
+                )
+
+    def test_all_concrete_classes_inherit_base(self):
+        """All concrete reranker classes must be subclasses of BaseReranker."""
+        for cls in self.CONCRETE_CLASSES:
+            assert issubclass(cls, BaseReranker), (
+                f"{cls.__name__} does not inherit from BaseReranker."
+            )
+
+    def test_is_loaded_returns_false_when_model_none(self):
+        """is_loaded() returns False before model is loaded (base implementation)."""
+        reranker = NeuralReranker()
+        assert reranker._model is None
+        assert reranker.is_loaded() is False
+
+    def test_generative_cleanup_extra_clears_tokenizer(self):
+        """GenerativeReranker._cleanup_extra deletes self._tokenizer."""
+        reranker = GenerativeReranker()
+        reranker._tokenizer = MagicMock()
+        reranker._cleanup_extra()
+        assert reranker._tokenizer is None
+
+    def test_cleanup_log_msgs_are_distinct(self):
+        """Each concrete class has a unique _CLEANUP_LOG_MSG."""
+        msgs = {cls._CLEANUP_LOG_MSG for cls in self.CONCRETE_CLASSES}
+        assert len(msgs) == len(self.CONCRETE_CLASSES), (
+            "Duplicate _CLEANUP_LOG_MSG across concrete reranker classes."
+        )

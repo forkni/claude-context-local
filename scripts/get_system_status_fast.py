@@ -79,56 +79,18 @@ def main():
 
         # Parse Config Values
         embedding = cfg.get("embedding", {})
-        routing = cfg.get("routing", {})
         reranker = cfg.get("reranker", {})
         performance = cfg.get("performance", {})
         output = cfg.get("output", {})
 
         # -- Model Status --
         model_name = embedding.get("model_name", "google/embeddinggemma-300m")
-        multi_enabled = routing.get("multi_model_enabled", True)  # Default True in code
-        pool = routing.get("multi_model_pool", None) or "full"
-
-        # Pool contents for inconsistency detection (mirrored from search/config.py)
-        _pool_models = {
-            "lightweight-speed": {"BAAI/bge-m3", "Alibaba-NLP/gte-modernbert-base"},
-            "full": {
-                "BAAI/bge-m3",
-                "nomic-ai/CodeRankEmbed",
-                "Qwen/Qwen3-Embedding-4B",
-            },
-        }
-
-        if multi_enabled:
-            if pool == "lightweight-speed":
-                print("Model: [MULTI] BGE-M3 + gte-modernbert (1.65GB total)")
-            else:
-                print("Model: [MULTI] CodeRankEmbed + Qwen3-4B (~10.6GB total)")
-            print(f"       Active routing - {pool} pool")
-            # Detect inconsistency: embedding.model_name not in active pool
-            pool_models = _pool_models.get(pool, set())
-            if pool_models and model_name not in pool_models:
-                spec = MODEL_REGISTRY.get(
-                    model_name, {"short": model_name.split("/")[-1]}
-                )
-                short = spec.get("short", model_name.split("/")[-1])
-                print(
-                    f"       [WARN] config inconsistency: embedding.model_name={short}"
-                )
-                print(
-                    f"       [WARN] is not in the {pool} pool and is ignored by the indexer"
-                )
-                print(
-                    "       [WARN] Use 'M > 1-2-4' to switch to a single model, or reselect opt 3"
-                )
-        else:
-            # Single model lookup
-            spec = MODEL_REGISTRY.get(
-                model_name, {"dim": "?", "vram": "?", "short": model_name}
-            )
-            short_name = spec.get("short", model_name.split("/")[-1])
-            print(f"Model: [SINGLE] {short_name} ({spec['dim']}d, {spec['vram']})")
-            print("Tip: Press M for Quick Model Switch")
+        spec = MODEL_REGISTRY.get(
+            model_name, {"dim": "?", "vram": "?", "short": model_name}
+        )
+        short_name = spec.get("short", model_name.split("/")[-1])
+        print(f"Model: {short_name} ({spec['dim']}d, {spec['vram']})")
+        print("Tip: Press M for Quick Model Switch")
 
         # -- Reranker Status --
         reranker_enabled = reranker.get("enabled", True)

@@ -12,10 +12,11 @@ from search.ranking_policy import (
     TYPE_BOOSTS_ENTITY,
     lifecycle_demotion,
 )
+from search.tokenization import normalize_to_tokens
 
 
 if TYPE_CHECKING:
-    from .searcher import SearchResult
+    from .reranker import SearchResult
 
 
 class RankingHeuristics:
@@ -32,7 +33,7 @@ class RankingHeuristics:
 
     def _score(self, result: "SearchResult", query: str) -> float:
         """Compute relevance score for a single result."""
-        score = result.similarity_score
+        score = result.score
 
         query_tokens = self._normalize_to_tokens(query.lower())
         is_entity_query = self._is_entity_like_query(query, query_tokens)
@@ -45,29 +46,33 @@ class RankingHeuristics:
         else:
             type_boosts = TYPE_BOOSTS_CODE
 
-        score *= type_boosts.get(result.chunk_type, 1.0)
+        chunk_type = result.metadata.get("chunk_type", "unknown")
+        score *= type_boosts.get(chunk_type, 1.0)
 
-        score *= self._calculate_name_boost(result.name, query, query_tokens)
-        score *= self._calculate_path_boost(result.relative_path, query_tokens)
+        name = result.metadata.get("name")
+        relative_path = result.metadata.get("relative_path", "")
+        score *= self._calculate_name_boost(name, query, query_tokens)
+        score *= self._calculate_path_boost(relative_path, query_tokens)
 
-        score *= lifecycle_demotion(result.name, query.lower())
+        if name is not None:
+            score *= lifecycle_demotion(name, query.lower())
 
-        if result.docstring:
-            if is_entity_query and result.chunk_type == "module":
+        docstring = result.metadata.get("docstring")
+        if docstring:
+            if is_entity_query and chunk_type == "module":
                 score *= 1.02
             else:
                 score *= 1.05
 
-        if len(result.content_preview) > 1000:
+        content_preview = result.metadata.get("content_preview", "")
+        if len(content_preview) > 1000:
             score *= 0.98
 
         return score
 
     def _normalize_to_tokens(self, text: str) -> list[str]:
         """Convert text to normalized tokens, handling CamelCase."""
-        text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-        text = text.replace("_", " ").replace("-", " ")
-        return re.findall(r"\w+", text.lower())
+        return normalize_to_tokens(text)
 
     def _is_entity_like_query(self, query: str, query_tokens: list[str]) -> bool:
         """Detect if query looks like an entity/type name."""

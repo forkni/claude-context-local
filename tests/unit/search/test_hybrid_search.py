@@ -556,9 +556,9 @@ class TestHybridSearcher:
         dense_mock.chunk_ids = ["chunk1", "chunk2", "chunk3"]
         dense_mock.metadata_store.get = Mock(
             side_effect=[
-                {"metadata": {"content": "def func1(): pass"}},
-                {"metadata": {"content": "class MyClass: pass"}},
-                {"metadata": {"content": "async def async_func(): pass"}},
+                {"metadata": {"bm25_text": "def func1(): pass"}},
+                {"metadata": {"bm25_text": "class MyClass: pass"}},
+                {"metadata": {"bm25_text": "async def async_func(): pass"}},
             ]
         )
 
@@ -609,8 +609,8 @@ class TestHybridSearcher:
         dense_mock.chunk_ids = ["chunk1", "chunk2"]
         dense_mock.metadata_store.get = Mock(
             side_effect=[
-                {"metadata": {"content": "valid content"}},
-                {"metadata": {}},  # No content key
+                {"metadata": {"bm25_text": "valid content"}},
+                {"metadata": {}},  # No bm25_text key
             ]
         )
         searcher.dense_index = dense_mock

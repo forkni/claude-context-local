@@ -267,6 +267,90 @@ class TestExtractSubgraph:
 # ---------------------------------------------------------------------------
 
 
+class TestPrivateHelpers:
+    """Direct unit tests for the decomposed private helpers."""
+
+    # _reorder_synthetic ---------------------------------------------------
+
+    def test_reorder_synthetic_none_intent_returns_unchanged(self):
+        """None intent_decision → no reordering."""
+        stage = GraphScoringStage()
+        results = [
+            {"kind": "module"},
+            {"kind": "function"},
+        ]
+        out = stage._reorder_synthetic(list(results), None)
+        assert out == results
+
+    def test_reorder_synthetic_global_intent_returns_unchanged(self):
+        """GLOBAL intent → synthetic chunks stay in place."""
+        stage = GraphScoringStage()
+        intent = IntentDecision(
+            intent=QueryIntent.GLOBAL,
+            confidence=0.9,
+            reason="global",
+            scores={},
+            suggested_params={},
+        )
+        results = [{"kind": "module"}, {"kind": "function"}]
+        out = stage._reorder_synthetic(list(results), intent)
+        assert out == results
+
+    def test_reorder_synthetic_moves_synthetic_to_tail(self):
+        """Non-GLOBAL intent moves module/community to the end."""
+        stage = GraphScoringStage()
+        intent = IntentDecision(
+            intent=QueryIntent.LOCAL,
+            confidence=0.9,
+            reason="local",
+            scores={},
+            suggested_params={},
+        )
+        fn = {"kind": "function"}
+        mod = {"kind": "module"}
+        com = {"kind": "community"}
+        out = stage._reorder_synthetic([mod, fn, com], intent)
+        assert out[0] == fn
+        assert {r["kind"] for r in out[1:]} == {"module", "community"}
+
+    def test_reorder_synthetic_no_synthetic_chunks_unchanged(self):
+        """No synthetic chunks → list unchanged even with non-GLOBAL intent."""
+        stage = GraphScoringStage()
+        intent = IntentDecision(
+            intent=QueryIntent.LOCAL,
+            confidence=0.9,
+            reason="local",
+            scores={},
+            suggested_params={},
+        )
+        results = [{"kind": "function"}, {"kind": "class"}]
+        out = stage._reorder_synthetic(list(results), intent)
+        assert out == results
+
+    # _cap_results ---------------------------------------------------------
+
+    def test_cap_results_under_limit_unchanged(self):
+        """Fewer than k*4 results → unchanged."""
+        stage = GraphScoringStage()
+        results = [{"chunk_id": str(i)} for i in range(15)]
+        out = stage._cap_results(results, k=4)
+        assert len(out) == 15  # 15 < 16
+
+    def test_cap_results_exactly_at_limit_unchanged(self):
+        """Exactly k*4 results → unchanged."""
+        stage = GraphScoringStage()
+        results = [{"chunk_id": str(i)} for i in range(16)]
+        out = stage._cap_results(results, k=4)
+        assert len(out) == 16
+
+    def test_cap_results_over_limit_truncated(self):
+        """More than k*4 results → truncated to k*4."""
+        stage = GraphScoringStage()
+        results = [{"chunk_id": str(i)} for i in range(20)]
+        out = stage._cap_results(results, k=4)
+        assert len(out) == 16
+
+
 class TestGraphScoringStageIntegration:
     """End-to-end tests across Block F, the k*4 cap, and Block G."""
 

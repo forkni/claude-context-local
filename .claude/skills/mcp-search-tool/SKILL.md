@@ -3,7 +3,7 @@ name: mcp-search-tool
 description: "Guides semantic code search via the code-search MCP server. Use when searching for code definitions, callers, callees, dependencies, or tracing code flow in indexed projects. Provides correct workflows for search_code, find_connections, find_path, find_similar_code. Invoke /mcp-search-tool status to run a health check."
 user-invocable: true
 argument-hint: "search query or 'status' for index health"
-allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_query_routing, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources"
+allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources"
 ---
 
 # MCP Search Tool Skill
@@ -39,7 +39,7 @@ MCP search returns **ranked candidates**, not definitive answers. On the 2026-05
 
 **Result Interpretation Workflow:**
 1. Call `code-search:search_code(query="<your query>", k=7, include_context=true)` — `include_context` fetches ego-graph/graph-hop neighbors inline (more recall per call). Use `k=10` for architectural / global queries.
-2. **Scan ALL k results** — sort by `reranker_score` first, then `blended_score` (results are NOT pre-sorted; see Gotchas). The tool returns **metadata rows** (chunk_id, type, name, scores, short snippet). Names + types + scores are enough to judge relevance — you do NOT need to refetch bodies to "confirm".
+2. **Scan ALL k results** — results are pre-sorted in relevance order (centrality-reranked blended_score descending) under the server default; module/community summary chunks appear at the tail for non-GLOBAL queries. Array position 0 is the highest blended_score result. The tool returns **metadata rows** (chunk_id, type, name, scores, short snippet). Names + types + scores are enough to judge relevance — you do NOT need to refetch bodies to "confirm". You may optionally re-sort by `reranker_score` for pure cross-encoder order, but doing so will **re-promote demoted summary chunks** (see Gotchas).
 3. **Issue a second search with alternate phrasings** when the question describes a generic operation (validate/normalize/encode/decode/load/save/id-handling) that could live in multiple subsystems, or when the first result set is concentrated in one module but the concept plausibly also exists in a sibling file. Use synonyms, subsystem names, and related symbol names. Aim for 2–3 diverse queries on non-trivial questions; do NOT finish after one query.
 4. **Identify the best match** based on your actual need.  For MRR / lead-chunk ranking, prefer the canonical `class` or `method`/`function` chunk whose name most directly matches the question — never a `split_block`, `module`, or `decorated_definition` fragment (even if it scores slightly higher; see Gotchas).
 5. If the best match is a module/summary chunk but you need specific code, look at lower-ranked results or filter with `chunk_type="function"` / `chunk_type="class"`.
@@ -47,7 +47,7 @@ MCP search returns **ranked candidates**, not definitive answers. On the 2026-05
 
 **When rank-1 is most reliable:** small function discovery ("get X", "validate Y"), exact symbol lookup via `chunk_id`
 
-**When you MUST scan all results:** class overview queries, sibling context ("encode and decode"), queries where module/community chunks may surface at rank-1
+**When you MUST scan all results:** class overview queries, sibling context ("encode and decode"), queries where the answer may rank 5–7
 
 ---
 
@@ -102,7 +102,7 @@ What are you trying to do?
 
 ---
 
-## 19-Tool Summary
+## 18-Tool Summary
 
 | Tool | Purpose |
 |------|---------|
@@ -118,7 +118,6 @@ What are you trying to do?
 | code-search:delete_project | Safely delete project data |
 | code-search:configure_search_mode | Set search mode & BM25/dense weights |
 | code-search:get_search_config_status | View current config |
-| code-search:configure_query_routing | Multi-model routing settings |
 | code-search:configure_reranking | Neural reranking settings |
 | code-search:configure_chunking | Code chunking & community detection |
 | code-search:list_embedding_models | Show available models |
@@ -126,7 +125,7 @@ What are you trying to do?
 | code-search:get_memory_status | Check RAM/VRAM usage |
 | code-search:cleanup_resources | Free memory/caches |
 
-19-tool catalog (names + one-liner purposes): [references/tool-index.md](references/tool-index.md)
+18-tool catalog (names + one-liner purposes): [references/tool-index.md](references/tool-index.md)
 Full parameter reference for essential tools (search_code, find_connections, find_path): [references/parameters.md](references/parameters.md)
 Advanced features (multi-hop, intent routing, summaries): [references/advanced-features.md](references/advanced-features.md)
 Benchmark data & mode selection guide: [references/performance.md](references/performance.md)
@@ -137,11 +136,11 @@ Benchmark data & mode selection guide: [references/performance.md](references/pe
 
 These are non-obvious traps from real session experience — not things the docs mention.
 
-**Results are NOT sorted by score.** The returned array is ordered by internal file/community grouping, not by relevance. When you need a true ranking (e.g. for MRR/Recall evaluation), sort by `reranker_score` first (cross-encoder signal; strongest discriminator), then `blended_score` as a tiebreaker:
+**Results are pre-sorted by relevance (blended_score descending) under the server default (`source_order_output=false`, v0.18.0+).** Module/community summary chunks are demoted to the tail for non-GLOBAL queries. Array position 0 is now the highest blended_score result. If you need strict cross-encoder order, re-sort by `reranker_score`:
 ```python
 ranked = sorted(results, key=lambda r: (r.get("reranker_score", 0), r.get("blended_score", 0)), reverse=True)
 ```
-Failing to sort is why a result at array position 0 isn't always rank-1.  For a quick single-metric rank, `blended_score` works but `reranker_score` is more discriminating.
+**Caveat:** re-sorting by `reranker_score` will re-promote demoted module/community summary chunks (e.g. a `module:hybrid_searcher` summary with reranker_score 0.94 lands at position 28 in the default order because blended_score factors in centrality; re-sorting elevates it back to position 0). Apply the re-sort deliberately when you specifically want pure cross-encoder ranking.
 
 **`search_code` returns metadata only — do NOT refetch chunk bodies.** Each result row contains `chunk_id`, `type`, `name`, `scores`, and a short snippet.  Names, types, and scores are sufficient to judge relevance; additional tool calls to fetch or "confirm" the body of each candidate waste call budget without improving precision.
 
@@ -159,7 +158,7 @@ Failing to sort is why a result at array position 0 isn't always rank-1.  For a 
 
 For **connection/relationship queries** (find_connections output): emit EVERY returned edge target in `relevant_chunk_ids`, even cross-file ones. The named symbol is the question's *subject*, usually **not** in the relevant set — do **not** lead with it. Lead with the connection targets `find_connections` returned (the actual callers / callees / subclasses), highest `resolver_confidence` first. Do not prune based on file location or kind.
 
-**Community and module summary chunks surface at rank-1 on class-overview queries.** They have IDs like `__community__/label:0-0:community:label` or `file.py:0-0:module:name`. When this happens: **first scan the remaining lower-ranked results** in the current set — the specific implementation is often already present at rank 2-4. If not found there, re-run with `chunk_type="function"` or `chunk_type="class"` to explicitly filter summary chunks out.
+**Community and module summary chunks are demoted to the tail on class-overview queries (v0.18.0+, `source_order_output=false` default).** They have IDs like `__community__/label:0-0:community:label` or `file.py:0-0:module:name`. Under the default ordering they appear at the end of the results array for non-GLOBAL queries — **don't mistake their low array position for low relevance; their reranker_score may be high.** If you need a summary chunk specifically, look at the tail of the result array, or filter with `chunk_type="community"` / `chunk_type="module"`. If `source_order_output=true` is set (DOS-RAG mode), they can still surface at rank-1 of their file group — use `chunk_type="function"` or `chunk_type="class"` to exclude them.
 
 **Unicode symbols crash on Windows cp1252 terminals.** `✓`/`✗` cause `UnicodeEncodeError` in any script that writes to stdout in a cmd/PowerShell window without UTF-8. Use plain ASCII (`PASS`/`FAIL`) or run with `PYTHONUTF8=1`.
 
@@ -191,7 +190,6 @@ If returned chunk_ids have file paths that don't match the expected project, cal
 | **Wrong result at rank-1** | Scan all k results — answer likely at rank 2-4. Use `chunk_type` filter to exclude module/community summary chunks |
 | **Too slow** | Use `search_mode="bm25"` for exact symbols (fastest). Check: `code-search:get_memory_status`. Free: `code-search:cleanup_resources` |
 | **Memory issues** | `code-search:cleanup_resources`. Switch to a lighter model: `code-search:switch_embedding_model("google/embeddinggemma-300m")` (~1.2GB, default) or `code-search:switch_embedding_model("Alibaba-NLP/gte-modernbert-base")` (0.28GB, lightest) |
-| **Code model never selected (multi-model setup)** | The routing confidence gate may be too aggressive. Check routing block in `search_code` response: if `routing.confidence < threshold`, the code model was rejected. Use `configure_query_routing` to lower the threshold or add keywords to the routing config. For the lightweight-speed pool (bge_m3 + gte_modernbert), the threshold in `config/routing_keywords.yaml` → `lightweight_pool.confidence_threshold` controls this. |
 | **find_similar_code use-case** | Use when you have a seed chunk_id and want to find structural/semantic near-duplicates: sibling method overrides, parallel implementations across language backends, or copied-with-variation functions. Call `search_code` first to get the seed chunk_id, then `find_similar_code(chunk_id=...)`. Returns top-N similar chunks ranked by embedding similarity. |
 
 ---

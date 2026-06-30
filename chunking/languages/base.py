@@ -5,16 +5,14 @@ for all language-specific chunkers.
 """
 
 import logging
-from abc import ABC, abstractmethod
+from abc import ABC
 from dataclasses import dataclass
-from dataclasses import replace as dc_replace
 from typing import TYPE_CHECKING, Any, Optional
 
 from tree_sitter import Language, Parser
 
 
 if TYPE_CHECKING:
-    from chunking.python_ast_chunker import CodeChunk
     from search.config import ChunkingConfig
 
 logger = logging.getLogger(__name__)
@@ -143,7 +141,7 @@ class TreeSitterChunk:
         }
 
 
-class LanguageChunker(ABC):
+class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_metadata is an intentional no-op hook
     """Abstract base class for language-specific chunkers."""
 
     def __init__(self, language_name: str, language: Language | None = None) -> None:
@@ -161,33 +159,75 @@ class LanguageChunker(ABC):
         self.splittable_node_types = self._get_splittable_node_types()
 
     def _load_language(self) -> Language:
-        """Load the tree-sitter language binding.
+        """Load the tree-sitter language binding from the LANGUAGE_SPECS table.
 
-        Override in subclasses to provide language-specific loading.
+        Reads the grammar spec for ``self.language_name`` from
+        ``chunking.language_registry.LANGUAGE_SPECS`` and delegates to
+        ``LanguageSpec.load_grammar()``.  Subclasses that need custom loading
+        (e.g. TypeScriptChunker's tsx/non-tsx branching) can still override
+        this method — but most leaves no longer need to.
 
         Returns:
             Language object
 
         Raises:
-            ValueError: If language binding not available
+            ValueError: If the language spec or grammar package is not available.
         """
-        raise ValueError(
-            f"Language {self.language_name} not available. "
-            f"Install tree-sitter-{self.language_name} or pass language explicitly."
-        )
+        from chunking.language_registry import LANGUAGE_SPECS  # avoid circular import
 
-    @abstractmethod
+        spec = LANGUAGE_SPECS.get(self.language_name)
+        if spec is None:
+            raise ValueError(
+                f"No LanguageSpec registered for {self.language_name!r}. "
+                f"Add an entry to LANGUAGE_SPECS in chunking/language_registry.py."
+            )
+        return spec.load_grammar()  # type: ignore[return-value]
+
     def _get_splittable_node_types(self) -> set[str]:
         """Get node types that should be split into chunks.
 
+        Reads ``splittable_node_types`` from the LANGUAGE_SPECS entry for
+        ``self.language_name``.  Subclasses may still override this method
+        if they need dynamic or context-sensitive node-type selection, but
+        most leaves can rely on this default.
+
         Returns:
             Set of node type names
-        """
-        pass
 
-    @abstractmethod
+        Raises:
+            ValueError: If no spec is registered for this language.
+        """
+        from chunking.language_registry import LANGUAGE_SPECS  # avoid circular import
+
+        spec = LANGUAGE_SPECS.get(self.language_name)
+        if spec is None:
+            raise ValueError(
+                f"No LanguageSpec registered for {self.language_name!r}. "
+                f"Add an entry to LANGUAGE_SPECS in chunking/language_registry.py."
+            )
+        return set(spec.splittable_node_types)  # defensive copy
+
+    #: Tuple of tree-sitter node type strings used by the default
+    #: :meth:`extract_metadata` template to identify the name child.
+    #: Defaults to ``("identifier",)`` — suitable for JS, Go, C#.
+    #: Override to ``("identifier", "type_identifier")`` in leaves whose
+    #: grammar uses ``type_identifier`` for type/struct names (Rust, TS).
+    _NAME_ID_TYPES: tuple[str, ...] = ("identifier",)
+
     def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract metadata from a node.
+
+        Default template-method implementation:
+
+        1. Seeds *metadata* with ``{"node_type": node.type}``.
+        2. Finds the node name via :meth:`_extract_name` using
+           :attr:`_NAME_ID_TYPES`.
+        3. Delegates language-specific extras to :meth:`_extra_metadata`.
+        4. Returns *metadata*.
+
+        Complex leaves (C, C++, GLSL, Python) that need declarator-aware
+        name logic override this method entirely.  Simple leaves (JS, TS,
+        Go, Rust, C#) implement only :meth:`_extra_metadata`.
 
         Args:
             node: Tree-sitter node
@@ -196,7 +236,34 @@ class LanguageChunker(ABC):
         Returns:
             Metadata dictionary
         """
-        pass
+        metadata: dict[str, Any] = {"node_type": node.type}
+        name = self._extract_name(node, source, id_types=self._NAME_ID_TYPES)
+        if name is not None:
+            metadata["name"] = name
+        self._extra_metadata(node, source, metadata)
+        return metadata
+
+    def _extra_metadata(  # noqa: B027 — intentional no-op hook; complex leaves override extract_metadata instead
+        self,
+        node: Any,
+        source: bytes,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Language-specific extras hook called by the template :meth:`extract_metadata`.
+
+        Simple leaf chunkers implement this instead of overriding
+        :meth:`extract_metadata` directly.  The *metadata* dict already
+        contains ``node_type`` and ``name`` when this hook fires; add any
+        additional keys in-place.
+
+        Complex leaves that override :meth:`extract_metadata` entirely never
+        call this hook — the default no-op body is never executed for them.
+
+        Args:
+            node: Tree-sitter node.
+            source: Source code bytes.
+            metadata: Mutable metadata dict to update in-place.
+        """
 
     def get_node_complexity(self, node: Any) -> int:
         """Get cyclomatic complexity for a node.
@@ -235,6 +302,38 @@ class LanguageChunker(ABC):
             Text content
         """
         return source[node.start_byte : node.end_byte].decode("utf-8")
+
+    def _extract_name(
+        self,
+        node: Any,
+        source: bytes,
+        *,
+        id_types: tuple[str, ...] = ("identifier",),
+    ) -> str | None:
+        """Find the first child whose type is in *id_types* and return its text.
+
+        This is the shared name-finding loop used by simple leaf chunkers:
+        walk ``node.children``, match the first child whose ``.type`` is in
+        *id_types*, and return its decoded text.
+
+        Complex leaves (C, C++, GLSL, Python) that need declarator-aware or
+        typedef/template traversal should keep their own name logic instead of
+        calling this helper.
+
+        Args:
+            node: Tree-sitter node whose children to search.
+            source: Source code bytes.
+            id_types: Tuple of tree-sitter node type strings to match.
+                Defaults to ``("identifier",)`` (Pattern 1 — JS, Go, C#).
+                Pass ``("identifier", "type_identifier")`` for Pattern 2 — Rust, TS.
+
+        Returns:
+            Decoded text of the first matching child, or ``None`` if not found.
+        """
+        for child in node.children:
+            if child.type in id_types:
+                return self.get_node_text(child, source)
+        return None
 
     def get_line_numbers(self, node: Any) -> tuple[int, int]:
         """Get start and end line numbers for a node.
@@ -432,339 +531,6 @@ class LanguageChunker(ABC):
         )
 
         return result, len(chunks), len(result)
-
-    @staticmethod
-    def _assign_community_ids(
-        chunks: list["CodeChunk"],
-        community_map: dict[str, int],
-    ) -> list["CodeChunk"]:
-        """Return a copy of each chunk with its community_id resolved from ``community_map``.
-
-        Generates the lookup key that maps a raw AST chunk to a community: ``chunk_id``
-        when already set; otherwise a composite of
-        ``relative_path:start-end:chunk_type[:parent.name]``.
-        This is the single source of truth for the chunk→community lookup semantics used
-        in :meth:`remerge_chunks_with_communities`.
-        """
-        from dataclasses import replace
-
-        logger = logging.getLogger(__name__)
-        result = []
-        for chunk in chunks:
-            chunk_id = chunk.chunk_id
-            if chunk_id is None:
-                normalized_path = chunk.relative_path.replace("\\", "/")
-                if chunk.parent_name and chunk.name:
-                    lookup_key = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}:{chunk.parent_name}.{chunk.name}"
-                elif chunk.name:
-                    lookup_key = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}:{chunk.name}"
-                else:
-                    lookup_key = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
-            else:
-                lookup_key = chunk_id
-            community_id = community_map.get(lookup_key)
-            if community_id is None:
-                logger.debug(f"[REMERGE] No community found for {lookup_key}")
-            result.append(replace(chunk, community_id=community_id))
-        return result
-
-    @staticmethod
-    def _to_treesitter_chunks(chunks: list["CodeChunk"]) -> list["TreeSitterChunk"]:
-        """Convert CodeChunks to TreeSitterChunks for the greedy-merge algorithm.
-
-        Preserves call-graph data, relationships, and ``community_id`` in the metadata
-        dict so they survive the merge pass and can be recovered by
-        :meth:`_from_treesitter_chunks`.
-        """
-        # pyrefly: ignore [missing-module-attribute]
-        from chunking.languages.base import TreeSitterChunk
-
-        return [
-            TreeSitterChunk(
-                content=chunk.content,
-                start_line=chunk.start_line,
-                end_line=chunk.end_line,
-                node_type=chunk.chunk_type,
-                language=chunk.language,
-                metadata={
-                    "name": chunk.name,
-                    "file_path": chunk.file_path,
-                    "relative_path": chunk.relative_path,
-                    "calls": chunk.calls,
-                    "relationships": chunk.relationships,
-                    "docstring": chunk.docstring,
-                    "decorators": chunk.decorators,
-                    "imports": chunk.imports,
-                    "complexity_score": chunk.complexity_score,
-                    "tags": chunk.tags,
-                },
-                chunk_id=chunk.chunk_id,
-                parent_class=getattr(chunk, "parent_name", None),
-                community_id=chunk.community_id,
-            )
-            for chunk in chunks
-        ]
-
-    @staticmethod
-    def _from_treesitter_chunks(
-        merged_ts_chunks: list["TreeSitterChunk"],
-        original_chunks: list["CodeChunk"],
-    ) -> list["CodeChunk"]:
-        """Convert merged TreeSitterChunks back to CodeChunks using original metadata.
-
-        Uses a 2-pass lookup:
-
-        1. **Members** — all originals whose range is contained within the merged range
-           (same file, ``original ⊆ merged``).  For ``"merged"`` node_type all members
-           contribute calls/relationships/imports/decorators/tags (union, deduplicated).
-           Building the per-file index once also removes the O(M×N) full-list rescan that
-           previously ran for every merged chunk (#16).
-        2. **File fallback** — if no contained members are found, any chunk from the same
-           file is used as the sole representative (handles edge-case line shifts).
-        3. **Skip** — logs a warning and omits the merged chunk if no original found.
-
-        ``original_chunks`` should be the community-annotated list produced by
-        :meth:`_assign_community_ids` so that ``community_id`` is available when needed.
-        """
-        from chunking.python_ast_chunker import CodeChunk
-
-        logger = logging.getLogger(__name__)
-        result = []
-
-        # Build file → chunks index once (O(M+N)) instead of rescanning per merged chunk
-        originals_by_file: dict[str, list] = {}
-        for c in original_chunks:
-            originals_by_file.setdefault(c.file_path, []).append(c)
-
-        for ts_chunk in merged_ts_chunks:
-            merged_file: str | None = ts_chunk.metadata.get("file_path")
-            file_originals = originals_by_file.get(merged_file or "", [])
-
-            # Collect every original whose range is fully contained within this merged chunk
-            members = [
-                c
-                for c in file_originals
-                if c.start_line >= ts_chunk.start_line
-                and c.end_line <= ts_chunk.end_line
-            ]
-
-            if not members:
-                if file_originals:
-                    # File fallback: use first same-file chunk as scalar-field representative
-                    members = [file_originals[0]]
-                    logger.debug(
-                        f"[REMERGE] Using fallback for {merged_file}:"
-                        f"{ts_chunk.start_line}-{ts_chunk.end_line}"
-                    )
-                else:
-                    logger.warning(
-                        f"[REMERGE] No original chunk found for merged chunk at "
-                        f"{merged_file}:{ts_chunk.start_line}-{ts_chunk.end_line}, skipping"
-                    )
-                    continue
-
-            representative = members[0]
-
-            if ts_chunk.node_type == "merged":
-                # Compute the merged chunk_id so relationship edges are attributed to the
-                # right graph node.  Mirrors Embedder._build_chunk_id:
-                #   "{relative_path}:{start}-{end}:{chunk_type}[:{qualified_name}]"
-                rel_path = str(
-                    representative.relative_path or merged_file or ""
-                ).replace("\\", "/")
-                name = ts_chunk.metadata.get("name") or ""
-                parent = ts_chunk.parent_class or ""
-                qualified = f"{parent}.{name}" if parent and name else name
-                merged_chunk_id = (
-                    f"{rel_path}:{ts_chunk.start_line}-{ts_chunk.end_line}:merged"
-                    + (f":{qualified}" if qualified else "")
-                )
-
-                # Union calls (CallEdge objects) — dedupe by (callee_name, line_number)
-                seen_call: set[tuple] = set()
-                unioned_calls: list = []
-                for m in members:
-                    for call in m.calls or []:
-                        key = (
-                            getattr(call, "callee_name", str(call)),
-                            getattr(call, "line_number", 0),
-                        )
-                        if key not in seen_call:
-                            seen_call.add(key)
-                            unioned_calls.append(call)
-
-                # Union relationships (RelationshipEdge objects) — dedupe by
-                # (target_name, relationship_type, line_number).  Rewrite source_id to the
-                # merged chunk_id so graph edges resolve from the correct node.
-                seen_rel: set[tuple] = set()
-                unioned_rels: list = []
-                for m in members:
-                    for rel in m.relationships or []:
-                        rt = getattr(rel, "relationship_type", None)
-                        rt_val = rt.value if hasattr(rt, "value") else str(rt)
-                        key = (
-                            getattr(rel, "target_name", ""),
-                            rt_val,
-                            getattr(rel, "line_number", 0),
-                        )
-                        if key not in seen_rel:
-                            seen_rel.add(key)
-                            try:
-                                unioned_rels.append(
-                                    dc_replace(rel, source_id=merged_chunk_id)
-                                )
-                            except Exception:
-                                unioned_rels.append(rel)
-
-                # Union list fields (imports, decorators) — dedupe by string value
-                seen_imports: set[str] = set()
-                unioned_imports: list = []
-                for m in members:
-                    for item in m.imports or []:
-                        k = str(item)
-                        if k not in seen_imports:
-                            seen_imports.add(k)
-                            unioned_imports.append(item)
-
-                seen_decs: set[str] = set()
-                unioned_decs: list = []
-                for m in members:
-                    for item in m.decorators or []:
-                        k = str(item)
-                        if k not in seen_decs:
-                            seen_decs.add(k)
-                            unioned_decs.append(item)
-
-                # Union tags (list[str] or set in practice)
-                seen_tags: set[str] = set()
-                unioned_tags: list = []
-                for m in members:
-                    for tag in m.tags or []:
-                        if tag not in seen_tags:
-                            seen_tags.add(tag)
-                            unioned_tags.append(tag)
-
-                calls: Any = unioned_calls
-                relationships: Any = unioned_rels
-                imports: Any = unioned_imports
-                decorators: Any = unioned_decs
-                tags: Any = unioned_tags
-                docstring = representative.docstring
-                complexity_score = representative.complexity_score
-            else:
-                # Non-merged node: preserve single-representative behavior
-                calls = representative.calls
-                relationships = representative.relationships
-                docstring = representative.docstring
-                decorators = representative.decorators
-                imports = representative.imports
-                complexity_score = representative.complexity_score
-                tags = representative.tags
-
-            result.append(
-                CodeChunk(
-                    content=ts_chunk.content,
-                    chunk_type=(
-                        ts_chunk.node_type
-                        if ts_chunk.node_type != "merged"
-                        else "merged"
-                    ),
-                    start_line=ts_chunk.start_line,
-                    end_line=ts_chunk.end_line,
-                    file_path=representative.file_path,
-                    relative_path=representative.relative_path,
-                    folder_structure=representative.folder_structure,
-                    name=ts_chunk.metadata.get("name"),
-                    parent_name=ts_chunk.parent_class,
-                    language=representative.language,
-                    chunk_id=None,
-                    community_id=ts_chunk.community_id,
-                    merged_from=ts_chunk.metadata.get("merged_from"),
-                    calls=calls,
-                    relationships=relationships,
-                    docstring=docstring,
-                    decorators=decorators,
-                    imports=imports,
-                    complexity_score=complexity_score,
-                    tags=tags,
-                )
-            )
-        return result
-
-    @staticmethod
-    def remerge_chunks_with_communities(
-        chunks: list["CodeChunk"],
-        community_map: dict[str, int],
-        min_tokens: int = 50,
-        max_merged_tokens: int = 1000,
-        token_method: str = "whitespace",
-        size_method: str = "tokens",
-    ) -> list["CodeChunk"]:
-        """Re-merge chunks using community boundaries (Community-based remerging).
-
-        This is called AFTER community detection to re-merge chunks using
-        community_id as boundaries instead of parent_class. Solves the circular
-        dependency: chunking needs communities, but communities need chunks.
-
-        Community merge flow:
-            1. Chunk with AST boundaries → Build graph → Detect communities
-            2. Re-merge using community_id boundaries ← THIS METHOD
-
-        Args:
-            chunks: List of CodeChunk (raw AST chunks)
-            community_map: Dict mapping chunk_id to community_id from Louvain detection
-            min_tokens: Minimum tokens before considering merge (default: 50)
-            max_merged_tokens: Maximum tokens for merged chunk (default: 1000)
-            token_method: Token estimation method ("whitespace" or "tiktoken")
-            size_method: Size calculation method - "tokens" (default) or "characters" (cAST paper)
-
-        Returns:
-            List of CodeChunk re-merged with community boundaries
-
-        Example:
-            >>> # After community detection assigns IDs
-            >>> community_map = {"file.py:1-10:method:foo": 0, "file.py:11-20:method:bar": 1}
-            >>> remerged = remerge_chunks_with_communities(chunks, community_map)
-            >>> # Methods from different communities won't merge
-        """
-        if not chunks or not community_map:
-            return chunks
-
-        logger = logging.getLogger(__name__)
-        logger.info(
-            f"[REMERGE] Re-merging {len(chunks)} chunks with community boundaries"
-        )
-
-        # Step 1: Assign community_id to chunks from map
-        chunks_with_community = LanguageChunker._assign_community_ids(
-            chunks, community_map
-        )
-
-        # Step 2: Convert CodeChunk → TreeSitterChunk for merge algorithm
-        ts_chunks = LanguageChunker._to_treesitter_chunks(chunks_with_community)
-
-        # Step 3: Re-run merge with use_community_boundary=True
-        from chunking.languages.python import PythonChunker
-
-        chunker = PythonChunker()
-        merged_ts_chunks, orig_count, merged_count = chunker._greedy_merge_small_chunks(
-            ts_chunks,
-            min_tokens=min_tokens,
-            max_merged_tokens=max_merged_tokens,
-            token_method=token_method,
-            use_community_boundary=True,
-            size_method=size_method,
-        )
-
-        logger.info(
-            f"[REMERGE] Community-based merge: {orig_count} → {merged_count} chunks "
-            f"({100 * (orig_count - merged_count) / orig_count:.1f}% reduction)"
-        )
-
-        # Step 4: Convert TreeSitterChunk → CodeChunk
-        return LanguageChunker._from_treesitter_chunks(
-            merged_ts_chunks, chunks_with_community
-        )
 
     def _get_block_boundary_types(self) -> set[str]:
         """Get node types that are valid split boundaries.
@@ -1135,15 +901,7 @@ class LanguageChunker(ABC):
         return chunks
 
     def _get_chunking_config(self) -> Optional["ChunkingConfig"]:
-        """Get ChunkingConfig from the current search config.
+        """Get ChunkingConfig from the current search config, or None if unavailable."""
+        from search.config import get_chunking_config
 
-        Returns:
-            ChunkingConfig if available, None otherwise
-        """
-        try:
-            from search.config import get_search_config
-
-            config = get_search_config()
-            return config.chunking if config else None
-        except (ImportError, AttributeError):
-            return None
+        return get_chunking_config()

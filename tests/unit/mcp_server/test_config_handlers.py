@@ -4,16 +4,18 @@ Covers the validation branches in handle_configure_search_mode and
 handle_configure_chunking that each return specific error dicts on bad input.
 """
 
-import json
+import ast
+import dataclasses
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
 from mcp_server.tools.config_handlers import (
-    _detect_indexed_model,
     handle_configure_chunking,
     handle_configure_search_mode,
 )
+from search.config import ChunkingConfig, SearchModeConfig
 
 
 @pytest.fixture
@@ -222,162 +224,107 @@ async def test_chunking_all_valid_saves_config(mock_config_manager):
 
 
 # ============================================================================
-# _detect_indexed_model — cross-pool detection via project_info.json
+# TestConfigValidationOwnership — P3-C gate
 # ============================================================================
 
 
-def test_detect_indexed_model_reads_project_info_cross_pool(tmp_path):
-    """_detect_indexed_model returns the correct key via project_info.json
-    even when the active pool does not contain the indexing model.
+class TestConfigValidationOwnership:
+    """Completeness gate: field-spec validation must live on the dataclass fields,
+    not as inline bounds/enum checks in config_handlers.py.
 
-    Regression test: previously only scanned the active pool, causing
-    'No indexed model detected' for projects indexed with a different pool.
+    Mirrors TestTokenizationOwnership (tests/unit/search/test_tokenization.py).
     """
-    project_path = tmp_path / "myproject"
-    project_path.mkdir()
 
-    # Construct a valid project_info.json so info_path.exists() is True
-    info_file = tmp_path / "project_info.json"
-    info_file.write_text(
-        json.dumps(
-            {"embedding_model": "Qwen/Qwen3-Embedding-0.6B", "model_dimension": 1024}
+    _HANDLER_FILE = Path("mcp_server/tools/config_handlers.py")
+    _CONFIG_FILE = Path("search/config.py")
+
+    # ------------------------------------------------------------------
+    # 1. Specs live on ChunkingConfig and SearchModeConfig fields
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize(
+        "field_name,spec_key,expected",
+        [
+            ("community_resolution", "range", (0.1, 2.0)),
+            ("max_phantom_degree", "range", (1, 1000)),
+            ("max_split_chars", "range", (1000, 10000)),
+            ("adaptive_multiplier_max", "range", (1.0, 2.0)),
+            ("adaptive_multiplier_min", "range", (0.1, 1.0)),
+            ("max_complexity_cap", "range", (5, 100)),
+            ("token_estimation", "choices", ("whitespace", "tiktoken")),
+            ("split_size_method", "choices", ("lines", "characters")),
+            ("sizing_mode", "choices", ("fixed", "adaptive")),
+        ],
+    )
+    def test_chunking_field_carries_spec(self, field_name, spec_key, expected):
+        """Each constrained ChunkingConfig field must have its spec in field metadata."""
+        fields = {f.name: f for f in dataclasses.fields(ChunkingConfig)}
+        assert field_name in fields, f"ChunkingConfig has no field '{field_name}'"
+        meta = fields[field_name].metadata
+        assert spec_key in meta, (
+            f"ChunkingConfig.{field_name}.metadata missing '{spec_key}' — "
+            "spec must live on the field, not in the handler."
         )
-    )
+        assert meta[spec_key] == expected, (
+            f"ChunkingConfig.{field_name}.metadata['{spec_key}'] = {meta[spec_key]!r}, "
+            f"expected {expected!r}"
+        )
 
-    # Create a storage dir with code.index so the existence check passes
-    index_dir = tmp_path / "storage" / "index"
-    index_dir.mkdir(parents=True)
-    (index_dir / "code.index").write_bytes(b"")
+    def test_search_mode_default_mode_carries_choices(self):
+        """SearchModeConfig.default_mode must carry choices metadata."""
+        fields = {f.name: f for f in dataclasses.fields(SearchModeConfig)}
+        meta = fields["default_mode"].metadata
+        assert "choices" in meta, (
+            "SearchModeConfig.default_mode.metadata missing 'choices' — "
+            "spec must live on the field."
+        )
+        assert set(meta["choices"]) == {"hybrid", "semantic", "bm25", "auto"}
 
-    # Lazy imports inside _detect_indexed_model are resolved at call time from
-    # their source modules — patch there, not on config_handlers.
-    with (
-        patch(
-            "mcp_server.storage_manager.get_canonical_project_info",
-            return_value=info_file,
-        ),
-        patch(
-            "mcp_server.model_pool_manager.get_model_key_from_name",
-            return_value="qwen3_0.6b",
-        ),
-        patch(
-            "mcp_server.tools.config_handlers.get_project_storage_dir",
-            return_value=tmp_path / "storage",
-        ),
-    ):
-        result = _detect_indexed_model(str(project_path))
+    # ------------------------------------------------------------------
+    # 2. No chained comparison (lo <= x <= hi) in handler bodies
+    # ------------------------------------------------------------------
 
-    assert result == "qwen3_0.6b"
+    def test_no_chained_bounds_in_handlers(self):
+        """config_handlers.py must not contain inline chained comparisons (lo <= x <= hi).
 
+        All validation is routed through validate_field_value / apply_config_patch.
+        """
+        source = self._HANDLER_FILE.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        violations: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Compare) and len(node.ops) >= 2:
+                violations.append(f"line {node.lineno}: chained comparison")
+        assert not violations, (
+            f"Inline chained bounds check(s) found in {self._HANDLER_FILE}:\n"
+            + "\n".join(violations)
+            + "\nRoute validation through validate_field_value() instead."
+        )
 
-def test_detect_indexed_model_skips_stale_project_info_without_index(tmp_path):
-    """When project_info.json exists but its model has no code.index, the function
-    falls through to the active-pool directory scan instead of returning that model.
+    # ------------------------------------------------------------------
+    # 3. validate_field_value is imported into config_handlers
+    # ------------------------------------------------------------------
 
-    Regression test: bge-m3 had project_info.json but no index/ directory after a
-    force re-index with qwen3 only — previously caused indexed:false in switch_project.
-    """
-    project_path = tmp_path / "myproject"
-    project_path.mkdir()
+    def test_validate_field_value_imported_in_handlers(self):
+        """config_handlers.py must import validate_field_value from search.config."""
+        source = self._HANDLER_FILE.read_text(encoding="utf-8")
+        assert "validate_field_value" in source, (
+            f"{self._HANDLER_FILE} does not import validate_field_value — "
+            "the validation owner is not wired in."
+        )
 
-    # Stale project_info.json (bge_m3) — exists but has no index
-    stale_info = tmp_path / "stale_info.json"
-    stale_info.write_text(
-        json.dumps({"embedding_model": "BAAI/bge-m3", "model_dimension": 1024})
-    )
+    # ------------------------------------------------------------------
+    # 4. Owner (validate_field_value) exists in config.py
+    # ------------------------------------------------------------------
 
-    # A qwen3 storage dir that DOES have code.index (the real index)
-    qwen3_storage = tmp_path / "qwen3_storage"
-    (qwen3_storage / "index").mkdir(parents=True)
-    (qwen3_storage / "index" / "code.index").write_bytes(b"")
-
-    # bge_m3 storage dir has NO code.index — just project_info.json
-    bge_m3_storage = tmp_path / "bge_m3_storage"
-    bge_m3_storage.mkdir()
-
-    call_count = []
-
-    def fake_get_storage_dir(path, model_key=None):
-        call_count.append(model_key)
-        if model_key == "bge_m3":
-            return bge_m3_storage
-        return qwen3_storage
-
-    with (
-        patch(
-            "mcp_server.storage_manager.get_canonical_project_info",
-            return_value=stale_info,
-        ),
-        patch(
-            "mcp_server.model_pool_manager.get_model_key_from_name",
-            return_value="bge_m3",
-        ),
-        patch("mcp_server.model_pool_manager.get_model_pool_manager") as mock_pool_mgr,
-        patch(
-            "mcp_server.tools.config_handlers.get_project_storage_dir",
-            side_effect=fake_get_storage_dir,
-        ),
-    ):
-        # Active pool contains qwen3_0.6b (the one with the real index)
-        mock_pool_mgr.return_value.get_pool_config.return_value = {
-            "qwen3_0.6b": "Qwen/Qwen3-Embedding-0.6B"
+    def test_validate_field_value_defined_in_config(self):
+        """validate_field_value must be defined in search/config.py (not deleted)."""
+        source = self._CONFIG_FILE.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        names = {
+            node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
         }
-        result = _detect_indexed_model(str(project_path))
-
-    # Should fall through to dir scan and find qwen3 (not return bge_m3)
-    assert result == "qwen3_0.6b"
-
-
-def test_detect_indexed_model_fallback_when_no_project_info(tmp_path):
-    """When project_info.json is absent, falls back to active-pool dir scan."""
-    project_path = tmp_path / "myproject"
-    project_path.mkdir()
-
-    fake_storage = tmp_path / "storage"
-    (fake_storage / "index").mkdir(parents=True)
-    (fake_storage / "index" / "code.index").write_bytes(b"")
-
-    with (
-        patch(
-            "mcp_server.storage_manager.get_canonical_project_info",
-            return_value=None,
-        ),
-        patch("mcp_server.model_pool_manager.get_model_pool_manager") as mock_pool_mgr,
-        patch(
-            "mcp_server.tools.config_handlers.get_project_storage_dir",
-            return_value=fake_storage,
-        ),
-    ):
-        mock_pool_mgr.return_value.get_pool_config.return_value = {
-            "gte_modernbert": "Alibaba-NLP/gte-modernbert-base"
-        }
-        result = _detect_indexed_model(str(project_path))
-
-    assert result == "gte_modernbert"
-
-
-def test_detect_indexed_model_returns_none_when_nothing_found(tmp_path):
-    """Returns None cleanly when project_info.json is absent and no dir scan hits."""
-    project_path = tmp_path / "myproject"
-    project_path.mkdir()
-
-    empty_storage = tmp_path / "storage"
-    empty_storage.mkdir()
-
-    with (
-        patch(
-            "mcp_server.storage_manager.get_canonical_project_info",
-            return_value=None,
-        ),
-        patch("mcp_server.model_pool_manager.get_model_pool_manager") as mock_pool_mgr,
-        patch(
-            "mcp_server.tools.config_handlers.get_project_storage_dir",
-            return_value=empty_storage,
-        ),
-    ):
-        mock_pool_mgr.return_value.get_pool_config.return_value = {
-            "qwen3_0.6b": "Qwen/Qwen3-Embedding-0.6B"
-        }
-        result = _detect_indexed_model(str(project_path))
-
-    assert result is None
+        assert "validate_field_value" in names, (
+            f"validate_field_value not found in {self._CONFIG_FILE} — "
+            "the validation owner was deleted."
+        )

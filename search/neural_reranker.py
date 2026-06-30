@@ -1,5 +1,6 @@
 """Neural cross-encoder reranker for semantic scoring."""
 
+import abc
 import contextlib
 import logging
 import os
@@ -55,7 +56,73 @@ def _resolve_single_token_id(tokenizer: "AutoModel", text: str) -> int:
     )
 
 
-class NeuralReranker:
+class BaseReranker(abc.ABC):
+    """Abstract base owning shared lifecycle for all reranker implementations.
+
+    Three methods — ``is_loaded``, ``get_vram_usage``, and ``cleanup`` — are
+    byte-identical across ``NeuralReranker``, ``GenerativeReranker``, and
+    ``JinaRerankerV3``.  This class is the single owner; concrete classes
+    inherit them rather than copying them.
+
+    Concrete classes must:
+
+    * Set ``self._model = None`` and ``self._logger`` in ``__init__``.
+    * Declare ``self.device`` in ``__init__``.
+    * Override ``_CLEANUP_LOG_MSG`` with the class-specific log string.
+    * Override ``_cleanup_extra()`` to release resources beyond ``self._model``
+      (e.g. ``GenerativeReranker`` also deletes its tokenizer).
+    * Implement ``rerank()``.
+    """
+
+    # Subclasses override this string for the cleanup log message.
+    _CLEANUP_LOG_MSG: str = "Cleaning up reranker model"
+
+    # Declared here so type checkers know the base methods can access these;
+    # concrete __init__ methods set the actual values.
+    _model: object | None
+    _logger: logging.Logger
+
+    @abc.abstractmethod
+    def rerank(self, query: str, candidates: list, top_k: int = 10) -> list:
+        """Rerank candidates by relevance to *query* and return the top *top_k*."""
+
+    # ------------------------------------------------------------------
+    # Shared lifecycle — single implementation, all three classes inherit
+    # ------------------------------------------------------------------
+
+    def is_loaded(self) -> bool:
+        """Return ``True`` if model weights are loaded in memory."""
+        return self._model is not None
+
+    def get_vram_usage(self) -> float:
+        """Return current VRAM usage in MB, or 0.0 if unloaded or no GPU."""
+        if not self.is_loaded() or not torch.cuda.is_available():
+            return 0.0
+        return torch.cuda.memory_allocated() / (1024 * 1024)
+
+    def _cleanup_extra(self) -> None:
+        """Release resources beyond ``self._model``.
+
+        Default is a no-op.  ``GenerativeReranker`` overrides this to also
+        delete ``self._tokenizer``.
+        """
+        return  # No-op default; override in subclasses that hold extra resources.
+
+    def cleanup(self) -> None:
+        """Release GPU memory and model resources."""
+        if self._model is not None:
+            self._logger.info(self._CLEANUP_LOG_MSG)
+            del self._model
+            self._model = None
+            self._cleanup_extra()
+            import gc
+
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+
+class NeuralReranker(BaseReranker):
     """Cross-encoder neural reranker using BAAI/bge-reranker-v2-m3.
 
     This reranker provides semantic relevance scoring on top of RRF fusion results,
@@ -245,38 +312,10 @@ class NeuralReranker:
 
         return results
 
-    def is_loaded(self) -> bool:
-        """Check if model is loaded.
-
-        Returns:
-            bool: True if model is loaded in memory
-        """
-        return self._model is not None
-
-    def cleanup(self) -> None:
-        """Release GPU memory and model resources."""
-        if self._model is not None:
-            self._logger.info("Cleaning up reranker model")
-            del self._model
-            self._model = None
-            import gc
-
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-    def get_vram_usage(self) -> float:
-        """Get current VRAM usage in MB.
-
-        Returns:
-            float: VRAM usage in MB, 0.0 if model not loaded or no GPU
-        """
-        if not self.is_loaded() or not torch.cuda.is_available():
-            return 0.0
-        return torch.cuda.memory_allocated() / (1024 * 1024)
+    # Lifecycle methods (is_loaded, get_vram_usage, cleanup) are owned by BaseReranker.
 
 
-class GenerativeReranker:
+class GenerativeReranker(BaseReranker):
     """Qwen3-style generative reranker using Yes/No token probability.
 
     This reranker leverages the full LLM "world knowledge" for relevance scoring,
@@ -466,40 +505,17 @@ class GenerativeReranker:
         )
         return results
 
-    def is_loaded(self) -> bool:
-        """Check if model is loaded.
+    _CLEANUP_LOG_MSG = "Cleaning up generative reranker model"
 
-        Returns:
-            bool: True if model is loaded in memory
-        """
-        return self._model is not None
+    def _cleanup_extra(self) -> None:
+        """Also release the tokenizer held by GenerativeReranker."""
+        del self._tokenizer
+        self._tokenizer = None
 
-    def cleanup(self) -> None:
-        """Release GPU memory and model resources."""
-        if self._model is not None:
-            self._logger.info("Cleaning up generative reranker model")
-            del self._model
-            del self._tokenizer
-            self._model = None
-            self._tokenizer = None
-            import gc
-
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-    def get_vram_usage(self) -> float:
-        """Get current VRAM usage in MB.
-
-        Returns:
-            float: VRAM usage in MB, 0.0 if model not loaded or no GPU
-        """
-        if not self.is_loaded() or not torch.cuda.is_available():
-            return 0.0
-        return torch.cuda.memory_allocated() / (1024 * 1024)
+    # is_loaded, get_vram_usage, cleanup are owned by BaseReranker.
 
 
-class JinaRerankerV3:
+class JinaRerankerV3(BaseReranker):
     """Jina v3 listwise reranker with 'last but not late' interaction.
 
     This reranker processes all documents together in a single context window,
@@ -756,35 +772,9 @@ class JinaRerankerV3:
         )
         return results
 
-    def is_loaded(self) -> bool:
-        """Check if model is loaded.
+    _CLEANUP_LOG_MSG = "Cleaning up Jina reranker model"
 
-        Returns:
-            bool: True if model is loaded in memory
-        """
-        return self._model is not None
-
-    def cleanup(self) -> None:
-        """Release GPU memory and model resources."""
-        if self._model is not None:
-            self._logger.info("Cleaning up Jina reranker model")
-            del self._model
-            self._model = None
-            import gc
-
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-    def get_vram_usage(self) -> float:
-        """Get current VRAM usage in MB.
-
-        Returns:
-            float: VRAM usage in MB, 0.0 if model not loaded or no GPU
-        """
-        if not self.is_loaded() or not torch.cuda.is_available():
-            return 0.0
-        return torch.cuda.memory_allocated() / (1024 * 1024)
+    # is_loaded, get_vram_usage, cleanup are owned by BaseReranker.
 
 
 def create_reranker(

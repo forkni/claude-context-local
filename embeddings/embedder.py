@@ -1,6 +1,6 @@
-"""Multi-model embedder for generating code embeddings.
+"""Code embedder for generating code embeddings.
 
-Supports multiple embedding models including:
+Supports configurable embedding models including:
 - EmbeddingGemma (google/embeddinggemma-300m)
 - BGE-M3 (BAAI/bge-m3)
 
@@ -574,9 +574,9 @@ class EmbeddingResult:
 
 
 class CodeEmbedder:
-    """Multi-model embedder for generating code embeddings.
+    """Embedder for generating code embeddings.
 
-    Supports multiple embedding models with automatic configuration detection.
+    Supports configurable embedding models with automatic configuration detection.
     Default model is google/embeddinggemma-300m.
     """
 
@@ -637,7 +637,7 @@ class CodeEmbedder:
         )
 
         # Track per-model VRAM usage
-        self._model_vram_usage: dict[str, float] = {}  # model_key -> VRAM MB
+        self._model_vram_usage: dict[str, float] = {}  # model_name -> VRAM MB
 
         # File-content cache for _get_class_signature (#50).
         # Avoids O(chunks × filesize) repeated re-reads when many methods share a file.
@@ -1108,10 +1108,10 @@ class CodeEmbedder:
             "parent_name": chunk.parent_name,
             "parent_chunk_id": chunk.parent_chunk_id,
             "docstring": chunk.docstring,
-            "decorators": chunk.decorators,
-            "imports": chunk.imports,
+            "decorators": chunk.decorators or [],
+            "imports": chunk.imports or [],
             "complexity_score": chunk.complexity_score,
-            "tags": chunk.tags,
+            "tags": chunk.tags or [],
             # In-memory carrier for downstream BM25 document indexing (read in
             # hybrid_searcher / indexer); stripped before persist so the
             # MetadataStore keeps only content_preview (#55). NOT used for token

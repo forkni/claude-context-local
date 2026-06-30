@@ -17,6 +17,7 @@ CamelCase names.
 import ast
 from typing import Any
 
+from chunking.relationships.name_resolution import call_target_name
 from chunking.relationships.relationship_extractors.base_extractor import (
     BaseRelationshipExtractor,
 )
@@ -99,7 +100,7 @@ class InstantiationExtractor(BaseRelationshipExtractor):
             node: ast.Call node
             chunk_id: Source chunk ID
         """
-        call_name = self._get_call_name(node.func)
+        call_name = call_target_name(node.func)
         if not call_name:
             return
 
@@ -125,45 +126,6 @@ class InstantiationExtractor(BaseRelationshipExtractor):
                 line_number=node.lineno,
                 confidence=0.8,  # Lower confidence due to heuristic
             )
-
-    def _get_call_name(self, func_node) -> str:
-        """
-        Get the name of the called function/class.
-
-        Handles:
-        - MyClass() (ast.Name) -> "MyClass"
-        - module.MyClass() (ast.Attribute) -> "module.MyClass"
-
-        Args:
-            func_node: AST node representing the function/class being called
-
-        Returns:
-            Full name as string, or empty string if extraction fails
-        """
-        if isinstance(func_node, ast.Name):
-            return func_node.id
-        elif isinstance(func_node, ast.Attribute):
-            return self._get_full_attribute_name(func_node)
-        return ""
-
-    def _get_full_attribute_name(self, node: ast.Attribute) -> str:
-        """
-        Get the full dotted name from an Attribute node.
-
-        Args:
-            node: ast.Attribute node
-
-        Returns:
-            Full dotted name (e.g., "module.MyClass")
-        """
-        parts = []
-        current: ast.expr = node
-        while isinstance(current, ast.Attribute):
-            parts.append(current.attr)
-            current = current.value
-        if isinstance(current, ast.Name):
-            parts.append(current.id)
-        return ".".join(reversed(parts))
 
     def _should_skip_class(self, class_name: str) -> bool:
         """

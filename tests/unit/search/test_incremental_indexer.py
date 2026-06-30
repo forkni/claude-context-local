@@ -101,6 +101,7 @@ class TestIncrementalIndexer:
 
         # Mock components
         self.mock_indexer = Mock()
+        self.mock_indexer.resync_if_desynced.return_value = (False, 0)
         self.mock_embedder = Mock()
         self.mock_chunker = Mock()
         self.mock_snapshot_manager = Mock()
@@ -280,9 +281,7 @@ class TestIncrementalIndexer:
         )
 
         # Mock batch removal (now enabled by default)
-        self.mock_indexer.remove_multiple_files = Mock(
-            return_value=10
-        )  # 2 files * 5 chunks
+        self.mock_indexer.remove_files = Mock(return_value=10)  # 2 files * 5 chunks
 
         # Mock successful validation
         self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
@@ -640,9 +639,7 @@ class TestIncrementalIndexer:
         indexer.change_detector.get_files_to_reindex = Mock(return_value=[])
 
         # Mock batch removal
-        self.mock_indexer.remove_multiple_files = Mock(
-            return_value=10
-        )  # 2 files * 5 chunks
+        self.mock_indexer.remove_files = Mock(return_value=10)  # 2 files * 5 chunks
 
         # Mock successful validation
         self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
@@ -683,7 +680,7 @@ class TestIncrementalIndexer:
         indexer.change_detector.get_files_to_reindex = Mock(return_value=[])
 
         # Mock file removal
-        self.mock_indexer.remove_file_chunks.return_value = 5
+        self.mock_indexer.remove_files = Mock(return_value=5)
 
         # Mock FAILED validation (index corrupted)
         self.mock_indexer.validate_index_consistency = Mock(
@@ -784,7 +781,7 @@ class TestIncrementalIndexer:
         indexer.change_detector.get_files_to_reindex = Mock(return_value=[])
 
         # Mock batch removal returns 30 chunks total (10 files * 3 chunks each)
-        self.mock_indexer.remove_multiple_files = Mock(return_value=30)
+        self.mock_indexer.remove_files = Mock(return_value=30)
 
         # Mock successful validation
         self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
@@ -795,7 +792,7 @@ class TestIncrementalIndexer:
         assert result.files_removed == 10
         assert result.chunks_removed == 30  # 10 files * 3 chunks each
         # Verify batch removal was called once with all files
-        self.mock_indexer.remove_multiple_files.assert_called_once()
+        self.mock_indexer.remove_files.assert_called_once()
 
     def test_recovery_failure_returns_error(self):
         """Test that recovery failure is properly reported."""
@@ -858,14 +855,8 @@ class TestIncrementalIndexer:
         mock_embedding_result.metadata = {}
         self.mock_embedder.embed_chunks.return_value = [mock_embedding_result]
 
-        # Mock indexer with significant desync (>10%)
-        # Dense: 100, BM25: 85 => 15% difference
-        self.mock_indexer.get_stats.return_value = {
-            "bm25_documents": 85,
-            "dense_vectors": 100,
-            "total_chunks": 100,
-        }
-        self.mock_indexer.resync_bm25_from_dense = Mock(return_value=100)
+        # Mock resync_if_desynced to report significant desync (>10%)
+        self.mock_indexer.resync_if_desynced.return_value = (True, 100)
         # Prevent the incremental path from failing at index consistency check
         self.mock_indexer.validate_index_consistency.return_value = (True, [])
 
@@ -874,7 +865,7 @@ class TestIncrementalIndexer:
         assert result.success is True
         assert result.bm25_resynced is True
         assert result.bm25_resync_count == 100
-        self.mock_indexer.resync_bm25_from_dense.assert_called_once()
+        self.mock_indexer.resync_if_desynced.assert_called_once_with("INCREMENTAL")
 
     def test_auto_sync_not_triggered_when_desync_below_threshold(self):
         """Test auto-sync NOT triggered when desync < 10%."""
@@ -895,21 +886,14 @@ class TestIncrementalIndexer:
             return_value=(mock_changes, mock_dag)
         )
 
-        # Mock indexer with small desync (<10%)
-        # Dense: 100, BM25: 95 => 5% difference
-        self.mock_indexer.get_stats.return_value = {
-            "bm25_documents": 95,
-            "dense_vectors": 100,
-            "total_chunks": 100,
-        }
-        self.mock_indexer.resync_bm25_from_dense = Mock(return_value=100)
+        # setUp default: resync_if_desynced returns (False, 0); no changes → early-exit
 
         result = indexer.incremental_index(str(self.project_path), "test_project")
 
         assert result.success is True
         assert result.bm25_resynced is False
         assert result.bm25_resync_count == 0
-        self.mock_indexer.resync_bm25_from_dense.assert_not_called()
+        self.mock_indexer.resync_if_desynced.assert_not_called()
 
     def test_auto_sync_not_triggered_when_counts_equal(self):
         """Test auto-sync NOT triggered when BM25 and dense counts are equal."""
@@ -930,20 +914,14 @@ class TestIncrementalIndexer:
             return_value=(mock_changes, mock_dag)
         )
 
-        # Mock indexer with synced counts
-        self.mock_indexer.get_stats.return_value = {
-            "bm25_documents": 100,
-            "dense_vectors": 100,
-            "total_chunks": 100,
-        }
-        self.mock_indexer.resync_bm25_from_dense = Mock(return_value=100)
+        # setUp default: resync_if_desynced returns (False, 0); no changes → early-exit
 
         result = indexer.incremental_index(str(self.project_path), "test_project")
 
         assert result.success is True
         assert result.bm25_resynced is False
         assert result.bm25_resync_count == 0
-        self.mock_indexer.resync_bm25_from_dense.assert_not_called()
+        self.mock_indexer.resync_if_desynced.assert_not_called()
 
     @patch.object(IncrementalIndexer, "_release_and_verify_resources")
     def test_filter_persistence_in_full_index(self, mock_release):
@@ -1056,6 +1034,7 @@ class TestIncrementalIndexer:
         fresh_embedding_result.metadata = {}
         fresh_embedder.embed_chunks.return_value = [fresh_embedding_result]
         fresh_indexer = Mock()
+        fresh_indexer.resync_if_desynced.return_value = (False, 0)
 
         def swap_resources(project_path):
             indexer.embedder = fresh_embedder

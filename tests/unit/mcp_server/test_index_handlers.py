@@ -122,25 +122,17 @@ class TestReleaseGpuMemory:
         """gc.collect() is always called regardless of CUDA availability."""
         from mcp_server.tools.index_handlers import _release_gpu_memory
 
-        with patch("mcp_server.tools.index_handlers.gc") as mock_gc:
-            mock_gc.collect = __import__(
-                "unittest.mock", fromlist=["MagicMock"]
-            ).MagicMock()
-            with patch(
-                "mcp_server.tools.index_handlers.torch", create=True
-            ) as mock_torch:
+        with patch("search.gpu_monitor.gc") as mock_gc:
+            with patch("search.gpu_monitor.torch") as mock_torch:
                 mock_torch.cuda.is_available.return_value = False
                 _release_gpu_memory()
-
-        mock_gc.collect.assert_called_once()
+            mock_gc.collect.assert_called_once()
 
     def test_no_error_when_torch_unavailable(self):
         """Survives gracefully when torch is not installed (ImportError)."""
-        import sys
-
         from mcp_server.tools.index_handlers import _release_gpu_memory
 
-        with patch.dict(sys.modules, {"torch": None}):
+        with patch("search.gpu_monitor.torch", None):
             _release_gpu_memory()  # Must not raise
 
 
@@ -175,7 +167,7 @@ class TestSwitchActiveModel:
             patch("mcp_server.tools.index_handlers.get_state"),
             patch("mcp_server.tools.index_handlers._invalidate_config_caches"),
         ):
-            _switch_active_model("key_x", "new-model")
+            _switch_active_model("new-model")
 
         mock_mgr.save_config.assert_called_once()
 
@@ -200,9 +192,133 @@ class TestSwitchActiveModel:
                 "mcp_server.tools.index_handlers._invalidate_config_caches"
             ) as mock_inv,
         ):
-            _switch_active_model("key_x", "old-model")
+            _switch_active_model("old-model")
 
         mock_inv.assert_called_once()
+
+
+class TestHandlerChunkerOwnership:
+    """Both handler sites must build their chunker via MultiLanguageChunker.for_project.
+
+    These tests lock in the import-classification fix so it cannot silently regress
+    (someone replacing .for_project(...) with the bare constructor would drop
+    relation_filter and re-introduce the "unknown" import-category bug).
+    """
+
+    def test_handle_index_directory_uses_for_project(self, tmp_path: Path) -> None:
+        """handle_index_directory builds its chunker via MultiLanguageChunker.for_project."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        project_dir = tmp_path / "myproject"
+        project_dir.mkdir()
+
+        with (
+            patch(
+                "mcp_server.tools.index_handlers.MultiLanguageChunker"
+            ) as mock_chunker_cls,
+            # _cleanup_previous_resources is a lazy in-function import; patch at source
+            patch("mcp_server.resource_manager._cleanup_previous_resources"),
+            patch("mcp_server.tools.index_handlers.get_state") as mock_state,
+            patch("mcp_server.tools.index_handlers.get_config") as mock_cfg,
+            patch(
+                "mcp_server.tools.index_handlers.get_canonical_project_info",
+                return_value=None,
+            ),
+            patch(
+                "mcp_server.tools.index_handlers.get_project_storage_dir"
+            ) as mock_psd,
+            patch("mcp_server.tools.index_handlers.set_current_project"),
+            patch("mcp_server.tools.index_handlers.temporary_ram_fallback_off"),
+            patch(
+                "mcp_server.tools.index_handlers._build_index_response", return_value={}
+            ),
+            # TreeSitterChunker is used in the accessibility pre-check (lazy import)
+            patch(
+                "chunking.tree_sitter.TreeSitterChunker.get_supported_extensions",
+                return_value=[],
+            ),
+        ):
+            # Wire enough state for the handler to reach the chunker line
+            mock_cfg.return_value.performance.enable_entity_tracking = False
+            mock_cfg.return_value.search_mode.enable_hybrid = False
+            lock_mock = AsyncMock()
+            lock_mock.__aenter__ = AsyncMock(return_value=None)
+            lock_mock.__aexit__ = AsyncMock(return_value=None)
+            mock_state.return_value.get_reindex_lock.return_value = lock_mock
+            proj_dir = tmp_path / "storage" / "proj"
+            proj_dir.mkdir(parents=True)
+            index_dir = proj_dir / "index"
+            index_dir.mkdir()
+            mock_psd.return_value = proj_dir
+            mock_chunker_cls.for_project.return_value = MagicMock()
+
+            from mcp_server.tools.index_handlers import handle_index_directory
+
+            asyncio.run(handle_index_directory({"directory_path": str(project_dir)}))
+
+        mock_chunker_cls.for_project.assert_called_once()
+        # The bare constructor must NOT be called (that would be the regression)
+        mock_chunker_cls.assert_not_called()
+
+    def test_check_auto_reindex_uses_for_project(self, tmp_path: Path) -> None:
+        """_check_auto_reindex builds its chunker via MultiLanguageChunker.for_project."""
+        from unittest.mock import MagicMock, patch
+
+        project_path = str(tmp_path / "myproject")
+        Path(project_path).mkdir()
+
+        with (
+            patch(
+                "mcp_server.tools.search_handlers.MultiLanguageChunker"
+            ) as mock_chunker_cls,
+            patch(
+                "mcp_server.tools.search_handlers.get_project_storage_dir"
+            ) as mock_psd,
+            patch("mcp_server.tools.search_handlers.get_config") as mock_cfg,
+            patch("mcp_server.tools.search_handlers.get_embedder") as mock_emb,
+            patch("mcp_server.tools.search_handlers.get_index_manager"),
+            patch("mcp_server.tools.search_handlers.IncrementalIndexer") as mock_ii,
+            patch("mcp_server.tools.search_handlers.temporary_ram_fallback_off"),
+            # validate_embedder_index_compatibility is a lazy in-function import
+            patch("search.dimension_validator.validate_embedder_index_compatibility"),
+            # SnapshotManager and ChangeDetector are lazy in-function imports
+            patch("merkle.snapshot_manager.SnapshotManager") as mock_snap_cls,
+            patch("merkle.change_detector.ChangeDetector"),
+            patch(
+                "chunking.tree_sitter.TreeSitterChunker.get_supported_extensions",
+                return_value=[],
+            ),
+        ):
+            storage = tmp_path / "storage"
+            storage.mkdir()
+            mock_psd.return_value = storage
+            (storage / "project_info.json").write_text("{}")
+
+            snap_mock = MagicMock()
+            snap_mock.has_snapshot.return_value = False
+            mock_snap_cls.return_value = snap_mock
+
+            cfg = MagicMock()
+            cfg.search_mode.enable_hybrid = False
+            cfg.performance.enable_entity_tracking = False
+            mock_cfg.return_value = cfg
+
+            mock_emb.return_value = MagicMock()
+            mock_chunker_cls.for_project.return_value = MagicMock()
+            ii_inst = MagicMock()
+            ii_result = MagicMock()
+            ii_result.files_modified = 0
+            ii_result.files_added = 0
+            ii_inst.auto_reindex_if_needed.return_value = ii_result
+            mock_ii.return_value = ii_inst
+
+            from mcp_server.tools.search_handlers import _check_auto_reindex
+
+            _check_auto_reindex(project_path, max_age_minutes=60)
+
+        mock_chunker_cls.for_project.assert_called_once()
+        mock_chunker_cls.assert_not_called()
 
 
 if __name__ == "__main__":

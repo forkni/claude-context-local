@@ -1,0 +1,37 @@
+[
+  {
+    "content": "pub async fn fetch(url: &str) -> String {\n    String::from(url)\n}",
+    "end_line": 5,
+    "language": "rust",
+    "metadata": {
+      "is_async": true,
+      "name": "fetch",
+      "node_type": "function_item"
+    },
+    "start_line": 3,
+    "type": "function_item"
+  },
+  {
+    "content": "struct Point {\n    x: f64,\n    y: f64,\n}",
+    "end_line": 10,
+    "language": "rust",
+    "metadata": {
+      "name": "Point",
+      "node_type": "struct_item"
+    },
+    "start_line": 7,
+    "type": "struct_item"
+  },
+  {
+    "content": "impl Point {\n    pub fn distance(&self) -> f64 {\n        (self.x * self.x + self.y * self.y).sqrt()\n    }\n}",
+    "end_line": 16,
+    "language": "rust",
+    "metadata": {
+      "impl_type": "Point",
+      "name": "Point",
+      "node_type": "impl_item"
+    },
+    "start_line": 12,
+    "type": "impl_item"
+  }
+]

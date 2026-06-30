@@ -2,25 +2,26 @@
 
 ## Overview
 
-This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic search system. The project maintains a professional test suite with 2,495 passing unit tests organized into clear categories for effective quality assurance.
+This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic search system. The project maintains a professional test suite with 3,100+ passing tests organized into clear categories for effective quality assurance.
 
 ### Current Test Status
 
-✅ **All tests passing** (as of 2026-06-03):
+✅ **All tests passing** (as of 2026-06-30, v0.20.0):
 
-- **Unit Tests**: 2,495 tests (`tests/unit/`)
-  - Chunking (incl. relationships): includes `test_call_edge_resolver.py` (31), `test_call_graph_config.py` (15), `test_libcst_call_graph.py` (38+), `test_lsp_call_graph.py` (38, 1 POSIX skip)
-  - Embeddings, Graph, Merkle, Search, MCP Server, Evaluation, Benchmark, Utils
-- **Integration Tests**: 19 tests (`tests/integration/`)
-- **Total**: 2,514 tests
+- **Unit Tests**: ~3,040 tests (`tests/unit/`)
+  - Chunking (incl. relationships): includes `test_call_edge_resolver.py`, `test_call_graph_config.py`, `test_libcst_call_graph.py`, `test_lsp_call_graph.py` (1 POSIX skip)
+  - Embeddings, Graph, Merkle, Search, MCP Server, Evaluation, Benchmark, Utils, Tools
+- **Integration Tests**: ~22 tests (`tests/integration/`)
+- **Fast Integration Tests**: ~38 tests (`tests/fast_integration/`)
+- **Total**: 3,100 passed, 13 skipped (measured 2026-06-30 with seed 1554140588)
 
-**⚠️ IMPORTANT**: Run tests by module for best results (see "Recommended Testing Approach" below)
+**Note**: Run `uv run pytest tests/ --ignore=tests/slow_integration -q` for the full suite (excluding GPU-dependent slow tests).
 
 ## Recommended Testing Approach
 
 ### Why Run Tests by Module?
 
-The test suite has been optimized for module-by-module execution. Running all tests together may encounter resource cleanup issues between modules. **All 2,495 unit tests pass when run via `./scripts/test/run_tests.sh`.**
+The test suite has been optimized for module-by-module execution. Running all tests together may encounter resource cleanup issues between modules. **All 3,100+ tests pass when run via `./scripts/test/run_tests.sh` or `uv run pytest tests/ --ignore=tests/slow_integration -q`.**
 
 ### Quick Start: Run Tests by Module
 
@@ -1588,3 +1589,245 @@ timeout 900 pytest tests/
   - `test_import_resolution_integration.py` - 11 integration tests for end-to-end import resolution
 
 This comprehensive testing guide ensures high-quality, maintainable code through systematic testing practices and clear documentation.
+
+---
+
+## Testing Infrastructure (2026-06 overhaul)
+
+### Summary of changes
+
+| Area | Before | After |
+|------|--------|-------|
+| pytest config | `pytest.ini` (legacy) | `[tool.pytest.ini_options]` in `pyproject.toml` |
+| Import mode | `prepend` (default) + manual `sys.path.insert` in conftest | `importlib` + `pythonpath = ["."]` |
+| New markers | — | `gpu`, `e2e` |
+| New test deps | — | `pytest-randomly`, `pytest-xdist`, `syrupy` |
+| Coverage config | None | `[tool.coverage.*]` in `pyproject.toml` (branch coverage) |
+| CI install | `pip install` | `uv sync --locked` (matches local `uv.lock`) |
+| CI lint gate | non-blocking (`continue-on-error: true`) | `ruff` blocking; `pyrefly` blocking (verified green 2026-06-30); `pre-commit` non-blocking |
+| CI pre-commit | not enforced | `uvx pre-commit run --all-files` in CI |
+
+### Order-randomization (Phase 2 — pytest-randomly)
+
+`pytest-randomly` is now a declared test dependency. Use it to expose hidden ordering dependencies:
+
+```bash
+# Run unit tests with randomised order (different seed each time)
+bash scripts/test/run_tests.sh tests/unit -p randomly
+
+# Reproduce a failure with a specific seed
+bash scripts/test/run_tests.sh tests/unit -p randomly --randomly-seed=<N>
+
+# Verify order-independence: 20 consecutive randomised runs
+for i in $(seq 1 20); do
+    bash scripts/test/run_tests.sh tests/unit -p randomly -q || break
+done
+```
+
+Any test that fails under randomisation is an ordering dependency — fix the root cause (typically
+global state not reset between tests). The autouse fixtures `reset_global_state` and
+`preserve_original_project_selection` protect the main globals, but new state mutations need
+function-scoped teardown.
+
+### Measuring and gating coverage
+
+Coverage config lives in `pyproject.toml` `[tool.coverage.*]`. Branch coverage is on.
+
+**Baseline (measured 2026-06-27):** 76.94% branch+statement combined (2840 tests passing, 15 738 stmts).
+`fail_under = 76` is set in `[tool.coverage.report]` and `--cov-fail-under=76` is active in CI.
+
+```bash
+# Re-measure (with gate enforced):
+bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration/ \
+  --cov --cov-branch --cov-report=term-missing --cov-fail-under=76
+```
+
+Ratchet upward: when coverage improves, bump `fail_under` in `pyproject.toml` and
+`--cov-fail-under` in `.github/workflows/branch-protection.yml`.
+
+### Snapshot / golden-file regression testing (Phase 4 — Syrupy)
+
+`syrupy` is a declared test dependency. Use it for deterministic complex outputs:
+pure metric functions, formatter outputs, MCP tool-handler responses.
+
+**Existing snapshot tests:**
+- `tests/unit/evaluation/test_metrics_snapshot.py` — `calculate_metrics_from_results` and
+  `aggregate_metrics` (9 snapshots)
+- `tests/unit/mcp_server/test_search_results_snapshot.py` — `_format_search_results` (4 snapshots)
+
+Snapshot files live in `__snapshots__/` dirs next to each test module and are committed to the
+repo. They are diffable JSON (via `JSONSnapshotExtension`) so diffs in PR reviews are human-readable.
+
+#### Fixture pattern (used in this project)
+
+Override the `snapshot` fixture per module to force JSON extension — do not rely on the default
+`.ambr` format:
+
+```python
+import pytest
+from syrupy.extensions.json import JSONSnapshotExtension
+
+@pytest.fixture
+def snapshot(snapshot):
+    return snapshot.use_extension(JSONSnapshotExtension)
+
+def test_some_output(snapshot):
+    assert compute_thing() == snapshot  # stored as JSON, one file per test
+```
+
+#### Workflow
+
+**First run (generate snapshots):**
+```bash
+# Generate snapshots for a new test file:
+bash scripts/test/run_tests.sh tests/unit/evaluation/test_metrics_snapshot.py \
+  --snapshot-update -q
+
+# Then commit the generated __snapshots__/ files along with the test file.
+```
+
+**Normal run (no flag needed — snapshots are in the suite):**
+```bash
+bash scripts/test/run_tests.sh tests/unit/evaluation/test_metrics_snapshot.py -q
+# "N snapshots passed." printed by syrupy if all match
+```
+
+**After intentional output change — regenerate:**
+```bash
+bash scripts/test/run_tests.sh tests/unit/evaluation/test_metrics_snapshot.py \
+  --snapshot-update -q
+# Then review the diff before committing:
+git diff tests/unit/evaluation/__snapshots__/
+```
+
+#### Reading a snapshot diff
+
+When a snapshot test fails, syrupy prints a unified diff between the stored JSON and the new
+output. Example (truncated):
+
+```
+AssertionError: snapshot does not match
++ {"mrr": 0.85, "ndcg@5": 0.72, ...}
+- {"mrr": 0.80, "ndcg@5": 0.72, ...}
+```
+
+`+` is the new value, `-` is the stored value. Review the diff to decide:
+- **Expected change** (intentional refactor) → `--snapshot-update` and commit
+- **Regression** (metric formula broken) → fix the code, do not update
+
+#### Masking volatile fields
+
+For outputs with timestamps, UUIDs, or absolute paths, mask with `path_type`:
+
+```python
+from syrupy.matchers import path_type
+
+def test_with_timestamp(snapshot):
+    assert result == snapshot(
+        matcher=path_type({".*timestamp.*": (str,), ".*path.*": (str,)})
+    )
+```
+
+The pure-function targets in this project have no volatile fields — masking is not needed for
+existing snapshot tests.
+
+#### Guidelines
+
+- Snapshot tests run in the normal suite with no separate marker (no `@pytest.mark.snapshot`).
+- Keep the set small: a handful of high-value pure functions, not every handler.
+- Do NOT snapshot heavily-mocked handlers — mock identity dominates the output, not real behaviour.
+- `--snapshot-update` is the only way to update; the flag is intentionally absent from CI.
+
+### Mutation testing (Phase 4.2 — periodic, not per-commit)
+
+Engines: **cosmic-ray** (local Windows, config-driven) + **mutmut** (Linux CI,
+`workflow_dispatch`-triggered via `.github/workflows/mutation-testing.yml`).
+
+**Governing rule:** mutation testing payoff is inversely proportional to mock density. Only target
+pure deterministic cores (zero or near-zero mocks). Do NOT run mutation tests on heavily-mocked
+orchestration shells — they test the mocks, not the logic.
+
+#### Tier 1+2 targets (zero-mock deterministic cores)
+
+| Target | Total | Killed | Pragmaed | Genuine survivors | Score |
+|--------|-------|--------|----------|------------------|-------|
+| `chunking/relationships/call_edge_resolver.py` | 56 | 40 | 16 | 0 | **100%** |
+| `search/reranker.py` | 529 | 265 | 261 | 0 | **100%** |
+| `evaluation/metrics.py` | 581 | 183 | 181 | 1 | **99.5%** |
+
+Score = killed / (killed + genuine survivors). Incompetent and pragmaed mutations are excluded.
+
+`search/reranker.py` pragmas cover: `__init__` default params, `analyze_fusion_quality` body,
+`tune_parameters` body, `_calculate_std` body — none affect ranking output. Genuine ranking-math
+mutants (lines 66, 68, 88) are killed by precision tests.
+
+`evaluation/metrics.py` pragmas cover: magnitude guards (`> 0` / `!= 0` when value ≥ 0 always),
+`round(x, 4)` display-precision constants, `False` defaults when key always present, k-literal
+constants in metric labels (5, 7, 10), `while`-condition `<` vs `!=` equivalence for monotonic
+index, pointer-advance tie-break `<` vs `<=` for equal endpoints in merged inputs. The 1 remaining
+item is a confirmed-killed transient false positive (cosmic-ray `NumberReplacer` on L290,
+`merge_ranges` `prev_end + 1`; `test_adjacent` kills it in isolation — verified manually).
+
+#### Local run workflow (cosmic-ray)
+
+```bash
+# Per-target session (gitignored configs/sqlite live in project root)
+uv run cosmic-ray init cr-<target>.toml cr-<target>.sqlite
+uv run cosmic-ray baseline cr-<target>.toml
+uv run cosmic-ray exec cr-<target>.toml cr-<target>.sqlite   # sequential, not parallel
+uv run cr-report cr-<target>.sqlite
+uv run cr-filter-pragma cr-<target>.sqlite                   # mark # pragma: no mutate lines
+```
+
+Windows gotcha: `test-command` must use the absolute venv path, not bare `python`:
+```toml
+test-command = "D:/claude-context-local/.venv/Scripts/python.exe -m pytest <paths> -q --no-header --tb=no"
+```
+`subprocess.run(['python', ...])` resolves to system Python via Windows App Paths registry even
+when the venv is first in PATH. See `cr-*.toml` (gitignored) for the per-target configs.
+
+#### CI run (mutmut on Linux)
+
+Trigger via `Actions → Mutation Testing (Periodic) → Run workflow`. Select `target` (default:
+`all`). The workflow installs dev+test+callgraph extras, runs baseline, then one mutmut step per
+target. Artifacts: `.mutmut-cache` (14 days retention).
+
+#### De-mocking backlog (future Tier 3 targets)
+
+These modules have high mock density. Reduce mocks first (shift to outcome assertions via fakes in
+`tests/fixtures/`), then graduate to mutation testing:
+
+| Module | Mock count | Priority |
+|--------|-----------|---------|
+| `search/hybrid_searcher.py` | ~133 | High |
+| `search/centrality_ranker.py` | ~40 | Medium |
+| `search/reranking_engine.py` | ~30 | Medium |
+
+### Deferred improvements (trigger thresholds documented here)
+
+| Improvement | Add when |
+|-------------|----------|
+| `pytest-xdist -n auto` per job | per-runner wall-clock > ~5 min |
+| `pytest-split` sharding across runners | per-runner wall-clock > ~10 min after xdist |
+| Python 3.12 matrix | validated clean on 3.11 + meaningful new-version diff |
+| Combined cross-runner coverage | matrix sharding is added |
+| `pyrefly` blocking gate | ✅ **DONE** 2026-06-30 — `continue-on-error` removed; pyrefly exits 0 on development |
+| `pre-commit` blocking gate | `uvx pre-commit run --all-files` exits 0 on CI |
+| Mutation testing (periodic) | already added; re-run before releases or after major test refactors |
+
+When adding `pytest-split`: use `--splitting-algorithm least_duration` (compatible with
+`pytest-randomly`); commit `.test_durations` to repo; re-run `--store-durations` after major suite
+changes.
+
+### Codecov integration (Phase 3 CI scaffolding — 2026-06-30)
+
+`codecov/codecov-action@v5` is wired into `branch-protection.yml` (test job, development branch only).
+CI now emits `--cov-report=xml`; the XML is uploaded after each run including on `--cov-fail-under`
+failures, so regressions remain visible on Codecov. The README badge tracks the `development` branch.
+
+**Notes:**
+- `fail_ci_if_error: false` — Codecov outages or missing token never fail the CI gate.
+- Authoritative gate remains `--cov-fail-under=76` in CI; Codecov is reporting/visualization only.
+- No `codecov.yml` — relying on Codecov defaults.
+- `pyrefly` is now a **blocking gate** (2026-06-30) — `continue-on-error` removed after verified green.
+- `pre-commit` remains `continue-on-error: true`; flip to blocking when it exits 0 consistently on CI.

@@ -56,8 +56,6 @@ async def test_handle_search_code_does_not_mutate_config_singleton():
         patch("mcp_server.tools.search_orchestrator.get_config_manager") as mock_cm,
         # IntentClassifier lives in search_orchestrator
         patch("mcp_server.tools.search_orchestrator.IntentClassifier") as mock_ic_cls,
-        # _route_query_to_model imported lazily by planner from search_handlers
-        patch("mcp_server.tools.search_handlers._route_query_to_model") as mock_route,
         patch(
             "mcp_server.tools.search_handlers._check_auto_reindex",
             return_value=(False, None),
@@ -82,7 +80,6 @@ async def test_handle_search_code_does_not_mutate_config_singleton():
         mock_orch_cfg.return_value = app_cfg
 
         mock_cm.return_value.get_search_mode_for_query.return_value = "hybrid"
-        mock_route.return_value = ("qwen3_0.6b", None)
 
         ic_instance = Mock()
         ic_instance.classify.return_value = intent_decision

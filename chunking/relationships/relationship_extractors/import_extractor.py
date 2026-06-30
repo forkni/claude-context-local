@@ -108,10 +108,6 @@ class ImportExtractor(BaseRelationshipExtractor):
             module_name = alias.name
             alias_name = alias.asname  # None if no alias
 
-            # Skip stdlib if desired (we'll keep them for now)
-            # if self._should_skip_target(module_name, include_stdlib=False):
-            #     continue
-
             # Classify import if filter available
             import_category = "unknown"
             if self.relation_filter:
@@ -184,10 +180,6 @@ class ImportExtractor(BaseRelationshipExtractor):
                 else:
                     target_name = symbol_name
                 is_star_import = False
-
-            # Skip stdlib if desired (we'll keep them for now)
-            # if self._should_skip_target(target_name, include_stdlib=False):
-            #     continue
 
             # Classify import if filter available
             import_category = "unknown"

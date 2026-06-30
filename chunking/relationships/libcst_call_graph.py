@@ -14,7 +14,7 @@ name-matching.  As a **MIT-licensed pure-Python library**, it is the
 recommended primary resolver for the ``[callgraph]`` optional extra.
 
 Confidence: 0.90 — cross-file FQN resolution with static scope analysis.
-Falls back to pyan (0.75) or in-house AST (0.5/0.7) when unavailable.
+When unavailable, only lower-confidence resolvers (pyan 0.75, AST) contribute edges.
 
 Optional dependency
 -------------------
@@ -36,9 +36,8 @@ from evaluation.chunk_mapping import chunk_id_from_fqn
 
 from .call_edge_resolver import (
     ResolvedEdge,
-    gather_py_files,
-    scope_to_indexed_files,
-    validate_py_files,
+    ResolverConfidence,
+    prepare_scoped_files,
 )
 
 
@@ -212,7 +211,7 @@ class LibCSTResolver:
     """
 
     name: str = "libcst"
-    base_confidence: float = 0.90
+    base_confidence: float = ResolverConfidence.LIBCST
 
     def __init__(self, use_pyproject_toml: bool = False) -> None:
         """Initialise the resolver.
@@ -256,27 +255,9 @@ class LibCSTResolver:
             )
             return []
 
-        py_files = gather_py_files(project_root)
-
-        # Scope to indexed files only — avoids injecting edges from venv/stdlib.
-        if raw_line_map:
-            py_files = scope_to_indexed_files(
-                py_files, set(raw_line_map.keys()), project_root
-            )
-
-        if not py_files:
-            logger.warning(
-                "[LIBCST] No .py files found under %s — skipping", project_root
-            )
-            return []
-
-        # Pre-validate: one syntactically broken file must not abort the pass.
-        py_files = validate_py_files(py_files, logger, source_name="LIBCST")
-
-        if not py_files:
-            logger.warning(
-                "[LIBCST] No parseable .py files remain — skipping edge injection"
-            )
+        # Gather, scope to indexed files, and validate — single preamble owner.
+        py_files = prepare_scoped_files(project_root, raw_line_map, logger, "LIBCST")
+        if py_files is None:
             return []
 
         logger.info(

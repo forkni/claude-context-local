@@ -1,0 +1,21 @@
+[
+  {
+    "chunk_id": "search/config.py:function:get_config",
+    "file": "search/config.py",
+    "kind": "function",
+    "lines": "10-25",
+    "name": "get_config",
+    "score": 0.88,
+    "source": "hybrid"
+  },
+  {
+    "chunk_id": "search/hybrid_searcher.py:class:HybridSearcher",
+    "file": "search/hybrid_searcher.py",
+    "kind": "class",
+    "lines": "50-120",
+    "name": "HybridSearcher",
+    "reranker_score": 0.9234,
+    "score": 0.81,
+    "source": "dense"
+  }
+]

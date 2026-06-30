@@ -17,6 +17,7 @@ from mcp_server.server import (
 )
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_project_storage_dir
+from mcp_server.tools import responses
 from mcp_server.tools.decorators import error_handler, require_indexed_project
 from mcp_server.tools.search_orchestrator import SearchOrchestrator
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
@@ -26,7 +27,6 @@ from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
 from search.metadata import MetadataStore
-from search.query_router import QueryRouter
 from search.relationship_analyzer import RelationshipAnalyzer
 
 
@@ -54,11 +54,11 @@ def _handle_chunk_id_lookup(chunk_id: str) -> dict:
         result = searcher.get_by_chunk_id(chunk_id)
 
         if result is None:
-            return {
-                "error": "Chunk not found",
-                "message": f"No chunk found with ID: {chunk_id}",
-                "chunk_id": chunk_id,
-            }
+            return responses.error(
+                "Chunk not found",
+                message=f"No chunk found with ID: {chunk_id}",
+                chunk_id=chunk_id,
+            )
 
         # Reuse existing formatting function for consistency
         formatted_results = _format_search_results([result])
@@ -88,158 +88,24 @@ def _handle_chunk_id_lookup(chunk_id: str) -> dict:
 
     except Exception as e:
         logger.error(f"Direct lookup failed: {e}", exc_info=True)
-        return {"error": str(e), "chunk_id": chunk_id}
+        return responses.error(str(e), chunk_id=chunk_id)
 
 
-def _route_query_to_model(
-    query: str, use_routing: bool, model_key: str | None
-) -> tuple[str | None, dict | None]:
-    """Route query to optimal embedding model.
-
-    Validates that the routed model has an index for the current project.
-    Falls back to auto-detected model if routing selects unindexed model.
-
-    Args:
-        query: The search query
-        use_routing: Whether to use automatic model routing
-        model_key: User-specified model override (None for auto)
-
-    Returns:
-        tuple: (selected_model_key, routing_info_dict)
-    """
-    # User-specified override always wins
-    if model_key is not None:
-        return model_key, {
-            "model_selected": model_key,
-            "confidence": 1.0,
-            "reason": "User-specified override",
-        }
-
-    # Try query routing if enabled
-    if get_state().multi_model_enabled and use_routing:
-        router = QueryRouter(enable_logging=True)
-        decision = router.route(query)
-
-        # Validate routed model has an index for current project
-        current_project = get_state().current_project
-        if current_project:
-            project_dir = get_project_storage_dir(
-                current_project, model_key=decision.model_key
-            )
-            code_index_file = project_dir / "index" / "code.index"
-
-            if code_index_file.exists():
-                # Routed model has valid index.
-                # Include rejected_model/rejected_score when the router fell back to the
-                # default due to low confidence — avoids the ambiguity where `confidence`
-                # is the *rejected* model's score but `model_selected` is the default.
-                routing_info: dict = {
-                    "model_selected": decision.model_key,
-                    "confidence": decision.confidence,
-                    "reason": decision.reason,
-                    "scores": decision.scores,
-                }
-                if decision.rejected_model is not None:
-                    routing_info["rejected_model"] = decision.rejected_model
-                    routing_info["rejected_score"] = decision.rejected_score
-                return decision.model_key, routing_info
-            else:
-                logger.warning(
-                    f"Routed model '{decision.model_key}' has no index. "
-                    f"Falling back to auto-detected model."
-                )
-
-        # Routed model doesn't have index, fall back to auto-detected
-        fallback_model = get_state().current_model_key
-        if fallback_model:
-            return fallback_model, {
-                "model_selected": fallback_model,
-                "confidence": decision.confidence,
-                "reason": f"Fallback to indexed model (routed '{decision.model_key}' not indexed)",
-                "routed_model": decision.model_key,
-            }
-
-        # Last resort: Try configured default model first, then scan remaining models
-        # GUARD: Skip model scanning if no project is selected
-        if current_project is None:
-            logger.warning(
-                "No project selected and no fallback model available. "
-                "Cannot determine model for routing."
-            )
-            return None, None
-
-        from search.config import get_search_config
-
-        config = get_search_config()
-        default_model = config.routing.default_model
-
-        # Validate default_model against active pool before trying it
-        from mcp_server.model_pool_manager import get_model_pool_manager
-
-        pool_config = get_model_pool_manager().get_pool_config()
-
-        if default_model in pool_config:
-            # Try default model first
-            logger.info(f"Trying configured default model: {default_model}")
-            project_dir = get_project_storage_dir(
-                current_project, model_key=default_model
-            )
-            code_index_file = project_dir / "index" / "code.index"
-            if code_index_file.exists():
-                logger.info(f"Using configured default model: {default_model}")
-                return default_model, {
-                    "model_selected": default_model,
-                    "confidence": 0.0,
-                    "reason": f"Fallback to configured default ({default_model}), routed '{decision.model_key}' not indexed",
-                    "routed_model": decision.model_key,
-                }
-        else:
-            logger.info(
-                f"Configured default '{default_model}' not in active pool "
-                f"{list(pool_config.keys())}, scanning pool models"
-            )
-
-        # Then scan remaining models (excluding default since we already checked it)
-        for model_key_candidate in pool_config:
-            if model_key_candidate == default_model:
-                continue  # Already checked above
-            project_dir = get_project_storage_dir(
-                current_project, model_key=model_key_candidate
-            )
-            code_index_file = project_dir / "index" / "code.index"
-            if code_index_file.exists():
-                logger.info(f"Found indexed model: {model_key_candidate}")
-                return model_key_candidate, {
-                    "model_selected": model_key_candidate,
-                    "confidence": 0.0,
-                    "reason": f"Auto-detected from indices (routed '{decision.model_key}' not indexed)",
-                    "routed_model": decision.model_key,
-                }
-
-    return None, None
-
-
-def _check_auto_reindex(
-    project_path: str, selected_model_key: str | None, max_age_minutes: int
-) -> tuple[bool, str | None]:
+def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, None]:
     """Check if auto-reindex is needed and perform if necessary.
 
     Args:
         project_path: Path to the project
-        selected_model_key: The selected model key for embeddings
         max_age_minutes: Maximum age of index before reindex
 
     Returns:
-        Tuple of (reindexed: bool, stored_model_key: str | None)
+        Tuple of (reindexed: bool, None)
         - reindexed: True if reindex was performed
-        - stored_model_key: The model key from project_info.json (for cache consistency)
     """
     # Load filters from project_info.json to ensure consistent filtering
     import json
 
-    project_storage = get_project_storage_dir(
-        project_path, model_key=selected_model_key
-    )
+    project_storage = get_project_storage_dir(project_path)
     project_info_file = project_storage / "project_info.json"
 
     include_dirs = None
@@ -260,29 +126,6 @@ def _check_auto_reindex(
                 )
         except Exception as e:
             logger.warning(f"[AUTO_REINDEX] Failed to load filters: {e}")
-
-    # CRITICAL: For existing indexes, use the model that created the index
-    # NOT the routing-selected model (prevents dimension mismatch errors)
-    model_key_for_embedder = selected_model_key
-    if project_info and project_info.get("embedding_model"):
-        from mcp_server.model_pool_manager import get_model_key_from_name
-
-        stored_model_name = project_info["embedding_model"]
-        stored_model_key = get_model_key_from_name(stored_model_name)
-        if stored_model_key:
-            model_key_for_embedder = stored_model_key
-            logger.info(
-                f"[AUTO_REINDEX] Using stored model from index: {stored_model_name} "
-                f"(key: {stored_model_key}) instead of routing selection"
-            )
-        else:
-            logger.error(
-                f"[AUTO_REINDEX] Stored model '{stored_model_name}' is not registered in "
-                f"MODEL_POOL_CONFIG or MODEL_POOL_CONFIG_LIGHTWEIGHT_SPEED. Existing index "
-                f"will be discarded and rebuilt with routing-selected model "
-                f"'{selected_model_key}'. Update search/config.py:ALL_POOL_MODELS to "
-                f"register this model and prevent data loss."
-            )
 
     # Phase 1: Lightweight freshness check (no HybridSearcher/embedder needed)
     from chunking.tree_sitter import TreeSitterChunker
@@ -310,7 +153,7 @@ def _check_auto_reindex(
                 f"[AUTO_REINDEX] Index for {project_path} is fresh (age: {age:.1f}s, "
                 f"max: {max_age_minutes * 60}s), skipping reindex"
             )
-            return False, model_key_for_embedder
+            return False, None
 
     # Phase 2: Index is stale — create full machinery and reindex
     logger.debug(
@@ -320,7 +163,7 @@ def _check_auto_reindex(
     # Validate dimension compatibility BEFORE creating searcher
     from search.dimension_validator import validate_embedder_index_compatibility
 
-    embedder = get_embedder(model_key_for_embedder, allow_cross_pool=True)
+    embedder = get_embedder()
 
     try:
         validate_embedder_index_compatibility(
@@ -345,6 +188,8 @@ def _check_auto_reindex(
             dense_weight=config.search_mode.dense_weight,
             rrf_k=config.search_mode.rrf_k_parameter,
             max_workers=2,
+            bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
+            bm25_use_stemming=config.search_mode.bm25_use_stemming,
             project_id=project_id,
             config=config,
         )
@@ -352,16 +197,13 @@ def _check_auto_reindex(
         # Searcher bind is deferred until after auto_reindex_if_needed so we never
         # cache a HybridSearcher whose embedder was just nulled by clear_embedders().
         state = get_state()
-        if (
-            state.searcher is None
-            or state.current_project != project_path
-            or state.current_model_key != model_key_for_embedder
-        ):
+        if state.searcher is None or state.current_project != project_path:
             state.current_project = project_path
-            state.current_model_key = model_key_for_embedder
     else:
-        indexer = get_index_manager(project_path, model_key=selected_model_key)
-    chunker = MultiLanguageChunker(
+        indexer = get_index_manager(project_path)
+    # for_project() wires RepositoryRelationFilter so import edges are
+    # classified (stdlib/third_party/local) rather than stored as "unknown".
+    chunker = MultiLanguageChunker.for_project(
         project_path,
         include_dirs,
         exclude_dirs,
@@ -391,18 +233,19 @@ def _check_auto_reindex(
     # construct a fresh HybridSearcher from the new embedder.
     if (
         config.search_mode.enable_hybrid
-        and model_key_for_embedder
         and get_state().searcher is None
-        and get_state().embedders.get(model_key_for_embedder) is embedder
+        and get_state().embedders.get("default") is embedder
     ):
         get_state().searcher = indexer
 
-    # Return stored model key for searcher cache consistency
-    return reindexed, model_key_for_embedder
+    return reindexed, None
 
 
 def _get_index_manager_from_searcher(searcher) -> CodeIndexManager | None:
     """Extract index_manager from searcher (handles different searcher types).
+
+    Delegates to :class:`~mcp_server.tools.searcher_view.SearcherView`, which
+    owns the HybridSearcher/IntelligentSearcher attribute-extraction seam.
 
     Args:
         searcher: HybridSearcher or IntelligentSearcher instance
@@ -410,11 +253,9 @@ def _get_index_manager_from_searcher(searcher) -> CodeIndexManager | None:
     Returns:
         CodeIndexManager or None
     """
-    if hasattr(searcher, "index_manager"):
-        return searcher.index_manager
-    elif hasattr(searcher, "dense_index"):
-        return searcher.dense_index
-    return None
+    from mcp_server.tools.searcher_view import SearcherView
+
+    return SearcherView(searcher).index_manager
 
 
 async def _resolve_symbol_to_chunk_id(
@@ -448,27 +289,28 @@ async def _resolve_symbol_to_chunk_id(
             }
 
     # Tier 2 — graph node name index + suffix scan
-    if hasattr(searcher, "dense_index"):
-        gs = getattr(searcher.dense_index, "graph_storage", None)
-        if gs:
-            matches = (
-                gs.get_nodes_by_name(symbol_name)
-                if hasattr(gs, "get_nodes_by_name")
-                else []
-            )
-            if not matches:
-                # Plain ":name" (chunk_id suffix) or class-qualified ".name"
-                matches = [
-                    n
-                    for n in gs.graph.nodes()
-                    if n.endswith(f":{symbol_name}") or n.endswith(f".{symbol_name}")
-                ]
-            if matches:
-                return matches[0], {
-                    "resolved_from": symbol_name,
-                    "chunk_id": matches[0],
-                    "resolution_method": "graph_lookup",
-                }
+    from mcp_server.tools.searcher_view import SearcherView
+
+    gs = SearcherView(searcher).graph_storage
+    if gs:
+        matches = (
+            gs.get_nodes_by_name(symbol_name)
+            if hasattr(gs, "get_nodes_by_name")
+            else []
+        )
+        if not matches:
+            # Plain ":name" (chunk_id suffix) or class-qualified ".name"
+            matches = [
+                n
+                for n in gs.graph.nodes()
+                if n.endswith(f":{symbol_name}") or n.endswith(f".{symbol_name}")
+            ]
+        if matches:
+            return matches[0], {
+                "resolved_from": symbol_name,
+                "chunk_id": matches[0],
+                "resolution_method": "graph_lookup",
+            }
 
     # Tier 3 — semantic search with name-preference filter
     results = await asyncio.to_thread(searcher.search, symbol_name, k=5)
@@ -578,49 +420,32 @@ def _format_search_results(results: list) -> list[dict]:
     """
     formatted_results = []
     for result in results:
-        if hasattr(result, "relative_path"):
-            # IntelligentSearcher result format
-            item = {
-                "file": result.relative_path,
-                "lines": f"{result.start_line}-{result.end_line}",
-                "kind": result.chunk_type,
-                "score": round(result.similarity_score, 2),
-                "chunk_id": result.chunk_id,
-            }
-            # Note: name field omitted (redundant with chunk_id last component)
-            # Add complexity score if available (functions only)
-            if hasattr(result, "complexity_score") and result.complexity_score:
-                item["complexity_score"] = result.complexity_score
-            # Propagate source field for ego-graph neighbor identification
-            if hasattr(result, "source") and result.source:
-                item["source"] = result.source
-        else:
-            # HybridSearcher result format
-            item = {
-                "file": result.metadata.get("relative_path", ""),
-                "lines": f"{result.metadata.get('start_line', 0)}-{result.metadata.get('end_line', 0)}",
-                "kind": result.metadata.get("chunk_type", "unknown"),
-                "score": round(result.score, 2),
-                "chunk_id": result.chunk_id,
-            }
-            # Add name for module-type results (helps identify what the chunk represents)
-            name = result.metadata.get("name", "")
-            if name:
-                item["name"] = name
-            # Add docstring preview for module summaries (compressed context)
-            if result.metadata.get("chunk_type") in ("module", "community"):
-                doc = result.metadata.get("docstring", "")
-                if doc:
-                    item["summary"] = doc[:200]
-            # Add reranker score if available (neural reranking)
-            if "reranker_score" in result.metadata:
-                item["reranker_score"] = round(result.metadata["reranker_score"], 4)
-            # Add complexity score if available (functions only)
-            if result.metadata.get("complexity_score"):
-                item["complexity_score"] = result.metadata["complexity_score"]
-            # Propagate source field for ego-graph neighbor identification
-            if hasattr(result, "source") and result.source:
-                item["source"] = result.source
+        # Unified thin SearchResult format (reranker.SearchResult — all results)
+        item = {
+            "file": result.metadata.get("relative_path", ""),
+            "lines": f"{result.metadata.get('start_line', 0)}-{result.metadata.get('end_line', 0)}",
+            "kind": result.metadata.get("chunk_type", "unknown"),
+            "score": round(result.score, 2),
+            "chunk_id": result.chunk_id,
+        }
+        # Add name for module-type results (helps identify what the chunk represents)
+        name = result.metadata.get("name", "")
+        if name:
+            item["name"] = name
+        # Add docstring preview for module summaries (compressed context)
+        if result.metadata.get("chunk_type") in ("module", "community"):
+            doc = result.metadata.get("docstring", "")
+            if doc:
+                item["summary"] = doc[:200]
+        # Add reranker score if available (neural reranking)
+        if "reranker_score" in result.metadata:
+            item["reranker_score"] = round(result.metadata["reranker_score"], 4)
+        # Add complexity score if available (functions only)
+        if result.metadata.get("complexity_score"):
+            item["complexity_score"] = result.metadata["complexity_score"]
+        # Propagate source field for ego-graph neighbor identification
+        if hasattr(result, "source") and result.source:
+            item["source"] = result.source
         formatted_results.append(item)
     return formatted_results
 
@@ -755,13 +580,13 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     for result in results:
         item = {
             "chunk_id": result.chunk_id,
-            "file": result.relative_path,
-            "lines": f"{result.start_line}-{result.end_line}",
-            "kind": result.chunk_type,
-            "score": round(result.similarity_score, 2),
+            "file": result.metadata.get("relative_path", ""),
+            "lines": f"{result.metadata.get('start_line', 0)}-{result.metadata.get('end_line', 0)}",
+            "kind": result.metadata.get("chunk_type", "unknown"),
+            "score": round(result.score, 2),
         }
-        if hasattr(result, "name") and result.name:
-            item["name"] = result.name
+        if result.metadata.get("name"):
+            item["name"] = result.metadata["name"]
         formatted_results.append(item)
 
     return {
@@ -788,10 +613,10 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
 
     # Validate inputs
     if not chunk_id and not symbol_name:
-        return {
-            "error": "Missing required parameter",
-            "message": "Provide either chunk_id or symbol_name",
-        }
+        return responses.error(
+            "Missing required parameter",
+            message="Provide either chunk_id or symbol_name",
+        )
 
     # Normalize chunk_id path separators for cross-platform compatibility
     if chunk_id:
@@ -849,15 +674,15 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
 
     # Validate: need at least one source and one target identifier
     if not source and not source_chunk_id:
-        return {
-            "error": "Missing source",
-            "message": "Provide either source (symbol name) or source_chunk_id",
-        }
+        return responses.error(
+            "Missing source",
+            message="Provide either source (symbol name) or source_chunk_id",
+        )
     if not target and not target_chunk_id:
-        return {
-            "error": "Missing target",
-            "message": "Provide either target (symbol name) or target_chunk_id",
-        }
+        return responses.error(
+            "Missing target",
+            message="Provide either target (symbol name) or target_chunk_id",
+        )
 
     # Normalize chunk_ids
     if source_chunk_id:
@@ -895,19 +720,15 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
             }
 
     # Get graph query engine
-    graph_storage = None
-    if hasattr(searcher, "dense_index") and hasattr(
-        searcher.dense_index, "graph_storage"
-    ):
-        graph_storage = searcher.dense_index.graph_storage
-    elif hasattr(searcher, "graph_storage"):
-        graph_storage = searcher.graph_storage
+    from mcp_server.tools.searcher_view import SearcherView
+
+    graph_storage = SearcherView(searcher).graph_storage
 
     if not graph_storage:
-        return {
-            "error": "Graph not available",
-            "message": "Call graph not initialized. Re-index the project.",
-        }
+        return responses.error(
+            "Graph not available",
+            message="Call graph not initialized. Re-index the project.",
+        )
 
     # Create query engine and find path
     from graph.graph_queries import GraphQueryEngine

@@ -118,7 +118,7 @@ class TestRefreshEarlyExits:
         """When no community_map JSON exists on disk, run() returns silently."""
         stage = _make_stage(tmp_path)
         stage.run(_changes(added=["a.py"]), "proj")
-        stage._indexer.remove_file_chunks.assert_not_called()
+        stage._indexer.remove_files.assert_not_called()
         stage._indexer.add_embeddings.assert_not_called()
 
     def test_returns_early_when_no_affected_communities(self, tmp_path):
@@ -126,7 +126,7 @@ class TestRefreshEarlyExits:
         _write_community_map(tmp_path, {"other/file.py:1-5:function:foo": 0})
         stage = _make_stage(tmp_path)
         stage.run(_changes(added=["new/file.py"]), "proj")
-        stage._indexer.remove_file_chunks.assert_not_called()
+        stage._indexer.remove_files.assert_not_called()
 
     def test_returns_early_when_metadata_store_unavailable(self, tmp_path):
         """When MetadataStore is inaccessible, run() warns and returns silently."""
@@ -199,8 +199,8 @@ class TestRefreshHappyPath:
         ):
             stage.run(_changes(added=["a.py"]), "proj")
 
-        stage._indexer.remove_file_chunks.assert_called_once_with(
-            "__community_7__.py", "proj"
+        stage._indexer.remove_files.assert_called_once_with(
+            {"__community_7__.py"}, "proj"
         )
         stage._summary_stage.compute_community_summaries.assert_called_once()
         stage._embedder.embed_chunks.assert_called_once()
@@ -308,3 +308,94 @@ class TestRefreshListTypeSafety:
             stage.run(
                 _changes(added=["a.py"], modified=["b.py"], removed=["c.py"]), "proj"
             )
+
+
+# ---------------------------------------------------------------------------
+# Direct tests for pure-computation phase helpers
+# ---------------------------------------------------------------------------
+
+
+class TestMapFilesToCommunities:
+    """Direct tests for _map_files_to_communities (pure computation)."""
+
+    def _stage(self):
+        idx = MagicMock()
+        idx.storage_dir = "."
+        return CommunityRefreshStage(
+            embedder=MagicMock(), indexer=idx, summary_stage=MagicMock()
+        )
+
+    def test_single_file_single_community(self):
+        stage = self._stage()
+        community_map = {
+            "a.py:1-5:function:foo": 3,
+            "a.py:6-10:function:bar": 3,
+        }
+        result = stage._map_files_to_communities(community_map)
+        assert result == {"a.py": 3}
+
+    def test_primary_community_wins_by_count(self):
+        """File with 2 chunks in community 5 and 1 chunk in community 9 → maps to 5."""
+        stage = self._stage()
+        community_map = {
+            "a.py:1-5:function:foo": 5,
+            "a.py:6-10:function:bar": 5,
+            "a.py:11-15:function:baz": 9,
+        }
+        result = stage._map_files_to_communities(community_map)
+        assert result["a.py"] == 5
+
+    def test_multiple_files_mapped_independently(self):
+        stage = self._stage()
+        community_map = {
+            "a.py:1-5:function:foo": 1,
+            "b.py:1-3:function:bar": 2,
+        }
+        result = stage._map_files_to_communities(community_map)
+        assert result == {"a.py": 1, "b.py": 2}
+
+
+class TestAffectedCommunityIds:
+    """Direct tests for _affected_community_ids (pure computation)."""
+
+    def _stage(self):
+        idx = MagicMock()
+        idx.storage_dir = "."
+        return CommunityRefreshStage(
+            embedder=MagicMock(), indexer=idx, summary_stage=MagicMock()
+        )
+
+    def test_empty_when_no_overlap(self):
+        stage = self._stage()
+        file_to_community = {"other/file.py": 0}
+        result = stage._affected_community_ids(
+            file_to_community, _changes(added=["new/file.py"])
+        )
+        assert result == set()
+
+    def test_finds_community_for_modified_file(self):
+        stage = self._stage()
+        file_to_community = {"a.py": 7}
+        result = stage._affected_community_ids(
+            file_to_community, _changes(modified=["a.py"])
+        )
+        assert result == {7}
+
+    def test_path_normalisation_matches_forward_slash(self):
+        """Windows backslash paths in changes are normalised to forward-slash keys."""
+        stage = self._stage()
+        file_to_community = {"src/a.py": 3}
+        # Simulate a Windows path in changes
+        result = stage._affected_community_ids(
+            file_to_community, _changes(added=["src\\a.py"])
+        )
+        assert result == {3}
+
+    def test_all_three_change_types_included(self):
+        stage = self._stage()
+        file_to_community = {"a.py": 1, "b.py": 2, "c.py": 3}
+        result = stage._affected_community_ids(
+            file_to_community,
+            _changes(added=["a.py"], modified=["b.py"], removed=["c.py"]),
+        )
+        assert result == {1, 2, 3}

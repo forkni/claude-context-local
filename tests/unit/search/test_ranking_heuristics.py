@@ -8,7 +8,7 @@ documented boost/demotion rule in isolation.
 import unittest
 
 from search.ranking_heuristics import RankingHeuristics
-from search.searcher import SearchResult
+from search.reranker import SearchResult
 
 
 def _result(
@@ -21,19 +21,16 @@ def _result(
 ) -> SearchResult:
     return SearchResult(
         chunk_id="id",
-        similarity_score=similarity_score,
-        content_preview=content_preview,
-        file_path="/abs/a/b.py",
-        relative_path=relative_path,
-        folder_structure=[],
-        chunk_type=chunk_type,
-        name=name,
-        parent_name=None,
-        start_line=1,
-        end_line=10,
-        docstring=docstring,
-        tags=[],
-        context_info={},
+        score=similarity_score,
+        metadata={
+            "name": name,
+            "chunk_type": chunk_type,
+            "relative_path": relative_path,
+            "file_path": "/abs/a/b.py",
+            "docstring": docstring,
+            "content_preview": content_preview,
+        },
+        source="semantic",
     )
 
 
@@ -51,7 +48,7 @@ class TestRankingHeuristicsParity(unittest.TestCase):
         cls = _result(name="QueryRouter", chunk_type="class", similarity_score=0.8)
         fn = _result(name="route_query", chunk_type="function", similarity_score=0.85)
         ranked = self.h.rank([fn, cls], "QueryRouter class")
-        self.assertEqual(ranked[0].chunk_type, "class")
+        self.assertEqual(ranked[0].metadata["chunk_type"], "class")
 
     def test_entity_query_path_order(self):
         """CamelCase entity query → class chunk boosted over function."""
@@ -60,14 +57,14 @@ class TestRankingHeuristicsParity(unittest.TestCase):
         )
         fn = _result(name="search", chunk_type="function", similarity_score=0.82)
         ranked = self.h.rank([fn, cls], "IntelligentSearcher")
-        self.assertEqual(ranked[0].chunk_type, "class")
+        self.assertEqual(ranked[0].metadata["chunk_type"], "class")
 
     def test_general_query_module_demoted(self):
         """General query → module chunks scored below functions at equal similarity."""
         fn = _result(name="search", chunk_type="function", similarity_score=0.9)
         mod = _result(name="searcher", chunk_type="module", similarity_score=0.9)
         ranked = self.h.rank([mod, fn], "how does search work")
-        self.assertEqual(ranked[0].chunk_type, "function")
+        self.assertEqual(ranked[0].metadata["chunk_type"], "function")
 
     def test_score_reproducible(self):
         """Same result + query always returns same score."""

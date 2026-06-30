@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from mcp_server.server import get_searcher
 from mcp_server.services import get_config, get_state
+from mcp_server.tools import responses
 from search.config import (
     EgoGraphConfig,
     ParentRetrievalConfig,
@@ -47,8 +48,6 @@ class SearchPlan:
 
     query: str
     k: int
-    selected_model_key: str
-    routing_info: dict[str, Any] | None
     intent_decision: IntentDecision | None
     search_mode: str
     ego_graph_enabled: bool
@@ -79,14 +78,12 @@ class PlanRedirect:
 
     fallback_on_error: when True (SIMILARITY), the handler should fall through to normal
         search if the I/O lookup raises. When False (PATH_TRACING), no fallback.
-    model_key: model to use for the preliminary symbol-lookup search (find_similar only).
     k: k to forward to find_similar_code.
     """
 
     kind: str
     params: dict[str, Any] = field(default_factory=dict)
     fallback_on_error: bool = False
-    model_key: str | None = None
     k: int = 4
 
 
@@ -126,21 +123,12 @@ class SearchPlanner:
         Args:
             arguments: raw MCP tool arguments dict; must contain "query".
         """
-        from mcp_server.tools.search_handlers import _route_query_to_model
-
         query: str = arguments["query"]
 
         # k: respect per-request arg, clamp to max_k
         search_config = get_search_config()
         k = int(arguments.get("k", search_config.search_mode.default_k))
         k = min(k, search_config.search_mode.max_k)
-
-        # Model routing
-        use_routing = bool(arguments.get("use_routing", True))
-        model_key: str | None = arguments.get("model_key")
-        selected_model_key, routing_info = _route_query_to_model(
-            query, use_routing, model_key
-        )
 
         # Ego-graph defaults (may be overridden by CONTEXTUAL intent below)
         ego_graph_enabled = bool(arguments.get("ego_graph_enabled", False))
@@ -199,7 +187,6 @@ class SearchPlanner:
                         kind="find_similar",
                         params={"symbol_name": symbol_name},
                         fallback_on_error=True,
-                        model_key=selected_model_key,
                         k=k,
                     )
 
@@ -257,8 +244,6 @@ class SearchPlanner:
         return SearchPlan(
             query=query,
             k=k,
-            selected_model_key=selected_model_key,
-            routing_info=routing_info,
             intent_decision=intent_decision,
             search_mode=search_mode,
             ego_graph_enabled=ego_graph_enabled,
@@ -320,7 +305,6 @@ class SearchOrchestrator:
 
         # ===== Block A: Auto-reindex =====
         current_project = get_state().current_project
-        stored_model_key = None
         if plan.auto_reindex and current_project:
             try:
                 # Per-project asyncio.Lock prevents two concurrent search/index
@@ -328,80 +312,38 @@ class SearchOrchestrator:
                 # _check_auto_reindex is blocking (can run a full incremental
                 # reindex + HybridSearcher construction), so offload to a thread.
                 async with get_state().get_reindex_lock(current_project):
-                    reindexed, stored_model_key = await asyncio.to_thread(
+                    reindexed, _ = await asyncio.to_thread(
                         _check_auto_reindex,
                         current_project,
-                        plan.selected_model_key,
                         plan.max_age_minutes,
                     )
                 if reindexed:
                     get_state().reset_searcher()
             except DimensionMismatchError as e:
-                return {
-                    "error": "Dimension mismatch",
-                    "message": str(e),
-                    "recovery_suggestion": (
-                        f"Run index_directory with force_reindex=True to rebuild "
-                        f"the index for model {e.embedder_model}"
-                    ),
-                    "embedder_dimension": e.embedder_dim,
-                    "index_dimension": e.index_dim,
-                }
+                return responses.dimension_mismatch(e)
 
         # ===== Block B: Searcher acquisition + readiness check =====
-        effective_search_model = (
-            stored_model_key if stored_model_key else plan.selected_model_key
-        )
-        if stored_model_key and stored_model_key != plan.selected_model_key:
-            logger.info(
-                f"[SEARCH] Using stored index model '{stored_model_key}' instead of "
-                f"routed model '{plan.selected_model_key}' to preserve searcher cache"
-            )
-
         try:
             # get_searcher can construct a HybridSearcher on cache-miss — offload
             # to avoid blocking the event loop during model/index init.
-            searcher = await asyncio.to_thread(
-                lambda: get_searcher(model_key=effective_search_model)
-            )
+            searcher = await asyncio.to_thread(get_searcher)
         except DimensionMismatchError as e:
-            return {
-                "error": "Dimension mismatch",
-                "message": str(e),
-                "recovery_suggestion": (
-                    f"Run index_directory with force_reindex=True to rebuild "
-                    f"the index for model {e.embedder_model}"
-                ),
-                "embedder_dimension": e.embedder_dim,
-                "index_dimension": e.index_dim,
-            }
+            return responses.dimension_mismatch(e)
 
-        total_chunks = 0
-        is_ready = False
-        if hasattr(searcher, "is_ready"):
-            is_ready = searcher.is_ready
-            if (
-                hasattr(searcher, "dense_index")
-                and searcher.dense_index
-                and hasattr(searcher.dense_index, "index")
-                and searcher.dense_index.index
-            ):
-                total_chunks = searcher.dense_index.index.ntotal
-        elif hasattr(searcher, "index_manager") and searcher.index_manager:
-            stats = searcher.index_manager.get_stats()
-            total_chunks = stats.get("total_chunks", 0)
-            is_ready = total_chunks > 0
-        elif hasattr(searcher, "get_stats"):
-            stats = searcher.get_stats()
-            total_chunks = stats.get("total_chunks", 0)
-            is_ready = total_chunks > 0
+        from mcp_server.tools.searcher_view import SearcherView
+
+        _view = SearcherView(searcher)
+        is_ready = _view.is_ready
+        # Only compute total_chunks when the index is ready — avoids accessing
+        # a partially-initialised index and simplifies mock setup in tests.
+        total_chunks = _view.total_chunks if is_ready else 0
 
         if not is_ready or total_chunks == 0:
-            return {
-                "error": "No indexed project found",
-                "message": "You must index a project before searching",
-                "current_project": current_project or "None",
-            }
+            return responses.error(
+                "No indexed project found",
+                message="You must index a project before searching",
+                current_project=current_project or "None",
+            )
 
         # ===== Block C: Filter build + config assembly =====
         filters: dict = {}
@@ -604,12 +546,6 @@ class SearchOrchestrator:
             if subgraph_data.get("communities"):
                 response["subgraph_communities"] = subgraph_data["communities"]
 
-        if plan.routing_info:
-            confidence = plan.routing_info.get("confidence", 0.0)
-            reason = plan.routing_info.get("reason", "")
-            if confidence < 0.9 or "Fallback" in reason or "routed" in reason.lower():
-                response["routing"] = plan.routing_info
-
         response = add_system_message(
             response, tool_name="search_code", query=plan.query, chunk_id=None
         )
@@ -664,15 +600,15 @@ class SearchOrchestrator:
         chunk_id = arguments.get("chunk_id")
 
         if not query and not chunk_id:
-            return {
-                "error": "Missing required parameter",
-                "message": "Provide either query or chunk_id parameter",
-            }
+            return responses.error(
+                "Missing required parameter",
+                message="Provide either query or chunk_id parameter",
+            )
         if query and chunk_id:
-            return {
-                "error": "Invalid parameters",
-                "message": "Provide either query OR chunk_id, not both",
-            }
+            return responses.error(
+                "Invalid parameters",
+                message="Provide either query OR chunk_id, not both",
+            )
 
         if chunk_id:
             from mcp_server.tools.search_handlers import _handle_chunk_id_lookup
@@ -681,8 +617,7 @@ class SearchOrchestrator:
 
         # SearchPlanner.plan() calls IntentClassifier.classify() which, when
         # semantic_enabled=True (the default), runs embed_query() — a GPU forward
-        # pass per request.  It also probes the filesystem via _route_query_to_model.
-        # Offload to avoid blocking the event loop. plan() stays synchronous.
+        # pass per request.  Offload to avoid blocking the event loop. plan() stays synchronous.
         plan = await asyncio.to_thread(lambda: SearchPlanner().plan(arguments))
 
         if plan.redirect is not None:
@@ -703,9 +638,7 @@ class SearchOrchestrator:
                 try:
                     # get_searcher() can construct a HybridSearcher on cache-miss —
                     # same reason the call 35 lines above is wrapped in to_thread.
-                    _redirect_searcher = await asyncio.to_thread(
-                        lambda: get_searcher(model_key=redirect.model_key)
-                    )
+                    _redirect_searcher = await asyncio.to_thread(get_searcher)
                     _redirect_result = await asyncio.to_thread(
                         _redirect_searcher.search,
                         redirect.params["symbol_name"],

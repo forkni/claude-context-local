@@ -1,0 +1,22 @@
+{
+  "hit_rate@5": 0.0,
+  "hit_rate@7": 0.0,
+  "mrr": 0.0,
+  "ndcg@10": 0.0,
+  "ndcg@5": 0.0,
+  "pass_fail": {
+    "hit_rate@5": "FAIL",
+    "mrr": "FAIL",
+    "recall@5": "FAIL"
+  },
+  "precision@1": 0.0,
+  "precision@10": 0.0,
+  "precision@5": 0.0,
+  "recall@1": 0.0,
+  "recall@10": 0.0,
+  "recall@5": 0.0,
+  "recall@7": 0.0,
+  "success_count": 0,
+  "success_count@7": 0,
+  "total_queries": 1
+}

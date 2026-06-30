@@ -77,7 +77,6 @@ async def run_query(orchestrator, query: str, k: int) -> tuple[dict, float]:
             "k": k,
             "include_context": True,
             "search_mode": "auto",
-            "use_routing": True,
         }
     )
     latency = (time.perf_counter() - start) * 1000.0

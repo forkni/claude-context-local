@@ -20,6 +20,14 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from search.tokenization import (
+    CODE_TERM_BLOCKLIST,
+    is_camelcase,
+    is_dotted_symbol,
+    is_snake_or_dunder,
+    is_upper_const,
+)
+
 
 if TYPE_CHECKING:
     from embeddings.embedder import CodeEmbedder
@@ -97,49 +105,9 @@ def _load_intent_rules() -> dict:
     return data
 
 
-# Blocklist of common programming terms that shouldn't be matched as symbols
-_CODE_TERM_BLOCKLIST = {
-    "method",
-    "function",
-    "class",
-    "module",
-    "variable",
-    "constant",
-    "attribute",
-    "property",
-    "field",
-    "parameter",
-    "argument",
-    "type",
-    "interface",
-    "enum",
-    "struct",
-    "trait",
-    "protocol",
-    "caller",
-    "callers",
-    "callee",
-    "callees",
-    "implementation",
-    "definition",
-    "declaration",
-    "reference",
-    "import",
-    "imports",
-    "export",
-    "exports",
-    "handler",
-    "helper",
-    "utility",
-    "wrapper",
-    "factory",
-    "object",
-    "instance",
-    "value",
-    "result",
-    "error",
-    "exception",
-}
+# Blocklist of common programming terms that shouldn't be matched as symbols.
+# Canonical definition: search/tokenization.CODE_TERM_BLOCKLIST
+_CODE_TERM_BLOCKLIST = CODE_TERM_BLOCKLIST
 
 
 class QueryIntent(Enum):
@@ -593,24 +561,16 @@ class IntentClassifier:
                 continue
 
             # CamelCase/PascalCase: HybridSearcher, IndexFlatIP, HTMLParser
-            # Detect transition from lowercase to uppercase within token
-            if re.search(r"[a-z][A-Z]", token) or re.search(r"[A-Z][a-z]+[A-Z]", token):
+            if is_camelcase(token):
                 boost += 0.25
             # UPPER_CASE with 2+ alpha chars: FAISS, BM25, MAX_RETRIES
-            # Requires at least one alphabetic char after first to avoid single letters
-            elif re.match(r"^[A-Z][A-Z0-9_]{1,}$", token) and any(
-                c.isalpha() for c in token[1:]
-            ):
+            elif is_upper_const(token):
                 boost += 0.15
-            # Dunder methods: __init__, __enter__, __repr__
-            elif (
-                re.match(r"^__[a-z]\w+__$", token)
-                or "_" in token
-                and re.match(r"^_?[a-z][a-z0-9_]+$", token)
-            ):
+            # Dunder methods / snake_case: __init__, embed_chunks
+            elif is_snake_or_dunder(token):
                 boost += 0.20
             # dot.notation with mixed case: module.Class, self.method
-            elif "." in token and re.search(r"[A-Z]", token):
+            elif is_dotted_symbol(token):
                 boost += 0.25
 
         return min(boost, 0.5)

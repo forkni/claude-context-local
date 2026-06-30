@@ -97,13 +97,15 @@ class CommunityStage:
             logger.info("[COMMUNITY_MERGE] Running community-based remerge")
 
             try:
-                # Deferred import: chunking.languages.base pulls in the chunker stack,
-                # which imports graph modules — importing at module scope creates a cycle.
-                from chunking.languages.base import LanguageChunker
+                # Deferred import: chunking.community_remerge pulls in the chunker
+                # stack which imports graph modules — keep deferred to avoid a cycle.
+                from chunking.community_remerge import remerge_chunks_with_communities
 
-                all_chunks = LanguageChunker.remerge_chunks_with_communities(
+                all_chunks = remerge_chunks_with_communities(
                     chunks=all_chunks,
                     community_map=community_map,
+                    # merger not supplied — community_remerge lazily constructs
+                    # PythonChunker() to borrow _greedy_merge_small_chunks (P5).
                     min_tokens=config.chunking.min_chunk_tokens,
                     max_merged_tokens=config.chunking.max_merged_tokens,
                     token_method=config.chunking.token_estimation,

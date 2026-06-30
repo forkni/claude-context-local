@@ -50,7 +50,7 @@ if "%~1"=="" (
     echo   4. Project Management
     echo   5. Developer Options
     echo   6. Help ^& Documentation
-    echo   M. Quick Model Switch ^(General / Code-specific / Multi-model^)
+    echo   M. Quick Model Switch ^(single-model selection^)
     echo   F. Configure Output Format
     echo   V. Toggle RAM Fallback
     echo   X. Release Resources
@@ -159,24 +159,6 @@ if "!SERVER_EXIT_CODE!"=="0" (
 pause
 goto menu_restart
 
-REM ============================================================================
-REM :start_server_sse - SECTION REMOVED (2025-11-15)
-REM ============================================================================
-REM This section has been removed due to unresolved Windows batch compatibility
-REM issues. The single SSE server option caused crashes when selected, likely
-REM due to complex interactions between:
-REM   - Delayed expansion (setlocal EnableDelayedExpansion)
-REM   - Nested IF blocks and FOR loops
-REM   - Quote parsing in the 'start' command
-REM   - goto statements inside code blocks
-REM
-REM WORKAROUND: Use Option 2 (Dual SSE Servers) instead, which works perfectly.
-REM The dual server mode launches both VSCode (port 8765) and CLI (port 8766)
-REM servers, and you can use either or both as needed.
-REM
-REM If you need single server mode, use Option 1 (stdio transport) or manually
-REM run: scripts\batch\start_mcp_http.bat
-REM ============================================================================
 
 :start_server_http
 echo.
@@ -337,7 +319,7 @@ echo.
 echo   1. View Current Configuration       - Show all active settings
 echo   2. Search Mode Configuration        - Mode, weights, parallel search
 echo   3. Select Embedding Model           - Choose model by VRAM ^(BGE-M3/Qwen3^)
-echo   4. Configure Neural Reranker        - Cross-encoder reranking ^(+5-15%% quality^)
+echo   4. Configure Neural Reranker        - Cross-encoder reranking ^(+15-25%% quality^)
 echo   5. Entity Tracking Configuration    - Symbol tracking, import/class context
 echo   6. Configure Chunking Settings      - Chunk merging, AST splitting ^(+4.3 Recall@5^)
 echo   7. Performance Settings             - GPU acceleration, VRAM management, auto-reindex
@@ -1196,7 +1178,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); multi_enabled = config.routing.multi_model_enabled; pool = config.routing.multi_model_pool or 'full'; model_display = f'BGE-M3 + gte-modernbert ({pool})' if multi_enabled and pool == 'lightweight-speed' else f'CodeRankEmbed + Qwen3 ({pool})' if multi_enabled else f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print('    Multi-Model Routing:', 'Enabled' if multi_enabled else 'Disabled'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print('    File Summaries:', 'Enabled' if config.chunking.enable_file_summaries else 'Disabled'); print('    Community Summaries:', 'Enabled' if config.chunking.enable_community_summaries else 'Disabled'); print(); print('  Chunking Settings:'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge (full re-index only):', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Split Size Method: {config.chunking.split_size_method}'); print(f'    Max Split Chars: {config.chunking.max_split_chars}'); print(f'    Sizing Mode: {config.chunking.sizing_mode}'); print(f'    Adaptive Max Multiplier: {config.chunking.adaptive_multiplier_max}'); print(f'    Adaptive Min Multiplier: {config.chunking.adaptive_multiplier_min}'); print(f'    Max Complexity Cap: {config.chunking.max_complexity_cap}'); print(f'    Max Merged Tokens: {config.chunking.max_merged_tokens}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format); g = config.graph_enhanced; print(); print('  Output ^& Ranking Enhancements:'); print('    Source-Position Ordering:', 'Enabled' if config.output.source_order_output else 'Disabled'); print('    Centrality BM25 Boost:', 'Enabled' if g.centrality_bm25_boost else 'Disabled'); print(f'      Boost Threshold: {g.centrality_boost_threshold}'); print(f'      Boost Factor: {g.centrality_boost_factor}'); print(f'      Boost Cap: {g.centrality_boost_cap}')"
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); model_display = f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print('    File Summaries:', 'Enabled' if config.chunking.enable_file_summaries else 'Disabled'); print('    Community Summaries:', 'Enabled' if config.chunking.enable_community_summaries else 'Disabled'); print(); print('  Chunking Settings:'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge (full re-index only):', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Split Size Method: {config.chunking.split_size_method}'); print(f'    Max Split Chars: {config.chunking.max_split_chars}'); print(f'    Sizing Mode: {config.chunking.sizing_mode}'); print(f'    Adaptive Max Multiplier: {config.chunking.adaptive_multiplier_max}'); print(f'    Adaptive Min Multiplier: {config.chunking.adaptive_multiplier_min}'); print(f'    Max Complexity Cap: {config.chunking.max_complexity_cap}'); print(f'    Max Merged Tokens: {config.chunking.max_merged_tokens}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format); g = config.graph_enhanced; print(); print('  Output ^& Ranking Enhancements:'); print('    Source-Position Ordering:', 'Enabled' if config.output.source_order_output else 'Disabled'); print('    Centrality BM25 Boost:', 'Enabled' if g.centrality_bm25_boost else 'Disabled'); print(f'      Boost Threshold: {g.centrality_boost_threshold}'); print(f'      Boost Factor: {g.centrality_boost_factor}'); print(f'      Boost Cap: {g.centrality_boost_cap}')"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.35, Dense=0.65
@@ -1258,7 +1240,7 @@ echo [INFO] Configure search weights ^(must sum to 1.0^)
 echo.
 REM Show current values from config
 ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print(f'   Current: BM25={cfg.search_mode.bm25_weight}, Dense={cfg.search_mode.dense_weight}')" 2>nul
-if errorlevel 1 echo    Current: BM25=0.4, Dense=0.6 ^(default^)
+if errorlevel 1 echo    Current: BM25=0.35, Dense=0.65 ^(default^)
 echo.
 set "bm25_weight="
 set /p bm25_weight="Enter BM25 weight (0.0-1.0, or press Enter to cancel): "
@@ -1290,125 +1272,7 @@ pause
 goto search_mode_menu
 
 :select_embedding_model
-echo.
-echo === Select Embedding Model ===
-echo.
-echo Current Settings:
-".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Model:', cfg.embedding.model_name); print('  Multi-Model Routing:', 'Enabled' if cfg.routing.multi_model_enabled else 'Disabled')" 2>nul
-if errorlevel 1 (
-    echo   Model: google/embeddinggemma-300m ^(default^)
-    echo   Multi-Model Routing: Disabled
-)
-echo.
-echo Choose by your GPU VRAM:
-echo.
-echo   [8GB VRAM] ^(RTX 3060, RTX 4060 Laptop, GTX 1080^)
-echo   1. BGE-M3 ^(1024d, 1-1.5GB^)
-echo      Production-validated, optimal for hybrid search
-echo.
-echo   2. EmbeddingGemma ^(768d, 300M params^)
-echo      Lightweight alternative, minimal VRAM
-echo.
-echo   3. Multi-Model Routing ^(1.65GB, 2 models^)
-echo      BGE-M3 + gte-modernbert -- enables routing across 2 models; NOT a single-model choice
-echo.
-echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+, RTX 4090^)
-echo   4. Qwen3-Embedding-0.6B ^(1024d, ~1.1GB^)
-echo      Single model + Jina v3 reranker ^(MRR 0.94 SSCG baseline^)
-echo.
-echo   0. Back to Search Configuration
-echo.
-set "model_choice="
-set /p model_choice="Select model (0-4): "
-
-if not defined model_choice goto search_config_menu
-if "!model_choice!"=="" goto search_config_menu
-if "!model_choice!"=="0" goto search_config_menu
-
-set "SELECTED_MODEL="
-if "!model_choice!"=="1" set "SELECTED_MODEL=BAAI/bge-m3"
-if "!model_choice!"=="2" set "SELECTED_MODEL=google/embeddinggemma-300m"
-if "!model_choice!"=="3" goto enable_lightweight_speed
-if "!model_choice!"=="4" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
-
-if defined SELECTED_MODEL (
-    echo.
-    echo [INFO] Configuring model: !SELECTED_MODEL!
-    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.embedding.dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; cfg.routing.multi_model_enabled = False; mgr.save_config(cfg); print('[OK] Model configuration saved')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save configuration
-    ) else (
-        echo.
-        echo [WARNING] Existing indexes need to be rebuilt for the new model
-        echo [INFO] Next time you index a project, it will use: !SELECTED_MODEL!
-        echo.
-        set "reindex_now="
-        set /p reindex_now="Clear old indexes now? (y/N): "
-        if /i "!reindex_now!"=="y" (
-            echo [INFO] Clearing old indexes and Merkle snapshots...
-            ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; import json; storage = get_storage_dir(); sm = SnapshotManager(); cleared = 0; projects = list((storage / 'projects').glob('*/project_info.json')); [sm.delete_all_snapshots(json.load(open(p))['project_path']) or shutil.rmtree(p.parent) if p.exists() and (cleared := cleared + 1) else None for p in projects]; print(f'[OK] Cleared indexes and snapshots for {cleared} projects')" 2>nul
-            echo [OK] Indexes and Merkle snapshots cleared ^(all dimensions^). Re-index projects via: /index_directory "path"
-        )
-    )
-) else (
-    echo [ERROR] Invalid choice
-)
-set "CLAUDE_MULTI_MODEL_ENABLED="
-pause
-goto search_config_menu
-
-:enable_lightweight_speed
-echo.
-echo === Enable Lightweight-Speed Multi-Model ===
-echo.
-echo This will enable lightweight query routing across:
-echo   - BGE-M3 ^(1024d, ~1.07GB^) - General-purpose baseline
-echo   - gte-modernbert-base ^(768d, ~0.28GB^) - Code-specific queries
-echo   - gte-reranker-modernbert-base ^(~0.30GB^) - Lightweight reranker
-echo.
-echo Total VRAM: ~1.65GB ^(69%% reduction vs full pool^)
-echo Performance: 144 docs/sec indexing ^(3x faster^)
-echo Quality: 79.31 CoIR score ^(+32%% vs CodeRankEmbed^)
-echo.
-echo Best for:
-echo   - 8GB VRAM GPUs ^(RTX 3060/4060/3070^)
-echo   - Fast indexing and high throughput
-echo   - Individual functions/snippets ^(<8k tokens^)
-echo.
-set "confirm_lightweight_speed="
-set /p confirm_lightweight_speed="Enable lightweight-speed multi-model? (y/N): "
-if /i "!confirm_lightweight_speed!"=="y" (
-    REM Persist to config file via Python
-    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.routing.multi_model_enabled = True; cfg.routing.multi_model_pool = 'lightweight-speed'; cfg.embedding.model_name = 'BAAI/bge-m3'; cfg.reranker.enabled = True; cfg.reranker.model_name = 'Alibaba-NLP/gte-reranker-modernbert-base'; mgr.save_config(cfg); print('[OK] Lightweight-speed multi-model enabled and saved to config')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save to config file
-    ) else (
-        echo.
-        echo [OK] Lightweight-speed configuration saved
-        echo [INFO] Pool: BGE-M3 + gte-modernbert-base
-        echo [INFO] Reranker: gte-reranker-modernbert-base
-        echo [INFO] Total VRAM: ~1.65GB
-        echo.
-        echo [WARNING] Existing indexes need to be rebuilt for multi-model pool
-        echo [INFO] Next time you index a project, it will use the lightweight-speed pool
-        echo.
-        set "reindex_now="
-        set /p reindex_now="Clear old indexes now? (y/N): "
-        if /i "!reindex_now!"=="y" (
-            echo [INFO] Clearing old indexes and Merkle snapshots...
-            ".\.venv\Scripts\python.exe" -c "from mcp_server.storage_manager import get_storage_dir; from merkle.snapshot_manager import SnapshotManager; import shutil; import json; storage = get_storage_dir(); sm = SnapshotManager(); cleared = 0; projects = list((storage / 'projects').glob('*/project_info.json')); [sm.delete_all_snapshots(json.load(open(p))['project_path']) or shutil.rmtree(p.parent) if p.exists() and (cleared := cleared + 1) else None for p in projects]; print(f'[OK] Cleared indexes and snapshots for {cleared} projects')" 2>nul
-            echo [OK] Indexes and Merkle snapshots cleared. Re-index projects via: /index_directory "path"
-        )
-    )
-) else (
-    echo [INFO] Cancelled
-)
-pause
-goto search_config_menu
-
-REM :enable_lightweight_accuracy function removed
-REM C2LLM-0.5B had excessive VRAM usage (5-7.6GB vs advertised 0.93GB)
-REM Use lightweight-speed pool (BGE-M3 + GTE-ModernBERT) instead
+goto quick_model_switch
 
 :configure_parallel_search
 echo.
@@ -1524,7 +1388,7 @@ echo Neural Reranker uses a cross-encoder model to re-score search results.
 echo This improves search quality by 15-25%% for complex queries.
 echo.
 echo Requirements:
-echo   - GPU with ^>= 6GB VRAM ^(auto-disabled on insufficient VRAM^)
+echo   - GPU with ^>= 2GB VRAM ^(auto-disabled on insufficient VRAM^)
 echo   - Additional latency: +150-300ms per search
 echo.
 echo Current Setting:
@@ -1898,10 +1762,9 @@ echo === Quick Model Switch ===
 echo.
 echo Current Settings:
 if exist ".venv\Scripts\python.exe" (
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Model: {model} ({dim}d, {vram})'); print('  Multi-Model Routing:', 'Enabled' if cfg.routing.multi_model_enabled else 'Disabled')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Model: {model} ({dim}d, {vram})')" 2>nul
 ) else (
     echo   Model: google/embeddinggemma-300m ^(default^)
-    echo   Multi-Model Routing: Disabled
 )
 echo.
 echo Choose by your GPU VRAM:
@@ -1910,23 +1773,23 @@ echo   [8GB VRAM] ^(RTX 3060, RTX 4060 Laptop, GTX 1080^)
 echo   1. BGE-M3 ^(1024d, 1-1.5GB^)
 echo      Production-validated, optimal for hybrid search
 echo.
-echo   2. EmbeddingGemma ^(768d, 300M params^)
-echo      Lightweight alternative, minimal VRAM
+echo   2. EmbeddingGemma ^(768d, ~1.2GB^)
+echo      Lightweight general-purpose
 echo.
-echo   3. Multi-Model Routing ^(1.65GB, 2 models^)
-echo      BGE-M3 + gte-modernbert -- enables routing across 2 models; NOT a single-model choice
+echo   3. CodeRankEmbed ^(768d, 0.5-0.6GB^)
+echo      Code-specialized retrieval
+echo.
+echo   4. GTE-ModernBERT ^(768d, 0.28GB^)
+echo      Lightest; code-capable
 echo.
 echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+, RTX 4090^)
-echo   4. Qwen3-Embedding-0.6B ^(1024d, ~1.1GB^)
-echo      Single model + Jina v3 reranker ^(MRR 0.94 SSCG baseline^)
+echo   5. Qwen3-Embedding-0.6B ^(1024d, 2.3GB^)
+echo      MRR 0.94 SSCG baseline
 echo.
 echo   0. Back to Main Menu
 echo.
-echo [NOTE] Option 3 enables MULTI-MODEL routing -- it indexes 2 models, not just BGE-M3.
-echo        Use options 1, 2 or 4 to select a single model.
-echo.
 set "model_choice="
-set /p model_choice="Select model (0-4): "
+set /p model_choice="Select model (0-5): "
 
 REM Handle empty input or back
 if not defined model_choice goto menu_restart
@@ -1937,8 +1800,9 @@ REM Map choices to model names
 set "SELECTED_MODEL="
 if "!model_choice!"=="1" set "SELECTED_MODEL=BAAI/bge-m3"
 if "!model_choice!"=="2" set "SELECTED_MODEL=google/embeddinggemma-300m"
-if "!model_choice!"=="3" goto enable_lightweight_speed
-if "!model_choice!"=="4" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
+if "!model_choice!"=="3" set "SELECTED_MODEL=nomic-ai/CodeRankEmbed"
+if "!model_choice!"=="4" set "SELECTED_MODEL=Alibaba-NLP/gte-modernbert-base"
+if "!model_choice!"=="5" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
 
 REM Perform model switch
 if defined SELECTED_MODEL (
@@ -1947,7 +1811,7 @@ if defined SELECTED_MODEL (
     echo.
 
     REM Use Python to switch model
-    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.embedding.dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; cfg.routing.multi_model_enabled = False; cfg.routing.multi_model_pool = None; mgr.save_config(cfg); print('[OK] Model switched successfully'); print(f'[INFO] Dimension: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"dimension\"]}d'); print(f'[INFO] VRAM: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"vram_gb\"]}')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.embedding.dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; mgr.save_config(cfg); print('[OK] Model switched successfully'); print(f'[INFO] Dimension: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"dimension\"]}d'); print(f'[INFO] VRAM: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"vram_gb\"]}')" 2>nul
 
     if errorlevel 1 (
         echo [ERROR] Failed to switch model
@@ -1966,7 +1830,6 @@ if defined SELECTED_MODEL (
     echo [ERROR] Invalid choice
 )
 echo.
-set "CLAUDE_MULTI_MODEL_ENABLED="
 pause
 goto menu_restart
 
@@ -2166,7 +2029,7 @@ echo   1. Enable Community Detection           - Detect code communities for bet
 echo   2. Disable Community Detection          - Skip community detection
 echo   3. Enable Community Merge               - Use communities for chunk remerging (full re-index only)
 echo   4. Disable Community Merge              - Skip community-based remerging
-echo   5. Set Community Resolution             - Louvain algorithm parameter (0.1-2.0, default: 1.5)
+echo   5. Set Community Resolution             - Louvain algorithm parameter (0.1-2.0, default: 1.0)
 echo.
 echo   --- Large Node Splitting ---
 echo   6. Enable Large Node Splitting          - Split functions ^> threshold at AST boundaries
@@ -2250,7 +2113,7 @@ if "!chunk_choice!"=="4" (
 if "!chunk_choice!"=="5" (
     echo.
     set "community_res="
-    set /p community_res="Enter community resolution (0.1-2.0, default: 1.5): "
+    set /p community_res="Enter community resolution (0.1-2.0, default: 1.0): "
     if defined community_res (
         echo [INFO] Setting community resolution to: !community_res!
         ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = float('!community_res!'); assert 0.1 <= val <= 2.0, 'Out of range'; cfg.chunking.community_resolution = val; mgr.save_config(cfg); print('[OK] Community resolution updated to !community_res!')" 2>nul
@@ -2627,8 +2490,8 @@ echo All formats preserve 100%% of data, only changing encoding.
 echo.
 echo Available Formats:
 echo   verbose - Verbose (indent=2, all fields)        0%% reduction
-echo   compact - Omit empty fields, no indent       30-40%% reduction (default)
-echo   ultra   - Tabular arrays with headers        45-55%% reduction
+echo   compact - Omit empty fields, no indent       30-40%% reduction
+echo   ultra   - Tabular arrays with headers        45-55%% reduction (default)
 echo.
 echo Token Reduction Examples (find_connections with 5 callers):
 echo   Verbose: 3,259 chars (~814 tokens)
@@ -2721,12 +2584,11 @@ echo [INFO] Resetting to default configuration:
 echo.
 echo   Search Mode:
 echo     - Mode: hybrid
-echo     - BM25 Weight: 0.4
-echo     - Dense Weight: 0.6
+echo     - BM25 Weight: 0.35
+echo     - Dense Weight: 0.65
 echo     - Parallel Search: Enabled
 echo.
 echo   Embedding Model: google/embeddinggemma-300m ^(768d^)
-echo     - Multi-Model Routing: Enabled
 echo.
 echo   Neural Reranker:
 echo     - Enabled: True
@@ -2740,7 +2602,7 @@ echo.
 echo   Chunking Settings:
 echo     - Community Detection: Enabled
 echo     - Community Merge: Enabled (full re-index only)
-echo     - Community Resolution: 1.1
+echo     - Community Resolution: 1.0
 echo     - Token Estimation: whitespace
 echo     - Large Node Splitting: Disabled ^(preserve full functions^)
 echo     - Max Chunk Lines: 100
@@ -2764,48 +2626,6 @@ if errorlevel 1 (
 pause
 goto search_config_menu
 
-:install_cuda
-echo.
-echo [INFO] Installing PyTorch with CUDA support...
-if exist "scripts\batch\install_pytorch_cuda.bat" (
-    echo [INFO] Running PyTorch CUDA installer...
-    call scripts\batch\install_pytorch_cuda.bat
-    echo [INFO] CUDA installation completed
-) else (
-    echo [WARNING] CUDA installer script not found
-    echo [INFO] You can manually install PyTorch CUDA with:
-    echo [INFO] .venv\Scripts\pip install torch --index-url https://download.pytorch.org/whl/cu121
-)
-pause
-goto menu_restart
-
-:force_cpu_mode
-echo.
-echo [INFO] Forcing CPU-only mode for this session...
-set "CUDA_VISIBLE_DEVICES="
-set "FORCE_CPU_MODE=1"
-echo [OK] CPU-only mode enabled
-echo [INFO] Starting MCP server in CPU-only mode...
-".\.venv\Scripts\python.exe" -m mcp_server.server
-goto end
-
-:test_install
-echo.
-echo [INFO] Running installation tests...
-if exist "tests\unit\test_imports.py" (
-    echo [INFO] Testing core imports and MCP server functionality...
-    call ".\.venv\Scripts\python.exe" -m pytest tests\unit\test_imports.py tests\unit\test_mcp_server.py -v --tb=short
-    if "!ERRORLEVEL!" neq "0" (
-        echo [WARNING] Some tests failed. Check output above for details.
-    ) else (
-        echo [OK] Installation tests passed
-    )
-) else (
-    echo [INFO] Pytest not available, running basic import test...
-    call ".\.venv\Scripts\python.exe" -c "try: import mcp_server.server; print('[OK] MCP server imports successfully'); except Exception as e: print(f'[ERROR] Import failed: {e}')"
-)
-pause
-goto end
 
 :menu_restart
 echo.
@@ -2855,8 +2675,8 @@ echo.
 echo Key Features:
 echo   - 18 MCP Tools: Index, search, configure, manage projects
 echo   - Low-Level MCP SDK: Official Anthropic implementation
-echo   - Single-Model: Qwen3-Embedding-0.6B + Jina v3 reranker ^(workstation^)
-echo   - Neural Reranking: Cross-encoder model ^(5-15%% quality boost^)
+echo   - Single-Model: selectable from 5 models ^(BGE-M3, EmbeddingGemma, CodeRankEmbed, GTE-ModernBERT, Qwen3-0.6B^)
+echo   - Neural Reranking: Cross-encoder model ^(15-25%% quality boost^)
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
 echo   - 85-95%% Token Reduction: Validated benchmark results
 echo   - Multi-language Support: 9 languages, 19 extensions
@@ -2880,7 +2700,7 @@ echo     - README.md: Complete setup guide and quick start
 echo.
 echo   docs/ Directory:
 echo     - DOCUMENTATION_INDEX.md: Master reference guide
-echo     - ADVANCED_FEATURES_GUIDE.md: Multi-model routing, multi-hop, graph search
+echo     - ADVANCED_FEATURES_GUIDE.md: Multi-hop, graph search
 echo     - VERSION_HISTORY.md: Complete feature timeline
 echo     - INSTALLATION_GUIDE.md: Detailed installation steps
 echo     - BENCHMARKS.md: Performance metrics and validation
@@ -2971,11 +2791,4 @@ if not defined SELECTED_PROJECT_PATH (
     exit /b 1
 )
 
-exit /b 0
-
-:end
-echo.
-echo [STOP] MCP server stopped
-pause
-endlocal
 exit /b 0

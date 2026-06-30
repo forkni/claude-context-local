@@ -1,7 +1,6 @@
 """Intelligent search functionality with query optimization."""
 
 import logging
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
 from embeddings.embedder import CodeEmbedder
@@ -9,31 +8,11 @@ from embeddings.embedder import CodeEmbedder
 from .base_searcher import BaseSearcher
 from .indexer import CodeIndexManager
 from .ranking_heuristics import RankingHeuristics
+from .reranker import SearchResult
 
 
 if TYPE_CHECKING:
     from graph.graph_storage import CodeGraphStorage
-
-
-@dataclass
-class SearchResult:
-    """Enhanced search result with rich metadata."""
-
-    chunk_id: str
-    similarity_score: float
-    content_preview: str
-    file_path: str
-    relative_path: str
-    folder_structure: list[str]
-    chunk_type: str
-    name: str | None
-    parent_name: str | None
-    start_line: int
-    end_line: int
-    docstring: str | None
-    tags: list[str]
-    context_info: dict[str, Any]
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class IntelligentSearcher(BaseSearcher):
@@ -153,16 +132,10 @@ class IntelligentSearcher(BaseSearcher):
         metadata: dict[str, Any],
         context_depth: int,
     ) -> SearchResult:
-        """Create a rich search result with context information."""
-
-        # Basic metadata extraction
-        content_preview = metadata.get("content_preview", "")
-        file_path = metadata.get("file_path", "")
-        relative_path = metadata.get("relative_path", "")
-        folder_structure = metadata.get("folder_structure", [])
+        """Create a thin search result, enriching metadata with context information."""
 
         # Context information
-        context_info = {}
+        context_info: dict[str, Any] = {}
 
         if context_depth > 0:
             # Add related chunks context
@@ -180,6 +153,7 @@ class IntelligentSearcher(BaseSearcher):
             # Add file context (folder_path only — total_chunks_in_file was
             # returning the project-wide file count, not the per-file chunk count,
             # and was read nowhere downstream so it has been removed (#45))
+            folder_structure = metadata.get("folder_structure", [])
             # pyrefly: ignore [unsupported-operation]
             context_info["file_context"] = {
                 "folder_path": "/".join(folder_structure) if folder_structure else None,
@@ -187,19 +161,9 @@ class IntelligentSearcher(BaseSearcher):
 
         return SearchResult(
             chunk_id=chunk_id,
-            similarity_score=similarity,
-            content_preview=content_preview,
-            file_path=file_path,
-            relative_path=relative_path,
-            folder_structure=folder_structure,
-            chunk_type=metadata.get("chunk_type", "unknown"),
-            name=metadata.get("name"),
-            parent_name=metadata.get("parent_name"),
-            start_line=metadata.get("start_line", 0),
-            end_line=metadata.get("end_line", 0),
-            docstring=metadata.get("docstring"),
-            tags=metadata.get("tags", []),
-            context_info=context_info,
+            score=similarity,
+            metadata={**metadata, "context_info": context_info},
+            source="semantic",
         )
 
     def search_by_file_pattern(

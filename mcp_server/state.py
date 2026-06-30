@@ -17,15 +17,10 @@ Usage:
 """
 
 import asyncio
-import os
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-
-if TYPE_CHECKING:
-    from search.config import SearchConfig
+from typing import Any
 
 
 @dataclass
@@ -33,20 +28,17 @@ class ApplicationState:
     """Centralized application state container.
 
     Replaces the following global variables from server.py:
-    - _embedders: Dict of model_key -> CodeEmbedder instances
+    - _embedders: Dict of CodeEmbedder instances (keyed by "default")
     - _index_manager: CodeIndexManager instance
     - _searcher: HybridSearcher instance
-    - _current_model_key: Currently active embedding model
     - _storage_dir: Base storage directory path
     - _current_project: Currently active project path
     - _model_preload_task_started: Whether preload has started
-    - _multi_model_enabled: Whether multi-model mode is active
+
     """
 
     # Model management
     embedders: dict[str, Any] = field(default_factory=dict)
-    current_model_key: str | None = None
-    current_index_model_key: str | None = None  # Track index manager's model
     model_preload_task_started: bool = False
 
     # Search components (lazy-initialized)
@@ -56,14 +48,6 @@ class ApplicationState:
     # Storage and project
     storage_dir: Path | None = None
     current_project: str | None = None
-
-    # Configuration
-    multi_model_enabled: bool = field(
-        default_factory=lambda: (
-            os.getenv("CLAUDE_MULTI_MODEL_ENABLED", "false").lower()
-            in ("true", "1", "yes")
-        )
-    )
 
     # Concurrency guards — intentionally NOT reset by reset() so that in-flight
     # threads always share the same stable lock instance across state resets.
@@ -80,8 +64,6 @@ class ApplicationState:
         any in-flight threads keep a stable lock reference.
         """
         self.embedders = {}
-        self.current_model_key = None
-        self.current_index_model_key = None
         self.model_preload_task_started = False
         self.index_manager = None
         self.searcher = None
@@ -89,8 +71,6 @@ class ApplicationState:
         self.current_project = None
         # Per-project reindex locks are project-scoped; reset with fresh dict.
         self._reindex_locks = {}
-        # Re-read from config with env override
-        self._reset_multi_model_from_config()
 
     def get_reindex_lock(self, project_path: str) -> asyncio.Lock:
         """Return the per-project asyncio.Lock for reindex serialization.
@@ -103,46 +83,11 @@ class ApplicationState:
             self._reindex_locks[project_path] = asyncio.Lock()
         return self._reindex_locks[project_path]
 
-    def _reset_multi_model_from_config(self) -> None:
-        """Reset multi_model_enabled from config file with env override."""
-        try:
-            from search.config import get_search_config
-
-            config = get_search_config()
-            self.sync_from_config(config)
-        except (AttributeError, KeyError, RuntimeError):
-            # Fallback to env var if config unavailable
-            self.multi_model_enabled = os.getenv(
-                "CLAUDE_MULTI_MODEL_ENABLED", "false"
-            ).lower() in ("true", "1", "yes")
-
-    def sync_from_config(self, config: "SearchConfig") -> None:
-        """Sync multi_model_enabled from config file.
-
-        Config file takes precedence for disabling multi-model. The env var
-        CLAUDE_MULTI_MODEL_ENABLED can only enable multi-model when the config
-        also enables it, preventing stale OS-level env vars from overriding the
-        user's explicit config choice.
-        Called during server startup in app_lifespan().
-
-        Args:
-            config: SearchConfig instance to sync from
-        """
-        env_value = os.getenv("CLAUDE_MULTI_MODEL_ENABLED")
-        if env_value is not None:
-            env_wants_enabled = env_value.lower() in ("true", "1", "yes")
-            # Config file can always disable multi-model regardless of env var
-            self.multi_model_enabled = (
-                env_wants_enabled and config.routing.multi_model_enabled
-            )
-        else:
-            self.multi_model_enabled = config.routing.multi_model_enabled
-
     def switch_project(self, path: str) -> None:
         """Switch to a different project.
 
         Resets project-specific state (index_manager, searcher) but
-        preserves model state (embedders, current_model_key).
+        preserves model state (embedders).
 
         Args:
             path: Absolute path to the project directory
@@ -153,43 +98,22 @@ class ApplicationState:
             self.index_manager = None
             self.searcher = None
 
-    def switch_model(self, model_key: str) -> None:
-        """Switch to a different embedding model.
-
-        Searcher needs to be recreated with new model, but index_manager
-        may remain if it supports the new model's dimension.
-
-        Args:
-            model_key: Model key (e.g., 'qwen3_0.6b', 'bge_m3')
-        """
-        with self._lock:
-            self.current_model_key = model_key
-            self.current_index_model_key = None  # Force index reload on model switch
-            # Searcher needs to be recreated with new model
-            self.searcher = None
-
-    def get_embedder(self, model_key: str | None = None) -> Any | None:
-        """Get embedder for a specific model key.
-
-        Args:
-            model_key: Model key, or None to use current_model_key
+    def get_embedder(self) -> Any | None:
+        """Get the active embedder.
 
         Returns:
             CodeEmbedder instance or None if not loaded
         """
-        key = model_key or self.current_model_key
-        if key:
-            return self.embedders.get(key)
-        return None
+        return self.embedders.get("default")
 
-    def set_embedder(self, model_key: str, embedder: Any) -> None:
+    def set_embedder(self, key: str, embedder: Any) -> None:
         """Store an embedder instance.
 
         Args:
-            model_key: Model key to associate with embedder
+            key: Key to associate with embedder (always "default")
             embedder: CodeEmbedder instance
         """
-        self.embedders[model_key] = embedder
+        self.embedders[key] = embedder
 
     def clear_embedders(self) -> None:
         """Clear all cached embedder instances and release GPU memory."""
@@ -208,13 +132,13 @@ class ApplicationState:
             self.searcher = None
 
         # Call cleanup on each embedder to release GPU memory (outside lock)
-        for model_key, embedder in old_embedders.items():
+        for key, embedder in old_embedders.items():
             if hasattr(embedder, "cleanup"):
                 try:
-                    logger.info(f"[CLEANUP] Releasing embedder: {model_key}")
+                    logger.info(f"[CLEANUP] Releasing embedder: {key}")
                     embedder.cleanup()
                 except Exception as e:
-                    logger.warning(f"[CLEANUP] Failed to cleanup {model_key}: {e}")
+                    logger.warning(f"[CLEANUP] Failed to cleanup {key}: {e}")
 
     def reset_search_components(self) -> None:
         """Reset index_manager and searcher to force re-initialization.
@@ -256,9 +180,7 @@ class ApplicationState:
         return (
             f"ApplicationState("
             f"project={self.current_project!r}, "
-            f"model={self.current_model_key!r}, "
-            f"embedders={list(self.embedders.keys())}, "
-            f"multi_model={self.multi_model_enabled})"
+            f"embedders={list(self.embedders.keys())})"
         )
 
 
@@ -293,8 +215,3 @@ def get_current_project() -> str | None:
 def set_current_project_compat(path: str) -> None:
     """Set current project path (backward compatibility)."""
     _app_state.switch_project(path)
-
-
-def is_multi_model_enabled() -> bool:
-    """Check if multi-model mode is enabled (backward compatibility)."""
-    return _app_state.multi_model_enabled

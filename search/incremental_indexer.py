@@ -23,9 +23,9 @@ from utils.otel_attributes import (
     ATTR_INDEX_TYPE,
     ATTR_PROJECT_ID,
 )
+from utils.path_utils import normalize_path
 from utils.timing import timed
 
-from .bm25_sync import BM25SyncManager
 from .community_refresh_stage import CommunityRefreshStage
 from .community_stage import CommunityStage
 from .config import get_search_config
@@ -54,8 +54,6 @@ class IncrementalIndexer:
         snapshot_manager: SnapshotManager | None = None,
         include_dirs: list | None = None,
         exclude_dirs: list | None = None,
-        precomputed_repo_profile: object | None = None,
-        prebuilt_dag: MerkleDAG | None = None,
     ):
         """Initialize incremental indexer.
 
@@ -66,10 +64,6 @@ class IncrementalIndexer:
             snapshot_manager: Snapshot manager instance
             include_dirs: Optional list of directories to include
             exclude_dirs: Optional list of directories to exclude
-            precomputed_repo_profile: Optional pre-computed RepoProfile to skip
-                profiling (used in multi-model indexing to avoid redundant AST scans)
-            prebuilt_dag: Optional already-built MerkleDAG to skip the filesystem
-                walk (used in multi-model indexing to avoid redundant I/O)
         """
         if indexer is None:
             # Create indexer with temporary storage directory for testing
@@ -129,26 +123,19 @@ class IncrementalIndexer:
             summary_stage=self._summary_stage,
         )
         self._build_write_pipeline()
-        self.precomputed_repo_profile = precomputed_repo_profile
-        self.repo_profile: object | None = (
-            None  # Set after full index for caller capture
-        )
-        self.prebuilt_dag = prebuilt_dag
-        self.built_dag: MerkleDAG | None = None  # Captured for multi-model reuse
+        self.repo_profile: object | None = None  # Set during _full_index
 
     def _build_write_pipeline(self) -> None:
         """(Re)build the resource-bound write pipeline.
 
         Call from __init__ and again immediately after _release_and_verify_resources()
-        so IndexWriteStage and BM25SyncManager are always bound to the current
-        self.embedder / self.indexer — never to released objects.
+        so IndexWriteStage is always bound to the current self.embedder / self.indexer
+        — never to released objects.
         """
-        self._bm25_sync = BM25SyncManager(indexer=self.indexer)
         self._index_write_stage = IndexWriteStage(
             embedder=self.embedder,
             indexer=self.indexer,
             snapshot_manager=self.snapshot_manager,
-            bm25_sync=self._bm25_sync,
             build_metadata_fn=self._build_snapshot_metadata,
             clear_gpu_fn=self._clear_gpu_cache,
         )
@@ -373,7 +360,9 @@ class IncrementalIndexer:
             logger.info("[INCREMENTAL] Index saved")
 
             # Auto-sync BM25 if significant desync detected (>10% difference)
-            bm25_resynced, bm25_resync_count = self._sync_bm25_if_needed("INCREMENTAL")
+            bm25_resynced, bm25_resync_count = self.indexer.resync_if_desynced(
+                "INCREMENTAL"
+            )
 
             # Clear GPU cache to free intermediate tensors from embedding batches
             self._clear_gpu_cache("INCREMENTAL")
@@ -564,38 +553,6 @@ class IncrementalIndexer:
         """
         logger.info("[FULL_INDEX] Mandatory pre-reindex resource release starting...")
 
-        # Step 0: Save model key before cleanup destroys embedder
-        # CodeEmbedder doesn't have _model_key attribute - look it up from state.embedders dict
-        model_key = None
-        if self.embedder is not None:
-            from mcp_server.services import get_state
-
-            state = get_state()
-            for key, emb in state.embedders.items():
-                if emb is self.embedder:
-                    model_key = key
-                    break
-            if model_key:
-                logger.info(f"[FULL_INDEX] Preserving model key: {model_key}")
-
-        if model_key is None:
-            # Embedder not found in state pool — derive from config as fallback
-            from mcp_server.model_pool_manager import get_model_key_from_name
-
-            config = get_search_config()
-            model_key = get_model_key_from_name(config.embedding.model_name)
-            if model_key:
-                logger.warning(
-                    f"[FULL_INDEX] Embedder not in state pool, "
-                    f"derived model_key from config: {model_key}"
-                )
-            else:
-                logger.warning(
-                    "[FULL_INDEX] Could not determine model_key — "
-                    "get_embedder(None) will use default model; "
-                    "verify embedding dimension compatibility"
-                )
-
         # Step 1: Release resources (same operation as UI "Release Resources" command)
         from mcp_server.resource_manager import _cleanup_previous_resources
 
@@ -684,10 +641,8 @@ class IncrementalIndexer:
         # Step 3: Refresh embedder (required since cleanup cleared it)
         from mcp_server.model_pool_manager import get_embedder
 
-        self.embedder = get_embedder(model_key)  # Fresh instance with correct model
-        logger.info(
-            f"[FULL_INDEX] Fresh embedder acquired for reindex (model_key={model_key})"
-        )
+        self.embedder = get_embedder()  # Fresh instance with config model
+        logger.info("[FULL_INDEX] Fresh embedder acquired for reindex")
 
         # Step 4: Refresh indexer/searcher (required since cleanup shut it down)
         # Only refresh if the indexer was actually shut down (has _is_shutdown flag set to True)
@@ -753,21 +708,14 @@ class IncrementalIndexer:
             # Clear existing index
             self.indexer.clear_index()
 
-            # Build DAG for all files (or reuse from a previous model pass)
-            if self.prebuilt_dag is not None:
-                dag = self.prebuilt_dag
-                logger.info(
-                    "[FULL_INDEX] Reusing prebuilt MerkleDAG (shared across models)"
-                )
-            else:
-                dag = MerkleDAG(
-                    project_path,
-                    self.include_dirs,
-                    self.exclude_dirs,
-                    supported_extensions=self.supported_extensions,
-                )
-                dag.build()
-                self.built_dag = dag  # Expose for multi-model caller to reuse
+            # Build DAG for all files
+            dag = MerkleDAG(
+                project_path,
+                self.include_dirs,
+                self.exclude_dirs,
+                supported_extensions=self.supported_extensions,
+            )
+            dag.build()
             all_files = dag.get_all_files()
 
             # Filter supported files
@@ -780,33 +728,24 @@ class IncrementalIndexer:
             repo_profile = None
             _profile_config = get_search_config()
             if _profile_config.chunking.sizing_mode == "adaptive" and supported_files:
-                if self.precomputed_repo_profile is not None:
-                    # Reuse profile from an earlier model pass (multi-model indexing)
-                    repo_profile = self.precomputed_repo_profile
+                from chunking.repo_profiler import profile_repository
+
+                repo_profile = profile_repository(project_path, supported_files)
+                if repo_profile:
                     logger.info(
-                        f"[REPO_PROFILE] Reusing precomputed profile: "
-                        f"{repo_profile.function_count} functions, "  # type: ignore[attr-defined]
-                        f"P75={repo_profile.p75_chars} chars"  # type: ignore[attr-defined]
+                        f"[REPO_PROFILE] {repo_profile.function_count} functions analyzed: "
+                        f"P75={repo_profile.p75_chars} chars, "
+                        f"P90={repo_profile.p90_chars} chars, "
+                        f"max_cc={repo_profile.max_complexity}"
                     )
                 else:
-                    from chunking.repo_profiler import profile_repository
-
-                    repo_profile = profile_repository(project_path, supported_files)
-                    if repo_profile:
-                        logger.info(
-                            f"[REPO_PROFILE] {repo_profile.function_count} functions analyzed: "
-                            f"P75={repo_profile.p75_chars} chars, "
-                            f"P90={repo_profile.p90_chars} chars, "
-                            f"max_cc={repo_profile.max_complexity}"
-                        )
-                    else:
-                        logger.info(
-                            "[REPO_PROFILE] Too few functions for profiling, using static defaults"
-                        )
+                    logger.info(
+                        "[REPO_PROFILE] Too few functions for profiling, using static defaults"
+                    )
                 self._parallel_chunker.chunker.tree_sitter_chunker.repo_profile = (
                     repo_profile
                 )
-            self.repo_profile = repo_profile  # Expose for multi-model capture
+            self.repo_profile = repo_profile
             # ========== END Repository Profiling ==========
 
             # Collect all chunks first, then embed in a single pass for efficiency
@@ -963,7 +902,7 @@ class IncrementalIndexer:
                     rel_path = chunk_path.name
 
             # Normalize path separators to forward slash
-            normalized_path = str(rel_path).replace("\\", "/")
+            normalized_path = normalize_path(str(rel_path))
 
             # Build chunk_id: path:lines:type:name
             chunk_id = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
@@ -1020,7 +959,7 @@ class IncrementalIndexer:
         Returns:
             Metadata dictionary for snapshot
         """
-        metadata = {
+        metadata: dict[str, Any] = {
             "project_name": project_name,
             "incremental_update": not is_full,
             "total_files": len(all_files),
@@ -1038,7 +977,6 @@ class IncrementalIndexer:
 
         # Cache repo profile for incremental indexing reuse
         if repo_profile is not None:
-            # pyrefly: ignore [bad-typed-dict-key]
             metadata["repo_profile"] = {
                 # pyrefly: ignore [missing-attribute]
                 "function_count": repo_profile.function_count,
@@ -1070,32 +1008,14 @@ class IncrementalIndexer:
         """
         files_to_remove = self.change_detector.get_files_to_remove(changes)
 
-        # Use batch removal for efficiency (single pass instead of one per file)
-        # Handles FAISS vector removal and index reconstruction
-        if hasattr(self.indexer, "remove_multiple_files") and files_to_remove:
-            try:
-                chunks_removed = self.indexer.remove_multiple_files(
-                    set(files_to_remove), project_name
-                )
-                logger.info(
-                    f"Batch removed {chunks_removed} chunks from {len(files_to_remove)} files"
-                )
-            except Exception as e:
-                logger.error(f"Batch removal failed: {e}", exc_info=True)
-                logger.warning("Falling back to individual file removal")
-                # Fall back to individual removal on error
-                chunks_removed = 0
-                for file_path in files_to_remove:
-                    removed = self.indexer.remove_file_chunks(file_path, project_name)
-                    chunks_removed += removed
-                    logger.debug(f"Removed {removed} chunks from {file_path}")
-        else:
-            # Fallback to individual removal if batch method not available
-            chunks_removed = 0
-            for file_path in files_to_remove:
-                removed = self.indexer.remove_file_chunks(file_path, project_name)
-                chunks_removed += removed
-                logger.debug(f"Removed {removed} chunks from {file_path}")
+        chunks_removed = 0
+        if files_to_remove:
+            chunks_removed = self.indexer.remove_files(
+                set(files_to_remove), project_name
+            )
+            logger.info(
+                f"Removed {chunks_removed} chunks from {len(files_to_remove)} files"
+            )
 
         # Prune stale call-graph nodes for all removed/modified files.
         # The call graph and the metadata store are maintained independently; without
@@ -1203,17 +1123,6 @@ class IncrementalIndexer:
             logger.info("[INCREMENTAL] Successfully added embeddings")
 
         return len(all_embedding_results)
-
-    def _sync_bm25_if_needed(self, log_prefix: str = "INCREMENTAL") -> tuple[bool, int]:
-        """Auto-sync BM25 if significant desync detected (>10% difference).
-
-        Args:
-            log_prefix: Prefix for log messages (e.g., "INCREMENTAL" or "FULL_INDEX")
-
-        Returns:
-            tuple[bool, int]: (bm25_resynced, bm25_resync_count)
-        """
-        return self._bm25_sync.sync_if_needed(log_prefix)
 
     def _clear_gpu_cache(self, log_prefix: str = "INCREMENTAL") -> None:
         """Clear GPU cache to free intermediate tensors from embedding batches.
@@ -1347,40 +1256,9 @@ class IncrementalIndexer:
 
             # Refresh embedder after cleanup - old one can't reload (model loader cleared)
             # This ensures cleanup happens before model is loaded for reindex
-            from mcp_server.model_pool_manager import (
-                get_embedder,
-                get_model_key_from_name,
-            )
-            from search.dimension_validator import read_index_metadata
+            from mcp_server.model_pool_manager import get_embedder
 
-            # CRITICAL: Read the model from the existing index to ensure we use the SAME model
-            # that was used to create the index (prevents dimension mismatch errors)
-            model_key = None
-            try:
-                # Get storage_dir from indexer (CodeIndexManager or HybridSearcher.dense_index)
-                if hasattr(self.indexer, "storage_dir"):
-                    storage_dir = self.indexer.storage_dir
-                elif hasattr(self.indexer, "dense_index") and hasattr(
-                    self.indexer.dense_index, "storage_dir"
-                ):
-                    storage_dir = self.indexer.dense_index.storage_dir
-                else:
-                    storage_dir = None
-
-                if storage_dir:
-                    metadata = read_index_metadata(storage_dir)
-                    if metadata and metadata.get("embedding_model"):
-                        model_name = metadata["embedding_model"]
-                        model_key = get_model_key_from_name(model_name)
-                        logger.info(
-                            f"Using model from index: {model_name} (key: {model_key})"
-                        )
-            except Exception as e:
-                logger.warning(
-                    f"Could not read model from index metadata: {e}", exc_info=True
-                )
-
-            self.embedder = get_embedder(model_key)
+            self.embedder = get_embedder()
             logger.info("Embedder refreshed after cleanup - ready for reindex")
 
             return self.incremental_index(project_path, project_name)

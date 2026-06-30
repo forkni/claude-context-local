@@ -13,6 +13,11 @@ from .bm25_index import BM25Index
 from .indexer import CodeIndexManager
 
 
+# Threshold ratio above which a BM25/Dense count difference triggers resync.
+# Example: 10% = if |dense - bm25| / dense > 0.10, auto-rebuild BM25.
+DESYNC_THRESHOLD = 0.10
+
+
 class IndexSynchronizer:
     """Manages synchronization and persistence of BM25 and dense indices."""
 
@@ -142,6 +147,20 @@ class IndexSynchronizer:
             self._logger.error(f"[SAVE] Failed to save indices: {e}")
             raise
 
+    def _live_counts(self) -> tuple[int, int]:
+        """Return (bm25_count, dense_count) from live in-memory structures.
+
+        Both callers (validate_index_sync and resync_if_desynced) use the same
+        data source so the two can never silently disagree.
+        """
+        bm25_count = len(self.bm25_index._doc_ids) if self.bm25_index else 0
+        dense_count = (
+            self.dense_index.ntotal
+            if self.dense_index and self.dense_index.index
+            else 0
+        )
+        return bm25_count, dense_count
+
     def validate_index_sync(self) -> bool:
         """
         Validate BM25 and Dense indices are synchronized.
@@ -152,12 +171,7 @@ class IndexSynchronizer:
         Returns:
             True if indices are synced, False otherwise
         """
-        bm25_count = len(self.bm25_index._doc_ids) if self.bm25_index else 0
-        dense_count = (
-            self.dense_index.ntotal
-            if self.dense_index and self.dense_index.index
-            else 0
-        )
+        bm25_count, dense_count = self._live_counts()
 
         if bm25_count != dense_count:
             self._logger.warning(
@@ -167,6 +181,41 @@ class IndexSynchronizer:
 
         self._logger.info(f"[SYNC_CHECK] Indices synced at {bm25_count} documents")
         return True
+
+    def resync_if_desynced(self, log_prefix: str = "INCREMENTAL") -> tuple[bool, int]:
+        """Auto-sync BM25 if a significant desync is detected (>10% difference).
+
+        Uses the same live in-memory count source as validate_index_sync to
+        avoid the two-data-source disagreement that previously caused silent
+        desync bugs.  This is the single owner of the resync-trigger decision;
+        callers (IncrementalIndexer, IndexWriteStage) reach it via the
+        HybridSearcher delegate.
+
+        Args:
+            log_prefix: Label for log lines (e.g. "INCREMENTAL" or "FULL_INDEX").
+
+        Returns:
+            tuple[bool, int]: (bm25_resynced, bm25_resync_count)
+        """
+        bm25_count, dense_count = self._live_counts()
+
+        if dense_count > 0:
+            desync_ratio = abs(dense_count - bm25_count) / dense_count
+            if desync_ratio > DESYNC_THRESHOLD:
+                self._logger.warning(
+                    f"[{log_prefix}] Significant desync detected: BM25={bm25_count}, "
+                    f"Dense={dense_count} ({desync_ratio:.1%} difference)"
+                )
+                self._logger.info(
+                    f"[{log_prefix}] Auto-syncing BM25 from dense metadata..."
+                )
+                count = self.resync_bm25_from_dense()
+                self._logger.info(
+                    f"[{log_prefix}] BM25 resync complete: {count} documents"
+                )
+                return True, count
+
+        return False, 0
 
     def resync_bm25_from_dense(self) -> int:
         """
@@ -190,11 +239,14 @@ class IndexSynchronizer:
         for chunk_id in self.dense_index.chunk_ids:
             entry = self.dense_index.metadata_store.get(chunk_id)
             if entry:
-                content = entry["metadata"].get("content", "")
-                if content:
-                    documents.append(content)
-                    doc_ids.append(chunk_id)
-                    metadata[chunk_id] = entry["metadata"]
+                # Keep empty-content chunks (bm25_text absent or "") as empty
+                # strings — mirrors the add path which appends every doc
+                # unconditionally.  Skipping them here caused a chronic
+                # BM25 < Dense desync for module/community chunks that have
+                # no bm25_text key.
+                documents.append(entry["metadata"].get("bm25_text", ""))
+                doc_ids.append(chunk_id)
+                metadata[chunk_id] = entry["metadata"]
 
         if not documents:
             self._logger.error("[RESYNC] No content found in dense metadata")
@@ -290,7 +342,6 @@ class IndexSynchronizer:
                 str(self.storage_dir),
                 embedder=self.embedder,
                 project_id=self.project_id,
-                config=self.config,
             )
 
             self._logger.info("Successfully cleared hybrid indices")
@@ -298,118 +349,62 @@ class IndexSynchronizer:
             self._logger.error(f"Failed to clear hybrid indices: {e}")
             raise
 
-    def remove_file_chunks(self, file_path: str, project_name: str) -> int:
-        """
-        Remove chunks for a specific file from both indices.
-        Compatible with incremental indexer interface.
+    def remove_files(self, file_paths: set[str], project_name: str) -> int:
+        """Remove chunks for one or more files from both indices.
 
         Args:
-            file_path: Relative path of the file
-            project_name: Name of the project
+            file_paths: Set of file paths to remove.
+            project_name: Name of the project.
 
         Returns:
-            Number of chunks removed
+            Total number of chunks removed.
+
+        Raises:
+            RuntimeError: If both dense and BM25 removal fail simultaneously.
         """
-        self._logger.debug(f"Removing chunks for file: {file_path}")
-
-        try:
-            removed_count = 0
-
-            # Remove from dense index
-            if hasattr(self.dense_index, "remove_file_chunks"):
-                removed_dense = self.dense_index.remove_file_chunks(
-                    file_path, project_name
-                )
-                removed_count += removed_dense
-                self._logger.debug(f"Removed {removed_dense} chunks from dense index")
-
-            # Remove from BM25 index
-            if hasattr(self.bm25_index, "remove_file_chunks"):
-                removed_bm25 = self.bm25_index.remove_file_chunks(
-                    file_path, project_name
-                )
-                removed_count += removed_bm25
-                self._logger.debug(f"Removed {removed_bm25} chunks from BM25 index")
-            else:
-                self._logger.warning("BM25 index does not support file chunk removal")
-
-            self._logger.info(
-                f"Removed {removed_count} total chunks for file: {file_path}"
-            )
-            return removed_count
-
-        except Exception as e:
-            self._logger.error(f"Failed to remove chunks for file {file_path}: {e}")
+        if not file_paths:
             return 0
 
-    def remove_multiple_files(self, file_paths: set, project_name: str) -> int:
-        """
-        Remove chunks for multiple files from both indices in a single pass.
-        Much faster than calling remove_file_chunks repeatedly.
-
-        IMPORTANT: This method properly removes chunks from both FAISS and BM25 indices,
-        preventing index corruption.
-
-        Args:
-            file_paths: Set of file paths to remove
-            project_name: Name of the project
-
-        Returns:
-            Total number of chunks removed
-        """
         self._logger.info(
-            f"Batch removing chunks for {len(file_paths)} files from hybrid indices"
+            f"Removing chunks for {len(file_paths)} files from hybrid indices"
         )
 
         removed_count = 0
         dense_failed = False
         bm25_failed = False
 
-        # Remove from dense index
-        if hasattr(self.dense_index, "remove_multiple_files"):
-            try:
-                removed_dense = self.dense_index.remove_multiple_files(
-                    file_paths, project_name
-                )
-                removed_count += removed_dense
-                self._logger.info(
-                    f"Batch removed {removed_dense} chunks from dense (FAISS) index"
-                )
-            except Exception as e:
-                self._logger.error(f"Failed to batch remove from dense index: {e}")
-                import traceback
+        try:
+            removed_dense = self.dense_index.remove_files(file_paths, project_name)
+            removed_count += removed_dense
+            self._logger.info(
+                f"Removed {removed_dense} chunks from dense (FAISS) index"
+            )
+        except Exception as e:
+            self._logger.error(f"Failed to remove from dense index: {e}")
+            import traceback
 
-                self._logger.error(traceback.format_exc())
-                dense_failed = True
+            self._logger.error(traceback.format_exc())
+            dense_failed = True
 
-        # Remove from BM25 index
-        if hasattr(self.bm25_index, "remove_multiple_files"):
-            try:
-                removed_bm25 = self.bm25_index.remove_multiple_files(
-                    file_paths, project_name
-                )
-                removed_count += removed_bm25
-                self._logger.info(
-                    f"Batch removed {removed_bm25} chunks from BM25 index"
-                )
-            except Exception as e:
-                self._logger.error(f"Failed to batch remove from BM25 index: {e}")
-                import traceback
+        try:
+            removed_bm25 = self.bm25_index.remove_files(file_paths, project_name)
+            removed_count += removed_bm25
+            self._logger.info(f"Removed {removed_bm25} chunks from BM25 index")
+        except Exception as e:
+            self._logger.error(f"Failed to remove from BM25 index: {e}")
+            import traceback
 
-                self._logger.error(traceback.format_exc())
-                bm25_failed = True
-        else:
-            self._logger.warning("BM25 index does not support batch file chunk removal")
+            self._logger.error(traceback.format_exc())
+            bm25_failed = True
 
-        # If both failed, raise exception to trigger error recovery
         if dense_failed and bm25_failed:
             raise RuntimeError(
-                "Batch removal failed for both dense and BM25 indices. "
+                "Removal failed for both dense and BM25 indices. "
                 "Indices may be in corrupted state."
             )
 
         self._logger.info(
-            f"Batch removed {removed_count} total chunks for {len(file_paths)} files"
+            f"Removed {removed_count} total chunks for {len(file_paths)} files"
         )
         return removed_count
 

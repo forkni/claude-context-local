@@ -26,6 +26,7 @@ from graph.schema import (
     NODE_ATTR_NAME,
     NODE_ATTR_TYPE,
     NODE_TYPE_SYMBOL_NAME,
+    edge_relation_type,
     get_reverse_relation,
 )
 from utils.atomic_io import write_json_atomic
@@ -514,7 +515,7 @@ class CodeGraphStorage:
         """
         # Forward (outgoing) relationships — forward edge_type matched directly
         for _, target, edge_data in self.graph.out_edges(current_id, data=True):
-            edge_type = edge_data.get("relationship_type") or edge_data.get("type")
+            edge_type = edge_relation_type(edge_data)
             if edge_type and edge_type in relation_types:
                 if (
                     edge_type == "imports"
@@ -530,11 +531,11 @@ class CodeGraphStorage:
                 yield target, edge_type
         # Reverse (incoming) relationships — reverse type matched, forward type yielded
         for source, _, edge_data in self.graph.in_edges(current_id, data=True):
-            edge_type = edge_data.get("relationship_type") or edge_data.get("type")
+            edge_type = edge_relation_type(edge_data)
             reverse_type = (
                 self._get_reverse_relation_type(edge_type) if edge_type else None
             )
-            if reverse_type and reverse_type in relation_types:
+            if edge_type and reverse_type and reverse_type in relation_types:
                 if (
                     edge_type == "imports"
                     and exclude_import_categories
@@ -597,7 +598,7 @@ class CodeGraphStorage:
             return False
 
         # Type guard — the caller may pass any edge; only imports edges carry categories.
-        edge_type = edge_data.get("relationship_type") or edge_data.get("type")
+        edge_type = edge_relation_type(edge_data)
         if edge_type != "imports":
             return False
 
@@ -888,7 +889,7 @@ class CodeGraphStorage:
             Number of nodes removed.
         """
         # Normalize to forward slashes, matching chunk_id construction in chunker
-        normalized = file_path.replace("\\", "/").rstrip("/")
+        normalized = normalize_path(file_path).rstrip("/")
         prefix = normalized + ":"
 
         # Collect IDs first to avoid mutating the graph during iteration

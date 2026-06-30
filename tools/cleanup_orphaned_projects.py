@@ -33,6 +33,12 @@ except Exception:
         return Path.home() / ".claude_code_search" / "projects"
 
 
+try:
+    from merkle.snapshot_manager import SnapshotManager as _SnapshotManager
+except Exception:
+    _SnapshotManager = None  # type: ignore[assignment,misc]
+
+
 def find_orphaned_projects():
     """Find project directories without project_info.json or with non-existent project_path.
 
@@ -92,30 +98,32 @@ def get_project_size(project_dir):
 def _get_full_project_id(project_dir: Path) -> str | None:
     """Get full 32-char project_id from project_info.json.
 
+    Delegates to SnapshotManager.resolve_project_id, which tries the
+    drive-agnostic (v2) id first then the legacy (v1) id — selecting
+    whichever scheme matches the ``project_hash`` recorded in project_info.json.
+
     Args:
         project_dir: Path to project directory
 
     Returns:
-        Full 32-char MD5 hash project_id, or None if not found
+        Full 32-char project_id, or None if project_info.json is missing,
+        unreadable, or neither hash scheme matches the stored project_hash.
     """
-    import hashlib
-
     info_file = project_dir / "project_info.json"
     if not info_file.exists():
         return None
-
     try:
         with open(info_file, encoding="utf-8") as f:
             project_info = json.load(f)
-            project_path = project_info.get("project_path", "")
-            if project_path:
-                # Compute full 32-char project_id from normalized path
-                normalized = str(Path(project_path).resolve())
-                return hashlib.md5(normalized.encode()).hexdigest()
     except json.JSONDecodeError:
-        pass
-
-    return None
+        return None
+    project_path = project_info.get("project_path", "")
+    if not project_path:
+        return None
+    short_hash = project_info.get("project_hash")  # authoritative 8-char prefix
+    if _SnapshotManager is None:
+        return None
+    return _SnapshotManager().resolve_project_id(project_path, short_hash)
 
 
 def cleanup_project(project_dir):

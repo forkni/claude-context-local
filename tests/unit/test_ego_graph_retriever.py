@@ -320,7 +320,7 @@ class TestEgoGraphRetriever:
         nx_graph = nx.DiGraph()
         nx_graph.add_edge("anchor.py:1-10:function:a", "file1.py:10-20:function:n1")
         nx_graph.add_edge("anchor.py:1-10:function:a", "file2.py:30-40:function:n2")
-        mock_graph_storage.get_graph = Mock(return_value=nx_graph)
+        mock_graph_storage.graph = nx_graph
         mock_graph_storage.load_community_map.return_value = None
         retriever = EgoGraphRetriever(mock_graph_storage)
 
@@ -340,7 +340,7 @@ class TestEgoGraphRetriever:
         """PPR with an empty graph returns empty neighbor lists."""
         import networkx as nx
 
-        mock_graph_storage.get_graph = Mock(return_value=nx.DiGraph())
+        mock_graph_storage.graph = nx.DiGraph()
         mock_graph_storage.load_community_map.return_value = None
         retriever = EgoGraphRetriever(mock_graph_storage)
 

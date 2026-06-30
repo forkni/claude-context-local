@@ -1,16 +1,32 @@
 """Resolver protocol, ResolvedEdge, and shared helpers for the call-graph pipeline.
 
-Architecture
-------------
-The resolver pipeline chains multiple static-analysis backends at increasing accuracy::
+Architecture — two namespaces
+------------------------------
+The resolver pipeline chains multiple static-analysis backends at increasing accuracy.
+There are **two distinct confidence namespaces** that must not be conflated:
 
-    AST (0.5/0.7)  →  pyan (0.75)  →  libcst (0.90)  →  lsp (0.98)
+``confidence`` (tag attribute on graph edges)
+    Qualitative label produced by the AST chunking pass: ``"exact"``,
+    ``"recovered"``, or ``"ambiguous"``.  Written via
+    ``graph_storage.add_call_edge`` during chunking.  These are *not* numeric
+    scores and are *not* compared against :class:`ResolverConfidence` thresholds.
 
-*AST edges* are produced during the chunking pass (call_graph_extractor) and already live
-in the graph before injection time.  The pipeline only manages the *additional* resolvers
-that run at full-index time:
+``resolver_confidence`` (numeric score on graph edges)
+    Numeric precedence written by the resolver pipeline (Stage 1–3 below).
+    Edges without this attribute default to ``0.0``, so *every* resolver reliably
+    upgrades them via the keep-max merge in :func:`run_resolvers`.
+
+Resolver ladder (``resolver_confidence`` values; see :class:`ResolverConfidence`)::
+
+    pyan wildcard (0.60)  →  pyan (0.75)  →  libcst (0.90)  →  lsp (0.98)
+
+*AST edges* ride a separate ``add_call_edge`` / ``extract_calls`` rail and are
+written during chunking — they are not :class:`CallEdgeResolver` instances and
+do not participate in the keep-max merge.  The pipeline only manages the
+*additional* resolvers that run at full-index time:
 
 - **PyanResolver** (Stage 1)  — whole-project name resolution; GPL-2.0 optional extra.
+  Wildcard fan-out edges (``expand_unknowns``) get :attr:`ResolverConfidence.PYAN_WILDCARD`.
 - **LibCSTResolver** (Stage 2) — ``FullyQualifiedNameProvider``; MIT, permissive.
 - **LSPResolver** (Stage 3)   — basedpyright JSON-RPC call hierarchy; opt-in.
 
@@ -31,7 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no mutate — always False at runtime; AddNot equivalent
     pass  # mypy/pyright stubs only
 
 
@@ -64,6 +80,46 @@ class ResolvedEdge:
     is_method: bool
     source: str
     confidence: float
+
+
+# ---------------------------------------------------------------------------
+# Confidence constants — single source of truth for all resolvers
+# ---------------------------------------------------------------------------
+
+
+class ResolverConfidence:
+    """Numeric ``resolver_confidence`` values for each resolver stage.
+
+    These are the authoritative constants; each resolver imports the
+    appropriate value rather than hard-coding a float literal.
+
+    Ladder (ascending precision)::
+
+        PYAN_WILDCARD (0.60) — pyan ``expand_unknowns`` fan-out edges
+        PYAN          (0.75) — pyan whole-project name resolution
+        LIBCST        (0.90) — LibCST ``FullyQualifiedNameProvider``
+        LSP           (0.98) — basedpyright type-inference call hierarchy
+    """
+
+    PYAN_WILDCARD: float = (
+        0.60  # pragma: no mutate — numeric constant, consumed by external resolvers
+    )
+    """pyan ``expand_unknowns`` wildcard fan-out: lower-confidence speculative edges."""
+
+    PYAN: float = (
+        0.75  # pragma: no mutate — numeric constant, consumed by external resolvers
+    )
+    """pyan whole-project name resolution."""
+
+    LIBCST: float = (
+        0.90  # pragma: no mutate — numeric constant, consumed by external resolvers
+    )
+    """LibCST ``FullyQualifiedNameProvider`` cross-module resolution."""
+
+    LSP: float = (
+        0.98  # pragma: no mutate — numeric constant, consumed by external resolvers
+    )
+    """basedpyright type-inference–level call hierarchy."""
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +200,7 @@ def gather_py_files(project_root: Path) -> list[str]:
         for part in p.relative_to(project_root).parts[:-1]:  # skip file name itself
             if part in excluded_segments or part.startswith("."):
                 skip = True
-                break
+                break  # pragma: no mutate — continue would also work (skip already set); equivalent
         if not skip:
             files.append(str(p))
     return sorted(files)
@@ -214,6 +270,55 @@ def validate_py_files(
 
 
 # ---------------------------------------------------------------------------
+# Shared resolver preamble
+# ---------------------------------------------------------------------------
+
+
+def prepare_scoped_files(
+    project_root: Path,
+    raw_line_map: dict[str, list[tuple[int, int, str]]],
+    logger: logging.Logger,
+    source_name: str,
+) -> list[str] | None:
+    """Gather, scope, and validate .py files for a call-edge resolver pass.
+
+    This is the identical 5-step preamble shared by PyanResolver, LibCSTResolver,
+    and LSPResolver: gather all .py files → scope to indexed files → early-return
+    on empty → validate with ast.parse → early-return on empty again.
+
+    Args:
+        project_root: Absolute path to the project root.
+        raw_line_map: Per-file sorted ``(start, end, raw_chunk_id)`` list; used to
+            scope files to those present in the index.  Pass an empty dict to skip
+            scoping (all gathered files are kept).
+        logger: Logger for progress and warning messages.
+        source_name: Resolver tag used in log prefixes (e.g. ``"PYAN"``).
+
+    Returns:
+        Validated list of absolute ``.py`` paths ready for analysis, or ``None``
+        if the resolver pass should be skipped (no files gathered or no parseable
+        files after validation).
+    """
+    py_files = gather_py_files(project_root)
+    if raw_line_map:
+        py_files = scope_to_indexed_files(
+            py_files, set(raw_line_map.keys()), project_root
+        )
+    if not py_files:
+        logger.warning(
+            "[%s] No .py files found under %s — skipping", source_name, project_root
+        )
+        return None
+    py_files = validate_py_files(py_files, logger, source_name=source_name)
+    if not py_files:
+        logger.warning(
+            "[%s] No parseable .py files remain — skipping edge injection", source_name
+        )
+        return None
+    return py_files
+
+
+# ---------------------------------------------------------------------------
 # Merge / orchestration
 # ---------------------------------------------------------------------------
 
@@ -266,16 +371,18 @@ def run_resolvers(
             )
             continue
 
-        added = upgraded = 0
+        added = upgraded = (
+            0  # pragma: no mutate — logging counters only; value doesn't affect logic
+        )
         for edge in edges:
             key = (edge.caller_id, edge.callee_id)
             existing = merged.get(key)
             if existing is None:
                 merged[key] = edge
-                added += 1
+                added += 1  # pragma: no mutate — logging counter
             elif edge.confidence > existing.confidence:
                 merged[key] = edge
-                upgraded += 1
+                upgraded += 1  # pragma: no mutate — logging counter
 
         logger.info(
             "[RESOLVERS] %s: %d edges → added=%d, upgraded=%d (total merged so far: %d)",

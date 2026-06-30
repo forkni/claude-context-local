@@ -70,70 +70,6 @@ class TestGetterFunctions:
             "CodeIndexManager must be initialized with project_id"
         )
 
-    @patch("search.searcher.IntelligentSearcher")
-    @patch("mcp_server.model_pool_manager.get_embedder")
-    @patch("mcp_server.search_factory.get_index_manager")
-    @patch("search.config.get_search_config")
-    def test_get_searcher_preserves_model_key_when_none_passed(
-        self,
-        mock_get_config,
-        mock_get_index_manager,
-        mock_get_embedder,
-        mock_intelligent_searcher,
-    ):
-        """Verify get_searcher() preserves current_model_key when model_key=None.
-
-        This is a regression test for the cross-model chunk_id lookup issue.
-        When multi-model routing selects a model (e.g., qwen3), follow-up
-        operations that call get_searcher() without model_key should preserve
-        the routed model, not reset it to None.
-        """
-        # Import here after mocks are set up
-        from mcp_server import search_factory as server
-        from mcp_server.state import get_state
-
-        # Mock config to disable hybrid search for simpler test
-        mock_config = MagicMock()
-        mock_config.search_mode.enable_hybrid = False
-        mock_get_config.return_value = mock_config
-
-        # Mock embedder
-        mock_embedder = MagicMock()
-        mock_get_embedder.return_value = mock_embedder
-
-        # Mock index manager
-        mock_index_mgr = MagicMock()
-        mock_get_index_manager.return_value = mock_index_mgr
-
-        # Mock IntelligentSearcher
-        mock_searcher_instance = MagicMock()
-        mock_intelligent_searcher.return_value = mock_searcher_instance
-
-        # Get state and reset it
-        state = get_state()
-        state.current_project = "/mock/project"
-        state.current_model_key = None
-        state.searcher = None
-
-        # Step 1: Simulate routing selecting a model (like handle_search_code does)
-        searcher1 = server.get_searcher(model_key="qwen3_0.6b")
-        assert state.current_model_key == "qwen3_0.6b", (
-            "Routing should set model to qwen3"
-        )
-        assert searcher1 is mock_searcher_instance
-
-        # Step 2: Call get_searcher without model_key (like follow-up operations do)
-        # This should PRESERVE the qwen3 model, not reset it to None
-        searcher2 = server.get_searcher()
-
-        # Verify model was preserved
-        assert state.current_model_key == "qwen3_0.6b", (
-            "Model should be preserved when model_key=None, not reset"
-        )
-
-        # Verify searcher was reused (not recreated since model didn't change)
-        assert searcher2 is searcher1, "Searcher should be reused when model unchanged"
-
 
 # Note: Most MCP server functionality is tested in integration tests
 # where the actual tool handlers and MCP framework are working properly.
@@ -171,7 +107,6 @@ class TestToolHandlers:
         # Call handler
         with patch("mcp_server.tools.status_handlers.get_state") as mock_get_state:
             mock_state = MagicMock()
-            mock_state.multi_model_enabled = False
             mock_get_state.return_value = mock_state
 
             result = await handle_get_search_config_status({})
@@ -204,8 +139,6 @@ class TestToolHandlers:
         # Mock state
         mock_state = MagicMock()
         mock_state.current_project = "/mock/project/path"
-        mock_state.current_model_key = "default"
-        mock_state.multi_model_enabled = False
         mock_state.embedders = {"default": None}
         mock_get_state.return_value = mock_state
 
@@ -275,7 +208,6 @@ class TestToolHandlers:
         # Call handler
         with patch("mcp_server.tools.status_handlers.get_state") as mock_get_state:
             mock_state = MagicMock()
-            mock_state.multi_model_enabled = False
             mock_get_state.return_value = mock_state
 
             result = await handle_get_search_config_status({})
@@ -351,7 +283,6 @@ class TestToolHandlers:
         # Mock state
         mock_state = MagicMock()
         mock_state.current_project = "/mock/project"
-        mock_state.current_model_key = "default"
         mock_state.embedders = {}
         mock_get_state.return_value = mock_state
 

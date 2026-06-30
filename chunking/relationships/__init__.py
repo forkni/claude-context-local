@@ -12,7 +12,7 @@ Edge types
     RelationshipEdge, RelationshipType, CallEdge, create_call_edge
 
 Extractor infrastructure
-    BaseRelationshipExtractor, MultiPassExtractor
+    BaseRelationshipExtractor
 
 Python relationship extractors (21 types)
     InheritanceExtractor, TypeAnnotationExtractor, ImportExtractor,

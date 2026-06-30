@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from evaluation.metrics import normalize_chunk_id
+from utils.path_utils import normalize_path
 
 
 def build_line_to_chunk_map(
@@ -52,7 +53,7 @@ def build_line_to_chunk_map(
     result: dict[str, list[tuple[int, int, str]]] = {}
     for raw_id, entry in metadata_store.items():
         meta = entry.get("metadata", {})
-        path = meta.get("relative_path", "").replace("\\", "/")
+        path = normalize_path(meta.get("relative_path", ""))
         # Use get() without default so None and 0 both fall through to the
         # truthiness filter below (0 is not a valid 1-indexed line number).
         # Previously `or 0` masked None with 0, making the two cases indistinguishable

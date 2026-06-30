@@ -1,0 +1,73 @@
+[
+  {
+    "content": "def add(x: int, y: int) -> int:\n    \"\"\"Add two numbers.\"\"\"\n    return x + y",
+    "end_line": 6,
+    "language": "python",
+    "metadata": {
+      "complexity_score": 1,
+      "docstring": "Add two numbers.",
+      "name": "add",
+      "node_type": "function_definition",
+      "param_count": 2
+    },
+    "start_line": 4,
+    "type": "function_definition"
+  },
+  {
+    "content": "class Greeter:\n    \"\"\"A simple greeter class.\"\"\"\n\n    def greet(self, name: str) -> str:\n        \"\"\"Return a greeting string.\"\"\"\n        return f\"Hello, {name}\"",
+    "end_line": 14,
+    "language": "python",
+    "metadata": {
+      "docstring": "A simple greeter class.",
+      "name": "Greeter",
+      "node_type": "class_definition"
+    },
+    "start_line": 9,
+    "type": "class_definition"
+  },
+  {
+    "content": "def greet(self, name: str) -> str:\n        \"\"\"Return a greeting string.\"\"\"\n        return f\"Hello, {name}\"",
+    "end_line": 14,
+    "language": "python",
+    "metadata": {
+      "complexity_score": 1,
+      "docstring": "Return a greeting string.",
+      "name": "greet",
+      "node_type": "function_definition",
+      "param_count": 2,
+      "parent_name": "Greeter",
+      "parent_type": "class"
+    },
+    "start_line": 12,
+    "type": "function_definition"
+  },
+  {
+    "content": "def _passthrough(f):\n    return f",
+    "end_line": 18,
+    "language": "python",
+    "metadata": {
+      "complexity_score": 1,
+      "name": "_passthrough",
+      "node_type": "function_definition",
+      "param_count": 1
+    },
+    "start_line": 17,
+    "type": "function_definition"
+  },
+  {
+    "content": "@_passthrough\ndef decorated_fn() -> None:\n    \"\"\"A decorated no-op function.\"\"\"\n    pass",
+    "end_line": 24,
+    "language": "python",
+    "metadata": {
+      "complexity_score": 1,
+      "decorators": [
+        "@_passthrough"
+      ],
+      "docstring": "A decorated no-op function.",
+      "name": "decorated_fn",
+      "node_type": "decorated_definition"
+    },
+    "start_line": 21,
+    "type": "decorated_definition"
+  }
+]

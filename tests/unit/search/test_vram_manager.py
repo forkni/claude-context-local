@@ -47,32 +47,24 @@ class TestVRAMTiers:
             assert len(tier.recommended_model) > 5
 
     def test_feature_enablement_progression(self):
-        """Test that features are enabled progressively with higher tiers."""
+        """Test that reranking is enabled progressively with higher tiers."""
         minimal = VRAM_TIERS[0]
         laptop = VRAM_TIERS[1]
         desktop = VRAM_TIERS[2]
         workstation = VRAM_TIERS[3]
 
-        # Minimal tier has everything disabled
-        assert minimal.multi_model_enabled is False
+        # Minimal tier has reranking disabled
         assert minimal.neural_reranking_enabled is False
-        assert minimal.multi_model_pool is None
         assert minimal.reranker_model is None
 
-        # Laptop tier: lightweight multi-model for 8GB GPUs
-        assert laptop.multi_model_enabled is True  # Enabled with lightweight pool
-        assert laptop.neural_reranking_enabled is True  # Lightweight reranker
-        assert laptop.multi_model_pool == "lightweight-speed"  # Default speed preset
-        assert laptop.reranker_model == "lightweight"  # gte-reranker-modernbert
+        # Laptop tier: lightweight reranker enabled
+        assert laptop.neural_reranking_enabled is True
+        assert laptop.reranker_model == "lightweight"
 
-        # Higher tiers enable full multi-model pool
-        assert desktop.multi_model_enabled is True
+        # Higher tiers enable full reranker
         assert desktop.neural_reranking_enabled is True
-        assert desktop.multi_model_pool == "full"
         assert desktop.reranker_model == "full"
-        assert workstation.multi_model_enabled is False
         assert workstation.neural_reranking_enabled is True
-        assert workstation.multi_model_pool is None
         assert workstation.reranker_model == "full"
 
 
@@ -100,7 +92,6 @@ class TestVRAMTierManager:
 
             assert tier.name == "minimal"
             assert tier.recommended_model == "BAAI/bge-m3"
-            assert tier.multi_model_enabled is False
             assert tier.neural_reranking_enabled is False
 
     def test_detect_tier_laptop(self):
@@ -119,9 +110,7 @@ class TestVRAMTierManager:
 
             assert tier.name == "laptop"
             assert tier.recommended_model == "BAAI/bge-m3"
-            assert tier.multi_model_enabled is True  # Enabled with lightweight pool
             assert tier.neural_reranking_enabled is True
-            assert tier.multi_model_pool == "lightweight-speed"  # Default preset
             assert tier.reranker_model == "lightweight"
 
     def test_detect_tier_desktop(self):
@@ -140,7 +129,6 @@ class TestVRAMTierManager:
 
             assert tier.name == "desktop"
             assert tier.recommended_model == "Qwen/Qwen3-Embedding-0.6B"
-            assert tier.multi_model_enabled is True
             assert tier.neural_reranking_enabled is True
 
     def test_detect_tier_workstation(self):
@@ -159,7 +147,6 @@ class TestVRAMTierManager:
 
             assert tier.name == "workstation"
             assert tier.recommended_model == "Qwen/Qwen3-Embedding-0.6B"
-            assert tier.multi_model_enabled is False
             assert tier.neural_reranking_enabled is True
 
     def test_detect_tier_caching(self):
@@ -220,34 +207,6 @@ class TestVRAMTierManager:
 
         with pytest.raises(ValueError, match="Unknown tier"):
             manager.get_model_for_tier("invalid")
-
-    def test_should_enable_multi_model(self):
-        """Test multi-model enablement check."""
-        # Mock laptop tier (multi-model enabled with lightweight pool)
-        with (
-            patch("torch.cuda.is_available", return_value=True),
-            patch("torch.cuda.get_device_properties") as mock_get_props,
-        ):
-            mock_props = MagicMock()
-            mock_props.total_memory = 8 * (1024**3)
-            mock_get_props.return_value = mock_props
-
-            manager = VRAMTierManager()
-            assert (
-                manager.should_enable_multi_model() is True
-            )  # Enabled with lightweight
-
-        # Mock minimal tier (multi-model disabled)
-        with (
-            patch("torch.cuda.is_available", return_value=True),
-            patch("torch.cuda.get_device_properties") as mock_get_props,
-        ):
-            mock_props = MagicMock()
-            mock_props.total_memory = 4 * (1024**3)
-            mock_get_props.return_value = mock_props
-
-            manager2 = VRAMTierManager()
-            assert manager2.should_enable_multi_model() is False
 
     def test_should_enable_neural_reranking(self):
         """Test neural reranking enablement check."""

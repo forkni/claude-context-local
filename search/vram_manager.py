@@ -12,13 +12,11 @@ class VRAMTier:
     """VRAM tier configuration for automatic feature adaptation.
 
     Attributes:
-        name: Tier name (minimal, laptop, desktop, workstation, laptop_multimodel)
+        name: Tier name (minimal, laptop, desktop, workstation)
         min_vram_gb: Minimum VRAM in GB for this tier (inclusive)
         max_vram_gb: Maximum VRAM in GB for this tier (exclusive)
         recommended_model: Full model name from MODEL_REGISTRY
-        multi_model_enabled: Whether multi-model routing should be enabled
         neural_reranking_enabled: Whether neural reranking should be enabled
-        multi_model_pool: Pool type for multi-model ("full", "lightweight-speed")
         reranker_model: Reranker type ("full", "lightweight")
     """
 
@@ -26,26 +24,21 @@ class VRAMTier:
     min_vram_gb: float
     max_vram_gb: float
     recommended_model: str
-    multi_model_enabled: bool
     neural_reranking_enabled: bool
-    multi_model_pool: str | None = None  # "full" or "lightweight-speed"
     reranker_model: str | None = None  # "full" or "lightweight"
 
 
 # VRAM tier definitions based on GPU capabilities
-# RTX 3060/4060 (8GB) → laptop tier → BGE-M3 with lightweight multi-model option
-# RTX 3060 12GB (12GB) → desktop tier → Qwen3-0.6B (full multi-model pool, OOM safety)
-# RTX 3090 (24GB) → workstation tier → Qwen3-0.6B (single-model + reranker, ~2.5GB)
-# RTX 4090 (24GB) → workstation tier → Qwen3-0.6B (single-model + reranker, ~2.5GB)
+# RTX 3060/4060 (8GB) → laptop tier → BGE-M3
+# RTX 3060 12GB (12GB) → desktop tier → Qwen3-0.6B
+# RTX 3090/4090 (24GB) → workstation tier → Qwen3-0.6B (single-model + reranker, ~2.5GB)
 VRAM_TIERS: list[VRAMTier] = [
     VRAMTier(
         name="minimal",
         min_vram_gb=0,
         max_vram_gb=6,
         recommended_model="BAAI/bge-m3",  # Smallest viable model (1.07GB)
-        multi_model_enabled=False,  # Too little VRAM for multi-model
         neural_reranking_enabled=False,  # Disable to conserve VRAM
-        multi_model_pool=None,  # Single-model only
         reranker_model=None,  # Reranking disabled
     ),
     VRAMTier(
@@ -53,30 +46,24 @@ VRAM_TIERS: list[VRAMTier] = [
         min_vram_gb=6,
         max_vram_gb=10,
         recommended_model="BAAI/bge-m3",  # Base model for 8GB GPUs
-        multi_model_enabled=True,  # Enable with lightweight pool
         neural_reranking_enabled=True,  # Lightweight reranker (0.3GB)
-        multi_model_pool="lightweight-speed",  # Default to speed preset (1.65GB total)
         reranker_model="lightweight",  # Use gte-reranker-modernbert-base
     ),
     VRAMTier(
         name="desktop",
         min_vram_gb=10,
         max_vram_gb=18,
-        recommended_model="Qwen/Qwen3-Embedding-0.6B",  # Keep 0.6B for OOM prevention
-        multi_model_enabled=True,
+        recommended_model="Qwen/Qwen3-Embedding-0.6B",  # 1024d, ~1.1GB VRAM
         neural_reranking_enabled=True,
-        multi_model_pool="full",  # Full 3-model pool (6.8GB)
-        reranker_model="full",  # Full bge-reranker-v2-m3 (1.5GB)
+        reranker_model="full",
     ),
     VRAMTier(
         name="workstation",
         min_vram_gb=18,
         max_vram_gb=999,  # No upper limit
         recommended_model="Qwen/Qwen3-Embedding-0.6B",  # 1024d, ~1.1GB VRAM; baseline MRR 0.94
-        multi_model_enabled=False,  # Single-model + reranker mode; no multi-model routing
         neural_reranking_enabled=True,
-        multi_model_pool=None,  # Single-model only
-        reranker_model="full",  # Full jina-reranker-v3
+        reranker_model="full",
     ),
 ]
 
@@ -173,15 +160,6 @@ class VRAMTierManager:
         raise ValueError(
             f"Unknown tier: {tier_name}. Valid tiers: {[t.name for t in VRAM_TIERS]}"
         )
-
-    def should_enable_multi_model(self) -> bool:
-        """Check if multi-model routing should be enabled.
-
-        Returns:
-            True if current tier supports multi-model routing
-        """
-        tier = self.detect_tier()
-        return tier.multi_model_enabled
 
     def should_enable_neural_reranking(self) -> bool:
         """Check if neural reranking should be enabled.

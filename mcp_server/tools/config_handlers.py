@@ -14,68 +14,104 @@ from mcp_server.storage_manager import (
     get_project_storage_dir,
     set_current_project,
 )
+from mcp_server.tools import responses
 from mcp_server.tools.decorators import error_handler
 from search.config import (
     MODEL_REGISTRY,
+    ChunkingConfig,
+    RerankerConfig,
+    SearchModeConfig,
     get_config_manager,
+    validate_field_value,
 )
 
 
 logger = logging.getLogger(__name__)
 
 
-def _detect_indexed_model(project_path: str) -> str | None:
-    """Detect which model has a valid index for this project.
+# ---------------------------------------------------------------------------
+# Field maps: (arg_key, attr_name) pairs for apply_config_patch.
+# Attribute names must match the real dataclass fields so that
+# validate_field_value can look up metadata from the spec class.
+# ---------------------------------------------------------------------------
 
-    Reads project_info.json first (pool-agnostic path); falls back to
-    scanning the active-pool directories for legacy projects that predate
-    project_info.json or where the JSON read fails.
+_CHUNKING_FIELDS: tuple[tuple[str, str], ...] = (
+    ("enable_community_detection", "enable_community_detection"),
+    ("enable_community_merge", "enable_community_merge"),
+    ("community_resolution", "community_resolution"),
+    ("max_phantom_degree", "max_phantom_degree"),
+    ("token_estimation", "token_estimation"),
+    ("enable_large_node_splitting", "enable_large_node_splitting"),
+    ("max_chunk_lines", "max_chunk_lines"),
+    ("split_size_method", "split_size_method"),
+    ("max_split_chars", "max_split_chars"),
+    ("enable_file_summaries", "enable_file_summaries"),
+    ("enable_community_summaries", "enable_community_summaries"),
+    ("sizing_mode", "sizing_mode"),
+    ("adaptive_multiplier_max", "adaptive_multiplier_max"),
+    ("adaptive_multiplier_min", "adaptive_multiplier_min"),
+    ("max_complexity_cap", "max_complexity_cap"),
+)
 
-    Args:
-        project_path: Path to the project directory
+# Echo subset: the fields the response returns (curated; may include read-only fields).
+_CHUNKING_ECHO: tuple[str, ...] = (
+    "enable_community_detection",
+    "enable_community_merge",
+    "community_resolution",
+    "max_phantom_degree",
+    "token_estimation",
+    "enable_large_node_splitting",
+    "max_chunk_lines",
+    "split_size_method",
+    "max_split_chars",
+    "enable_file_summaries",
+    "enable_community_summaries",
+    "sizing_mode",
+    "adaptive_multiplier_max",
+    "adaptive_multiplier_min",
+    "max_complexity_cap",
+)
 
-    Returns:
-        Model key if found, None otherwise
+_RERANKER_FIELDS: tuple[tuple[str, str], ...] = (
+    ("enabled", "enabled"),
+    ("model_name", "model_name"),
+    ("top_k_candidates", "top_k_candidates"),
+)
+
+# Echoes include non-settable fields (min_vram_gb, batch_size) — read from target after patch.
+_RERANKER_ECHO: tuple[str, ...] = (
+    "enabled",
+    "model_name",
+    "top_k_candidates",
+    "min_vram_gb",
+    "batch_size",
+)
+
+
+def apply_config_patch(
+    target: Any,
+    spec_cls: type,
+    arguments: dict[str, Any],
+    field_map: tuple[tuple[str, str], ...],
+) -> str | None:
+    """Apply a batch of config arguments to *target* with spec-driven validation.
+
+    For each ``(arg_key, attr)`` pair in *field_map*: skip if the key is absent from
+    *arguments*, validate the value against *spec_cls*'s field metadata via
+    :func:`~search.config.validate_field_value`, then ``setattr(target, attr, value)``.
+    Returns the first error message encountered, or ``None`` on success.
+
+    *spec_cls* is the **real** dataclass type (e.g. ``ChunkingConfig``), never
+    ``type(target)`` — tests mock ``target``, so specs must come from the real class.
     """
-    import json as _json
-
-    from mcp_server.model_pool_manager import (
-        get_model_key_from_name,
-        get_model_pool_manager,
-    )
-    from mcp_server.storage_manager import get_canonical_project_info
-
-    # Primary: read the stored embedding_model from project_info.json (pool-agnostic).
-    # get_canonical_project_info returns the Path to the first project_info.json found
-    # across ALL model storage dirs, regardless of the currently active pool.
-    info_path = get_canonical_project_info(project_path)
-    if info_path and info_path.exists():
-        try:
-            with open(info_path) as f:
-                project_info = _json.load(f)
-            stored_model_name = project_info.get("embedding_model")
-            if stored_model_name:
-                model_key = get_model_key_from_name(stored_model_name)
-                if model_key:
-                    # Verify this model's index actually exists before committing to it.
-                    # A project_info.json can exist for a model whose index was later
-                    # cleared or never fully built (only the metadata file was written).
-                    project_dir = get_project_storage_dir(
-                        project_path, model_key=model_key
-                    )
-                    if (project_dir / "index" / "code.index").exists():
-                        logger.info(f"Detected indexed model for project: {model_key}")
-                        return model_key
-        except Exception as e:
-            logger.warning(f"Failed to read project_info.json at {info_path}: {e}")
-
-    # Fallback: scan active-pool dirs (legacy projects without project_info.json)
-    pool_config = get_model_pool_manager().get_pool_config()
-    for model_key in pool_config:
-        project_dir = get_project_storage_dir(project_path, model_key=model_key)
-        if (project_dir / "index" / "code.index").exists():
-            logger.info(f"Detected indexed model for project: {model_key}")
-            return model_key
+    for arg_key, attr in field_map:
+        value = arguments.get(arg_key)
+        if value is None:
+            continue
+        err = validate_field_value(spec_cls, attr, value)
+        if err:
+            return err
+        setattr(target, attr, value)
     return None
 
 
@@ -86,7 +122,7 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
 
     project_path = Path(project_path).resolve()
     if not project_path.exists():
-        return {"error": f"Project path does not exist: {project_path}"}
+        return responses.error(f"Project path does not exist: {project_path}")
 
     # Cleanup previous resources
     _cleanup_previous_resources()
@@ -94,91 +130,27 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
     # Set new project using setter function (required for cross-module globals)
     set_current_project(str(project_path))
 
-    # Reset and auto-detect model key to ensure correct index is used
-    state = get_state()
-    state.current_model_key = None
-    state.current_index_model_key = None
-
-    # Auto-detect which model was used to index this project
-    indexed_model = _detect_indexed_model(str(project_path))
-    if indexed_model:
-        state.current_model_key = indexed_model
-        logger.info(f"Auto-detected and set model key to: {indexed_model}")
-    else:
-        logger.warning(f"No indexed model detected for project: {project_path}")
-
     # Save selection for persistence across server restarts
     save_project_selection(str(project_path))
 
     # Verify project is indexed
-    project_dir = get_project_storage_dir(str(project_path), model_key=indexed_model)
+    project_dir = get_project_storage_dir(str(project_path))
     index_dir = project_dir / "index"
 
     if not index_dir.exists() or not (index_dir / "code.index").exists():
-        return {
-            "success": True,
-            "project": str(project_path),
-            "warning": "Project not indexed yet. Run index_directory first.",
-            "indexed": False,
-        }
+        return responses.ok(
+            success=True,
+            project=str(project_path),
+            warning="Project not indexed yet. Run index_directory first.",
+            indexed=False,
+        )
 
-    return {
-        "success": True,
-        "project": str(project_path),
-        "indexed": True,
-        "message": f"Switched to project: {project_path.name}",
-    }
-
-
-@error_handler("Configure routing")
-async def handle_configure_query_routing(arguments: dict[str, Any]) -> dict:
-    """Configure query routing behavior."""
-    enable_multi_model = arguments.get("enable_multi_model")
-    default_model = arguments.get("default_model")
-    confidence_threshold = arguments.get("confidence_threshold")
-
-    config_manager = get_config_manager()
-    config = config_manager.load_config()
-    changes = {}
-
-    if enable_multi_model is not None:
-        # Persist to config file
-        config.routing.multi_model_enabled = enable_multi_model
-        changes["multi_model_enabled"] = enable_multi_model
-
-        # Update runtime state
-        state = get_state()
-        state.multi_model_enabled = enable_multi_model
-
-        # Save config
-        config_manager.save_config(config)
-
-    if default_model is not None:
-        from mcp_server.model_pool_manager import get_model_pool_manager
-
-        pool_config = get_model_pool_manager().get_pool_config()
-        if default_model in pool_config:
-            # Persist to config file
-            config.routing.default_model = default_model
-            changes["default_model"] = default_model
-
-            # Save config
-            config_manager.save_config(config)
-        else:
-            return {"error": f"Invalid model: {default_model}"}
-
-    if confidence_threshold is not None:
-        changes["confidence_threshold"] = confidence_threshold
-        # Note: confidence_threshold is runtime-only for now
-
-    return {
-        "success": True,
-        "changes": changes,
-        "message": "Configuration updated and persisted",
-        "current_state": {
-            "multi_model_enabled": get_state().multi_model_enabled,
-        },
-    }
+    return responses.ok(
+        success=True,
+        project=str(project_path),
+        indexed=True,
+        message=f"Switched to project: {project_path.name}",
+    )
 
 
 @error_handler("Configure search mode")
@@ -189,34 +161,34 @@ async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
     dense_weight = arguments.get("dense_weight", 0.65)
     enable_parallel = arguments.get("enable_parallel", True)
 
+    err = validate_field_value(SearchModeConfig, "default_mode", search_mode)
+    if err:
+        return responses.error(err)
+
     config_manager = get_config_manager()
     config = config_manager.load_config()
 
-    # Update config
-    if search_mode in ["hybrid", "semantic", "bm25", "auto"]:
-        config.search_mode.default_mode = search_mode
-        config.search_mode.enable_hybrid = search_mode in ["hybrid", "auto"]
-        config.search_mode.bm25_weight = bm25_weight
-        config.search_mode.dense_weight = dense_weight
-        config.performance.use_parallel_search = enable_parallel
+    config.search_mode.default_mode = search_mode
+    config.search_mode.enable_hybrid = search_mode in ["hybrid", "auto"]
+    config.search_mode.bm25_weight = bm25_weight
+    config.search_mode.dense_weight = dense_weight
+    config.performance.use_parallel_search = enable_parallel
 
-        config_manager.save_config(config)
+    config_manager.save_config(config)
 
-        # Reset searcher to pick up new config
-        state = get_state()
-        state.reset_searcher()
+    # Reset searcher to pick up new config
+    state = get_state()
+    state.reset_searcher()
 
-        return {
-            "success": True,
-            "config": {
-                "search_mode": search_mode,
-                "bm25_weight": bm25_weight,
-                "dense_weight": dense_weight,
-                "enable_parallel": enable_parallel,
-            },
-        }
-    else:
-        return {"error": f"Invalid search_mode: {search_mode}"}
+    return responses.ok(
+        success=True,
+        config={
+            "search_mode": search_mode,
+            "bm25_weight": bm25_weight,
+            "dense_weight": dense_weight,
+            "enable_parallel": enable_parallel,
+        },
+    )
 
 
 @error_handler(
@@ -228,10 +200,10 @@ async def handle_switch_embedding_model(arguments: dict[str, Any]) -> dict:
     model_name = arguments["model_name"]
 
     if model_name not in MODEL_REGISTRY:
-        return {
-            "error": f"Unknown model: {model_name}",
-            "available_models": list(MODEL_REGISTRY.keys()),
-        }
+        return responses.error(
+            f"Unknown model: {model_name}",
+            available_models=list(MODEL_REGISTRY.keys()),
+        )
 
     config_manager = get_config_manager()
     config = config_manager.load_config()
@@ -244,198 +216,65 @@ async def handle_switch_embedding_model(arguments: dict[str, Any]) -> dict:
     state = get_state()
     state.reset_for_model_switch()
 
-    return {
-        "success": True,
-        "old_model": old_model,
-        "new_model": model_name,
-        "message": f"Switched to {model_name}. Indexes will use this model.",
-        "note": "Existing indices for other models are preserved (per-model storage)",
-    }
+    return responses.ok(
+        success=True,
+        old_model=old_model,
+        new_model=model_name,
+        message=f"Switched to {model_name}. Indexes will use this model.",
+        note="Existing indices for other models are preserved (per-model storage)",
+    )
 
 
 @error_handler("Configure reranking")
 async def handle_configure_reranking(arguments: dict[str, Any]) -> dict:
-    """Configure neural reranker settings.
-
-    Args:
-        arguments: Dict with optional keys:
-            - enabled: Enable/disable neural reranking
-            - model_name: Cross-encoder model to use
-            - top_k_candidates: Number of candidates to rerank
-
-    Returns:
-        Dict with success status and updated config
-    """
+    """Configure neural reranker settings."""
     config_manager = get_config_manager()
     config = config_manager.load_config()
 
-    enabled = arguments.get("enabled")
-    model_name = arguments.get("model_name")
-    top_k_candidates = arguments.get("top_k_candidates")
-
-    if enabled is not None:
-        config.reranker.enabled = enabled
-    if model_name is not None:
-        config.reranker.model_name = model_name
-    if top_k_candidates is not None:
-        config.reranker.top_k_candidates = top_k_candidates
+    err = apply_config_patch(
+        config.reranker, RerankerConfig, arguments, _RERANKER_FIELDS
+    )
+    if err:
+        return responses.error(err)
 
     config_manager.save_config(config)
 
-    return {
-        "success": True,
-        "config": {
-            "enabled": config.reranker.enabled,
-            "model_name": config.reranker.model_name,
-            "top_k_candidates": config.reranker.top_k_candidates,
-            "min_vram_gb": config.reranker.min_vram_gb,
-            "batch_size": config.reranker.batch_size,
-        },
-        "system_message": "Reranker configuration updated. Changes take effect on next search.",
-    }
+    return responses.ok(
+        success=True,
+        config={attr: getattr(config.reranker, attr) for attr in _RERANKER_ECHO},
+        system_message="Reranker configuration updated. Changes take effect on next search.",
+    )
 
 
 @error_handler("Configure chunking")
 async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
     """Configure code chunking settings.
 
-    Args:
-        arguments: Dict with optional keys:
-            - enable_community_detection: Enable/disable community detection (independent)
-            - enable_community_merge: Enable/disable community-based remerge (full index only)
-            - community_resolution: Resolution parameter for Louvain community detection (0.1-2.0)
-            - max_phantom_degree: Skip phantom nodes with >N callers to reduce graph noise (1-1000)
-            - token_estimation: Token estimation method ("whitespace" or "tiktoken")
-            - enable_large_node_splitting: Enable/disable AST block splitting
-            - max_chunk_lines: Maximum lines per chunk before splitting
-            - split_size_method: Size method for splitting ("lines" or "characters")
-            - max_split_chars: Maximum characters per split chunk (1000-10000)
-            - enable_file_summaries: Enable/disable file-level module summaries (A2 feature)
-            - sizing_mode: Chunk sizing algorithm ("fixed" or "adaptive")
-            - adaptive_multiplier_max: T_max multiplier for low-complexity functions (1.0-2.0)
-            - adaptive_multiplier_min: T_min multiplier for high-complexity functions (0.1-1.0)
-            - max_complexity_cap: Cyclomatic complexity ceiling for Cv normalization (5-100)
+    Valid values per field are enforced by ``ChunkingConfig`` field metadata
+    (see ``search.config.validate_field_value``).  Exposed parameters:
+    enable_community_detection, enable_community_merge, community_resolution (0.1-2.0),
+    max_phantom_degree (1-1000), token_estimation ("whitespace"|"tiktoken"),
+    enable_large_node_splitting, max_chunk_lines, split_size_method ("lines"|"characters"),
+    max_split_chars (1000-10000), enable_file_summaries, enable_community_summaries,
+    sizing_mode ("fixed"|"adaptive"), adaptive_multiplier_max (1.0-2.0),
+    adaptive_multiplier_min (0.1-1.0), max_complexity_cap (5-100).
 
-    Returns:
-        Dict with success status and updated config
-
-    Note:
-        min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults
-        and not exposed for user configuration.
+    Note: min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults and
+    not exposed for user configuration.
     """
     config_manager = get_config_manager()
     config = config_manager.load_config()
 
-    enable_community_detection = arguments.get("enable_community_detection")
-    enable_community_merge = arguments.get("enable_community_merge")
-    community_resolution = arguments.get("community_resolution")
-    max_phantom_degree = arguments.get("max_phantom_degree")
-    token_estimation = arguments.get("token_estimation")
-    enable_large_node_splitting = arguments.get("enable_large_node_splitting")
-    max_chunk_lines = arguments.get("max_chunk_lines")
-    split_size_method = arguments.get("split_size_method")
-    max_split_chars = arguments.get("max_split_chars")
-    enable_file_summaries = arguments.get("enable_file_summaries")
-    enable_community_summaries = arguments.get("enable_community_summaries")
-    sizing_mode = arguments.get("sizing_mode")
-    adaptive_multiplier_max = arguments.get("adaptive_multiplier_max")
-    adaptive_multiplier_min = arguments.get("adaptive_multiplier_min")
-    max_complexity_cap = arguments.get("max_complexity_cap")
-
-    if enable_community_detection is not None:
-        config.chunking.enable_community_detection = enable_community_detection
-    if enable_community_merge is not None:
-        config.chunking.enable_community_merge = enable_community_merge
-    if community_resolution is not None:
-        if 0.1 <= community_resolution <= 2.0:
-            config.chunking.community_resolution = community_resolution
-        else:
-            return {
-                "error": f"Invalid community_resolution: {community_resolution}. Must be between 0.1 and 2.0"
-            }
-    if max_phantom_degree is not None:
-        if 1 <= max_phantom_degree <= 1000:
-            config.chunking.max_phantom_degree = max_phantom_degree
-        else:
-            return {
-                "error": f"Invalid max_phantom_degree: {max_phantom_degree}. Must be between 1 and 1000"
-            }
-    if token_estimation is not None:
-        if token_estimation in ["whitespace", "tiktoken"]:
-            config.chunking.token_estimation = token_estimation
-        else:
-            return {"error": f"Invalid token_estimation: {token_estimation}"}
-    if enable_large_node_splitting is not None:
-        config.chunking.enable_large_node_splitting = enable_large_node_splitting
-    if max_chunk_lines is not None:
-        config.chunking.max_chunk_lines = max_chunk_lines
-    if split_size_method is not None:
-        if split_size_method in ["lines", "characters"]:
-            config.chunking.split_size_method = split_size_method
-        else:
-            return {
-                "error": f"Invalid split_size_method: {split_size_method}. Must be 'lines' or 'characters'"
-            }
-    if max_split_chars is not None:
-        if 1000 <= max_split_chars <= 10000:
-            config.chunking.max_split_chars = max_split_chars
-        else:
-            return {
-                "error": f"Invalid max_split_chars: {max_split_chars}. Must be between 1000 and 10000"
-            }
-    if enable_file_summaries is not None:
-        config.chunking.enable_file_summaries = enable_file_summaries
-    if enable_community_summaries is not None:
-        config.chunking.enable_community_summaries = enable_community_summaries
-    if sizing_mode is not None:
-        if sizing_mode in ["fixed", "adaptive"]:
-            config.chunking.sizing_mode = sizing_mode
-        else:
-            return {
-                "error": f"Invalid sizing_mode: {sizing_mode}. Must be 'fixed' or 'adaptive'"
-            }
-    if adaptive_multiplier_max is not None:
-        if 1.0 <= adaptive_multiplier_max <= 2.0:
-            config.chunking.adaptive_multiplier_max = adaptive_multiplier_max
-        else:
-            return {
-                "error": f"Invalid adaptive_multiplier_max: {adaptive_multiplier_max}. Must be between 1.0 and 2.0"
-            }
-    if adaptive_multiplier_min is not None:
-        if 0.1 <= adaptive_multiplier_min <= 1.0:
-            config.chunking.adaptive_multiplier_min = adaptive_multiplier_min
-        else:
-            return {
-                "error": f"Invalid adaptive_multiplier_min: {adaptive_multiplier_min}. Must be between 0.1 and 1.0"
-            }
-    if max_complexity_cap is not None:
-        if 5 <= max_complexity_cap <= 100:
-            config.chunking.max_complexity_cap = max_complexity_cap
-        else:
-            return {
-                "error": f"Invalid max_complexity_cap: {max_complexity_cap}. Must be between 5 and 100"
-            }
+    err = apply_config_patch(
+        config.chunking, ChunkingConfig, arguments, _CHUNKING_FIELDS
+    )
+    if err:
+        return responses.error(err)
 
     config_manager.save_config(config)
 
-    return {
-        "success": True,
-        "config": {
-            "enable_community_detection": config.chunking.enable_community_detection,
-            "enable_community_merge": config.chunking.enable_community_merge,
-            "community_resolution": config.chunking.community_resolution,
-            "max_phantom_degree": config.chunking.max_phantom_degree,
-            "token_estimation": config.chunking.token_estimation,
-            "enable_large_node_splitting": config.chunking.enable_large_node_splitting,
-            "max_chunk_lines": config.chunking.max_chunk_lines,
-            "split_size_method": config.chunking.split_size_method,
-            "max_split_chars": config.chunking.max_split_chars,
-            "enable_file_summaries": config.chunking.enable_file_summaries,
-            "enable_community_summaries": config.chunking.enable_community_summaries,
-            "sizing_mode": config.chunking.sizing_mode,
-            "adaptive_multiplier_max": config.chunking.adaptive_multiplier_max,
-            "adaptive_multiplier_min": config.chunking.adaptive_multiplier_min,
-            "max_complexity_cap": config.chunking.max_complexity_cap,
-        },
-        "system_message": "Chunking configuration updated. Re-index project to apply changes.",
-    }
+    return responses.ok(
+        success=True,
+        config={attr: getattr(config.chunking, attr) for attr in _CHUNKING_ECHO},
+        system_message="Chunking configuration updated. Re-index project to apply changes.",
+    )

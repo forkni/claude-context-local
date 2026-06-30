@@ -21,6 +21,7 @@ Examples:
 import ast
 from typing import Any
 
+from chunking.relationships.name_resolution import call_target_name
 from chunking.relationships.relationship_extractors.base_extractor import (
     BaseRelationshipExtractor,
 )
@@ -192,51 +193,7 @@ class DefaultParameterExtractor(BaseRelationshipExtractor):
             >>> # def foo(x=Config()): → "Config"
             >>> # def foo(x=module.Config()): → "module.Config"
         """
-        # Simple name reference
-        if isinstance(default, ast.Name):
-            return default.id
-
-        # Attribute access (module.symbol or obj.attr)
-        if isinstance(default, ast.Attribute):
-            return DefaultParameterExtractor._get_attr_path(default)
-
-        # Call expression (extract callee)
-        if isinstance(default, ast.Call):
-            if isinstance(default.func, ast.Name):
-                return default.func.id
-            elif isinstance(default.func, ast.Attribute):
-                return DefaultParameterExtractor._get_attr_path(default.func)
-
-        return ""
-
-    @staticmethod
-    def _get_attr_path(node: ast.Attribute) -> str:
-        """
-        Get full attribute path (e.g., "module.Class.attr").
-
-        Recursively builds path for nested attributes.
-
-        Args:
-            node: Attribute AST node
-
-        Returns:
-            Full attribute path
-
-        Examples:
-            >>> # config.TIMEOUT → "config.TIMEOUT"
-            >>> # module.config.TIMEOUT → "module.config.TIMEOUT"
-        """
-        parts = [node.attr]
-        current = node.value
-
-        while isinstance(current, ast.Attribute):
-            parts.insert(0, current.attr)
-            current = current.value
-
-        if isinstance(current, ast.Name):
-            parts.insert(0, current.id)
-
-        return ".".join(parts)
+        return call_target_name(default) or ""  # type: ignore[arg-type]
 
     @staticmethod
     def _get_default_type(default: ast.AST) -> str:

@@ -75,7 +75,7 @@ class ContextManagerExtractor(BaseRelationshipExtractor):
         if isinstance(node, ast.Call):
             # with Manager() or with func()
             func_name = self._get_call_name(node.func)
-            if func_name and not self._is_builtin(func_name):
+            if func_name and not self._is_builtin_context_manager(func_name):
                 self._add_edge(
                     source_id=chunk_metadata["chunk_id"],
                     target_name=func_name,
@@ -83,7 +83,7 @@ class ContextManagerExtractor(BaseRelationshipExtractor):
                 )
         elif isinstance(node, ast.Name):
             # with existing_manager:
-            if not self._is_builtin(node.id):
+            if not self._is_builtin_context_manager(node.id):
                 self._add_edge(
                     source_id=chunk_metadata["chunk_id"],
                     target_name=node.id,
@@ -107,7 +107,7 @@ class ContextManagerExtractor(BaseRelationshipExtractor):
             return node.attr
         return None
 
-    def _is_builtin(self, name: str) -> bool:
+    def _is_builtin_context_manager(self, name: str) -> bool:
         """
         Check if name is a builtin context manager.
 

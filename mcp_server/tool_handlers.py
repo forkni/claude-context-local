@@ -17,7 +17,6 @@ from collections.abc import Awaitable, Callable
 
 from mcp_server.tools.config_handlers import (
     handle_configure_chunking,
-    handle_configure_query_routing,
     handle_configure_reranking,
     handle_configure_search_mode,
     handle_switch_embedding_model,
@@ -54,9 +53,8 @@ TOOL_DISPATCH: dict[str, Callable[[dict], Awaitable[dict | list]]] = {
     "cleanup_resources": handle_cleanup_resources,
     "get_search_config_status": handle_get_search_config_status,
     "list_embedding_models": handle_list_embedding_models,
-    # Config (6)
+    # Config (5)
     "switch_project": handle_switch_project,
-    "configure_query_routing": handle_configure_query_routing,
     "configure_reranking": handle_configure_reranking,
     "configure_search_mode": handle_configure_search_mode,
     "configure_chunking": handle_configure_chunking,
@@ -82,9 +80,8 @@ __all__ = [
     "handle_cleanup_resources",
     "handle_get_search_config_status",
     "handle_list_embedding_models",
-    # Config handlers (6)
+    # Config handlers (5)
     "handle_switch_project",
-    "handle_configure_query_routing",
     "handle_configure_reranking",
     "handle_configure_search_mode",
     "handle_configure_chunking",

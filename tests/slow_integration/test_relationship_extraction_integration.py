@@ -372,7 +372,9 @@ class TestPhase3RelationshipExtraction:
             pytest.skip("No chunks with Phase 3 relationships found")
 
         # Create CodeRelationshipAnalyzer with searcher
-        from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
+        from search.relationship_analyzer import (
+            RelationshipAnalyzer as CodeRelationshipAnalyzer,
+        )
         from search.searcher import IntelligentSearcher
 
         # Create searcher from indexer
@@ -439,7 +441,9 @@ class TestPhase3RelationshipExtraction:
             pytest.skip("No chunks with USES_TYPE relationships found")
 
         # Analyze the chunk
-        from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
+        from search.relationship_analyzer import (
+            RelationshipAnalyzer as CodeRelationshipAnalyzer,
+        )
         from search.searcher import IntelligentSearcher
 
         # Create searcher from indexer
@@ -722,7 +726,9 @@ class TestPriority2RelationshipExtraction:
             pytest.skip("No chunks with Priority 2 relationships found")
 
         # Analyze the chunk
-        from mcp_server.tools.code_relationship_analyzer import CodeRelationshipAnalyzer
+        from search.relationship_analyzer import (
+            RelationshipAnalyzer as CodeRelationshipAnalyzer,
+        )
         from search.searcher import IntelligentSearcher
 
         searcher = IntelligentSearcher(indexer, session_embedder)

@@ -25,18 +25,8 @@ def main():
         model_short = model.split("/")[-1]
         dim = specs.get("dimension", 768)
         vram = specs.get("vram_gb", "?")
-        multi_enabled = cfg.routing.multi_model_enabled
-        pool = cfg.routing.multi_model_pool or "full"
-
-        if multi_enabled:
-            if pool == "lightweight-speed":
-                print("Model: [MULTI] BGE-M3 + gte-modernbert (1.65GB total)")
-            else:
-                print("Model: [MULTI] BGE-Code-v1 + Qwen3 (6.3GB total)")
-            print(f"       Active routing - {pool} pool")
-        else:
-            print(f"Model: [SINGLE] {model_short} ({dim}d, {vram})")
-            print("Tip: Press M for Quick Model Switch")
+        print(f"Model: {model_short} ({dim}d, {vram})")
+        print("Tip: Press M for Quick Model Switch")
 
         # --- Reranker Status ---
         if cfg.reranker.enabled:

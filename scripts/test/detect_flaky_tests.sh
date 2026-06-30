@@ -13,10 +13,10 @@ echo ""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-if [[[ -f "$PROJECT_ROOT/.venv/Scripts/python.exe" ]]; then
+if [[ -f "$PROJECT_ROOT/.venv/Scripts/python.exe" ]]; then
     PYTHON="$PROJECT_ROOT/.venv/Scripts/python.exe"
     PYTEST="$PROJECT_ROOT/.venv/Scripts/pytest.exe"
-elif [[[ -f "$PROJECT_ROOT/.venv/bin/python" ]]; then
+elif [[ -f "$PROJECT_ROOT/.venv/bin/python" ]]; then
     PYTHON="$PROJECT_ROOT/.venv/bin/python"
     PYTEST="$PROJECT_ROOT/.venv/bin/pytest"
 else

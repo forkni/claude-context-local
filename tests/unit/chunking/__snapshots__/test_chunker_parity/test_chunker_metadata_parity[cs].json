@@ -1,0 +1,51 @@
+[
+  {
+    "content": "public class Calculator {\n    public async System.Threading.Tasks.Task<int> AddAsync(int a, int b) {\n        return a + b;\n    }\n\n    public T Identity<T>(T value) {\n        return value;\n    }\n}",
+    "end_line": 11,
+    "language": "csharp",
+    "metadata": {
+      "modifiers": [
+        "public"
+      ],
+      "name": "Calculator",
+      "node_type": "class_declaration"
+    },
+    "start_line": 3,
+    "type": "class_declaration"
+  },
+  {
+    "content": "public async System.Threading.Tasks.Task<int> AddAsync(int a, int b) {\n        return a + b;\n    }",
+    "end_line": 6,
+    "language": "csharp",
+    "metadata": {
+      "is_async": true,
+      "modifiers": [
+        "public",
+        "async"
+      ],
+      "name": "AddAsync",
+      "node_type": "method_declaration",
+      "parent_name": "Calculator",
+      "parent_type": "class"
+    },
+    "start_line": 4,
+    "type": "method_declaration"
+  },
+  {
+    "content": "public T Identity<T>(T value) {\n        return value;\n    }",
+    "end_line": 10,
+    "language": "csharp",
+    "metadata": {
+      "has_generics": true,
+      "modifiers": [
+        "public"
+      ],
+      "name": "T",
+      "node_type": "method_declaration",
+      "parent_name": "Calculator",
+      "parent_type": "class"
+    },
+    "start_line": 8,
+    "type": "method_declaration"
+  }
+]
