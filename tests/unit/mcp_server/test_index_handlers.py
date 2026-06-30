@@ -233,6 +233,25 @@ class TestHandlerChunkerOwnership:
             patch(
                 "mcp_server.tools.index_handlers._build_index_response", return_value={}
             ),
+            # update_project_filters calls storage_manager's own get_project_storage_dir
+            # (unpatched module-level reference) — mock it to prevent real-storage writes.
+            patch("mcp_server.tools.index_handlers.update_project_filters"),
+            # asyncio.to_thread runs _setup_and_run in a worker thread; that closure calls
+            # get_embedder / get_searcher (real implementations) which trigger model loading
+            # and create real project dirs.  Short-circuit the whole thread since this test
+            # only verifies the chunker call-site ABOVE the to_thread dispatch.
+            patch(
+                "asyncio.to_thread",
+                AsyncMock(
+                    return_value={
+                        "files_added": 0,
+                        "files_modified": 0,
+                        "files_removed": 0,
+                        "chunks_added": 0,
+                        "time_taken": 0.0,
+                    }
+                ),
+            ),
             # TreeSitterChunker is used in the accessibility pre-check (lazy import)
             patch(
                 "chunking.tree_sitter.TreeSitterChunker.get_supported_extensions",
