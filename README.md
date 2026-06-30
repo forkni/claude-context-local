@@ -25,6 +25,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows-blue.svg)](https://www.microsoft.com/windows)
 [![Python: 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
+[![codecov](https://codecov.io/gh/forkni/claude-context-local/branch/development/graph/badge.svg)](https://codecov.io/gh/forkni/claude-context-local)
 
 ## Highlights
 
@@ -41,13 +42,16 @@
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 2,853 passing tests | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
+**Status**: ✅ Production-ready | 3,100 passing tests | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
 
-## What's New in v0.19.0
+## What's New in v0.20.0
 
-- **Multi-model routing removed** — `RoutingConfig` deleted; `MODEL_REGISTRY` pruned to 5 selectable models (BGE-M3, EmbeddingGemma-300m (default), CodeRankEmbed, GTE-ModernBERT, Qwen3-0.6B); `configure_query_routing` MCP tool removed — server now exposes **18 tools**.
-- **Launcher UI cleanup** — Dead code blocks removed (`:install_cuda`, `:force_cpu_mode`, `:test_install`); duplicate model-switch menu deduped to single source of truth; 10 display values corrected to match `search/config.py` defaults (BM25=0.35, Dense=0.65, community_resolution=1.0, min_vram_gb=2.0, output format=ultra).
-- **Docs cleanup** — Multi-model routing sections removed from `ADVANCED_FEATURES_GUIDE.md`, `MCP_TOOLS_REFERENCE.md`, `HYBRID_SEARCH_CONFIGURATION_GUIDE.md`, and `CLAUDE_MD_TEMPLATE.md`.
+- **Codecov coverage integration** — CI now uploads `coverage.xml` to Codecov on every development CI run; README badge tracks live coverage on the `development` branch. Authoritative gate remains `--cov-fail-under=76` in CI.
+- **Campaign-2 Tier-1 refactors** — Six behavior-preserving internal refactors: project-ID hash single owner, `ResultFactory._from_tuples`, `edge_relation_type()` accessor, `BaseReranker` ABC, resolver scoped-file preamble, `_two_pass_build` graph builder. All cx hotspots decomposed; 3,100+ tests pass.
+- **Test-suite hardening** — Integration tests mock `ModelLoader.load` (no model downloads in CI); pyrefly 0 errors on `development`; snapshot test regression suite (Syrupy, Phase 4) already shipped.
+- **Internal fixes** — Pyrefly narrowing regression in `graph_storage.py`; restored `missing-attribute` / `bad-argument-type` ignores in `graph_integration.py`.
+
+**Previous (v0.19.0)**: Multi-model routing removed (`RoutingConfig` deleted; `MODEL_REGISTRY` pruned to 5 models; `configure_query_routing` MCP tool removed — server exposes **18 tools**); Launcher UI cleanup (dead code removed, 10 display values corrected); Docs cleanup (routing sections deleted from 4 guides).
 
 **Previous (v0.18.0)**: Default `search_code` output to relevance order (`source_order_output=False`); MCP-pipeline eval (45 A/B/C queries): MRR 0.8278, Hit@7 0.978.
 

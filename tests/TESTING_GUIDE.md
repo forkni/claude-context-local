@@ -2,25 +2,26 @@
 
 ## Overview
 
-This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic search system. The project maintains a professional test suite with 2,495 passing unit tests organized into clear categories for effective quality assurance.
+This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic search system. The project maintains a professional test suite with 3,100+ passing tests organized into clear categories for effective quality assurance.
 
 ### Current Test Status
 
-✅ **All tests passing** (as of 2026-06-03):
+✅ **All tests passing** (as of 2026-06-30, v0.20.0):
 
-- **Unit Tests**: 2,495 tests (`tests/unit/`)
-  - Chunking (incl. relationships): includes `test_call_edge_resolver.py` (31), `test_call_graph_config.py` (15), `test_libcst_call_graph.py` (38+), `test_lsp_call_graph.py` (38, 1 POSIX skip)
-  - Embeddings, Graph, Merkle, Search, MCP Server, Evaluation, Benchmark, Utils
-- **Integration Tests**: 19 tests (`tests/integration/`)
-- **Total**: 2,514 tests
+- **Unit Tests**: ~3,040 tests (`tests/unit/`)
+  - Chunking (incl. relationships): includes `test_call_edge_resolver.py`, `test_call_graph_config.py`, `test_libcst_call_graph.py`, `test_lsp_call_graph.py` (1 POSIX skip)
+  - Embeddings, Graph, Merkle, Search, MCP Server, Evaluation, Benchmark, Utils, Tools
+- **Integration Tests**: ~22 tests (`tests/integration/`)
+- **Fast Integration Tests**: ~38 tests (`tests/fast_integration/`)
+- **Total**: 3,100 passed, 13 skipped (measured 2026-06-30 with seed 1554140588)
 
-**⚠️ IMPORTANT**: Run tests by module for best results (see "Recommended Testing Approach" below)
+**Note**: Run `uv run pytest tests/ --ignore=tests/slow_integration -q` for the full suite (excluding GPU-dependent slow tests).
 
 ## Recommended Testing Approach
 
 ### Why Run Tests by Module?
 
-The test suite has been optimized for module-by-module execution. Running all tests together may encounter resource cleanup issues between modules. **All 2,495 unit tests pass when run via `./scripts/test/run_tests.sh`.**
+The test suite has been optimized for module-by-module execution. Running all tests together may encounter resource cleanup issues between modules. **All 3,100+ tests pass when run via `./scripts/test/run_tests.sh` or `uv run pytest tests/ --ignore=tests/slow_integration -q`.**
 
 ### Quick Start: Run Tests by Module
 
@@ -1817,3 +1818,16 @@ These modules have high mock density. Reduce mocks first (shift to outcome asser
 When adding `pytest-split`: use `--splitting-algorithm least_duration` (compatible with
 `pytest-randomly`); commit `.test_durations` to repo; re-run `--store-durations` after major suite
 changes.
+
+### Codecov integration (Phase 3 CI scaffolding — 2026-06-30)
+
+`codecov/codecov-action@v5` is wired into `branch-protection.yml` (test job, development branch only).
+CI now emits `--cov-report=xml`; the XML is uploaded after each run including on `--cov-fail-under`
+failures, so regressions remain visible on Codecov. The README badge tracks the `development` branch.
+
+**Notes:**
+- `fail_ci_if_error: false` — Codecov outages or missing token never fail the CI gate.
+- Authoritative gate remains `--cov-fail-under=76` in CI; Codecov is reporting/visualization only.
+- No `codecov.yml` — relying on Codecov defaults.
+- `pyrefly` and `pre-commit` both remain `continue-on-error: true` by explicit decision (2026-06-30).
+  Flip to blocking when both exit 0 consistently on CI for 3+ consecutive green runs.

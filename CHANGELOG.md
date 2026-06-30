@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.20.0] - 2026-06-30
+
+### Added
+
+- **Codecov integration** — `codecov/codecov-action@v5` upload step in `branch-protection.yml` CI (test
+  job, development-branch only). Pytest now emits `--cov-report=xml`; XML is uploaded to Codecov on every
+  CI run, including on `--cov-fail-under` failures so coverage regressions are still visible. README badge
+  tracks the `development` branch (the only branch where tests run).
+
+### Changed
+
+- **Campaign-2 Tier-1 refactors** (all behavior-preserving, 3100 pass / 13 skip):
+  - `43465afc` — `SnapshotManager.resolve_project_id()` single owner; both cleanup scripts routed
+    through it, fixing a false-positive stale-snapshot flag on Windows v2 projects.
+  - `c1e58e37` — `ResultFactory._from_tuples()` private helper; three byte-identical `source=`-only
+    loops collapsed into one.
+  - `e808db94` — `edge_relation_type()` accessor in `graph/schema.py`; 6 inline dual-key `.get()` calls
+    replaced.
+  - `455e56be` — `BaseReranker` ABC owns `is_loaded`, `get_vram_usage`, `cleanup`; three reranker
+    classes inherit instead of duplicating.
+  - `0d4d5bc6` — `prepare_scoped_files()` shared preamble in `call_edge_resolver.py`; three resolver
+    `resolve()` methods deduped.
+  - `bde66586` — `_two_pass_build()` shared graph builder in `graph_integration.py`; `cx32` hotspot
+    decomposed via two thin normalizer wrappers.
+
+### Fixed
+
+- **Pyrefly type regressions** (`33f40dc2`) — restored `# pyrefly: ignore` annotations dropped during
+  T2/T6 refactors (`search/graph_integration.py` lines 403, 404, 425); tightened reverse-edge guard in
+  `graph/graph_storage.py` for cross-variable narrowing. 0 pyrefly errors on `development`.
+- **Integration-test model downloads** (`234a3176`) — 7 integration tests that attempted a real
+  `Alibaba-NLP/gte-modernbert-base` download in CI now mock `embeddings.model_loader.ModelLoader.load`
+  via `_FakeEmbeddingModel` (768-dim, CPU, no real attributes). CI green without model caching.
+
+---
+
 ## [0.19.0] - 2026-06-27
 
 ### Removed
