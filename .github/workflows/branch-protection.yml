@@ -107,7 +107,16 @@ jobs:
         run: |
           uv run pytest tests/ -v --tb=short --maxfail=20 \
             --ignore=tests/slow_integration/ \
-            --cov --cov-branch --cov-report=term-missing --cov-fail-under=76
+            --cov --cov-branch --cov-report=term-missing --cov-report=xml --cov-fail-under=76
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.xml
+          flags: development
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
       - name: Upload test results
         if: always()
