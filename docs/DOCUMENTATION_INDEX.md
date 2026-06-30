@@ -35,7 +35,7 @@ Fundamental documentation for daily use.
 
 | Document | Description |
 |----------|-------------|
-| **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | Complete API reference for all 19 MCP tools |
+| **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | Complete API reference for all 18 MCP tools |
 | **[HYBRID_SEARCH_CONFIGURATION_GUIDE.md](HYBRID_SEARCH_CONFIGURATION_GUIDE.md)** | Search modes configuration (hybrid/semantic/BM25/auto) |
 | **[BENCHMARKS.md](BENCHMARKS.md)** | Performance benchmarks: SSCG retrieval (MRR/Recall/NDCG/line-overlap), token efficiency, caller recall |
 | **[KNOWN_ISSUES.md](KNOWN_ISSUES.md)** | Known issues and workarounds |
@@ -51,10 +51,9 @@ Comprehensive guides for advanced functionality.
 | **[ADVANCED_FEATURES_GUIDE.md](ADVANCED_FEATURES_GUIDE.md)** | **Complete guide to all advanced features** |
 | - Multi-Hop Search | Discover interconnected code relationships (93% queries benefit) |
 | - Graph-Enhanced Search | Call relationship tracking for Python code |
-| - Multi-Model Query Routing | Intelligent routing to optimal models (100% accuracy) |
-| - Multi-Model Batch Indexing | Index with all 3 models simultaneously |
 | - Per-Model Index Storage | Instant model switching <150ms |
-| - Model Selection Guide | Complete model comparison tables |
+| - Model Selection Guide | Complete model comparison tables (5 models) |
+| - Neural Reranking | Cross-encoder reranker (Alibaba-NLP/gte-reranker-modernbert-base) |
 
 ---
 
@@ -64,7 +63,7 @@ MCP server implementation and transport options.
 
 | Document | Description |
 |----------|-------------|
-| **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | All 19 tools with parameters, examples, output formats |
+| **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | All 18 tools with parameters, examples, output formats |
 
 ### Transport Options
 
@@ -139,7 +138,7 @@ Test suite documentation and validation reports.
 
 | Document | Description |
 |----------|-------------|
-| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (2,853 unit + 19 integration tests) |
+| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (3,100 tests, 3,100 pass / 13 skip) |
 | **[tests/README.md](../tests/README.md)** | Test suite organization and best practices |
 
 ### Testing Tools (scripts/test/)
@@ -173,7 +172,7 @@ Detailed technical documentation.
   - `query_cache.py` - LRU cache with TTL for query embeddings (v0.8.6+)
 - `graph/` - Call graph extraction and relationship tracking
   - `resolvers/` - Type, import, and assignment resolvers
-- `mcp_server/` - MCP tool implementations (19 tools)
+- `mcp_server/` - MCP tool implementations (18 tools)
 - `merkle/` - Incremental indexing (snapshot management)
 - `search/` - FAISS + BM25 hybrid search
 - `utils/` - Performance monitoring and utilities (v0.8.6+)
@@ -185,10 +184,13 @@ Detailed technical documentation.
 
 | Document | Description |
 |----------|-------------|
-| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.17.0 |
+| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.20.0 |
 
 ### Key Versions
 
+- **v0.20.0** (2026-06-30): Codecov CI integration, Campaign-2 Tier-1 behavior-preserving refactors, 3,100 tests
+- **v0.19.0** (2026-06-27): Multi-model routing removed; `configure_query_routing` MCP tool deleted; **18 tools** (down from 19); `MODEL_REGISTRY` pruned 7→5 models; launcher display values corrected (BM25/Dense 0.35/0.65, reranker gain +15-25%)
+- **v0.18.0** (2026-06-26): `source_order_output` default `True→False` (results now in relevance order); MCP-pipeline eval MRR 0.700→0.8278; `run_mcp_pipeline_eval.py` script added
 - **v0.17.0** (2026-06-24): DSPy/GEPA agent-eval harness, `ClaudeCodeLM` subscription backend, `default_k` 4→7 (MRR +0.093, Recall@7 +0.122), CVE remediation 53→5, Batch 3/4/5 perf+fixes, 2,853 tests
 - **v0.16.0** (2026-06-11): code-review hardening — 30 correctness/concurrency fixes (Batch 1/2A/2B); thread-safe MCP server, MultiDiGraph call graph, atomic writes, 2,533 tests
 - **v0.15.0** (2026-06-03): LSP resolver repair (0 → 938 edges), resolver precision tuning, `min_confidence`/`use_pyproject_toml` config knobs, `docs/CALL_GRAPH_TUNING.md`, 2,495 tests
@@ -273,4 +275,4 @@ Detailed technical documentation.
 
 ---
 
-**Last Updated**: 2026-06-11 (v0.16.0 — code-review hardening: Batch 1/2A/2B correctness + concurrency fixes; 2,533 tests)
+**Last Updated**: 2026-06-30 (v0.20.0 — Codecov CI integration, Campaign-2 Tier-1 refactors; 3,100 tests)

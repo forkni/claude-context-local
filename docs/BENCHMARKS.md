@@ -352,11 +352,13 @@ Based on Claude Sonnet 4.5 pricing ($3/1M input, $15/1M output):
 
 ---
 
-## Multi-Model Routing Performance
+## Multi-Model Routing Performance *(removed in v0.19.0)*
+
+> **Note**: Multi-model query routing was removed in v0.19.0. The data below is from the December 2025 mixed-approach study when multi-model routing was active. The current system uses a single configurable embedding model (default: `google/embeddinggemma-300m`; active config: `BAAI/bge-m3`).
 
 The Mixed approach leveraged multi-model query routing:
 
-### Model Distribution
+### Model Distribution (historical, v0.5.4–v0.18.x)
 
 | Model | Queries | Confidence Range | Use Case |
 |-------|---------|------------------|----------|
@@ -364,7 +366,7 @@ The Mixed approach leveraged multi-model query routing:
 | **Qwen3** | 11 queries | 0.1 - 0.6 | Implementation/algorithm queries |
 | **CodeRankEmbed** | 4 queries | 0.15 - 0.45 | Specialized algorithms (Merkle, RRF) |
 
-### Routing Accuracy
+### Routing Accuracy (historical)
 
 - **100%** - All models returned relevant results
 - Automatic model selection based on query content

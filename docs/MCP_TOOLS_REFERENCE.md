@@ -286,7 +286,7 @@ The `search_code` tool returns results with the following fields:
 
 ## Output Format Options
 
-All 19 MCP tools support configurable output formatting via the `output_format` parameter. This allows you to optimize token usage while preserving 100% of data.
+All 18 MCP tools support configurable output formatting via the `output_format` parameter. This allows you to optimize token usage while preserving 100% of data.
 
 ### Available Formats
 
@@ -610,28 +610,6 @@ At index time, every chunk is tagged with its file role via `_classify_file_role
 # Model management
 /list_embedding_models
 /switch_embedding_model "BAAI/bge-m3"
-
-# Multi-model routing configuration (v0.5.4+; disabled by default — shipped as single-model Qwen3-0.6B)
-/configure_query_routing true                       # Enable multi-model mode (opt-in)
-/configure_query_routing false                      # Disable multi-model (single-model Qwen3-0.6B, the shipped default)
-/configure_query_routing true "qwen3_0.6b" 0.35    # Enable + set default model + confidence threshold
-/configure_query_routing None "qwen3_0.6b" None    # Just change default model (keep current multi-model setting)
-
-# Multi-model search usage
-/search_code "Merkle tree detection"                # Auto-routes to optimal model (CodeRankEmbed)
-/search_code "error handling" --model_key "qwen3"   # Force specific model override
-/search_code "configuration" --use_routing False    # Disable routing for this query (use default)
-
-# Natural query routing examples (v0.5.5+)
-# Natural language queries now work without keyword stuffing
-/search_code "error handling"                       # Routes to Qwen3 (implementation focus)
-/search_code "configuration loading"                # Routes to BGE-M3 (workflow focus)
-/search_code "merkle tree"                          # Routes to CodeRankEmbed (specialized algorithm)
-/search_code "algorithm implementation"             # Routes to Qwen3 (confidence ~0.12)
-/search_code "initialization process"               # Routes to BGE-M3 (confidence ~0.11)
-
-# Routing transparency - every search shows which model was used
-# Output includes: "routing": {"model_selected": "qwen3", "confidence": 0.08, "reason": "..."}
 ```
 
 ---
@@ -738,90 +716,6 @@ Server startup:              0 MB VRAM (lazy loading)
 - **Models reload automatically**: Next search triggers 5-10s load (normal behavior)
 - **No data loss**: Index files remain on disk, only in-memory state cleared
 - **Safe operation**: Can run anytime without breaking functionality
-
----
-
-## Query Enhancement for Optimal Routing
-
-### Why Query Enhancement Matters
-
-The multi-model routing system uses keyword matching to select optimal embedding models. Natural language queries often produce **low confidence scores (0.05-0.15)**, causing fallback to the default model even when a specialized model would perform better.
-
-**Solution**: Claude Code should enhance queries with routing keywords before sending to MCP search.
-
-### Enhancement Protocol for Claude Code
-
-When calling `search_code()`, Claude Code should analyze user intent and expand queries:
-
-**1. Classify Query Intent & Add Domain Keywords**
-
-| User Query About | Add These Keywords | Route To |
-|------------------|-------------------|----------|
-| Error handling, exceptions | `error handling exception try except pattern` | Qwen3 |
-| Implementation, algorithms | `implementation algorithm function pattern` | Qwen3 |
-| Async/concurrent code | `async await coroutine concurrent implementation` | Qwen3 |
-| Configuration, setup | `configuration loading initialization workflow setup` | BGE-M3 |
-| Workflows, processes | `workflow process pipeline flow` | BGE-M3 |
-| Vector search, FAISS | `faiss vector similarity embedding dense` | BGE-M3 |
-| Trees, graphs, DAGs | `merkle tree graph structure binary dag` | CodeRankEmbed |
-| Ranking, fusion | `rrf reranking reciprocal rank fusion` | CodeRankEmbed |
-
-**2. Expand Natural Language to Technical Terms**
-
-| User Says | Expand To | Reason |
-|-----------|-----------|--------|
-| "find error code" | `"error handling exception try except pattern"` | Add domain keywords |
-| "config stuff" | `"configuration loading initialization setup workflow"` | Clarify vague terms |
-| "tree search" | `"merkle tree binary graph structure search"` | Disambiguate "tree" |
-| "async code" | `"async await coroutine asyncio concurrent implementation"` | Add technical terms |
-| "database setup" | `"database connection initialization configuration setup"` | Add setup keywords |
-| "how errors handled" | `"error handling exception try except implementation"` | Add intent keywords |
-
-**3. Use Model Override for Low Confidence Scenarios**
-
-When confidence would be <0.10, explicitly specify the model:
-
-```python
-# Instead of hoping for correct routing:
-search_code("handle errors")  # Low confidence, may default to BGE-M3
-
-# Enhance query AND override model:
-search_code("error handling exception try except pattern", model_key="qwen3")
-```
-
-### Quick Reference: Model Selection
-
-| Model | Best For | Key Triggers |
-|-------|----------|--------------|
-| **Qwen3** | Implementation, algorithms, error handling, async | `implement`, `algorithm`, `error`, `exception`, `async`, `pattern` |
-| **BGE-M3** | Configuration, workflows, vector search | `config`, `workflow`, `setup`, `faiss`, `vector`, `embedding` |
-| **CodeRankEmbed** | Data structures, specialized algorithms | `merkle`, `tree`, `graph`, `rrf`, `rerank`, `fusion` |
-
-### Example: Complete Enhancement Flow
-
-**User request**: "Find where errors are caught in the codebase"
-
-**Claude Code enhancement**:
-
-```
-1. Intent: Error handling implementation
-2. Expanded query: "error handling exception try except catch pattern"
-3. Expected routing: Qwen3 (implementation focus)
-4. Call: search_code("error handling exception try except catch pattern")
-```
-
-**Alternative with model override** (for guaranteed routing):
-
-```
-search_code("error handling exception try except", model_key="qwen3")
-```
-
-### Benefits of Enhancement
-
-1. **Higher confidence scores**: 0.05 → 0.15+ with added keywords
-2. **Correct model selection**: Queries route to optimal model
-3. **Better results**: Specialized models outperform default by 15-25%
-4. **Zero latency**: No additional API calls (Claude Code is the LLM)
 
 ---
 

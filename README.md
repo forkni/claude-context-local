@@ -308,7 +308,7 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
 - **RAM**: 4GB minimum (8GB+ recommended for large codebases)
 - **Disk**: 2-4GB free space (model cache + embeddings)
   - EmbeddingGemma: ~1.2GB (default)
-  - BGE-M3: ~2.2GB
+  - BGE-M3: 1–1.5 GB
   - Qwen3-0.6B: ~2.3GB
 - **Windows**: Windows 10/11 with PowerShell
 - **PyTorch**: 2.6.0+ (auto-installed with CUDA 11.8/12.4/12.6 support)
@@ -431,7 +431,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 2,533+ tests (unit + integration)
+└── tests/             # 3,100 tests (3,100 pass / 13 skip)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -537,7 +537,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (2,533 unit + 19 integration, 100% pass rate)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (3,100 tests, 100% pass rate)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 

@@ -24,12 +24,12 @@ This guide covers the complete installation process for the Claude Context MCP s
 
 - **Python**: 3.11+ (tested with Python 3.11.1)
 - **Operating System**: Windows 10/11
-- **Disk Space**: 4-6 GB free space
-  - EmbeddingGemma model: ~1.3 GB
-  - BGE-M3 model: ~1.1 GB
-  - Qwen3-0.6B model: ~2.4 GB (desktop/workstation tier, 10GB+ VRAM)
-  - BGE-Code model: ~4 GB (code-specific)
-  - CodeRankEmbed model: ~0.6 GB (code-specific)
+- **Disk Space**: 3-6 GB free space
+  - EmbeddingGemma model: ~1.2 GB (default)
+  - BGE-M3 model: 1–1.5 GB
+  - Qwen3-0.6B model: ~2.3 GB (long-context, MRL support)
+  - CodeRankEmbed model: ~0.6 GB (code-specific, CSN: 77.9 MRR)
+  - GTE-ModernBERT-base model: ~0.28 GB (lightest, code-optimized)
   - PyTorch with CUDA: ~2.4 GB
   - Dependencies and cache: ~500 MB
 - **Memory**: 4GB RAM minimum, 8GB+ recommended
@@ -879,7 +879,7 @@ scripts\batch\start_mcp_http.bat
 - Runs on `http://localhost:8765/mcp`
 - Automatic port conflict detection
 - Auto-kill for processes on port 8765
-- All 19 MCP tools available
+- All 18 MCP tools available
 - Identical functionality to stdio
 - <10ms latency overhead
 - Single bidirectional endpoint (no separate POST back-channel)

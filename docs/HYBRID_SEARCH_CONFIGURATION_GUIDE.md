@@ -98,8 +98,8 @@ All hybrid search features have been **comprehensively tested** and validated fo
   },
   "ego_graph": {
     "enabled": false,
-    "k_hops": 1,
-    "max_neighbors_per_hop": 5
+    "k_hops": 2,
+    "max_neighbors_per_hop": 10
   }
 }
 ```
@@ -125,8 +125,8 @@ The ego-graph feature is configured via per-query parameters, not global setting
 search_code(
     "authentication handler",
     ego_graph_enabled=True,     # Opt-in parameter
-    ego_graph_k_hops=1,         # Graph traversal depth
-    ego_graph_max_neighbors_per_hop=5   # Neighbor limit
+    ego_graph_k_hops=2,         # Graph traversal depth (default)
+    ego_graph_max_neighbors_per_hop=10  # Neighbor limit (default)
 )
 ```
 
@@ -135,8 +135,8 @@ search_code(
 | Parameter | Default | Range | Description |
 |-----------|---------|-------|-------------|
 | `ego_graph_enabled` | `false` | - | Enable k-hop neighbor expansion from call graph |
-| `ego_graph_k_hops` | `1` | 1-5 | Graph traversal depth (1=direct, 2=neighbors of neighbors) |
-| `ego_graph_max_neighbors_per_hop` | `5` | 1-50 | Limit neighbors per hop to prevent explosion |
+| `ego_graph_k_hops` | `2` | 1-5 | Graph traversal depth (1=direct, 2=neighbors of neighbors) |
+| `ego_graph_max_neighbors_per_hop` | `10` | 1-50 | Limit neighbors per hop to prevent explosion |
 
 ### Interaction with Multi-Hop Search
 
@@ -461,8 +461,8 @@ Create a `search_config.json` file in your project root:
 
 ### Default Weights (Recommended)
 
-- **BM25 Weight: 0.4** (40%) - Good for exact text matches
-- **Dense Weight: 0.6** (60%) - Better for semantic understanding
+- **BM25 Weight: 0.35** (35%) - Good for exact text matches
+- **Dense Weight: 0.65** (65%) - Better for semantic understanding
 
 ### Tuning for Different Use Cases
 

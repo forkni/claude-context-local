@@ -356,10 +356,11 @@ set CLAUDE_DEFAULT_PROJECT=C:\Projects\MyProject
 
 | Model | Type | Dimensions | VRAM | Best For |
 |-------|------|------------|------|----------|
-| **Qwen3-0.6B** ⭐ | General | 1024 | 2.3GB | Default (desktop/workstation), best value |
-| **BGE-M3** ⭐ | General | 1024 | 1-1.5GB | Default (laptop tier), hybrid search support |
-| **CodeRankEmbed** | Code | 768 | 2GB | Code-specific retrieval (CSN: 77.9 MRR) |
-| **EmbeddingGemma-300m** | General | 768 | 4-8GB | Low-VRAM option, fast and efficient |
+| **EmbeddingGemma-300m** ⭐ | General | 768 | ~1.2 GB | **Default**, fast and efficient |
+| **BGE-M3** | General | 1024 | 1–1.5 GB | Hybrid search support, recommended upgrade |
+| **Qwen3-0.6B** | General | 1024 | 2.3 GB | Long-context (32k), MRL support |
+| **CodeRankEmbed** | Code | 768 | 0.5–0.6 GB | Code-specific retrieval (CSN: 77.9 MRR) |
+| **GTE-ModernBERT-base** | Code | 768 | 0.28 GB | Lightest option, code-optimized (CoIR: 79.31 NDCG@10) |
 
 ### Switching Models
 
@@ -484,9 +485,9 @@ python tools/benchmark_instructions.py --model Qwen/Qwen3-Embedding-0.6B
 ```python
 # In search/config.py MODEL_REGISTRY:
 "Qwen/Qwen3-Embedding-0.6B": {
-    "dimension": 2560,  # Full model dimension
-    "truncate_dim": 1024,  # Output dimension (50% reduction)
-    "mrl_dimensions": [2560, 1024, 512, 256, 128, 64, 32],  # Supported dims
+    "dimension": 1024,  # Native output dimension
+    "truncate_dim": None,  # Optional: set to reduce (e.g. 512)
+    "mrl_dimensions": [1024, 512, 256, 128, 64, 32],  # Supported MRL dims
 }
 ```
 
@@ -732,12 +733,7 @@ The system automatically:
 
 ### Feature Enablement by Tier
 
-**Multi-Model Routing**:
-
-- Minimal tier: DISABLED (insufficient VRAM for 3 models)
-- Laptop tier+: ENABLED (loads BGE-M3, Qwen3, CodeRankEmbed)
-
-**Neural Reranking** (BAAI/bge-reranker-v2-m3, ~1.5GB VRAM):
+**Neural Reranking** (Alibaba-NLP/gte-reranker-modernbert-base, ~1.5GB VRAM):
 
 - Minimal tier: DISABLED
 - Laptop tier+: ENABLED (5-15% quality improvement)
@@ -764,7 +760,7 @@ The system automatically:
 |-------|------------|-------|
 | **Startup** | 0 MB | Lazy loading enabled, models not loaded |
 | **First search** | 8-15s latency | 5-10s one-time model loading + 3-5s search |
-| **After first search** | ~6.3 GB | All 3 models loaded for multi-model routing |
+| **After first search** | ~1–2.3 GB | Single model loaded (varies by model; BGE-M3 ~1.07 GB) |
 | **Subsequent searches** | 3-5s latency | Models cached in memory (fast) |
 | **After cleanup** | 0 MB | `/cleanup_resources` frees all VRAM |
 
@@ -804,7 +800,7 @@ set CLAUDE_RERANKER_ENABLED=false
 
 **Feature**: Cross-encoder neural reranking for improved search quality
 
-**Model**: BAAI/bge-reranker-v2-m3
+**Model**: Alibaba-NLP/gte-reranker-modernbert-base
 
 **Version**: v0.5.4+
 
@@ -812,14 +808,14 @@ set CLAUDE_RERANKER_ENABLED=false
 
 ### Overview
 
-Neural reranking uses a cross-encoder model to re-score initial search results, improving ranking quality by 5-15%. The reranker analyzes query-document pairs more deeply than embedding similarity alone.
+Neural reranking uses a cross-encoder model to re-score initial search results, improving ranking quality by 15-25%. The reranker analyzes query-document pairs more deeply than embedding similarity alone.
 
 ### Configuration Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `enabled` | `True` | Enable/disable neural reranking |
-| `model_name` | `"BAAI/bge-reranker-v2-m3"` | HuggingFace model path |
+| `model_name` | `"Alibaba-NLP/gte-reranker-modernbert-base"` | HuggingFace model path |
 | `top_k_candidates` | `50` | Number of candidates to rerank |
 | `min_vram_gb` | `2.0` | Minimum VRAM required |
 | `batch_size` | `16` | Reranking batch size |
@@ -835,7 +831,7 @@ Neural reranking uses a cross-encoder model to re-score initial search results, 
 
 **Quality Improvement**:
 
-- 5-15% better ranking (validated on benchmarks)
+- 15-25% better ranking (validated on benchmarks)
 - 30% of queries see top result changes
 - More noticeable on semantic queries vs exact matches
 
@@ -856,7 +852,7 @@ Neural reranking uses a cross-encoder model to re-score initial search results, 
 set CLAUDE_RERANKER_ENABLED=true
 
 # Custom reranker model
-set CLAUDE_RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+set CLAUDE_RERANKER_MODEL=Alibaba-NLP/gte-reranker-modernbert-base
 
 # Adjust candidates
 set CLAUDE_RERANKER_TOP_K=100
@@ -876,7 +872,7 @@ cfg = mgr.load_config()
 # Update reranker settings
 cfg.reranker = RerankerConfig(
     enabled=True,
-    model_name="BAAI/bge-reranker-v2-m3",
+    model_name="Alibaba-NLP/gte-reranker-modernbert-base",
     top_k_candidates=100,
     batch_size=32
 )
@@ -888,7 +884,7 @@ mgr.save_config(cfg)
 
 ```bash
 # Configure via MCP tool
-/configure_reranking enabled=true model_name="BAAI/bge-reranker-v2-m3" top_k_candidates=50
+/configure_reranking enabled=true model_name="Alibaba-NLP/gte-reranker-modernbert-base" top_k_candidates=50
 ```
 
 ### When to Enable/Disable
@@ -1383,7 +1379,7 @@ export CLAUDE_LOG_LEVEL=INFO
 
 ### Performance Baselines
 
-**Typical hybrid search timing** (k=4, with cache hit):
+**Typical hybrid search timing** (k=7, with cache hit):
 
 - **embed_query**: 0ms (cached)
 - **bm25_search**: 3-8ms
@@ -1476,7 +1472,7 @@ Symbol ID Lookups enable direct, unambiguous code retrieval without semantic sea
 **Traditional Semantic Search** (every query):
 
 1. Embed query text → vector
-2. FAISS similarity search (k=4)
+2. FAISS similarity search (k=7)
 3. BM25 keyword matching
 4. Reciprocal Rank Fusion reranking
 5. Multi-hop expansion

@@ -2,15 +2,15 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-06-24)
+## Current Status: All Features Operational (2026-06-30)
 
-- **Version**: 0.17.0
+- **Version**: 0.20.0
 - **Status**: Production-ready, concurrency-safe
-- **Test Coverage**: 2,853 unit tests + 19 integration tests (100% pass rate)
+- **Test Coverage**: 3,100 tests (3,100 pass / 13 skip, 2026-06-30)
 - **Dependencies**: 125 packages + optional `[callgraph]` / `[lsp]` / `[gpu]` extras
-- **SSCG Benchmark**: MRR 0.806, Recall@5 0.646, Recall@7 0.700, Hit@7 100% — recommended k=7 (2026-05-25)
+- **SSCG Benchmark**: MRR 0.797, Recall@5 0.689, Recall@7 0.736, Hit@5 100% — recommended k=7 (2026-06-08)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: v0.17.0 — DSPy/GEPA agent-eval harness, subscription LM backend, default_k 4→7, CVE 53→5
+- **Recent**: v0.20.0 — Codecov CI integration, Campaign-2 Tier-1 refactors; v0.19.0 — multi-model routing removed, 18 MCP tools (down from 19), MODEL_REGISTRY pruned 7→5 models
 
 ---
 
@@ -55,6 +55,56 @@ New agent-evaluation and optimization subsystem built on DSPy, plus search quali
 - **Non-hybrid path persisted content** — BM25-only and semantic-only paths now strip `content` fields consistently.
 - **Windows cp1252 decode on `claude` subprocess** — `encoding="utf-8"` added to prevent `UnicodeDecodeError` on Windows.
 - **Pyrefly type cleanup** — `get_embedder` non-None assertion, `_class_file_cache` `Optional` annotation.
+
+---
+
+## v0.20.0 - Codecov Integration + Campaign-2 Tier-1 Refactors (2026-06-30)
+
+### Added
+
+- **Codecov integration** — `codecov/codecov-action@v5` in `branch-protection.yml`; pytest emits `--cov-report=xml`; README badge tracks `development` branch.
+
+### Changed
+
+- **Campaign-2 Tier-1 refactors** (all behavior-preserving, **3,100 pass / 13 skip**):
+  - `SnapshotManager.resolve_project_id()` — single owner; fixes false-positive stale-snapshot flag on Windows v2 projects.
+  - `ResultFactory._from_tuples()` — private helper collapses three byte-identical loops into one.
+  - `edge_relation_type()` accessor in `graph/schema.py` — 6 inline dual-key `.get()` calls replaced.
+  - `BaseReranker` ABC — owns `is_loaded`, `get_vram_usage`, `cleanup`; three reranker classes inherit instead of duplicating.
+  - `prepare_scoped_files()` shared preamble — three resolver `resolve()` methods deduped.
+  - `_two_pass_build()` shared graph builder — `cx32` hotspot decomposed via two thin normalizer wrappers.
+
+### Fixed
+
+- **Pyrefly type regressions** — restored `# pyrefly: ignore` annotations in `search/graph_integration.py`; tightened reverse-edge guard in `graph/graph_storage.py`. 0 pyrefly errors on `development`.
+- **Integration-test model downloads** — 7 integration tests mock `ModelLoader.load` via `_FakeEmbeddingModel` (768-dim, CPU); CI green without model caching.
+
+---
+
+## v0.19.0 - Remove Multi-Model Routing (2026-06-27)
+
+### Removed
+
+- **Multi-model embedding routing** — `RoutingConfig` and all `cfg.routing.*` references deleted. `MODEL_REGISTRY` pruned **7→5 models** (kept: EmbeddingGemma-300m, BGE-M3, Qwen3-0.6B, CodeRankEmbed, GTE-ModernBERT-base; removed: bge-code-v1, Qwen3-4B, jina-embeddings-v5*).
+- **`configure_query_routing` MCP tool** — removed from tool registry. Server now exposes exactly **18 tools** (down from 19).
+
+### Changed
+
+- **Launcher UI cleanup** — dead code blocks deleted; ten display values corrected to match `search/config.py` actuals: BM25/Dense **0.35/0.65**, `min_vram_gb` ≥2 GB, output default **ultra**, reranker quality gain **+15-25%**.
+- **Docs cleanup** — multi-model routing sections (~250 lines) removed from `ADVANCED_FEATURES_GUIDE.md`, `MCP_TOOLS_REFERENCE.md`, `HYBRID_SEARCH_CONFIGURATION_GUIDE.md`, and `CLAUDE_MD_TEMPLATE.md`.
+
+---
+
+## v0.18.0 - Relevance-Order Output Default (2026-06-26)
+
+### Changed
+
+- **`source_order_output` default `True→False`** — `search_code` now emits results in **relevance order** (centrality-reranked blended_score descending) instead of file/line order. Module/community summary chunks demoted to tail for non-GLOBAL queries. DOS-RAG order still available via `source_order_output=true`.
+- **MCP-pipeline eval** (`run_mcp_pipeline_eval.py`) — `SearchOrchestrator.run()` pipeline evaluation: **MRR 0.700→0.8278** (+0.128), Hit@7 0.978 (44/45).
+
+### Added
+
+- **`scripts/benchmark/run_mcp_pipeline_eval.py`** — emission-order SSCG eval through the real `SearchOrchestrator.run()` pipeline (position-sensitive MRR/Recall@7 in emission order).
 
 ---
 
