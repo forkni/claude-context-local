@@ -52,7 +52,6 @@ jobs:
       - name: Update branches from remote
         run: |
           git fetch origin development:development
-          git fetch origin main:main
 
       - name: Create backup tag
         if: ${{ inputs.create_backup == true && inputs.dry_run == false }}
