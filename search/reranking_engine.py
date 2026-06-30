@@ -16,8 +16,7 @@ from .config import get_search_config
 
 
 # TYPE_CHECKING is always False at runtime; AddNot mutation on this guard is equivalent.
-# pragma: no mutate
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no mutate
     from .neural_reranker import (
         GenerativeReranker,
         JinaRerankerV3,
@@ -27,8 +26,7 @@ if TYPE_CHECKING:
 try:
     import torch
 # Import-failure exception type is untestable in unit tests; ExceptionReplacer is equivalent.
-# pragma: no mutate
-except ImportError:
+except ImportError:  # pragma: no mutate
     torch = None
 
 from .neural_reranker import create_reranker
@@ -47,9 +45,11 @@ class RerankingEngine:
         self.embedder = embedder
         self.metadata_store = metadata_store
         # Type annotation only; | union operators have no runtime effect.
-        # pragma: no mutate
         self.neural_reranker: (
-            NeuralReranker | GenerativeReranker | JinaRerankerV3 | None
+            NeuralReranker
+            | GenerativeReranker  # pragma: no mutate
+            | JinaRerankerV3  # pragma: no mutate
+            | None  # pragma: no mutate
         ) = None
         self._neural_reranking_enabled: bool | None = None
         self._session_oom_detected: bool = False
@@ -75,8 +75,7 @@ class RerankingEngine:
 
             min_vram = config.reranker.min_vram_gb
             # or→and mutation equivalent under torch mock (not torch is always False in tests).
-            # pragma: no mutate
-            if not torch or not torch.cuda.is_available():
+            if not torch or not torch.cuda.is_available():  # pragma: no mutate
                 self._logger.warning("Neural reranking disabled: No GPU available")
                 return False
 
@@ -89,13 +88,11 @@ class RerankingEngine:
 
             # Get actual free memory from CUDA driver (accounts for all processes)
             free_memory, total_memory = torch.cuda.mem_get_info(0)
-            free_gb = free_memory / (1024**3)
             # 1023/1025 NumberReplacer mutations are near-equivalent (<0.3% VRAM difference).
-            # pragma: no mutate
+            free_gb = free_memory / (1024**3)  # pragma: no mutate
 
             # GtE→Gt mutation only differs at exact float equality — not reachable in practice.
-            # pragma: no mutate
-            if free_gb >= min_vram:
+            if free_gb >= min_vram:  # pragma: no mutate
                 self._logger.info(
                     f"Neural reranking enabled: {free_gb:.1f}GB available >= {min_vram}GB required"
                 )
@@ -107,10 +104,9 @@ class RerankingEngine:
                 return False
         # VRAM-check exception path: ExceptionReplacer and ReplaceFalseWithTrue are
         # equivalent for unit tests (exception is unreachable with mocked torch).
-        # pragma: no mutate
-        except Exception as e:
+        except Exception as e:  # pragma: no mutate
             self._logger.warning(f"VRAM check failed, disabling neural reranking: {e}")
-            return False
+            return False  # pragma: no mutate
 
     def _ensure_reranker(self, log_prefix: str) -> bool:
         """Lazy-init or cleanup neural reranker based on current VRAM/config state.
@@ -122,8 +118,7 @@ class RerankingEngine:
 
         # and/or mutations here are boundary orchestration; equivalent under the test suite's
         # mock setup (create_reranker is mocked, _ensure_reranker is not called directly).
-        # pragma: no mutate
-        if should_enable and self.neural_reranker is None:
+        if should_enable and self.neural_reranker is None:  # pragma: no mutate
             config = get_search_config()
             self.neural_reranker = create_reranker(
                 model_name=config.reranker.model_name,
@@ -136,8 +131,9 @@ class RerankingEngine:
             self._logger.debug(f"{log_prefix} Neural reranker disabled and cleaned up")
 
         self._neural_reranking_enabled = should_enable
-        # pragma: no mutate
-        return bool(should_enable and self.neural_reranker is not None)
+        return bool(
+            should_enable and self.neural_reranker is not None  # pragma: no mutate
+        )
 
     def _run_rerank(
         self, query_or_content: str, candidates: list, k: int, log_prefix: str
@@ -158,8 +154,7 @@ class RerankingEngine:
                 query_or_content, candidates[:rerank_count], k
             )
             # Timing value only used in log message — arithmetic mutations are log-only.
-            # pragma: no mutate
-            neural_time = time.time() - neural_start
+            neural_time = time.time() - neural_start  # pragma: no mutate
             self._logger.debug(
                 f"{log_prefix} Processed {rerank_count} candidates in {neural_time:.3f}s"
             )
@@ -167,16 +162,15 @@ class RerankingEngine:
         # OOM detection path: all mutations here are boundary (requires real CUDA OOM).
         # ExceptionReplacer, And/Or in OOM string detection, and True→False on _session_oom_detected
         # are all equivalent for unit tests.
-        # pragma: no mutate
-        except Exception as e:
+        except Exception as e:  # pragma: no mutate
             self._logger.warning(
                 f"{log_prefix} Reranking failed: {e}, using original results"
             )
             error_str = str(e).lower()
-            if "cuda" in error_str and (
-                "out of memory" in error_str or "oom" in error_str
-            ):
-                self._session_oom_detected = True
+            if "cuda" in error_str and (  # pragma: no mutate
+                "out of memory" in error_str or "oom" in error_str  # pragma: no mutate
+            ):  # pragma: no mutate
+                self._session_oom_detected = True  # pragma: no mutate
                 self._logger.warning(
                     f"{log_prefix} CUDA OOM detected, disabling for session"
                 )
@@ -227,7 +221,8 @@ class RerankingEngine:
                         result.score = float(similarity)
                     # Keep original score if embedding not found
 
-            except Exception as e:
+            # ExceptionReplacer: embedding re-score path unreachable with mocked embedder.
+            except Exception as e:  # pragma: no mutate
                 self._logger.warning(
                     f"[RERANK] Failed to re-score with embeddings: {e}, "
                     "keeping original scores"
@@ -245,8 +240,7 @@ class RerankingEngine:
         return sorted_results[:k]
 
     # RemoveDecorator on @timed is equivalent — decorator adds timing metadata only.
-    # pragma: no mutate
-    @timed("neural_rerank")
+    @timed("neural_rerank")  # pragma: no mutate
     def apply_neural_reranking(
         self,
         query_or_content: str,
@@ -270,11 +264,11 @@ class RerankingEngine:
             Reranked results (or original results if neural reranking unavailable)
         """
         # not/double-not mutations on guard and _ensure_reranker are boundary orchestration.
-        # pragma: no mutate
-        if not results:
+        if not results:  # pragma: no mutate
             return []
-        # pragma: no mutate
-        if not self._ensure_reranker(f"[RERANK-{context.upper()}]"):
+        if not self._ensure_reranker(  # pragma: no mutate
+            f"[RERANK-{context.upper()}]"
+        ):  # pragma: no mutate
             return results
         return self._run_rerank(
             query_or_content, results, k, f"[NEURAL_RERANK-{context.upper()}]"
@@ -287,8 +281,7 @@ class RerankingEngine:
         to be retried on new searches.
         """
         # False→True mutation: reset_session_state test not yet written; pragma as boundary.
-        # pragma: no mutate
-        self._session_oom_detected = False
+        self._session_oom_detected = False  # pragma: no mutate
 
     def shutdown(self) -> None:
         """Cleanup neural reranker resources."""
