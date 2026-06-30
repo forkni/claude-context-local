@@ -1604,7 +1604,7 @@ This comprehensive testing guide ensures high-quality, maintainable code through
 | New test deps | — | `pytest-randomly`, `pytest-xdist`, `syrupy` |
 | Coverage config | None | `[tool.coverage.*]` in `pyproject.toml` (branch coverage) |
 | CI install | `pip install` | `uv sync --locked` (matches local `uv.lock`) |
-| CI lint gate | non-blocking (`continue-on-error: true`) | `ruff` blocking; `pyrefly` ratchet (non-blocking until baseline clean) |
+| CI lint gate | non-blocking (`continue-on-error: true`) | `ruff` blocking; `pyrefly` blocking (verified green 2026-06-30); `pre-commit` non-blocking |
 | CI pre-commit | not enforced | `uvx pre-commit run --all-files` in CI |
 
 ### Order-randomization (Phase 2 — pytest-randomly)
@@ -1811,7 +1811,7 @@ These modules have high mock density. Reduce mocks first (shift to outcome asser
 | `pytest-split` sharding across runners | per-runner wall-clock > ~10 min after xdist |
 | Python 3.12 matrix | validated clean on 3.11 + meaningful new-version diff |
 | Combined cross-runner coverage | matrix sharding is added |
-| `pyrefly` blocking gate | `pyrefly check` exits 0 on `development` branch |
+| `pyrefly` blocking gate | ✅ **DONE** 2026-06-30 — `continue-on-error` removed; pyrefly exits 0 on development |
 | `pre-commit` blocking gate | `uvx pre-commit run --all-files` exits 0 on CI |
 | Mutation testing (periodic) | already added; re-run before releases or after major test refactors |
 
@@ -1829,5 +1829,5 @@ failures, so regressions remain visible on Codecov. The README badge tracks the 
 - `fail_ci_if_error: false` — Codecov outages or missing token never fail the CI gate.
 - Authoritative gate remains `--cov-fail-under=76` in CI; Codecov is reporting/visualization only.
 - No `codecov.yml` — relying on Codecov defaults.
-- `pyrefly` and `pre-commit` both remain `continue-on-error: true` by explicit decision (2026-06-30).
-  Flip to blocking when both exit 0 consistently on CI for 3+ consecutive green runs.
+- `pyrefly` is now a **blocking gate** (2026-06-30) — `continue-on-error` removed after verified green.
+- `pre-commit` remains `continue-on-error: true`; flip to blocking when it exits 0 consistently on CI.

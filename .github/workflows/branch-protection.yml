@@ -157,8 +157,7 @@ jobs:
 
       - name: Run type checking (pyrefly)
         run: uv run pyrefly check
-        continue-on-error: true
-        # TODO: flip to blocking (remove continue-on-error) once verified consistently green
+        # Blocking gate — pyrefly exits 0 consistently on development (verified 2026-06-30)
 
       - name: Run pre-commit hooks
         run: uvx pre-commit run --all-files
