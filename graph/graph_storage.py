@@ -535,7 +535,7 @@ class CodeGraphStorage:
             reverse_type = (
                 self._get_reverse_relation_type(edge_type) if edge_type else None
             )
-            if reverse_type and reverse_type in relation_types:
+            if edge_type and reverse_type and reverse_type in relation_types:
                 if (
                     edge_type == "imports"
                     and exclude_import_categories

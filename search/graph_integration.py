@@ -400,8 +400,8 @@ class GraphIntegration:
                 calls.append(
                     {
                         "callee_name": call.callee_name,
-                        "line_number": call.line_number,
-                        "is_method_call": call.is_method_call,
+                        "line_number": call.line_number,  # pyrefly: ignore [missing-attribute]
+                        "is_method_call": call.is_method_call,  # pyrefly: ignore [missing-attribute]
                     }
                 )
             else:
@@ -422,7 +422,7 @@ class GraphIntegration:
                 try:
                     relationships.append(
                         RelationshipEdge(
-                            source_id=rel.get("source_id", chunk.chunk_id),
+                            source_id=rel.get("source_id", chunk.chunk_id),  # pyrefly: ignore [bad-argument-type]
                             target_name=rel.get("target_name", "unknown"),
                             relationship_type=RelationshipType(
                                 rel.get("relationship_type", "calls")
