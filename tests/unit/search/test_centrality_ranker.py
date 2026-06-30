@@ -434,6 +434,21 @@ class TestApplySizeNormalization:
         expected = 1.0 / (1.0 + 0.1 * math.log(200 / 50))
         assert result["blended_score"] == pytest.approx(expected, abs=0.0002)
 
+    def test_floor_div_kills_div_floordiv_mutant(self):
+        """Non-divisible ratio distinguishes / from // in log(chunk/target).
+
+        Kills Div_FloorDiv: 75/50=1.5 → log(1.5)≈0.405 vs 75//50=1 → log(1)=0.
+        FloorDiv mutant sets size_factor=1.0 (no penalty), producing blended=1.0.
+        """
+        import math
+
+        ranker = self._make_ranker(target_lines=50, alpha=0.1)
+        result = {"chunk_id": "file.py:1-75:function:big", "blended_score": 1.0}
+        ranker._apply_size_normalization(result)
+
+        expected = 1.0 / (1.0 + 0.1 * math.log(75 / 50))
+        assert result["blended_score"] == pytest.approx(expected, abs=0.0002)
+
 
 class TestApplyBm25Boost:
     """Tests for CentralityRanker._apply_bm25_boost."""
