@@ -99,25 +99,25 @@ if %FAILED%==0 (
 ### Module-Specific Testing (Recommended)
 
 ```bash
-# Chunking tests (63 tests, ~9s)
+# Chunking tests (~9s)
 pytest tests/unit/chunking/ -v
 
-# Embeddings tests (113 tests, ~1s)
+# Embeddings tests (~1s)
 pytest tests/unit/embeddings/ -v
 
-# Graph tests (313 tests, ~2s)
+# Graph tests (~2s)
 pytest tests/unit/graph/ -v
 
-# Merkle tests (21 tests, ~1s)
+# Merkle tests (~1s)
 pytest tests/unit/merkle/ -v
 
-# Search tests (402 tests, ~26s)
+# Search tests (~26s)
 pytest tests/unit/search/ -v
 
-# MCP Server tests (140 tests, ~2s)
+# MCP Server tests (~2s)
 pytest tests/unit/mcp_server/ -v
 
-# Integration tests (2 tests, ~19s)
+# Integration tests (~19s)
 pytest tests/integration/ -v
 ```
 
@@ -155,8 +155,6 @@ pytest tests/unit/graph/ --cov=graph --cov-append --cov-report=xml
 
 ## Test Organization
 
-## Test Organization
-
 ### Directory Structure
 
 ```
@@ -175,7 +173,7 @@ tests/
 │   ├── glsl_project/         # GLSL shader samples
 │   ├── multi_language/       # Multi-language test files
 │   └── python_project/       # Python project samples
-├── unit/                     # Unit tests (17 files, 93 tests)
+├── unit/                     # Unit tests (~3,040 tests; see CI for current count)
 │   ├── test_bm25_index.py    # BM25 index functionality
 │   ├── test_bm25_population.py # BM25 document population
 │   ├── test_embedder.py      # Embedding generation
@@ -192,7 +190,7 @@ tests/
 │   ├── test_search_config.py # Search configuration
 │   ├── test_token_efficiency.py # Token efficiency evaluation
 │   └── test_tree_sitter.py   # Tree-sitter parsing
-├── fast_integration/         # Fast integration tests (11 files, 77 tests, < 5s each)
+├── fast_integration/         # Fast integration tests (< 5s each)
 │   ├── test_complete_workflow.py # End-to-end workflow
 │   ├── test_cuda_detection.py # GPU/CUDA detection
 │   ├── test_encoding_validation.py # Text encoding validation
@@ -204,7 +202,7 @@ tests/
 │   ├── test_model_switching.py # Model switching (Gemma/BGE-M3)
 │   ├── test_token_efficiency_workflow.py # Token efficiency workflow
 │   └── test_tree_sitter_*.py # Tree-sitter parsing tests
-├── slow_integration/         # Slow integration tests (10 files, 67 tests, > 10s each)
+├── slow_integration/         # Slow integration tests (> 10s each; excluded from main CI run)
 │   ├── helpers/              # Test helper utilities
 │   │   ├── __init__.py
 │   │   ├── check_auth.py     # Authentication validation
@@ -236,7 +234,7 @@ tests/
 ### Basic Test Execution
 
 ```bash
-# Run all tests (38 files, 227 tests)
+# Run all tests (3,100+ tests; use --ignore=tests/slow_integration/ for CI speed)
 pytest tests/
 
 # Run with verbose output
@@ -252,16 +250,16 @@ pytest tests/ -x
 ### Category-Specific Testing
 
 ```bash
-# Unit tests only (16 files, 82 tests, < 1s each) - Fast component testing
+# Unit tests only (< 1s each) - Fast component testing
 pytest tests/unit/
 
-# Fast integration tests only (11 files, 77 tests, < 5s each) - Quick workflow validation
+# Fast integration tests only (< 5s each) - Quick workflow validation
 pytest tests/fast_integration/
 
-# Slow integration tests only (10 files, 67 tests, > 10s each) - Comprehensive workflow validation
+# Slow integration tests only (> 10s each) - Comprehensive workflow validation
 pytest tests/slow_integration/
 
-# All integration tests (21 files, 144 tests)
+# All integration tests
 pytest tests/fast_integration/ tests/slow_integration/
 
 # Regression tests (PowerShell, 1 file, 15 checks)
@@ -330,7 +328,7 @@ pytest tests/ --durations=10
 
 ## Test Categories
 
-### Unit Tests (16 files, 82 tests)
+### Unit Tests
 
 **Purpose**: Test individual components in isolation with mocked dependencies.
 
@@ -351,7 +349,7 @@ pytest tests/ --durations=10
 - Extensive use of mocks and fixtures
 - High code coverage targets (>90%)
 
-### Fast Integration Tests (11 files, 77 tests)
+### Fast Integration Tests
 
 **Purpose**: Verify component interactions with quick feedback cycles for CI/CD.
 
@@ -371,7 +369,7 @@ pytest tests/ --durations=10
 - File system operations (using temporary directories)
 - Ideal for CI fast feedback loops
 
-### Slow Integration Tests (10 files, 67 tests)
+### Slow Integration Tests
 
 **Purpose**: Comprehensive end-to-end validation of complete workflows.
 
@@ -1390,9 +1388,9 @@ pytest tests/ -n auto --dist=loadfile
 
 **Fast Feedback Pipeline** (runs on every commit, < 3 min):
 
-- Unit tests (82 tests, ~5s)
-- Fast integration tests (77 tests, ~2 min)
-- Coverage check with 75% threshold
+- Unit tests (~5s)
+- Fast integration tests (~2 min)
+- Coverage check with `fail_under=77` threshold (active in CI)
 - **Total time**: ~3 minutes
 - **Purpose**: Quick feedback for developers
 
@@ -1400,8 +1398,8 @@ pytest tests/ -n auto --dist=loadfile
 
 - All unit tests
 - All fast integration tests
-- All slow integration tests (67 tests)
-- Coverage check with 80% threshold
+- All slow integration tests
+- Coverage check with `fail_under=77` threshold
 - **Total time**: ~15 minutes
 - **Purpose**: Complete validation before merge
 
@@ -1633,8 +1631,9 @@ function-scoped teardown.
 
 Coverage config lives in `pyproject.toml` `[tool.coverage.*]`. Branch coverage is on.
 
-**Baseline (measured 2026-06-27):** 76.94% branch+statement combined (2840 tests passing, 15 738 stmts).
-`fail_under = 76` is set in `[tool.coverage.report]` and `--cov-fail-under=76` is active in CI.
+**Baseline (measured 2026-06-30):** 78.53% branch+statement combined (3104 tests passing, 15 565 stmts).
+`fail_under = 77` is set in `[tool.coverage.report]` and `--cov-fail-under=77` is active in CI.
+(Previous baseline 2026-06-27: 76.94% at 2840 tests; ratcheted after adding ~276 tests.)
 
 ```bash
 # Re-measure (with gate enforced):
