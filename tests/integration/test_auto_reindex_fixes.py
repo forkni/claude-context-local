@@ -23,6 +23,31 @@ from search.incremental_indexer import IncrementalIndexer
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(autouse=True)
+def _mock_model_load():
+    """Prevent real model downloads in all tests in this module."""
+    import numpy as np
+
+    class _FakeEmbeddingModel:
+        max_seq_length = 512
+        device = "cpu"
+
+        def encode(
+            self, sentences, show_progress_bar=False, convert_to_tensor=False, **kwargs
+        ):
+            n = 1 if isinstance(sentences, str) else len(sentences)
+            return np.zeros((n, 768), dtype=np.float32)
+
+        def get_sentence_embedding_dimension(self):
+            return 768
+
+    with patch(
+        "embeddings.model_loader.ModelLoader.load",
+        return_value=(_FakeEmbeddingModel(), "cpu"),
+    ):
+        yield
+
+
 @pytest.fixture
 def temp_project(tmp_path):
     """Create a temporary project with Python files."""

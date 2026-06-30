@@ -8,7 +8,7 @@ Tests the complete MCP tool workflow:
 
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -55,15 +55,24 @@ def mock_embedder():
     """Mock embedder to avoid GPU/model requirements."""
     import numpy as np
 
-    def mock_encode(sentences, **kwargs):
-        # Return random embeddings
-        return np.random.rand(len(sentences), 1024).astype(np.float32)
+    class _FakeEmbeddingModel:
+        max_seq_length = 512
+        device = "cpu"
 
-    with patch("embeddings.embedder.SentenceTransformer") as mock_st:
-        mock_model = Mock()
-        mock_model.encode.side_effect = mock_encode
-        mock_st.return_value = mock_model
-        yield mock_st
+        def encode(
+            self, sentences, show_progress_bar=False, convert_to_tensor=False, **kwargs
+        ):
+            n = 1 if isinstance(sentences, str) else len(sentences)
+            return np.zeros((n, 768), dtype=np.float32)
+
+        def get_sentence_embedding_dimension(self):
+            return 768
+
+    with patch(
+        "embeddings.model_loader.ModelLoader.load",
+        return_value=(_FakeEmbeddingModel(), "cpu"),
+    ):
+        yield
 
 
 @pytest.mark.asyncio
