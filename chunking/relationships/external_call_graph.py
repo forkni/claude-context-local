@@ -48,8 +48,7 @@ from .call_edge_resolver import (
     ResolvedEdge,
     ResolverConfidence,
     gather_py_files,
-    scope_to_indexed_files,
-    validate_py_files,
+    prepare_scoped_files,
 )
 
 
@@ -224,29 +223,9 @@ class PyanResolver:
             )
             return []
 
-        py_files = gather_py_files(project_root)
-
-        # Scope to indexed files only — eliminates unindexed install/venv trees
-        # (e.g. Scripts/, site-packages/) that can never produce injectable edges.
-        if raw_line_map:
-            py_files = scope_to_indexed_files(
-                py_files, set(raw_line_map.keys()), project_root
-            )
-
-        if not py_files:
-            logger.warning(
-                "[PYAN] No .py files found under %s — skipping", project_root
-            )
-            return []
-
-        # Pre-validate with ast.parse — one malformed file must not abort the
-        # whole pass (pyan's prescan raises SyntaxError on the first bad file).
-        py_files = validate_py_files(py_files, logger, source_name="PYAN")
-
-        if not py_files:
-            logger.warning(
-                "[PYAN] No parseable .py files remain — skipping edge injection"
-            )
+        # Gather, scope to indexed files, and validate — single preamble owner.
+        py_files = prepare_scoped_files(project_root, raw_line_map, logger, "PYAN")
+        if py_files is None:
             return []
 
         logger.info("[PYAN] Analysing %d Python files with pyan3...", len(py_files))

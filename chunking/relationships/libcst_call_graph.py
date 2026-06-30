@@ -37,9 +37,7 @@ from evaluation.chunk_mapping import chunk_id_from_fqn
 from .call_edge_resolver import (
     ResolvedEdge,
     ResolverConfidence,
-    gather_py_files,
-    scope_to_indexed_files,
-    validate_py_files,
+    prepare_scoped_files,
 )
 
 
@@ -257,27 +255,9 @@ class LibCSTResolver:
             )
             return []
 
-        py_files = gather_py_files(project_root)
-
-        # Scope to indexed files only — avoids injecting edges from venv/stdlib.
-        if raw_line_map:
-            py_files = scope_to_indexed_files(
-                py_files, set(raw_line_map.keys()), project_root
-            )
-
-        if not py_files:
-            logger.warning(
-                "[LIBCST] No .py files found under %s — skipping", project_root
-            )
-            return []
-
-        # Pre-validate: one syntactically broken file must not abort the pass.
-        py_files = validate_py_files(py_files, logger, source_name="LIBCST")
-
-        if not py_files:
-            logger.warning(
-                "[LIBCST] No parseable .py files remain — skipping edge injection"
-            )
+        # Gather, scope to indexed files, and validate — single preamble owner.
+        py_files = prepare_scoped_files(project_root, raw_line_map, logger, "LIBCST")
+        if py_files is None:
             return []
 
         logger.info(

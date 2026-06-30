@@ -270,6 +270,55 @@ def validate_py_files(
 
 
 # ---------------------------------------------------------------------------
+# Shared resolver preamble
+# ---------------------------------------------------------------------------
+
+
+def prepare_scoped_files(
+    project_root: Path,
+    raw_line_map: dict[str, list[tuple[int, int, str]]],
+    logger: logging.Logger,
+    source_name: str,
+) -> list[str] | None:
+    """Gather, scope, and validate .py files for a call-edge resolver pass.
+
+    This is the identical 5-step preamble shared by PyanResolver, LibCSTResolver,
+    and LSPResolver: gather all .py files → scope to indexed files → early-return
+    on empty → validate with ast.parse → early-return on empty again.
+
+    Args:
+        project_root: Absolute path to the project root.
+        raw_line_map: Per-file sorted ``(start, end, raw_chunk_id)`` list; used to
+            scope files to those present in the index.  Pass an empty dict to skip
+            scoping (all gathered files are kept).
+        logger: Logger for progress and warning messages.
+        source_name: Resolver tag used in log prefixes (e.g. ``"PYAN"``).
+
+    Returns:
+        Validated list of absolute ``.py`` paths ready for analysis, or ``None``
+        if the resolver pass should be skipped (no files gathered or no parseable
+        files after validation).
+    """
+    py_files = gather_py_files(project_root)
+    if raw_line_map:
+        py_files = scope_to_indexed_files(
+            py_files, set(raw_line_map.keys()), project_root
+        )
+    if not py_files:
+        logger.warning(
+            "[%s] No .py files found under %s — skipping", source_name, project_root
+        )
+        return None
+    py_files = validate_py_files(py_files, logger, source_name=source_name)
+    if not py_files:
+        logger.warning(
+            "[%s] No parseable .py files remain — skipping edge injection", source_name
+        )
+        return None
+    return py_files
+
+
+# ---------------------------------------------------------------------------
 # Merge / orchestration
 # ---------------------------------------------------------------------------
 

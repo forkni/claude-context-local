@@ -16,6 +16,7 @@ from chunking.relationships.call_edge_resolver import (
     CallEdgeResolver,
     ResolvedEdge,
     gather_py_files,
+    prepare_scoped_files,
     run_resolvers,
     scope_to_indexed_files,
     validate_py_files,
@@ -410,3 +411,66 @@ class TestPyanAvailable:
         log = logging.getLogger("test_resolver_unavailable")
         edges = resolver.resolve(tmp_path, {}, log)
         assert edges == []
+
+
+# ---------------------------------------------------------------------------
+# T5 ownership gate — prepare_scoped_files is the single preamble owner
+# ---------------------------------------------------------------------------
+
+
+class TestPrepareScoped:
+    """Unit tests for prepare_scoped_files (T5 ownership gate).
+
+    Confirms the helper owns the gather → scope → validate pipeline and that
+    callers receive None (early-return signal) or the validated file list.
+    """
+
+    def _logger(self) -> logging.Logger:
+        return logging.getLogger("test_prepare_scoped")
+
+    def test_returns_valid_files(self, tmp_path: Path) -> None:
+        """With a parseable .py file that's in raw_line_map, returns the file."""
+        f = tmp_path / "foo.py"
+        f.write_text("x = 1\n")
+        rel = "foo.py"
+        raw_line_map = {rel: [(1, 1, "foo.py:1-1:module:foo")]}
+        result = prepare_scoped_files(tmp_path, raw_line_map, self._logger(), "TEST")
+        assert result is not None
+        assert str(f.resolve()) in result
+
+    def test_empty_dir_returns_none(self, tmp_path: Path) -> None:
+        """No .py files → None (early-return signal)."""
+        result = prepare_scoped_files(tmp_path, {}, self._logger(), "TEST")
+        assert result is None
+
+    def test_scoped_out_file_returns_none(self, tmp_path: Path) -> None:
+        """A .py file not in raw_line_map is scoped out → None."""
+        f = tmp_path / "excluded.py"
+        f.write_text("x = 1\n")
+        # raw_line_map has a different file → excluded.py is out of scope
+        raw_line_map = {"other.py": [(1, 1, "other.py:1-1:module:other")]}
+        result = prepare_scoped_files(tmp_path, raw_line_map, self._logger(), "TEST")
+        assert result is None
+
+    def test_unparseable_file_returns_none(self, tmp_path: Path) -> None:
+        """A .py file that fails ast.parse → validate returns [] → None."""
+        f = tmp_path / "bad.py"
+        f.write_text("controlnets:\n  - model: foo\n")  # YAML, not Python
+        result = prepare_scoped_files(tmp_path, {}, self._logger(), "TEST")
+        assert result is None
+
+    def test_empty_raw_line_map_skips_scoping(self, tmp_path: Path) -> None:
+        """With empty raw_line_map, no scoping happens — all valid .py files kept."""
+        f = tmp_path / "bar.py"
+        f.write_text("y = 2\n")
+        result = prepare_scoped_files(tmp_path, {}, self._logger(), "TEST")
+        assert result is not None
+        assert str(f.resolve()) in result
+
+    def test_source_name_in_log_messages(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The source_name prefix appears in warning log messages when no files found."""
+        with caplog.at_level(logging.WARNING):
+            prepare_scoped_files(tmp_path, {}, self._logger(), "MYRESOLVER")
+        assert any("MYRESOLVER" in r.message for r in caplog.records)

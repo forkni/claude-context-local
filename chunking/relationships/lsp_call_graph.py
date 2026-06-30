@@ -66,9 +66,7 @@ from evaluation.chunk_mapping import find_enclosing_chunk
 from .call_edge_resolver import (
     ResolvedEdge,
     ResolverConfidence,
-    gather_py_files,
-    scope_to_indexed_files,
-    validate_py_files,
+    prepare_scoped_files,
 )
 
 
@@ -335,17 +333,9 @@ class LSPResolver:
             )
             return []
 
-        py_files = gather_py_files(project_root)
-        if raw_line_map:
-            py_files = scope_to_indexed_files(
-                py_files, set(raw_line_map.keys()), project_root
-            )
-        if not py_files:
-            logger.warning("[LSP] No .py files — skipping")
-            return []
-        py_files = validate_py_files(py_files, logger, source_name="LSP")
-        if not py_files:
-            logger.warning("[LSP] No parseable .py files — skipping")
+        # Gather, scope to indexed files, and validate — single preamble owner.
+        py_files = prepare_scoped_files(project_root, raw_line_map, logger, "LSP")
+        if py_files is None:
             return []
 
         logger.info(
