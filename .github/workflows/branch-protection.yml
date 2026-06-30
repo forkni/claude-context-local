@@ -148,11 +148,11 @@ jobs:
         # missing-import errors). Torch wheels are heavy (~2.3 GB) but cached by setup-uv.
 
       - name: Run ruff check (linting + import sorting)
-        run: uvx ruff check .
+        run: uv run ruff check .
         # Blocking gate — ruff is already enforced locally via commit_enhanced.sh
 
       - name: Check formatting (ruff format)
-        run: uvx ruff format --check .
+        run: uv run ruff format --check .
         # Blocking gate — ruff format is already enforced locally
 
       - name: Run type checking (pyrefly)
