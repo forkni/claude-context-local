@@ -8,12 +8,12 @@ This comprehensive guide covers the testing infrastructure for the Claude Contex
 
 ✅ **All tests passing** (as of 2026-06-30, v0.20.0):
 
-- **Unit Tests**: ~3,040 tests (`tests/unit/`)
+- **Unit Tests**: ~3,066 tests (`tests/unit/`)
   - Chunking (incl. relationships): includes `test_call_edge_resolver.py`, `test_call_graph_config.py`, `test_libcst_call_graph.py`, `test_lsp_call_graph.py` (1 POSIX skip)
   - Embeddings, Graph, Merkle, Search, MCP Server, Evaluation, Benchmark, Utils, Tools
 - **Integration Tests**: ~22 tests (`tests/integration/`)
 - **Fast Integration Tests**: ~38 tests (`tests/fast_integration/`)
-- **Total**: 3,100 passed, 13 skipped (measured 2026-06-30 with seed 1554140588)
+- **Total**: 3,126 passed, 13 skipped (measured 2026-06-30)
 
 **Note**: Run `uv run pytest tests/ --ignore=tests/slow_integration -q` for the full suite (excluding GPU-dependent slow tests).
 
@@ -1638,7 +1638,7 @@ Coverage config lives in `pyproject.toml` `[tool.coverage.*]`. Branch coverage i
 ```bash
 # Re-measure (with gate enforced):
 bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration/ \
-  --cov --cov-branch --cov-report=term-missing --cov-fail-under=76
+  --cov --cov-branch --cov-report=term-missing --cov-fail-under=77
 ```
 
 Ratchet upward: when coverage improves, bump `fail_under` in `pyproject.toml` and
@@ -1773,9 +1773,9 @@ item is a confirmed-killed transient false positive (cosmic-ray `NumberReplacer`
 # Per-target session (gitignored configs/sqlite live in project root)
 uv run cosmic-ray init cr-<target>.toml cr-<target>.sqlite
 uv run cosmic-ray baseline cr-<target>.toml
+uv run cr-filter-pragma cr-<target>.sqlite                   # mark # pragma: no mutate lines BEFORE exec
 uv run cosmic-ray exec cr-<target>.toml cr-<target>.sqlite   # sequential, not parallel
 uv run cr-report cr-<target>.sqlite
-uv run cr-filter-pragma cr-<target>.sqlite                   # mark # pragma: no mutate lines
 ```
 
 Windows gotcha: `test-command` must use the absolute venv path, not bare `python`:
@@ -1791,16 +1791,39 @@ Trigger via `Actions → Mutation Testing (Periodic) → Run workflow`. Select `
 `all`). The workflow installs dev+test+callgraph extras, runs baseline, then one mutmut step per
 target. Artifacts: `.mutmut-cache` (14 days retention).
 
-#### De-mocking backlog (future Tier 3 targets)
+#### Tier 3 targets (de-mocked; mutation runs in progress / complete)
 
-These modules have high mock density. Reduce mocks first (shift to outcome assertions via fakes in
-`tests/fixtures/`), then graduate to mutation testing:
+De-mocked 2026-06-30 — `FakeMetadataStore` + real `SearchConfig`/`RerankerConfig` dataclasses
+replace MagicMock; `_session_oom_detected` drives real methods without patching:
 
-| Module | Mock count | Priority |
-|--------|-----------|---------|
-| `search/hybrid_searcher.py` | ~133 | High |
-| `search/centrality_ranker.py` | ~40 | Medium |
-| `search/reranking_engine.py` | ~30 | Medium |
+| Module | Status | Score |
+|--------|--------|-------|
+| `search/centrality_ranker.py` | **complete** (2026-07-01) | **100.0%** (199/199) |
+| `search/reranking_engine.py` | **complete** (2026-07-01) | **100.0%** (56/56) |
+
+**`search/centrality_ranker.py`** — 511 mutations total (185 incompetent, 199 killed,
+0 survived, 127 pragma-skipped). 10 kill-tests cover all genuine mutants (including
+`Div_FloorDiv` in `_apply_size_normalization` via non-divisible `chunk_lines=75, target=50`).
+127 `# pragma: no mutate` trailing-inline markers for equivalents (precision `round()`,
+unreachable defaults, untestable exception paths, log-only arithmetic, boundary operators
+that differ only at exact float equality, CPython-interned string `is`/`==`).
+
+**`search/reranking_engine.py`** — 170 mutations total (8 incompetent, 56 killed,
+0 survived, 103 pragma-skipped, 3 NO_TEST for type-annotation `|` union operators).
+All pragmas use trailing-inline format (`code  # pragma: no mutate`) required by
+`cr-filter-pragma`'s `end_pos_row` check. Covered equivalents: `TYPE_CHECKING` AddNot,
+`except ImportError` ExceptionReplacer, VRAM arithmetic `NumberReplacer`/`GtE→Gt`,
+type-union annotation operators, OOM detection `And/Or/AddNot/TrueWithFalse`, timing
+log-only arithmetic, and other GPU/mock-boundary paths.
+
+#### De-mocking backlog (deferred)
+
+These modules have irreducibly high mock density — mutation testing payoff is near-zero without
+first extracting pure scoring cores or building in-memory fakes for heavy dependencies:
+
+| Module | Mock count | Deferral rationale |
+|--------|-----------|-------------------|
+| `search/hybrid_searcher.py` | ~133 | Pure orchestrator over FAISS/BM25/embedder boundaries — no in-memory fakes exist for these backends. Pure logic was already extracted to sibling modules (`ego_graph_retriever`, `graph_scoring_stage`). Revisit only if a future refactor extracts another pure scoring core. |
 
 ### Deferred improvements (trigger thresholds documented here)
 
@@ -1826,7 +1849,7 @@ failures, so regressions remain visible on Codecov. The README badge tracks the 
 
 **Notes:**
 - `fail_ci_if_error: false` — Codecov outages or missing token never fail the CI gate.
-- Authoritative gate remains `--cov-fail-under=76` in CI; Codecov is reporting/visualization only.
+- Authoritative gate remains `--cov-fail-under=77` in CI; Codecov is reporting/visualization only.
 - No `codecov.yml` — relying on Codecov defaults.
 - `pyrefly` is now a **blocking gate** (2026-06-30) — `continue-on-error` removed after verified green.
 - `pre-commit` remains `continue-on-error: true`; flip to blocking when it exits 0 consistently on CI.

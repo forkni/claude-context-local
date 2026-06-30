@@ -1,14 +1,38 @@
 """Tests for reranking engine functionality.
 
 Extracted from test_hybrid_search.py (Phase 3.2 refactoring).
+De-mocked in Phase 4.2 Tier-3 (2026-06-30):
+  - FakeMetadataStore replaces MagicMock for metadata_store
+  - Real SearchConfig/RerankerConfig dataclasses replace MagicMock configs
+  - patch.object(engine, "should_enable_neural_reranking") replaced by
+    engine._session_oom_detected = True (drives the real method to return False
+    without patching; no disk I/O because _session_oom_detected is checked first)
+  - test_should_enable_neural_reranking_insufficient_vram fixed to configure
+    mem_get_info (the actual API path) instead of the unused get_device_properties
 """
 
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
+from search.config import PerformanceConfig, RerankerConfig, SearchConfig
 from search.reranker import SearchResult
 from search.reranking_engine import RerankingEngine
+
+
+class FakeMetadataStore:
+    """In-memory metadata store for testing (replaces MagicMock).
+
+    Implements the single method called by RerankingEngine: .get(chunk_id).
+    Pre-populate ._data before exercising embedding-based re-scoring.
+    """
+
+    def __init__(self, data: dict | None = None) -> None:
+        self._data: dict = data or {}
+
+    def get(self, chunk_id: str) -> dict | None:
+        return self._data.get(chunk_id)
 
 
 class TestRerankingEngine:
@@ -16,10 +40,10 @@ class TestRerankingEngine:
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.mock_embedder = MagicMock()
-        self.mock_metadata_store = MagicMock()
+        self.mock_embedder = MagicMock()  # true boundary: wraps neural model
+        self.fake_metadata_store = FakeMetadataStore()
         self.engine = RerankingEngine(
-            embedder=self.mock_embedder, metadata_store=self.mock_metadata_store
+            embedder=self.mock_embedder, metadata_store=self.fake_metadata_store
         )
 
     @patch("search.reranking_engine.torch")
@@ -28,28 +52,32 @@ class TestRerankingEngine:
         mock_torch.cuda.is_available.return_value = False
 
         with patch("search.reranking_engine.get_search_config") as mock_config:
-            config = MagicMock()
-            config.reranker.enabled = True
-            mock_config.return_value = config
+            mock_config.return_value = SearchConfig(
+                reranker=RerankerConfig(enabled=True)
+            )
 
             result = self.engine.should_enable_neural_reranking()
             assert result is False
 
     @patch("search.reranking_engine.torch")
     def test_should_enable_neural_reranking_insufficient_vram(self, mock_torch):
-        """Test neural reranking disabled with insufficient VRAM."""
+        """Test neural reranking disabled with insufficient VRAM.
+
+        Previously this test mocked cuda.get_device_properties / memory_allocated,
+        but the implementation calls cuda.mem_get_info(0). The test passed
+        accidentally via the exception-catch path. Now fixed to use the real API.
+        """
         mock_torch.cuda.is_available.return_value = True
-        mock_device = MagicMock()
-        mock_device.total_memory = 2 * 1024**3  # 2GB total
-        mock_torch.cuda.get_device_properties.return_value = mock_device
-        mock_torch.cuda.memory_allocated.return_value = 0
+        # 1 GB free < 4 GB required → should return False
+        mock_torch.cuda.mem_get_info.return_value = (
+            1 * 1024**3,  # 1 GB free
+            8 * 1024**3,  # 8 GB total
+        )
 
         with patch("search.reranking_engine.get_search_config") as mock_config:
-            config = MagicMock()
-            config.reranker.enabled = True
-            config.reranker.min_vram_gb = 4  # Requires 4GB
-            config.performance.allow_ram_fallback = False  # Test pure VRAM check
-            mock_config.return_value = config
+            mock_config.return_value = SearchConfig(
+                reranker=RerankerConfig(enabled=True, min_vram_gb=4.0)
+            )
 
             result = self.engine.should_enable_neural_reranking()
             assert result is False
@@ -58,20 +86,20 @@ class TestRerankingEngine:
     def test_should_enable_neural_reranking_sufficient_vram(self, mock_torch):
         """Test neural reranking enabled with sufficient VRAM."""
         mock_torch.cuda.is_available.return_value = True
-        # Mock mem_get_info to return (free_memory, total_memory)
         mock_torch.cuda.mem_get_info.return_value = (
-            5 * 1024**3,  # 5GB free
-            8 * 1024**3,  # 8GB total
+            5 * 1024**3,  # 5 GB free
+            8 * 1024**3,  # 8 GB total
         )
 
         with patch("search.reranking_engine.get_search_config") as mock_config:
-            config = MagicMock()
-            config.reranker.enabled = True
-            config.reranker.min_vram_gb = 4  # Requires 4GB
-            mock_config.return_value = config
+            mock_config.return_value = SearchConfig(
+                reranker=RerankerConfig(enabled=True, min_vram_gb=4.0)
+            )
 
             result = self.engine.should_enable_neural_reranking()
             assert result is True
+            # Device index must be 0 (kills NumberReplacer 0→1 mutant)
+            mock_torch.cuda.mem_get_info.assert_called_with(0)
 
     def test_rerank_by_query_empty_results(self):
         """Test reranking with empty results."""
@@ -79,61 +107,196 @@ class TestRerankingEngine:
         assert results == []
 
     def test_rerank_by_query_embedding_based(self):
-        """Test embedding-based reranking."""
-        # Create test results
+        """Test embedding-based reranking.
+
+        Uses engine._session_oom_detected = True so should_enable_neural_reranking
+        returns False immediately (no GPU/config I/O), keeping neural path inactive
+        and letting the pure cosine/sort/truncate island run unobstructed.
+        """
         results = [
             SearchResult(chunk_id="chunk1", score=0.5, metadata={}),
             SearchResult(chunk_id="chunk2", score=0.7, metadata={}),
             SearchResult(chunk_id="chunk3", score=0.6, metadata={}),
         ]
 
-        # Mock embedder and metadata
         query_emb = np.array([1.0, 0.0, 0.0])
         self.mock_embedder.embed_query.return_value = query_emb
 
+        # chunk1: sim = dot([1,0,0],[0.8,0.6,0]) / (1 * 1) ≈ 0.8
+        # chunk2: sim = dot([1,0,0],[0,1,0]) / (1 * 1) = 0.0
+        # chunk3: sim = dot([1,0,0],[1,0,0]) / (1 * 1) = 1.0
         chunk_embeddings = {
-            "chunk1": np.array([0.8, 0.6, 0.0]),  # similarity ~0.8
-            "chunk2": np.array([0.0, 1.0, 0.0]),  # similarity ~0.0
-            "chunk3": np.array([1.0, 0.0, 0.0]),  # similarity ~1.0
+            "chunk1": np.array([0.8, 0.6, 0.0]),
+            "chunk2": np.array([0.0, 1.0, 0.0]),
+            "chunk3": np.array([1.0, 0.0, 0.0]),
+        }
+        self.fake_metadata_store._data = {
+            cid: {"embedding": emb.tolist()} for cid, emb in chunk_embeddings.items()
         }
 
-        def mock_get(chunk_id):
-            return {"embedding": chunk_embeddings.get(chunk_id).tolist()}
+        # Prevent neural reranking without patching the method:
+        # _session_oom_detected is checked first in should_enable_neural_reranking,
+        # returning False before any config/GPU calls.
+        self.engine._session_oom_detected = True
 
-        self.mock_metadata_store.get.side_effect = mock_get
+        reranked = self.engine.rerank_by_query(
+            "test query", results, k=3, search_mode="semantic"
+        )
 
-        # Rerank - prevent neural reranking from interfering
-        with patch.object(
-            self.engine, "should_enable_neural_reranking", return_value=False
-        ):
-            reranked = self.engine.rerank_by_query(
-                "test query", results, k=3, search_mode="semantic"
-            )
-
-        # Check ordering - chunk3 should be first (similarity=1.0)
+        # chunk3 should be first (cosine similarity = 1.0)
         assert len(reranked) == 3
         assert reranked[0].chunk_id == "chunk3"
         assert reranked[0].score > reranked[1].score
 
     def test_rerank_by_query_no_embedder(self):
         """Test reranking without embedder (keeps original scores)."""
-        engine = RerankingEngine(embedder=None, metadata_store=self.mock_metadata_store)
+        engine = RerankingEngine(embedder=None, metadata_store=FakeMetadataStore())
 
         results = [
             SearchResult(chunk_id="chunk1", score=0.5, metadata={}),
             SearchResult(chunk_id="chunk2", score=0.7, metadata={}),
         ]
 
-        # Prevent neural reranking from interfering with score-based sorting
-        with patch.object(engine, "should_enable_neural_reranking", return_value=False):
-            reranked = engine.rerank_by_query(
-                "test query", results, k=2, search_mode="bm25"
-            )
+        # No embedder → embedding path skipped; neural path bypassed via OOM flag.
+        engine._session_oom_detected = True
+        reranked = engine.rerank_by_query(
+            "test query", results, k=2, search_mode="bm25"
+        )
 
         # Should keep original ordering (sorted by score)
         assert len(reranked) == 2
-        assert reranked[0].chunk_id == "chunk2"  # Higher score
+        assert reranked[0].chunk_id == "chunk2"  # higher original score
         assert reranked[1].chunk_id == "chunk1"
+
+    # ------------------------------------------------------------------
+    # Kill-tests: mutation-targeted (Phase 4.2 Tier-3 hardening)
+    # ------------------------------------------------------------------
+
+    @patch("search.reranking_engine.torch")
+    def test_should_enable_ram_fallback_kills_true_false_mutant(self, mock_torch):
+        """RAM fallback path must return True (kills L80 ReplaceTrueWithFalse mutant).
+
+        When allow_ram_fallback=True the VRAM threshold check is bypassed.
+        The mutant returns False instead — this test pinpoints that gap.
+        """
+        mock_torch.cuda.is_available.return_value = True
+
+        with patch("search.reranking_engine.get_search_config") as mock_config:
+            mock_config.return_value = SearchConfig(
+                reranker=RerankerConfig(enabled=True),
+                performance=PerformanceConfig(allow_ram_fallback=True),
+            )
+            result = self.engine.should_enable_neural_reranking()
+
+        assert result is True
+
+    @patch("search.reranking_engine.torch")
+    def test_should_enable_vram_nonmultiple_kills_floordiv_mutant(self, mock_torch):
+        """Non-multiple VRAM distinguishes / from // (kills L84 Div_FloorDiv mutant).
+
+        4.5 GB / 1024**3 = 4.5 >= 4.3 → True.
+        4.5 GB // 1024**3 = 4   < 4.3 → False (mutant fails).
+        """
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.mem_get_info.return_value = (
+            int(4.5 * 1024**3),  # 4.5 GB free — not a multiple of 1 GiB
+            8 * 1024**3,
+        )
+
+        with patch("search.reranking_engine.get_search_config") as mock_config:
+            mock_config.return_value = SearchConfig(
+                reranker=RerankerConfig(enabled=True, min_vram_gb=4.3)
+            )
+            result = self.engine.should_enable_neural_reranking()
+
+        assert result is True
+
+    def test_rerank_bm25_mode_skips_embedding_kills_or_mutant(self):
+        """bm25 mode must NOT invoke embedder even when one is present.
+
+        Kills L185 ReplaceAndWithOr mutant: with 'or', any truthy embedder
+        would enter the embedding loop even for bm25 queries.
+        """
+        results = [SearchResult(chunk_id="c1", score=0.5, metadata={})]
+        self.engine._session_oom_detected = True
+
+        self.engine.rerank_by_query("query", results, k=1, search_mode="bm25")
+
+        # embedder is present (set in setup_method) but must NOT be called for bm25
+        self.mock_embedder.embed_query.assert_not_called()
+
+    def test_rerank_missing_first_metadata_kills_or_and_exception_mutants(self):
+        """None metadata on first chunk must not abort the loop for later chunks.
+
+        Kills:
+          L196 ReplaceAndWithOr: 'None or "embedding" in None' raises TypeError
+          L205 ExceptionReplacer: wrong except type lets TypeError propagate
+        Both are killed when the second chunk's score IS updated despite the first being absent.
+        """
+        results = [
+            SearchResult(
+                chunk_id="no_meta", score=0.3, metadata={}
+            ),  # no metadata → skip
+            SearchResult(
+                chunk_id="has_meta", score=0.1, metadata={}
+            ),  # has embedding → update
+        ]
+        query_emb = np.array([1.0, 0.0, 0.0])
+        self.mock_embedder.embed_query.return_value = query_emb
+
+        # has_meta chunk is perfectly aligned → cosine = 1.0
+        self.fake_metadata_store._data = {
+            "has_meta": {"embedding": [1.0, 0.0, 0.0]}
+            # no_meta returns None → must short-circuit cleanly via 'and', not crash
+        }
+        self.engine._session_oom_detected = True
+
+        reranked = self.engine.rerank_by_query(
+            "q", results, k=2, search_mode="semantic"
+        )
+
+        # has_meta must win: cosine 1.0 > no_meta's original 0.3
+        assert reranked[0].chunk_id == "has_meta"
+        assert reranked[1].chunk_id == "no_meta"
+
+    def test_rerank_cosine_exact_score_kills_denominator_mutants(self):
+        """Exact cosine scores distinguish correct / from *, **, +, // denominator mutants.
+
+        Kills:
+          L199 Div_Mul:      dot * norm_q * norm_c (wildly different)
+          L200 Mul_Add:      dot / (norm_q + norm_c)  (≠ correct for asymmetric norms)
+          L200 Mul_Pow:      dot / (norm_q ** norm_c) (≠ correct when norm_c ≠ 0 or 1)
+          L200 Mul_FloorDiv: dot / (norm_q // norm_c) (integer floor changes result)
+
+        Setup: query=[2,0,0] (norm=2), so norm_q varies from norm_c:
+          'aligned'  [1,0,0]: dot=2, norm_c=1 → cosine=2/(2×1)=1.0
+          'diagonal' [0.5,0.5,0]: dot=1, norm_c≈0.707 → cosine=1/(2×0.707)≈0.707
+        """
+        results = [
+            SearchResult(chunk_id="aligned", score=0.1, metadata={}),
+            SearchResult(chunk_id="diagonal", score=0.9, metadata={}),
+        ]
+        query_emb = np.array([2.0, 0.0, 0.0])
+        self.mock_embedder.embed_query.return_value = query_emb
+
+        self.fake_metadata_store._data = {
+            "aligned": {"embedding": [1.0, 0.0, 0.0]},
+            "diagonal": {"embedding": [0.5, 0.5, 0.0]},
+        }
+        self.engine._session_oom_detected = True
+
+        reranked = self.engine.rerank_by_query(
+            "q", results, k=2, search_mode="semantic"
+        )
+
+        assert reranked[0].chunk_id == "aligned"
+        assert reranked[0].score == pytest.approx(
+            1.0, abs=0.002
+        )  # kills Mul_Add (0.667), Div_Mul (4.0)
+        assert reranked[1].chunk_id == "diagonal"
+        assert reranked[1].score == pytest.approx(
+            0.707, abs=0.003
+        )  # kills Mul_Pow (0.612), Mul_FloorDiv (0.5)
 
     @patch("search.neural_reranker.NeuralReranker")
     def test_shutdown_cleans_up_neural_reranker(self, mock_neural_reranker_class):
@@ -160,9 +323,12 @@ class TestRerankingEngine:
         query_emb = np.array([1.0, 0.0, 0.0])
         chunk_emb = np.array([1.0, 0.0, 0.0])
 
-        self.mock_metadata_store.get.return_value = {"embedding": chunk_emb.tolist()}
+        self.fake_metadata_store._data["chunk1"] = {"embedding": chunk_emb.tolist()}
 
-        # Pass pre-computed embedding - embedder should NOT be called
+        # Bypass neural path (same OOM-flag pattern) to isolate the pure island.
+        self.engine._session_oom_detected = True
+
+        # Pass pre-computed embedding — embedder.embed_query must NOT be called
         reranked = self.engine.rerank_by_query(
             "test query", results, k=1, search_mode="hybrid", query_embedding=query_emb
         )
@@ -180,15 +346,13 @@ class TestRerankingEngine:
         query_emb = np.array([1.0, 0.0, 0.0])
         self.mock_embedder.embed_query.return_value = query_emb
 
-        # chunk1 has embedding, chunk2 doesn't
-        def mock_get(chunk_id):
-            if chunk_id == "chunk1":
-                return {"embedding": [0.8, 0.6, 0.0]}
-            return {}  # No embedding
+        # chunk1 has an embedding; chunk2 is absent → get() returns None → keeps score
+        self.fake_metadata_store._data = {"chunk1": {"embedding": [0.8, 0.6, 0.0]}}
 
-        self.mock_metadata_store.get.side_effect = mock_get
+        # Bypass neural path to keep test fast and focused on the missing-embedding branch.
+        self.engine._session_oom_detected = True
 
-        # Should not raise, keeps original score for chunk2
+        # Should not raise; chunk2 keeps its original score 0.7
         reranked = self.engine.rerank_by_query(
             "test query", results, k=2, search_mode="semantic"
         )
@@ -205,35 +369,34 @@ class TestRerankingEngine:
         Regression test for Issue 1: Reranker doesn't reload after disable/re-enable.
         The cached _neural_reranking_enabled flag prevented config re-evaluation.
         """
-        # Setup: GPU available with sufficient VRAM
+        # GPU with sufficient VRAM
         mock_torch.cuda.is_available.return_value = True
-        # Mock mem_get_info to return (free_memory, total_memory)
         mock_torch.cuda.mem_get_info.return_value = (
-            5 * 1024**3,  # 5GB free
-            8 * 1024**3,  # 8GB total
+            5 * 1024**3,  # 5 GB free
+            8 * 1024**3,  # 8 GB total
         )
 
-        # Mock NeuralReranker
         mock_reranker_instance = MagicMock()
         mock_neural_reranker_class.return_value = mock_reranker_instance
 
-        # Create test results
         results = [
             SearchResult(chunk_id="chunk1", score=0.5, metadata={}),
             SearchResult(chunk_id="chunk2", score=0.7, metadata={}),
         ]
 
         # Phase 1: Enable neural reranking
+        enabled_config = SearchConfig(
+            reranker=RerankerConfig(
+                enabled=True,
+                model_name="BAAI/bge-reranker-v2-m3",
+                batch_size=16,
+                top_k_candidates=50,
+                min_vram_gb=4.0,
+            )
+        )
         with patch("search.reranking_engine.get_search_config") as mock_config:
-            config = MagicMock()
-            config.reranker.enabled = True
-            config.reranker.min_vram_gb = 4
-            config.reranker.model_name = "BAAI/bge-reranker-v2-m3"
-            config.reranker.batch_size = 16
-            config.reranker.top_k_candidates = 50
-            mock_config.return_value = config
+            mock_config.return_value = enabled_config
 
-            # First search - should initialize reranker
             mock_reranker_instance.rerank.return_value = results
             self.engine.rerank_by_query("test query", results, k=2)
 
@@ -242,35 +405,23 @@ class TestRerankingEngine:
 
         # Phase 2: Disable neural reranking
         with patch("search.reranking_engine.get_search_config") as mock_config:
-            config = MagicMock()
-            config.reranker.enabled = False  # Disabled
-            mock_config.return_value = config
+            mock_config.return_value = SearchConfig(
+                reranker=RerankerConfig(enabled=False)
+            )
 
-            # Second search - should cleanup reranker
             self.engine.rerank_by_query("test query", results, k=2)
 
             mock_reranker_instance.cleanup.assert_called_once()
             assert self.engine.neural_reranker is None
 
-        # Phase 3: Re-enable neural reranking (THIS WAS BROKEN BEFORE FIX)
+        # Phase 3: Re-enable (THIS WAS BROKEN BEFORE FIX)
         with patch("search.reranking_engine.get_search_config") as mock_config:
-            config = MagicMock()
-            config.reranker.enabled = True  # Re-enabled
-            config.reranker.min_vram_gb = 4
-            config.reranker.model_name = "BAAI/bge-reranker-v2-m3"
-            config.reranker.batch_size = 16
-            config.reranker.top_k_candidates = 50
-            mock_config.return_value = config
+            mock_config.return_value = enabled_config
 
-            # Third search - should RE-INITIALIZE reranker
             mock_reranker_instance.rerank.return_value = results
             self.engine.rerank_by_query("test query", results, k=2)
 
-            # Key assertion: Reranker should be reloaded (not None)
+            # Reranker must be re-initialised (not remain None)
             assert self.engine.neural_reranker is not None
-            assert (
-                mock_neural_reranker_class.call_count == 2
-            )  # Called twice (init + re-init)
-            assert (
-                mock_reranker_instance.rerank.call_count == 2
-            )  # Used in phase 1 and 3
+            assert mock_neural_reranker_class.call_count == 2  # init + re-init
+            assert mock_reranker_instance.rerank.call_count == 2  # phase 1 + 3
