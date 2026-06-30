@@ -245,3 +245,62 @@ class TestResultFactory:
         assert results[0].metadata["content"] == "foo"
         assert results[0].metadata["chunk_type"] == "function"
         assert results[0].metadata["name"] == "foo"
+
+
+class TestFromTuples:
+    """Tests for _from_tuples — the single implementation owned by ResultFactory.
+
+    Verifies the helper is used by all three source-only adapters (T3 ownership gate)
+    and produces byte-identical results compared to the named adapters' prior behaviour.
+    """
+
+    _TUPLES = [
+        ("c1", 0.9, {"file": "a.py"}),
+        ("c2", 0.7, {"file": "b.py"}),
+    ]
+
+    def test_from_tuples_sets_source_and_rank(self):
+        results = ResultFactory._from_tuples(self._TUPLES, "my_source")
+        assert results[0].source == "my_source"
+        assert results[1].source == "my_source"
+        assert results[0].rank == 0
+        assert results[1].rank == 1
+
+    def test_from_tuples_empty(self):
+        assert ResultFactory._from_tuples([], "x") == []
+
+    def test_bm25_parity_with_from_tuples(self):
+        """from_bm25_results is byte-identical to _from_tuples(..., 'bm25')."""
+        via_adapter = ResultFactory.from_bm25_results(self._TUPLES)
+        via_helper = ResultFactory._from_tuples(self._TUPLES, "bm25")
+        assert len(via_adapter) == len(via_helper)
+        for a, b in zip(via_adapter, via_helper, strict=True):
+            assert a.chunk_id == b.chunk_id
+            assert a.score == b.score
+            assert a.source == b.source
+            assert a.rank == b.rank
+            assert a.metadata == b.metadata
+
+    def test_dense_parity_with_from_tuples(self):
+        """from_dense_results is byte-identical to _from_tuples(..., 'semantic')."""
+        via_adapter = ResultFactory.from_dense_results(self._TUPLES)
+        via_helper = ResultFactory._from_tuples(self._TUPLES, "semantic")
+        assert len(via_adapter) == len(via_helper)
+        for a, b in zip(via_adapter, via_helper, strict=True):
+            assert a.chunk_id == b.chunk_id
+            assert a.score == b.score
+            assert a.source == b.source
+            assert a.rank == b.rank
+            assert a.metadata == b.metadata
+
+    def test_similarity_parity_with_from_tuples(self):
+        """from_similarity_results is byte-identical to _from_tuples(..., source)."""
+        via_adapter = ResultFactory.from_similarity_results(self._TUPLES, source="sim")
+        via_helper = ResultFactory._from_tuples(self._TUPLES, "sim")
+        assert len(via_adapter) == len(via_helper)
+        for a, b in zip(via_adapter, via_helper, strict=True):
+            assert a.chunk_id == b.chunk_id
+            assert a.score == b.score
+            assert a.source == b.source
+            assert a.rank == b.rank
+            assert a.metadata == b.metadata
