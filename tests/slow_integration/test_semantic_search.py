@@ -9,12 +9,12 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-from conftest import create_test_embeddings
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
 from search.indexer import CodeIndexManager
 from search.searcher import IntelligentSearcher
+from tests.helpers.embeddings import create_test_embeddings
 
 
 @pytest.mark.slow

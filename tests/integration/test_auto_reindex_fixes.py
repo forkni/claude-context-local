@@ -16,6 +16,7 @@ import pytest
 
 from mcp_server.model_pool_manager import reset_pool_manager
 from mcp_server.services import get_state
+from merkle import SnapshotManager
 from search.config import get_search_config
 from search.incremental_indexer import IncrementalIndexer
 
@@ -104,15 +105,19 @@ def cleanup_state():
 class TestMaxAgeMinutesConfigRespect:
     """Test that max_age_minutes respects config instead of hardcoded 5."""
 
-    def test_uses_config_default_when_not_specified(self, temp_project, cleanup_state):
+    def test_uses_config_default_when_not_specified(
+        self, temp_project, cleanup_state, tmp_path
+    ):
         """Verify default comes from config, not hardcoded 5."""
         config = get_search_config()
 
         # Verify config has a positive value (sensible default from config)
         assert config.performance.max_index_age_minutes > 0
 
-        # Create indexer and index project
-        indexer = IncrementalIndexer()
+        # Create indexer with isolated storage so no writes reach ~/.claude_code_search
+        indexer = IncrementalIndexer(
+            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots")
+        )
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success
 
@@ -133,11 +138,13 @@ class TestMaxAgeMinutesConfigRespect:
         assert result.files_modified == 0
 
     def test_explicit_max_age_minutes_overrides_config(
-        self, temp_project, cleanup_state
+        self, temp_project, cleanup_state, tmp_path
     ):
         """Verify explicit max_age_minutes parameter overrides config."""
-        # Create indexer and index project
-        indexer = IncrementalIndexer()
+        # Create indexer with isolated storage so no writes reach ~/.claude_code_search
+        indexer = IncrementalIndexer(
+            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots")
+        )
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success
 
@@ -159,10 +166,14 @@ class TestMaxAgeMinutesConfigRespect:
 class TestMultiModelCleanupBeforeReindex:
     """Test that auto-reindex handles cleanup correctly."""
 
-    def test_cleanup_handles_errors_gracefully(self, temp_project, cleanup_state):
+    def test_cleanup_handles_errors_gracefully(
+        self, temp_project, cleanup_state, tmp_path
+    ):
         """Verify auto-reindex continues even if cleanup fails."""
-        # Create indexer
-        indexer = IncrementalIndexer()
+        # Create indexer with isolated storage so no writes reach ~/.claude_code_search
+        indexer = IncrementalIndexer(
+            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots")
+        )
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success
 

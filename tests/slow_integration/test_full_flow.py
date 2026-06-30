@@ -8,11 +8,11 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from conftest import create_test_embeddings
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from merkle import ChangeDetector, MerkleDAG, SnapshotManager
 from search.indexer import CodeIndexManager
+from tests.helpers.embeddings import create_test_embeddings
 
 
 @pytest.mark.slow
