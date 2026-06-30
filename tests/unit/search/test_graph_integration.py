@@ -638,6 +638,287 @@ class TestExtractSplitBlockCalls(TestCase):
         )
 
 
+def _make_chunk(
+    chunk_id: str,
+    chunk_type: str = "function",
+    name: str = "foo",
+    parent_name: str | None = None,
+    calls: list | None = None,
+    relationships: list | None = None,
+    file_path: str = "src/module.py",
+    language: str = "python",
+    start_line: int = 1,
+) -> Mock:
+    """Build a mock CodeChunk for testing build_graph_from_chunks."""
+    chunk = Mock()
+    chunk.chunk_id = chunk_id
+    chunk.chunk_type = chunk_type
+    chunk.name = name
+    chunk.parent_name = parent_name
+    chunk.calls = calls or []
+    chunk.relationships = relationships or []
+    chunk.file_path = file_path
+    chunk.language = language
+    chunk.start_line = start_line
+    return chunk
+
+
+class TestTwoPassBuild(TestCase):
+    """Direct tests for GraphIntegration._two_pass_build."""
+
+    def _make_graph(self) -> tuple[GraphIntegration, Mock]:
+        storage = Mock()
+        storage.__len__ = Mock(return_value=0)
+        graph = GraphIntegration.from_storage(storage)
+        return graph, storage
+
+    def test_empty_specs_returns_empty_dict(self):
+        """_two_pass_build([]) should return {} without touching storage."""
+        graph, storage = self._make_graph()
+
+        stats = graph._two_pass_build([], clear=False)
+        self.assertEqual(stats, {})
+        storage.add_node.assert_not_called()
+
+    def test_no_storage_returns_empty_dict(self):
+        """_two_pass_build on a None-storage instance returns {}."""
+        graph = GraphIntegration.from_storage(None)
+        from search.graph_integration import _BuildSpec
+
+        spec = _BuildSpec(
+            chunk_id="f.py:1-5:function:foo",
+            name="foo",
+            chunk_type="function",
+            file_path="f.py",
+            language="python",
+            parent_name=None,
+            calls=[],
+            relationships=[],
+        )
+        stats = graph._two_pass_build([spec], clear=False)
+        self.assertEqual(stats, {})
+
+    def test_clear_true_calls_storage_clear(self):
+        """clear=True must call storage.clear() before adding nodes."""
+        graph, storage = self._make_graph()
+        from search.graph_integration import _BuildSpec
+
+        spec = _BuildSpec(
+            chunk_id="f.py:1-5:function:foo",
+            name="foo",
+            chunk_type="function",
+            file_path="f.py",
+            language="python",
+            parent_name=None,
+            calls=[],
+            relationships=[],
+        )
+        graph._two_pass_build([spec], clear=True)
+        storage.clear.assert_called_once()
+
+    def test_clear_false_skips_storage_clear(self):
+        """clear=False must NOT call storage.clear()."""
+        graph, storage = self._make_graph()
+        from search.graph_integration import _BuildSpec
+
+        spec = _BuildSpec(
+            chunk_id="f.py:1-5:function:foo",
+            name="foo",
+            chunk_type="function",
+            file_path="f.py",
+            language="python",
+            parent_name=None,
+            calls=[],
+            relationships=[],
+        )
+        graph._two_pass_build([spec], clear=False)
+        storage.clear.assert_not_called()
+
+    def test_stats_keys_present(self):
+        """_two_pass_build returns all expected stat keys."""
+        graph, storage = self._make_graph()
+        from search.graph_integration import _BuildSpec
+
+        spec = _BuildSpec(
+            chunk_id="f.py:1-5:function:foo",
+            name="foo",
+            chunk_type="function",
+            file_path="f.py",
+            language="python",
+            parent_name=None,
+            calls=[],
+            relationships=[],
+        )
+        stats = graph._two_pass_build([spec], clear=False)
+        for key in (
+            "nodes_added",
+            "call_edges",
+            "resolved_edges",
+            "phantom_edges",
+            "rel_edges",
+        ):
+            self.assertIn(key, stats)
+        self.assertEqual(stats["nodes_added"], 1)
+
+    def test_resolved_call_edge_counted(self):
+        """A call whose callee appears in the spec list is counted as resolved."""
+        graph, storage = self._make_graph()
+        from search.graph_integration import _BuildSpec
+
+        callee_spec = _BuildSpec(
+            chunk_id="f.py:10-15:function:helper",
+            name="helper",
+            chunk_type="function",
+            file_path="f.py",
+            language="python",
+            parent_name=None,
+            calls=[],
+            relationships=[],
+        )
+        caller_spec = _BuildSpec(
+            chunk_id="f.py:20-30:function:main",
+            name="main",
+            chunk_type="function",
+            file_path="f.py",
+            language="python",
+            parent_name=None,
+            calls=[
+                {"callee_name": "helper", "line_number": 25, "is_method_call": False}
+            ],
+            relationships=[],
+        )
+        stats = graph._two_pass_build([callee_spec, caller_spec], clear=False)
+        self.assertEqual(stats["resolved_edges"], 1)
+        self.assertEqual(stats["call_edges"], 1)
+        self.assertEqual(stats["phantom_edges"], 0)
+
+
+class TestBuildGraphFromChunks(TestCase):
+    """Tests for GraphIntegration.build_graph_from_chunks."""
+
+    def _make_graph(self) -> tuple[GraphIntegration, Mock]:
+        storage = Mock()
+        storage.__len__ = Mock(return_value=0)
+        graph = GraphIntegration.from_storage(storage)
+        return graph, storage
+
+    def test_no_storage_warns_and_returns(self):
+        """build_graph_from_chunks with None storage logs a warning but does not raise."""
+        graph = GraphIntegration.from_storage(None)
+        chunk = _make_chunk("f.py:1-5:function:foo")
+        graph.build_graph_from_chunks([chunk])  # must not raise
+
+    def test_clears_graph_on_call(self):
+        """build_graph_from_chunks always calls storage.clear() for a fresh build."""
+        graph, storage = self._make_graph()
+        graph.build_graph_from_chunks([])
+        storage.clear.assert_called_once()
+
+    def test_skips_module_and_community(self):
+        """module and community chunk types are not added as nodes."""
+        graph, storage = self._make_graph()
+        chunks = [
+            _make_chunk("f.py:0-0:module:f", chunk_type="module"),
+            _make_chunk("f.py:0-0:community:grp", chunk_type="community"),
+        ]
+        graph.build_graph_from_chunks(chunks)
+        storage.add_node.assert_not_called()
+
+    def test_skips_chunks_without_id(self):
+        """Chunks with empty chunk_id are silently skipped."""
+        graph, storage = self._make_graph()
+        chunk = _make_chunk("", chunk_type="function")
+        graph.build_graph_from_chunks([chunk])
+        storage.add_node.assert_not_called()
+
+    def test_nodes_added_for_valid_chunks(self):
+        """Valid function chunks produce add_node calls with correct kwargs."""
+        graph, storage = self._make_graph()
+        chunk = _make_chunk(
+            "f.py:1-10:function:do_work", name="do_work", file_path="f.py"
+        )
+        graph.build_graph_from_chunks([chunk])
+        storage.add_node.assert_called_once_with(
+            chunk_id="f.py:1-10:function:do_work",
+            name="do_work",
+            chunk_type="function",
+            file_path="f.py",
+            language="python",
+        )
+
+
+class TestBuildVsPopulateParity(TestCase):
+    """Parity: build_graph_from_chunks and populate_from_embeddings produce the same
+    node additions when fed equivalent data.
+
+    Both go through _two_pass_build; this test pins the contract that neither
+    entry point silently drops or duplicates nodes relative to the other.
+    """
+
+    def _make_graph(self) -> tuple[GraphIntegration, Mock]:
+        storage = Mock()
+        storage.__len__ = Mock(return_value=0)
+        graph = GraphIntegration.from_storage(storage)
+        return graph, storage
+
+    def test_same_add_node_calls(self):
+        """add_node is called with identical kwargs from both entry points."""
+        chunk_id = "pkg/mod.py:1-10:function:compute"
+        name = "compute"
+        file_path = "pkg/mod.py"
+
+        # --- build_graph_from_chunks path ---
+        graph_b, storage_b = self._make_graph()
+        chunk = _make_chunk(chunk_id, name=name, file_path=file_path)
+        graph_b.build_graph_from_chunks([chunk])
+
+        # --- populate_from_embeddings path ---
+        graph_e, storage_e = self._make_graph()
+        result = _make_result(chunk_id, name=name, file_path=file_path)
+        graph_e.populate_from_embeddings([result])
+
+        # Both should have called add_node exactly once
+        self.assertEqual(storage_b.add_node.call_count, 1)
+        self.assertEqual(storage_e.add_node.call_count, 1)
+
+        # Kwargs must match
+        kwargs_b = storage_b.add_node.call_args.kwargs
+        kwargs_e = storage_e.add_node.call_args.kwargs
+        self.assertEqual(kwargs_b, kwargs_e)
+
+    def test_resolved_edge_from_both_entry_points(self):
+        """A resolved call edge appears via both entry points with is_resolved=True."""
+        callee_id = "pkg/mod.py:1-5:function:helper"
+        caller_id = "pkg/mod.py:10-20:function:main"
+        call = {"callee_name": "helper", "line_number": 15, "is_method_call": False}
+
+        # --- build_graph_from_chunks path ---
+        graph_b, storage_b = self._make_graph()
+        chunks = [
+            _make_chunk(callee_id, name="helper", file_path="pkg/mod.py"),
+            _make_chunk(caller_id, name="main", file_path="pkg/mod.py", calls=[call]),
+        ]
+        graph_b.build_graph_from_chunks(chunks)
+
+        # --- populate_from_embeddings path ---
+        graph_e, storage_e = self._make_graph()
+        results = [
+            _make_result(callee_id, name="helper", file_path="pkg/mod.py"),
+            _make_result(caller_id, name="main", file_path="pkg/mod.py", calls=[call]),
+        ]
+        graph_e.populate_from_embeddings(results)
+
+        # Both should produce exactly one resolved call edge
+        b_calls = storage_b.add_call_edge.call_args_list
+        e_calls = storage_e.add_call_edge.call_args_list
+        self.assertEqual(len(b_calls), 1)
+        self.assertEqual(len(e_calls), 1)
+        self.assertTrue(b_calls[0].kwargs["is_resolved"])
+        self.assertTrue(e_calls[0].kwargs["is_resolved"])
+        self.assertEqual(b_calls[0].kwargs["callee_name"], callee_id)
+        self.assertEqual(e_calls[0].kwargs["callee_name"], callee_id)
+
+
 if __name__ == "__main__":
     import pytest
 

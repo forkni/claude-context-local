@@ -4,7 +4,7 @@ import ast
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 
 # Import graph storage for call graph
@@ -74,6 +74,26 @@ _COMMON_METHODS: frozenset[str] = frozenset(
         "upper",
     }
 )
+
+
+class _BuildSpec(NamedTuple):
+    """Normalised, input-type-agnostic spec for a single chunk in a two-pass build.
+
+    Produced by :meth:`GraphIntegration._make_spec_from_embedding` and
+    :meth:`GraphIntegration._make_spec_from_chunk`; consumed by
+    :meth:`GraphIntegration._two_pass_build`.  All fields are already resolved
+    to the types that the graph-storage API expects — no isinstance checks or
+    dict-vs-object branches inside the builder.
+    """
+
+    chunk_id: str
+    name: str  # "unknown" when the original was missing/empty
+    chunk_type: str
+    file_path: str
+    language: str
+    parent_name: str | None
+    calls: list  # list[dict]: callee_name, line_number, is_method_call
+    relationships: list  # list[RelationshipEdge] — already constructed
 
 
 class GraphIntegration:
@@ -278,6 +298,284 @@ class GraphIntegration:
             )
             return []
 
+    # ------------------------------------------------------------------
+    # Two-pass build helpers (T2 single-owner refactor)
+    # ------------------------------------------------------------------
+
+    def _make_spec_from_embedding(self, result: Any) -> "_BuildSpec | None":
+        """Normalise an EmbeddingResult into a _BuildSpec.
+
+        Returns None if the result should be skipped (non-semantic chunk_type).
+        Converts call dicts and relationship dicts to the canonical forms used
+        by _two_pass_build so the builder is input-type-agnostic.
+        """
+        meta = result.metadata
+        chunk_type = meta.get("chunk_type")
+        if chunk_type not in SEMANTIC_TYPES:
+            return None
+
+        chunk_id = result.chunk_id
+        file_path = meta.get("file_path", "")
+
+        # Normalise calls: handle split_block extraction fallback
+        raw_calls: list[Any] = meta.get("calls", [])
+        if chunk_type == "split_block" and not raw_calls:
+            raw_calls = self._extract_split_block_calls(
+                file_path=file_path,
+                parent_name=meta.get("parent_name"),
+                name=meta.get("name", ""),
+                start_line=meta.get("start_line", 0),
+                language=meta.get("language", "python"),
+            )
+        calls = [
+            {
+                "callee_name": c.get("callee_name", "unknown"),
+                "line_number": c.get("line_number", 0),
+                "is_method_call": c.get("is_method_call", False),
+            }
+            for c in raw_calls
+        ]
+
+        # Normalise relationships: dict → RelationshipEdge
+        relationships: list[RelationshipEdge] = []
+        for rel_dict in meta.get("relationships", []):
+            try:
+                relationships.append(
+                    RelationshipEdge(
+                        source_id=rel_dict.get("source_id", chunk_id),
+                        target_name=rel_dict.get("target_name", "unknown"),
+                        relationship_type=RelationshipType(
+                            rel_dict.get("relationship_type", "calls")
+                        ),
+                        line_number=rel_dict.get("line_number", 0),
+                        confidence=rel_dict.get("confidence", 1.0),
+                        metadata=rel_dict.get("metadata", {}),
+                    )
+                )
+            except (ValueError, KeyError, TypeError) as e:
+                self._logger.debug(
+                    f"Failed to normalise relationship from {chunk_id}: {e}"
+                )
+
+        return _BuildSpec(
+            chunk_id=chunk_id,
+            name=meta.get("name", "unknown") or "unknown",
+            chunk_type=chunk_type,
+            file_path=file_path,
+            language=meta.get("language", "python"),
+            parent_name=meta.get("parent_name"),
+            calls=calls,
+            relationships=relationships,
+        )
+
+    def _make_spec_from_chunk(self, chunk: Any) -> "_BuildSpec | None":
+        """Normalise a CodeChunk into a _BuildSpec.
+
+        Returns None if the chunk should be skipped (missing chunk_id, or
+        synthetic module/community chunk_type).  Handles both CallEdge objects
+        and dicts for calls, and both RelationshipEdge objects and dicts for
+        relationships, so the builder is input-type-agnostic.
+        """
+        if not chunk.chunk_id:
+            return None
+        if chunk.chunk_type in ("module", "community"):
+            return None
+
+        file_path = chunk.file_path or ""
+        chunk_type = chunk.chunk_type
+
+        # Normalise calls: handle both object and dict forms + split_block fallback
+        raw_calls: list[Any] = list(chunk.calls or [])
+        if chunk_type == "split_block" and not raw_calls:
+            raw_calls = self._extract_split_block_calls(
+                file_path=file_path,
+                parent_name=chunk.parent_name,
+                name=chunk.name or "",
+                start_line=chunk.start_line or 0,
+                language=chunk.language or "python",
+            )
+        calls = []
+        for call in raw_calls:
+            if hasattr(call, "callee_name"):
+                calls.append(
+                    {
+                        "callee_name": call.callee_name,
+                        "line_number": call.line_number,
+                        "is_method_call": call.is_method_call,
+                    }
+                )
+            else:
+                calls.append(
+                    {
+                        "callee_name": call.get("callee_name", "unknown"),
+                        "line_number": call.get("line_number", 0),
+                        "is_method_call": call.get("is_method_call", False),
+                    }
+                )
+
+        # Normalise relationships: accept objects and dicts
+        relationships: list[RelationshipEdge] = []
+        for rel in chunk.relationships or []:
+            if isinstance(rel, RelationshipEdge):
+                relationships.append(rel)
+            elif isinstance(rel, dict):
+                try:
+                    relationships.append(
+                        RelationshipEdge(
+                            source_id=rel.get("source_id", chunk.chunk_id),
+                            target_name=rel.get("target_name", "unknown"),
+                            relationship_type=RelationshipType(
+                                rel.get("relationship_type", "calls")
+                            ),
+                            line_number=rel.get("line_number", 0),
+                            confidence=rel.get("confidence", 1.0),
+                            metadata=rel.get("metadata", {}),
+                        )
+                    )
+                except (ValueError, KeyError, TypeError) as e:
+                    self._logger.debug(
+                        f"Failed to normalise relationship from {chunk.chunk_id}: {e}"
+                    )
+
+        return _BuildSpec(
+            chunk_id=chunk.chunk_id,
+            name=chunk.name or "unknown",
+            chunk_type=chunk_type,
+            file_path=file_path,
+            language=chunk.language or "python",
+            parent_name=chunk.parent_name,
+            calls=calls,
+            relationships=relationships,
+        )
+
+    def _two_pass_build(
+        self, specs: "list[_BuildSpec]", *, clear: bool
+    ) -> "dict[str, int]":
+        """Single owner of the two-pass node-then-edge graph build algorithm.
+
+        Pass 1 adds all nodes and builds the symbol-resolution map.
+        Pass 2 resets per-build caches and adds call + relationship edges.
+
+        Args:
+            specs: Pre-normalised _BuildSpec items (None already filtered out).
+            clear: When True, clears the graph before Pass 1 (used by
+                build_graph_from_chunks for a fresh build).  When False, appends
+                (used by populate_from_embeddings for incremental add).
+
+        Returns:
+            Stats dict with keys: ``nodes_added``, ``call_edges``,
+            ``resolved_edges``, ``phantom_edges``, ``rel_edges``.
+        """
+        if self.storage is None:
+            return {}
+
+        if clear:
+            self.storage.clear()
+
+        if not specs:
+            return {}
+
+        # === PASS 1: add nodes + build symbol-resolution map ===
+        name_to_chunk_ids: dict[str, list[str]] = defaultdict(list)
+        nodes_added = 0
+
+        for spec in specs:
+            try:
+                self.storage.add_node(
+                    chunk_id=spec.chunk_id,
+                    name=spec.name,
+                    chunk_type=spec.chunk_type,
+                    file_path=spec.file_path,
+                    language=spec.language,
+                )
+                nodes_added += 1
+
+                # Index names for call-target resolution (skip "unknown" placeholder)
+                if spec.name and spec.name != "unknown":
+                    name_to_chunk_ids[spec.name].append(spec.chunk_id)
+                    if "." in spec.name:
+                        name_to_chunk_ids[spec.name.split(".")[-1]].append(
+                            spec.chunk_id
+                        )
+                    if spec.parent_name:
+                        name_to_chunk_ids[f"{spec.parent_name}.{spec.name}"].append(
+                            spec.chunk_id
+                        )
+            except (AttributeError, KeyError, TypeError) as e:
+                self._logger.warning(
+                    f"Failed to add node {spec.chunk_id} to graph: {e}"
+                )
+
+        # === PASS 2: add call + relationship edges ===
+        self._file_ast_cache = {}
+        self._seen_split_methods = set()
+        call_edges = 0
+        resolved_edges = 0
+        phantom_edges = 0
+        rel_edges = 0
+
+        for spec in specs:
+            try:
+                for call in spec.calls:
+                    callee_name = call["callee_name"]
+                    line_number = call["line_number"]
+                    is_method_call = call["is_method_call"]
+                    resolved = self._resolve_call_target(
+                        callee_name, name_to_chunk_ids, caller_file=spec.file_path
+                    )
+                    if resolved:
+                        self.storage.add_call_edge(
+                            caller_id=spec.chunk_id,
+                            callee_name=resolved,
+                            line_number=line_number,
+                            is_method_call=is_method_call,
+                            is_resolved=True,
+                            confidence="exact",
+                        )
+                        call_edges += 1
+                        resolved_edges += 1
+                    else:
+                        ambiguous = self._get_ambiguous_candidates(
+                            callee_name, name_to_chunk_ids, caller_file=spec.file_path
+                        )
+                        if ambiguous:
+                            for candidate_id in ambiguous:
+                                self.storage.add_call_edge(
+                                    caller_id=spec.chunk_id,
+                                    callee_name=candidate_id,
+                                    line_number=line_number,
+                                    is_method_call=is_method_call,
+                                    is_resolved=True,
+                                    confidence="ambiguous",
+                                )
+                            call_edges += 1
+                            phantom_edges += 1
+                        else:
+                            self.storage.add_call_edge(
+                                caller_id=spec.chunk_id,
+                                callee_name=callee_name,
+                                line_number=line_number,
+                                is_method_call=is_method_call,
+                                is_resolved=False,
+                            )
+                            call_edges += 1
+                            phantom_edges += 1
+
+                for rel in spec.relationships:
+                    self.storage.add_relationship_edge(rel)
+                    rel_edges += 1
+
+            except Exception as e:
+                self._logger.warning(f"Failed to add edges for {spec.chunk_id}: {e}")
+
+        return {
+            "nodes_added": nodes_added,
+            "call_edges": call_edges,
+            "resolved_edges": resolved_edges,
+            "phantom_edges": phantom_edges,
+            "rel_edges": rel_edges,
+        }
+
     def add_chunk(self, chunk_id: str, metadata: dict[str, Any]) -> None:
         """Add chunk to call graph storage.
 
@@ -379,140 +677,20 @@ class GraphIntegration:
         Args:
             embedding_results: List of EmbeddingResult with .chunk_id and .metadata.
         """
-        if self.storage is None:
+        if self.storage is None or not embedding_results:
             return
-        if not embedding_results:
-            return
-
-        # === PASS 1: add nodes + build symbol-resolution map ===
-        name_to_chunk_ids: dict[str, list[str]] = defaultdict(list)
-        nodes_added = 0
-
-        for result in embedding_results:
-            chunk_id = result.chunk_id
-            meta = result.metadata
-            chunk_type = meta.get("chunk_type")
-
-            if chunk_type not in SEMANTIC_TYPES:
-                continue
-
-            try:
-                self.storage.add_node(
-                    chunk_id=chunk_id,
-                    name=meta.get("name", "unknown"),
-                    chunk_type=chunk_type,
-                    file_path=meta.get("file_path", ""),
-                    language=meta.get("language", "python"),
-                )
-                nodes_added += 1
-
-                name = meta.get("name")
-                if name:
-                    name_to_chunk_ids[name].append(chunk_id)
-
-                    # Also index by bare name for methods (ClassName.method → method)
-                    if "." in name:
-                        name_to_chunk_ids[name.split(".")[-1]].append(chunk_id)
-
-                    # Index qualified name (ClassName.method) for self.method() resolution
-                    # Fixes intra-class method calls by indexing "ClassName.method"
-                    parent_name = meta.get("parent_name")
-                    if parent_name:
-                        name_to_chunk_ids[f"{parent_name}.{name}"].append(chunk_id)
-
-            except (AttributeError, KeyError, TypeError) as e:
-                self._logger.warning(f"Failed to add node {chunk_id} to graph: {e}")
-
-        # === PASS 2: add call + relationship edges with resolution ===
-        call_edges = 0
-        resolved_edges = 0
-        rel_edges = 0
-
-        # Reset per-build caches so dedup and AST cache don't bleed across calls
-        self._file_ast_cache = {}
-        self._seen_split_methods = set()
-
-        for result in embedding_results:
-            chunk_id = result.chunk_id
-            meta = result.metadata
-            caller_file = meta.get("file_path", "")
-
-            calls_to_process = meta.get("calls", [])
-            if meta.get("chunk_type") == "split_block" and not calls_to_process:
-                calls_to_process = self._extract_split_block_calls(
-                    file_path=caller_file,
-                    parent_name=meta.get("parent_name"),
-                    name=meta.get("name", ""),
-                    start_line=meta.get("start_line", 0),
-                    language=meta.get("language", "python"),
-                )
-
-            for call_dict in calls_to_process:
-                callee_name = call_dict.get("callee_name", "unknown")
-                line_number = call_dict.get("line_number", 0)
-                is_method_call = call_dict.get("is_method_call", False)
-                resolved = self._resolve_call_target(
-                    callee_name, name_to_chunk_ids, caller_file=caller_file
-                )
-                if resolved:
-                    self.storage.add_call_edge(
-                        caller_id=chunk_id,
-                        callee_name=resolved,
-                        line_number=line_number,
-                        is_method_call=is_method_call,
-                        is_resolved=True,
-                        confidence="exact",
-                    )
-                    call_edges += 1
-                    resolved_edges += 1
-                else:
-                    ambiguous = self._get_ambiguous_candidates(
-                        callee_name, name_to_chunk_ids, caller_file=caller_file
-                    )
-                    if ambiguous:
-                        for candidate_id in ambiguous:
-                            self.storage.add_call_edge(
-                                caller_id=chunk_id,
-                                callee_name=candidate_id,
-                                line_number=line_number,
-                                is_method_call=is_method_call,
-                                is_resolved=True,
-                                confidence="ambiguous",
-                            )
-                        call_edges += 1
-                    else:
-                        self.storage.add_call_edge(
-                            caller_id=chunk_id,
-                            callee_name=callee_name,
-                            line_number=line_number,
-                            is_method_call=is_method_call,
-                            is_resolved=False,
-                        )
-                        call_edges += 1
-
-            for rel_dict in meta.get("relationships", []):
-                try:
-                    edge = RelationshipEdge(
-                        source_id=rel_dict.get("source_id", chunk_id),
-                        target_name=rel_dict.get("target_name", "unknown"),
-                        relationship_type=RelationshipType(
-                            rel_dict.get("relationship_type", "calls")
-                        ),
-                        line_number=rel_dict.get("line_number", 0),
-                        confidence=rel_dict.get("confidence", 1.0),
-                        metadata=rel_dict.get("metadata", {}),
-                    )
-                    self.storage.add_relationship_edge(edge)
-                    rel_edges += 1
-                except (ValueError, KeyError, TypeError) as e:
-                    self._logger.debug(
-                        f"Failed to add relationship edge from {chunk_id}: {e}"
-                    )
-
+        specs = [
+            s
+            for r in embedding_results
+            if (s := self._make_spec_from_embedding(r)) is not None
+        ]
+        stats = self._two_pass_build(specs, clear=False)
         self._logger.info(
-            f"Populated graph from embeddings: {nodes_added} nodes, "
-            f"{call_edges} call edges ({resolved_edges} resolved, "
-            f"{call_edges - resolved_edges} phantom), {rel_edges} relationship edges"
+            f"Populated graph from embeddings: {stats.get('nodes_added', 0)} nodes, "
+            f"{stats.get('call_edges', 0)} call edges "
+            f"({stats.get('resolved_edges', 0)} resolved, "
+            f"{stats.get('phantom_edges', 0)} phantom), "
+            f"{stats.get('rel_edges', 0)} relationship edges"
         )
 
     def build_graph_from_chunks(self, chunks) -> None:
@@ -543,169 +721,17 @@ class GraphIntegration:
                 "Graph storage not initialized, cannot build from chunks"
             )
             return
-
-        # Clear existing graph for fresh build
-        self.storage.clear()
-
-        # === PASS 1: Add all chunk nodes + build symbol resolution map ===
-        name_to_chunk_ids: dict[str, list[str]] = defaultdict(list)
-        processed_count = 0
-
-        for chunk in chunks:
-            if not chunk.chunk_id:
-                continue
-            # Skip synthetic summaries — no parseable code, would be isolated nodes
-            # (module summaries from A2, community summaries from B1)
-            if chunk.chunk_type in ("module", "community"):
-                continue
-
-            try:
-                # Add node (NetworkX: G.add_node)
-                self.storage.add_node(
-                    chunk_id=chunk.chunk_id,
-                    name=chunk.name or "unknown",
-                    chunk_type=chunk.chunk_type,
-                    file_path=chunk.file_path,
-                    language=chunk.language,
-                )
-
-                # Build name→chunk_id mapping for call resolution
-                if chunk.name and chunk.name != "unknown":
-                    name_to_chunk_ids[chunk.name].append(chunk.chunk_id)
-
-                    # Also index by bare name for methods (ClassName.method → method)
-                    if "." in chunk.name:
-                        bare_name = chunk.name.split(".")[-1]
-                        name_to_chunk_ids[bare_name].append(chunk.chunk_id)
-
-                    # Index qualified name (ClassName.method) for self.method() resolution
-                    # Fixes intra-class method calls by indexing "ClassName.method"
-                    if chunk.parent_name and chunk.name:
-                        qualified_name = f"{chunk.parent_name}.{chunk.name}"
-                        name_to_chunk_ids[qualified_name].append(chunk.chunk_id)
-
-                processed_count += 1
-
-            except (AttributeError, KeyError, TypeError) as e:
-                self._logger.warning(
-                    f"Failed to add chunk {chunk.chunk_id} to graph: {e}"
-                )
-
+        specs = [
+            s
+            for chunk in chunks
+            if (s := self._make_spec_from_chunk(chunk)) is not None
+        ]
+        stats = self._two_pass_build(specs, clear=True)
         self._logger.info(
-            f"Built graph nodes: {processed_count} chunks, {len(name_to_chunk_ids)} unique symbol names"
-        )
-
-        # === PASS 2: Add edges with call target resolution ===
-        resolved_edges = 0
-        phantom_edges = 0
-
-        # Reset per-build caches
-        self._file_ast_cache = {}
-        self._seen_split_methods = set()
-
-        for chunk in chunks:
-            if not chunk.chunk_id:
-                continue
-
-            try:
-                # Add call edges with resolution (NetworkX: G.add_edge)
-                chunk_calls: list[Any] = list(chunk.calls or [])
-                if chunk.chunk_type == "split_block" and not chunk_calls:
-                    chunk_calls = self._extract_split_block_calls(
-                        file_path=chunk.file_path or "",
-                        parent_name=chunk.parent_name,
-                        name=chunk.name or "",
-                        start_line=chunk.start_line or 0,
-                        language=chunk.language or "python",
-                    )
-                for call in chunk_calls:
-                    # Handle both CallEdge objects and dicts
-                    if hasattr(call, "callee_name"):
-                        callee_name = call.callee_name
-                        line_number = call.line_number  # type: ignore[union-attr]
-                        is_method_call = call.is_method_call  # type: ignore[union-attr]
-                    else:
-                        callee_name = call.get("callee_name", "unknown")
-                        line_number = call.get("line_number", 0)
-                        is_method_call = call.get("is_method_call", False)
-
-                    # Try to resolve callee_name to a chunk_id
-                    resolved_chunk_id = self._resolve_call_target(
-                        callee_name, name_to_chunk_ids, caller_file=chunk.file_path
-                    )
-
-                    if resolved_chunk_id:
-                        # Direct chunk-to-chunk edge — high confidence
-                        self.storage.add_call_edge(
-                            caller_id=chunk.chunk_id,
-                            callee_name=resolved_chunk_id,  # Use resolved chunk_id
-                            line_number=line_number,
-                            is_method_call=is_method_call,
-                            is_resolved=True,
-                            confidence="exact",
-                        )
-                        resolved_edges += 1
-                    else:
-                        # Check whether it's ambiguous (project has multiple
-                        # definitions) or a true phantom (no project definition).
-                        ambiguous = self._get_ambiguous_candidates(
-                            callee_name, name_to_chunk_ids, caller_file=chunk.file_path
-                        )
-                        if ambiguous:
-                            # Keep all candidates tagged as ambiguous so they are
-                            # retrievable at query time.  Each edge is low-confidence
-                            # rather than silently dropped.
-                            for candidate_id in ambiguous:
-                                self.storage.add_call_edge(
-                                    caller_id=chunk.chunk_id,
-                                    callee_name=candidate_id,
-                                    line_number=line_number,
-                                    is_method_call=is_method_call,
-                                    is_resolved=True,
-                                    confidence="ambiguous",
-                                )
-                            phantom_edges += 1  # still counted as unresolved for stats
-                        else:
-                            # True phantom node (builtin, stdlib, or unknown symbol)
-                            self.storage.add_call_edge(
-                                caller_id=chunk.chunk_id,
-                                callee_name=callee_name,  # Use bare symbol name
-                                line_number=line_number,
-                                is_method_call=is_method_call,
-                                is_resolved=False,
-                            )
-                            phantom_edges += 1
-
-                # Add relationship edges
-                for rel in chunk.relationships or []:
-                    try:
-                        # Handle both RelationshipEdge objects and dicts
-                        if isinstance(rel, RelationshipEdge):
-                            self.storage.add_relationship_edge(rel)
-                        elif isinstance(rel, dict):
-                            edge = RelationshipEdge(
-                                # pyrefly: ignore [bad-argument-type]
-                                source_id=rel.get("source_id", chunk.chunk_id),
-                                target_name=rel.get("target_name", "unknown"),
-                                relationship_type=RelationshipType(
-                                    rel.get("relationship_type", "calls")
-                                ),
-                                line_number=rel.get("line_number", 0),
-                                confidence=rel.get("confidence", 1.0),
-                                metadata=rel.get("metadata", {}),
-                            )
-                            self.storage.add_relationship_edge(edge)
-                    except (ValueError, KeyError, TypeError) as e:
-                        self._logger.debug(f"Failed to add relationship edge: {e}")
-
-            except Exception as e:
-                self._logger.warning(
-                    f"Failed to add edges for chunk {chunk.chunk_id}: {e}"
-                )
-
-        self._logger.info(
-            f"Built graph from {processed_count} chunks: {len(self.storage)} nodes, "
-            f"{resolved_edges} direct edges, {phantom_edges} phantom edges"
+            f"Built graph from {stats.get('nodes_added', 0)} chunks: "
+            f"{len(self.storage)} nodes, "
+            f"{stats.get('resolved_edges', 0)} direct edges, "
+            f"{stats.get('phantom_edges', 0)} phantom edges"
         )
 
     def _resolve_call_target(
