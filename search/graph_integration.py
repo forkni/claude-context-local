@@ -424,7 +424,7 @@ class GraphIntegration:
                         RelationshipEdge(
                             source_id=rel.get(
                                 "source_id", chunk.chunk_id
-                            ),  # pyrefly: ignore [bad-argument-type]
+                            ),  # pyrefly: ignore [bad-argument-type]  # fmt: skip
                             target_name=rel.get("target_name", "unknown"),
                             relationship_type=RelationshipType(
                                 rel.get("relationship_type", "calls")
