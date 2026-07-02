@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.20.1] - 2026-07-02
+
+### Fixed
+
+- **Intent-classifier verification-term routing (Q12)** — merged a long-pending fix
+  (`fae6256d`, originally opened before the `INTENT_RULES` extraction to
+  `config/intent_rules.yaml`) adding `check whether` / `verify` keyword and pattern
+  coverage to the `local` intent rules, so existence-checking queries such as "verify
+  X exists" and "check whether Y is present" route correctly. Ported into the YAML
+  config instead of the superseded hardcoded dict to preserve the current
+  config-driven architecture.
+
+---
+
 ## [0.20.0] - 2026-06-30
 
 ### Added

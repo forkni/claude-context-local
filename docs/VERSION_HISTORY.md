@@ -2,15 +2,15 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-06-30)
+## Current Status: All Features Operational (2026-07-02)
 
-- **Version**: 0.20.0
+- **Version**: 0.20.1
 - **Status**: Production-ready, concurrency-safe
-- **Test Coverage**: 3,100 tests (3,100 pass / 13 skip, 2026-06-30)
+- **Test Coverage**: 3,140 tests (3,127 pass / 13 skip, 2026-07-02)
 - **Dependencies**: 125 packages + optional `[callgraph]` / `[lsp]` / `[gpu]` extras
 - **SSCG Benchmark**: MRR 0.797, Recall@5 0.689, Recall@7 0.736, Hit@5 100% — recommended k=7 (2026-06-08)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: v0.20.0 — Codecov CI integration, Campaign-2 Tier-1 refactors; v0.19.0 — multi-model routing removed, 18 MCP tools (down from 19), MODEL_REGISTRY pruned 7→5 models
+- **Recent**: v0.20.1 — intent-classifier verification-term routing fix (Q12); v0.20.0 — Codecov CI integration, Campaign-2 Tier-1 refactors; v0.19.0 — multi-model routing removed, 18 MCP tools (down from 19), MODEL_REGISTRY pruned 7→5 models
 
 ---
 
@@ -55,6 +55,14 @@ New agent-evaluation and optimization subsystem built on DSPy, plus search quali
 - **Non-hybrid path persisted content** — BM25-only and semantic-only paths now strip `content` fields consistently.
 - **Windows cp1252 decode on `claude` subprocess** — `encoding="utf-8"` added to prevent `UnicodeDecodeError` on Windows.
 - **Pyrefly type cleanup** — `get_embedder` non-None assertion, `_class_file_cache` `Optional` annotation.
+
+---
+
+## v0.20.1 - Intent-Classifier Verification-Term Routing Fix (2026-07-02)
+
+### Fixed
+
+- **Q12 verification-term routing** — merged a long-pending fix (`fae6256d`) adding `check whether` / `verify` keyword and pattern coverage to the `local` intent rules in `config/intent_rules.yaml`, so existence-checking queries like "verify X exists" route correctly. Ported from a stale hardcoded-dict branch into the current YAML-config architecture.
 
 ---
 

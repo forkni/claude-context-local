@@ -42,14 +42,13 @@
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 3,100 passing tests | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
+**Status**: ✅ Production-ready | 3,127 passing tests | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
 
-## What's New in v0.20.0
+## What's New in v0.20.1
 
-- **Codecov coverage integration** — CI now uploads `coverage.xml` to Codecov on every development CI run; README badge tracks live coverage on the `development` branch. Authoritative gate remains `--cov-fail-under=76` in CI.
-- **Campaign-2 Tier-1 refactors** — Six behavior-preserving internal refactors: project-ID hash single owner, `ResultFactory._from_tuples`, `edge_relation_type()` accessor, `BaseReranker` ABC, resolver scoped-file preamble, `_two_pass_build` graph builder. All cx hotspots decomposed; 3,100+ tests pass.
-- **Test-suite hardening** — Integration tests mock `ModelLoader.load` (no model downloads in CI); pyrefly 0 errors on `development`; snapshot test regression suite (Syrupy, Phase 4) already shipped.
-- **Internal fixes** — Pyrefly narrowing regression in `graph_storage.py`; restored `missing-attribute` / `bad-argument-type` ignores in `graph_integration.py`.
+- **Intent-classifier verification-term routing fix (Q12)** — merged a long-pending fix adding `check whether` / `verify` keyword and pattern coverage to the `local` intent rules in `config/intent_rules.yaml`, so existence-checking queries like "verify X exists" route correctly.
+
+**Previous (v0.20.0)**: Codecov coverage integration (CI uploads `coverage.xml` on every development run); Campaign-2 Tier-1 refactors (six behavior-preserving internal refactors — project-ID hash single owner, `ResultFactory._from_tuples`, `edge_relation_type()` accessor, `BaseReranker` ABC, resolver scoped-file preamble, `_two_pass_build` graph builder); test-suite hardening (mocked model downloads, pyrefly 0 errors, Syrupy snapshot suite).
 
 **Previous (v0.19.0)**: Multi-model routing removed (`RoutingConfig` deleted; `MODEL_REGISTRY` pruned to 5 models; `configure_query_routing` MCP tool removed — server exposes **18 tools**); Launcher UI cleanup (dead code removed, 10 display values corrected); Docs cleanup (routing sections deleted from 4 guides).
 
@@ -431,7 +430,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 3,100 tests (3,100 pass / 13 skip)
+└── tests/             # 3,140 tests (3,127 pass / 13 skip)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -537,7 +536,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (3,100 tests, 100% pass rate)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (3,140 tests, 100% pass rate)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 

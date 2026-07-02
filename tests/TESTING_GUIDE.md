@@ -6,14 +6,14 @@ This comprehensive guide covers the testing infrastructure for the Claude Contex
 
 ### Current Test Status
 
-✅ **All tests passing** (as of 2026-06-30, v0.20.0):
+✅ **All tests passing** (as of 2026-07-02, v0.20.1):
 
 - **Unit Tests**: ~3,066 tests (`tests/unit/`)
   - Chunking (incl. relationships): includes `test_call_edge_resolver.py`, `test_call_graph_config.py`, `test_libcst_call_graph.py`, `test_lsp_call_graph.py` (1 POSIX skip)
   - Embeddings, Graph, Merkle, Search, MCP Server, Evaluation, Benchmark, Utils, Tools
 - **Integration Tests**: ~22 tests (`tests/integration/`)
 - **Fast Integration Tests**: ~38 tests (`tests/fast_integration/`)
-- **Total**: 3,126 passed, 13 skipped (measured 2026-06-30)
+- **Total**: 3,127 passed, 13 skipped (measured 2026-07-02)
 
 **Note**: Run `uv run pytest tests/ --ignore=tests/slow_integration -q` for the full suite (excluding GPU-dependent slow tests).
 
@@ -21,7 +21,7 @@ This comprehensive guide covers the testing infrastructure for the Claude Contex
 
 ### Why Run Tests by Module?
 
-The test suite has been optimized for module-by-module execution. Running all tests together may encounter resource cleanup issues between modules. **All 3,100+ tests pass when run via `./scripts/test/run_tests.sh` or `uv run pytest tests/ --ignore=tests/slow_integration -q`.**
+The test suite has been optimized for module-by-module execution. Running all tests together in one process (e.g. plain `./scripts/test/run_tests.sh` with no args) can hit cross-module resource-cleanup contamination — observed 2026-07-02: 11 failures (dimension mismatches, stale model state) that vanish when run via the excluded-slow-integration command below. **All 3,127 tests pass when run via `uv run pytest tests/ --ignore=tests/slow_integration -q`**, or module-by-module per the commands below.
 
 ### Quick Start: Run Tests by Module
 

@@ -31,6 +31,8 @@ intent_rules:
       - "identify"
       # Existence-checking query patterns
       - "check if"
+      - "check whether"
+      - "verify"
       - "does"
       - "is there"
       - "exists"
@@ -85,6 +87,8 @@ intent_rules:
       - ['\bget\s+\w+(\s+\w+)*\s+from\b', 1.3]             # "get node text from tree sitter"
       - ['\b(enum|interface|struct|type)\s+\w+\b', 1.2]    # "interface SearchResult"
       - ['\bcheck\s+if\s+\w+\s+exists?\b', 1.4]
+      - ['\bcheck\s+(if|whether)\s+\w+\s+(exists?|present|available)\b', 1.3]  # Q12: "check whether X is present"
+      - ['\bverify\s+(that\s+)?\w+\s+(exists?|is\s+present)\b', 1.2]          # Q12: "verify X exists"
       - ['\bdoes\s+\w+\s+exist\b', 1.4]
       - ['\bis\s+there\s+(a\s+)?\w+\b', 1.3]
 
