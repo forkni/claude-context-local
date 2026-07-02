@@ -61,6 +61,21 @@ def mock_embedder():
         yield
 
 
+@pytest.mark.skip(
+    reason=(
+        "Quarantined: flaky in CI (development branch, ~9.5% flake rate over the "
+        "trailing week — 2/21 executed runs). Failed with 'BM25 should have docs' "
+        "(bm25_documents==0 right after indexing) and, on a separate commit, with "
+        "'BM25 should be cleared' (bm25_documents==-1). Suspected root cause: "
+        "get_state()/get_searcher() singleton reuse across the pytest session lets "
+        "index/searcher state from a prior test leak into this one (same class of "
+        "bug fixed for tests/unit/mcp_server in fb1f372a's regression-guard "
+        "conftest, which does not cover fast_integration/). Could not verify a "
+        "fix locally in this environment (torch install is blocked by network "
+        "policy), so quarantining instead of guessing. See the flaky-test report "
+        "for the full ranked list and evidence."
+    )
+)
 @pytest.mark.asyncio
 async def test_clear_index_clears_bm25_and_dense(mock_embedder):
     """Integration test: clear_index removes BOTH BM25 and dense indices."""
