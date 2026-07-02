@@ -138,7 +138,7 @@ Test suite documentation and validation reports.
 
 | Document | Description |
 |----------|-------------|
-| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (3,100 tests, 3,100 pass / 13 skip) |
+| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (3,140 tests, 3,127 pass / 13 skip) |
 | **[tests/README.md](../tests/README.md)** | Test suite organization and best practices |
 
 ### Testing Tools (scripts/test/)
@@ -184,10 +184,11 @@ Detailed technical documentation.
 
 | Document | Description |
 |----------|-------------|
-| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.20.0 |
+| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.20.1 |
 
 ### Key Versions
 
+- **v0.20.1** (2026-07-02): Intent-classifier verification-term routing fix (Q12)
 - **v0.20.0** (2026-06-30): Codecov CI integration, Campaign-2 Tier-1 behavior-preserving refactors, 3,100 tests
 - **v0.19.0** (2026-06-27): Multi-model routing removed; `configure_query_routing` MCP tool deleted; **18 tools** (down from 19); `MODEL_REGISTRY` pruned 7→5 models; launcher display values corrected (BM25/Dense 0.35/0.65, reranker gain +15-25%)
 - **v0.18.0** (2026-06-26): `source_order_output` default `True→False` (results now in relevance order); MCP-pipeline eval MRR 0.700→0.8278; `run_mcp_pipeline_eval.py` script added
@@ -275,4 +276,4 @@ Detailed technical documentation.
 
 ---
 
-**Last Updated**: 2026-06-30 (v0.20.0 — Codecov CI integration, Campaign-2 Tier-1 refactors; 3,100 tests)
+**Last Updated**: 2026-07-02 (v0.20.1 — Intent-classifier verification-term routing fix; 3,140 tests)
