@@ -388,7 +388,7 @@ class ObservabilityConfig:
 
 @dataclass
 class CallGraphConfig:
-    """Call-graph resolver pipeline settings (5 fields).
+    """Call-graph resolver pipeline settings (6 fields).
 
     Controls which static-analysis backends run at full-index time to inject
     cross-module ``calls`` edges into the code graph.
@@ -425,6 +425,16 @@ class CallGraphConfig:
     """Per-request timeout for LSP JSON-RPC calls (seconds).
 
     Increase for large codebases where basedpyright type-checking takes longer.
+    """
+
+    lsp_total_timeout_seconds: float = 120.0
+    """Aggregate wall-clock budget for the *entire* LSP pass (seconds).
+
+    Unlike ``lsp_timeout_seconds`` (per JSON-RPC request), this bounds the
+    whole ``resolve()`` call across all files. If exceeded, the basedpyright
+    subprocess is force-killed and edges collected so far are returned —
+    partial LSP results are safe because LSP only *upgrades confidence* on
+    edges the pyan/libcst resolvers already produced.
     """
 
     use_pyproject_toml: bool = False

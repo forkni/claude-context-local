@@ -257,7 +257,12 @@ class IndexWriteStage:
             if cg_cfg is not None and cg_cfg.lsp_enabled:
                 from chunking.relationships.lsp_call_graph import LSPResolver
 
-                resolvers.append(LSPResolver(timeout=cg_cfg.lsp_timeout_seconds))
+                resolvers.append(
+                    LSPResolver(
+                        timeout=cg_cfg.lsp_timeout_seconds,
+                        max_total_seconds=cg_cfg.lsp_total_timeout_seconds,
+                    )
+                )
 
             if not resolvers:
                 logger.info("[CALL_EDGES] No resolvers configured — skipping injection")
