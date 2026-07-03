@@ -33,12 +33,12 @@ dependencies = [
     "einops>=0.8.0",  # Required for CodeRankEmbed model
     "faiss-cpu>=1.14.3",
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
-    "huggingface-hub>=0.36.0",
+    "huggingface-hub>=1.3.0",  # transformers>=5.3.0 requires >=1.3.0,<2
     "idna>=3.15",  # Security: CVE-2026-45409
     "mcp>=1.27.0,<2",  # <2: mcp v2 (beta 2026-06-30) has breaking changes
     "msgpack>=1.2.1",  # Security: GHSA-6v7p-g79w-8964 (SEGV on repeated unpack after error)
     "networkx>=3.0",  # Required for graph storage and community detection
-    "nltk>=3.9.4",  # Security: Fixes CVE-2025-14009 (path traversal in downloader)
+    "nltk>=3.9.4",  # Security: Fixes CVE-2025-14009 (path traversal in downloader). CVE-2026-12243 (incomplete fix, path traversal) has no release yet -- see audit_reports/deferred-cves-2026-07-03.md
     "psutil>=7.2.1",
     "pydantic-settings>=2.14.2",  # Security: GHSA-4xgf-cpjx-pc3j (symlink follow in secrets_dir)
     "pygments>=2.20.0",  # Security: CVE-2026-4539 (ReDoS in AdlLexer)
@@ -53,8 +53,8 @@ dependencies = [
     "starlette>=1.3.1",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
     "tiktoken>=0.12.0",
     "torch>=2.8.0,<2.9.0",  # 2.9.x breaks ModernBERT torch.compile (template conflict)
-    "transformers>=4.51.0,<4.58.0",  # >=4.51 for Qwen3; <4.58 required by optimum-onnx ONNX compatibility
-    "tree-sitter>=0.25.0",
+    "transformers>=5.3.0,<6",  # Security: >=5.3.0 fixes CVE-2026-4372 (config.json RCE) & CVE-2026-1839 (Trainer RCE); <6 pre-major. Drops the old <4.58 optimum-onnx cap -- see [onnx] extra note below.
+    "tree-sitter>=0.25.0,<0.26",  # ABI: no tree-sitter-* grammar package supports the 0.26 ABI yet (max on PyPI is 0.25.0); loading grammars raises OverflowError under 0.26
     "tree-sitter-c>=0.24.2",
     "tree-sitter-c-sharp>=0.23.5",
     "tree-sitter-cpp>=0.23.4",
@@ -117,13 +117,16 @@ profile = [
     "snoop>=0.6.0",
     "py-heat>=0.0.6",
 ]
-onnx = [
-    "optimum[onnxruntime-gpu]>=1.25.0",
-]
-# NOTE: optimum[onnxruntime-gpu] caps transformers<4.58.0. This is why
-# transformers is pinned to >=4.51.0,<4.58.0 in the main dependencies.
-# Install: uv pip install -e .[onnx]
-# See tools/convert_onnx.py for standalone conversion usage.
+# onnx = ["optimum[onnxruntime-gpu]>=1.25.0"]  # TEMPORARILY REMOVED (2026-07-03)
+# ONNX conversion/runtime backend is unsupported for now: optimum[onnxruntime-gpu]
+# caps transformers<4.52 even at its latest release, which is incompatible with the
+# transformers>=5.3.0 security upgrade above (fixes CVE-2026-4372/CVE-2026-1839).
+# The ONNX code paths (embeddings/onnx_loader.py, embeddings/onnx_wrapper.py,
+# tools/convert_onnx.py) are untouched and dormant (search/config.py use_onnx=False
+# by default; optimum imports are lazy + ImportError-guarded with a PyTorch fallback).
+# Restore this extra once optimum ships transformers-5 compatibility.
+# See tools/convert_onnx.py for standalone conversion usage (requires manual
+# `pip install optimum[onnxruntime-gpu]` against a pinned transformers<5 env).
 gpu = [
     # nvidia-ml-py (pynvml): NVML bindings for device-level GPU memory reporting.
     # Used by _get_nvml_used_bytes() (model_loader.py) and _check_vram_status()
@@ -153,8 +156,10 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-06-24 (pip-audit - 5 advisories remain: transformers 2×RCE blocked by optimum-onnx pin,
-#             diskcache/sqlitedict/pyjwt 3 with no upstream fix)
+# Last audit: 2026-07-03 (pip-audit - transformers>=5.3.0 unblocks CVE-2026-4372/CVE-2026-1839
+#             by dropping the optimum-onnx <4.58 pin; [onnx] extra temporarily removed as a result
+#             (see profile/onnx comment above). Remaining: diskcache/sqlitedict/nltk, no upstream fix.
+#             See audit_reports/deferred-cves-2026-07-03.md)
 #
 # Direct dependency security updates:
 # mcp>=1.27.0,<2       # Fixes CVE-2025-66416 (DNS rebinding); <2 guards against mcp v2 breaking changes (beta 2026-06-30)
@@ -180,9 +185,13 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # wheel>=0.46.3            # Fixes CVE-2026-24049 (path traversal in unpack)
 #
 # Deferred (no upstream fix):
-# * transformers CVE-2026-1839, PYSEC-2025-217 (Trainer/X-CLIP RCE) — fix needs 5.0.0rc3, blocked by optimum-onnx <4.58.0 pin; not applicable (no Trainer use)
+# * transformers PYSEC-2025-217 (X-CLIP checkpoint-conversion RCE) — no fix; not applicable (no X-CLIP conversion use)
 # * diskcache CVE-2025-69872, sqlitedict CVE-2024-35515 (pickle RCE) — no upstream fix; sqlitedict mitigated via JSON serialization (metadata.py)
+# * nltk CVE-2026-12243 (path traversal, incomplete fix of CVE-2025-14009) — no upstream fix; no untrusted NLTK data paths in this project
 # * pyjwt PYSEC-2025-183 (disputed weak encryption) — no upstream fix
+#
+# Resolved 2026-07-03: transformers CVE-2026-4372 (config.json RCE), CVE-2026-1839 (Trainer RCE)
+#   via transformers>=5.3.0,<6 + huggingface-hub>=1.3.0. Traded off: [onnx] extra removed (see above).
 #
 # Verification: .venv/Scripts/pip-audit --format json | .venv/Scripts/python.exe tools/summarize_audit.py
 #
