@@ -561,15 +561,13 @@ if __name__ == "__main__":
                 try:
                     logger.info("[HTTP CONFIG] Config reload requested")
 
-                    # Reload config from file
-                    from search.config import SearchConfigManager
+                    # Reload config from file into the shared singleton so
+                    # get_search_config() consumers across the running server
+                    # pick up the change.
+                    from search.config import get_config_manager
 
-                    config_manager = SearchConfigManager()
-                    config_manager.load_config()  # Re-reads search_config.json
-
-                    # Get updated values for response
-                    # pyrefly: ignore [missing-attribute]
-                    config = config_manager.config
+                    config_manager = get_config_manager()
+                    config = config_manager.load_config()  # Re-reads search_config.json
 
                     logger.info(
                         f"[HTTP CONFIG] Reloaded: mode={config.search_mode.default_mode}, "

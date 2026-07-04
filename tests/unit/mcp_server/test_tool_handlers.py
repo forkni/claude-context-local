@@ -1067,5 +1067,34 @@ async def test_handle_delete_project_adds_to_cleanup_queue(tmp_path):
     assert result.get("queued_for_retry") == 1
 
 
+# ============================================================================
+# REGRESSION: SearchConfigManager has no public `.config` attribute
+# ============================================================================
+
+
+def test_config_manager_exposes_config_only_via_load_config():
+    """Regression guard for mcp_server/server.py::handle_reload_config.
+
+    That handler used to read `config_manager.config` after calling
+    `load_config()`, but SearchConfigManager stores its parsed config in the
+    private `_config` and only exposes it via load_config()'s return value.
+    This caused every /reload_config HTTP call to 500 with
+    AttributeError: 'SearchConfigManager' object has no attribute 'config'.
+    """
+    from search.config import SearchConfigManager
+
+    mgr = SearchConfigManager()
+    assert not hasattr(mgr, "config")
+
+    cfg = mgr.load_config()
+    # Attributes the /reload_config handler reads must exist on the
+    # returned SearchConfig.
+    assert isinstance(cfg.search_mode.default_mode, str)
+    assert hasattr(cfg.search_mode, "bm25_weight")
+    assert hasattr(cfg.search_mode, "dense_weight")
+    assert hasattr(cfg.performance, "enable_entity_tracking")
+    assert hasattr(cfg.reranker, "enabled")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
