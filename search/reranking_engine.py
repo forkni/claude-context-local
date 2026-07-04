@@ -109,22 +109,47 @@ class RerankingEngine:
             return False  # pragma: no mutate
 
     def _ensure_reranker(self, log_prefix: str) -> bool:
-        """Lazy-init or cleanup neural reranker based on current VRAM/config state.
+        """Lazy-init, swap, or cleanup neural reranker based on current VRAM/config state.
 
         Updates self._neural_reranking_enabled and self.neural_reranker.
         Returns True if reranking is available (enabled and loaded).
+
+        Note: like the existing create-branch, the swap-branch below has no lock around
+        it. RerankingEngine is a single instance shared across concurrent
+        HybridSearcher.search() calls (each offloaded via asyncio.to_thread), so two
+        requests detecting a swap at the same time could each build a new reranker and
+        the loser's instance would be discarded without cleanup(). Pre-existing gap,
+        not introduced by the swap branch — same race already existed for the create
+        branch's `self.neural_reranker is None` check.
         """
         should_enable = self.should_enable_neural_reranking()
+        config = get_search_config()
 
         # and/or mutations here are boundary orchestration; equivalent under the test suite's
         # mock setup (create_reranker is mocked, _ensure_reranker is not called directly).
         if should_enable and self.neural_reranker is None:  # pragma: no mutate
-            config = get_search_config()
             self.neural_reranker = create_reranker(
                 model_name=config.reranker.model_name,
                 batch_size=config.reranker.batch_size,
             )
             self._logger.debug(f"{log_prefix} Neural reranker initialized")
+        elif (
+            should_enable
+            and self.neural_reranker is not None
+            and self.neural_reranker.model_name != config.reranker.model_name
+        ):
+            # configure_reranking(model_name=...) only takes effect on the next search if
+            # we actually detect the change here — without this branch, a loaded reranker
+            # instance is never replaced, and the config change is silently a no-op.
+            self._logger.info(
+                f"{log_prefix} Reranker model changed "
+                f"({self.neural_reranker.model_name} -> {config.reranker.model_name}), reloading"
+            )
+            self.neural_reranker.cleanup()
+            self.neural_reranker = create_reranker(
+                model_name=config.reranker.model_name,
+                batch_size=config.reranker.batch_size,
+            )
         elif not should_enable and self.neural_reranker is not None:
             self.neural_reranker.cleanup()
             self.neural_reranker = None

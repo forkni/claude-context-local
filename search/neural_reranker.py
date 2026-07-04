@@ -228,11 +228,20 @@ class NeuralReranker(BaseReranker):
             )
             pairs.append((query, content))
 
-        scores = self.model.predict(
-            pairs,
-            batch_size=self.batch_size,
-            show_progress_bar=False,
-        )
+        try:
+            scores = self.model.predict(
+                pairs,
+                batch_size=self.batch_size,
+                show_progress_bar=False,
+            )
+        finally:
+            # Pool-wide policy: release cached-but-unused CUDA allocator blocks after
+            # every rerank() call, on both success and failure. Originally added only to
+            # JinaRerankerV3 (whose variable-length listwise context caused torch_reserved
+            # to grow monotonically 8.3GB->13.5GB across searches on an RTX 4090 while
+            # torch_allocated stayed flat); applied here too for pool-wide consistency.
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         scored_candidates = list(zip(candidates, scores, strict=True))
         scored_candidates.sort(key=lambda x: x[1], reverse=True)
@@ -290,11 +299,16 @@ class NeuralReranker(BaseReranker):
         if not all_pairs:
             return [[] for _ in batch]
 
-        all_scores = self.model.predict(
-            all_pairs,
-            batch_size=self.batch_size,
-            show_progress_bar=False,
-        )
+        try:
+            all_scores = self.model.predict(
+                all_pairs,
+                batch_size=self.batch_size,
+                show_progress_bar=False,
+            )
+        finally:
+            # See rerank() above: pool-wide policy, release after every call.
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         results = []
         for i, (_, candidates) in enumerate(batch):
@@ -478,8 +492,6 @@ class GenerativeReranker(BaseReranker):
                 f"Batched inference failed ({type(e).__name__}): {e}. "
                 "Returning candidates in original order."
             )
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             # Graceful fallback: return top_k candidates with original scores preserved
             results = []
             for candidate in candidates[:top_k]:
@@ -487,6 +499,12 @@ class GenerativeReranker(BaseReranker):
                 candidate.metadata["reranker_score"] = candidate.score
                 results.append(candidate)
             return results
+        finally:
+            # Pool-wide policy (see NeuralReranker.rerank() above): release cached-but-
+            # unused CUDA allocator blocks after every call, on both success and failure.
+            # `finally` runs even though the except branch above returns early.
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         # Pair candidates with scores and sort
         scored_candidates = list(zip(candidates, scores, strict=True))
@@ -734,11 +752,29 @@ class JinaRerankerV3(BaseReranker):
                 jina_results = self.model.rerank(query, documents, top_n=top_k)
         except torch.cuda.OutOfMemoryError as e:
             self._logger.error(f"CUDA OOM during reranking: {e}")
-            torch.cuda.empty_cache()
             raise RuntimeError(f"Insufficient GPU memory for reranking: {e}") from e
         except Exception as e:
             self._logger.error(f"Jina reranker inference failed: {e}")
             raise RuntimeError(f"Reranking failed: {e}") from e
+        finally:
+            # Pool-wide policy: release cached-but-unused allocator blocks after every
+            # rerank() call, on success, OOM, or any other failure — NeuralReranker and
+            # GenerativeReranker do the same (see their rerank()/rerank_batch() methods).
+            # This class is where the policy was discovered: Jina's listwise architecture
+            # concatenates ALL candidate documents into one shared context per forward
+            # pass, so sequence length — and therefore the CUDA allocator's block sizes —
+            # varies with every query. Differently-sized blocks are rarely reused
+            # call-to-call, so torch_reserved (cached-but-unallocated memory) ratchets
+            # upward monotonically across searches even though torch_allocated (live
+            # tensors) stays flat — confirmed via get_memory_status(): reserved grew
+            # ~8.3GB -> 13.5GB over 4 searches on an RTX 4090 while allocated stayed
+            # pinned at 2.25GB. Left unchecked this eventually exhausts VRAM and triggers
+            # Windows WDDM's shared-memory (sysmem) fallback ("VRAM spillover"). GTE/BGE's
+            # uniform, fixed-max_length=512 pairwise batches are far less likely to hit
+            # this in practice, but release uniformly across the pool rather than
+            # special-casing by measured risk.
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         # Map back to SearchResult objects with index validation
         n = len(candidates)

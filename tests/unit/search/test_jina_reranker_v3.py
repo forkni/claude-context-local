@@ -168,6 +168,60 @@ class TestJinaRerankerV3:
         assert results[1].chunk_id == "a"
         assert results[1].score == 0.85
 
+    @patch("torch.cuda.is_available", return_value=True)
+    @patch("torch.cuda.empty_cache")
+    def test_rerank_releases_cuda_cache_on_success(
+        self, mock_empty_cache, mock_is_available
+    ):
+        """Regression: successful rerank() must release cached allocator blocks.
+
+        Jina's listwise architecture concatenates all candidates into one
+        variable-length forward pass per call, so the CUDA caching allocator's
+        reserved memory grows unboundedly across searches unless released after
+        every call (unlike GTE/BGE's small, uniform pairwise batches). Verified
+        on real hardware (RTX 4090): torch_reserved climbed 8.3GB -> 13.5GB over
+        4 searches with this call missing; flat at 2.26GB with it present.
+        """
+        mock_model = MagicMock()
+        mock_model.rerank.return_value = [
+            {"index": 0, "relevance_score": 0.9, "document": "code a"}
+        ]
+        reranker = JinaRerankerV3()
+        reranker._model = mock_model
+
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            )
+        ]
+        reranker.rerank("test query", candidates, top_k=1)
+
+        mock_empty_cache.assert_called_once()
+
+    @patch("torch.cuda.is_available", return_value=True)
+    @patch("torch.cuda.empty_cache")
+    def test_rerank_releases_cuda_cache_on_failure(
+        self, mock_empty_cache, mock_is_available
+    ):
+        """Regression: a failed rerank() must still release cached blocks (finally)."""
+        mock_model = MagicMock()
+        mock_model.rerank.side_effect = RuntimeError("inference failed")
+        reranker = JinaRerankerV3()
+        reranker._model = mock_model
+
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            )
+        ]
+
+        import pytest
+
+        with pytest.raises(RuntimeError, match="Reranking failed"):
+            reranker.rerank("test query", candidates, top_k=1)
+
+        mock_empty_cache.assert_called_once()
+
     @patch("transformers.AutoModel.from_pretrained")
     @patch("transformers.AutoConfig.from_pretrained")
     def test_model_property_resets_on_validation_failure(

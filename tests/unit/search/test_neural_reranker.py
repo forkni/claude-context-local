@@ -164,6 +164,104 @@ class TestNeuralReranker:
         # Verify batch_size was used
         assert mock_model.predict.call_args[1]["batch_size"] == 32
 
+    @patch("torch.cuda.is_available", return_value=True)
+    @patch("torch.cuda.empty_cache")
+    @patch("sentence_transformers.CrossEncoder")
+    def test_rerank_releases_cuda_cache_on_success(
+        self, mock_cross_encoder, mock_empty_cache, mock_is_available
+    ):
+        """Regression: successful rerank() must release cached allocator blocks.
+
+        Pool-wide policy (measured evidence in JinaRerankerV3.rerank()): release
+        cached-but-unused CUDA allocator blocks after every call, for every reranker
+        class in the pool — not just Jina.
+        """
+        mock_model = MagicMock()
+        mock_model.predict.return_value = [0.9]
+        mock_cross_encoder.return_value = mock_model
+
+        reranker = NeuralReranker()
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            )
+        ]
+        reranker.rerank("query", candidates, top_k=1)
+
+        mock_empty_cache.assert_called_once()
+
+    @patch("torch.cuda.is_available", return_value=True)
+    @patch("torch.cuda.empty_cache")
+    @patch("sentence_transformers.CrossEncoder")
+    def test_rerank_releases_cuda_cache_on_failure(
+        self, mock_cross_encoder, mock_empty_cache, mock_is_available
+    ):
+        """Regression: a failed rerank() must still release cached blocks (finally)."""
+        import pytest
+
+        mock_model = MagicMock()
+        mock_model.predict.side_effect = RuntimeError("inference failed")
+        mock_cross_encoder.return_value = mock_model
+
+        reranker = NeuralReranker()
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            )
+        ]
+
+        with pytest.raises(RuntimeError, match="inference failed"):
+            reranker.rerank("query", candidates, top_k=1)
+
+        mock_empty_cache.assert_called_once()
+
+    @patch("torch.cuda.is_available", return_value=True)
+    @patch("torch.cuda.empty_cache")
+    @patch("sentence_transformers.CrossEncoder")
+    def test_rerank_batch_releases_cuda_cache_on_success(
+        self, mock_cross_encoder, mock_empty_cache, mock_is_available
+    ):
+        """Regression: successful rerank_batch() must release cached allocator blocks."""
+        mock_model = MagicMock()
+        mock_model.predict.return_value = [0.9]
+        mock_cross_encoder.return_value = mock_model
+
+        reranker = NeuralReranker()
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            )
+        ]
+
+        reranker.rerank_batch([("query", candidates)], top_k=1)
+
+        mock_empty_cache.assert_called_once()
+
+    @patch("torch.cuda.is_available", return_value=True)
+    @patch("torch.cuda.empty_cache")
+    @patch("sentence_transformers.CrossEncoder")
+    def test_rerank_batch_releases_cuda_cache_on_failure(
+        self, mock_cross_encoder, mock_empty_cache, mock_is_available
+    ):
+        """Regression: a failed rerank_batch() must still release cached blocks."""
+        import pytest
+
+        mock_model = MagicMock()
+        mock_model.predict.side_effect = RuntimeError("inference failed")
+        mock_cross_encoder.return_value = mock_model
+
+        reranker = NeuralReranker()
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            )
+        ]
+
+        with pytest.raises(RuntimeError, match="inference failed"):
+            reranker.rerank_batch([("query", candidates)], top_k=1)
+
+        mock_empty_cache.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # T4 ownership gate — BaseReranker owns lifecycle, no per-class copies
