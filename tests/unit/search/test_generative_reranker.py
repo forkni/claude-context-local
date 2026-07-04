@@ -208,11 +208,16 @@ class TestGenerativeReranker:
         assert results[1].metadata["original_score"] == 0.8
         assert results[1].metadata["reranker_score"] == 0.8
 
+    @patch("torch.cuda.is_available", return_value=True)
     @patch("torch.cuda.empty_cache")
     @patch("transformers.AutoModelForCausalLM.from_pretrained")
     @patch("transformers.AutoTokenizer.from_pretrained")
     def test_rerank_releases_cuda_cache_on_success(
-        self, mock_tokenizer_class, mock_model_class, mock_empty_cache
+        self,
+        mock_tokenizer_class,
+        mock_model_class,
+        mock_empty_cache,
+        mock_is_available,
     ):
         """Regression: successful rerank() must release cached allocator blocks.
 
@@ -269,11 +274,16 @@ class TestGenerativeReranker:
 
         mock_empty_cache.assert_called_once()
 
+    @patch("torch.cuda.is_available", return_value=True)
     @patch("torch.cuda.empty_cache")
     @patch("transformers.AutoModelForCausalLM.from_pretrained")
     @patch("transformers.AutoTokenizer.from_pretrained")
     def test_rerank_releases_cuda_cache_on_failure(
-        self, mock_tokenizer_class, mock_model_class, mock_empty_cache
+        self,
+        mock_tokenizer_class,
+        mock_model_class,
+        mock_empty_cache,
+        mock_is_available,
     ):
         """Regression: a failed rerank() must still release cached blocks (finally).
 
