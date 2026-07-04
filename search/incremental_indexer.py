@@ -246,7 +246,7 @@ class IncrementalIndexer:
                 try:
                     self.embedder.cleanup()
                     logger.info("VRAM cleanup completed successfully")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - resilience: VRAM cleanup best-effort, indexing continues
                     logger.warning(
                         f"VRAM cleanup failed (continuing with index): {e}",
                         exc_info=True,
@@ -312,7 +312,7 @@ class IncrementalIndexer:
             if _should_refresh_communities:
                 try:
                     self._community_refresh_stage.run(changes, project_name)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - resilience: community summary refresh non-fatal, indexing continues
                     logger.warning(
                         f"[INCR_COMM] Community summary refresh failed (non-fatal): {e}",
                         exc_info=True,
@@ -379,7 +379,7 @@ class IncrementalIndexer:
                 bm25_resync_count=bm25_resync_count,
             )
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - api-boundary: top-level indexing op converts failure to structured result
             logger.error(f"Incremental indexing failed: {e}")
             logger.error(traceback.format_exc())
 
@@ -523,7 +523,7 @@ class IncrementalIndexer:
         try:
             self.indexer.clear_index()
             return self._full_index(project_path, project_name, start_time)
-        except Exception as recovery_error:
+        except Exception as recovery_error:  # noqa: BLE001 - api-boundary: recovery failure converted to structured error result
             logger.error(f"Recovery failed: {recovery_error}")
             logger.error(traceback.format_exc())
             return self._zero_result(
@@ -1091,7 +1091,7 @@ class IncrementalIndexer:
                     logger.info(
                         f"[INCREMENTAL] Generated {len(file_summaries)} module summary chunks"
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: optional module summary generation, indexing continues
                 logger.warning(
                     f"[INCREMENTAL] File summary generation failed: {e}", exc_info=True
                 )
@@ -1241,7 +1241,7 @@ class IncrementalIndexer:
                     pass
 
                 logger.info("Multi-model VRAM cleanup completed successfully")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - cleanup: best-effort VRAM release, reindex proceeds regardless
                 logger.warning(
                     f"Multi-model VRAM cleanup failed (continuing with reindex): {e}",
                     exc_info=True,

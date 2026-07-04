@@ -222,7 +222,7 @@ class TreeSitterChunker:
             try:
                 language = AVAILABLE_LANGUAGES[language_name]
                 chunkers[suffix] = chunker_factory(language)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: per-language chunker init is optional, degrade to no chunker for this suffix
                 logger.warning(
                     f"Failed to initialize chunker for {suffix}: {e}", exc_info=True
                 )
@@ -294,7 +294,7 @@ class TreeSitterChunker:
             return chunker.chunk_code(
                 content, config=config, repo_profile=self.repo_profile
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - parse-recovery: tree-sitter parsing of one file failing shouldn't abort the whole chunking run
             logger.warning(
                 f"Tree-sitter parsing failed for {file_path}: {e}", exc_info=True
             )

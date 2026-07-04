@@ -88,7 +88,7 @@ def _get_graph_data_for_chunk(
                     lst.append(source)
 
         return result if result else None
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - resilience: optional graph enrichment, degrade to no graph data
         logger.debug(f"Failed to get graph data for {chunk_id}: {e}")
     return None
 

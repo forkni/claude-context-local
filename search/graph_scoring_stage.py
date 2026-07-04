@@ -245,7 +245,7 @@ class GraphScoringStage:
                         logger.info(
                             f"[SSCG] No graph nodes found for {len(result_chunk_ids)} chunk_ids"
                         )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: optional SSCG subgraph extraction, search continues without it
                 logger.debug(f"[SSCG] Subgraph extraction failed: {e}")
 
         return subgraph_data

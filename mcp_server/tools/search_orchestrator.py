@@ -699,7 +699,7 @@ class SearchOrchestrator:
                         return await handle_find_similar_code(
                             {"chunk_id": _redirect_result[0].chunk_id, "k": redirect.k}
                         )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - resilience: optional redirect, falls back to normal search
                     logger.warning(
                         f"[INTENT] Failed to redirect SIMILARITY query: {e}. "
                         f"Falling back to normal search."

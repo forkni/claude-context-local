@@ -137,7 +137,7 @@ def gepa_tool_bridge(
                 # Wait until the outer sync context exits.
                 while not cleanup_signal.is_set():
                     await asyncio.sleep(0.1)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - cross-thread: captured for re-raise on the calling thread
             session_error.append(exc)
             session_ready.set()  # unblock the waiter so it can raise
 
@@ -180,7 +180,7 @@ def gepa_tool_bridge(
                             tool_timeout_s,
                         )
                         return msg
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:  # noqa: BLE001 - api-boundary: tool bridge returns error string to caller
                         msg = f"Execution error in {tool_name}: {exc}"
                         logger.warning("Bridge tool %r raised %r", tool_name, exc)
                         return msg
@@ -512,7 +512,7 @@ def run_gepa_optimization(
         optimized.save(str(program_path))
         artifact_paths.append(str(program_path))
         logger.info("Saved optimised program → %s", program_path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 - resilience: artifact save is non-critical, run continues regardless
         logger.warning("Could not save optimised program: %r", exc)
 
     # Save a human-readable summary.

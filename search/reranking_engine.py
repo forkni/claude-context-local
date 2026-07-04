@@ -104,7 +104,7 @@ class RerankingEngine:
                 return False
         # VRAM-check exception path: ExceptionReplacer and ReplaceFalseWithTrue are
         # equivalent for unit tests (exception is unreachable with mocked torch).
-        except Exception as e:  # pragma: no mutate
+        except Exception as e:  # pragma: no mutate  # noqa: BLE001 - resilience: VRAM check failure disables neural reranking
             self._logger.warning(f"VRAM check failed, disabling neural reranking: {e}")
             return False  # pragma: no mutate
 
@@ -187,7 +187,7 @@ class RerankingEngine:
         # OOM detection path: all mutations here are boundary (requires real CUDA OOM).
         # ExceptionReplacer, And/Or in OOM string detection, and True→False on _session_oom_detected
         # are all equivalent for unit tests.
-        except Exception as e:  # pragma: no mutate
+        except Exception as e:  # pragma: no mutate  # noqa: BLE001 - resilience: OOM-protected rerank falls back to original candidates
             self._logger.warning(
                 f"{log_prefix} Reranking failed: {e}, using original results"
             )
@@ -247,7 +247,7 @@ class RerankingEngine:
                     # Keep original score if embedding not found
 
             # ExceptionReplacer: embedding re-score path unreachable with mocked embedder.
-            except Exception as e:  # pragma: no mutate
+            except Exception as e:  # pragma: no mutate  # noqa: BLE001 - resilience: re-score failure keeps original scores
                 self._logger.warning(
                     f"[RERANK] Failed to re-score with embeddings: {e}, "
                     "keeping original scores"

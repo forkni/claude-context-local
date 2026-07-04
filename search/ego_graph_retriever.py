@@ -136,7 +136,7 @@ class EgoGraphRetriever:
 
                 results[anchor] = valid_neighbors
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: per-anchor ego-graph failure, empty result for anchor
                 logger.warning(f"Failed to retrieve ego-graph for {anchor}: {e}")
                 results[anchor] = []
 
@@ -373,7 +373,7 @@ class EgoGraphRetriever:
             # pyrefly: ignore [missing-attribute]
             query_embedding = embedder.embed_query(query)
             query_embedding_available = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: embedding unavailable, fall back to fixed decay scoring
             logger.warning(
                 f"Failed to compute query embedding for ego-graph scoring: {e}. "
                 f"Falling back to fixed decay.",

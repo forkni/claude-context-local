@@ -144,7 +144,7 @@ class MultiHopSearcher:
                             all_results[cid] = reranker_result
                             hop_discovered += 1
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: per-hop expansion optional, continue without it
                 self._logger.warning(
                     f"[MULTI_HOP] Batched search failed for hop {hop}: {e}"
                 )
@@ -383,7 +383,7 @@ class MultiHopSearcher:
                 self._logger.debug(
                     "[MULTI_HOP] Pre-computed query embedding for caching"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: query embedding pre-cache optional, recomputed later if needed
                 self._logger.warning(
                     f"[MULTI_HOP] Failed to pre-compute embedding: {e}"
                 )

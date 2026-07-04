@@ -33,7 +33,7 @@ class GPUMemoryMonitor:
                 memory_info["gpu_available"] = gpu_memory[0]
                 memory_info["gpu_total"] = gpu_memory[1]
                 memory_info["gpu_utilization"] = 1.0 - (gpu_memory[0] / gpu_memory[1])
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: GPU query optional, default zeroed memory_info returned
                 self._logger.warning(f"Failed to get GPU memory info: {e}")
 
         # pyrefly: ignore [bad-return]

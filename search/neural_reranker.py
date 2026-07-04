@@ -12,7 +12,7 @@ import torch
 
 if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
-    from transformers import AutoModel
+    from transformers import AutoModel, PreTrainedModel
 
 
 # Reranker model registry
@@ -182,7 +182,7 @@ class NeuralReranker(BaseReranker):
                         from search.config import get_search_config as _gsc
 
                         set_vram_limit(_gsc().performance.vram_limit_fraction)
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 - resilience: VRAM cap re-apply non-fatal, model load continues
                         self._logger.debug(
                             "VRAM cap re-apply skipped (non-fatal): %s", e
                         )
@@ -406,7 +406,7 @@ class GenerativeReranker(BaseReranker):
                 from search.config import get_search_config as _gsc
 
                 set_vram_limit(_gsc().performance.vram_limit_fraction)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: VRAM cap re-apply non-fatal, model load continues
                 self._logger.debug("VRAM cap re-apply skipped (non-fatal): %s", e)
             self._logger.info(f"Loading generative reranker: {self.model_name}")
             from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -630,7 +630,7 @@ class JinaRerankerV3(BaseReranker):
             from search.config import get_search_config as _gsc
 
             set_vram_limit(_gsc().performance.vram_limit_fraction)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: VRAM cap re-apply non-fatal, model load continues
             self._logger.debug("VRAM cap re-apply skipped (non-fatal): %s", e)
         import transformers as _tf
         from huggingface_hub import try_to_load_from_cache
@@ -672,7 +672,7 @@ class JinaRerankerV3(BaseReranker):
             config = _load_config(False)
             local_only = False  # cache miss — fall through to network for model too
 
-        def _load_model(cfg: AutoConfig, local_files_only: bool):
+        def _load_model(cfg: AutoConfig, local_files_only: bool) -> "PreTrainedModel":
             # Suppress Jina's lm_head MISSING LOAD REPORT printed to stdout
             # (cosmetic: lm_head is replaced by nn.Identity() and is never
             # used during reranking; scoring uses the projector head instead).
@@ -735,7 +735,7 @@ class JinaRerankerV3(BaseReranker):
         if hasattr(self._model, "_ensure_tokenizer"):
             try:
                 self._model._ensure_tokenizer()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: tokenizer pre-load optional, retried on first rerank
                 self._logger.warning(
                     f"Tokenizer pre-load failed (will retry on first rerank): {e}"
                 )

@@ -133,7 +133,7 @@ class CleanupQueue:
                     logger.error(
                         f"Cleanup failed after 3 attempts (giving up): {path} - {e}"
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - cleanup: best-effort directory removal, don't retry
                 # Unexpected error, don't retry
                 failed.append(item["directory"])
                 logger.error(f"Unexpected cleanup error: {path} - {e}")

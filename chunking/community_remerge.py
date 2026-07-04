@@ -244,7 +244,13 @@ def from_treesitter_chunks(
                             unioned_rels.append(
                                 dc_replace(rel, source_id=merged_chunk_id)
                             )
-                        except Exception:
+                        except Exception as e:  # noqa: BLE001 - resilience: keep original relationship if dc_replace fails
+                            logger.warning(
+                                "dc_replace failed for %s during community "
+                                "remerge, keeping original source_id: %s",
+                                merged_chunk_id,
+                                e,
+                            )
                             unioned_rels.append(rel)
 
             # Union list fields (imports, decorators) — dedupe by string value

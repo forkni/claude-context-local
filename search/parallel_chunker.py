@@ -3,9 +3,10 @@
 import contextlib
 import logging
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from rich.progress import (
     BarColumn,
@@ -89,7 +90,7 @@ class ParallelChunker:
 
     @staticmethod
     @contextlib.contextmanager
-    def _progress_context(file_paths: list[str]):
+    def _progress_context(file_paths: list[str]) -> Iterator[tuple[Any, Any]]:
         """Suppress INFO logs and display a Rich progress bar for the duration.
 
         Yields ``(progress, task)`` ready for ``progress.update(task, advance=1)`` calls.
@@ -172,7 +173,7 @@ class ParallelChunker:
                                 f"[TIMEOUT] File chunking timed out: {file_path}"
                             )
                             stalled_files.append(file_path)
-                        except Exception as e:
+                        except Exception as e:  # noqa: BLE001 - resilience: per-file chunking failure skipped, batch continues
                             logger.warning(f"Failed to chunk {file_path}: {e}")
                         finally:
                             progress.update(task, advance=1)
@@ -201,7 +202,7 @@ class ParallelChunker:
                             )
                             all_chunks.extend(chunks)
                             logger.debug(f"Chunked {file_path}: {len(chunks)} chunks")
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 - resilience: per-file chunking failure skipped, batch continues
                         logger.warning(f"Failed to chunk {file_path}: {e}")
                     finally:
                         progress.update(task, advance=1)

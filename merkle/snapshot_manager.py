@@ -31,7 +31,7 @@ class SnapshotManager:
                 from mcp_server.storage_manager import get_storage_dir
 
                 storage_dir = get_storage_dir() / "merkle"
-            except Exception:
+            except Exception:  # noqa: BLE001 - resilience: fall back to default storage dir if import fails
                 storage_dir = Path.home() / ".claude_code_search" / "merkle"
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)

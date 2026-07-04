@@ -41,7 +41,7 @@ def _cleanup_previous_resources() -> None:
             state.index_manager.close()
             state.index_manager = None
             logger.info("Previous index manager cleaned up")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - cleanup: isolated teardown step, must not block sibling cleanup
         logger.warning(f"Error cleaning index_manager: {e}")
 
     # Component 2: Searcher cleanup
@@ -52,7 +52,7 @@ def _cleanup_previous_resources() -> None:
                 logger.info("Searcher shutdown completed (neural reranker released)")
             state.searcher = None
             logger.info("Previous searcher cleaned up")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - cleanup: isolated teardown step, must not block sibling cleanup
         logger.warning(f"Error cleaning searcher: {e}")
 
     # Component 3: Embedder pool cleanup (always try even if above failed)
@@ -64,7 +64,7 @@ def _cleanup_previous_resources() -> None:
             )
             state.clear_embedders()
             logger.info("Embedder pool cleared - VRAM released")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - cleanup: isolated teardown step, must not block sibling cleanup
         logger.warning(f"Error cleaning embedders: {e}")
 
     # Component 4: ModelPoolManager reset (always try)
@@ -73,7 +73,7 @@ def _cleanup_previous_resources() -> None:
 
         reset_pool_manager()
         logger.info("ModelPoolManager singleton reset")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - cleanup: isolated teardown step, must not block sibling cleanup
         logger.warning(f"Error resetting pool manager: {e}")
 
     # Component 5+6: GPU memory release (gc.collect + CUDA cache if available)
@@ -82,7 +82,7 @@ def _cleanup_previous_resources() -> None:
 
         release_gpu_memory(synchronize=False)
         logger.info("GPU memory released (gc + CUDA cache)")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - cleanup: isolated teardown step, must not block sibling cleanup
         logger.warning(f"Error releasing GPU memory: {e}")
 
     # Component 7: OTel force-flush — drain pending spans before resource teardown.
@@ -92,7 +92,7 @@ def _cleanup_previous_resources() -> None:
         from utils.observability import force_flush
 
         force_flush()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - cleanup: isolated teardown step, must not block sibling cleanup
         logger.warning(f"Error flushing OTel spans: {e}")
 
 
@@ -169,7 +169,7 @@ def initialize_server_state() -> None:
         from utils.observability import init_observability
 
         init_observability(config.observability)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - cleanup: non-fatal init step, falls back to default config
         logger.warning(f"[INIT] Config sync failed (using defaults): {e}")
 
     # 2. Set default project

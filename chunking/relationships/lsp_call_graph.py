@@ -89,7 +89,7 @@ try:
                 _LSP_BINARY = str(_p)
                 break
     _LSP_AVAILABLE = _LSP_BINARY is not None
-except Exception:
+except Exception:  # noqa: BLE001 - dep-probe: module-level probe for basedpyright-langserver on PATH, degrades to unavailable
     _LSP_AVAILABLE = False
     _LSP_BINARY = None
 
@@ -269,7 +269,7 @@ def _uri_to_path(uri: str) -> Path | None:
     """
     try:
         parsed = urlparse(uri)
-    except Exception:
+    except Exception:  # noqa: BLE001 - parse-recovery: malformed LSP file URI, fall back to None
         return None
     if parsed.scheme != "file":
         return None
@@ -346,7 +346,7 @@ class LSPResolver:
 
         try:
             return self._run_lsp(py_files, project_root, raw_line_map, logger)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - resilience: LSP resolver is an optional recall booster, fall back to no edges
             logger.warning("[LSP] LSP pass failed (%s) — falling back to []", exc)
             return []
 
@@ -422,7 +422,7 @@ class LSPResolver:
                         )
                     )
                     proc.stdin.flush()
-            except Exception:
+            except Exception:  # noqa: BLE001 - cleanup: best-effort LSP shutdown message, must not block process teardown
                 pass
             try:
                 proc.wait(timeout=5)
@@ -692,7 +692,7 @@ def _read_response_with_timeout(stdout: Any, timeout: float) -> dict[str, Any] |
     def _reader() -> None:
         try:
             result[0] = _read_response(stdout)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - cross-thread: captured on reader thread for the joining thread to inspect
             error[0] = exc
 
     t = threading.Thread(target=_reader, daemon=True)

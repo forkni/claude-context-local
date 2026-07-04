@@ -123,7 +123,7 @@ def _with_timeout(tool: Any, timeout_s: float) -> Any:
             msg = f"Execution error in {tool_name}: timeout after {timeout_s:.0f}s"
             logger.warning("Tool %r timed out after %.0fs", tool_name, timeout_s)
             return msg
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - api-boundary: tool wrapper returns error string to caller
             msg = f"Execution error in {tool_name}: {exc}"
             logger.warning("Tool %r raised %r", tool_name, exc)
             return msg
@@ -256,7 +256,7 @@ async def code_search_session(
                         timeout=180.0,
                     )
                     logger.info("Embedding model warm.")
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001 - resilience: warmup failure must not block session startup
                     logger.warning(
                         "Warmup call failed or timed out: %r — continuing anyway", exc
                     )

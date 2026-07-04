@@ -61,7 +61,7 @@ class SymbolHashCache:
         if self._cache_path.exists():
             try:
                 self.load()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - parse-recovery: malformed cache file, start with empty cache
                 logger.warning(f"Failed to load symbol cache: {e}. Starting fresh.")
 
     @staticmethod

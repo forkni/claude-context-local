@@ -112,7 +112,7 @@ class IndexWriteStage:
                 ):
                     embedding_result.metadata["project_name"] = project_name
                     embedding_result.metadata["content"] = chunk.content
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - api-boundary: embedding failure converted to structured error result
                 logger.error(f"Embedding failed: {e}")
                 logger.error(traceback.format_exc())
                 embed_error = str(e)
@@ -337,7 +337,7 @@ class IndexWriteStage:
                 skipped,
             )
 
-        except Exception:
+        except Exception:  # noqa: BLE001 - resilience: optional call-edge injection non-fatal, indexing continues
             logger.warning(
                 "[CALL_EDGES] Edge injection failed (non-fatal):\n%s",
                 traceback.format_exc(),

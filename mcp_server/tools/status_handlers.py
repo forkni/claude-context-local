@@ -68,7 +68,7 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
                 stats["bm25_documents"] = hybrid_stats.get("bm25_documents")
                 stats["dense_vectors"] = hybrid_stats.get("dense_vectors")
                 stats["synced"] = hybrid_stats.get("synced")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: optional stats enrichment, degrade to base stats
             logger.warning(f"Could not get hybrid searcher stats: {e}")
 
     # Collect model info (single-model mode)
@@ -84,7 +84,7 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
             metadata = snapshot_mgr.load_metadata(state.current_project)
             if metadata:
                 last_indexed_time = metadata.get("last_snapshot")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: optional metadata enrichment, degrade to no timestamp
             logger.debug(f"Could not get last_indexed_time: {e}")
 
     return {
@@ -207,7 +207,7 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
 
             pynvml.nvmlInit()
             nvml_available = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - dep-probe: optional pynvml unavailable, fall back to torch metrics
             logger.debug(
                 "pynvml unavailable, falling back to torch-only VRAM metrics: %s", e
             )
@@ -226,7 +226,7 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
                     mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
                     real_used_gb = round(mem_info.used / (1024**3), 2)
                     real_free_gb = round(mem_info.free / (1024**3), 2)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - resilience: optional per-device VRAM query, degrade to None
                     logger.debug(
                         "pynvml per-device query failed for device %d: %s", i, exc
                     )

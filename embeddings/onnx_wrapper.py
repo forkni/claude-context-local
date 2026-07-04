@@ -232,5 +232,5 @@ class ONNXEmbeddingModel:
                 f"ONNXEmbeddingModel cleanup complete: model={self.model_name!r}, "
                 "ORT CUDA session released"
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - cleanup: best-effort ORT session/GPU release must not raise
             _log.warning(f"ONNXEmbeddingModel cleanup error: {e}")

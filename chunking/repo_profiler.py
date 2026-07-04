@@ -128,7 +128,7 @@ def profile_repository(
                 complexities,
             )
             files_scanned += 1
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - parse-recovery: tree-sitter parsing of one file failing shouldn't abort the profiling scan
             logger.debug(f"[PROFILER] Skipped {rel_path}: {e}")
             files_skipped += 1
             continue

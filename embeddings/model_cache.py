@@ -258,7 +258,7 @@ class ModelCacheManager:
                 )
                 return True
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - cleanup: best-effort symlink setup, fall back to False
             self._logger.debug(f"Error in ensure_split_cache_symlink: {e}")
             return False
 
@@ -555,7 +555,7 @@ class ModelCacheManager:
 
             return removed_count, incomplete_files
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - cleanup: best-effort incomplete-file removal must not raise
             self._logger.warning(f"Error during incomplete file cleanup: {e}")
             return 0, []
 

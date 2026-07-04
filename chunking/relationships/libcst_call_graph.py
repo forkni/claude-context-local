@@ -300,7 +300,7 @@ class LibCSTResolver:
             # This resolves all cross-file FQN tables up-front so each
             # MetadataWrapper construction below hits an already-warm cache.
             manager.resolve_cache()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - resilience: libcst resolver is an optional recall booster, skip it on init failure
             logger.warning(
                 "[LIBCST] FullRepoManager initialisation failed (%s) — skipping",
                 exc,
@@ -316,7 +316,7 @@ class LibCSTResolver:
                 module = cst.parse_module(source)
                 cache = manager.get_cache_for_path(key)
                 wrapper = MetadataWrapper(module, True, cache)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - resilience: one file's CST wrapper failing shouldn't break the libcst resolver pass
                 logger.warning(
                     "[LIBCST] Skipping %s (wrapper error: %s)", rel_label, exc
                 )
@@ -326,7 +326,7 @@ class LibCSTResolver:
             visitor = _CallVisitor()
             try:
                 wrapper.visit(visitor)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - resilience: one file's visitor failing shouldn't break the libcst resolver pass
                 logger.warning(
                     "[LIBCST] Skipping %s (visitor error: %s)", rel_label, exc
                 )

@@ -878,7 +878,7 @@ class SearchConfigManager:
                 config_dict = (
                     raw if file_is_nested else SearchConfig._flat_to_nested(raw)
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - parse-recovery: malformed config file, fall back to defaults
                 self.logger.warning(
                     f"Failed to load config file {self.config_file}: {e}"
                 )

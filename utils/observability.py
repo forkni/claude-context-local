@@ -97,7 +97,7 @@ def force_flush(timeout_millis: int = 30000) -> bool:
         return True
     try:
         return bool(_tracer_provider.force_flush(timeout_millis))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - resilience: flush is best-effort, never blocks caller
         logger.debug(f"[OTEL] force_flush error (ignored): {exc}")
         return False
 
@@ -110,7 +110,7 @@ def get_tracer(name: str = "claude-context-local") -> Any:
         from opentelemetry import trace  # pyrefly: ignore [missing-import]
 
         return trace.get_tracer(name)
-    except Exception:
+    except Exception:  # noqa: BLE001 - resilience: fall back to no-op tracer when OTel unavailable
         return _NoopTracer()
 
 
@@ -133,7 +133,7 @@ def traced_block(name: str, **attrs: Any) -> Generator[Any, None, None]:
         from opentelemetry import trace  # pyrefly: ignore [missing-import]
 
         tracer = trace.get_tracer("claude-context-local")
-    except Exception:
+    except Exception:  # noqa: BLE001 - resilience: fall back to no-op span when OTel setup fails
         yield _NoopSpan()
         return
 
@@ -172,7 +172,7 @@ def wrap_in_context(fn: Any) -> Any:
                 otel_context.detach(token)
 
         return wrapper
-    except Exception:
+    except Exception:  # noqa: BLE001 - resilience: skip context propagation when OTel unavailable
         return fn
 
 
@@ -258,7 +258,7 @@ def init_observability(cfg: ObservabilityConfig) -> None:
             "[OTEL] opentelemetry not installed — tracing disabled. "
             "Install with: pip install 'claude-context-local[otel]'"
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - resilience: tracing init must never block server startup
         logger.warning(
             f"[OTEL] Failed to initialize tracing: {exc} — continuing without",
             exc_info=True,
@@ -297,7 +297,7 @@ def shutdown_observability() -> None:
     if _tracer_provider is not None:
         try:
             _tracer_provider.shutdown()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - cleanup: best-effort provider shutdown, must not block exit
             logger.debug(f"[OTEL] Shutdown error (ignored): {exc}")
         _tracer_provider = None
     _enabled = False

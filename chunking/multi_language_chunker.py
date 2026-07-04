@@ -129,7 +129,7 @@ class MultiLanguageChunker:
             try:
                 call_graph_extractor = CallGraphExtractorFactory.create("python")
                 logger.info("Call graph extraction enabled for Python (thread-local)")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: call graph extraction is optional, degrade to None
                 logger.warning(
                     f"Failed to initialize call graph extractor: {e}", exc_info=True
                 )
@@ -152,7 +152,7 @@ class MultiLanguageChunker:
                     f"Initialized {len(relationship_extractors)} relationship extractors "
                     f"(foundation + core + data models; entity tracking disabled)"
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: relationship extraction is optional, degrade to empty list
             logger.warning(
                 f"Failed to initialize relationship extractors: {e}", exc_info=True
             )
@@ -406,7 +406,7 @@ class MultiLanguageChunker:
 
             if calls:
                 logger.debug(f"Extracted {len(calls)} calls from {chunk_id}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - parse-recovery: AST parsing of chunk content can fail (e.g. Python 3.11 recursion bug), skip this chunk
             # Handle AST recursion depth limitation in Python 3.11.0-3.11.3
             if "recursion depth mismatch" in str(e):
                 logger.debug(
@@ -483,7 +483,7 @@ class MultiLanguageChunker:
                 logger.debug(
                     f"Extracted {len(all_relationships)} relationships from {chunk_id}"
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - parse-recovery: AST parsing of chunk content can fail (e.g. Python 3.11 recursion bug), skip this chunk
             # Handle AST recursion depth limitation in Python 3.11.0-3.11.3
             if "recursion depth mismatch" in str(e):
                 logger.debug(
@@ -695,7 +695,7 @@ class MultiLanguageChunker:
                 chunks = self.chunk_file(str(file_path))
                 all_chunks.extend(chunks)
                 logger.debug(f"Chunked {len(chunks)} from {file_path}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - parse-recovery: one file failing to chunk shouldn't abort the whole batch
                 logger.warning(f"Failed to chunk {file_path}: {e}", exc_info=True)
         return all_chunks
 
@@ -728,7 +728,7 @@ class MultiLanguageChunker:
                     chunks = future.result()
                     all_chunks.extend(chunks)
                     logger.debug(f"Chunked {len(chunks)} from {file_path}")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - parse-recovery: one file failing to chunk shouldn't abort the whole batch
                     logger.warning(f"Failed to chunk {file_path}: {e}", exc_info=True)
 
         return all_chunks

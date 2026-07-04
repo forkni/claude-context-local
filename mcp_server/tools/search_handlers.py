@@ -69,7 +69,7 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
                 logger.info(
                     f"[AUTO_REINDEX] Loaded filters: include={include_dirs}, exclude={exclude_dirs}"
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - parse-recovery: project_info.json read, fall back to no filters
             logger.warning(f"[AUTO_REINDEX] Failed to load filters: {e}")
 
     # Phase 1: Lightweight freshness check (no HybridSearcher/embedder needed)

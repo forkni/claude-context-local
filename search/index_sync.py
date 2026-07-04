@@ -287,7 +287,7 @@ class IndexSynchronizer:
 
             return success
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: index load failure reported as False, no crash
             self._logger.error(f"Failed to load indices: {e}")
             return False
 
@@ -379,7 +379,7 @@ class IndexSynchronizer:
             self._logger.info(
                 f"Removed {removed_dense} chunks from dense (FAISS) index"
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: dense removal failure isolated, BM25 removal still attempted
             self._logger.error(f"Failed to remove from dense index: {e}")
             import traceback
 
@@ -390,7 +390,7 @@ class IndexSynchronizer:
             removed_bm25 = self.bm25_index.remove_files(file_paths, project_name)
             removed_count += removed_bm25
             self._logger.info(f"Removed {removed_bm25} chunks from BM25 index")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: BM25 removal failure isolated, dense removal already attempted
             self._logger.error(f"Failed to remove from BM25 index: {e}")
             import traceback
 
