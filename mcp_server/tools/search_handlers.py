@@ -10,7 +10,7 @@ from typing import Any
 from chunking.multi_language_chunker import MultiLanguageChunker
 from mcp_server.guidance import add_system_message
 from mcp_server.model_pool_manager import get_embedder
-from mcp_server.server import (
+from mcp_server.search_factory import (
     get_index_manager,
     get_searcher,
 )

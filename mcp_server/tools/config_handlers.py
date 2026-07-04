@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp_server.project_persistence import save_project_selection
-from mcp_server.server import _cleanup_previous_resources
+from mcp_server.resource_manager import _cleanup_previous_resources
 from mcp_server.services import get_state
 from mcp_server.storage_manager import (
     get_project_storage_dir,

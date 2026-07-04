@@ -17,7 +17,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from mcp_server.server import get_searcher
+from mcp_server.search_factory import get_searcher
 from mcp_server.services import get_config, get_state
 from mcp_server.tools import responses, result_view
 from mcp_server.tools.searcher_view import SearcherView

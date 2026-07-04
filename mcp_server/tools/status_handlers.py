@@ -9,8 +9,8 @@ import json
 import logging
 from typing import Any
 
-from mcp_server.server import (
-    _cleanup_previous_resources,
+from mcp_server.resource_manager import _cleanup_previous_resources
+from mcp_server.search_factory import (
     get_index_manager,
     get_searcher,
 )
