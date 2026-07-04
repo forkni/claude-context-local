@@ -719,7 +719,7 @@ async def test_handle_search_code_hybrid_searcher_ready():
             return_value=(False, None),
         ),
         patch(
-            "mcp_server.tools.search_handlers._format_search_results",
+            "mcp_server.tools.result_view._format_search_results",
             return_value=[
                 {
                     "chunk_id": "test.py:1-10:function:test",
@@ -731,12 +731,8 @@ async def test_handle_search_code_hybrid_searcher_ready():
             ],
         ),
         patch(
-            "mcp_server.tools.search_handlers._enrich_results_with_graph_data",
+            "mcp_server.tools.result_view._enrich_results_with_graph_data",
             side_effect=lambda r, _im: r,
-        ),
-        patch(
-            "mcp_server.tools.search_handlers._get_index_manager_from_searcher",
-            return_value=None,
         ),
     ):
         mock_state = Mock()

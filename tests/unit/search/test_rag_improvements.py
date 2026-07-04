@@ -1,6 +1,6 @@
 """
 Unit tests for v0.10.0 RAG improvement functions:
-- _reorder_by_source_position (search_handlers.py)
+- _reorder_by_source_position (result_view.py)
 - _classify_file_role (multi_language_chunker.py)
 - Centrality BM25 boost in CentralityRanker.rerank()
 """
@@ -11,7 +11,7 @@ import networkx as nx
 import pytest
 
 from chunking.multi_language_chunker import MultiLanguageChunker
-from mcp_server.tools.search_handlers import _reorder_by_source_position
+from mcp_server.tools.result_view import _reorder_by_source_position
 from search.centrality_ranker import CentralityRanker
 from search.config import GraphEnhancedConfig
 

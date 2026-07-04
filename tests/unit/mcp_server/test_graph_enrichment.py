@@ -10,7 +10,7 @@ import networkx as nx
 import pytest
 
 from graph.schema import REVERSE_RELATIONS
-from mcp_server.tools.search_handlers import (
+from mcp_server.tools.result_view import (
     _get_graph_data_for_chunk,
     _get_reverse_relation_name,
 )
