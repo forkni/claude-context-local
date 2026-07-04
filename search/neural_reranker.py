@@ -329,11 +329,35 @@ class NeuralReranker(BaseReranker):
     # Lifecycle methods (is_loaded, get_vram_usage, cleanup) are owned by BaseReranker.
 
 
-class GenerativeReranker(BaseReranker):
-    """Qwen3-style generative reranker using Yes/No token probability.
+# Qwen3-Reranker official prompt template (arXiv:2506.05176, "Qwen3 Embedding" tech
+# report, §2 "Reranking Models"). Qwen3-Reranker models are fine-tuned specifically on
+# this chat-wrapped <Instruct>/<Query>/<Document> format with lowercase "yes"/"no"
+# target tokens. An ad-hoc prompt (no chat wrapper, capitalized Yes/No) is off-distribution
+# for the model and produces poorly-calibrated, sometimes inverted relevance scores —
+# verified empirically: on a real query the official template restored the correct top
+# candidates that the ad-hoc prompt had buried below unrelated results.
+_QWEN_RERANK_DEFAULT_INSTRUCTION = (
+    "Given a code search query, retrieve relevant code that answers the query"
+)
+_QWEN_RERANK_SYSTEM_PREFIX = (
+    "<|im_start|>system\n"
+    "Judge whether the Document meets the requirements based on the Query and the "
+    'Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>\n'
+    "<|im_start|>user\n"
+)
+_QWEN_RERANK_ASSISTANT_SUFFIX = (
+    "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+)
 
-    This reranker leverages the full LLM "world knowledge" for relevance scoring,
-    achieving +8.7 points over discriminative cross-encoders on MTEB-R benchmark.
+
+class GenerativeReranker(BaseReranker):
+    """Qwen3-style generative reranker using yes/no token probability.
+
+    Uses the official Qwen3-Reranker instruct template (chat-wrapped
+    <Instruct>/<Query>/<Document> fields, lowercase yes/no target tokens; see
+    arXiv:2506.05176 §2). This reranker leverages the full LLM "world knowledge" for
+    relevance scoring, achieving +8.7 points over discriminative cross-encoders on the
+    MTEB-R benchmark.
 
     Performance:
         - VRAM: ~1.5GB
@@ -350,14 +374,19 @@ class GenerativeReranker(BaseReranker):
         self,
         model_name: str = "Qwen/Qwen3-Reranker-0.6B",
         device: str | None = None,
+        instruction: str | None = None,
     ):
         """Initialize GenerativeReranker with lazy loading.
 
         Args:
             model_name: HuggingFace model ID for generative reranker
             device: Device to run on ('cuda', 'cpu', or None for auto-detect)
+            instruction: Task instruction inserted into the official Qwen3-Reranker
+                <Instruct> field (Qwen3-Reranker is "Instruction Aware" per the model's
+                technical report). Defaults to a generic code-retrieval instruction.
         """
         self.model_name = model_name
+        self.instruction = instruction or _QWEN_RERANK_DEFAULT_INSTRUCTION
         self._model = None
         self._tokenizer = None
         self._logger = logging.getLogger(__name__)
@@ -429,10 +458,12 @@ class GenerativeReranker(BaseReranker):
         model = self.model
         tokenizer = self.tokenizer
 
-        # Resolve token IDs with validation and graceful fallback
+        # Resolve token IDs with validation and graceful fallback.
+        # Lowercase "yes"/"no" per the official Qwen3-Reranker template (arXiv:2506.05176)
+        # — the model was fine-tuned on these exact target tokens.
         try:
-            yes_token_id = _resolve_single_token_id(tokenizer, "Yes")
-            no_token_id = _resolve_single_token_id(tokenizer, "No")
+            yes_token_id = _resolve_single_token_id(tokenizer, "yes")
+            no_token_id = _resolve_single_token_id(tokenizer, "no")
         except RuntimeError as e:
             self._logger.error(
                 f"Token resolution failed: {e}. Returning candidates in original order."
@@ -444,15 +475,17 @@ class GenerativeReranker(BaseReranker):
                 results.append(candidate)
             return results
 
-        # Build all prompts
+        # Build all prompts using the official Qwen3-Reranker instruct template
+        # (chat-wrapped <Instruct>/<Query>/<Document> fields; see module-level constants).
         prompts = []
         for candidate in candidates:
             content = candidate.metadata.get("content_preview", "")
             if not content:
                 content = candidate.chunk_id
             prompt = (
-                f"Query: {query}\nDocument: {content}\n"
-                "Is this document relevant to the query? Answer Yes or No:"
+                f"{_QWEN_RERANK_SYSTEM_PREFIX}"
+                f"<Instruct>: {self.instruction}\n<Query>: {query}\n<Document>: {content}"
+                f"{_QWEN_RERANK_ASSISTANT_SUFFIX}"
             )
             prompts.append(prompt)
 

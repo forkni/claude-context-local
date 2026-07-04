@@ -30,7 +30,7 @@
 ## Highlights
 
 - **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-06-08, 13 queries, k=7): **Hit@5 100%, MRR 0.797, Recall@7 0.736 (recommended k=7)** - [benchmarks](docs/BENCHMARKS.md)
-- **Neural Reranking**: Cross-encoder models (default: `jinaai/jina-reranker-v3`; alternatives: BGE-reranker-v2-m3, gte-reranker-modernbert-base) improve ranking quality by 15-25% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
+- **Neural Reranking**: Cross-encoder models (default: `jinaai/jina-reranker-v3`; alternatives: gte-reranker-modernbert-base, Qwen3-Reranker-0.6B) improve ranking quality by 15-25% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
 - **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-06-08, 13 queries, k=10): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); neural reranker active (all modes MRR 0.797); Hybrid best at deep recall (R@7 0.736, R@10 0.770)**
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Layered Call-Graph Resolver Pipeline**: `find_connections` returns callers **and** callees with per-entry provenance (`resolver_source`, `resolver_confidence`). Confidence ladder: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98. Install `pip install -e ".[callgraph]"` for pyan3 + LibCST; core is Apache-2.0-clean — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)

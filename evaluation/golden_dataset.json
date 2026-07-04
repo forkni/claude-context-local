@@ -39,6 +39,12 @@
     "recommended_k": 7,
     "changelog": [
       {
+        "date": "2026-07-04",
+        "changes": [
+          "Corrected Q12/Q48/Q53: removed chunk_ids deleted by the v0.12.3 multi-model-pool -> single-model refactor (mcp_server/tools/config_handlers.py:_detect_indexed_model, ModelPoolManager.initialize_pool, ModelPoolManager._load_pool_embedder — verified deleted via direct MetadataStore lookup against the live index). Q48's expected_primary retargeted to ModelPoolManager.get_embedder (the live lazy-load-and-return equivalent); Q53's expected gained the same method as a supplementary label-2 entry. Q12's expected_primary was already live and untouched."
+        ]
+      },
+      {
         "date": "2026-06-26",
         "changes": [
           "Expanded dataset from 49 to 77 queries: +3A, +4B, +3C, +4D, +7E, +7F (Q72–Q99). All chunk IDs grounded via live MCP tools against D:/claude-context-local project (2026-06-26).",
@@ -216,8 +222,7 @@
       "expected": [
         "merkle/snapshot_manager.py:method:SnapshotManager.has_snapshot",
         "search/incremental_indexer.py:method:IncrementalIndexer.needs_reindex",
-        "search/metadata.py:method:MetadataStore.exists",
-        "mcp_server/tools/config_handlers.py:function:_detect_indexed_model"
+        "search/metadata.py:method:MetadataStore.exists"
       ],
       "expected_primary": [
         "merkle/snapshot_manager.py:method:SnapshotManager.has_snapshot",
@@ -227,7 +232,6 @@
         "merkle/snapshot_manager.py:method:SnapshotManager.has_snapshot": 3,
         "search/incremental_indexer.py:method:IncrementalIndexer.needs_reindex": 3,
         "search/metadata.py:method:MetadataStore.exists": 2,
-        "mcp_server/tools/config_handlers.py:function:_detect_indexed_model": 2,
         "mcp_server/tools/index_handlers.py:split_block:handle_index_directory": 1
       }
     },
@@ -665,21 +669,17 @@
       "category": "B",
       "split": "test",
       "expected": [
-        "mcp_server/model_pool_manager.py:method:ModelPoolManager.initialize_pool",
-        "mcp_server/model_pool_manager.py:method:ModelPoolManager._load_pool_embedder",
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_embedder",
         "mcp_server/model_pool_manager.py:class:ModelPoolManager",
         "mcp_server/model_pool_manager.py:function:get_embedder"
       ],
       "expected_primary": [
-        "mcp_server/model_pool_manager.py:method:ModelPoolManager.initialize_pool",
-        "mcp_server/model_pool_manager.py:method:ModelPoolManager._load_pool_embedder"
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_embedder"
       ],
       "relevance_grades": {
-        "mcp_server/model_pool_manager.py:method:ModelPoolManager.initialize_pool": 3,
-        "mcp_server/model_pool_manager.py:method:ModelPoolManager._load_pool_embedder": 3,
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_embedder": 3,
         "mcp_server/model_pool_manager.py:class:ModelPoolManager": 2,
-        "mcp_server/model_pool_manager.py:function:get_embedder": 2,
-        "mcp_server/model_pool_manager.py:function:initialize_model_pool": 1
+        "mcp_server/model_pool_manager.py:function:get_embedder": 2
       }
     },
     {
@@ -775,18 +775,15 @@
       "split": "train",
       "expected": [
         "mcp_server/model_pool_manager.py:class:ModelPoolManager",
-        "mcp_server/model_pool_manager.py:method:ModelPoolManager.initialize_pool",
-        "mcp_server/model_pool_manager.py:method:ModelPoolManager._load_pool_embedder"
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_embedder"
       ],
       "expected_primary": [
         "mcp_server/model_pool_manager.py:class:ModelPoolManager"
       ],
       "relevance_grades": {
         "mcp_server/model_pool_manager.py:class:ModelPoolManager": 3,
-        "mcp_server/model_pool_manager.py:method:ModelPoolManager.initialize_pool": 2,
-        "mcp_server/model_pool_manager.py:method:ModelPoolManager._load_pool_embedder": 2,
-        "mcp_server/model_pool_manager.py:function:get_embedder": 1,
-        "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_pool_config": 1
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_embedder": 2,
+        "mcp_server/model_pool_manager.py:function:get_embedder": 1
       }
     },
     {

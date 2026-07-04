@@ -46,10 +46,10 @@ class TestGenerativeReranker:
         logits_tensor[1, -1, yes_id] = 0.5  # Candidate 1: P(Yes) lower
         logits_tensor[1, -1, no_id] = 2.0
 
-        # Mock tokenizer
+        # Mock tokenizer (lowercase "yes"/"no" per the official Qwen3-Reranker template)
         class MockTokenizer:
             def encode(self, text, **kwargs):
-                return [yes_id] if text in ("Yes", " Yes") else [no_id]
+                return [yes_id] if text in ("yes", " yes") else [no_id]
 
             def __call__(self, prompts, **kwargs):
                 n = len(prompts) if isinstance(prompts, list) else 1
@@ -104,6 +104,79 @@ class TestGenerativeReranker:
 
     @patch("transformers.AutoModelForCausalLM.from_pretrained")
     @patch("transformers.AutoTokenizer.from_pretrained")
+    def test_rerank_uses_official_qwen3_template(
+        self, mock_tokenizer_class, mock_model_class
+    ):
+        """Regression: prompts must use the official Qwen3-Reranker instruct template.
+
+        Root-cause regression test for the bug where an ad-hoc "Query: ...\\nDocument:
+        ..." prompt with capitalized Yes/No tokens was off-distribution for the
+        fine-tuned model and produced inverted/poorly-calibrated relevance scores
+        (see arXiv:2506.05176 §2 "Reranking Models"). Captures the exact prompts sent
+        to the tokenizer and asserts on the required structural markers.
+        """
+        seq_len = 10
+        vocab_size = 1000
+        yes_id, no_id = 100, 101
+        logits_tensor = torch.zeros(1, seq_len, vocab_size)
+        logits_tensor[0, -1, yes_id] = 2.0
+        logits_tensor[0, -1, no_id] = 0.5
+
+        captured_prompts = []
+
+        class MockTokenizer:
+            def encode(self, text, **kwargs):
+                return [yes_id] if text in ("yes", " yes") else [no_id]
+
+            def __call__(self, prompts, **kwargs):
+                captured_prompts.extend(prompts)
+                n = len(prompts)
+                mock_inputs = {
+                    "input_ids": torch.ones(n, seq_len, dtype=torch.long),
+                    "attention_mask": torch.ones(n, seq_len, dtype=torch.long),
+                }
+
+                class TensorDict(dict):
+                    def to(self, device):
+                        return self
+
+                return TensorDict(mock_inputs)
+
+        class MockModel:
+            def to(self, device):
+                return self
+
+            def __call__(self, **inputs):
+                class Outputs:
+                    logits = logits_tensor
+
+                return Outputs()
+
+        mock_tokenizer_class.return_value = MockTokenizer()
+        mock_model_class.return_value = MockModel()
+
+        reranker = GenerativeReranker(device="cpu")
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            )
+        ]
+        reranker.rerank("find function", candidates, top_k=1)
+
+        assert len(captured_prompts) == 1
+        prompt = captured_prompts[0]
+        assert "<|im_start|>system" in prompt
+        assert "<|im_start|>user" in prompt
+        assert "<|im_start|>assistant" in prompt
+        assert "<Instruct>:" in prompt
+        assert "<Query>: find function" in prompt
+        assert "<Document>: code a" in prompt
+        assert "<think>" in prompt
+        # The ad-hoc prompt this replaces never appears in the official template.
+        assert "Is this document relevant to the query? Answer Yes or No:" not in prompt
+
+    @patch("transformers.AutoModelForCausalLM.from_pretrained")
+    @patch("transformers.AutoTokenizer.from_pretrained")
     def test_cleanup_releases_resources(self, mock_tokenizer_class, mock_model_class):
         """Cleanup should release model and tokenizer."""
         mock_tokenizer_class.return_value = MagicMock()
@@ -143,7 +216,7 @@ class TestGenerativeReranker:
 
         class MockTokenizer:
             def encode(self, text, **kwargs):
-                return [100] if text in ("Yes", " Yes") else [101]
+                return [100] if text in ("yes", " yes") else [101]
 
             def __call__(self, prompts, **kwargs):
                 raise RuntimeError("Simulated tokenization failure")
@@ -177,11 +250,11 @@ class TestGenerativeReranker:
     def test_rerank_fallback_on_token_resolution_failure(
         self, mock_tokenizer_class, mock_model_class
     ):
-        """Should return original scores when tokenizer can't resolve Yes/No tokens."""
+        """Should return original scores when tokenizer can't resolve yes/no tokens."""
 
         class MockTokenizer:
             def encode(self, text, **kwargs):
-                # Always return multi-token for both "Yes"/" Yes" and "No"/" No"
+                # Always return multi-token for both "yes"/" yes" and "no"/" no"
                 return [10, 20]  # Multi-token
 
         mock_tokenizer_class.return_value = MockTokenizer()
@@ -236,7 +309,7 @@ class TestGenerativeReranker:
 
         class MockTokenizer:
             def encode(self, text, **kwargs):
-                return [yes_id] if text in ("Yes", " Yes") else [no_id]
+                return [yes_id] if text in ("yes", " yes") else [no_id]
 
             def __call__(self, prompts, **kwargs):
                 n = len(prompts) if isinstance(prompts, list) else 1
@@ -294,7 +367,7 @@ class TestGenerativeReranker:
 
         class MockTokenizer:
             def encode(self, text, **kwargs):
-                return [100] if text in ("Yes", " Yes") else [101]
+                return [100] if text in ("yes", " yes") else [101]
 
             def __call__(self, prompts, **kwargs):
                 raise RuntimeError("Simulated tokenization failure")
