@@ -1447,35 +1447,27 @@ if "!reranker_choice!"=="4" (
     echo.
     echo === Select Reranker Model ===
     echo.
-    echo   1. BGE Reranker ^(BAAI/bge-reranker-v2-m3^)
-    echo      Full quality, ~1.5GB VRAM - discriminative cross-encoder
+    echo Pick based on available GPU VRAM and how much search latency you can spend for quality.
+    echo Benchmarked on this project's SSCG golden-query set:
     echo.
-    echo   2. GTE Reranker ^(Alibaba-NLP/gte-reranker-modernbert-base^)
-    echo      Lightweight, ~0.3GB VRAM - for 8GB GPUs
+    echo   1. GTE Reranker ^(Alibaba-NLP/gte-reranker-modernbert-base^)  [DEFAULT]
+    echo      Best for: 6GB+ VRAM, fastest option, lowest footprint
+    echo      ~0.3GB VRAM, ~190ms/search, MRR 0.75
     echo.
-    echo   3. Qwen3 Reranker ^(Qwen/Qwen3-Reranker-0.6B^)
-    echo      Generative LLM reranker, ~1.5GB VRAM - +8.7 pts over BGE
+    echo   2. Qwen3 Reranker ^(Qwen/Qwen3-Reranker-0.6B^)
+    echo      Best for: 8GB+ VRAM, balanced quality/speed, LLM-based scoring
+    echo      ~1.5GB VRAM, ~335ms/search, MRR 0.75
     echo.
-    echo   4. Jina Reranker v3 ^(jinaai/jina-reranker-v3^) [NEW]
-    echo      Code-optimized listwise, ~1.5GB VRAM - CoIR 70.64
+    echo   3. Jina Reranker v3 ^(jinaai/jina-reranker-v3^)
+    echo      Best for: 12GB+ VRAM, best quality, code-optimized listwise reranking
+    echo      ~1.5GB base VRAM ^(grows with candidate count, up to ~10GB^), ~750ms/search, MRR 0.85
     echo.
     echo   0. Cancel
     echo.
     set "model_sel="
-    set /p model_sel="Select model (0-4): "
+    set /p model_sel="Select model (0-3): "
 
     if "!model_sel!"=="1" (
-        echo.
-        echo [INFO] Setting reranker to BGE...
-        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.model_name = 'BAAI/bge-reranker-v2-m3'; mgr.save_config(cfg); print('[OK] Reranker set to BGE (bge-reranker-v2-m3)')" 2>nul
-        if errorlevel 1 (
-            echo [ERROR] Failed to save configuration
-        ) else (
-            REM Notify running MCP server to reload config
-            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-        )
-    )
-    if "!model_sel!"=="2" (
         echo.
         echo [INFO] Setting reranker to GTE...
         ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.model_name = 'Alibaba-NLP/gte-reranker-modernbert-base'; mgr.save_config(cfg); print('[OK] Reranker set to GTE (gte-reranker-modernbert-base)')" 2>nul
@@ -1486,7 +1478,7 @@ if "!reranker_choice!"=="4" (
             ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
     )
-    if "!model_sel!"=="3" (
+    if "!model_sel!"=="2" (
         echo.
         echo [INFO] Setting reranker to Qwen3 Generative...
         ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.model_name = 'Qwen/Qwen3-Reranker-0.6B'; mgr.save_config(cfg); print('[OK] Reranker set to Qwen3 Generative (Qwen3-Reranker-0.6B)')" 2>nul
@@ -1497,7 +1489,7 @@ if "!reranker_choice!"=="4" (
             ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
     )
-    if "!model_sel!"=="4" (
+    if "!model_sel!"=="3" (
         echo.
         echo [INFO] Setting reranker to Jina v3...
         ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.model_name = 'jinaai/jina-reranker-v3'; mgr.save_config(cfg); print('[OK] Reranker set to Jina v3 (jina-reranker-v3)')" 2>nul

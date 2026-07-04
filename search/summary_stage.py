@@ -57,7 +57,7 @@ class SummaryStage:
                         f"[COMMUNITY_SUMMARIES] Computed centrality for "
                         f"{len(centrality_scores)} nodes"
                     )
-                except Exception as ce:
+                except Exception as ce:  # noqa: BLE001 - resilience: centrality optional, falls back to line-count weighting
                     logger.debug(
                         f"[COMMUNITY_SUMMARIES] Centrality unavailable, "
                         f"using line-count fallback: {ce}"
@@ -71,7 +71,7 @@ class SummaryStage:
             )
             return summaries
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: optional community summaries, empty list on failure
             logger.warning(f"[COMMUNITY_SUMMARIES] Failed to compute: {e}")
             return []
 
@@ -94,6 +94,6 @@ class SummaryStage:
                 )
             return summaries
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: optional module summaries, empty list on failure
             logger.warning(f"[FILE_SUMMARIES] Failed: {e}")
             return []

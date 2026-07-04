@@ -425,3 +425,71 @@ class TestRerankingEngine:
             assert self.engine.neural_reranker is not None
             assert mock_neural_reranker_class.call_count == 2  # init + re-init
             assert mock_reranker_instance.rerank.call_count == 2  # phase 1 + 3
+
+    @patch("search.reranking_engine.torch")
+    @patch("search.neural_reranker.NeuralReranker")
+    def test_neural_reranker_swaps_on_model_name_change(
+        self, mock_neural_reranker_class, mock_torch
+    ):
+        """Test neural reranker reloads when configure_reranking() changes model_name.
+
+        Regression test: RerankingEngine._ensure_reranker() previously only checked
+        `self.neural_reranker is None` before creating an instance — switching
+        model_name via configure_reranking() while a reranker was already loaded was
+        silently a no-op (the MCP tool's "changes take effect on next search" message
+        was false in that state). Fixed by comparing self.neural_reranker.model_name
+        against the newly-configured model_name and reloading (cleanup + recreate) on
+        mismatch.
+        """
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.mem_get_info.return_value = (
+            5 * 1024**3,  # 5 GB free
+            8 * 1024**3,  # 8 GB total
+        )
+
+        model_a_instance = MagicMock()
+        model_a_instance.model_name = "model-a"
+        model_b_instance = MagicMock()
+        model_b_instance.model_name = "model-b"
+        mock_neural_reranker_class.side_effect = [model_a_instance, model_b_instance]
+
+        results = [SearchResult(chunk_id="chunk1", score=0.5, metadata={})]
+
+        # Phase 1: load model A
+        config_a = SearchConfig(
+            reranker=RerankerConfig(
+                enabled=True,
+                model_name="model-a",
+                batch_size=16,
+                top_k_candidates=50,
+                min_vram_gb=4.0,
+            )
+        )
+        with patch("search.reranking_engine.get_search_config") as mock_config:
+            mock_config.return_value = config_a
+            model_a_instance.rerank.return_value = results
+            self.engine.rerank_by_query("test query", results, k=1)
+
+            assert self.engine.neural_reranker is model_a_instance
+            assert mock_neural_reranker_class.call_count == 1
+
+        # Phase 2: configure_reranking() switches to model B while A is still loaded
+        config_b = SearchConfig(
+            reranker=RerankerConfig(
+                enabled=True,
+                model_name="model-b",
+                batch_size=16,
+                top_k_candidates=50,
+                min_vram_gb=4.0,
+            )
+        )
+        with patch("search.reranking_engine.get_search_config") as mock_config:
+            mock_config.return_value = config_b
+            model_b_instance.rerank.return_value = results
+            self.engine.rerank_by_query("test query", results, k=1)
+
+            # Old instance must be released before the new one takes over
+            model_a_instance.cleanup.assert_called_once()
+            assert self.engine.neural_reranker is model_b_instance
+            assert self.engine.neural_reranker.model_name == "model-b"
+            assert mock_neural_reranker_class.call_count == 2

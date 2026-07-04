@@ -201,7 +201,7 @@ class MmapVectorStorage:
             )
             return True
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - parse-recovery: malformed mmap file, caller falls back to FAISS reconstruct
             logger.warning(f"Failed to load mmap storage from {self._path}: {e}")
             self.close()
             return False

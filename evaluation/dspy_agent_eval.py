@@ -767,7 +767,7 @@ async def _eval_one(
             )
             return row
 
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - resilience: one query failing must not abort the whole eval batch
             logger.warning("Query %s failed: %r", query_id, exc)
             return None
 

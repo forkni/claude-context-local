@@ -350,7 +350,7 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
                 "[VRAM_LIMIT] RAM fallback allowed - skipping PyTorch VRAM cap"
             )
             return True  # Don't set limit, allow PyTorch spillover
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parse-recovery: config unavailable, use defaults
         logging.getLogger(__name__).debug(f"Config not available, using defaults: {e}")
 
     logger = logging.getLogger(__name__)
@@ -965,7 +965,7 @@ class CodeEmbedder:
             max_import_lines = config.embedding.max_import_lines
             max_class_sig_lines = config.embedding.max_class_signature_lines
             enable_structural_header = config.embedding.enable_structural_header
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - parse-recovery: context config unavailable, use defaults
             self._logger.debug(f"Failed to load context config, using defaults: {e}")
             # Fallback to defaults
             enable_import_ctx = True
@@ -1305,7 +1305,7 @@ class CodeEmbedder:
                         )
                         if _cap_result is not None:
                             ort_cap_gb = _cap_result[1] / 1024**3  # bytes → GB
-                    except Exception as _ort_err:
+                    except Exception as _ort_err:  # noqa: BLE001 - resilience: ORT VRAM cap best-effort, skip on failure
                         self._logger.debug(
                             "Ignoring %s computing ORT cap", type(_ort_err).__name__
                         )
@@ -1825,7 +1825,7 @@ class CodeEmbedder:
                         torch.cuda.empty_cache()
 
                     self._logger.info("Model cleanup complete - VRAM and RAM freed")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - cleanup: best-effort model teardown must not raise
                     self._logger.warning(f"Error during model cleanup: {e}")
 
     def __enter__(self) -> "CodeEmbedder":

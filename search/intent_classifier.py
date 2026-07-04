@@ -62,7 +62,7 @@ def _load_anchor_config() -> dict | None:
         if config_path.exists():
             with open(config_path, encoding="utf-8") as f:
                 return yaml.safe_load(f)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - parse-recovery: malformed intent_anchors.yaml, fall back to None
         logger.warning(f"[INTENT-SEM] Failed to load intent_anchors.yaml: {exc}")
     return None
 
@@ -400,7 +400,7 @@ class IntentClassifier:
                         norm = float(np.linalg.norm(vec))
                         if norm > 0:
                             vecs.append(vec / norm)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - resilience: per-anchor embed failure skipped, others continue
                     logger.debug(
                         f"[INTENT-SEM] Failed to embed anchor '{q[:40]}': {exc}"
                     )
@@ -451,7 +451,7 @@ class IntentClassifier:
             if norm == 0:
                 return {}
             query_vec = query_vec / norm
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - resilience: optional semantic scoring, empty scores on embed failure
             logger.debug(f"[INTENT-SEM] embed_query failed: {exc}")
             return {}
 

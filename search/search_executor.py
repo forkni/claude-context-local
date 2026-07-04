@@ -208,7 +208,7 @@ class SearchExecutor:
 
             return bm25_results, dense_results
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: parallel search failure, falls back to sequential search
             self._logger.warning(
                 f"Parallel search failed, falling back to sequential: {e}"
             )

@@ -79,7 +79,7 @@ class CommunityStage:
                         "[COMMUNITY_DETECT] Community map persisted to graph storage"
                     )
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: optional community detection, continue without it
                 logger.error(f"[COMMUNITY_DETECT] Failed: {e}")
                 logger.error(traceback.format_exc())
                 logger.warning("[COMMUNITY_DETECT] Continuing without community data")
@@ -121,7 +121,7 @@ class CommunityStage:
                     f"[COMMUNITY_MERGE] Community merge complete: {len(all_chunks)} final chunks"
                 )
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: optional community remerge, fall back to unmerged chunks
                 logger.error(f"[COMMUNITY_MERGE] Failed: {e}")
                 logger.error(traceback.format_exc())
                 logger.warning(

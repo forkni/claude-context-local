@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.21.0] - 2026-07-04
+
+### Fixed
+
+- **Qwen3-Reranker prompt bug** — `GenerativeReranker.rerank()` (`search/neural_reranker.py`) built an
+  ad-hoc prompt with capitalized `Yes`/`No` target tokens instead of the official Qwen3-Reranker
+  instruct template (arXiv:2506.05176 §2 "Reranking Models": chat-wrapped
+  `<Instruct>`/`<Query>`/`<Document>` fields, lowercase `yes`/`no`). Off-distribution for the
+  fine-tuned model, causing degenerate, poorly-calibrated relevance scores — measured MRR 0.311, *below*
+  the no-reranker baseline (0.372) on the SSCG A/B/C golden-query benchmark. Switched to the official
+  template; verified fix restores correct top-of-list ranking on a live repro query and lifts MRR to
+  0.754 (RTX 4090, 45 queries, k=7), now competitive with GTE (0.748). Added a regression test
+  (`test_rerank_uses_official_qwen3_template`) asserting the required template markers.
+- **Stale golden-dataset chunk IDs** — 3 of 45 category A/B/C queries in
+  `evaluation/golden_dataset.json` (Q12, Q48, Q53) referenced symbols deleted by the v0.12.3
+  multi-model-pool → single-model refactor (`mcp_server/tools/config_handlers.py:_detect_indexed_model`,
+  `ModelPoolManager.initialize_pool`, `ModelPoolManager._load_pool_embedder` — confirmed removed via
+  direct index lookup). Retargeted to the live `ModelPoolManager.get_embedder` equivalent; 0 stale
+  references remain.
+
+### Added
+
+- **Reranker comparison benchmarking** (`scripts/benchmark/run_sscg_benchmark.py`) — `--reranker-model`
+  and `--reranker-enabled` flags override the reranker for a single run; `--reranker-sweep` runs a
+  predefined `RERANKER_SWEEP` (gte, jina_v3, qwen_0.6b, bge_v2_m3, none) and prints a comparison
+  leaderboard. `--category` now accepts a comma-separated list (e.g. `A,B,C`). Leaderboard gained a
+  `VRAM(GB)` column (peak `torch.cuda.max_memory_reserved()` per run).
+
+### Changed
+
+- **Reranker selection UI** (`start_mcp_server.cmd`) — removed BGE (`BAAI/bge-reranker-v2-m3`) from the
+  interactive "Select Reranker Model" menu: benchmarked as strictly dominated by GTE on speed (MRR
+  0.748 @ 193ms vs BGE's 0.716 @ 268ms, same VRAM) and by Qwen3/Jina on quality, with no scenario where
+  it's the right pick. Remaining GTE/Qwen3/Jina v3 choices renumbered 1-3 and annotated with
+  VRAM-tier guidance and benchmark numbers (MRR/latency/VRAM) to help pick a model for a given machine.
+  `README.md` and `docs/ADVANCED_FEATURES_GUIDE.md` updated to match (BGE reranker mentions removed
+  from current-facing docs; dated historical/changelog records elsewhere left untouched).
+
+---
+
 ## [0.20.1] - 2026-07-02
 
 ### Fixed

@@ -51,7 +51,7 @@ def save_project_selection(project_path: str) -> bool:
         logger.info(f"Project selection saved: {Path(project_path).name}")
         return True
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - resilience: optional persistence, degrade to unsaved
         logger.warning(f"Failed to save project selection: {e}")
         return False
 
@@ -99,7 +99,7 @@ def load_project_selection() -> dict | None:
     except json.JSONDecodeError as e:
         logger.warning(f"Invalid JSON in project selection file: {e}")
         return None
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - resilience: optional persistence, degrade to no selection
         logger.warning(f"Failed to load project selection: {e}")
         return None
 
@@ -130,7 +130,7 @@ def clear_project_selection() -> bool:
             selection_file.unlink()
             logger.info("Project selection cleared")
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - resilience: optional persistence, degrade to uncleared
         logger.warning(f"Failed to clear project selection: {e}")
         return False
 

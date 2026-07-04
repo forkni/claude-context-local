@@ -79,7 +79,7 @@ def error_handler(
                             context_fields = error_context(arguments)
                             if context_fields:
                                 error_response.update(context_fields)
-                        except Exception as ctx_error:
+                        except Exception as ctx_error:  # noqa: BLE001 - api-boundary: context enrichment failure must not break error response
                             # Don't let context enrichment failure break error reporting
                             logger.warning(
                                 f"Failed to enrich error context: {ctx_error}",

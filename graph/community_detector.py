@@ -190,7 +190,7 @@ class CommunityDetector:
                 f"Detected {len(communities_list)} communities from {len(community_map)} nodes "
                 f"(resolution={resolution}, modularity={mod_score:.3f})"
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: modularity score is a non-critical quality metric
             self.logger.warning(f"Failed to calculate modularity: {e}", exc_info=True)
             self.logger.info(
                 f"Detected {len(communities_list)} communities from {len(community_map)} nodes "

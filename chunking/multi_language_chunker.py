@@ -26,47 +26,9 @@ from .tree_sitter import TreeSitterChunk, TreeSitterChunker
 # Import call graph extractor for Python
 try:
     from chunking.relationships.call_graph_extractor import CallGraphExtractorFactory
-    from chunking.relationships.relationship_extractors.class_attr_extractor import (
-        ClassAttributeExtractor,
-    )
-    from chunking.relationships.relationship_extractors.constant_extractor import (
-        ConstantExtractor,
-    )
-    from chunking.relationships.relationship_extractors.context_manager_extractor import (
-        ContextManagerExtractor,
-    )
-    from chunking.relationships.relationship_extractors.dataclass_field_extractor import (
-        DataclassFieldExtractor,
-    )
-    from chunking.relationships.relationship_extractors.decorator_extractor import (
-        DecoratorExtractor,
-    )
-    from chunking.relationships.relationship_extractors.default_param_extractor import (
-        DefaultParameterExtractor,
-    )
-    from chunking.relationships.relationship_extractors.enum_extractor import (
-        EnumMemberExtractor,
-    )
-    from chunking.relationships.relationship_extractors.exception_extractor import (
-        ExceptionExtractor,
-    )
-    from chunking.relationships.relationship_extractors.implements_extractor import (
-        ImplementsExtractor,
-    )
-    from chunking.relationships.relationship_extractors.import_extractor import (
-        ImportExtractor,
-    )
-    from chunking.relationships.relationship_extractors.inheritance_extractor import (
-        InheritanceExtractor,
-    )
-    from chunking.relationships.relationship_extractors.instantiation_extractor import (
-        InstantiationExtractor,
-    )
-    from chunking.relationships.relationship_extractors.override_extractor import (
-        OverrideExtractor,
-    )
-    from chunking.relationships.relationship_extractors.type_extractor import (
-        TypeAnnotationExtractor,
+    from chunking.relationships.relationship_extractors.registry import (
+        ExtractorContext,
+        build_relationship_extractors,
     )
 
     CALL_GRAPH_AVAILABLE = True
@@ -167,7 +129,7 @@ class MultiLanguageChunker:
             try:
                 call_graph_extractor = CallGraphExtractorFactory.create("python")
                 logger.info("Call graph extraction enabled for Python (thread-local)")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: call graph extraction is optional, degrade to None
                 logger.warning(
                     f"Failed to initialize call graph extractor: {e}", exc_info=True
                 )
@@ -176,35 +138,11 @@ class MultiLanguageChunker:
         # Relationship extractors
         relationship_extractors: list = []
         try:
-            relationship_extractors = [
-                # Priority 1 (Foundation) - always enabled
-                InheritanceExtractor(),
-                TypeAnnotationExtractor(),
-                ImportExtractor(
-                    relation_filter=self.relation_filter
-                ),  # Pass filter for import classification
-                # Priority 2 (Core) - always enabled
-                DecoratorExtractor(),
-                ExceptionExtractor(),
-                InstantiationExtractor(),
-                # Promoted to P2 - essential for understanding code structure
-                ClassAttributeExtractor(),  # Class data models (self.x = ...)
-                DataclassFieldExtractor(),  # Dataclass fields (field(...))
-                ConstantExtractor(),  # Module-level UPPER_CASE constants
-                # Priority 3 (Advanced) - always enabled
-                ImplementsExtractor(),  # Protocol/ABC implementations
-                OverrideExtractor(),  # Method overriding
-            ]
-
-            # Priority 4-5 (Entity Tracking) - conditional
+            ctx = ExtractorContext(relation_filter=self.relation_filter)
+            relationship_extractors = build_relationship_extractors(
+                ctx, enable_entity_tracking=self.enable_entity_tracking
+            )
             if self.enable_entity_tracking:
-                relationship_extractors.extend(
-                    [
-                        EnumMemberExtractor(),
-                        DefaultParameterExtractor(),
-                        ContextManagerExtractor(),
-                    ]
-                )
                 logger.info(
                     f"Initialized {len(relationship_extractors)} relationship extractors "
                     f"(foundation + core + data models + entity tracking)"
@@ -214,7 +152,7 @@ class MultiLanguageChunker:
                     f"Initialized {len(relationship_extractors)} relationship extractors "
                     f"(foundation + core + data models; entity tracking disabled)"
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: relationship extraction is optional, degrade to empty list
             logger.warning(
                 f"Failed to initialize relationship extractors: {e}", exc_info=True
             )
@@ -468,7 +406,7 @@ class MultiLanguageChunker:
 
             if calls:
                 logger.debug(f"Extracted {len(calls)} calls from {chunk_id}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - parse-recovery: AST parsing of chunk content can fail (e.g. Python 3.11 recursion bug), skip this chunk
             # Handle AST recursion depth limitation in Python 3.11.0-3.11.3
             if "recursion depth mismatch" in str(e):
                 logger.debug(
@@ -545,7 +483,7 @@ class MultiLanguageChunker:
                 logger.debug(
                     f"Extracted {len(all_relationships)} relationships from {chunk_id}"
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - parse-recovery: AST parsing of chunk content can fail (e.g. Python 3.11 recursion bug), skip this chunk
             # Handle AST recursion depth limitation in Python 3.11.0-3.11.3
             if "recursion depth mismatch" in str(e):
                 logger.debug(
@@ -757,7 +695,7 @@ class MultiLanguageChunker:
                 chunks = self.chunk_file(str(file_path))
                 all_chunks.extend(chunks)
                 logger.debug(f"Chunked {len(chunks)} from {file_path}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - parse-recovery: one file failing to chunk shouldn't abort the whole batch
                 logger.warning(f"Failed to chunk {file_path}: {e}", exc_info=True)
         return all_chunks
 
@@ -790,7 +728,7 @@ class MultiLanguageChunker:
                     chunks = future.result()
                     all_chunks.extend(chunks)
                     logger.debug(f"Chunked {len(chunks)} from {file_path}")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - parse-recovery: one file failing to chunk shouldn't abort the whole batch
                     logger.warning(f"Failed to chunk {file_path}: {e}", exc_info=True)
 
         return all_chunks

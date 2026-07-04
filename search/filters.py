@@ -196,7 +196,7 @@ def matches_directory_filter(
 
     # Ensure path ends with / for directory matching
     if not normalized_path.endswith("/"):
-        normalized_path = normalized_path + "/"
+        normalized_path = f"{normalized_path}/"
 
     # Check exclusions first (fast reject)
     if exclude_dirs:

@@ -123,7 +123,7 @@ class GraphIntegration:
                 self._logger.info(
                     f"Call graph storage initialized for project: {project_id}"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: optional graph storage init, indexing continues without it
                 self._logger.warning(f"Failed to initialize graph storage: {e}")
 
     @classmethod
@@ -292,7 +292,7 @@ class GraphIntegration:
                 f"'{parent_name}.{bare_name}' in {file_path}"
             )
             return result
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: split_block call extraction optional, returns empty on failure
             self._logger.debug(
                 f"split_block call extraction failed for {file_path}:{bare_name}: {e}"
             )
@@ -565,7 +565,7 @@ class GraphIntegration:
                     self.storage.add_relationship_edge(rel)
                     rel_edges += 1
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: per-spec edge failure, continue with remaining specs
                 self._logger.warning(f"Failed to add edges for {spec.chunk_id}: {e}")
 
         return {

@@ -12,7 +12,7 @@ from typing import Any
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from mcp_server.model_pool_manager import get_embedder
-from mcp_server.server import (
+from mcp_server.search_factory import (
     get_index_manager,
     get_searcher,
 )
@@ -360,7 +360,7 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
             _snap_mgr = SnapshotManager()
             _snaps = _snap_mgr.delete_all_snapshots(str(project_path))
             logger.info(f"Cleared {_snaps} Merkle snapshot(s) for {project_path}")
-        except Exception as _e:
+        except Exception as _e:  # noqa: BLE001 - resilience: optional snapshot cleanup, index deletion still succeeds
             logger.warning(f"Failed to clear Merkle snapshots: {_e}")
 
         return _cleared, _snaps
@@ -431,8 +431,12 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
         )
 
     # 3. Close all resources for this project
+    # close_project_resources() blocks (gc.collect, torch.cuda ops, time.sleep(0.3))
+    # — offload, mirroring handle_clear_index.
+    import asyncio
+
     logger.info(f"Closing resources for project: {project_path}")
-    close_project_resources(str(project_path_resolved))
+    await asyncio.to_thread(close_project_resources, str(project_path_resolved))
 
     # 4. Find and delete all model directories for this project
     projects_dir = get_storage_dir() / "projects"
@@ -452,7 +456,7 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
             error_msg = f"{model_dir.name}: File locked - {e}"
             errors.append(error_msg)
             logger.error(f"Permission error deleting {model_dir}: {e}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - cleanup: per-directory delete, must not block remaining directories
             error_msg = f"{model_dir.name}: {e}"
             errors.append(error_msg)
             logger.error(f"Unexpected error deleting {model_dir}: {e}")
@@ -465,7 +469,7 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
             str(project_path_resolved)
         )
         logger.info(f"Deleted {deleted_snapshots} Merkle snapshot(s)")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - cleanup: best-effort snapshot delete, must not block remaining steps
         deleted_snapshots = 0
         logger.warning(f"Failed to delete Merkle snapshots: {e}")
 
@@ -558,7 +562,7 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
                     f"  Example: {inaccessible[0]}\n"
                     f"  Tip: Close other programs (TouchDesigner, IDEs) that may have files open."
                 )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - resilience: optional accessibility check, indexing proceeds regardless
         # Don't fail indexing if accessibility check fails
         logger.debug(f"[ACCESSIBILITY] Check failed (non-critical): {e}")
 

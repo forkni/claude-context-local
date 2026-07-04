@@ -114,7 +114,7 @@ def _enable_windows_ansi() -> None:
             mode = ctypes.c_ulong(0)
             if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
                 kernel32.SetConsoleMode(handle, mode.value | 0x0004)
-    except Exception:
+    except Exception:  # noqa: BLE001 - cosmetic: best-effort ANSI console support
         pass
 
 
@@ -360,7 +360,7 @@ async def handle_read_resource(uri: str) -> str:
             index_manager = get_index_manager()
             stats = index_manager.get_stats()
             return json.dumps(stats, indent=2)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - api-boundary: convert to structured error response
             return json.dumps(
                 responses.error(f"Failed to get statistics: {str(e)}"), indent=2
             )
@@ -561,15 +561,13 @@ if __name__ == "__main__":
                 try:
                     logger.info("[HTTP CONFIG] Config reload requested")
 
-                    # Reload config from file
-                    from search.config import SearchConfigManager
+                    # Reload config from file into the shared singleton so
+                    # get_search_config() consumers across the running server
+                    # pick up the change.
+                    from search.config import get_config_manager
 
-                    config_manager = SearchConfigManager()
-                    config_manager.load_config()  # Re-reads search_config.json
-
-                    # Get updated values for response
-                    # pyrefly: ignore [missing-attribute]
-                    config = config_manager.config
+                    config_manager = get_config_manager()
+                    config = config_manager.load_config()  # Re-reads search_config.json
 
                     logger.info(
                         f"[HTTP CONFIG] Reloaded: mode={config.search_mode.default_mode}, "
@@ -647,7 +645,7 @@ if __name__ == "__main__":
                             embedder = get_embedder()
                             _ = embedder.model
                             logger.info("[INIT] Embedding model pre-loaded")
-                        except Exception as e:
+                        except Exception as e:  # noqa: BLE001 - resilience: optional pre-warm, model loads lazily on first use
                             logger.warning(
                                 f"[INIT] Model pre-load failed (non-critical): {e}"
                             )

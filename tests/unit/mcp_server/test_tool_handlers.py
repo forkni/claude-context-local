@@ -719,7 +719,7 @@ async def test_handle_search_code_hybrid_searcher_ready():
             return_value=(False, None),
         ),
         patch(
-            "mcp_server.tools.search_handlers._format_search_results",
+            "mcp_server.tools.result_view._format_search_results",
             return_value=[
                 {
                     "chunk_id": "test.py:1-10:function:test",
@@ -731,12 +731,8 @@ async def test_handle_search_code_hybrid_searcher_ready():
             ],
         ),
         patch(
-            "mcp_server.tools.search_handlers._enrich_results_with_graph_data",
+            "mcp_server.tools.result_view._enrich_results_with_graph_data",
             side_effect=lambda r, _im: r,
-        ),
-        patch(
-            "mcp_server.tools.search_handlers._get_index_manager_from_searcher",
-            return_value=None,
         ),
     ):
         mock_state = Mock()
@@ -1065,6 +1061,35 @@ async def test_handle_delete_project_adds_to_cleanup_queue(tmp_path):
     assert result["success"] is False
     assert len(result.get("errors", [])) == 1
     assert result.get("queued_for_retry") == 1
+
+
+# ============================================================================
+# REGRESSION: SearchConfigManager has no public `.config` attribute
+# ============================================================================
+
+
+def test_config_manager_exposes_config_only_via_load_config():
+    """Regression guard for mcp_server/server.py::handle_reload_config.
+
+    That handler used to read `config_manager.config` after calling
+    `load_config()`, but SearchConfigManager stores its parsed config in the
+    private `_config` and only exposes it via load_config()'s return value.
+    This caused every /reload_config HTTP call to 500 with
+    AttributeError: 'SearchConfigManager' object has no attribute 'config'.
+    """
+    from search.config import SearchConfigManager
+
+    mgr = SearchConfigManager()
+    assert not hasattr(mgr, "config")
+
+    cfg = mgr.load_config()
+    # Attributes the /reload_config handler reads must exist on the
+    # returned SearchConfig.
+    assert isinstance(cfg.search_mode.default_mode, str)
+    assert hasattr(cfg.search_mode, "bm25_weight")
+    assert hasattr(cfg.search_mode, "dense_weight")
+    assert hasattr(cfg.performance, "enable_entity_tracking")
+    assert hasattr(cfg.reranker, "enabled")
 
 
 if __name__ == "__main__":

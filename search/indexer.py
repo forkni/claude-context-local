@@ -240,7 +240,7 @@ class CodeIndexManager:
                 self._logger.info(
                     f"Successfully saved call graph with {len(self.graph_storage)} nodes"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: optional call graph save, indexing continues without it
                 self._logger.warning(f"Failed to save call graph: {e}")
         else:
             skip_reason = "None" if self.graph_storage is None else "empty (0 nodes)"
@@ -529,7 +529,7 @@ class CodeIndexManager:
                 with open(model_info_path, "w") as f:
                     json.dump(model_info, f, indent=2)
                 self._logger.debug(f"Saved model info to {model_info_path}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: model info save non-critical, indexing continues
                 self._logger.debug(f"Failed to save model info (non-critical): {e}")
 
         self._update_stats()

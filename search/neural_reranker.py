@@ -12,7 +12,7 @@ import torch
 
 if TYPE_CHECKING:
     from sentence_transformers import CrossEncoder
-    from transformers import AutoModel
+    from transformers import AutoModel, PreTrainedModel
 
 
 # Reranker model registry
@@ -182,7 +182,7 @@ class NeuralReranker(BaseReranker):
                         from search.config import get_search_config as _gsc
 
                         set_vram_limit(_gsc().performance.vram_limit_fraction)
-                    except Exception as e:
+                    except Exception as e:  # noqa: BLE001 - resilience: VRAM cap re-apply non-fatal, model load continues
                         self._logger.debug(
                             "VRAM cap re-apply skipped (non-fatal): %s", e
                         )
@@ -228,11 +228,20 @@ class NeuralReranker(BaseReranker):
             )
             pairs.append((query, content))
 
-        scores = self.model.predict(
-            pairs,
-            batch_size=self.batch_size,
-            show_progress_bar=False,
-        )
+        try:
+            scores = self.model.predict(
+                pairs,
+                batch_size=self.batch_size,
+                show_progress_bar=False,
+            )
+        finally:
+            # Pool-wide policy: release cached-but-unused CUDA allocator blocks after
+            # every rerank() call, on both success and failure. Originally added only to
+            # JinaRerankerV3 (whose variable-length listwise context caused torch_reserved
+            # to grow monotonically 8.3GB->13.5GB across searches on an RTX 4090 while
+            # torch_allocated stayed flat); applied here too for pool-wide consistency.
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         scored_candidates = list(zip(candidates, scores, strict=True))
         scored_candidates.sort(key=lambda x: x[1], reverse=True)
@@ -290,11 +299,16 @@ class NeuralReranker(BaseReranker):
         if not all_pairs:
             return [[] for _ in batch]
 
-        all_scores = self.model.predict(
-            all_pairs,
-            batch_size=self.batch_size,
-            show_progress_bar=False,
-        )
+        try:
+            all_scores = self.model.predict(
+                all_pairs,
+                batch_size=self.batch_size,
+                show_progress_bar=False,
+            )
+        finally:
+            # See rerank() above: pool-wide policy, release after every call.
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         results = []
         for i, (_, candidates) in enumerate(batch):
@@ -315,11 +329,35 @@ class NeuralReranker(BaseReranker):
     # Lifecycle methods (is_loaded, get_vram_usage, cleanup) are owned by BaseReranker.
 
 
-class GenerativeReranker(BaseReranker):
-    """Qwen3-style generative reranker using Yes/No token probability.
+# Qwen3-Reranker official prompt template (arXiv:2506.05176, "Qwen3 Embedding" tech
+# report, §2 "Reranking Models"). Qwen3-Reranker models are fine-tuned specifically on
+# this chat-wrapped <Instruct>/<Query>/<Document> format with lowercase "yes"/"no"
+# target tokens. An ad-hoc prompt (no chat wrapper, capitalized Yes/No) is off-distribution
+# for the model and produces poorly-calibrated, sometimes inverted relevance scores —
+# verified empirically: on a real query the official template restored the correct top
+# candidates that the ad-hoc prompt had buried below unrelated results.
+_QWEN_RERANK_DEFAULT_INSTRUCTION = (
+    "Given a code search query, retrieve relevant code that answers the query"
+)
+_QWEN_RERANK_SYSTEM_PREFIX = (
+    "<|im_start|>system\n"
+    "Judge whether the Document meets the requirements based on the Query and the "
+    'Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>\n'
+    "<|im_start|>user\n"
+)
+_QWEN_RERANK_ASSISTANT_SUFFIX = (
+    "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+)
 
-    This reranker leverages the full LLM "world knowledge" for relevance scoring,
-    achieving +8.7 points over discriminative cross-encoders on MTEB-R benchmark.
+
+class GenerativeReranker(BaseReranker):
+    """Qwen3-style generative reranker using yes/no token probability.
+
+    Uses the official Qwen3-Reranker instruct template (chat-wrapped
+    <Instruct>/<Query>/<Document> fields, lowercase yes/no target tokens; see
+    arXiv:2506.05176 §2). This reranker leverages the full LLM "world knowledge" for
+    relevance scoring, achieving +8.7 points over discriminative cross-encoders on the
+    MTEB-R benchmark.
 
     Performance:
         - VRAM: ~1.5GB
@@ -336,14 +374,19 @@ class GenerativeReranker(BaseReranker):
         self,
         model_name: str = "Qwen/Qwen3-Reranker-0.6B",
         device: str | None = None,
+        instruction: str | None = None,
     ):
         """Initialize GenerativeReranker with lazy loading.
 
         Args:
             model_name: HuggingFace model ID for generative reranker
             device: Device to run on ('cuda', 'cpu', or None for auto-detect)
+            instruction: Task instruction inserted into the official Qwen3-Reranker
+                <Instruct> field (Qwen3-Reranker is "Instruction Aware" per the model's
+                technical report). Defaults to a generic code-retrieval instruction.
         """
         self.model_name = model_name
+        self.instruction = instruction or _QWEN_RERANK_DEFAULT_INSTRUCTION
         self._model = None
         self._tokenizer = None
         self._logger = logging.getLogger(__name__)
@@ -363,7 +406,7 @@ class GenerativeReranker(BaseReranker):
                 from search.config import get_search_config as _gsc
 
                 set_vram_limit(_gsc().performance.vram_limit_fraction)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: VRAM cap re-apply non-fatal, model load continues
                 self._logger.debug("VRAM cap re-apply skipped (non-fatal): %s", e)
             self._logger.info(f"Loading generative reranker: {self.model_name}")
             from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -415,10 +458,12 @@ class GenerativeReranker(BaseReranker):
         model = self.model
         tokenizer = self.tokenizer
 
-        # Resolve token IDs with validation and graceful fallback
+        # Resolve token IDs with validation and graceful fallback.
+        # Lowercase "yes"/"no" per the official Qwen3-Reranker template (arXiv:2506.05176)
+        # — the model was fine-tuned on these exact target tokens.
         try:
-            yes_token_id = _resolve_single_token_id(tokenizer, "Yes")
-            no_token_id = _resolve_single_token_id(tokenizer, "No")
+            yes_token_id = _resolve_single_token_id(tokenizer, "yes")
+            no_token_id = _resolve_single_token_id(tokenizer, "no")
         except RuntimeError as e:
             self._logger.error(
                 f"Token resolution failed: {e}. Returning candidates in original order."
@@ -430,15 +475,17 @@ class GenerativeReranker(BaseReranker):
                 results.append(candidate)
             return results
 
-        # Build all prompts
+        # Build all prompts using the official Qwen3-Reranker instruct template
+        # (chat-wrapped <Instruct>/<Query>/<Document> fields; see module-level constants).
         prompts = []
         for candidate in candidates:
             content = candidate.metadata.get("content_preview", "")
             if not content:
                 content = candidate.chunk_id
             prompt = (
-                f"Query: {query}\nDocument: {content}\n"
-                "Is this document relevant to the query? Answer Yes or No:"
+                f"{_QWEN_RERANK_SYSTEM_PREFIX}"
+                f"<Instruct>: {self.instruction}\n<Query>: {query}\n<Document>: {content}"
+                f"{_QWEN_RERANK_ASSISTANT_SUFFIX}"
             )
             prompts.append(prompt)
 
@@ -478,8 +525,6 @@ class GenerativeReranker(BaseReranker):
                 f"Batched inference failed ({type(e).__name__}): {e}. "
                 "Returning candidates in original order."
             )
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             # Graceful fallback: return top_k candidates with original scores preserved
             results = []
             for candidate in candidates[:top_k]:
@@ -487,6 +532,12 @@ class GenerativeReranker(BaseReranker):
                 candidate.metadata["reranker_score"] = candidate.score
                 results.append(candidate)
             return results
+        finally:
+            # Pool-wide policy (see NeuralReranker.rerank() above): release cached-but-
+            # unused CUDA allocator blocks after every call, on both success and failure.
+            # `finally` runs even though the except branch above returns early.
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         # Pair candidates with scores and sort
         scored_candidates = list(zip(candidates, scores, strict=True))
@@ -579,7 +630,7 @@ class JinaRerankerV3(BaseReranker):
             from search.config import get_search_config as _gsc
 
             set_vram_limit(_gsc().performance.vram_limit_fraction)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: VRAM cap re-apply non-fatal, model load continues
             self._logger.debug("VRAM cap re-apply skipped (non-fatal): %s", e)
         import transformers as _tf
         from huggingface_hub import try_to_load_from_cache
@@ -621,7 +672,7 @@ class JinaRerankerV3(BaseReranker):
             config = _load_config(False)
             local_only = False  # cache miss — fall through to network for model too
 
-        def _load_model(cfg: AutoConfig, local_files_only: bool):
+        def _load_model(cfg: AutoConfig, local_files_only: bool) -> "PreTrainedModel":
             # Suppress Jina's lm_head MISSING LOAD REPORT printed to stdout
             # (cosmetic: lm_head is replaced by nn.Identity() and is never
             # used during reranking; scoring uses the projector head instead).
@@ -684,7 +735,7 @@ class JinaRerankerV3(BaseReranker):
         if hasattr(self._model, "_ensure_tokenizer"):
             try:
                 self._model._ensure_tokenizer()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: tokenizer pre-load optional, retried on first rerank
                 self._logger.warning(
                     f"Tokenizer pre-load failed (will retry on first rerank): {e}"
                 )
@@ -734,11 +785,29 @@ class JinaRerankerV3(BaseReranker):
                 jina_results = self.model.rerank(query, documents, top_n=top_k)
         except torch.cuda.OutOfMemoryError as e:
             self._logger.error(f"CUDA OOM during reranking: {e}")
-            torch.cuda.empty_cache()
             raise RuntimeError(f"Insufficient GPU memory for reranking: {e}") from e
         except Exception as e:
             self._logger.error(f"Jina reranker inference failed: {e}")
             raise RuntimeError(f"Reranking failed: {e}") from e
+        finally:
+            # Pool-wide policy: release cached-but-unused allocator blocks after every
+            # rerank() call, on success, OOM, or any other failure — NeuralReranker and
+            # GenerativeReranker do the same (see their rerank()/rerank_batch() methods).
+            # This class is where the policy was discovered: Jina's listwise architecture
+            # concatenates ALL candidate documents into one shared context per forward
+            # pass, so sequence length — and therefore the CUDA allocator's block sizes —
+            # varies with every query. Differently-sized blocks are rarely reused
+            # call-to-call, so torch_reserved (cached-but-unallocated memory) ratchets
+            # upward monotonically across searches even though torch_allocated (live
+            # tensors) stays flat — confirmed via get_memory_status(): reserved grew
+            # ~8.3GB -> 13.5GB over 4 searches on an RTX 4090 while allocated stayed
+            # pinned at 2.25GB. Left unchecked this eventually exhausts VRAM and triggers
+            # Windows WDDM's shared-memory (sysmem) fallback ("VRAM spillover"). GTE/BGE's
+            # uniform, fixed-max_length=512 pairwise batches are far less likely to hit
+            # this in practice, but release uniformly across the pool rather than
+            # special-casing by measured risk.
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
         # Map back to SearchResult objects with index validation
         n = len(candidates)

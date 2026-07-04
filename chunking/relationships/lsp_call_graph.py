@@ -110,7 +110,7 @@ try:
                 _LSP_BINARY = str(_p)
                 break
     _LSP_AVAILABLE = _LSP_BINARY is not None
-except Exception:
+except Exception:  # noqa: BLE001 - dep-probe: module-level probe for basedpyright-langserver on PATH, degrades to unavailable
     _LSP_AVAILABLE = False
     _LSP_BINARY = None
 
@@ -221,7 +221,7 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
                 p.kill()
         with contextlib.suppress(Exception):
             psutil.wait_procs(procs, timeout=3)
-    except Exception:
+    except Exception:  # noqa: BLE001 - cleanup: psutil unavailable/failed, fall back to plain proc.kill()
         with contextlib.suppress(Exception):
             proc.kill()
 
@@ -287,7 +287,7 @@ def _uri_to_path(uri: str) -> Path | None:
     """
     try:
         parsed = urlparse(uri)
-    except Exception:
+    except Exception:  # noqa: BLE001 - parse-recovery: malformed LSP file URI, fall back to None
         return None
     if parsed.scheme != "file":
         return None
@@ -479,7 +479,7 @@ class _LspClient:
             except _FrameParseError as exc:
                 self._logger.debug("[LSP] Dropping malformed frame: %s", exc)
                 continue
-            except Exception:
+            except Exception:  # noqa: BLE001 - resilience: reader thread must not crash silently, treat any read failure as EOF
                 break
             if msg is None:
                 break  # EOF
@@ -600,7 +600,7 @@ class LSPResolver:
 
         try:
             return self._run_lsp(py_files, project_root, raw_line_map, logger)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - resilience: LSP resolver is an optional recall booster, fall back to no edges
             logger.warning("[LSP] LSP pass failed (%s) — falling back to []", exc)
             return []
 

@@ -104,27 +104,52 @@ class RerankingEngine:
                 return False
         # VRAM-check exception path: ExceptionReplacer and ReplaceFalseWithTrue are
         # equivalent for unit tests (exception is unreachable with mocked torch).
-        except Exception as e:  # pragma: no mutate
+        except Exception as e:  # pragma: no mutate  # noqa: BLE001 - resilience: VRAM check failure disables neural reranking
             self._logger.warning(f"VRAM check failed, disabling neural reranking: {e}")
             return False  # pragma: no mutate
 
     def _ensure_reranker(self, log_prefix: str) -> bool:
-        """Lazy-init or cleanup neural reranker based on current VRAM/config state.
+        """Lazy-init, swap, or cleanup neural reranker based on current VRAM/config state.
 
         Updates self._neural_reranking_enabled and self.neural_reranker.
         Returns True if reranking is available (enabled and loaded).
+
+        Note: like the existing create-branch, the swap-branch below has no lock around
+        it. RerankingEngine is a single instance shared across concurrent
+        HybridSearcher.search() calls (each offloaded via asyncio.to_thread), so two
+        requests detecting a swap at the same time could each build a new reranker and
+        the loser's instance would be discarded without cleanup(). Pre-existing gap,
+        not introduced by the swap branch — same race already existed for the create
+        branch's `self.neural_reranker is None` check.
         """
         should_enable = self.should_enable_neural_reranking()
+        config = get_search_config()
 
         # and/or mutations here are boundary orchestration; equivalent under the test suite's
         # mock setup (create_reranker is mocked, _ensure_reranker is not called directly).
         if should_enable and self.neural_reranker is None:  # pragma: no mutate
-            config = get_search_config()
             self.neural_reranker = create_reranker(
                 model_name=config.reranker.model_name,
                 batch_size=config.reranker.batch_size,
             )
             self._logger.debug(f"{log_prefix} Neural reranker initialized")
+        elif (
+            should_enable
+            and self.neural_reranker is not None
+            and self.neural_reranker.model_name != config.reranker.model_name
+        ):
+            # configure_reranking(model_name=...) only takes effect on the next search if
+            # we actually detect the change here — without this branch, a loaded reranker
+            # instance is never replaced, and the config change is silently a no-op.
+            self._logger.info(
+                f"{log_prefix} Reranker model changed "
+                f"({self.neural_reranker.model_name} -> {config.reranker.model_name}), reloading"
+            )
+            self.neural_reranker.cleanup()
+            self.neural_reranker = create_reranker(
+                model_name=config.reranker.model_name,
+                batch_size=config.reranker.batch_size,
+            )
         elif not should_enable and self.neural_reranker is not None:
             self.neural_reranker.cleanup()
             self.neural_reranker = None
@@ -162,7 +187,7 @@ class RerankingEngine:
         # OOM detection path: all mutations here are boundary (requires real CUDA OOM).
         # ExceptionReplacer, And/Or in OOM string detection, and True→False on _session_oom_detected
         # are all equivalent for unit tests.
-        except Exception as e:  # pragma: no mutate
+        except Exception as e:  # pragma: no mutate  # noqa: BLE001 - resilience: OOM-protected rerank falls back to original candidates
             self._logger.warning(
                 f"{log_prefix} Reranking failed: {e}, using original results"
             )
@@ -222,7 +247,7 @@ class RerankingEngine:
                     # Keep original score if embedding not found
 
             # ExceptionReplacer: embedding re-score path unreachable with mocked embedder.
-            except Exception as e:  # pragma: no mutate
+            except Exception as e:  # pragma: no mutate  # noqa: BLE001 - resilience: re-score failure keeps original scores
                 self._logger.warning(
                     f"[RERANK] Failed to re-score with embeddings: {e}, "
                     "keeping original scores"

@@ -137,7 +137,7 @@ class ApplicationState:
                 try:
                     logger.info(f"[CLEANUP] Releasing embedder: {key}")
                     embedder.cleanup()
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - cleanup: per-embedder release, must not block remaining embedders
                     logger.warning(f"[CLEANUP] Failed to cleanup {key}: {e}")
 
     def reset_search_components(self) -> None:

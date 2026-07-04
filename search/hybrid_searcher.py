@@ -288,7 +288,7 @@ class HybridSearcher(BaseSearcher):
                 self._logger.info(
                     f"[INIT] Ego-graph retrieval initialized for project: {project_id}"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: optional ego-graph init, feature disabled on failure
                 self._logger.warning(
                     f"[INIT] Failed to initialize ego-graph retrieval: {e}. "
                     "Ego-graph expansion will be disabled.",
@@ -854,7 +854,7 @@ class HybridSearcher(BaseSearcher):
 
             return combined_results
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: optional ego-graph expansion, return unexpanded results
             self._logger.warning(
                 f"Ego-graph expansion failed: {e}. Returning original results.",
                 exc_info=True,
@@ -929,7 +929,7 @@ class HybridSearcher(BaseSearcher):
 
             return combined_results
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: optional parent expansion, return unexpanded results
             self._logger.warning(
                 f"Parent expansion failed: {e}. Returning original results.",
                 exc_info=True,

@@ -1,5 +1,7 @@
 """Unit tests for MCP server functionality."""
 
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +19,32 @@ class TestMCPServerImport:
             assert True  # If we get here, import succeeded
         except ImportError as e:
             pytest.fail(f"Failed to import MCP server: {e}")
+
+    def test_mcp_server_can_import_as_first_module(self):
+        """mcp_server.server must import cleanly even as the very first mcp_server
+        module imported in a fresh interpreter (e.g. a standalone script calling
+        mcp_server.search_factory.get_searcher()).
+
+        Runs in a subprocess because within the shared pytest process, other test
+        modules collected earlier (e.g. test_index_handlers.py, alphabetically
+        before this file) already import mcp_server.tools first, masking an
+        ordering-dependent circular import: several mcp_server/tools/*.py modules
+        used to eagerly import get_index_manager/get_searcher/
+        _cleanup_previous_resources from mcp_server.server at module level, but
+        those names are only bound in server.py via a re-export placed after the
+        `from mcp_server.tools import responses` import that triggers the cycle.
+        A fresh subprocess reproduces the true worst case regardless of
+        collection order.
+        """
+        repo_root = Path(__file__).resolve().parents[3]
+        result = subprocess.run(
+            [sys.executable, "-c", "import mcp_server.server"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
 
 
 class TestGetterFunctions:

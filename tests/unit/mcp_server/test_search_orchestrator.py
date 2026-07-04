@@ -91,10 +91,6 @@ def _patch_execute(real_sc=None, project="/test"):
                 "mcp_server.tools.search_handlers._check_auto_reindex",
                 return_value=(False, None),
             ),
-            patch(
-                "mcp_server.tools.search_handlers._get_index_manager_from_searcher",
-                return_value=None,
-            ),
         ):
             st = Mock()
             st.current_project = project
@@ -352,7 +348,7 @@ class TestApplySourceOrderAndBudget:
             {"chunk_id": "a.py:1-5:function:a", "file_path": "a.py", "start_line": 1},
         ]
         with patch(
-            "mcp_server.tools.search_handlers._reorder_by_source_position",
+            "mcp_server.tools.result_view._reorder_by_source_position",
             return_value=list(reversed(results)),
         ) as mock_reorder:
             out = SearchOrchestrator._apply_source_order_and_budget(
@@ -367,7 +363,7 @@ class TestApplySourceOrderAndBudget:
         outcome = _make_outcome(effective_config=sc)
         single = [_make_formatted()]
         with patch(
-            "mcp_server.tools.search_handlers._reorder_by_source_position"
+            "mcp_server.tools.result_view._reorder_by_source_position"
         ) as mock_reorder:
             out = SearchOrchestrator._apply_source_order_and_budget(
                 _make_plan(max_context_tokens=0), outcome, list(single)

@@ -189,7 +189,7 @@ def _update_stored_path_if_changed(project_dir: Path, current_path: str) -> None
 
             with open(info_file, "w") as f:
                 json.dump(info, f, indent=2)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parse-recovery: project_info.json read/update, skip on failure
         logger.warning(f"Failed to update stored path: {e}")
 
 
@@ -390,5 +390,5 @@ def update_project_filters(
         logger.info(
             f"[PROJECT_INFO] Updated filters: user_include={include_dirs}, user_exclude={exclude_dirs}"
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parse-recovery: project_info.json read/update, skip on failure
         logger.warning(f"[PROJECT_INFO] Failed to update filters: {e}")

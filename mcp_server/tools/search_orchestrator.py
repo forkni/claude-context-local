@@ -3,8 +3,10 @@
 SearchPlanner (Phase A): synchronous, side-effect-free decision stage.
 SearchOrchestrator (Phases B–D): async execution + assembly + run driver.
 
-Circular-import rule: never import search_handlers at module level. All helpers
-from search_handlers are imported lazily inside methods.
+Circular-import rule: never import search_handlers at module level (it imports
+this module back for SearchOrchestrator). Rendering helpers now live in
+mcp_server.tools.result_view (a leaf module, safe to import at top level);
+only genuine indexing/redirect calls into search_handlers stay lazy.
 """
 
 from __future__ import annotations
@@ -15,9 +17,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from mcp_server.server import get_searcher
+from mcp_server.search_factory import get_searcher
 from mcp_server.services import get_config, get_state
-from mcp_server.tools import responses
+from mcp_server.tools import responses, result_view
+from mcp_server.tools.searcher_view import SearcherView
 from search.config import (
     EgoGraphConfig,
     ParentRetrievalConfig,
@@ -298,10 +301,7 @@ class SearchOrchestrator:
         Returns ExecutionOutcome on success; returns a dict (error response) when
         a DimensionMismatchError is raised or the index is not ready.
         """
-        from mcp_server.tools.search_handlers import (
-            _check_auto_reindex,
-            _get_index_manager_from_searcher,
-        )
+        from mcp_server.tools.search_handlers import _check_auto_reindex
 
         # ===== Block A: Auto-reindex =====
         current_project = get_state().current_project
@@ -329,8 +329,6 @@ class SearchOrchestrator:
             searcher = await asyncio.to_thread(get_searcher)
         except DimensionMismatchError as e:
             return responses.dimension_mismatch(e)
-
-        from mcp_server.tools.searcher_view import SearcherView
 
         _view = SearcherView(searcher)
         is_ready = _view.is_ready
@@ -475,7 +473,7 @@ class SearchOrchestrator:
                 filters=filters if filters else None,
             )
 
-        index_manager = _get_index_manager_from_searcher(searcher)
+        index_manager = SearcherView(searcher).index_manager
         return ExecutionOutcome(
             results=results,
             searcher=searcher,
@@ -496,13 +494,13 @@ class SearchOrchestrator:
         """Block H: source-position reorder (when output.source_order_output) +
         context-token-budget truncation (when plan.max_context_tokens > 0).
         """
-        from mcp_server.tools.search_handlers import _reorder_by_source_position
-
         if (
             getattr(outcome.effective_config.output, "source_order_output", True)
             and len(formatted_results) > 1
         ):
-            formatted_results = _reorder_by_source_position(formatted_results)
+            formatted_results = result_view._reorder_by_source_position(
+                formatted_results
+            )
             logger.debug(
                 f"[SOURCE_ORDER] Reordered {len(formatted_results)} results by file position"
             )
@@ -553,19 +551,13 @@ class SearchOrchestrator:
 
     def _assemble(self, plan: SearchPlan, outcome: ExecutionOutcome) -> dict:
         """Blocks E–I: format, enrich, centrality, subgraph, reorder, build response."""
-        from mcp_server.tools.search_handlers import (
-            _enrich_results_with_graph_data,
-            _format_search_results,
-            _get_index_manager_from_searcher,
-        )
-
-        index_manager = _get_index_manager_from_searcher(outcome.searcher)
+        index_manager = SearcherView(outcome.searcher).index_manager
         output_cfg = outcome.effective_config.output
 
         # Block E: format + enrich (per-result graph gated by include_result_graph)
-        formatted_results = _format_search_results(outcome.results)
+        formatted_results = result_view._format_search_results(outcome.results)
         if output_cfg.include_result_graph:
-            formatted_results = _enrich_results_with_graph_data(
+            formatted_results = result_view._enrich_results_with_graph_data(
                 formatted_results, index_manager
             )
 
@@ -594,6 +586,63 @@ class SearchOrchestrator:
     # Phase D: run driver
     # ---------------------------------------------------------------------------
 
+    @staticmethod
+    def _handle_chunk_id_lookup(chunk_id: str) -> dict:
+        """Handle direct O(1) chunk lookup by chunk_id.
+
+        Args:
+            chunk_id: The chunk identifier to look up directly
+
+        Returns:
+            dict: Response with single result or error
+        """
+        from mcp_server.guidance import add_system_message
+
+        logger.info(f"[DIRECT_LOOKUP] chunk_id='{chunk_id}'")
+
+        try:
+            searcher = get_searcher()
+            result = searcher.get_by_chunk_id(chunk_id)
+
+            if result is None:
+                return responses.error(
+                    "Chunk not found",
+                    message=f"No chunk found with ID: {chunk_id}",
+                    chunk_id=chunk_id,
+                )
+
+            # Reuse existing formatting function for consistency
+            formatted_results = result_view._format_search_results([result])
+            formatted_result = formatted_results[0]
+
+            # Add graph data if available
+            index_manager = SearcherView(searcher).index_manager
+            if index_manager and index_manager.graph_storage is not None:
+                graph_data = result_view._get_graph_data_for_chunk(
+                    index_manager, chunk_id
+                )
+                if graph_data:
+                    formatted_result["graph"] = graph_data
+
+            # Build response
+            response = {
+                "query": None,
+                "chunk_id": chunk_id,
+                "results": [formatted_result],
+                "routing": None,
+            }
+
+            # Add AI guidance
+            response = add_system_message(
+                response, tool_name="search_code", query=None, chunk_id=chunk_id
+            )
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Direct lookup failed: {e}", exc_info=True)
+            return responses.error(str(e), chunk_id=chunk_id)
+
     async def run(self, arguments: dict[str, Any]) -> dict:
         """Full search_code pipeline: validate → plan → redirect? → execute → assemble."""
         query = arguments.get("query")
@@ -611,9 +660,7 @@ class SearchOrchestrator:
             )
 
         if chunk_id:
-            from mcp_server.tools.search_handlers import _handle_chunk_id_lookup
-
-            return await asyncio.to_thread(_handle_chunk_id_lookup, chunk_id)
+            return await asyncio.to_thread(self._handle_chunk_id_lookup, chunk_id)
 
         # SearchPlanner.plan() calls IntentClassifier.classify() which, when
         # semantic_enabled=True (the default), runs embed_query() — a GPU forward
@@ -652,7 +699,7 @@ class SearchOrchestrator:
                         return await handle_find_similar_code(
                             {"chunk_id": _redirect_result[0].chunk_id, "k": redirect.k}
                         )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - resilience: optional redirect, falls back to normal search
                     logger.warning(
                         f"[INTENT] Failed to redirect SIMILARITY query: {e}. "
                         f"Falling back to normal search."

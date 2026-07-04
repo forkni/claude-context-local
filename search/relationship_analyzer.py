@@ -657,7 +657,7 @@ class RelationshipAnalyzer:
         filters = {"exclude_dirs": exclude_dirs} if exclude_dirs else None
         try:
             results = self.searcher.search(symbol_name, k=30, filters=filters)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - resilience: Tier 3 semantic search fallback, resolution returns None
             logger.debug(f"Tier 3 semantic search failed for '{symbol_name}': {exc}")
             return None
         if not results:
@@ -761,7 +761,7 @@ class RelationshipAnalyzer:
                 sr_name = sr.chunk_id.split(":")[-1] if hasattr(sr, "chunk_id") else ""
                 if sr_name == target:
                     return sr
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - resilience: type resolution search failure, returns None
             logger.debug(f"Failed to resolve type {target}: {exc}")
         return None
 
@@ -801,7 +801,7 @@ class RelationshipAnalyzer:
                         "score": final_score,
                     }
                 )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - resilience: similar-code search failure, returns partial/empty list
             logger.warning(f"Failed to find similar code: {exc}")
         return similar
 
