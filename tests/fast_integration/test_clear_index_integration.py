@@ -118,6 +118,22 @@ async def test_clear_index_clears_bm25_and_dense(mock_embedder):
         assert stats_after.get("synced", False) is True, "Indices should be synced"
 
 
+@pytest.mark.skip(
+    reason=(
+        "Quarantined: same root cause and file as "
+        "test_clear_index_clears_bm25_and_dense (quarantined in PR #34), flagged "
+        "there as an explicit follow-up and left unskipped at the time. It has "
+        "since shown the same failure pattern independently: 'BM25 reloaded from "
+        "disk after clear' / 'bm25_documents' missing from stats, both traced to "
+        "get_state()/get_searcher() singleton reuse across the pytest session "
+        "(tests/fast_integration/ has no equivalent of the real-storage "
+        "regression guard added for tests/unit/mcp_server/ in fb1f372a). Could "
+        "not verify a fix locally in this environment (torch install is blocked "
+        "by network policy), so quarantining to match its sibling rather than "
+        "guessing. See the flaky-test report for the full ranked list and "
+        "evidence."
+    )
+)
 @pytest.mark.asyncio
 async def test_clear_index_persists_after_searcher_recreation(mock_embedder):
     """
