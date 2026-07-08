@@ -108,6 +108,46 @@ class TestNoFileLogBleedDuringTests:
         )
 
 
+def _make_record(msg: str) -> logging.LogRecord:
+    return logging.LogRecord(
+        name="uvicorn.error",
+        level=logging.ERROR,
+        pathname="",
+        lineno=0,
+        msg=msg,
+        args=(),
+        exc_info=None,
+    )
+
+
+class TestDropBenignUvicornErrors:
+    """_drop_benign_uvicorn_errors must silence known-cosmetic uvicorn.error noise
+    (disconnected clients, SSE streams cancelled at Ctrl+C shutdown) while still
+    letting genuine server errors through."""
+
+    def test_drops_completing_response_message(self) -> None:
+        """The Ctrl+C shutdown symptom: standalone SSE stream cancelled mid-flight
+        logs 'ASGI callable returned without completing response.' at ERROR."""
+        from mcp_server.server import _drop_benign_uvicorn_errors
+
+        record = _make_record("ASGI callable returned without completing response.")
+        assert _drop_benign_uvicorn_errors(record) is False
+
+    def test_drops_unexpected_asgi_message(self) -> None:
+        from mcp_server.server import _drop_benign_uvicorn_errors
+
+        record = _make_record(
+            "Unexpected ASGI message 'http.response.body' sent, after response already completed."
+        )
+        assert _drop_benign_uvicorn_errors(record) is False
+
+    def test_keeps_genuine_errors(self) -> None:
+        from mcp_server.server import _drop_benign_uvicorn_errors
+
+        record = _make_record("Server error: boom")
+        assert _drop_benign_uvicorn_errors(record) is True
+
+
 class TestSafeRotatingFileHandler:
     """_SafeRotatingFileHandler.rotate() must swallow file-lock errors gracefully."""
 

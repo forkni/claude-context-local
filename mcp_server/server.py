@@ -199,6 +199,25 @@ else:
     logging.getLogger("mcp").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
 
+# Known-benign uvicorn.error messages, filtered out in app_lifespan (HTTP transport only).
+_BENIGN_UVICORN_ERROR_SUBSTRINGS = (
+    "Unexpected ASGI message",  # secondary error after a client BrokenResourceError
+    "ASGI callable returned without completing response",  # standalone SSE stream
+    # cancelled mid-flight when uvicorn shuts down (Ctrl+C) — cosmetic, not a bug.
+)
+
+
+def _drop_benign_uvicorn_errors(record: logging.LogRecord) -> bool:
+    """uvicorn.error filter: drop known-benign shutdown/disconnect noise.
+
+    Both messages are cosmetic: 'Unexpected ASGI message' follows a client
+    BrokenResourceError, and 'ASGI callable returned without completing response'
+    fires when a long-lived standalone SSE stream is cancelled at server shutdown.
+    """
+    msg = record.getMessage()
+    return not any(s in msg for s in _BENIGN_UVICORN_ERROR_SUBSTRINGS)
+
+
 # Multi-model pool configuration imported from search.config
 
 
@@ -659,12 +678,11 @@ if __name__ == "__main__":
                         )
                     logger.info("=" * 60)
 
-                    # Suppress noisy ASGI errors for disconnected clients
-                    # (secondary errors after BrokenResourceError)
+                    # Suppress noisy-but-benign uvicorn.error messages (disconnected
+                    # clients, SSE streams cancelled at shutdown) — see
+                    # _drop_benign_uvicorn_errors for the full rationale.
                     logging.getLogger("uvicorn.error").addFilter(
-                        lambda record: (
-                            "Unexpected ASGI message" not in record.getMessage()
-                        )
+                        _drop_benign_uvicorn_errors
                     )
 
                     # session_manager.run() creates the task group required by handle_request
