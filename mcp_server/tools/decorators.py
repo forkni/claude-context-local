@@ -92,6 +92,38 @@ def error_handler(
     return decorator
 
 
+def with_mutation_lock(func: Callable) -> Callable:
+    """Decorator that serializes a state-mutating handler on the global lock.
+
+    §IV-C hardening: the server holds global mutable state (active project,
+    model, search config — see mcp_server/state.py) and HTTP transport runs
+    ``stateless=True``, so concurrent clients share it. Without this, one
+    client's ``switch_project``/``configure_*``/``clear_index``/
+    ``delete_project`` call could interleave with another client's in-flight
+    search or mutation, corrupting shared state mid-read.
+
+    Uses ``ApplicationState.get_mutation_lock()`` — a single process-wide
+    ``asyncio.Lock`` shared by all state-mutating tools, following the same
+    lazy-creation pattern as the per-project ``get_reindex_lock()``. This
+    only prevents *interleaving*; it does not add session-scoped isolation
+    (a full Stateful Session Server is a separate, larger change).
+
+    Apply inside @error_handler so a failure while the lock is held still
+    gets the standard error-response treatment after the lock releases:
+
+        @error_handler("Project switch")
+        @with_mutation_lock
+        async def handle_switch_project(arguments): ...
+    """
+
+    @functools.wraps(func)
+    async def wrapper(arguments: dict[str, Any]) -> dict:
+        async with get_state().get_mutation_lock():
+            return await func(arguments)
+
+    return wrapper
+
+
 def require_indexed_project(func: Callable) -> Callable:
     """Decorator that short-circuits with an error when no project is indexed.
 

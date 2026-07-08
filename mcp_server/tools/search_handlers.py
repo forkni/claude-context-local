@@ -436,20 +436,18 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
             source, searcher
         )
         if not resolved_source:
-            return {
-                "path_found": False,
-                "error": f"Could not resolve source symbol: {source}",
-            }
+            return responses.error(
+                f"Could not resolve source symbol: {source}", path_found=False
+            )
 
     if not resolved_target and target:
         resolved_target, target_info = await _resolve_symbol_to_chunk_id(
             target, searcher
         )
         if not resolved_target:
-            return {
-                "path_found": False,
-                "error": f"Could not resolve target symbol: {target}",
-            }
+            return responses.error(
+                f"Could not resolve target symbol: {target}", path_found=False
+            )
 
     # Get graph query engine
     from mcp_server.tools.searcher_view import SearcherView

@@ -185,6 +185,37 @@ async def test_handle_get_index_status_with_hybrid_searcher():
 
 
 @pytest.mark.asyncio
+async def test_handle_get_index_status_with_job_id_reports_job_status():
+    """P2-A: get_index_status(job_id=...) polls a background index_directory job
+    instead of returning the regular index snapshot.
+    """
+    from mcp_server.tools.job_registry import get_job_registry, reset_job_registry
+
+    reset_job_registry()
+    registry = get_job_registry()
+    job = await registry.create(kind="index_directory", target="/proj")
+    await registry.mark_done(job.job_id, {"chunks_added": 5})
+
+    result = await tool_handlers.handle_get_index_status({"job_id": job.job_id})
+
+    assert result["status"] == "done"
+    assert result["result"] == {"chunks_added": 5}
+    assert result["job_id"] == job.job_id
+
+
+@pytest.mark.asyncio
+async def test_handle_get_index_status_unknown_job_id_returns_error():
+    from mcp_server.tools.job_registry import reset_job_registry
+
+    reset_job_registry()
+
+    result = await tool_handlers.handle_get_index_status({"job_id": "does-not-exist"})
+
+    assert "error" in result
+    assert "does-not-exist" in result["error"]
+
+
+@pytest.mark.asyncio
 async def test_handle_list_projects_no_projects():
     """Test list_projects when no projects exist."""
     with patch("mcp_server.tools.status_handlers.get_storage_dir") as mock_storage:

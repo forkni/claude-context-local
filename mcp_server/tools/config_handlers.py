@@ -16,7 +16,7 @@ from mcp_server.storage_manager import (
     set_current_project,
 )
 from mcp_server.tools import responses
-from mcp_server.tools.decorators import error_handler
+from mcp_server.tools.decorators import error_handler, with_mutation_lock
 from search.config import (
     MODEL_REGISTRY,
     ChunkingConfig,
@@ -118,6 +118,7 @@ def apply_config_patch(
 
 
 @error_handler("Project switch")
+@with_mutation_lock
 async def handle_switch_project(arguments: dict[str, Any]) -> dict:
     """Switch to a different indexed project."""
     project_path = arguments["project_path"]
@@ -158,6 +159,7 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
 
 
 @error_handler("Configure search mode")
+@with_mutation_lock
 async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
     """Configure search mode and parameters."""
     search_mode = arguments.get("search_mode", SearchMode.HYBRID)
@@ -202,6 +204,7 @@ async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
     "Switch model",
     error_context=lambda args: {"available_models": list(MODEL_REGISTRY.keys())},
 )
+@with_mutation_lock
 async def handle_switch_embedding_model(arguments: dict[str, Any]) -> dict:
     """Switch to a different embedding model."""
     model_name = arguments["model_name"]
@@ -233,6 +236,7 @@ async def handle_switch_embedding_model(arguments: dict[str, Any]) -> dict:
 
 
 @error_handler("Configure reranking")
+@with_mutation_lock
 async def handle_configure_reranking(arguments: dict[str, Any]) -> dict:
     """Configure neural reranker settings."""
     config_manager = get_config_manager()
@@ -254,6 +258,7 @@ async def handle_configure_reranking(arguments: dict[str, Any]) -> dict:
 
 
 @error_handler("Configure chunking")
+@with_mutation_lock
 async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
     """Configure code chunking settings.
 
@@ -266,7 +271,7 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
     sizing_mode ("fixed"|"adaptive"), adaptive_multiplier_max (1.0-2.0),
     adaptive_multiplier_min (0.1-1.0), max_complexity_cap (5-100).
 
-    Note: min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults and
+    Note: min_chunk_tokens (50) and max_merged_tokens (400) are optimal defaults and
     not exposed for user configuration.
     """
     config_manager = get_config_manager()

@@ -1,10 +1,12 @@
 """Unit tests for MCP tool handler decorators."""
 
+import asyncio
 from unittest.mock import patch
 
 import pytest
 
-from mcp_server.tools.decorators import error_handler
+from mcp_server.state import reset_state
+from mcp_server.tools.decorators import error_handler, with_mutation_lock
 
 
 class TestErrorHandlerDecorator:
@@ -286,6 +288,89 @@ class TestErrorHandlerIntegration:
         error_result = await switch_model_handler({"model_name": "invalid"})
         assert "Model 'invalid' not found" in error_result["error"]
         assert error_result["available_models"] == available_models
+
+
+class TestWithMutationLockDecorator:
+    """Test @with_mutation_lock — P3-A Phase 1 HTTP multi-client hardening."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_state(self):
+        """Give each test a fresh global mutation lock (real process singleton)."""
+        reset_state()
+        yield
+        reset_state()
+
+    @pytest.mark.asyncio
+    async def test_passes_through_result(self):
+        @with_mutation_lock
+        async def handler(arguments: dict) -> dict:
+            return {"success": True, "value": arguments["value"]}
+
+        result = await handler({"value": 1})
+
+        assert result == {"success": True, "value": 1}
+
+    @pytest.mark.asyncio
+    async def test_serializes_concurrent_calls(self):
+        """A slower call must fully finish before a later call's body starts."""
+        order: list[str] = []
+
+        @with_mutation_lock
+        async def slow_handler(arguments: dict) -> dict:
+            order.append("slow-start")
+            await asyncio.sleep(0.05)
+            order.append("slow-end")
+            return {}
+
+        @with_mutation_lock
+        async def fast_handler(arguments: dict) -> dict:
+            order.append("fast-start")
+            order.append("fast-end")
+            return {}
+
+        # Launch both concurrently; without the lock "fast-start" could land
+        # between "slow-start" and "slow-end".
+        await asyncio.gather(slow_handler({}), fast_handler({}))
+
+        # Whichever call the lock admits first must fully complete (start+end
+        # adjacent) before the other call's body begins.
+        assert order in (
+            ["slow-start", "slow-end", "fast-start", "fast-end"],
+            ["fast-start", "fast-end", "slow-start", "slow-end"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_lock_released_after_exception(self):
+        """A failing call must not leave the lock held for the next caller."""
+
+        @with_mutation_lock
+        async def failing_handler(arguments: dict) -> dict:
+            raise ValueError("boom")
+
+        @with_mutation_lock
+        async def ok_handler(arguments: dict) -> dict:
+            return {"success": True}
+
+        with pytest.raises(ValueError, match="boom"):
+            await failing_handler({})
+
+        # Would hang forever if the lock leaked from the failed call.
+        result = await asyncio.wait_for(ok_handler({}), timeout=1.0)
+        assert result == {"success": True}
+
+    @pytest.mark.asyncio
+    async def test_composes_with_error_handler(self):
+        """@error_handler outer + @with_mutation_lock inner: errors still
+        convert to error dicts (not raised) after the lock releases."""
+
+        @error_handler("Mutating action")
+        @with_mutation_lock
+        async def handler(arguments: dict) -> dict:
+            raise RuntimeError("mutation failed")
+
+        result = await handler({})
+
+        assert result == {"error": "mutation failed"}
 
 
 if __name__ == "__main__":

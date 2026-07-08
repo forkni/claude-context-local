@@ -155,6 +155,72 @@ async def test_no_path_returns_path_found_false_and_hint(
 
 
 @pytest.mark.asyncio
+async def test_source_symbol_unresolved_returns_error(dec_state, passthrough_metadata):
+    """Unresolvable source symbol returns a responses.error() envelope with
+    path_found=False preserved (P3-B: was a hand-rolled dict)."""
+    mock_gs = Mock()
+    mock_gs.get_nodes_by_name.return_value = []
+    mock_gs.graph.nodes.return_value = []
+
+    mock_searcher = Mock()
+    mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
+    mock_searcher.graph_storage = mock_gs
+    mock_searcher.search.return_value = []  # all resolution tiers miss
+
+    with (
+        patch("mcp_server.tools.decorators.get_state", return_value=dec_state),
+        patch("mcp_server.tools.search_handlers.MetadataStore", passthrough_metadata),
+        patch(
+            "mcp_server.tools.search_handlers.get_searcher", return_value=mock_searcher
+        ),
+    ):
+        result = await handle_find_path(
+            {
+                "source": "nonexistent",
+                "target_chunk_id": "file.py:20-30:function:target_fn",
+            }
+        )
+
+    assert result == {
+        "error": "Could not resolve source symbol: nonexistent",
+        "path_found": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_target_symbol_unresolved_returns_error(dec_state, passthrough_metadata):
+    """Unresolvable target symbol returns a responses.error() envelope with
+    path_found=False preserved (P3-B: was a hand-rolled dict)."""
+    mock_gs = Mock()
+    mock_gs.get_nodes_by_name.return_value = []
+    mock_gs.graph.nodes.return_value = []
+
+    mock_searcher = Mock()
+    mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
+    mock_searcher.graph_storage = mock_gs
+    mock_searcher.search.return_value = []  # all resolution tiers miss
+
+    with (
+        patch("mcp_server.tools.decorators.get_state", return_value=dec_state),
+        patch("mcp_server.tools.search_handlers.MetadataStore", passthrough_metadata),
+        patch(
+            "mcp_server.tools.search_handlers.get_searcher", return_value=mock_searcher
+        ),
+    ):
+        result = await handle_find_path(
+            {
+                "source_chunk_id": "file.py:1-10:function:source_fn",
+                "target": "nonexistent",
+            }
+        )
+
+    assert result == {
+        "error": "Could not resolve target symbol: nonexistent",
+        "path_found": False,
+    }
+
+
+@pytest.mark.asyncio
 async def test_symbol_resolution_via_semantic_search(dec_state):
     """handler resolves bare symbol names through semantic search as last resort."""
     source_result = Mock()

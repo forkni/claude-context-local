@@ -29,6 +29,15 @@ This modular reference can be embedded in any project instructions for Claude Co
 | list_embedding_models | Model | View available embedding models | *(no parameters)* |
 | switch_embedding_model | Model | Switch embedding model (instant <150ms) | model_name (required) |
 
+**One active project/model at a time:** `switch_project`, `switch_embedding_model`,
+`configure_search_mode`, `configure_reranking`, `configure_chunking`, `clear_index`, and
+`delete_project` all mutate process-wide server state (active project, active model,
+search config). Over the HTTP transport (`stateless=True`, shared by all connected
+clients) these calls are serialized on a global lock so two concurrent clients can't
+interleave a mutation with each other's reads — but the state itself is still global:
+switching the project/model from one client switches it for every client. Avoid running
+these calls concurrently against unrelated projects from multiple clients.
+
 ---
 
 ## Filter Parameters for search_code

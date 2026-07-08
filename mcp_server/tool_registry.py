@@ -1,13 +1,54 @@
 """Tool registry for low-level MCP server.
 
-Contains JSON schemas for all 19 tools following MCP specification.
+Contains JSON schemas for all 18 tools following MCP specification.
+
+Tool-count budget (§VI-C, "MCP Server Architecture Patterns for LLM-Integrated
+Applications", Rodrigues & Vas, arXiv:2606.30317): LLM tool-selection accuracy
+falls below 90% once a context holds ~10-15 tools (Haiku-class models) / ~20-30
+(Sonnet-class). Listing all 18 tools unconditionally risks that budget once this
+server is loaded alongside other MCP servers in the same client session.
+
+Tools are tagged CORE or ADVANCED (see ADVANCED_TOOLS below). By default
+build_tool_list() returns CORE tools only (10). Set the environment variable
+MCP_EXPOSE_ADVANCED_TOOLS=1 to list all 18. This only affects what list_tools
+advertises to the LLM — TOOL_DISPATCH in tool_handlers.py still dispatches every
+tool by name regardless of this flag, so advanced tools remain callable by any
+client that already knows their name/schema (tests, scripts, power users).
 """
 
+import os
 from typing import Any
 
 from mcp.types import Tool
 
 from search.config import SearchMode
+
+
+# Tools gated behind MCP_EXPOSE_ADVANCED_TOOLS (default: hidden from list_tools).
+# These are runtime-tuning / destructive / rarely-needed-day-to-day operations;
+# hiding them by default keeps the advertised tool count within the accuracy
+# budget above without removing the capability (see module docstring).
+ADVANCED_TOOLS: frozenset[str] = frozenset(
+    {
+        "configure_search_mode",
+        "configure_reranking",
+        "configure_chunking",
+        "switch_embedding_model",
+        "list_embedding_models",
+        "get_search_config_status",
+        "clear_index",
+        "delete_project",
+    }
+)
+
+
+def _advanced_tools_enabled() -> bool:
+    """Whether list_tools should include the ADVANCED_TOOLS tier.
+
+    Controlled by MCP_EXPOSE_ADVANCED_TOOLS (default off — see module docstring
+    for the tool-count budget this protects).
+    """
+    return os.getenv("MCP_EXPOSE_ADVANCED_TOOLS", "").lower() in ("1", "true", "yes")
 
 
 # Complete tool registry with JSON schemas
@@ -24,8 +65,16 @@ WHEN TO USE:
 
 WHEN NOT TO USE:
 - Simple exact text/pattern matching (use generic grep/search tools instead)
-- Searching non-Python files (this tool only works with Python codebases)
-- When the codebase hasn't been indexed yet (use index_directory first)""",
+- When the codebase hasn't been indexed yet (use index_directory first)
+
+RETURNS:
+- query: the query string that was executed
+- results: ranked list of chunks, each with chunk_id, file, lines, kind
+  (function/class/method/module/...), score, and — when available — name,
+  reranker_score, complexity_score, summary (module/community docstring
+  preview), source ("ego_graph" for expanded graph-neighbor results)
+- subgraph_nodes / subgraph_edges: present when a result subgraph is serialized
+- system_message: routing/reindex guidance for the calling model""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -95,7 +144,7 @@ WHEN NOT TO USE:
                 "max_age_minutes": {
                     "type": "number",
                     "default": 5,
-                    "description": "Maximum age of index before auto-reindex (default: 5 minutes)",
+                    "description": "Maximum age of index in minutes before auto-reindex triggers (schema default: 5; the running server may be configured with a different effective default — check get_search_config_status.max_index_age_minutes)",
                 },
                 "output_format": {
                     "type": "string",
@@ -152,7 +201,15 @@ PROCESS:
 - Chunks code into semantic units (functions, classes, methods)
 - Generates embeddings using configured embedding model
 - Builds FAISS vector index for fast similarity search
-- Stores metadata in SQLite database""",
+- Stores metadata in SQLite database
+
+RETURNS:
+- wait=true (default): success, project (indexed path), mode ("incremental" or
+  "full"), files_added, chunks_added, time_taken (seconds), files_modified /
+  files_removed (included only when non-zero)
+- wait=false: success, job_id, status="running", project — poll with
+  get_index_status(job_id=...) until status is "done" (result holds the
+  fields above) or "error" (error holds the failure message)""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -168,6 +225,11 @@ PROCESS:
                     "type": "boolean",
                     "default": True,
                     "description": "Use incremental indexing if snapshot exists (default: True)",
+                },
+                "wait": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "If true (default), block until indexing finishes and return the full result inline. If false, return immediately with a job_id and index in the background — poll get_index_status(job_id=...) for progress. Use false for large repos or first-time full indexes that may take minutes.",
                 },
                 "include_dirs": {
                     "type": "array",
@@ -201,7 +263,12 @@ WHEN TO USE:
 WORKFLOW:
 1. First use search_code to find a reference chunk
 2. Use the chunk_id from search results with this tool
-3. Get ranked list of functionally similar code""",
+3. Get ranked list of functionally similar code
+
+RETURNS:
+- reference_chunk: the input chunk_id (normalized)
+- similar_chunks: ranked list, each with chunk_id, file, lines, kind, score,
+  and name when available""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -225,10 +292,27 @@ WORKFLOW:
         },
     },
     "get_index_status": {
-        "description": "Get current status and statistics of the search index",
+        "description": """Check whether the active project's index exists, how large it is, and how stale it is. Also doubles as the poll target for a background index_directory(wait=false) job.
+
+WHEN TO USE:
+- Before the first search_code call in a new session, to confirm a project is indexed
+- After index_directory, to confirm the run completed and see resulting counts
+- To check index staleness before deciding whether to re-run index_directory
+- After index_directory(wait=false), passing its job_id to poll progress
+
+RETURNS:
+- job_id passed: job_id, kind, target, status ("running"/"done"/"error"),
+  elapsed_seconds, and result (when done) or error (when failed)
+- no job_id: index_statistics (total_chunks and, when hybrid search is
+  enabled, bm25_documents, dense_vectors, synced), model_information,
+  storage_directory, current_project, last_indexed_time""",
         "input_schema": {
             "type": "object",
             "properties": {
+                "job_id": {
+                    "type": "string",
+                    "description": "Optional job_id returned by index_directory(wait=false). When set, returns that background job's status instead of the regular index snapshot.",
+                },
                 "output_format": {
                     "type": "string",
                     "enum": ["verbose", "compact", "ultra"],
@@ -240,7 +324,17 @@ WORKFLOW:
         },
     },
     "list_projects": {
-        "description": "List all indexed projects with their information",
+        "description": """List every project that has been indexed on this machine, with per-model chunk counts. Use this to find the exact project_path before switch_project.
+
+WHEN TO USE:
+- Unsure which projects are indexed or what their exact paths are
+- Confirming a project was indexed under the expected name/path
+- Checking whether a project has been indexed with more than one embedding model
+
+RETURNS:
+- projects: list of {project_name, project_path, project_hash, path_exists,
+  models_indexed: [{model, dimension, chunks, created_at}]}
+- current_project: the currently active project path""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -255,7 +349,19 @@ WORKFLOW:
         },
     },
     "switch_project": {
-        "description": "Switch to a different indexed project for searching",
+        "description": """Switch the active project so subsequent search_code / find_connections / find_path calls target a different indexed codebase.
+
+WHEN TO USE:
+- Multiple projects are indexed and the wrong one is currently active
+- Moving on to work on a different codebase in the same session
+
+NOTE: this changes global server state (one active project at a time). On the
+HTTP transport this affects all connected clients — verify the active project
+with get_index_status if in doubt.
+
+RETURNS:
+- success, project (resolved path), indexed (bool)
+- warning (if not yet indexed) or message confirming the switch""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -274,7 +380,22 @@ WORKFLOW:
         },
     },
     "clear_index": {
-        "description": "Clear the entire search index and metadata for the current project. Deletes ALL dimension indices (768d, 1024d, etc.) and associated Merkle snapshots.",
+        "description": """Clear the entire search index and metadata for the current project. Deletes ALL dimension indices (768d, 1024d, etc.) and associated Merkle snapshots.
+
+WHEN TO USE:
+- Forcing a full rebuild from scratch (e.g. after a config change with no incremental path)
+- Recovering from a corrupted or inconsistent index
+
+WHEN NOT TO USE:
+- Simply refreshing a stale index — use index_directory (incremental) instead
+- Removing a project entirely — use delete_project (also removes project_info.json)
+
+NOTE: this mutates global server state (the active project's index). On the
+HTTP transport this affects all connected clients working on that project.
+
+RETURNS:
+- success, cleared_models (list of model-dir names whose indices were deleted)
+- snapshots_cleared (Merkle snapshot count; omitted when zero)""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -296,7 +417,18 @@ Handles deletion of: vector indices (FAISS), metadata databases (SQLite), BM25 i
 Merkle snapshots, and call graph data.
 
 IMPORTANT: Use this tool instead of manual deletion when the MCP server is running.
-If files are locked, they'll be queued for automatic retry on next server startup.""",
+If files are locked, they'll be queued for automatic retry on next server startup.
+
+NOTE: this mutates global server state. On the HTTP transport this affects all
+connected clients — deleting the active project (with force=True) leaves it
+unindexed for everyone until switch_project / index_directory is called again.
+
+RETURNS:
+- success (bool): True if fully deleted
+- deleted_directories: list of project directories that were removed
+- deleted_snapshots: number of Merkle snapshots deleted
+- errors: list of any deletion errors (omitted on full success)
+- hint: suggestion text when deletion was blocked (e.g. file locks)""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -322,7 +454,14 @@ If files are locked, they'll be queued for automatic retry on next server startu
     "get_memory_status": {
         "description": """Get current memory usage status for the index and system.
 
-Shows available RAM/VRAM, current index memory usage, and whether GPU acceleration is active. Useful for monitoring memory consumption and optimizing performance.""",
+Shows available RAM/VRAM, current index memory usage, and whether GPU acceleration is active. Useful for monitoring memory consumption and optimizing performance.
+
+RETURNS:
+- system_memory: {total_gb, available_gb, used_gb, percent}
+- gpu_memory: per-GPU {used_gb, free_gb, utilization_percent, ...}, or
+  {"status": "No GPU available"}
+- index_memory: {vectors, dimension, estimated_mb}, or {"status": "No index loaded"}
+- per_model_vram_mb: VRAM usage per currently loaded embedding model""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -339,7 +478,10 @@ Shows available RAM/VRAM, current index memory usage, and whether GPU accelerati
     "cleanup_resources": {
         "description": """Manually cleanup all resources to free memory.
 
-Forces cleanup of indexes, embedding model(s), and GPU memory. Useful when switching between large projects or when memory is running low.""",
+Forces cleanup of indexes, embedding model(s), and GPU memory. Useful when switching between large projects or when memory is running low.
+
+RETURNS:
+- success, message confirming cleanup completed""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -356,11 +498,22 @@ Forces cleanup of indexes, embedding model(s), and GPU memory. Useful when switc
     "configure_search_mode": {
         "description": """Configure search mode and hybrid search parameters.
 
+WHEN TO USE:
+- Tuning the BM25/dense balance for a codebase where one signal underperforms
+- Forcing a single mode (semantic or bm25) instead of hybrid/auto routing
+
 Args:
     search_mode: Default search mode - "hybrid", "semantic", "bm25", or "auto"
     bm25_weight: Weight for BM25 sparse search (0.0 to 1.0)
     dense_weight: Weight for dense vector search (0.0 to 1.0)
-    enable_parallel: Enable parallel BM25 + Dense search execution""",
+    enable_parallel: Enable parallel BM25 + Dense search execution
+
+NOTE: this changes global server config (one active setting at a time). On the
+HTTP transport this affects all connected clients — verify with
+get_search_config_status if in doubt.
+
+RETURNS:
+- success, config: {search_mode, bm25_weight, dense_weight, enable_parallel}""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -400,7 +553,20 @@ Args:
         },
     },
     "get_search_config_status": {
-        "description": "Get current search configuration status and available options",
+        "description": """Show the search engine's live configuration — current mode, weights, reranker state, multi-hop settings, and k defaults.
+
+WHEN TO USE:
+- Verifying a configure_search_mode / configure_reranking / configure_chunking call took effect
+- Checking whether a tool's schema-declared default (e.g. search_code's
+  max_age_minutes) matches the server's actual configured value, since
+  search_config.json can override factory defaults
+
+RETURNS:
+- search_mode, bm25_weight, dense_weight, rrf_k, use_parallel, embedding_model
+- auto_reindex_enabled, max_index_age_minutes
+- bm25_use_stemming, multi_hop_enabled, multi_hop_count, multi_hop_expansion
+- reranker_enabled, reranker_model, reranker_top_k_candidates
+- default_k, max_k""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -415,7 +581,16 @@ Args:
         },
     },
     "list_embedding_models": {
-        "description": "List all available embedding models with their specifications",
+        "description": """List every embedding model available for indexing/search, with dimension, VRAM footprint, context length, and whether it's currently loaded.
+
+WHEN TO USE:
+- Choosing a model before the first index_directory on a new project
+- Freeing VRAM: check `loaded` to see which models are currently in memory
+
+RETURNS:
+- models: list of {name, dimension, description, recommended_batch_size,
+  vram_gb, max_context, loaded}
+- current_model: the embedding model active for the current project""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -432,7 +607,15 @@ Args:
     "switch_embedding_model": {
         "description": """Switch to a different embedding model without deleting existing indices.
 
-Per-model indices enable instant switching - if you've already indexed a project with a model, switching back to it requires no re-indexing.""",
+Per-model indices enable instant switching - if you've already indexed a project with a model, switching back to it requires no re-indexing.
+
+NOTE: this changes global server state (one active model at a time). On the
+HTTP transport this affects all connected clients — verify with
+get_search_config_status if in doubt.
+
+RETURNS:
+- success, old_model, new_model
+- message, note (existing indices for other models are preserved per-model)""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -584,7 +767,15 @@ RETURNS:
 Args:
     enabled: Enable/disable neural reranking (default: True)
     model_name: Cross-encoder model to use (default: BAAI/bge-reranker-v2-m3)
-    top_k_candidates: Number of candidates to rerank (default: 50)""",
+    top_k_candidates: Number of candidates to rerank (default: 50)
+
+NOTE: this changes global server config (one active setting at a time). On the
+HTTP transport this affects all connected clients — verify with
+get_search_config_status if in doubt.
+
+RETURNS:
+- success, config: {enabled, model_name, top_k_candidates, min_vram_gb, batch_size}
+- system_message noting changes take effect on the next search""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -613,26 +804,26 @@ Args:
         },
     },
     "configure_chunking": {
-        "description": """Configure code chunking settings.
+        "description": """Configure code chunking, splitting, and community-detection parameters. Changes are persisted to config; re-index the project to apply them to existing chunks.
 
-Args:
-    enable_community_detection: Enable/disable community detection (default: True)
-    enable_community_merge: Enable/disable community-based remerge (full index only) (default: True)
-    community_resolution: Resolution parameter for Louvain community detection (default: 1.0, range: 0.1-2.0, higher = more communities)
-    max_phantom_degree: Skip phantom nodes with >N callers during community detection (1-1000, default: 20). Prevents builtins (str, dict, list) from creating O(N²) noise edges.
-    token_estimation: Token estimation method - "whitespace" (fast) or "tiktoken" (accurate) (default: "whitespace")
-    enable_large_node_splitting: Enable/disable AST block splitting for large functions (default: True)
-    max_chunk_lines: Maximum lines per chunk before splitting at AST boundaries (default: 100)
-    split_size_method: Size method for splitting - "lines" (default) or "characters" (default: "characters")
-    max_split_chars: Maximum characters per split chunk (1000-10000, default: 1600)
-    enable_file_summaries: Enable/disable file-level module summary chunks (A2 feature, default: True)
-    enable_community_summaries: Enable/disable community-level summary chunks (B1 feature, default: True)
-    sizing_mode: Chunk sizing algorithm - "fixed" (static thresholds) or "adaptive" (repo-profiled P75 baseline + complexity modulation) (default: "fixed")
-    adaptive_multiplier_max: T_max multiplier applied to P75 baseline for low-complexity functions (1.0-2.0, default: 1.3)
-    adaptive_multiplier_min: T_min multiplier applied to P75 baseline for high-complexity functions (0.1-1.0, default: 0.5)
-    max_complexity_cap: Cyclomatic complexity ceiling for Cv normalization — functions above this are capped (5-100, default: 30)
+WHEN TO USE:
+- Tuning chunk granularity (max_chunk_lines, max_split_chars, sizing_mode) for
+  a codebase with unusually large or small functions
+- Disabling community detection or file/community summaries to speed up
+  indexing on very large repos
 
-Note: min_chunk_tokens (50) and max_merged_tokens (400) are optimal defaults and not exposed for configuration.""",
+Each field's factory default and valid range are documented on its own schema
+property below (see this tool's input schema). Two fixed, non-configurable
+constants: min_chunk_tokens=50 and max_merged_tokens=400. Live values
+currently in effect may differ from factory defaults — check
+get_search_config_status.
+
+NOTE: this changes global server config (one active setting at a time). On the
+HTTP transport this affects all connected clients.
+
+RETURNS:
+- success, config: echo of the chunking fields after the patch is applied
+- system_message noting that re-indexing is required to apply changes""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -726,11 +917,21 @@ Note: min_chunk_tokens (50) and max_merged_tokens (400) are optimal defaults and
 }
 
 
-def build_tool_list() -> list[Tool]:
-    """Build MCP Tool list from registry."""
+def build_tool_list(include_advanced: bool | None = None) -> list[Tool]:
+    """Build MCP Tool list from registry.
+
+    Args:
+        include_advanced: Whether to include ADVANCED_TOOLS. Defaults to the
+            MCP_EXPOSE_ADVANCED_TOOLS environment variable (see module docstring)
+            when None. Pass explicitly (e.g. from tests) to override.
+    """
+    if include_advanced is None:
+        include_advanced = _advanced_tools_enabled()
 
     tools = []
     for name, meta in TOOL_REGISTRY.items():
+        if not include_advanced and name in ADVANCED_TOOLS:
+            continue
         tools.append(
             Tool(
                 name=name,

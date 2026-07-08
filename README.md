@@ -285,6 +285,11 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
 
 **Complete reference**: [MCP Tools Reference](docs/MCP_TOOLS_REFERENCE.md)
 
+> **Note:** The server tracks one active project and one active embedding model at a
+> time (process-wide state). `switch_project`, `switch_embedding_model`, and the
+> `configure_*`/`clear_index`/`delete_project` tools change that shared state for every
+> connected client, not just the caller.
+
 ## Supported Languages
 
 | Language | Extensions | Parser |

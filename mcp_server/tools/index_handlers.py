@@ -25,7 +25,7 @@ from mcp_server.storage_manager import (
     update_project_filters,
 )
 from mcp_server.tools import responses
-from mcp_server.tools.decorators import error_handler
+from mcp_server.tools.decorators import error_handler, with_mutation_lock
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import (
     MODEL_REGISTRY,
@@ -344,6 +344,7 @@ def _switch_active_model(model_name: str) -> None:
 
 
 @error_handler("Clear index")
+@with_mutation_lock
 async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     """Clear the entire search index for ALL models."""
     import shutil
@@ -422,6 +423,7 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
 
 
 @error_handler("Delete project")
+@with_mutation_lock
 async def handle_delete_project(arguments: dict[str, Any]) -> dict:
     """Delete an indexed project completely (indices + Merkle snapshots).
 
@@ -557,7 +559,72 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
 
 @error_handler("Index")
 async def handle_index_directory(arguments: dict[str, Any]) -> dict:
-    """Index a directory for code search."""
+    """Index a directory for code search.
+
+    By default (``wait=True``) this blocks until indexing completes, exactly
+    as before. Pass ``wait=False`` to launch indexing as a background job and
+    get a ``job_id`` back immediately (§V-C: don't block a tool call for the
+    full duration of a long-running operation) — poll progress with
+    ``get_index_status(job_id=...)``.
+    """
+    wait = arguments.get("wait", True)
+    if wait:
+        return await _run_index_directory(arguments)
+    return await _start_index_directory_job(arguments)
+
+
+async def _start_index_directory_job(arguments: dict[str, Any]) -> dict:
+    """Launch ``_run_index_directory`` as a tracked background task.
+
+    Returns immediately with a ``job_id``; the background task reports its
+    outcome into the job registry rather than back through this call, so
+    errors raised inside the indexing pipeline are captured on the Job
+    (status="error") instead of propagating to a caller who already
+    disconnected from this request.
+    """
+    from mcp_server.tools.job_registry import get_job_registry
+
+    directory_path = str(Path(arguments["directory_path"]).resolve())
+    registry = get_job_registry()
+    job = await registry.create(kind="index_directory", target=directory_path)
+
+    async def _background() -> None:
+        try:
+            result = await _run_index_directory(arguments)
+        except Exception as e:  # noqa: BLE001 - background job boundary: capture into registry, nothing left to propagate to
+            logger.error(f"[INDEX_JOB] {job.job_id} failed: {e}", exc_info=True)
+            await registry.mark_error(job.job_id, str(e))
+            return
+        if "error" in result:
+            await registry.mark_error(job.job_id, str(result["error"]))
+        else:
+            await registry.mark_done(job.job_id, result)
+
+    import asyncio
+
+    task = asyncio.create_task(_background())
+    registry.track_background_task(task)
+
+    return responses.ok(
+        success=True,
+        job_id=job.job_id,
+        status="running",
+        project=directory_path,
+        system_message=(
+            f"Indexing started in the background (job_id={job.job_id}). "
+            "Poll get_index_status(job_id=...) until status is 'done' or "
+            "'error' before relying on search results reflecting this run."
+        ),
+    )
+
+
+async def _run_index_directory(arguments: dict[str, Any]) -> dict:
+    """Do the actual indexing work (the body formerly inline in the handler).
+
+    Split out of ``handle_index_directory`` so it can be run either inline
+    (``wait=True``, default) or as a background task (``wait=False``) without
+    duplicating logic.
+    """
     directory_path = arguments["directory_path"]
     arguments.get("project_name")
     incremental = arguments.get("incremental", True)

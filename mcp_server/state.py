@@ -55,6 +55,12 @@ class ApplicationState:
     # Per-project asyncio reindex locks.  Only touched on the event loop; no
     # extra threading lock needed.  reset() replaces this with a fresh dict.
     _reindex_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
+    # Global asyncio lock serializing state-mutating tool calls (switch_project,
+    # configure_*, clear_index, delete_project) so a mutation from one HTTP
+    # client cannot interleave with another client's in-flight search reading
+    # the same global state.  Only touched on the event loop; lazily created
+    # (see get_mutation_lock()) for the same reason _reindex_locks is lazy.
+    _mutation_lock: asyncio.Lock | None = None
 
     def reset(self) -> None:
         """Reset all state to initial values.
@@ -71,6 +77,8 @@ class ApplicationState:
         self.current_project = None
         # Per-project reindex locks are project-scoped; reset with fresh dict.
         self._reindex_locks = {}
+        # Recreated lazily on next get_mutation_lock() call.
+        self._mutation_lock = None
 
     def get_reindex_lock(self, project_path: str) -> asyncio.Lock:
         """Return the per-project asyncio.Lock for reindex serialization.
@@ -82,6 +90,19 @@ class ApplicationState:
         if project_path not in self._reindex_locks:
             self._reindex_locks[project_path] = asyncio.Lock()
         return self._reindex_locks[project_path]
+
+    def get_mutation_lock(self) -> asyncio.Lock:
+        """Return the process-wide asyncio.Lock guarding state-mutating tools.
+
+        Used to single-flight `switch_project`, `configure_*`,
+        `switch_embedding_model`, `clear_index`, and `delete_project` so
+        concurrent HTTP clients can't interleave a mutation with another
+        client's in-flight search over the same global state. Created on
+        first access for the same reason `get_reindex_lock` is lazy.
+        """
+        if self._mutation_lock is None:
+            self._mutation_lock = asyncio.Lock()
+        return self._mutation_lock
 
     def switch_project(self, path: str) -> None:
         """Switch to a different project.

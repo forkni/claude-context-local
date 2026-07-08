@@ -116,7 +116,15 @@ def _format_search_results(results: list) -> list[dict]:
         name = result.metadata.get("name", "")
         if name:
             item["name"] = name
-        # Add docstring preview for module summaries (compressed context)
+        # Add docstring preview for module summaries (compressed context).
+        # §V-B note: this is unsanitized resource content (paper term) — the raw
+        # docstring text from the indexed repo, truncated but not filtered.
+        # Accepted residual risk: exposure is metadata-only (never code bodies,
+        # never executed/eval'd, capped at 200 chars) and the source is the
+        # user's own indexed codebase, not an untrusted external fetch. A repo
+        # containing a hostile docstring could still relay prompt-injection-like
+        # text to the calling LLM as part of a search result; no content
+        # filtering is applied here today.
         if result.metadata.get("chunk_type") in ("module", "community"):
             doc = result.metadata.get("docstring", "")
             if doc:

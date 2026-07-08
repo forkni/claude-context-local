@@ -285,6 +285,7 @@ class ExecutionOutcome:
     searcher: Any
     index_manager: CodeIndexManager | None
     effective_config: SearchConfig
+    reindexed: bool = False
 
 
 class SearchOrchestrator:
@@ -306,6 +307,7 @@ class SearchOrchestrator:
 
         # ===== Block A: Auto-reindex =====
         current_project = get_state().current_project
+        reindexed_flag = False
         if plan.auto_reindex and current_project:
             try:
                 # Per-project asyncio.Lock prevents two concurrent search/index
@@ -320,6 +322,7 @@ class SearchOrchestrator:
                     )
                 if reindexed:
                     get_state().reset_searcher()
+                    reindexed_flag = True
             except DimensionMismatchError as e:
                 return responses.dimension_mismatch(e)
 
@@ -480,6 +483,7 @@ class SearchOrchestrator:
             searcher=searcher,
             index_manager=index_manager,
             effective_config=effective_config,
+            reindexed=reindexed_flag,
         )
 
     # ---------------------------------------------------------------------------
@@ -530,6 +534,7 @@ class SearchOrchestrator:
         plan: SearchPlan,
         formatted_results: list[dict],
         subgraph_data: dict | None,
+        reindexed: bool = False,
     ) -> dict:
         """Block I: assemble the response dict (results + optional subgraph keys +
         conditional routing info), then attach the system guidance message.
@@ -548,6 +553,23 @@ class SearchOrchestrator:
         response = add_system_message(
             response, tool_name="search_code", query=plan.query, chunk_id=None
         )
+
+        # §V-C (de-silence auto-reindex): Block A ran an inline incremental
+        # reindex before this search because the index was stale. Surface that
+        # here instead of leaving the caller to wonder why the call took
+        # longer than expected — see SearchOrchestrator._execute Block A.
+        if reindexed:
+            response["index_refreshed"] = True
+            note = (
+                "Note: the index was refreshed (changed files detected) before "
+                "this search ran — results reflect the latest code."
+            )
+            response["system_message"] = (
+                f"{note} {response['system_message']}"
+                if response.get("system_message")
+                else note
+            )
+
         return response
 
     def _assemble(self, plan: SearchPlan, outcome: ExecutionOutcome) -> dict:
@@ -581,7 +603,9 @@ class SearchOrchestrator:
 
         # Block I: response assembly (subgraph serialization gated by include_subgraph)
         subgraph_for_response = subgraph_data if output_cfg.include_subgraph else None
-        return self._build_response(plan, formatted_results, subgraph_for_response)
+        return self._build_response(
+            plan, formatted_results, subgraph_for_response, outcome.reindexed
+        )
 
     # ---------------------------------------------------------------------------
     # Phase D: run driver

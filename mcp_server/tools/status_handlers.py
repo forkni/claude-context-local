@@ -29,7 +29,21 @@ logger = logging.getLogger(__name__)
 
 @error_handler("Status check")
 async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
-    """Get current status and statistics of the search index."""
+    """Get current status and statistics of the search index.
+
+    When ``job_id`` is provided, reports that background indexing job's
+    progress (see ``index_directory``'s ``wait=False`` mode) instead of the
+    regular index snapshot below.
+    """
+    job_id = arguments.get("job_id")
+    if job_id:
+        from mcp_server.tools.job_registry import get_job_registry
+
+        job = await get_job_registry().get(job_id)
+        if job is None:
+            return responses.error(f"Unknown job_id: {job_id}")
+        return job.to_status_dict()
+
     state = get_state()
 
     # Check if a project is selected — offload get_index_manager (may init lazily)
