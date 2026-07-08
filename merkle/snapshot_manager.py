@@ -418,19 +418,6 @@ class SnapshotManager:
 
         return sorted(snapshots, key=lambda x: x.get("last_snapshot", ""), reverse=True)
 
-    def cleanup_old_snapshots(self, keep_count: int = 5) -> None:
-        """No-op — kept for API compatibility.
-
-        Snapshot filenames are unique per (project, model, dimension)
-        (``{project_id}_snapshot.json``), so each logical group always has
-        exactly one file.  ``files[keep_count:]`` is always empty and this
-        method has never deleted anything (#39).
-
-        If per-version snapshot retention is needed in the future, the naming
-        scheme must encode a timestamp or sequence number in the stem so that
-        multiple snapshots can share the same group key.
-        """
-
     def get_snapshot_age(self, project_path: str) -> float | None:
         """Get the age of a snapshot in seconds.
 

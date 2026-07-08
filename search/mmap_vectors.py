@@ -14,7 +14,7 @@ Binary Format:
 
     Data (per vector):
         Index: u32 (4 bytes) - FAISS index position
-        Hash: u64 (8 bytes) - FNV-1a hash of chunk_id
+        Hash: u64 (8 bytes) - hash of chunk_id (Python built-in hash(), not FNV-1a)
         Vector: f32[dimension] (dimension * 4 bytes)
 
     Total size per vector: 12 + dimension * 4 bytes

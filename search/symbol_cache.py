@@ -33,13 +33,8 @@ class SymbolHashCache:
 
     Attributes:
         BUCKET_COUNT: Number of hash buckets (power of 2 for fast modulo)
-        FNV_OFFSET_BASIS: Legacy FNV-1a constant (no longer used)
-        FNV_PRIME: Legacy FNV-1a constant (no longer used)
     """
 
-    # Legacy FNV-1a constants (kept for backward compatibility, not used)
-    FNV_OFFSET_BASIS = 0xCBF29CE484222325
-    FNV_PRIME = 0x100000001B3
     BUCKET_COUNT = 256  # Power of 2 for fast modulo via bitwise AND
 
     def __init__(self, cache_path: Path) -> None:
@@ -97,7 +92,7 @@ class SymbolHashCache:
             chunk_id: Chunk identifier to cache
 
         Returns:
-            FNV-1a hash value of the chunk_id
+            Hash value of the chunk_id
         """
         hash_val = self.fnv1a_hash(chunk_id)
         bucket_idx = hash_val % self.BUCKET_COUNT
@@ -113,7 +108,7 @@ class SymbolHashCache:
         """Get chunk_id by hash (O(1) amortized).
 
         Args:
-            hash_val: FNV-1a hash value
+            hash_val: Hash value
 
         Returns:
             Chunk_id if found, None otherwise

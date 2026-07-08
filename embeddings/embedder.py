@@ -581,9 +581,16 @@ class CodeEmbedder:
     """
 
     def __new__(cls, *args, **kwargs) -> "CodeEmbedder":
+        """Pre-create the lifecycle lock before __init__ runs.
+
+        This is a lock-init hook, NOT a singleton pattern — every call
+        returns a fresh instance. It exists so __new__-only construction
+        paths (test mocks, unpickling) that skip __init__ still end up with
+        a functional ``_lifecycle_lock``, since the many
+        ``with self._lifecycle_lock:`` sites throughout this class assume
+        it is always present.
+        """
         instance = super().__new__(cls)
-        # Initialize lock before __init__ so __new__-only construction (test mocks,
-        # unpickling, etc.) always has a functional lock.
         # pyrefly: ignore [missing-attribute]
         instance._lifecycle_lock = threading.RLock()
         return instance
