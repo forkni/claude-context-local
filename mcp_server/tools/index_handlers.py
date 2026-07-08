@@ -76,6 +76,46 @@ def _check_file_accessibility(
     return inaccessible
 
 
+def _run_accessibility_precheck(directory_path: Path) -> None:
+    """Sample project files and warn if any are locked/inaccessible.
+
+    Synchronous by design — walks the directory tree and opens up to 50
+    files, so the caller offloads this via asyncio.to_thread rather than
+    running it inline on the event loop.
+
+    Args:
+        directory_path: Resolved project root to scan.
+    """
+    try:
+        # Quick file accessibility check on a sample of files
+        from chunking.tree_sitter import TreeSitterChunker
+
+        ext_set = set(TreeSitterChunker.get_supported_extensions())
+        sample_files = []
+
+        # Single lazy pass over the directory tree; break early at 50 files.
+        # Avoids up to 19 separate rglob walks (one per extension) and eliminates
+        # the materialize-before-slice anti-pattern that defeats rglob laziness.
+        for p in directory_path.rglob("*"):
+            if p.is_file() and p.suffix.lower() in ext_set:
+                sample_files.append(p)
+                if len(sample_files) >= 50:
+                    break
+
+        if sample_files:
+            inaccessible = _check_file_accessibility(sample_files, sample_size=50)
+            if inaccessible:
+                logger.warning(
+                    f"[ACCESSIBILITY] {len(inaccessible)}/{len(sample_files)} sampled files "
+                    f"are currently locked or inaccessible. Indexing will skip these files.\n"
+                    f"  Example: {inaccessible[0]}\n"
+                    f"  Tip: Close other programs (TouchDesigner, IDEs) that may have files open."
+                )
+    except Exception as e:  # noqa: BLE001 - resilience: optional accessibility check, indexing proceeds regardless
+        # Don't fail indexing if accessibility check fails
+        logger.debug(f"[ACCESSIBILITY] Check failed (non-critical): {e}")
+
+
 def _run_indexing(
     indexer,
     embedder,
@@ -540,35 +580,9 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
     if not directory_path.exists():
         return responses.error(f"Directory does not exist: {directory_path}")
 
-    # Step 2: Optional pre-index accessibility check (sample files for locks)
-    try:
-        # Quick file accessibility check on a sample of files
-        from chunking.tree_sitter import TreeSitterChunker
-
-        ext_set = set(TreeSitterChunker.get_supported_extensions())
-        sample_files = []
-
-        # Single lazy pass over the directory tree; break early at 50 files.
-        # Avoids up to 19 separate rglob walks (one per extension) and eliminates
-        # the materialize-before-slice anti-pattern that defeats rglob laziness.
-        for p in directory_path.rglob("*"):
-            if p.is_file() and p.suffix.lower() in ext_set:
-                sample_files.append(p)
-                if len(sample_files) >= 50:
-                    break
-
-        if sample_files:
-            inaccessible = _check_file_accessibility(sample_files, sample_size=50)
-            if inaccessible:
-                logger.warning(
-                    f"[ACCESSIBILITY] {len(inaccessible)}/{len(sample_files)} sampled files "
-                    f"are currently locked or inaccessible. Indexing will skip these files.\n"
-                    f"  Example: {inaccessible[0]}\n"
-                    f"  Tip: Close other programs (TouchDesigner, IDEs) that may have files open."
-                )
-    except Exception as e:  # noqa: BLE001 - resilience: optional accessibility check, indexing proceeds regardless
-        # Don't fail indexing if accessibility check fails
-        logger.debug(f"[ACCESSIBILITY] Check failed (non-critical): {e}")
+    # Step 2: Optional pre-index accessibility check (sample files for locks).
+    # Walks the directory tree and opens files — offload off the event loop.
+    await asyncio.to_thread(_run_accessibility_precheck, directory_path)
 
     # Check if project already exists and handle filter immutability.
     # Use get_canonical_project_info() so filter reads work regardless of which

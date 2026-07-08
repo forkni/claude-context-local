@@ -850,7 +850,7 @@ class CodeGraphStorage:
 
             return True
 
-        except Exception as e:
+        except (OSError, ValueError, KeyError, TypeError, nx.NetworkXError) as e:
             self.logger.error(f"Failed to load graph: {e}", exc_info=True)
             # Initialize empty graph on error
             # pyrefly: ignore [missing-attribute]

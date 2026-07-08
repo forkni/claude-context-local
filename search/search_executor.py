@@ -279,6 +279,9 @@ class SearchExecutor:
             return results
 
         except Exception as e:
+            # Intentionally broad: this is the "search never crashes" resilience
+            # boundary — sequential/single-mode callers have no outer guard, and
+            # RuntimeError -> [] is pinned by test_search_executor.py.
             self._logger.error(f"BM25 search failed: {e}", exc_info=True)
             return []
 
@@ -327,6 +330,9 @@ class SearchExecutor:
             return results
 
         except Exception as e:
+            # Intentionally broad: same resilience boundary as search_bm25 above —
+            # no outer guard on the sequential/single-mode search paths, and
+            # behavior here is test-pinned.
             self._logger.error(f"Dense search failed: {e}", exc_info=True)
             import traceback
 

@@ -137,7 +137,7 @@ class VRAMTierManager:
         except ImportError:
             logger.warning("PyTorch not available, cannot detect VRAM")
             return 0.0
-        except Exception as e:
+        except (RuntimeError, AssertionError, AttributeError) as e:
             logger.error(f"Error detecting VRAM: {e}", exc_info=True)
             return 0.0
 

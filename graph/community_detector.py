@@ -173,7 +173,7 @@ class CommunityDetector:
             communities_list = louvain_communities(
                 undirected, resolution=resolution, seed=42
             )
-        except Exception as e:
+        except (nx.NetworkXError, KeyError, ValueError, ZeroDivisionError) as e:
             self.logger.error(f"Louvain algorithm failed: {e}", exc_info=True)
             return {}
 
