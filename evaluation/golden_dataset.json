@@ -39,6 +39,18 @@
     "recommended_k": 7,
     "changelog": [
       {
+        "date": "2026-07-08",
+        "changes": [
+          "Systematic drift sweep across all 77 queries' expected/expected_primary/relevance_grades chunk IDs against the live index + `git log -S` archaeology surfaced 4 stale entries from recent refactors; all confirmed dead, fixed:",
+          "Q65: moved chunk_id mcp_server/tools/search_handlers.py:function:_get_graph_data_for_chunk -> mcp_server/tools/result_view.py:function:_get_graph_data_for_chunk (result_view.py seam extraction) — verified live, kind/name unchanged.",
+          "Q65 & Q58: removed dead search/metadata.py:decorated_definition:MetadataStore.get_chunk_id_variants (deleted by c8e98cda, P1b chunk_id canonicalization) — no direct successor; Q58's remaining expected_primary entries (handle_find_similar_code, handle_find_connections) already cover the live callers per find_connections.",
+          "Q65: retargeted grade-1 relevance_grades key search/bm25_index.py:split_block:BM25Index.remove_multiple_files -> search/bm25_index.py:method:BM25Index.remove_files (successor after 4aa07463 collapsed remove_file_chunks/remove_multiple_files into remove_files).",
+          "Q67: removed dead mcp_server/model_pool_manager.py:method:ModelPoolManager.get_pool_config (deleted by 4ec76278, multi-model routing removal) — find_connections on get_search_config shows no ModelPoolManager caller remains; no substitute needed, other grade-2/3 entries already live.",
+          "Q72: removed dead search/centrality_ranker.py:function:_extract_name_from_chunk_id (inlined into search/chunk_id.py:function:extract_name by f3b93616) — that successor was already present in Q72's expected/expected_primary at grade 2, so no new entry needed.",
+          "Verification: re-extracted all unique chunk IDs post-fix and cross-checked against a full repo def/class symbol walk (excluding .venv/.git/__pycache__/_archive/benchmark_results) — zero unresolved symbols remain (2 module-kind __init__.py chunk IDs are expected non-matches, not drift)."
+        ]
+      },
+      {
         "date": "2026-07-04",
         "changes": [
           "Corrected Q12/Q48/Q53: removed chunk_ids deleted by the v0.12.3 multi-model-pool -> single-model refactor (mcp_server/tools/config_handlers.py:_detect_indexed_model, ModelPoolManager.initialize_pool, ModelPoolManager._load_pool_embedder — verified deleted via direct MetadataStore lookup against the live index). Q48's expected_primary retargeted to ModelPoolManager.get_embedder (the live lazy-load-and-return equivalent); Q53's expected gained the same method as a supplementary label-2 entry. Q12's expected_primary was already live and untouched."
@@ -885,7 +897,6 @@
       "expected": [
         "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code",
         "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections",
-        "search/metadata.py:decorated_definition:MetadataStore.get_chunk_id_variants",
         "evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
         "evaluation/metrics.py:function:normalize_chunk_ids",
         "evaluation/metrics.py:function:build_chunk_line_lookup",
@@ -893,13 +904,11 @@
       ],
       "expected_primary": [
         "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code",
-        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections",
-        "search/metadata.py:decorated_definition:MetadataStore.get_chunk_id_variants"
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections"
       ],
       "relevance_grades": {
         "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code": 3,
         "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections": 3,
-        "search/metadata.py:decorated_definition:MetadataStore.get_chunk_id_variants": 3,
         "evaluation/chunk_mapping.py:function:build_line_to_chunk_map": 2,
         "evaluation/metrics.py:function:normalize_chunk_ids": 2,
         "evaluation/metrics.py:function:build_chunk_line_lookup": 2,
@@ -1089,9 +1098,8 @@
         "embeddings/embedder.py:decorated_definition:CodeEmbedder._build_chunk_id",
         "graph/graph_storage.py:class:CodeGraphStorage",
         "graph/graph_queries.py:class:GraphQueryEngine",
-        "mcp_server/tools/search_handlers.py:function:_get_graph_data_for_chunk",
+        "mcp_server/tools/result_view.py:function:_get_graph_data_for_chunk",
         "search/metadata.py:decorated_definition:MetadataStore.normalize_chunk_id",
-        "search/metadata.py:decorated_definition:MetadataStore.get_chunk_id_variants",
         "search/relationship_analyzer.py:method:RelationshipAnalyzer._find_similar",
         "search/relationship_analyzer.py:method:RelationshipAnalyzer._result_to_dict"
       ],
@@ -1126,14 +1134,13 @@
         "embeddings/embedder.py:decorated_definition:CodeEmbedder._build_chunk_id": 2,
         "graph/graph_storage.py:class:CodeGraphStorage": 2,
         "graph/graph_queries.py:class:GraphQueryEngine": 2,
-        "mcp_server/tools/search_handlers.py:function:_get_graph_data_for_chunk": 2,
+        "mcp_server/tools/result_view.py:function:_get_graph_data_for_chunk": 2,
         "search/metadata.py:decorated_definition:MetadataStore.normalize_chunk_id": 2,
-        "search/metadata.py:decorated_definition:MetadataStore.get_chunk_id_variants": 2,
         "search/relationship_analyzer.py:method:RelationshipAnalyzer._find_similar": 2,
         "search/relationship_analyzer.py:method:RelationshipAnalyzer._result_to_dict": 2,
         "graph/graph_storage.py:split_block:CodeGraphStorage.get_edge_data": 1,
         "graph/graph_queries.py:split_block:GraphQueryEngine.find_path": 1,
-        "search/bm25_index.py:split_block:BM25Index.remove_multiple_files": 1
+        "search/bm25_index.py:method:BM25Index.remove_files": 1
       }
     },
     {
@@ -1175,7 +1182,6 @@
         "search/reranking_engine.py:method:RerankingEngine._run_rerank",
         "chunking/languages/base.py:method:LanguageChunker._get_chunking_config",
         "chunking/tree_sitter.py:method:TreeSitterChunker._get_chunking_config",
-        "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_pool_config",
         "mcp_server/utils/config_helpers.py:function:get_config_via_service_locator"
       ],
       "expected_primary": [
@@ -1195,7 +1201,6 @@
         "search/reranking_engine.py:method:RerankingEngine._run_rerank": 3,
         "chunking/languages/base.py:method:LanguageChunker._get_chunking_config": 2,
         "chunking/tree_sitter.py:method:TreeSitterChunker._get_chunking_config": 2,
-        "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_pool_config": 2,
         "mcp_server/utils/config_helpers.py:function:get_config_via_service_locator": 2,
         "merkle/snapshot_manager.py:method:SnapshotManager._get_model_slug_and_dimension": 1,
         "scripts/benchmark/run_sscg_benchmark.py:function:_apply_weight_overrides": 1
@@ -1314,8 +1319,7 @@
         "search/chunk_id.py:function:normalize": 3,
         "search/chunk_id.py:decorated_definition:ChunkId": 2,
         "search/chunk_id.py:function:extract_name": 2,
-        "search/chunk_id.py:function:is_chunk_id": 2,
-        "search/centrality_ranker.py:function:_extract_name_from_chunk_id": 1
+        "search/chunk_id.py:function:is_chunk_id": 2
       }
     },
     {
