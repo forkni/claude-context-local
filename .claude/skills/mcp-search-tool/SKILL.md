@@ -4,6 +4,9 @@ description: "Guides semantic code search via the code-search MCP server. Use wh
 user-invocable: true
 argument-hint: "search query or 'status' for index health"
 allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources"
+metadata:
+  version: 0.18.0
+  mcp-server: code-search
 ---
 
 # MCP Search Tool Skill
@@ -102,7 +105,15 @@ What are you trying to do?
 
 ---
 
-## 18-Tool Summary
+## 18-Tool Summary (Core + Advanced tiers)
+
+By default the server's `list_tools` advertises only the **10 core tools** below (tool-count
+budget, MCP Architecture-Patterns §VI-C). Set `MCP_EXPOSE_ADVANCED_TOOLS=1` on the server
+process to also *list* the 8 advanced tools. Advanced tools stay **callable by name** even
+when unlisted — `TOOL_DISPATCH` dispatches all 18 regardless of the env flag — so the
+`configure_*` / model-management guidance below still works whether or not the flag is set.
+
+**Core (10, listed by default):**
 
 | Tool | Purpose |
 |------|---------|
@@ -114,6 +125,13 @@ What are you trying to do?
 | code-search:list_projects | Show indexed projects |
 | code-search:switch_project | Change active project |
 | code-search:get_index_status | Check index health |
+| code-search:get_memory_status | Check RAM/VRAM usage |
+| code-search:cleanup_resources | Free memory/caches |
+
+**Advanced (8, hidden unless `MCP_EXPOSE_ADVANCED_TOOLS=1`, always dispatchable):**
+
+| Tool | Purpose |
+|------|---------|
 | code-search:clear_index | Delete current index |
 | code-search:delete_project | Safely delete project data |
 | code-search:configure_search_mode | Set search mode & BM25/dense weights |
@@ -122,10 +140,8 @@ What are you trying to do?
 | code-search:configure_chunking | Code chunking & community detection |
 | code-search:list_embedding_models | Show available models |
 | code-search:switch_embedding_model | Change embedding model |
-| code-search:get_memory_status | Check RAM/VRAM usage |
-| code-search:cleanup_resources | Free memory/caches |
 
-18-tool catalog (names + one-liner purposes): [references/tool-index.md](references/tool-index.md)
+18-tool catalog (names + one-liner purposes, tiered): [references/tool-index.md](references/tool-index.md)
 Full parameter reference for essential tools (search_code, find_connections, find_path): [references/parameters.md](references/parameters.md)
 Advanced features (multi-hop, intent routing, summaries): [references/advanced-features.md](references/advanced-features.md)
 Benchmark data & mode selection guide: [references/performance.md](references/performance.md)
