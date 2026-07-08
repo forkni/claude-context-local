@@ -12,6 +12,7 @@ from typing import Any
 
 import numpy as np
 
+from search.config import SearchMode
 from utils.observability import wrap_in_context
 from utils.timing import timed
 
@@ -85,7 +86,7 @@ class SearchExecutor:
         self,
         query: str,
         k: int = 5,
-        search_mode: str = "hybrid",
+        search_mode: str = SearchMode.HYBRID,
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,
         filters: dict[str, Any] | None = None,
@@ -115,14 +116,14 @@ class SearchExecutor:
         dense_results = []
 
         # Handle different search modes
-        if search_mode == "bm25":
+        if search_mode == SearchMode.BM25:
             # BM25-only search
             bm25_results = self.search_bm25(query, k, min_bm25_score)
             # Convert BM25 results to SearchResult format
             final_results = ResultFactory.from_bm25_results(bm25_results)
             rerank_time = 0.0  # No reranking for single mode
 
-        elif search_mode == "semantic":
+        elif search_mode == SearchMode.SEMANTIC:
             # Dense-only search
             dense_results = self.search_dense(query, k, filters, query_embedding)
             # Convert dense results to SearchResult format
@@ -380,12 +381,12 @@ class SearchExecutor:
                 self._search_stats["parallel_efficiency"] = efficiency
 
         # Mode-specific logging
-        if search_mode == "bm25":
+        if search_mode == SearchMode.BM25:
             self._logger.debug(
                 f"BM25 search complete: {results_count} results, "
                 f"Total time: {total_time:.3f}s"
             )
-        elif search_mode == "semantic":
+        elif search_mode == SearchMode.SEMANTIC:
             self._logger.debug(
                 f"Semantic search complete: {results_count} results, "
                 f"Total time: {total_time:.3f}s"

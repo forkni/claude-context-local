@@ -25,6 +25,7 @@ from search.config import (
     EgoGraphConfig,
     ParentRetrievalConfig,
     SearchConfig,
+    SearchMode,
     get_config_manager,
     get_search_config,
 )
@@ -217,8 +218,8 @@ class SearchPlanner:
                     k = int(suggested_k)
 
         # Search mode: apply intent suggestion when user left 'auto'
-        search_mode = str(arguments.get("search_mode", "auto"))
-        if intent_decision and search_mode == "auto":
+        search_mode = str(arguments.get("search_mode", SearchMode.AUTO))
+        if intent_decision and search_mode == SearchMode.AUTO:
             suggested_mode = intent_decision.suggested_params.get("search_mode")
             if suggested_mode:
                 logger.info(

@@ -12,6 +12,7 @@ from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 from mcp_server.utils.config_helpers import (
     get_config_via_service_locator as _get_config_via_service_locator,
 )
+from search.config import SearchMode
 from search.graph_integration import is_chunk_id
 from utils.timing import timed
 
@@ -326,7 +327,7 @@ class MultiHopSearcher:
         self,
         query: str,
         k: int = 5,
-        search_mode: str = "hybrid",
+        search_mode: str = SearchMode.HYBRID,
         hops: int = 2,
         expansion_factor: float = 0.3,
         use_parallel: bool = True,
@@ -377,7 +378,7 @@ class MultiHopSearcher:
 
         # Pre-compute query embedding once for reuse (optimization)
         query_embedding = None
-        if search_mode in ("semantic", "hybrid") and self.embedder:
+        if search_mode in (SearchMode.SEMANTIC, SearchMode.HYBRID) and self.embedder:
             try:
                 query_embedding = self.embedder.embed_query(query)
                 self._logger.debug(

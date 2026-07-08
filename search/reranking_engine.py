@@ -12,7 +12,7 @@ import numpy as np
 
 from utils.timing import timed
 
-from .config import get_search_config
+from .config import SearchMode, get_search_config
 
 
 # TYPE_CHECKING is always False at runtime; AddNot mutation on this guard is equivalent.
@@ -206,7 +206,7 @@ class RerankingEngine:
         query: str,
         results: list,
         k: int,
-        search_mode: str = "hybrid",
+        search_mode: str = SearchMode.HYBRID,
         query_embedding: np.ndarray | None = None,
     ) -> list:
         """
@@ -226,7 +226,7 @@ class RerankingEngine:
             return []
 
         # For semantic/hybrid modes: re-score using dense similarity
-        if search_mode in ("semantic", "hybrid") and self.embedder:
+        if search_mode in (SearchMode.SEMANTIC, SearchMode.HYBRID) and self.embedder:
             try:
                 # Get query embedding (use cached if provided)
                 if query_embedding is None:

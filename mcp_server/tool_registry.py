@@ -7,6 +7,8 @@ from typing import Any
 
 from mcp.types import Tool
 
+from search.config import SearchMode
+
 
 # Complete tool registry with JSON schemas
 TOOL_REGISTRY: dict[str, dict[str, Any]] = {
@@ -44,8 +46,8 @@ WHEN NOT TO USE:
                 },
                 "search_mode": {
                     "type": "string",
-                    "enum": ["auto", "semantic", "hybrid", "bm25"],
-                    "default": "auto",
+                    "enum": [m.value for m in SearchMode],
+                    "default": SearchMode.AUTO.value,
                     "description": "Search mode selection",
                 },
                 "file_pattern": {
@@ -364,8 +366,8 @@ Args:
             "properties": {
                 "search_mode": {
                     "type": "string",
-                    "enum": ["hybrid", "semantic", "bm25", "auto"],
-                    "default": "hybrid",
+                    "enum": [m.value for m in SearchMode],
+                    "default": SearchMode.HYBRID.value,
                     "description": 'Default search mode - "hybrid", "semantic", "bm25", or "auto"',
                 },
                 "bm25_weight": {

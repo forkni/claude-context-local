@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from search.config import SearchMode
 from search.tokenization import (
     CODE_TERM_BLOCKLIST,
     is_camelcase,
@@ -592,13 +593,13 @@ class IntentClassifier:
         if intent == QueryIntent.GLOBAL:
             # Suggest larger k for architectural queries
             params["k"] = 10
-            params["search_mode"] = "hybrid"
+            params["search_mode"] = SearchMode.HYBRID
 
         elif intent == QueryIntent.LOCAL:
             # Suggest k=5 for symbol lookups (reverted from k=4 in commit 1802322)
             # Wider pool helps graph-isolated symbols that can't benefit from multi-hop
             params["k"] = 5
-            params["search_mode"] = "hybrid"
+            params["search_mode"] = SearchMode.HYBRID
 
             # Existence-checking queries benefit from semantic-heavy weights.
             # BM25 over-matches "index" and "exists" on internal implementation code,

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -105,12 +106,31 @@ class EmbeddingConfig:
     )
 
 
+class SearchMode(StrEnum):
+    """The four search-mode values accepted by SearchModeConfig.default_mode.
+
+    A real str subclass — every ``== "hybrid"`` comparison, dict-key lookup,
+    and JSON round-trip (dataclasses.asdict + json.dump) keeps working
+    unchanged. Centralizes the mode literals so a typo can't silently fall
+    through search dispatch logic to the wrong branch.
+    """
+
+    HYBRID = "hybrid"
+    SEMANTIC = "semantic"
+    BM25 = "bm25"
+    AUTO = "auto"
+
+
 @dataclass
 class SearchModeConfig:
     """Search mode and BM25 settings (12 fields)."""
 
+    # Typed as ``str`` (not SearchMode) so values loaded from JSON — which are
+    # always plain str — remain valid without extra coercion; SearchMode.HYBRID
+    # is itself a valid str default since StrEnum subclasses str.
     default_mode: str = field(
-        default="hybrid", metadata={"choices": ("hybrid", "semantic", "bm25", "auto")}
+        default=SearchMode.HYBRID,
+        metadata={"choices": tuple(m.value for m in SearchMode)},
     )  # hybrid, semantic, bm25, auto
     enable_hybrid: bool = True
 
@@ -1038,11 +1058,11 @@ class SearchConfigManager:
         config = self.load_config()
 
         # Use explicit mode if provided
-        if explicit_mode and explicit_mode != "auto":
+        if explicit_mode and explicit_mode != SearchMode.AUTO:
             return explicit_mode
 
         # Use default mode if not auto
-        if config.search_mode.default_mode != "auto":
+        if config.search_mode.default_mode != SearchMode.AUTO:
             return config.search_mode.default_mode
 
         # Auto-detect based on query characteristics
@@ -1052,17 +1072,17 @@ class SearchConfigManager:
         if any(
             keyword in query_lower for keyword in ["string", "message", "error", "log"]
         ):
-            return "bm25"
+            return SearchMode.BM25
 
         # Code structure queries -> semantic
         if any(
             keyword in query_lower
             for keyword in ["class", "function", "method", "interface"]
         ):
-            return "semantic"
+            return SearchMode.SEMANTIC
 
         # Default to hybrid for balanced approach
-        return "hybrid"
+        return SearchMode.HYBRID
 
 
 # Global configuration manager instance

@@ -21,6 +21,7 @@ from search.config import (
     MODEL_REGISTRY,
     ChunkingConfig,
     RerankerConfig,
+    SearchMode,
     SearchModeConfig,
     get_config_manager,
     validate_field_value,
@@ -159,7 +160,7 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
 @error_handler("Configure search mode")
 async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
     """Configure search mode and parameters."""
-    search_mode = arguments.get("search_mode", "hybrid")
+    search_mode = arguments.get("search_mode", SearchMode.HYBRID)
     bm25_weight = arguments.get("bm25_weight", 0.35)
     dense_weight = arguments.get("dense_weight", 0.65)
     enable_parallel = arguments.get("enable_parallel", True)
@@ -172,7 +173,10 @@ async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
     config = config_manager.load_config()
 
     config.search_mode.default_mode = search_mode
-    config.search_mode.enable_hybrid = search_mode in ["hybrid", "auto"]
+    config.search_mode.enable_hybrid = search_mode in (
+        SearchMode.HYBRID,
+        SearchMode.AUTO,
+    )
     config.search_mode.bm25_weight = bm25_weight
     config.search_mode.dense_weight = dense_weight
     config.performance.use_parallel_search = enable_parallel

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from embeddings.embedder import CodeEmbedder
 
 from .base_searcher import BaseSearcher
+from .config import SearchMode
 from .indexer import CodeIndexManager
 from .ranking_heuristics import RankingHeuristics
 from .reranker import SearchResult
@@ -56,7 +57,7 @@ class IntelligentSearcher(BaseSearcher):
         self,
         query: str,
         k: int = 4,
-        search_mode: str = "semantic",
+        search_mode: str = SearchMode.SEMANTIC,
         context_depth: int = 1,
         filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:

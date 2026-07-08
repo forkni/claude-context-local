@@ -27,6 +27,7 @@ from graph.graph_storage import CodeGraphStorage
 from mcp_server.utils.config_helpers import (
     get_config_via_service_locator as _get_config_via_service_locator,
 )
+from search.config import SearchMode
 from search.graph_integration import GraphIntegration
 from utils.observability import traced_block
 from utils.otel_attributes import (
@@ -614,7 +615,7 @@ class HybridSearcher(BaseSearcher):
         self,
         query: str,
         k: int = 4,
-        search_mode: str = "hybrid",
+        search_mode: str = SearchMode.HYBRID,
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,
         filters: dict[str, Any] | None = None,
@@ -648,14 +649,14 @@ class HybridSearcher(BaseSearcher):
             "search.hybrid", **{ATTR_SEARCH_MODE: search_mode, ATTR_K: k}
         ) as span:
             # Check if indices are ready based on search mode
-            if search_mode == "bm25":
+            if search_mode == SearchMode.BM25:
                 if self.bm25_index.is_empty:
                     self._logger.warning(
                         "BM25 search requested but BM25 index is empty"
                     )
                     span.set_attribute(ATTR_RESULT_COUNT, 0)
                     return []
-            elif search_mode == "semantic":
+            elif search_mode == SearchMode.SEMANTIC:
                 if not self.dense_index.index or self.dense_index.index.ntotal == 0:
                     self._logger.warning(
                         "Semantic search requested but dense index is empty"
@@ -743,7 +744,7 @@ class HybridSearcher(BaseSearcher):
         self,
         query: str,
         k: int = 5,
-        search_mode: str = "hybrid",
+        search_mode: str = SearchMode.HYBRID,
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,
         filters: dict[str, Any] | None = None,
