@@ -4,9 +4,11 @@ All tools use the `code-search:` server prefix. Always use fully qualified names
 
 **Tiering:** by default the server's `list_tools` advertises only the **10 core** tools
 (tool-count budget, MCP Architecture-Patterns §VI-C). Set `MCP_EXPOSE_ADVANCED_TOOLS=1` on
-the server process to also *list* the 8 **advanced** tools (marked below). Advanced tools
-stay **callable by name** even when unlisted — `TOOL_DISPATCH` dispatches all 18 regardless
-of the env flag — so this reference and the skill's guidance apply either way.
+the server process **and reconnect** (`/mcp` → Reconnect) to also *list* the 8 **advanced**
+tools (marked below). **An unlisted tool cannot be called — it is not dispatchable in this
+session, and calling it speculatively will fail.** Check the "In-band alternative" column
+below before asking the user to enable the flag; only `configure_search_mode` has one. See
+`SKILL.md` → "Tool Tiers" for the full decision procedure.
 
 ## Contents
 
@@ -54,43 +56,43 @@ Find shortest path between two code entities via the relationship graph. Uses bi
 
 ## Project Management
 
-| Tool | Tier | Purpose |
-|------|------|---------|
-| `code-search:list_projects` | Core | Show all indexed projects |
-| `code-search:switch_project` | Core | Switch active project |
-| `code-search:get_index_status` | Core | Check index health and staleness |
-| `code-search:index_directory` | Core | Index or re-index a project (supports incremental indexing) |
-| `code-search:clear_index` | Advanced | Delete entire current index |
-| `code-search:delete_project` | Advanced | Safely delete project data |
+| Tool | Tier | Purpose | In-band alternative |
+|------|------|---------|----------------------|
+| `code-search:list_projects` | Core | Show all indexed projects | — |
+| `code-search:switch_project` | Core | Switch active project | — |
+| `code-search:get_index_status` | Core | Check index health and staleness | — |
+| `code-search:index_directory` | Core | Index or re-index a project (supports incremental indexing) | — |
+| `code-search:clear_index` | Advanced | Delete entire current index | None — a stale/corrupted index is fixed by re-running the core `index_directory(path)`, not by clearing first |
+| `code-search:delete_project` | Advanced | Safely delete project data | None |
 
 ## Search Configuration
 
-| Tool | Tier | Purpose |
-|------|------|---------|
-| `code-search:configure_search_mode` | Advanced | Set hybrid/semantic/bm25 mode and BM25/dense weights |
-| `code-search:get_search_config_status` | Advanced | View current search config |
+| Tool | Tier | Purpose | In-band alternative |
+|------|------|---------|----------------------|
+| `code-search:configure_search_mode` | Advanced | Set hybrid/semantic/bm25 mode and BM25/dense weights | `search_code(search_mode="bm25"\|"dense"\|"hybrid")` for a one-off override |
+| `code-search:get_search_config_status` | Advanced | View current search config | None |
 
 ## Advanced Search
 
 *(Section name is functional grouping, not the Core/Advanced dispatch tier — see the
 per-row Tier column; `find_similar_code` is a core-tier tool despite the section title.)*
 
-| Tool | Tier | Purpose |
-|------|------|---------|
-| `code-search:find_similar_code` | Core | Find functionally similar code |
-| `code-search:configure_reranking` | Advanced | Neural reranking settings |
-| `code-search:configure_chunking` | Advanced | Chunking + community detection (file/community summaries, sizing mode, etc.) |
+| Tool | Tier | Purpose | In-band alternative |
+|------|------|---------|----------------------|
+| `code-search:find_similar_code` | Core | Find functionally similar code | — |
+| `code-search:configure_reranking` | Advanced | Neural reranking settings | None |
+| `code-search:configure_chunking` | Advanced | Chunking + community detection (file/community summaries, sizing mode, etc.) | None |
 
 ## Model Management
 
-| Tool | Tier | Purpose |
-|------|------|---------|
-| `code-search:list_embedding_models` | Advanced | Show available models (BGE-M3, Qwen3-0.6B, EmbeddingGemma-300m, CodeRankEmbed, GTE-ModernBERT) |
-| `code-search:switch_embedding_model` | Advanced | Change active embedding model (single-model; swaps index when switching) |
+| Tool | Tier | Purpose | In-band alternative |
+|------|------|---------|----------------------|
+| `code-search:list_embedding_models` | Advanced | Show available models (BGE-M3, Qwen3-0.6B, EmbeddingGemma-300m, CodeRankEmbed, GTE-ModernBERT) | None |
+| `code-search:switch_embedding_model` | Advanced | Change active embedding model (single-model; swaps index when switching) | None |
 
 ## Memory Management
 
-| Tool | Tier | Purpose |
-|------|------|---------|
-| `code-search:get_memory_status` | Core | Check RAM/VRAM usage |
-| `code-search:cleanup_resources` | Core | Free indexes, models, and GPU memory |
+| Tool | Tier | Purpose | In-band alternative |
+|------|------|---------|----------------------|
+| `code-search:get_memory_status` | Core | Check RAM/VRAM usage | — |
+| `code-search:cleanup_resources` | Core | Free indexes, models, and GPU memory | — |

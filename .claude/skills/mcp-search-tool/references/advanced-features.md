@@ -2,6 +2,8 @@
 
 Internal search-engine behaviors that affect result quality. Most of these operate automatically — they are documented here for debugging and tuning, not for direct invocation.
 
+**Tooling note:** `configure_reranking` and `configure_chunking`, referenced throughout this page as the controls for some of these behaviors, are **advanced, unlisted-by-default** MCP tools — unlisted unless `MCP_EXPOSE_ADVANCED_TOOLS=1` is set on the server and the client reconnects — with **no in-band alternative**. See `SKILL.md` → "Tool Tiers" before assuming either is callable in the current session.
+
 The project has **three distinct graph-aware subsystems** that are often confused. This page disambiguates them.
 
 ## Contents

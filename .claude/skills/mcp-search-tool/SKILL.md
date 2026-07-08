@@ -3,6 +3,11 @@ name: mcp-search-tool
 description: "Guides semantic code search via the code-search MCP server. Use when searching for code definitions, callers, callees, dependencies, or tracing code flow in indexed projects. Provides correct workflows for search_code, find_connections, find_path, find_similar_code. Invoke /mcp-search-tool status to run a health check."
 user-invocable: true
 argument-hint: "search query or 'status' for index health"
+# allowed-tools lists all 18 (10 core + 8 advanced: clear_index, delete_project,
+# configure_search_mode, get_search_config_status, configure_reranking, configure_chunking,
+# list_embedding_models, switch_embedding_model). Granting permission here does NOT make the
+# 8 advanced tools dispatchable — they must also be listed by the server's list_tools, which
+# requires MCP_EXPOSE_ADVANCED_TOOLS=1 on the server process + reconnect. See "Tool Tiers" below.
 allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources"
 metadata:
   version: 0.18.0
@@ -80,7 +85,7 @@ What are you trying to do?
 ├─ "Find function definition" ───────► code-search:search_code(query="<your query>", k=7, chunk_type="function")
 ├─ "Find class definition" ──────────► code-search:search_code(query="<your query>", k=7, chunk_type="class")
 ├─ "Find exact API call pattern" ────► code-search:search_code(query="<your query>", k=7, search_mode="bm25")
-├─ "Understand concept/feature" ─────► code-search:search_code(query="<your query>", k=7)  [hybrid mode]
+├─ "Understand concept/feature" ─────► code-search:search_code(query="<your query>", k=7)  [auto mode]
 ├─ "Architectural / global query" ───► code-search:search_code(query="<your query>", k=10)
 ├─ "Expand via call graph neighbors"─► code-search:search_code(..., ego_graph_enabled=true, ego_graph_k_hops=2)
 │
@@ -116,14 +121,16 @@ related?") and a `path_found:false` at low `max_hops` is itself the useful signa
 
 ---
 
-## 18-Tool Summary (Core + Advanced tiers)
+## Tool Tiers: 10 Core (Listed) + 8 Advanced (Hidden by Default)
 
 By default the server's `list_tools` advertises only the **10 core tools** below (tool-count
 budget, MCP Architecture-Patterns §VI-C). Set `MCP_EXPOSE_ADVANCED_TOOLS=1` on the server
-process and reconnect (`/mcp` → Reconnect) to also *list* the 8 advanced tools.
+process and reconnect (`/mcp` → Reconnect) to also *list* the 8 advanced tools
+(`clear_index`, `delete_project`, `configure_search_mode`, `get_search_config_status`,
+`configure_reranking`, `configure_chunking`, `list_embedding_models`, `switch_embedding_model`).
 
 **An unlisted tool cannot be called — do not assume otherwise.** If a task's "natural" tool is
-one of the 8 advanced tools below and it is not currently listed:
+one of the 8 advanced tools and it is not currently listed:
 1. **Check for an in-band alternative first** — only `configure_search_mode` has one:
    `search_code(search_mode="bm25"|"dense"|"hybrid")` sets the mode for that call without
    needing the advanced tool at all.
@@ -148,20 +155,8 @@ one of the 8 advanced tools below and it is not currently listed:
 | code-search:get_memory_status | Check RAM/VRAM usage |
 | code-search:cleanup_resources | Free memory/caches |
 
-**Advanced (8, hidden unless `MCP_EXPOSE_ADVANCED_TOOLS=1` is set and the server is reconnected):**
-
-| Tool | Purpose | In-band alternative |
-|------|---------|----------------------|
-| code-search:clear_index | Delete current index | None — a stale/corrupted index is fixed by re-running the core `index_directory(path)`, not by clearing first |
-| code-search:delete_project | Safely delete project data | None |
-| code-search:configure_search_mode | Set search mode & BM25/dense weights | `search_code(search_mode="bm25"\|"dense"\|"hybrid")` for a one-off override |
-| code-search:get_search_config_status | View current config | None |
-| code-search:configure_reranking | Neural reranking settings | None |
-| code-search:configure_chunking | Code chunking & community detection | None |
-| code-search:list_embedding_models | Show available models | None |
-| code-search:switch_embedding_model | Change embedding model | None |
-
-18-tool catalog (names + one-liner purposes, tiered): [references/tool-index.md](references/tool-index.md)
+Full purpose + in-band-alternative table for the 8 advanced tools (only `configure_search_mode`
+has one — see step 1 above): [references/tool-index.md](references/tool-index.md)
 Full parameter reference for essential tools (search_code, find_connections, find_path): [references/parameters.md](references/parameters.md)
 Advanced features (multi-hop, intent routing, summaries): [references/advanced-features.md](references/advanced-features.md)
 Benchmark data & mode selection guide: [references/performance.md](references/performance.md)
@@ -225,7 +220,7 @@ If returned chunk_ids have file paths that don't match the expected project, cal
 | **Bad results (right project)** | Try different mode: hybrid → semantic → bm25. Add filters: `file_pattern`, `chunk_type`. Increase k |
 | **Wrong result at rank-1** | Scan all k results — answer likely at rank 2-4. Use `chunk_type` filter to exclude module/community summary chunks |
 | **Too slow** | Use `search_mode="bm25"` for exact symbols (fastest). Check: `code-search:get_memory_status`. Free: `code-search:cleanup_resources` |
-| **Memory issues** | `code-search:cleanup_resources`. Switch to a lighter model: `code-search:switch_embedding_model("google/embeddinggemma-300m")` (~1.2GB, default) or `code-search:switch_embedding_model("Alibaba-NLP/gte-modernbert-base")` (0.28GB, lightest) |
+| **Memory issues** | 1. `code-search:cleanup_resources` (core, always listed) — free indexes/models/GPU memory first. 2. For a lasting fix, switch to a lighter embedding model: `code-search:switch_embedding_model("google/embeddinggemma-300m")` (~1.2GB, default) or `code-search:switch_embedding_model("Alibaba-NLP/gte-modernbert-base")` (0.28GB, lightest) — **advanced tool, unlisted by default**; requires `MCP_EXPOSE_ADVANCED_TOOLS=1` + reconnect (see "Tool Tiers" below) |
 | **find_similar_code use-case** | Use when you have a seed chunk_id and want to find structural/semantic near-duplicates: sibling method overrides, parallel implementations across language backends, or copied-with-variation functions. Call `search_code` first to get the seed chunk_id, then `find_similar_code(chunk_id=...)`. Returns top-N similar chunks ranked by embedding similarity. |
 
 ---
@@ -236,7 +231,7 @@ When the user invokes the skill with the argument `status` (e.g. `/mcp-search-to
 
 1. `code-search:list_projects` — show which project is active, when it was last indexed
 2. `code-search:get_index_status` — chunk count, staleness, graph data presence
-3. `code-search:get_search_config_status` — current search_mode, BM25/dense weights, reranker state
+3. `code-search:get_search_config_status` — current search_mode, BM25/dense weights, reranker state. **This is an advanced tool with no in-band alternative — it is unlisted unless `MCP_EXPOSE_ADVANCED_TOOLS=1` is set (see "Tool Tiers" below).** If it isn't listed, do NOT fail the whole status check: skip this step, report "search mode/reranker state: unavailable under the 10-tool default (set `MCP_EXPOSE_ADVANCED_TOOLS=1` and reconnect to include it)", and continue to step 4.
 4. `code-search:get_memory_status` — RAM/VRAM usage
 
-Summarize in one short block: **active project**, **index staleness**, **active search mode**, **memory pressure**. Flag anything that looks off (no active project, stale index, missing graph data, >80% VRAM).
+Summarize in one short block: **active project**, **index staleness**, **active search mode** (or "unavailable" per step 3), **memory pressure**. Flag anything that looks off (no active project, stale index, missing graph data, >80% VRAM).
