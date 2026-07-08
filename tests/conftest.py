@@ -220,6 +220,34 @@ def reset_global_state() -> Generator[None, None, None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
+def detach_server_file_logging() -> Generator[None, None, None]:
+    """Prevent mcp_server's root-logger file handler from capturing pytest output.
+
+    mcp_server.server._configure_logging() attaches a DEBUG _SafeRotatingFileHandler to the
+    ROOT logger at import time, so every test logger (including deliberate Simulated/Mock
+    failure injections) would otherwise propagate into logs/mcp_server.log and masquerade as
+    real server errors. Detach it for the duration of the test session; restore afterward.
+    """
+    root = logging.getLogger()
+    try:
+        import mcp_server.server as _srv  # force _configure_logging() to have run
+
+        safe_cls = _srv._SafeRotatingFileHandler
+    except ImportError:
+        yield
+        return
+
+    detached = [h for h in list(root.handlers) if isinstance(h, safe_cls)]
+    for h in detached:
+        root.removeHandler(h)
+    try:
+        yield
+    finally:
+        for h in detached:
+            root.addHandler(h)
+
+
+@pytest.fixture(scope="session", autouse=True)
 def preserve_original_project_selection() -> Generator[None, None, None]:
     """Preserve and restore original project selection across test session.
 

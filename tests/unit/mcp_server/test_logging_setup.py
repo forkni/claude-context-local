@@ -90,6 +90,24 @@ class TestConfigureLoggingIdempotent:
                 root.addHandler(h)
 
 
+class TestNoFileLogBleedDuringTests:
+    """The detach_server_file_logging session fixture (tests/conftest.py) must keep
+    mcp_server's rotating file handler off the root logger during the test session, so
+    test loggers (Simulated/Mock/corrupted-index negative paths) cannot bleed into
+    logs/mcp_server.log and masquerade as real server errors."""
+
+    def test_root_logger_has_no_server_file_handler_during_session(self) -> None:
+        from mcp_server.server import _SafeRotatingFileHandler
+
+        root = logging.getLogger()
+        offenders = [
+            h for h in root.handlers if isinstance(h, _SafeRotatingFileHandler)
+        ]
+        assert offenders == [], (
+            f"Server file handler attached to root during tests (log bleed): {offenders}"
+        )
+
+
 class TestSafeRotatingFileHandler:
     """_SafeRotatingFileHandler.rotate() must swallow file-lock errors gracefully."""
 
