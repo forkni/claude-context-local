@@ -527,10 +527,14 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
     logger.info(f"[INDEX] directory={directory_path}, incremental={incremental}")
 
     # Step 1: Cleanup previous resources BEFORE starting indexing
+    # _cleanup_previous_resources() blocks (gc.collect, torch.cuda ops) — offload,
+    # mirroring the pattern used at status_handlers.py and server.py.
     logger.info("[INDEX] Releasing previous resources before indexing...")
+    import asyncio
+
     from mcp_server.resource_manager import _cleanup_previous_resources
 
-    _cleanup_previous_resources()
+    await asyncio.to_thread(_cleanup_previous_resources)
 
     directory_path = Path(directory_path).resolve()
     if not directory_path.exists():

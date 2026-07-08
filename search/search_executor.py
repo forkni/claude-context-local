@@ -248,6 +248,9 @@ class SearchExecutor:
 
             # Apply filters post-search
             if filters and results:
+                # Build the filter engine once — filters are loop-invariant, so
+                # rebuilding it per-candidate below was wasted work on every hit.
+                filter_engine = FilterEngine.from_dict(filters)
                 filtered_results = []
                 for result in results:
                     # BM25 results are (chunk_id, score, metadata)
@@ -257,7 +260,7 @@ class SearchExecutor:
                         # Skip malformed results
                         continue
 
-                    if FilterEngine.from_dict(filters).matches(metadata):
+                    if filter_engine.matches(metadata):
                         filtered_results.append(result)
                         if len(filtered_results) >= k:
                             break

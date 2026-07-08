@@ -102,12 +102,16 @@ class ConstantExtractor(BaseRelationshipExtractor):
             tree: AST tree to analyze
             chunk_metadata: Chunk metadata
         """
+        # Collect assignment-target node ids once instead of re-walking the whole
+        # tree for every candidate Name node below (was O(n^2) per module chunk).
+        assignment_target_ids = self._collect_assignment_target_ids(tree)
+
         for node in ast.walk(tree):
             # Skip if this is an assignment target or builtin
             if (
                 isinstance(node, ast.Name)
                 and self._is_constant_name(node.id)
-                and not self._is_assignment_target(node, tree)
+                and id(node) not in assignment_target_ids
                 and not self._is_builtin(node.id)
             ):
                 self._add_edge(
@@ -191,11 +195,39 @@ class ConstantExtractor(BaseRelationshipExtractor):
         return False
 
     @staticmethod
+    def _collect_assignment_target_ids(tree: ast.AST) -> set[int]:
+        """
+        Collect id() of every direct assignment-target node in a single pass.
+
+        Mirrors what `_is_assignment_target` checked per-node, computed once for
+        the whole tree so callers can do an O(1) `id(node) in target_ids` test
+        instead of re-walking the tree for every candidate Name node.
+
+        Args:
+            tree: Full AST tree to scan
+
+        Returns:
+            Set of id() values for nodes on the left-hand side of `=` / `: type =`
+        """
+        target_ids: set[int] = set()
+        for parent in ast.walk(tree):
+            if isinstance(parent, ast.Assign):
+                for target in parent.targets:
+                    target_ids.add(id(target))
+            elif isinstance(parent, ast.AnnAssign):
+                target_ids.add(id(parent.target))
+        return target_ids
+
+    @staticmethod
     def _is_assignment_target(node: ast.Name, tree: ast.AST) -> bool:
         """
         Check if a Name node is the target of an assignment.
 
         This prevents counting "TIMEOUT = 30" as a usage of TIMEOUT.
+
+        Kept for backward compatibility / single-node checks; the hot-path
+        usage-extraction loop uses `_collect_assignment_target_ids` instead to
+        avoid re-walking the tree per candidate node.
 
         Args:
             node: Name node to check
@@ -204,12 +236,4 @@ class ConstantExtractor(BaseRelationshipExtractor):
         Returns:
             True if node is assignment target (left-hand side of =)
         """
-        for parent in ast.walk(tree):
-            if isinstance(parent, ast.Assign):
-                for target in parent.targets:
-                    if target is node:
-                        return True
-            elif isinstance(parent, ast.AnnAssign) and parent.target is node:
-                return True
-
-        return False
+        return id(node) in ConstantExtractor._collect_assignment_target_ids(tree)

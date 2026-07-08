@@ -4,7 +4,7 @@ import logging
 import time
 import traceback
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -37,19 +37,12 @@ class IncrementalIndexResult:
     bm25_resync_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "files_added": self.files_added,
-            "files_removed": self.files_removed,
-            "files_modified": self.files_modified,
-            "chunks_added": self.chunks_added,
-            "chunks_removed": self.chunks_removed,
-            "time_taken": self.time_taken,
-            "success": self.success,
-            "error": self.error,
-            "bm25_resynced": self.bm25_resynced,
-            "bm25_resync_count": self.bm25_resync_count,
-        }
+        """Convert to dictionary.
+
+        Uses dataclasses.asdict so a new field is never silently omitted here
+        (the previous hand-listed version required updating this method too).
+        """
+        return asdict(self)
 
 
 class IndexWriteStage:

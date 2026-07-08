@@ -3,6 +3,7 @@
 Handlers that modify system configuration or project state.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -124,8 +125,10 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
     if not project_path.exists():
         return responses.error(f"Project path does not exist: {project_path}")
 
-    # Cleanup previous resources
-    _cleanup_previous_resources()
+    # Cleanup previous resources — blocks (gc.collect, torch.cuda ops); offload
+    # so it doesn't stall the shared uvicorn event loop (also reachable via the
+    # HTTP switch-project route).
+    await asyncio.to_thread(_cleanup_previous_resources)
 
     # Set new project using setter function (required for cross-module globals)
     set_current_project(str(project_path))
@@ -212,9 +215,9 @@ async def handle_switch_embedding_model(arguments: dict[str, Any]) -> dict:
     config.embedding.model_name = model_name
     config_manager.save_config(config)
 
-    # Reset embedders to force reload
+    # Reset embedders to force reload — releases VRAM synchronously; offload.
     state = get_state()
-    state.reset_for_model_switch()
+    await asyncio.to_thread(state.reset_for_model_switch)
 
     return responses.ok(
         success=True,
