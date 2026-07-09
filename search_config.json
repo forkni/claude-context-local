@@ -166,7 +166,8 @@
     ],
     "lsp_enabled": true,
     "lsp_timeout_seconds": 30.0,
-    "use_pyproject_toml": true,
+    "lsp_total_timeout_seconds": 120.0,
+    "use_pyproject_toml": false,
     "min_confidence": 0.65
   }
 }
