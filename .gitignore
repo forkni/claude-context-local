@@ -378,6 +378,11 @@ scripts/batch/cleanup_powershell_references_DRYRUN.bat
 local_config.json
 *.local
 
+# Personal search config (untracked; ship shared defaults via search_config.json.example —
+# see SearchConfigManager.load_config() .example fallback in search/config.py)
+search_config.json
+search_config.json.bak
+
 # Temporary files and directories
 *.tmp
 tmp/

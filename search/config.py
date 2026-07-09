@@ -883,8 +883,17 @@ class SearchConfigManager:
         # performance concern. The cache hit-path (mtime unchanged) returns immediately.
         current_mtime = None
         _config_path = Path(self.config_file)
-        if _config_path.exists():
-            current_mtime = _config_path.stat().st_mtime
+        # search_config.json is a gitignored, machine-local file (see .gitignore /
+        # search_config.json.example). When it hasn't been created yet, fall back to
+        # the committed template so shared defaults still apply -- read-only: this
+        # branch never affects save_config(), which always writes self.config_file.
+        _read_path = _config_path
+        if not _config_path.exists():
+            _example_path = _config_path.with_name(_config_path.name + ".example")
+            if _example_path.exists():
+                _read_path = _example_path
+        if _read_path.exists():
+            current_mtime = _read_path.stat().st_mtime
 
         # Return cache only if file hasn't changed
         if self._config is not None and current_mtime == self._config_mtime:
@@ -894,11 +903,11 @@ class SearchConfigManager:
         config_dict: dict[str, Any] = {}
 
         # Load from file if exists
-        if _config_path.exists():
+        if _read_path.exists():
             try:
-                with open(self.config_file) as f:
+                with open(_read_path) as f:
                     raw = json.load(f)
-                self.logger.info(f"Loaded search config from {self.config_file}")
+                self.logger.info(f"Loaded search config from {_read_path}")
                 # Normalise to nested format so env overrides can be deep-merged
                 # without mixing flat and nested keys in a single dict.
                 file_is_nested = any(
@@ -909,9 +918,7 @@ class SearchConfigManager:
                     raw if file_is_nested else SearchConfig._flat_to_nested(raw)
                 )
             except Exception as e:  # noqa: BLE001 - parse-recovery: malformed config file, fall back to defaults
-                self.logger.warning(
-                    f"Failed to load config file {self.config_file}: {e}"
-                )
+                self.logger.warning(f"Failed to load config file {_read_path}: {e}")
 
         # Translate env-var flat keys to nested and deep-merge so they apply over
         # a nested config file (previously the update() call was a no-op for nested
