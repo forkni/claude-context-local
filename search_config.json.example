@@ -1,6 +1,6 @@
 {
   "embedding": {
-    "model_name": "Qwen/Qwen3-Embedding-0.6B",
+    "model_name": "BAAI/bge-m3",
     "dimension": 1024,
     "batch_size": 64,
     "query_cache_size": 128,
@@ -62,9 +62,9 @@
   },
   "reranker": {
     "enabled": true,
-    "model_name": "jinaai/jina-reranker-v3",
+    "model_name": "Alibaba-NLP/gte-reranker-modernbert-base",
     "top_k_candidates": 50,
-    "min_vram_gb": 6.0,
+    "min_vram_gb": 2.0,
     "batch_size": 16
   },
   "output": {

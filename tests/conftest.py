@@ -402,11 +402,11 @@ def mock_storage_dir(tmp_path: Path) -> Path:
 def test_config() -> dict[str, Any]:
     """Test configuration settings."""
     return {
-        "embedding_model": "google/embeddinggemma-300m",
+        "embedding_model": "BAAI/bge-m3",
         "test_batch_size": 2,  # Small batch size for tests
         "test_timeout": 30,  # Timeout for tests
         "mock_embeddings": False,  # Use real embeddings if available
-        "embedding_dimension": 768,
+        "embedding_dimension": 1024,
         "max_chunks_for_test": 10,  # Limit chunks in tests
     }
 

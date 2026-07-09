@@ -577,7 +577,7 @@ class CodeEmbedder:
     """Embedder for generating code embeddings.
 
     Supports configurable embedding models with automatic configuration detection.
-    Default model is google/embeddinggemma-300m.
+    Default model is BAAI/bge-m3.
     """
 
     def __new__(cls, *args, **kwargs) -> "CodeEmbedder":
@@ -597,7 +597,7 @@ class CodeEmbedder:
 
     def __init__(
         self,
-        model_name: str = "google/embeddinggemma-300m",
+        model_name: str = "BAAI/bge-m3",
         cache_dir: str | None = None,
         device: str = "auto",
     ) -> None:

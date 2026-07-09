@@ -50,7 +50,7 @@ class ModelPoolManager:
                         logger.info(f"Using embedding model: {model_name}")
                     except (RuntimeError, AttributeError) as e:
                         logger.warning(f"Failed to load model from config: {e}")
-                        model_name = "google/embeddinggemma-300m"
+                        model_name = "BAAI/bge-m3"
                         logger.info(f"Falling back to default model: {model_name}")
 
                     is_first_load = not any(state.embedders.values())

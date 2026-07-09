@@ -91,8 +91,8 @@ MODEL_REGISTRY = {
 class EmbeddingConfig:
     """Embedding model configuration (9 fields)."""
 
-    model_name: str = "google/embeddinggemma-300m"
-    dimension: int = 768
+    model_name: str = "BAAI/bge-m3"
+    dimension: int = 1024
     batch_size: int = 128  # Dynamic based on model, see MODEL_REGISTRY
     query_cache_size: int = 128  # LRU cache size for query embeddings
 

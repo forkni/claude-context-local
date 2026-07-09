@@ -1756,7 +1756,7 @@ echo Current Settings:
 if exist ".venv\Scripts\python.exe" (
     ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; cfg = get_search_config(); model = cfg.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); print(f'  Model: {model} ({dim}d, {vram})')" 2>nul
 ) else (
-    echo   Model: google/embeddinggemma-300m ^(default^)
+    echo   Model: BAAI/bge-m3 ^(default, 1024d, 1-1.5GB^)
 )
 echo.
 echo Choose by your GPU VRAM:
@@ -2580,7 +2580,7 @@ echo     - BM25 Weight: 0.35
 echo     - Dense Weight: 0.65
 echo     - Parallel Search: Enabled
 echo.
-echo   Embedding Model: google/embeddinggemma-300m ^(768d^)
+echo   Embedding Model: BAAI/bge-m3 ^(1024d^)
 echo.
 echo   Neural Reranker:
 echo     - Enabled: True
