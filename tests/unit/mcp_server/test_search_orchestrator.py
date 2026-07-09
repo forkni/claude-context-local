@@ -357,6 +357,44 @@ class TestApplySourceOrderAndBudget:
         mock_reorder.assert_called_once()
         assert out == list(reversed(results))
 
+    def test_source_order_with_reranking_logs_warning(self, caplog):
+        """B1: turning source_order_output on while reranking is enabled
+        overrides the reranker's ordering — this should be surfaced as a
+        warning, not silently applied.
+        """
+        sc = SearchConfig()
+        sc.output.source_order_output = True
+        sc.reranker.enabled = True
+        outcome = _make_outcome(effective_config=sc)
+        results = [
+            {"chunk_id": "b.py:10-20:function:b", "file_path": "b.py"},
+            {"chunk_id": "a.py:1-5:function:a", "file_path": "a.py"},
+        ]
+        with caplog.at_level("WARNING"):
+            SearchOrchestrator._apply_source_order_and_budget(
+                _make_plan(max_context_tokens=0), outcome, list(results)
+            )
+        assert any(
+            "source_order_output" in r.message and "reranker" in r.message.lower()
+            for r in caplog.records
+        )
+
+    def test_source_order_without_reranking_no_warning(self, caplog):
+        """No warning when reranking is disabled — no conflict to flag."""
+        sc = SearchConfig()
+        sc.output.source_order_output = True
+        sc.reranker.enabled = False
+        outcome = _make_outcome(effective_config=sc)
+        results = [
+            {"chunk_id": "b.py:10-20:function:b", "file_path": "b.py"},
+            {"chunk_id": "a.py:1-5:function:a", "file_path": "a.py"},
+        ]
+        with caplog.at_level("WARNING"):
+            SearchOrchestrator._apply_source_order_and_budget(
+                _make_plan(max_context_tokens=0), outcome, list(results)
+            )
+        assert not any("source_order_output" in r.message for r in caplog.records)
+
     def test_source_order_skipped_when_single_result(self):
         sc = SearchConfig()
         sc.output.source_order_output = True

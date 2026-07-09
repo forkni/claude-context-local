@@ -51,8 +51,11 @@ class ConstantExtractor(BaseRelationshipExtractor):
 
     def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
         chunk_type = chunk_metadata.get("chunk_type", "")
-        # Extract definitions from module-level chunks
-        if chunk_type == "module":
+        # Extract definitions from module-level chunks. "module" is the
+        # synthetic file-summary chunk (comment-only text, never real
+        # assignments); "module_preamble" is the real top-of-file source
+        # (Fix A) that actually contains the constant assignments.
+        if chunk_type in ("module", "module_preamble"):
             self._extract_constant_definitions(tree, chunk_metadata)
         # Extract usages from all chunks
         self._extract_constant_usages(tree, chunk_metadata)

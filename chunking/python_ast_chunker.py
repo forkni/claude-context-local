@@ -14,7 +14,7 @@ class CodeChunk:
     """Represents a semantically meaningful chunk of code."""
 
     content: str
-    chunk_type: str  # function, class, method, module_level, import_block
+    chunk_type: str  # function, class, method, module (synthetic summary), module_preamble (real top-of-file statements)
     start_line: int
     end_line: int
 

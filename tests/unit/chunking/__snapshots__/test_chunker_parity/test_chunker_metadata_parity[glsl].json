@@ -12,5 +12,15 @@
     },
     "start_line": 6,
     "type": "function_definition"
+  },
+  {
+    "content": "// Tiny GLSL fixture: uniforms, main function with builtins + texture + math ops.\n\nuniform mat4 uModel;\nuniform sampler2D uTexture;",
+    "end_line": 4,
+    "language": "glsl",
+    "metadata": {
+      "type": "module_preamble"
+    },
+    "start_line": 1,
+    "type": "module_preamble"
   }
 ]

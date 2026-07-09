@@ -498,11 +498,23 @@ class SearchOrchestrator:
     ) -> list[dict]:
         """Block H: source-position reorder (when output.source_order_output) +
         context-token-budget truncation (when plan.max_context_tokens > 0).
+
+        ``source_order_output`` defaults to ``False`` (``OutputConfig``) so relevance
+        order from the neural reranker is respected by default; the getattr fallback
+        below mirrors that default rather than re-enabling the DOS-RAG override on a
+        malformed/partial config.
         """
         if (
-            getattr(outcome.effective_config.output, "source_order_output", True)
+            getattr(outcome.effective_config.output, "source_order_output", False)
             and len(formatted_results) > 1
         ):
+            if getattr(outcome.effective_config.reranker, "enabled", False):
+                logger.warning(
+                    "[SOURCE_ORDER] source_order_output=True overrides the neural "
+                    "reranker's ordering (reranker.enabled=True) — DOS-RAG file/line "
+                    "order takes precedence over reranker_score. Set "
+                    "source_order_output=False to respect reranker results."
+                )
             formatted_results = result_view._reorder_by_source_position(
                 formatted_results
             )

@@ -120,6 +120,7 @@ RETURNS:
                         "class",
                         "method",
                         "module",
+                        "module_preamble",
                         "decorated_definition",
                         "interface",
                         "enum",
@@ -129,7 +130,7 @@ RETURNS:
                         "split_block",
                         "community",
                     ],
-                    "description": "Filter by code structure type (function, class, method, module, decorated_definition, interface, enum, struct, type, merged, split_block, community), or None for all",
+                    "description": "Filter by code structure type (function, class, method, module, module_preamble, decorated_definition, interface, enum, struct, type, merged, split_block, community), or None for all",
                 },
                 "include_context": {
                     "type": "boolean",

@@ -327,6 +327,41 @@ class TestPrivateHelpers:
         out = stage._reorder_synthetic(list(results), intent)
         assert out == results
 
+    def test_reorder_synthetic_high_scoring_module_not_demoted(self):
+        """B2: a synthetic chunk that out-scores every real chunk is kept in
+        place instead of being buried at the tail — demoting it would
+        silently override the reranker's/centrality's judgment.
+        """
+        stage = GraphScoringStage()
+        intent = IntentDecision(
+            intent=QueryIntent.LOCAL,
+            confidence=0.9,
+            reason="local",
+            scores={},
+            suggested_params={},
+        )
+        mod = {"kind": "module", "reranker_score": 0.94}
+        fn = {"kind": "function", "reranker_score": 0.5}
+        out = stage._reorder_synthetic([mod, fn], intent)
+        assert out == [mod, fn]  # unchanged: mod outranks fn, stays in place
+
+    def test_reorder_synthetic_low_scoring_module_still_demoted(self):
+        """B2 guard only protects chunks that actually outrank real results —
+        a lower-scoring module chunk is still demoted (historical behavior).
+        """
+        stage = GraphScoringStage()
+        intent = IntentDecision(
+            intent=QueryIntent.LOCAL,
+            confidence=0.9,
+            reason="local",
+            scores={},
+            suggested_params={},
+        )
+        mod = {"kind": "module", "reranker_score": 0.2}
+        fn = {"kind": "function", "reranker_score": 0.9}
+        out = stage._reorder_synthetic([mod, fn], intent)
+        assert out == [fn, mod]
+
     # _cap_results ---------------------------------------------------------
 
     def test_cap_results_under_limit_unchanged(self):

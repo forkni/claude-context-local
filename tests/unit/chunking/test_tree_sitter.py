@@ -119,9 +119,65 @@ print("Module level code")
 """
         chunks = self.chunker.chunk_code(code)
 
-        # Should create a module chunk since no functions/classes
+        # Fix A: top-level statements are captured as a real module_preamble
+        # chunk (actual content + real line numbers) rather than falling back
+        # to a whole-file "module" dump, since the run contains more than
+        # imports (assignments, a call).
         assert len(chunks) == 1
-        assert chunks[0].node_type == "module"
+        assert chunks[0].node_type == "module_preamble"
+        assert "CONSTANT" in chunks[0].content
+        assert "print(" in chunks[0].content
+
+    def test_module_preamble_alongside_function(self):
+        """Fix A: bare top-of-file statements (import-time side effects,
+        module constants) are chunked even when a function/class chunk also
+        exists in the file. Previously these statements had no chunk at all —
+        the synthetic "module" summary never contains their actual text (see
+        chunking/file_summarizer.py) — so semantic search could not surface
+        them (the reported SDTD_032_dev weakness).
+        """
+        code = '''import logging
+
+_STAGE_KEYWORDS = frozenset({"warmup", "denoise"})
+
+logging.basicConfig(level=logging.INFO)
+
+
+def configured_function():
+    """A function that exists alongside module-level config."""
+    return 42
+'''
+        chunks = self.chunker.chunk_code(code)
+
+        preamble = [c for c in chunks if c.node_type == "module_preamble"]
+        functions = [c for c in chunks if c.node_type == "function_definition"]
+
+        assert len(preamble) == 1
+        assert len(functions) == 1
+        # The gap being closed: these statements previously had no chunk at
+        # all, so their text was unsearchable regardless of ranking.
+        assert "_STAGE_KEYWORDS" in preamble[0].content
+        assert "logging.basicConfig" in preamble[0].content
+        assert preamble[0].start_line < functions[0].start_line
+
+    def test_module_preamble_skips_imports_only(self):
+        """Negative case: an imports/docstring-only preamble (no side
+        effects) emits no module_preamble chunk — that content is already
+        covered by the file-summary chunk's import list.
+        """
+        code = '''"""Module docstring."""
+import os
+import sys
+from pathlib import Path
+
+
+def do_thing():
+    return os.getcwd()
+'''
+        chunks = self.chunker.chunk_code(code)
+
+        preamble = [c for c in chunks if c.node_type == "module_preamble"]
+        assert preamble == []
 
 
 class TestJavaScriptChunker(TestCase):
