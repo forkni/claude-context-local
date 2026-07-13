@@ -36,8 +36,76 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------------------
 
 
+def _is_index_stale(project_path: str, max_age_minutes: float) -> bool:
+    """Lock-free staleness pre-check: snapshot age + quick merkle diff.
+
+    Mirrors the freshness gate ``IncrementalIndexer.needs_reindex()`` applies
+    internally, but needs no embedder or HybridSearcher — safe to call before
+    acquiring the project's reindex write lock (``search_orchestrator._execute``)
+    so a steady stream of fresh-index searches never contends for that lock.
+
+    Args:
+        project_path: Path to the project
+        max_age_minutes: Maximum age of index before it's considered stale
+
+    Returns:
+        True if the index needs reindexing, False if confirmed fresh.
+    """
+    import json
+
+    from chunking.tree_sitter import TreeSitterChunker
+    from merkle.change_detector import ChangeDetector
+    from merkle.snapshot_manager import SnapshotManager
+
+    project_storage = get_project_storage_dir(project_path)
+    project_info_file = project_storage / "project_info.json"
+
+    include_dirs = None
+    exclude_dirs = None
+    if project_info_file.exists():
+        try:
+            with open(project_info_file) as f:
+                project_info = json.load(f)
+
+            from search.filters import get_effective_filters
+
+            include_dirs, exclude_dirs = get_effective_filters(project_info)
+        except Exception as e:  # noqa: BLE001 - parse-recovery: project_info.json read, fall back to no filters
+            logger.warning(f"[AUTO_REINDEX] Failed to load filters: {e}")
+
+    snapshot_mgr = SnapshotManager()
+    change_detector = ChangeDetector(
+        snapshot_mgr,
+        include_dirs,
+        exclude_dirs,
+        supported_extensions=set(TreeSitterChunker.get_supported_extensions()),
+    )
+
+    if snapshot_mgr.has_snapshot(project_path):
+        age = snapshot_mgr.get_snapshot_age(project_path)
+        if (
+            age is not None
+            and age <= max_age_minutes * 60
+            and not change_detector.quick_check(project_path)
+        ):
+            logger.debug(
+                f"[AUTO_REINDEX] Index for {project_path} is fresh (age: {age:.1f}s, "
+                f"max: {max_age_minutes * 60}s), skipping reindex"
+            )
+            return False
+
+    return True
+
+
 def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, None]:
-    """Check if auto-reindex is needed and perform if necessary.
+    """Build full reindex machinery and reindex. Assumes staleness already confirmed.
+
+    Callers reach this only after ``_is_index_stale`` returned True (see
+    ``search_orchestrator._execute``), and only while holding the project's
+    reindex write lock — so this always proceeds straight to the heavy path.
+    ``IncrementalIndexer.auto_reindex_if_needed`` re-checks staleness internally
+    (via ``needs_reindex``), so a racing writer that already reindexed while this
+    call waited for the lock makes this a fast no-op rather than a double reindex.
 
     Args:
         project_path: Path to the project
@@ -72,35 +140,6 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
         except Exception as e:  # noqa: BLE001 - parse-recovery: project_info.json read, fall back to no filters
             logger.warning(f"[AUTO_REINDEX] Failed to load filters: {e}")
 
-    # Phase 1: Lightweight freshness check (no HybridSearcher/embedder needed)
-    from chunking.tree_sitter import TreeSitterChunker
-    from merkle.change_detector import ChangeDetector
-    from merkle.snapshot_manager import SnapshotManager
-
-    snapshot_mgr = SnapshotManager()
-    change_detector = ChangeDetector(
-        snapshot_mgr,
-        include_dirs,
-        exclude_dirs,
-        supported_extensions=set(TreeSitterChunker.get_supported_extensions()),
-    )
-
-    # Check if snapshot exists and is fresh
-    if snapshot_mgr.has_snapshot(project_path):
-        age = snapshot_mgr.get_snapshot_age(project_path)
-        # Index is fresh by age — do quick change detection
-        if (
-            age is not None
-            and age <= max_age_minutes * 60
-            and not change_detector.quick_check(project_path)
-        ):
-            logger.debug(
-                f"[AUTO_REINDEX] Index for {project_path} is fresh (age: {age:.1f}s, "
-                f"max: {max_age_minutes * 60}s), skipping reindex"
-            )
-            return False, None
-
-    # Phase 2: Index is stale — create full machinery and reindex
     logger.debug(
         "[AUTO_REINDEX] Index is stale or missing, proceeding with full reindex check"
     )

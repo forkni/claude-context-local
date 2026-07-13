@@ -682,6 +682,25 @@ async def test_handle_find_similar_code():
 # ============================================================================
 
 
+def _make_rwlock_mock():
+    """Mock for ``ApplicationState.get_reindex_rwlock()``'s return value.
+
+    Exposes ``.read()`` and ``.write()``, each returning a fresh no-op async
+    context manager on every call.
+    """
+
+    def _make_async_cm():
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=None)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        return cm
+
+    rwlock = MagicMock()
+    rwlock.read = Mock(side_effect=_make_async_cm)
+    rwlock.write = Mock(side_effect=_make_async_cm)
+    return rwlock
+
+
 @pytest.mark.asyncio
 async def test_handle_search_code_no_index():
     """Test search_code fails gracefully when no index exists (backward compatibility)."""
@@ -694,6 +713,10 @@ async def test_handle_search_code_no_index():
         patch("mcp_server.tools.search_orchestrator.get_config"),
         patch("mcp_server.tools.search_orchestrator.IntentClassifier") as mock_ic,
         patch(
+            "mcp_server.tools.search_handlers._is_index_stale",
+            return_value=False,
+        ),
+        patch(
             "mcp_server.tools.search_handlers._check_auto_reindex",
             return_value=(False, None),
         ),
@@ -701,10 +724,7 @@ async def test_handle_search_code_no_index():
         mock_state = Mock()
         mock_state.current_project = "/test/project"
         mock_state.searcher = None
-        _reindex_lock_cm = MagicMock()
-        _reindex_lock_cm.__aenter__ = AsyncMock(return_value=None)
-        _reindex_lock_cm.__aexit__ = AsyncMock(return_value=False)
-        mock_state.get_reindex_lock = Mock(return_value=_reindex_lock_cm)
+        mock_state.get_reindex_rwlock = Mock(return_value=_make_rwlock_mock())
         mock_get_state.return_value = mock_state
         mock_handler_state.return_value = mock_state
         mock_ic.return_value.classify.return_value = Mock(
@@ -746,6 +766,10 @@ async def test_handle_search_code_hybrid_searcher_ready():
         patch("mcp_server.tools.search_orchestrator.get_config") as mock_cfg,
         patch("mcp_server.tools.search_orchestrator.IntentClassifier") as mock_ic,
         patch(
+            "mcp_server.tools.search_handlers._is_index_stale",
+            return_value=False,
+        ),
+        patch(
             "mcp_server.tools.search_handlers._check_auto_reindex",
             return_value=(False, None),
         ),
@@ -769,10 +793,7 @@ async def test_handle_search_code_hybrid_searcher_ready():
         mock_state = Mock()
         mock_state.current_project = "/test/project"
         mock_state.searcher = None
-        _reindex_lock_cm = MagicMock()
-        _reindex_lock_cm.__aenter__ = AsyncMock(return_value=None)
-        _reindex_lock_cm.__aexit__ = AsyncMock(return_value=False)
-        mock_state.get_reindex_lock = Mock(return_value=_reindex_lock_cm)
+        mock_state.get_reindex_rwlock = Mock(return_value=_make_rwlock_mock())
         mock_get_state.return_value = mock_state
         mock_handler_state.return_value = mock_state
         mock_dec_state.return_value = mock_state
@@ -824,6 +845,10 @@ async def test_handle_search_code_hybrid_searcher_not_ready():
         patch("mcp_server.tools.search_orchestrator.get_config"),
         patch("mcp_server.tools.search_orchestrator.IntentClassifier") as mock_ic,
         patch(
+            "mcp_server.tools.search_handlers._is_index_stale",
+            return_value=False,
+        ),
+        patch(
             "mcp_server.tools.search_handlers._check_auto_reindex",
             return_value=(False, None),
         ),
@@ -831,10 +856,7 @@ async def test_handle_search_code_hybrid_searcher_not_ready():
         mock_state = Mock()
         mock_state.current_project = "/test/project"
         mock_state.searcher = None
-        _reindex_lock_cm = MagicMock()
-        _reindex_lock_cm.__aenter__ = AsyncMock(return_value=None)
-        _reindex_lock_cm.__aexit__ = AsyncMock(return_value=False)
-        mock_state.get_reindex_lock = Mock(return_value=_reindex_lock_cm)
+        mock_state.get_reindex_rwlock = Mock(return_value=_make_rwlock_mock())
         mock_get_state.return_value = mock_state
         mock_handler_state.return_value = mock_state
         mock_ic.return_value.classify.return_value = Mock(

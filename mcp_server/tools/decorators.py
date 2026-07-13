@@ -104,7 +104,7 @@ def with_mutation_lock(func: Callable) -> Callable:
 
     Uses ``ApplicationState.get_mutation_lock()`` — a single process-wide
     ``asyncio.Lock`` shared by all state-mutating tools, following the same
-    lazy-creation pattern as the per-project ``get_reindex_lock()``. This
+    lazy-creation pattern as the per-project ``get_reindex_rwlock()``. This
     only prevents *interleaving*; it does not add session-scoped isolation
     (a full Stateful Session Server is a separate, larger change).
 

@@ -712,10 +712,12 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
                 "[INDEX] RAM fallback auto-disabled for this indexing operation"
             )
 
-        # Per-project asyncio.Lock prevents two concurrent index_directory calls
-        # (or a concurrent search_code auto-reindex) from reindexing the same
-        # project simultaneously.
-        async with get_state().get_reindex_lock(str(directory_path)):
+        # Exclusive write lock on the per-project reader-writer lock: prevents
+        # two concurrent index_directory calls (or a concurrent search_code
+        # auto-reindex) from reindexing the same project simultaneously, and
+        # blocks until any in-flight searches (readers) currently reading the
+        # index have drained.
+        async with get_state().get_reindex_rwlock(str(directory_path)).write():
             logger.info(f"Indexing for: {directory_path}")
 
             # Get or create project storage

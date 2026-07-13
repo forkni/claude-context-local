@@ -18,9 +18,67 @@ Usage:
 
 import asyncio
 import threading
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+
+class _AsyncRWLock:
+    """Writer-preference async reader-writer lock, event-loop only.
+
+    Readers are concurrent in-flight searches (Blocks B-D of
+    ``SearchOrchestrator._execute``); the writer is the project's reindex
+    workflow (auto-reindex, or a manual ``index_directory`` call — both
+    rewrite index files and must not overlap a search reading them).
+    Writer preference: once a writer is waiting, new readers queue behind
+    it, so a steady stream of searches can't starve out a pending reindex.
+
+    Must only be constructed and used on the event loop — ``asyncio.Condition``
+    is not thread-safe. Acquire instances via
+    ``ApplicationState.get_reindex_rwlock()``, never construct directly.
+    """
+
+    def __init__(self) -> None:
+        self._cond = asyncio.Condition()
+        self._readers = 0
+        self._writer = False
+        self._writers_waiting = 0
+
+    @asynccontextmanager
+    async def read(self):
+        """Acquire the shared read lock. Multiple readers may hold this concurrently."""
+        async with self._cond:
+            while self._writer or self._writers_waiting:
+                await self._cond.wait()
+            self._readers += 1
+        try:
+            yield
+        finally:
+            async with self._cond:
+                self._readers -= 1
+                if not self._readers:
+                    self._cond.notify_all()
+
+    @asynccontextmanager
+    async def write(self):
+        """Acquire the exclusive write lock. Waits for in-flight readers to drain."""
+        async with self._cond:
+            self._writers_waiting += 1
+            try:
+                while self._writer or self._readers:
+                    await self._cond.wait()
+            finally:
+                # Always decrement, even if this waiter is cancelled — otherwise a
+                # cancelled writer leaks a permanent reader-starving count.
+                self._writers_waiting -= 1
+            self._writer = True
+        try:
+            yield
+        finally:
+            async with self._cond:
+                self._writer = False
+                self._cond.notify_all()
 
 
 @dataclass
@@ -52,14 +110,15 @@ class ApplicationState:
     # Concurrency guards — intentionally NOT reset by reset() so that in-flight
     # threads always share the same stable lock instance across state resets.
     _lock: threading.RLock = field(default_factory=threading.RLock)
-    # Per-project asyncio reindex locks.  Only touched on the event loop; no
-    # extra threading lock needed.  reset() replaces this with a fresh dict.
-    _reindex_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
+    # Per-project async reader-writer reindex locks.  Only touched on the event
+    # loop; no extra threading lock needed.  reset() replaces this with a fresh
+    # dict.  Readers = in-flight searches; writer = reindex (auto or manual).
+    _reindex_rwlocks: dict[str, _AsyncRWLock] = field(default_factory=dict)
     # Global asyncio lock serializing state-mutating tool calls (switch_project,
     # configure_*, clear_index, delete_project) so a mutation from one HTTP
     # client cannot interleave with another client's in-flight search reading
     # the same global state.  Only touched on the event loop; lazily created
-    # (see get_mutation_lock()) for the same reason _reindex_locks is lazy.
+    # (see get_mutation_lock()) for the same reason _reindex_rwlocks is lazy.
     _mutation_lock: asyncio.Lock | None = None
 
     def reset(self) -> None:
@@ -75,21 +134,21 @@ class ApplicationState:
         self.searcher = None
         self.storage_dir = None
         self.current_project = None
-        # Per-project reindex locks are project-scoped; reset with fresh dict.
-        self._reindex_locks = {}
+        # Per-project reindex rwlocks are project-scoped; reset with fresh dict.
+        self._reindex_rwlocks = {}
         # Recreated lazily on next get_mutation_lock() call.
         self._mutation_lock = None
 
-    def get_reindex_lock(self, project_path: str) -> asyncio.Lock:
-        """Return the per-project asyncio.Lock for reindex serialization.
+    def get_reindex_rwlock(self, project_path: str) -> _AsyncRWLock:
+        """Return the per-project async reader-writer lock for reindex serialization.
 
-        Creates a new Lock on first access for a given project path.
+        Creates a new _AsyncRWLock on first access for a given project path.
         Safe to call from any coroutine; must NOT be called from a thread
-        (asyncio.Lock is event-loop-bound and only touched on the loop).
+        (asyncio.Condition is event-loop-bound and only touched on the loop).
         """
-        if project_path not in self._reindex_locks:
-            self._reindex_locks[project_path] = asyncio.Lock()
-        return self._reindex_locks[project_path]
+        if project_path not in self._reindex_rwlocks:
+            self._reindex_rwlocks[project_path] = _AsyncRWLock()
+        return self._reindex_rwlocks[project_path]
 
     def get_mutation_lock(self) -> asyncio.Lock:
         """Return the process-wide asyncio.Lock guarding state-mutating tools.
@@ -98,7 +157,7 @@ class ApplicationState:
         `switch_embedding_model`, `clear_index`, and `delete_project` so
         concurrent HTTP clients can't interleave a mutation with another
         client's in-flight search over the same global state. Created on
-        first access for the same reason `get_reindex_lock` is lazy.
+        first access for the same reason `get_reindex_rwlock` is lazy.
         """
         if self._mutation_lock is None:
             self._mutation_lock = asyncio.Lock()

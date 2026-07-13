@@ -264,7 +264,7 @@ class TestHandlerChunkerOwnership:
             lock_mock = AsyncMock()
             lock_mock.__aenter__ = AsyncMock(return_value=None)
             lock_mock.__aexit__ = AsyncMock(return_value=None)
-            mock_state.return_value.get_reindex_lock.return_value = lock_mock
+            mock_state.return_value.get_reindex_rwlock.return_value.write.return_value = lock_mock
             proj_dir = tmp_path / "storage" / "proj"
             proj_dir.mkdir(parents=True)
             index_dir = proj_dir / "index"

@@ -1204,63 +1204,15 @@ class IncrementalIndexer:
                 f"Auto-reindexing {project_path} (index older than {max_age_minutes} minutes)"
             )
 
-            # Free VRAM before re-indexing to prevent OOM in multi-model mode
-            logger.info("Freeing VRAM before auto-reindex (multi-model cleanup)...")
-            try:
-                # Import here to avoid circular dependencies
-                from mcp_server.model_pool_manager import reset_pool_manager
-                from mcp_server.services import get_state
-
-                state = get_state()
-
-                # Clear ALL embedders in multi-model pool (not just self.embedder)
-                if state.embedders:
-                    embedder_count = len(state.embedders)
-                    logger.info(
-                        f"Clearing {embedder_count} cached embedder(s) before reindex: "
-                        f"{list(state.embedders.keys())}"
-                    )
-                    state.clear_embedders()
-                    logger.info("Embedder pool cleared - VRAM released")
-
-                # Reset ModelPoolManager singleton to release all model references
-                reset_pool_manager()
-                logger.info("ModelPoolManager singleton reset")
-
-                # Force garbage collection and GPU cache cleanup
-                gc.collect()
-                logger.info("Garbage collection completed")
-
-                try:
-                    import torch
-
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                        logger.info("GPU cache cleared")
-                except ImportError:
-                    pass
-
-                logger.info("Multi-model VRAM cleanup completed successfully")
-            except Exception as e:  # noqa: BLE001 - cleanup: best-effort VRAM release, reindex proceeds regardless
-                logger.warning(
-                    f"Multi-model VRAM cleanup failed (continuing with reindex): {e}",
-                    exc_info=True,
-                )
-
-            # Cleanup OUR OWN embedder reference before creating a new one
-            # This prevents VRAM accumulation (old embedder + new embedder)
-            if hasattr(self, "embedder") and hasattr(self.embedder, "cleanup"):
-                logger.info("Cleaning up IncrementalIndexer's embedder reference...")
-                self.embedder.cleanup()
-                logger.info("IncrementalIndexer's embedder cleaned")
-
-            # Refresh embedder after cleanup - old one can't reload (model loader cleared)
-            # This ensures cleanup happens before model is loaded for reindex
-            from mcp_server.model_pool_manager import get_embedder
-
-            self.embedder = get_embedder()
-            logger.info("Embedder refreshed after cleanup - ready for reindex")
-
+            # NOTE: previously this tore down state.embedders / ModelPoolManager /
+            # self.embedder ("prevent OOM in multi-model mode") before reindexing.
+            # The multi-model regime has been removed — state.embedders is a
+            # single-entry pool by construction (mcp_server/model_pool_manager.py),
+            # so that teardown only ever destroyed and reloaded the one active
+            # model. Worse, it raced concurrent searches: a search mid-flight
+            # (embed_query / reranker inference) could hit the torn-down embedder
+            # and raise "cleaned up" or fall back to degraded scoring. Reindex now
+            # reuses the live self.embedder; no teardown, no race.
             return self.incremental_index(project_path, project_name)
         else:
             logger.debug(f"Index for {project_path} is fresh, skipping reindex")

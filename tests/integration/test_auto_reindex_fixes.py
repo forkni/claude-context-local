@@ -163,38 +163,62 @@ class TestMaxAgeMinutesConfigRespect:
         assert result.success
 
 
-class TestMultiModelCleanupBeforeReindex:
-    """Test that auto-reindex handles cleanup correctly."""
+class TestReindexReusesLiveEmbedder:
+    """Part 2a (docs/adr/0008-reindex-search-rwlock.md): auto-reindex must
+    reuse the live embedder rather than tearing it down.
 
-    def test_cleanup_handles_errors_gracefully(
+    Previously, a stale-triggered reindex called state.clear_embedders() /
+    reset_pool_manager() / self.embedder.cleanup() before reindexing, to
+    avoid OOM in multi-model mode. That regime is gone — state.embedders is
+    single-entry by construction — and the teardown raced concurrent
+    searches using the same embedder (the "Embedder has been cleaned up"
+    bug). These tests lock in the new contract: no teardown call, ever.
+    """
+
+    def test_reindex_does_not_touch_global_state(
         self, temp_project, cleanup_state, tmp_path
     ):
-        """Verify auto-reindex continues even if cleanup fails."""
-        # Create indexer with isolated storage so no writes reach ~/.claude_code_search
+        """auto_reindex_if_needed must not call get_state() / reset_pool_manager()."""
         indexer = IncrementalIndexer(
             snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots")
         )
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success
 
-        # Mock cleanup to raise exception
         with (
             patch("mcp_server.services.get_state") as mock_get_state,
-            patch.object(indexer, "incremental_index") as mock_index,
+            patch(
+                "mcp_server.model_pool_manager.reset_pool_manager"
+            ) as mock_reset_pool,
         ):
-            # Make get_state raise exception during cleanup
-            mock_get_state.side_effect = RuntimeError("Simulated cleanup failure")
-
-            # Configure mock_index to return success
-            mock_index.return_value = MagicMock(success=True)
-
-            # Trigger auto-reindex - should not crash
             result = indexer.auto_reindex_if_needed(
                 str(temp_project), "test_project", max_age_minutes=0
             )
 
-            # Should still attempt reindex despite cleanup failure
-            mock_index.assert_called_once()
+        assert result.success
+        mock_get_state.assert_not_called()
+        mock_reset_pool.assert_not_called()
+
+    def test_embedder_cleanup_not_called_during_reindex(
+        self, temp_project, cleanup_state, tmp_path
+    ):
+        """The live embedder's cleanup() must not run mid-reindex."""
+        indexer = IncrementalIndexer(
+            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots")
+        )
+        result = indexer.incremental_index(str(temp_project), "test_project")
+        assert result.success
+
+        with patch.object(indexer.embedder, "cleanup") as mock_cleanup:
+            result = indexer.auto_reindex_if_needed(
+                str(temp_project), "test_project", max_age_minutes=0
+            )
+
+        assert result.success
+        mock_cleanup.assert_not_called()
+        # embedder.model must remain accessible post-reindex — cleanup() nulls
+        # _model_loader, which would make the `model` property raise.
+        assert indexer.embedder.model is not None
 
 
 class TestUserFilterPreservation:

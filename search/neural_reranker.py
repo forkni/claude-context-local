@@ -157,6 +157,13 @@ class NeuralReranker(BaseReranker):
         self.batch_size = batch_size
         self._model = None  # Lazy loading
         self._load_lock = threading.Lock()
+        # Serializes inference calls (predict()) — separate from _load_lock, which
+        # only guards the one-time model load. CrossEncoder.predict is not documented
+        # as thread-safe under concurrent calls; this mirrors CodeEmbedder's
+        # _lifecycle_lock pattern (embeddings/embedder.py). Lock ordering is always
+        # _infer_lock -> _load_lock (resolve self.model before acquiring _infer_lock),
+        # never the reverse.
+        self._infer_lock = threading.Lock()
         self._logger = logging.getLogger(__name__)
 
         # Auto-detect device
@@ -228,12 +235,14 @@ class NeuralReranker(BaseReranker):
             )
             pairs.append((query, content))
 
+        model = self.model  # resolve (lazy load under _load_lock) before _infer_lock
         try:
-            scores = self.model.predict(
-                pairs,
-                batch_size=self.batch_size,
-                show_progress_bar=False,
-            )
+            with self._infer_lock:
+                scores = model.predict(
+                    pairs,
+                    batch_size=self.batch_size,
+                    show_progress_bar=False,
+                )
         finally:
             # Pool-wide policy: release cached-but-unused CUDA allocator blocks after
             # every rerank() call, on both success and failure. Originally added only to
@@ -299,12 +308,14 @@ class NeuralReranker(BaseReranker):
         if not all_pairs:
             return [[] for _ in batch]
 
+        model = self.model  # resolve (lazy load under _load_lock) before _infer_lock
         try:
-            all_scores = self.model.predict(
-                all_pairs,
-                batch_size=self.batch_size,
-                show_progress_bar=False,
-            )
+            with self._infer_lock:
+                all_scores = model.predict(
+                    all_pairs,
+                    batch_size=self.batch_size,
+                    show_progress_bar=False,
+                )
         finally:
             # See rerank() above: pool-wide policy, release after every call.
             if torch.cuda.is_available():
@@ -389,6 +400,11 @@ class GenerativeReranker(BaseReranker):
         self.instruction = instruction or _QWEN_RERANK_DEFAULT_INSTRUCTION
         self._model = None
         self._tokenizer = None
+        # Serializes the tokenize+forward inference region — this class has no
+        # _load_lock (its lazy load via _ensure_loaded() is unguarded, a pre-existing
+        # gap out of scope here); _infer_lock still prevents concurrent callers from
+        # borrowing the shared HF fast tokenizer at the same time (see rerank()).
+        self._infer_lock = threading.Lock()
         self._logger = logging.getLogger(__name__)
 
         # Auto-detect device
@@ -489,36 +505,39 @@ class GenerativeReranker(BaseReranker):
             )
             prompts.append(prompt)
 
-        # Batched inference with graceful fallback
+        # Batched inference with graceful fallback. _infer_lock covers the whole
+        # tokenize->forward region: the fast-tokenizer borrow happens in the
+        # tokenizer(...) call itself, not just the model forward pass.
         try:
-            inputs = tokenizer(
-                prompts,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=512,
-            ).to(self.device)
+            with self._infer_lock:
+                inputs = tokenizer(
+                    prompts,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=512,
+                ).to(self.device)
 
-            with torch.no_grad():
-                if self.device == "cuda":
-                    with torch.autocast(device_type="cuda"):
+                with torch.no_grad():
+                    if self.device == "cuda":
+                        with torch.autocast(device_type="cuda"):
+                            outputs = model(**inputs)
+                    else:
                         outputs = model(**inputs)
-                else:
-                    outputs = model(**inputs)
 
-                # Find last real token position per sequence using attention_mask
-                # attention_mask is 1 for real tokens, 0 for padding
-                # Sum along seq dim gives count of real tokens; subtract 1 for 0-indexed
-                last_token_indices = inputs["attention_mask"].sum(dim=1) - 1
+                    # Find last real token position per sequence using attention_mask
+                    # attention_mask is 1 for real tokens, 0 for padding
+                    # Sum along seq dim gives count of real tokens; subtract 1 for 0-indexed
+                    last_token_indices = inputs["attention_mask"].sum(dim=1) - 1
 
-                # Extract logits at last-token positions: shape [batch, vocab_size]
-                batch_indices = torch.arange(len(prompts), device=self.device)
-                last_logits = outputs.logits[batch_indices, last_token_indices, :]
+                    # Extract logits at last-token positions: shape [batch, vocab_size]
+                    batch_indices = torch.arange(len(prompts), device=self.device)
+                    last_logits = outputs.logits[batch_indices, last_token_indices, :]
 
-                # Softmax over [yes, no] token logits to get P(Yes)
-                yn_logits = last_logits[:, [yes_token_id, no_token_id]]
-                probs = torch.softmax(yn_logits, dim=1)
-                scores = probs[:, 0].cpu().tolist()  # P(Yes) for each candidate
+                    # Softmax over [yes, no] token logits to get P(Yes)
+                    yn_logits = last_logits[:, [yes_token_id, no_token_id]]
+                    probs = torch.softmax(yn_logits, dim=1)
+                    scores = probs[:, 0].cpu().tolist()  # P(Yes) for each candidate
 
         except (torch.cuda.OutOfMemoryError, RuntimeError, ValueError) as e:
             self._logger.error(
@@ -598,6 +617,11 @@ class JinaRerankerV3(BaseReranker):
         self._model = None
         self._logger = logging.getLogger(__name__)
         self._load_lock = threading.Lock()
+        # Serializes model.rerank() calls — the underlying HF Rust fast tokenizer
+        # panics with "Already borrowed" if two threads call it concurrently.
+        # _load_lock guards the one-time load only; this is the separate inference
+        # mutex (see NeuralReranker._infer_lock above for the general rationale).
+        self._infer_lock = threading.Lock()
 
         # Auto-detect device
         if device is None:
@@ -780,9 +804,10 @@ class JinaRerankerV3(BaseReranker):
             documents.append(content)
 
         # Call Jina's native rerank method (listwise) with error handling
+        model = self.model  # resolve (lazy load under _load_lock) before _infer_lock
         try:
-            with torch.no_grad():
-                jina_results = self.model.rerank(query, documents, top_n=top_k)
+            with self._infer_lock, torch.no_grad():
+                jina_results = model.rerank(query, documents, top_n=top_k)
         except torch.cuda.OutOfMemoryError as e:
             self._logger.error(f"CUDA OOM during reranking: {e}")
             raise RuntimeError(f"Insufficient GPU memory for reranking: {e}") from e
