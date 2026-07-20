@@ -12,11 +12,12 @@ This guide covers the complete installation process for the Claude Context MCP s
 2. [Installation Methods](#installation-methods)
 3. [HuggingFace Authentication](#huggingface-authentication)
 4. [Claude Code MCP Configuration](#claude-code-mcp-configuration)
-5. [Dependency Management](#dependency-management)
-6. [PyTorch Installation](#pytorch-installation)
-7. [Verification & Testing](#verification--testing)
-8. [Troubleshooting](#troubleshooting)
-9. [Performance Optimization](#performance-optimization)
+5. [Claude Desktop MCP Configuration](#claude-desktop-mcp-configuration)
+6. [Dependency Management](#dependency-management)
+7. [PyTorch Installation](#pytorch-installation)
+8. [Verification & Testing](#verification--testing)
+9. [Troubleshooting](#troubleshooting)
+10. [Performance Optimization](#performance-optimization)
 
 ## Prerequisites
 
@@ -371,6 +372,16 @@ If the configured path becomes invalid (moved files, changed drives):
 scripts\batch\repair_installation.bat
 # Select: Option 3 - Reconfigure Claude Code integration
 ```
+
+## Claude Desktop MCP Configuration
+
+The **Claude Desktop** app can connect to the **same running HTTP server** as Claude Code (the
+server accepts multiple concurrent connections). Because Desktop's config speaks stdio and its
+custom-connector UI requires a public HTTPS endpoint, a small `mcp-remote` bridge (run via `npx`)
+adapts Desktop's stdio to the local `http://localhost:8765/mcp` server.
+
+**See the dedicated guide: [CLAUDE_DESKTOP_SETUP.md](CLAUDE_DESKTOP_SETUP.md)** for the exact
+`claude_desktop_config.json` entry, activation steps, and troubleshooting.
 
 ## Dependency Management
 

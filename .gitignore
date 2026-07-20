@@ -266,6 +266,7 @@ docs/*
 !docs/BENCHMARKS.md
 !docs/claude_code_config.md
 !docs/CLAUDE_MD_TEMPLATE.md
+!docs/CLAUDE_DESKTOP_SETUP.md
 !docs/GIT_WORKFLOW.md
 !docs/MCP_TOOLS_REFERENCE.md
 !docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md
