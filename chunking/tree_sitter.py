@@ -19,7 +19,9 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from tree_sitter import Language
 
@@ -64,6 +66,7 @@ del _lang_name, _spec  # don't pollute module namespace
 
 # Re-export for backwards compatibility
 __all__ = [
+    "ParsedSource",
     "TreeSitterChunk",
     "LanguageChunker",
     "TreeSitterChunker",
@@ -138,6 +141,29 @@ def _is_binary_file(file_path: Path, sample_size: int = 8192) -> bool:
             return b"\x00" in chunk
     except OSError:
         return False  # If we can't read it, let the main logic handle it
+
+
+@dataclass(frozen=True)
+class ParsedSource:
+    """A file that has been read and tree-sitter-parsed, ready to chunk.
+
+    Produced by `TreeSitterChunker.parse_file` and consumed by both the
+    repo-profiling pass (chunking/repo_profiler.py) and the chunking pass
+    (`TreeSitterChunker.chunk_parsed`) — the seam that lets both passes agree
+    on "how a file becomes a parsed tree" without re-implementing read/dispatch
+    inline.
+
+    Invariant: `tree` is a tree_sitter.Tree, valid only on the thread that
+    produced it (tree-sitter Tree/Node objects are not thread-safe). Callers
+    must produce and consume a given ParsedSource on the same thread.
+    """
+
+    abs_path: str
+    rel_path: str
+    content: str
+    language_name: str
+    chunker: LanguageChunker  # per-thread chunker that produced `tree`
+    tree: Any  # tree_sitter.Tree
 
 
 class TreeSitterChunker:
@@ -230,6 +256,117 @@ class TreeSitterChunker:
 
         return chunkers[suffix]
 
+    def parse_file(
+        self,
+        file_path: str,
+        content: str | None = None,
+        rel_path: str | None = None,
+    ) -> ParsedSource | None:
+        """Read and tree-sitter-parse a file, without chunking it.
+
+        Owns the same read+dispatch logic `chunk_file` used to inline
+        (binary detection, timeout read, HTML/XML skip, per-thread chunker
+        lookup) so callers that only need a parsed tree — e.g. the
+        repo-profiling pass — don't have to reimplement it.
+
+        Args:
+            file_path: Path to the file
+            content: Optional file content (will read from file if not provided)
+            rel_path: Optional path to record on the result for callers that
+                    track both absolute and relative paths. Defaults to
+                    `file_path`.
+
+        Returns:
+            ParsedSource, or None for unsupported/binary/unreadable files
+            (same contract `chunk_file` had).
+        """
+        chunker = self.get_chunker(file_path)
+
+        if not chunker:
+            logger.debug(f"No tree-sitter chunker available for {file_path}")
+            return None
+
+        if content is None:
+            # Check for binary files before attempting text read
+            if _is_binary_file(Path(file_path)):
+                logger.debug(f"[BINARY] Skipping binary file: {file_path}")
+                return None
+
+            try:
+                content = _read_file_with_timeout(Path(file_path))
+
+                # Skip HTML/XML files that shouldn't be parsed as code
+                content_start = content.lstrip()[:100].lower()
+                if any(
+                    marker in content_start
+                    for marker in ["<!doctype html", "<html", "<?xml"]
+                ):
+                    logger.debug(f"[HTML/XML] Skipping markup file: {file_path}")
+                    return None
+
+            except TimeoutError as e:
+                logger.warning(f"[TIMEOUT] {e}")
+                return None
+            except PermissionError:
+                logger.warning(
+                    f"[LOCKED] Cannot access file (permission denied): {file_path}"
+                )
+                return None
+            except UnicodeDecodeError:
+                logger.warning(
+                    f"UTF-8 decode failed for {file_path}, trying with error handling"
+                )
+                try:
+                    with open(file_path, encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                except Exception as e:
+                    logger.error(f"Failed to read file {file_path}: {e}", exc_info=True)
+                    return None
+            except Exception as e:
+                logger.error(f"Failed to read file {file_path}: {e}", exc_info=True)
+                return None
+
+        try:
+            tree = chunker.parser.parse(bytes(content, "utf-8"))
+        except Exception as e:  # noqa: BLE001 - parse-recovery: tree-sitter parsing of one file failing shouldn't abort the whole run
+            logger.warning(
+                f"Tree-sitter parsing failed for {file_path}: {e}", exc_info=True
+            )
+            return None
+
+        return ParsedSource(
+            abs_path=file_path,
+            rel_path=rel_path if rel_path is not None else file_path,
+            content=content,
+            language_name=chunker.language_name,
+            chunker=chunker,
+            tree=tree,
+        )
+
+    def chunk_parsed(self, parsed_source: ParsedSource) -> list[TreeSitterChunk]:
+        """Chunk an already-parsed file.
+
+        Args:
+            parsed_source: A ParsedSource produced by `parse_file` on this thread.
+
+        Returns:
+            List of TreeSitterChunk objects
+        """
+        try:
+            config = self._get_chunking_config()
+            return parsed_source.chunker.chunk_parsed(
+                parsed_source.tree,
+                parsed_source.content,
+                config=config,
+                repo_profile=self.repo_profile,
+            )
+        except Exception as e:  # noqa: BLE001 - parse-recovery: chunking one file failing shouldn't abort the whole chunking run
+            logger.warning(
+                f"Tree-sitter chunking failed for {parsed_source.abs_path}: {e}",
+                exc_info=True,
+            )
+            return []
+
     def chunk_file(
         self, file_path: str, content: str | None = None
     ) -> list[TreeSitterChunk]:
@@ -242,63 +379,10 @@ class TreeSitterChunker:
         Returns:
             List of TreeSitterChunk objects
         """
-        chunker = self.get_chunker(file_path)
-
-        if not chunker:
-            logger.debug(f"No tree-sitter chunker available for {file_path}")
+        parsed_source = self.parse_file(file_path, content=content)
+        if parsed_source is None:
             return []
-
-        if content is None:
-            # Check for binary files before attempting text read
-            if _is_binary_file(Path(file_path)):
-                logger.debug(f"[BINARY] Skipping binary file: {file_path}")
-                return []
-
-            try:
-                content = _read_file_with_timeout(Path(file_path))
-
-                # Skip HTML/XML files that shouldn't be parsed as code
-                content_start = content.lstrip()[:100].lower()
-                if any(
-                    marker in content_start
-                    for marker in ["<!doctype html", "<html", "<?xml"]
-                ):
-                    logger.debug(f"[HTML/XML] Skipping markup file: {file_path}")
-                    return []
-
-            except TimeoutError as e:
-                logger.warning(f"[TIMEOUT] {e}")
-                return []
-            except PermissionError:
-                logger.warning(
-                    f"[LOCKED] Cannot access file (permission denied): {file_path}"
-                )
-                return []
-            except UnicodeDecodeError:
-                logger.warning(
-                    f"UTF-8 decode failed for {file_path}, trying with error handling"
-                )
-                try:
-                    with open(file_path, encoding="utf-8", errors="ignore") as f:
-                        content = f.read()
-                except Exception as e:
-                    logger.error(f"Failed to read file {file_path}: {e}", exc_info=True)
-                    return []
-            except Exception as e:
-                logger.error(f"Failed to read file {file_path}: {e}", exc_info=True)
-                return []
-
-        try:
-            # Get config for merge settings
-            config = self._get_chunking_config()
-            return chunker.chunk_code(
-                content, config=config, repo_profile=self.repo_profile
-            )
-        except Exception as e:  # noqa: BLE001 - parse-recovery: tree-sitter parsing of one file failing shouldn't abort the whole chunking run
-            logger.warning(
-                f"Tree-sitter parsing failed for {file_path}: {e}", exc_info=True
-            )
-            return []
+        return self.chunk_parsed(parsed_source)
 
     def _get_chunking_config(self):
         """Get ChunkingConfig from the current search config, or None if unavailable."""

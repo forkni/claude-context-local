@@ -774,6 +774,11 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
     ) -> list[TreeSitterChunk]:
         """Chunk source code into semantic units.
 
+        Back-compat adapter: parses `source_code` and delegates to
+        `chunk_parsed`. Callers that already hold a parsed tree (e.g. the
+        repo-profiling pass, via TreeSitterChunker.parse_file) should call
+        `chunk_parsed` directly to avoid re-parsing the same source.
+
         Args:
             source_code: Source code string
             config: Optional ChunkingConfig for merge settings.
@@ -788,6 +793,40 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         """
         source_bytes = bytes(source_code, "utf-8")
         tree = self.parser.parse(source_bytes)
+        return self.chunk_parsed(
+            tree, source_code, config=config, repo_profile=repo_profile
+        )
+
+    def chunk_parsed(
+        self,
+        tree: Any,
+        source_code: str,
+        config: Optional["ChunkingConfig"] = None,
+        repo_profile: Any | None = None,
+    ) -> list[TreeSitterChunk]:
+        """Chunk an already-parsed tree into semantic units.
+
+        Same behavior as `chunk_code`, but takes a pre-parsed tree-sitter
+        `Tree` instead of parsing `source_code` itself — lets callers that
+        already produced a tree (e.g. via TreeSitterChunker.parse_file) skip
+        the redundant parse.
+
+        Args:
+            tree: tree_sitter.Tree parsed from `source_code` by this chunker's
+                    `self.parser` (must be produced on the current thread —
+                    tree-sitter Tree/Node objects are not thread-safe).
+            source_code: The source code string `tree` was parsed from.
+            config: Optional ChunkingConfig for merge settings.
+                    If None, uses ServiceLocator to get global config.
+            repo_profile: Optional RepoProfile for adaptive chunk sizing.
+                    When provided and config.sizing_mode == "adaptive", chunk size
+                    thresholds are adjusted per-function based on P75 baseline and
+                    cyclomatic complexity.
+
+        Returns:
+            List of TreeSitterChunk objects (may include merged chunks)
+        """
+        source_bytes = bytes(source_code, "utf-8")
         chunks = []
 
         # Get config BEFORE traverse (needed for splitting decision in closure)
