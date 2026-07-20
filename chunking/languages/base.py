@@ -110,8 +110,11 @@ def estimate_characters(content: str, count_whitespace: bool = False) -> int:
     """
     if count_whitespace:
         return len(content)
-    # Remove all whitespace characters for non-whitespace count
-    return sum(1 for c in content if not c.isspace())
+    # C-level non-whitespace count: str.split() drops runs of (Unicode) whitespace,
+    # so joining the pieces back together and measuring their length avoids a
+    # per-character Python-level generator. Parity with str.isspace() is exact in
+    # CPython (both use the same Unicode whitespace definition).
+    return len("".join(content.split()))
 
 
 @dataclass
