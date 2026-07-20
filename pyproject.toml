@@ -35,7 +35,7 @@ dependencies = [
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
     "huggingface-hub>=1.3.0",  # transformers>=5.3.0 requires >=1.3.0,<2
     "idna>=3.15",  # Security: CVE-2026-45409
-    "mcp>=1.27.0,<2",  # <2: mcp v2 (beta 2026-06-30) has breaking changes
+    "mcp>=1.28.1,<2",  # <2: mcp v2 (beta 2026-06-30) has breaking changes. Security: 1.28.1 fixes CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin validation)
     "msgpack>=1.2.1",  # Security: GHSA-6v7p-g79w-8964 (SEGV on repeated unpack after error)
     "networkx>=3.0",  # Required for graph storage and community detection
     "nltk>=3.9.4",  # Security: Fixes CVE-2025-14009 (path traversal in downloader). CVE-2026-12243 (incomplete fix, path traversal) has no release yet -- see audit_reports/deferred-cves-2026-07-03.md
@@ -156,29 +156,33 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-07-03 (pip-audit - transformers>=5.3.0 unblocks CVE-2026-4372/CVE-2026-1839
-#             by dropping the optimum-onnx <4.58 pin; [onnx] extra temporarily removed as a result
-#             (see profile/onnx comment above). Remaining: diskcache/sqlitedict/nltk, no upstream fix.
-#             See audit_reports/deferred-cves-2026-07-03.md)
+# Last audit: 2026-07-20 (pip-audit - re-synced venv to existing transformers>=5.3.0,<6 pin
+#             (venv had drifted to 4.57.6, resolving CVE-2026-4372/CVE-2026-1839 in practice);
+#             bumped mcp/pillow/click/setuptools/pip for newly published CVEs.
+#             Remaining: diskcache/sqlitedict/nltk/transformers(X-CLIP,LightGlue), no upstream fix.)
 #
 # Direct dependency security updates:
-# mcp>=1.27.0,<2       # Fixes CVE-2025-66416 (DNS rebinding); <2 guards against mcp v2 breaking changes (beta 2026-06-30)
+# mcp>=1.28.1,<2       # Fixes CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin); <2 guards against mcp v2 breaking changes (beta 2026-06-30)
 # nltk>=3.9.4          # Fixes CVE-2025-14009 (path traversal in zipfile.extractall)
 # aiohttp>=3.14.1      # Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1)
 # python-dotenv>=1.2.2 # Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)
 # starlette>=1.3.1     # Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
+# transformers>=5.3.0,<6 # Fixes CVE-2026-4372 (config.json RCE, 5.3.0), CVE-2026-1839 (Trainer RCE, 5.0.0)
+# huggingface-hub>=1.3.0  # transformers>=5.3.0 requires >=1.3.0,<2
 #
 # Transitive dependency security updates:
+# click>=8.3.3             # Fixes CVE-2026-7246 (command injection in click.edit())
 # cryptography>=46.0.7     # Fixes CVE-2026-34073 (46.0.6 DNS name-constraint), CVE-2026-39892 (46.0.7 buffer overflow)
 # idna>=3.18               # Fixes CVE-2026-45409 (incomplete fix of CVE-2024-3651, DoS in idna.encode)
 # msgpack>=1.2.1           # Fixes GHSA-6v7p-g79w-8964 (repeated unpacker SEGV)
-# pip>=26.1.1              # Fixes CVE-2025-8869, CVE-2026-1703, CVE-2026-3219, CVE-2026-6357
-# pillow>=12.2.0           # Fixes CVE-2026-40192, CVE-2026-42308, CVE-2026-42309, CVE-2026-42310, CVE-2026-42311
+# pip>=26.1.2              # Fixes CVE-2025-8869, CVE-2026-1703, CVE-2026-3219, CVE-2026-6357, CVE-2026-8643
+# pillow>=12.3.0           # Fixes CVE-2026-40192, CVE-2026-42308..42311 (12.2.0); CVE-2026-54059/54060/55379/55380/55798, CVE-2026-59199/59203/59205 (12.3.0)
 # pydantic-settings>=2.14.2 # Fixes GHSA-4xgf-cpjx-pc3j (symlink follow in NestedSecretsSettingsSource)
 # pygments>=2.20.0         # Fixes CVE-2026-4539 (ReDoS in AdlLexer)
 # pyjwt>=2.13.0            # Fixes CVE-2026-32597 (2.12.0), 4× CVEs (2.13.0: 48522/48524/48525/48526)
 # python-multipart>=0.0.32 # Fixes CVE-2026-24486, CVE-2026-40347, CVE-2026-42561, CVE-2026-53538, CVE-2026-53539, CVE-2026-53540 (DoS)
 # requests>=2.34.2         # Fixes CVE-2026-25645 (predictable tempfile name)
+# setuptools>=83.0.0       # Fixes CVE-2026-59890 (MANIFEST.in path traversal)
 # urllib3>=2.7.0           # Fixes CVE-2026-44431 (cross-origin redirect), CVE-2026-44432 (decompression)
 # uv>=0.11.24              # Fixes GHSA-4gg8-gxpx-9rph (0.11.15, malicious-wheel path traversal)
 # werkzeug>=3.1.4          # Fixes CVE-2025-66221 (Windows device name handling)
@@ -186,9 +190,16 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 #
 # Deferred (no upstream fix):
 # * transformers PYSEC-2025-217 (X-CLIP checkpoint-conversion RCE) — no fix; not applicable (no X-CLIP conversion use)
+# * transformers PYSEC-2026-2290 / CVE-2026-5241 (LightGlue model-load RCE) — no fix; not applicable (no LightGlue use)
 # * diskcache CVE-2025-69872, sqlitedict CVE-2024-35515 (pickle RCE) — no upstream fix; sqlitedict mitigated via JSON serialization (metadata.py)
 # * nltk CVE-2026-12243 (path traversal, incomplete fix of CVE-2025-14009) — no upstream fix; no untrusted NLTK data paths in this project
 # * pyjwt PYSEC-2025-183 (disputed weak encryption) — no upstream fix
+#
+# Resolved 2026-07-20: transformers CVE-2026-4372 (config.json RCE), CVE-2026-1839 (Trainer RCE)
+#   — venv re-synced to existing transformers>=5.3.0,<6 pin (was drifted at 4.57.6, installed 5.14.1).
+#   mcp CVE-2026-52869/52870/59950 (session-routing, WebSocket origin) via mcp>=1.28.1.
+#   pillow (8 CVEs), click CVE-2026-7246, setuptools CVE-2026-59890, pip CVE-2026-8643 (housekeeping bump).
+#   Tested: full unit suite pass, pip check clean, CUDA verified intact.
 #
 # Resolved 2026-07-03: transformers CVE-2026-4372 (config.json RCE), CVE-2026-1839 (Trainer RCE)
 #   via transformers>=5.3.0,<6 + huggingface-hub>=1.3.0. Traded off: [onnx] extra removed (see above).
