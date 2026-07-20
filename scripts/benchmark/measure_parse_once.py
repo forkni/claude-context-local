@@ -47,7 +47,7 @@ _PROJECT_ROOT = _SCRIPT_DIR.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from chunking.repo_profiler import profile_repository  # noqa: E402
+from chunking.repo_profiler import RepoProfile, profile_repository  # noqa: E402
 from chunking.tree_sitter import TreeSitterChunker  # noqa: E402
 from merkle.merkle_dag import MerkleDAG  # noqa: E402
 from search.config import get_search_config  # noqa: E402
@@ -84,7 +84,9 @@ def _discover_supported_files(
     return indexer._get_supported_files(project_path, all_files)
 
 
-def _time_profile(project_path: str, files: list[str]) -> tuple[float, object]:
+def _time_profile(
+    project_path: str, files: list[str]
+) -> tuple[float, RepoProfile | None]:
     start = time.perf_counter()
     profile = profile_repository(project_path, files)
     return time.perf_counter() - start, profile
@@ -116,12 +118,6 @@ def _time_chunk(project_path: str, files: list[str], workers: int) -> float:
     start = time.perf_counter()
     parallel_chunker.chunk_files(project_path, files)
     return time.perf_counter() - start
-
-
-def _median_of(fn, runs: int):
-    """Run fn() `runs` times, return (median_of_first_return, all_results)."""
-    results = [fn() for _ in range(runs)]
-    return results
 
 
 def main() -> None:
