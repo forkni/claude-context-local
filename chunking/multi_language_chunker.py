@@ -366,7 +366,11 @@ class MultiLanguageChunker:
         )
 
     def _extract_call_relationships(
-        self, chunk: CodeChunk, tchunk: TreeSitterChunk, chunk_id: str
+        self,
+        chunk: CodeChunk,
+        tchunk: TreeSitterChunk,
+        chunk_id: str,
+        dedented_content: str | None = None,
     ) -> None:
         """Extract call graph relationships.
 
@@ -374,6 +378,10 @@ class MultiLanguageChunker:
             chunk: CodeChunk to populate with call relationships
             tchunk: Tree-sitter chunk with source code
             chunk_id: Chunk identifier for logging
+            dedented_content: Pre-computed ``_smart_dedent(tchunk.content)``, shared
+                with ``_extract_phase3_relationships`` so identical content isn't
+                dedented twice per chunk. Computed lazily when None (e.g. direct
+                unit-test callers).
         """
         self._ensure_thread_extractors()
         call_graph_extractor = self._local.call_graph_extractor
@@ -399,9 +407,9 @@ class MultiLanguageChunker:
                 "parent_class": chunk.parent_name,
             }
             # Extract function calls from this chunk
-            calls = call_graph_extractor.extract_calls(
-                _smart_dedent(tchunk.content), chunk_metadata
-            )
+            if dedented_content is None:
+                dedented_content = _smart_dedent(tchunk.content)
+            calls = call_graph_extractor.extract_calls(dedented_content, chunk_metadata)
             chunk.calls = calls
 
             if calls:
@@ -418,7 +426,11 @@ class MultiLanguageChunker:
                 )
 
     def _extract_phase3_relationships(
-        self, chunk: CodeChunk, tchunk: TreeSitterChunk, chunk_id: str
+        self,
+        chunk: CodeChunk,
+        tchunk: TreeSitterChunk,
+        chunk_id: str,
+        dedented_content: str | None = None,
     ) -> None:
         """Extract relationship edges (inheritance, types, etc.).
 
@@ -426,6 +438,10 @@ class MultiLanguageChunker:
             chunk: CodeChunk to populate with relationships
             tchunk: Tree-sitter chunk with source code
             chunk_id: Chunk identifier for logging
+            dedented_content: Pre-computed ``_smart_dedent(tchunk.content)``, shared
+                with ``_extract_call_relationships`` so identical content isn't
+                dedented twice per chunk. Computed lazily when None (e.g. direct
+                unit-test callers).
         """
         self._ensure_thread_extractors()
         relationship_extractors = self._local.relationship_extractors
@@ -447,8 +463,10 @@ class MultiLanguageChunker:
             }
 
             all_relationships = []
-            # Use smart_dedent to properly dedent nested code
-            dedented_content = _smart_dedent(tchunk.content)
+            # Use smart_dedent to properly dedent nested code (shared with
+            # _extract_call_relationships via the caller-supplied dedented_content).
+            if dedented_content is None:
+                dedented_content = _smart_dedent(tchunk.content)
 
             # split_block bodies may be syntactically incomplete (dangling else/except).
             # Restrict extraction to the signature portion, which is always valid Python.
@@ -589,11 +607,19 @@ class MultiLanguageChunker:
             # Assign chunk_id to the chunk
             chunk.chunk_id = chunk_id
 
+            # Dedent once and share between call-graph and phase-3 relationship
+            # extraction — both operate on identical Python source (perf: dedent-once).
+            dedented_content = (
+                _smart_dedent(tchunk.content) if tchunk.language == "python" else None
+            )
+
             # Extract call graph relationships
-            self._extract_call_relationships(chunk, tchunk, chunk_id)
+            self._extract_call_relationships(chunk, tchunk, chunk_id, dedented_content)
 
             # Extract relationship edges
-            self._extract_phase3_relationships(chunk, tchunk, chunk_id)
+            self._extract_phase3_relationships(
+                chunk, tchunk, chunk_id, dedented_content
+            )
 
             code_chunks.append(chunk)
 
