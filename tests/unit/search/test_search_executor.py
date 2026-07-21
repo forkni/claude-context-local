@@ -111,6 +111,29 @@ def test_search_bm25_returns_empty_on_exception(executor):
     assert results == []
 
 
+def test_search_bm25_builds_filter_engine_once(executor):
+    """search_bm25 should create one filter engine per call, not per result row."""
+    executor.bm25_index.search.return_value = [
+        ("chunk1", 1.0, {"path": "src/a.py"}),
+        ("chunk2", 0.9, {"path": "src/b.py"}),
+        ("chunk3", 0.8, {"path": "src/c.py"}),
+    ]
+
+    mock_filter_engine = Mock()
+    mock_filter_engine.matches.return_value = True
+
+    with patch(
+        "search.search_executor.FilterEngine.from_dict", return_value=mock_filter_engine
+    ) as mock_from_dict:
+        results = executor.search_bm25(
+            "query", 2, 0.0, filters={"include_dirs": ["src/"]}
+        )
+
+    assert len(results) == 2
+    mock_from_dict.assert_called_once_with({"include_dirs": ["src/"]})
+    assert mock_filter_engine.matches.call_count == 2
+
+
 def test_search_dense_returns_empty_on_exception(executor):
     """search_dense catches exceptions and returns an empty list."""
     executor.dense_index.search.side_effect = RuntimeError("faiss error")

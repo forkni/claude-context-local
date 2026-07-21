@@ -249,6 +249,7 @@ class SearchExecutor:
             # Apply filters post-search
             if filters and results:
                 filtered_results = []
+                filter_engine = FilterEngine.from_dict(filters)
                 for result in results:
                     # BM25 results are (chunk_id, score, metadata)
                     if len(result) >= 3:
@@ -257,7 +258,7 @@ class SearchExecutor:
                         # Skip malformed results
                         continue
 
-                    if FilterEngine.from_dict(filters).matches(metadata):
+                    if filter_engine.matches(metadata):
                         filtered_results.append(result)
                         if len(filtered_results) >= k:
                             break
