@@ -364,3 +364,78 @@ class TestRerankingEngine:
             assert self.engine.neural_reranker is model_b_instance
             assert self.engine.neural_reranker.model_name == "model-b"
             assert mock_neural_reranker_class.call_count == 2
+
+    # ------------------------------------------------------------------
+    # R1: single config fetch per rerank pass (direct proof)
+    # ------------------------------------------------------------------
+
+    @patch("search.reranking_engine.torch")
+    @patch("search.neural_reranker.NeuralReranker")
+    def test_rerank_by_query_fetches_config_once_per_call(
+        self, mock_neural_reranker_class, mock_torch
+    ):
+        """R1: rerank_by_query must fetch config once, not three times.
+
+        Before R1, should_enable_neural_reranking, _ensure_reranker, and
+        _run_rerank each independently called get_search_config() — 3
+        fetches per rerank_by_query call (9/query across the 3 rerank
+        passes that fire on the default hybrid path). R1 fetches once and
+        threads the same snapshot through all three helpers.
+        """
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.mem_get_info.return_value = (
+            5 * 1024**3,  # 5 GB free
+            8 * 1024**3,  # 8 GB total
+        )
+        mock_reranker_instance = MagicMock()
+        mock_neural_reranker_class.return_value = mock_reranker_instance
+
+        results = [SearchResult(chunk_id="chunk1", score=0.5, metadata={})]
+        mock_reranker_instance.rerank.return_value = results
+
+        config = SearchConfig(
+            reranker=RerankerConfig(
+                enabled=True,
+                model_name="BAAI/bge-reranker-v2-m3",
+                batch_size=16,
+                top_k_candidates=50,
+                min_vram_gb=4.0,
+            )
+        )
+        with patch("search.reranking_engine.get_search_config") as mock_config:
+            mock_config.return_value = config
+            self.engine.rerank_by_query("test query", results, k=1)
+
+            assert mock_config.call_count == 1
+
+    @patch("search.reranking_engine.torch")
+    @patch("search.neural_reranker.NeuralReranker")
+    def test_apply_neural_reranking_fetches_config_once_per_call(
+        self, mock_neural_reranker_class, mock_torch
+    ):
+        """R1: apply_neural_reranking must fetch config once, not three times."""
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.mem_get_info.return_value = (
+            5 * 1024**3,  # 5 GB free
+            8 * 1024**3,  # 8 GB total
+        )
+        mock_reranker_instance = MagicMock()
+        mock_neural_reranker_class.return_value = mock_reranker_instance
+
+        results = [SearchResult(chunk_id="chunk1", score=0.5, metadata={})]
+        mock_reranker_instance.rerank.return_value = results
+
+        config = SearchConfig(
+            reranker=RerankerConfig(
+                enabled=True,
+                model_name="BAAI/bge-reranker-v2-m3",
+                batch_size=16,
+                top_k_candidates=50,
+                min_vram_gb=4.0,
+            )
+        )
+        with patch("search.reranking_engine.get_search_config") as mock_config:
+            mock_config.return_value = config
+            self.engine.apply_neural_reranking("query text", results, k=1)
+
+            assert mock_config.call_count == 1

@@ -16,6 +16,7 @@ from .config import SearchMode, get_search_config
 
 # TYPE_CHECKING is always False at runtime; AddNot mutation on this guard is equivalent.
 if TYPE_CHECKING:  # pragma: no mutate
+    from .config import SearchConfig
     from .neural_reranker import (
         GenerativeReranker,
         JinaRerankerV3,
@@ -54,8 +55,15 @@ class RerankingEngine:
         self._session_oom_detected: bool = False
         self._logger = logging.getLogger(__name__)
 
-    def should_enable_neural_reranking(self) -> bool:
+    def should_enable_neural_reranking(
+        self, config: "SearchConfig | None" = None
+    ) -> bool:
         """Check if VRAM is sufficient for neural reranking.
+
+        Args:
+            config: Optional pre-fetched SearchConfig snapshot. Callers that already
+                hold one for this rerank pass (R1) pass it through to avoid a
+                redundant get_search_config() call; fetched here if omitted.
 
         Returns:
             bool: True if VRAM is sufficient and feature is enabled
@@ -68,7 +76,8 @@ class RerankingEngine:
             return False
 
         try:
-            config = get_search_config()
+            if config is None:
+                config = get_search_config()
             if not hasattr(config, "reranker") or not config.reranker.enabled:
                 return False
 
@@ -107,11 +116,19 @@ class RerankingEngine:
             self._logger.warning(f"VRAM check failed, disabling neural reranking: {e}")
             return False  # pragma: no mutate
 
-    def _ensure_reranker(self, log_prefix: str) -> bool:
+    def _ensure_reranker(
+        self, log_prefix: str, config: "SearchConfig | None" = None
+    ) -> bool:
         """Lazy-init, swap, or cleanup neural reranker based on current VRAM/config state.
 
         Updates self._neural_reranking_enabled and self.neural_reranker.
         Returns True if reranking is available (enabled and loaded).
+
+        Args:
+            log_prefix: Prefix for log messages.
+            config: Optional pre-fetched SearchConfig snapshot (R1); fetched once
+                here if omitted, and passed to should_enable_neural_reranking() so
+                the enable-check and this method see the same config snapshot.
 
         Note: like the existing create-branch, the swap-branch below has no lock around
         it. RerankingEngine is a single instance shared across concurrent
@@ -121,8 +138,9 @@ class RerankingEngine:
         not introduced by the swap branch — same race already existed for the create
         branch's `self.neural_reranker is None` check.
         """
-        should_enable = self.should_enable_neural_reranking()
-        config = get_search_config()
+        if config is None:
+            config = get_search_config()
+        should_enable = self.should_enable_neural_reranking(config)
 
         # and/or mutations here are boundary orchestration; equivalent under the test suite's
         # mock setup (create_reranker is mocked, _ensure_reranker is not called directly).
@@ -160,16 +178,26 @@ class RerankingEngine:
         )
 
     def _run_rerank(
-        self, query_or_content: str, candidates: list, k: int, log_prefix: str
+        self,
+        query_or_content: str,
+        candidates: list,
+        k: int,
+        log_prefix: str,
+        config: "SearchConfig | None" = None,
     ) -> list:
         """OOM-protected timed rerank call.
 
         Returns reranked results on success, or candidates unchanged on failure.
+
+        Args:
+            config: Optional pre-fetched SearchConfig snapshot (R1); fetched here
+                if omitted.
         """
         assert (
             self.neural_reranker is not None
         )  # guaranteed by _ensure_reranker() caller gate
-        config = get_search_config()
+        if config is None:
+            config = get_search_config()
         rerank_count = min(config.reranker.top_k_candidates, len(candidates))
         neural_start = time.time()
 
@@ -225,10 +253,13 @@ class RerankingEngine:
         # Sort by score (descending)
         sorted_results = sorted(results, key=lambda r: r.score, reverse=True)
 
-        # Neural reranking (Quality First mode) — always re-check config for runtime changes
-        if sorted_results and self._ensure_reranker("[RERANK]"):
+        # Neural reranking (Quality First mode) — always re-check config for runtime
+        # changes. Fetch once per pass (R1) and thread through both helpers instead
+        # of each independently re-fetching (was 3 fetches/call, now 1).
+        config = get_search_config()
+        if sorted_results and self._ensure_reranker("[RERANK]", config=config):
             sorted_results = self._run_rerank(
-                query, sorted_results, k, "[NEURAL_RERANK]"
+                query, sorted_results, k, "[NEURAL_RERANK]", config=config
             )
 
         return sorted_results[:k]
@@ -260,12 +291,18 @@ class RerankingEngine:
         # not/double-not mutations on guard and _ensure_reranker are boundary orchestration.
         if not results:  # pragma: no mutate
             return []
+        # Fetch config once per pass (R1) and thread through both helpers.
+        config = get_search_config()
         if not self._ensure_reranker(  # pragma: no mutate
-            f"[RERANK-{context.upper()}]"
+            f"[RERANK-{context.upper()}]", config=config
         ):  # pragma: no mutate
             return results
         return self._run_rerank(
-            query_or_content, results, k, f"[NEURAL_RERANK-{context.upper()}]"
+            query_or_content,
+            results,
+            k,
+            f"[NEURAL_RERANK-{context.upper()}]",
+            config=config,
         )
 
     def reset_session_state(self) -> None:
