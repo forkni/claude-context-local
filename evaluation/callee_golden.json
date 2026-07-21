@@ -24,12 +24,10 @@
     {
       "id": "OB02",
       "category": "E",
-      "description": "PyanResolver.resolve calls gather_py_files, scope_to_indexed_files, validate_py_files",
+      "description": "PyanResolver.resolve calls prepare_scoped_files, the shared gather/scope/validate preamble extracted for PyanResolver, LibCSTResolver, and LSPResolver. gather_py_files, scope_to_indexed_files, and validate_py_files are now called from inside prepare_scoped_files (2-hop), not directly from resolve",
       "target_chunk_id": "chunking/relationships/external_call_graph.py:method:PyanResolver.resolve",
       "expected_callees": [
-        "chunking/relationships/call_edge_resolver.py:function:gather_py_files",
-        "chunking/relationships/call_edge_resolver.py:function:scope_to_indexed_files",
-        "chunking/relationships/call_edge_resolver.py:function:validate_py_files"
+        "chunking/relationships/call_edge_resolver.py:function:prepare_scoped_files"
       ]
     },
     {
@@ -68,9 +66,11 @@
     {
       "id": "OB07",
       "category": "E",
-      "description": "upgrade_call_edge calls graph.edges[...].update",
+      "description": "upgrade_call_edge calls graph.edges[...].update; caller_id and callee_id are each normalized via normalize_path first (#47, added after this golden's original authoring) so Windows backslash ids don't cause a KeyError against forward-slash graph ids",
       "target_chunk_id": "graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge",
-      "expected_callees": []
+      "expected_callees": [
+        "utils/path_utils.py:function:normalize_path"
+      ]
     }
   ]
 }

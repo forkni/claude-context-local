@@ -45,12 +45,11 @@
     {
       "id": "C004",
       "category": "E",
-      "description": "add_call_edge adds a caller→callee edge to the code graph; called from add_chunk (main chunk, findable), populate_from_embeddings, and build_graph_from_chunks (both in split_blocks, structural gap)",
+      "description": "add_call_edge adds a caller→callee edge to the code graph; called directly from add_chunk (legacy single-pass path) and from _two_pass_build's Pass 2 (the shared two-pass build algorithm introduced in commit bde66586). populate_from_embeddings and build_graph_from_chunks now call add_call_edge only indirectly, via _two_pass_build",
       "target_chunk_id": "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge",
       "expected_callers": [
         "search/graph_integration.py:method:GraphIntegration.add_chunk",
-        "search/graph_integration.py:method:GraphIntegration.populate_from_embeddings",
-        "search/graph_integration.py:method:GraphIntegration.build_graph_from_chunks"
+        "search/graph_integration.py:method:GraphIntegration._two_pass_build"
       ]
     },
     {
