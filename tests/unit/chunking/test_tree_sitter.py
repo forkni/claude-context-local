@@ -301,7 +301,12 @@ class TestReadFileWithTimeout(TestCase):
     """Test _read_file_with_timeout() function for file lock protection."""
 
     def test_read_file_success(self):
-        """Test successful file read within timeout."""
+        """Test successful file read within timeout.
+
+        _read_file_with_timeout now returns raw bytes (not decoded text) so
+        parse_file can derive the binary check from the same read (#B3) —
+        decoding to str happens separately in parse_file.
+        """
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def hello(): pass")
             temp_path = f.name
@@ -310,7 +315,7 @@ class TestReadFileWithTimeout(TestCase):
             from chunking.tree_sitter import _read_file_with_timeout
 
             content = _read_file_with_timeout(Path(temp_path), timeout=5.0)
-            assert content == "def hello(): pass"
+            assert content == b"def hello(): pass"
         finally:
             Path(temp_path).unlink()
 
@@ -339,6 +344,94 @@ class TestReadFileWithTimeout(TestCase):
         from chunking.tree_sitter import FILE_READ_TIMEOUT
 
         assert FILE_READ_TIMEOUT == 5
+
+
+class TestParseFileSingleRead(TestCase):
+    """B3: parse_file derives the binary check from the same bytes it reads
+    for content, so each file is opened once instead of twice."""
+
+    def setUp(self):
+        self.chunker = TreeSitterChunker()
+        self.temp_dir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_binary_file_is_skipped(self):
+        """A file containing a null byte in its first 8KB is still skipped."""
+        file_path = Path(self.temp_dir) / "test.py"
+        file_path.write_bytes(b"import os\x00\x01\x02binary garbage")
+
+        result = self.chunker.parse_file(str(file_path))
+        assert result is None
+
+    def test_html_file_is_skipped(self):
+        """Markup files are still skipped even though they'd otherwise decode as text."""
+        file_path = Path(self.temp_dir) / "test.py"
+        file_path.write_text("<!DOCTYPE html>\n<html><body></body></html>")
+
+        result = self.chunker.parse_file(str(file_path))
+        assert result is None
+
+    def test_normal_python_file_parses(self):
+        """A normal, valid UTF-8 Python file still parses successfully."""
+        import chunking.tree_sitter as tsf
+
+        if "python" not in tsf.AVAILABLE_LANGUAGES:
+            self.skipTest("tree-sitter-python not installed")
+
+        file_path = Path(self.temp_dir) / "test.py"
+        file_path.write_text("def hello():\n    return 42\n")
+
+        result = self.chunker.parse_file(str(file_path))
+        assert result is not None
+        assert result.content == "def hello():\n    return 42\n"
+
+    def test_crlf_line_endings_normalized_to_lf(self):
+        """A raw bytes read + manual decode() skips text-mode open()'s
+        universal-newline translation unless done explicitly — regression
+        guard for that (parse_file must still normalize \\r\\n/\\r to \\n)."""
+        import chunking.tree_sitter as tsf
+
+        if "python" not in tsf.AVAILABLE_LANGUAGES:
+            self.skipTest("tree-sitter-python not installed")
+
+        file_path = Path(self.temp_dir) / "test.py"
+        file_path.write_bytes(b"def hello():\r\n    return 42\r\n")
+
+        result = self.chunker.parse_file(str(file_path))
+        assert result is not None
+        assert result.content == "def hello():\n    return 42\n"
+        assert "\r" not in result.content
+
+    def test_file_is_opened_exactly_once(self):
+        """The old code opened every file twice (binary sniff + text read);
+        parse_file must now open it only once."""
+        import chunking.tree_sitter as tsf
+
+        if "python" not in tsf.AVAILABLE_LANGUAGES:
+            self.skipTest("tree-sitter-python not installed")
+
+        file_path = Path(self.temp_dir) / "test.py"
+        file_path.write_text("def hello():\n    return 42\n")
+
+        real_open = open
+        open_calls = []
+
+        def counting_open(path, *args, **kwargs):
+            open_calls.append(str(path))
+            return real_open(path, *args, **kwargs)
+
+        with patch("builtins.open", side_effect=counting_open):
+            result = self.chunker.parse_file(str(file_path))
+
+        assert result is not None
+        matching_calls = [c for c in open_calls if c == str(file_path)]
+        assert len(matching_calls) == 1, (
+            f"expected exactly 1 open() of {file_path}, got {len(matching_calls)}"
+        )
 
 
 if __name__ == "__main__":

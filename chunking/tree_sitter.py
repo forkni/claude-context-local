@@ -88,24 +88,29 @@ __all__ = [
 FILE_READ_TIMEOUT = 5
 
 
-def _read_file_with_timeout(file_path: Path, timeout: float = FILE_READ_TIMEOUT) -> str:
+def _read_file_with_timeout(
+    file_path: Path, timeout: float = FILE_READ_TIMEOUT
+) -> bytes:
     """Read file with timeout protection against locked files.
+
+    Reads raw bytes (not decoded text) so callers can derive both the binary
+    check and the decoded content from a single open+read, instead of opening
+    the file once to sniff for binary content and again to read it as text.
 
     Args:
         file_path: Path to file to read
         timeout: Timeout in seconds (default: 5s)
 
     Returns:
-        File contents as string
+        Raw file contents as bytes
 
     Raises:
         TimeoutError: If file read exceeds timeout (likely locked)
         PermissionError: If file is not accessible
-        UnicodeDecodeError: If file encoding is invalid
     """
 
     def read_file():
-        with open(file_path, encoding="utf-8") as f:
+        with open(file_path, "rb") as f:
             return f.read()
 
     # Do NOT use 'with executor' — the context-manager's __exit__ calls
@@ -122,25 +127,6 @@ def _read_file_with_timeout(file_path: Path, timeout: float = FILE_READ_TIMEOUT)
         ) from None
     finally:
         executor.shutdown(wait=False)
-
-
-def _is_binary_file(file_path: Path, sample_size: int = 8192) -> bool:
-    """Check if a file is binary by looking for null bytes.
-
-    Args:
-        file_path: Path to the file
-        sample_size: Number of bytes to sample (default 8KB)
-
-    Returns:
-        True if file appears to be binary
-    """
-    try:
-        with open(file_path, "rb") as f:
-            chunk = f.read(sample_size)
-            # Null bytes are strong indicator of binary content
-            return b"\x00" in chunk
-    except OSError:
-        return False  # If we can't read it, let the main logic handle it
 
 
 @dataclass(frozen=True)
@@ -287,13 +273,31 @@ class TreeSitterChunker:
             return None
 
         if content is None:
-            # Check for binary files before attempting text read
-            if _is_binary_file(Path(file_path)):
-                logger.debug(f"[BINARY] Skipping binary file: {file_path}")
-                return None
-
             try:
-                content = _read_file_with_timeout(Path(file_path))
+                # Single timed read of raw bytes (was two opens: a binary
+                # sniff via _is_binary_file, then a separate text read).
+                raw = _read_file_with_timeout(Path(file_path))
+
+                # Binary check on the bytes already in hand — same 8KB
+                # null-byte rule _is_binary_file used, no second open needed.
+                if b"\x00" in raw[:8192]:
+                    logger.debug(f"[BINARY] Skipping binary file: {file_path}")
+                    return None
+
+                try:
+                    content = raw.decode("utf-8")
+                except UnicodeDecodeError:
+                    logger.warning(
+                        f"UTF-8 decode failed for {file_path}, trying with error handling"
+                    )
+                    content = raw.decode("utf-8", errors="ignore")
+
+                # Reproduce text-mode open()'s universal-newline translation:
+                # open(file_path, encoding="utf-8") (the old code path) decodes
+                # \r\n and lone \r to \n by default. A raw bytes read + manual
+                # decode() skips that, so do it explicitly to keep chunk content
+                # (and offsets) identical to before on CRLF files.
+                content = content.replace("\r\n", "\n").replace("\r", "\n")
 
                 # Skip HTML/XML files that shouldn't be parsed as code
                 content_start = content.lstrip()[:100].lower()
@@ -312,16 +316,6 @@ class TreeSitterChunker:
                     f"[LOCKED] Cannot access file (permission denied): {file_path}"
                 )
                 return None
-            except UnicodeDecodeError:
-                logger.warning(
-                    f"UTF-8 decode failed for {file_path}, trying with error handling"
-                )
-                try:
-                    with open(file_path, encoding="utf-8", errors="ignore") as f:
-                        content = f.read()
-                except Exception as e:
-                    logger.error(f"Failed to read file {file_path}: {e}", exc_info=True)
-                    return None
             except Exception as e:
                 logger.error(f"Failed to read file {file_path}: {e}", exc_info=True)
                 return None
