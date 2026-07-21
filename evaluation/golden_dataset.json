@@ -39,6 +39,15 @@
     "recommended_k": 7,
     "changelog": [
       {
+        "date": "2026-07-21",
+        "changes": [
+          "Re-verification sweep (post call-graph resolution work + perf refactors): normalized-ID diff of all 232 unique golden chunk IDs against the live index (2050 chunks, last_indexed 2026-07-21) surfaced 2 drifted grade-1 relevance_grades entries, both unscored (not in expected/expected_primary):",
+          "Q12: retargeted mcp_server/tools/index_handlers.py:split_block:handle_index_directory -> mcp_server/tools/index_handlers.py:decorated_definition:handle_index_directory (handle_index_directory refactored into a thin dispatcher; body moved to _start_index_directory_job/_run_index_directory split_blocks, verified live).",
+          "Q20 & Q33: retargeted merkle/__init__.py:module -> merkle/__init__.py:module_preamble (only module_preamble is produced by the live chunker; the 2026-07-08 changelog already flagged the :module-kind entry as an expected non-match).",
+          "No scored-metric impact (all three fixes are grade-1 label hygiene). Re-ran run_sscg_benchmark.py post-fix to confirm no regression from recent code changes."
+        ]
+      },
+      {
         "date": "2026-07-08",
         "changes": [
           "Systematic drift sweep across all 77 queries' expected/expected_primary/relevance_grades chunk IDs against the live index + `git log -S` archaeology surfaced 4 stale entries from recent refactors; all confirmed dead, fixed:",
@@ -244,7 +253,7 @@
         "merkle/snapshot_manager.py:method:SnapshotManager.has_snapshot": 3,
         "search/incremental_indexer.py:method:IncrementalIndexer.needs_reindex": 3,
         "search/metadata.py:method:MetadataStore.exists": 2,
-        "mcp_server/tools/index_handlers.py:split_block:handle_index_directory": 1
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_index_directory": 1
       }
     },
     {
@@ -315,7 +324,7 @@
       "relevance_grades": {
         "merkle/merkle_dag.py:method:MerkleDAG.build": 3,
         "merkle/merkle_dag.py:method:MerkleDAG.build_node": 3,
-        "merkle/__init__.py:module": 1,
+        "merkle/__init__.py:module_preamble": 1,
         "merkle/merkle_dag.py:decorated_definition:MerkleDAG.from_dict": 1,
         "merkle/merkle_dag.py:decorated_definition:MerkleNode": 2
       }
@@ -381,7 +390,7 @@
       ],
       "relevance_grades": {
         "search/incremental_indexer.py:class:IncrementalIndexer": 3,
-        "merkle/__init__.py:module": 1,
+        "merkle/__init__.py:module_preamble": 1,
         "search/incremental_indexer.py:method:IncrementalIndexer.incremental_index": 2,
         "merkle/snapshot_manager.py:method:SnapshotManager.has_snapshot": 2,
         "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot": 3
