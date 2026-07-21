@@ -24,6 +24,13 @@ class CallEdge:
         line_number: Line number where the call occurs
         is_method_call: Whether this is a method call (obj.method())
         confidence: Confidence score (0.0-1.0) for the call detection
+        callee_qualified: Full dotted import-scope name of the callee (e.g.
+            "dedent_utils.smart_dedent", ".helper", "..utils.Parser"), sourced
+            from the extractor's import-alias map at extraction time. None for
+            calls with no matching import (locally-defined symbols, method/
+            attribute calls, or a pre-Part-1 persisted edge). Lets index-time
+            resolution disambiguate same-named symbols defined in more than
+            one module instead of falling back to a flat name lookup.
     """
 
     caller_id: str
@@ -31,6 +38,7 @@ class CallEdge:
     line_number: int
     is_method_call: bool = False
     confidence: float = 1.0  # Static analysis has high confidence
+    callee_qualified: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -40,6 +48,7 @@ class CallEdge:
             "line_number": self.line_number,
             "is_method_call": self.is_method_call,
             "confidence": self.confidence,
+            "callee_qualified": self.callee_qualified,
         }
 
     @classmethod
@@ -51,6 +60,7 @@ class CallEdge:
             line_number=data["line_number"],
             is_method_call=data.get("is_method_call", False),
             confidence=data.get("confidence", 1.0),
+            callee_qualified=data.get("callee_qualified"),
         )
 
 
@@ -258,12 +268,22 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         # Get line number
         line_number = getattr(node, "lineno", 0)
 
+        # Directly-called ast.Name callees carry the full dotted import scope
+        # alongside the bare dealiased name callee_name already has (e.g.
+        # "_smart_dedent" -> "dedent_utils.smart_dedent"). Method/attribute
+        # calls are already receiver-qualified in callee_name and are left
+        # unchanged (callee_qualified=None) by this pass.
+        callee_qualified = None
+        if isinstance(node.func, ast.Name):
+            callee_qualified = self._imports.get(node.func.id)
+
         return CallEdge(
             caller_id=chunk_id,
             callee_name=callee_name,
             line_number=line_number,
             is_method_call=is_method,
             confidence=1.0,  # Static AST analysis has high confidence
+            callee_qualified=callee_qualified,
         )
 
     def _get_call_name(self, func_node: ast.AST) -> str | None:
@@ -288,7 +308,13 @@ class PythonCallGraphExtractor(CallGraphExtractor):
         """
         if isinstance(func_node, ast.Name):
             # Simple function call: foo()
-            return func_node.id
+            name = func_node.id
+            # Dealias imported functions: from x import foo as g; g() -> "foo"
+            # Mirrors the ast.Attribute receiver branch below. self._imports maps
+            # alias -> dotted qualified name (e.g. "_smart_dedent" -> ".dedent_utils.smart_dedent").
+            if name in self._imports:
+                return self._imports[name].split(".")[-1]
+            return name
 
         elif isinstance(func_node, ast.Attribute):
             # Method call: obj.method()

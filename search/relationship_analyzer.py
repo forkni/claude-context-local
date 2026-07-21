@@ -9,6 +9,7 @@ calls CodeGraphStorage directly.
 
 from __future__ import annotations
 
+import builtins
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,7 @@ from search.filters import (
     normalize_path_lower,
     unescape_mcp_path,
 )
+from search.graph_integration import _COMMON_METHODS
 from search.types import BUILTIN_TYPES, ImpactReport
 
 
@@ -491,7 +493,15 @@ class RelationshipAnalyzer:
                 # reindex, split_block fragmentation, or graph/metadata divergence.
                 # Derive the symbol name and retry via Tier 1→3 resolution cascade.
                 symbol = caller_id.split(":")[-1] if ":" in caller_id else caller_id
-                recovered = self._resolve_by_symbol(symbol, exclude_dirs)
+                # Skip builtins/common-method names before recovery — matches the
+                # index-time policy (graph_integration._resolve_call_target) so we
+                # don't Tier-3-guess a target for a name that's never a real caller.
+                if hasattr(builtins, symbol) or symbol in _COMMON_METHODS:
+                    recovered = None
+                else:
+                    recovered = self._resolve_by_symbol(
+                        symbol, exclude_dirs, strict_name_match=True
+                    )
                 if recovered is not None:
                     result2, cid2 = recovered
                     d = self._result_to_dict(result2, cid2)
@@ -573,7 +583,16 @@ class RelationshipAnalyzer:
                 # Callee may be stored as a symbol name (in-house AST edges) or a
                 # stale/drifted chunk_id.  Derive the symbol and retry via the cascade.
                 symbol = callee_id.split(":")[-1] if ":" in callee_id else callee_id
-                recovered = self._resolve_by_symbol(symbol, exclude_dirs)
+                # Skip builtins/common-method names before recovery — matches the
+                # index-time policy (graph_integration._resolve_call_target) so an
+                # unresolved bare call like len()/append() stays phantom instead of
+                # Tier-3-guessing an unrelated project function.
+                if hasattr(builtins, symbol) or symbol in _COMMON_METHODS:
+                    recovered = None
+                else:
+                    recovered = self._resolve_by_symbol(
+                        symbol, exclude_dirs, strict_name_match=True
+                    )
                 if recovered is not None:
                     result2, cid2 = recovered
                     d = self._result_to_dict(result2, cid2)
@@ -606,6 +625,7 @@ class RelationshipAnalyzer:
         self,
         symbol_name: str,
         exclude_dirs: list[str] | None,
+        strict_name_match: bool = False,
     ) -> tuple[Any, str] | None:
         """Resolve a symbol name to (result, chunk_id) via the Tier 1→3 cascade.
 
@@ -617,6 +637,17 @@ class RelationshipAnalyzer:
           1. O(1) symbol-cache lookup (populated by indexer for all indexed chunks).
           2. Graph exact-name lookup + suffix scan (":<name>" / ".<name>").
           3. Semantic search with name-match + type-priority ranking.
+
+        Args:
+            strict_name_match: When True, Tier 3 only returns a candidate whose
+                name actually matches ``symbol_name`` — it will NOT fall back to
+                the nearest semantic neighbor when no name matches. Used by the
+                edge-recovery callers (_enrich_callers/_enrich_callees) so an
+                unresolved call-graph symbol (e.g. a bare builtin/common-method
+                name) stays unresolved rather than false-binding to an unrelated
+                top semantic hit. _resolve_target (user symbol queries) keeps the
+                lenient default so ambiguous/fuzzy lookups still return a best
+                guess.
         """
         # Tier 1: O(1) exact symbol-cache lookup
         if self.symbol_cache:
@@ -668,7 +699,14 @@ class RelationshipAnalyzer:
             return last_seg == symbol_name or last_seg.split(".")[-1] == symbol_name
 
         matching = [r for r in results if _name_matches(r)]
-        candidates = matching if matching else results
+        if matching:
+            candidates = matching
+        elif strict_name_match:
+            # Recovery path: don't guess — an unresolved call-graph symbol
+            # should stay unresolved rather than bind to an unrelated neighbor.
+            return None
+        else:
+            candidates = results
 
         type_priority = {
             "function": 0,

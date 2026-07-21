@@ -188,6 +188,72 @@ def process():
         finally:
             os.unlink(temp_path)
 
+    def test_aliased_bare_function_call_resolves(self):
+        """Test from mod import func as g; g() resolves callee_name to "func".
+
+        Regression test for the ``_smart_dedent`` mis-binding: a directly-called
+        aliased function (an ``ast.Name`` call, not an ``ast.Attribute`` receiver)
+        must be dealiased the same way method-receiver calls already are, so the
+        callee links back to the real definition instead of becoming a phantom
+        graph node keyed by the alias.
+        """
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(
+                """
+from dedent_utils import smart_dedent as _smart_dedent
+
+def process(code):
+    return _smart_dedent(code)
+"""
+            )
+            temp_path = f.name
+
+        try:
+            chunk_code = """
+def process(code):
+    return _smart_dedent(code)
+"""
+            chunk_metadata = {
+                "chunk_id": "test.py:3-4:function:process",
+                "file_path": temp_path,
+            }
+            calls = self.extractor.extract_calls(chunk_code, chunk_metadata)
+
+            assert len(calls) == 1
+            # Resolved to the real name, not the call-site alias
+            assert calls[0].callee_name == "smart_dedent"
+        finally:
+            os.unlink(temp_path)
+
+    def test_non_aliased_bare_function_call_unaffected(self):
+        """Test from mod import func; func() still resolves to "func" (no-op case)."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(
+                """
+from dedent_utils import smart_dedent
+
+def process(code):
+    return smart_dedent(code)
+"""
+            )
+            temp_path = f.name
+
+        try:
+            chunk_code = """
+def process(code):
+    return smart_dedent(code)
+"""
+            chunk_metadata = {
+                "chunk_id": "test.py:3-4:function:process",
+                "file_path": temp_path,
+            }
+            calls = self.extractor.extract_calls(chunk_code, chunk_metadata)
+
+            assert len(calls) == 1
+            assert calls[0].callee_name == "smart_dedent"
+        finally:
+            os.unlink(temp_path)
+
 
 class TestRelativeImportResolution:
     """Test relative import handling."""
@@ -770,3 +836,209 @@ def func2():
             assert method_call2.callee_name == "SuccessHandler.process"
         finally:
             os.unlink(temp_path)
+
+
+class TestCalleeQualifiedExtraction:
+    """Direct tests for CallEdge.callee_qualified (Part 1 of the
+    call-graph-resolution deepening).
+
+    A directly-called ``ast.Name`` callee gets its full dotted import-scope
+    name recorded alongside the existing bare ``callee_name``, so index-time
+    resolution can disambiguate same-named symbols defined in more than one
+    module. Method/attribute calls are already receiver-qualified in
+    ``callee_name`` and are left unchanged (``callee_qualified=None``) by
+    this pass.
+    """
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.extractor = PythonCallGraphExtractor()
+
+    def test_aliased_bare_call_records_full_qualified_name(self):
+        """Regression seam for the _smart_dedent mis-binding: the alias
+        '_smart_dedent' must resolve to the module-qualified original name,
+        not just the bare dealiased name callee_name already carries."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(
+                """
+from dedent_utils import smart_dedent as _smart_dedent
+
+def process(code):
+    return _smart_dedent(code)
+"""
+            )
+            temp_path = f.name
+
+        try:
+            chunk_code = """
+def process(code):
+    return _smart_dedent(code)
+"""
+            chunk_metadata = {
+                "chunk_id": "test.py:3-4:function:process",
+                "file_path": temp_path,
+            }
+            calls = self.extractor.extract_calls(chunk_code, chunk_metadata)
+
+            assert len(calls) == 1
+            assert calls[0].callee_name == "smart_dedent"
+            assert calls[0].callee_qualified == "dedent_utils.smart_dedent"
+        finally:
+            os.unlink(temp_path)
+
+    def test_non_aliased_bare_call_records_qualified_name(self):
+        """Even without an alias, the qualified module path is still worth
+        recording -- it's what lets same-file/cross-module disambiguation
+        work uniformly regardless of whether the import was aliased."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(
+                """
+from dedent_utils import smart_dedent
+
+def process(code):
+    return smart_dedent(code)
+"""
+            )
+            temp_path = f.name
+
+        try:
+            chunk_code = """
+def process(code):
+    return smart_dedent(code)
+"""
+            chunk_metadata = {
+                "chunk_id": "test.py:3-4:function:process",
+                "file_path": temp_path,
+            }
+            calls = self.extractor.extract_calls(chunk_code, chunk_metadata)
+
+            assert len(calls) == 1
+            assert calls[0].callee_qualified == "dedent_utils.smart_dedent"
+        finally:
+            os.unlink(temp_path)
+
+    def test_relative_import_records_dotted_qualified_name(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(
+                """
+from . import helper
+
+def process():
+    helper()
+"""
+            )
+            temp_path = f.name
+
+        try:
+            chunk_code = """
+def process():
+    helper()
+"""
+            chunk_metadata = {
+                "chunk_id": "test.py:3-4:function:process",
+                "file_path": temp_path,
+            }
+            calls = self.extractor.extract_calls(chunk_code, chunk_metadata)
+
+            assert len(calls) == 1
+            assert calls[0].callee_qualified == ".helper"
+        finally:
+            os.unlink(temp_path)
+
+    def test_non_imported_local_call_has_no_qualified_name(self):
+        """A call to a name with no matching import entry (a genuinely local
+        symbol) must not fabricate a qualified name."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(
+                """
+def local_helper():
+    return 1
+
+def process():
+    return local_helper()
+"""
+            )
+            temp_path = f.name
+
+        try:
+            chunk_code = """
+def process():
+    return local_helper()
+"""
+            chunk_metadata = {
+                "chunk_id": "test.py:5-6:function:process",
+                "file_path": temp_path,
+            }
+            calls = self.extractor.extract_calls(chunk_code, chunk_metadata)
+
+            assert len(calls) == 1
+            assert calls[0].callee_qualified is None
+        finally:
+            os.unlink(temp_path)
+
+    def test_attribute_call_leaves_qualified_name_unset(self):
+        """Method/attribute calls are already receiver-qualified in
+        callee_name (e.g. 'ErrorHandler.handle') -- this pass only adds
+        callee_qualified for directly-called ast.Name callees, so attribute
+        calls keep callee_qualified=None."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write(
+                """
+from handlers import ErrorHandler
+
+def process():
+    handler = ErrorHandler()
+    handler.handle()
+"""
+            )
+            temp_path = f.name
+
+        try:
+            chunk_code = """
+def process():
+    handler = ErrorHandler()
+    handler.handle()
+"""
+            chunk_metadata = {
+                "chunk_id": "test.py:3-6:function:process",
+                "file_path": temp_path,
+            }
+            calls = self.extractor.extract_calls(chunk_code, chunk_metadata)
+
+            assert len(calls) == 2
+            constructor_call = [c for c in calls if c.callee_name == "ErrorHandler"][0]
+            method_call = [c for c in calls if c.callee_name.endswith(".handle")][0]
+
+            # Direct Name call: constructor is dealiased via imports.
+            assert constructor_call.callee_qualified == "handlers.ErrorHandler"
+            # Attribute call: left unchanged by this pass.
+            assert method_call.callee_qualified is None
+        finally:
+            os.unlink(temp_path)
+
+    def test_callee_qualified_roundtrips_through_to_dict_and_from_dict(self):
+        """Part 1 schema: to_dict()/from_dict() must carry callee_qualified,
+        and old (pre-Part-1) dicts without the key must still decode with
+        callee_qualified=None (back-compat for existing indexes)."""
+        from chunking.relationships.call_graph_extractor import CallEdge
+
+        edge = CallEdge(
+            caller_id="c.py:1-2:function:caller",
+            callee_name="helper",
+            line_number=2,
+            callee_qualified="a.helper",
+        )
+        as_dict = edge.to_dict()
+        assert as_dict["callee_qualified"] == "a.helper"
+
+        restored = CallEdge.from_dict(as_dict)
+        assert restored.callee_qualified == "a.helper"
+
+        # Back-compat: a dict from before this field existed.
+        legacy_dict = {
+            "caller_id": "c.py:1-2:function:caller",
+            "callee_name": "helper",
+            "line_number": 2,
+        }
+        legacy_restored = CallEdge.from_dict(legacy_dict)
+        assert legacy_restored.callee_qualified is None

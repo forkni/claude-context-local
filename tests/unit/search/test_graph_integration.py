@@ -919,6 +919,167 @@ class TestBuildVsPopulateParity(TestCase):
         self.assertEqual(e_calls[0].kwargs["callee_name"], callee_id)
 
 
+class TestQualifiedToFileSuffix(TestCase):
+    """Direct tests for the module-level _qualified_to_file_suffix helper
+    (Part 3 of the call-graph-resolution deepening).
+
+    Converts a dotted qualified callee name (from CallEdge.callee_qualified,
+    sourced from the extractor's import-alias map) into a project-relative
+    ``.py`` file-path suffix, so _resolve_call_target can scope-match
+    candidates by the file the caller's own import actually points at.
+    """
+
+    def test_absolute_qualified_name(self):
+        from search.graph_integration import _qualified_to_file_suffix
+
+        result = _qualified_to_file_suffix(
+            "evaluation.metrics.normalize_chunk_id",
+            "tools/analyze_batch_results.py",
+        )
+        self.assertEqual(result, "evaluation/metrics.py")
+
+    def test_single_segment_absolute_is_undecidable(self):
+        from search.graph_integration import _qualified_to_file_suffix
+
+        # "import os as o; o()" -- qualified="os" has no module/symbol split.
+        result = _qualified_to_file_suffix("os", "pkg/mod.py")
+        self.assertIsNone(result)
+
+    def test_relative_single_dot_same_directory(self):
+        from search.graph_integration import _qualified_to_file_suffix
+
+        result = _qualified_to_file_suffix(
+            ".dedent_utils.smart_dedent",
+            "chunking/relationships/call_graph_extractor.py",
+        )
+        self.assertEqual(result, "chunking/relationships/dedent_utils.py")
+
+    def test_relative_double_dot_parent_directory(self):
+        from search.graph_integration import _qualified_to_file_suffix
+
+        result = _qualified_to_file_suffix(
+            "..utils.Parser",
+            "chunking/relationships/resolvers/import_resolver.py",
+        )
+        self.assertEqual(result, "chunking/relationships/utils.py")
+
+    def test_bare_relative_single_segment_treated_as_submodule(self):
+        """'from . import helper' -> '.helper': the lone segment is treated
+        as the submodule name itself."""
+        from search.graph_integration import _qualified_to_file_suffix
+
+        result = _qualified_to_file_suffix(".helper", "pkg/mod.py")
+        self.assertEqual(result, "pkg/helper.py")
+
+    def test_relative_level_exceeds_caller_depth_returns_none(self):
+        from search.graph_integration import _qualified_to_file_suffix
+
+        # 3 leading dots (go up 2 dirs) but caller_file has no directory at all.
+        result = _qualified_to_file_suffix("...deep.Thing", "mod.py")
+        self.assertIsNone(result)
+
+    def test_none_qualified_returns_none(self):
+        from search.graph_integration import _qualified_to_file_suffix
+
+        self.assertIsNone(_qualified_to_file_suffix(None, "pkg/mod.py"))
+
+    def test_empty_qualified_returns_none(self):
+        from search.graph_integration import _qualified_to_file_suffix
+
+        self.assertIsNone(_qualified_to_file_suffix("", "pkg/mod.py"))
+
+    def test_normalizes_backslash_caller_file(self):
+        from search.graph_integration import _qualified_to_file_suffix
+
+        result = _qualified_to_file_suffix(
+            ".dedent_utils.smart_dedent",
+            "chunking\\relationships\\call_graph_extractor.py",
+        )
+        self.assertEqual(result, "chunking/relationships/dedent_utils.py")
+
+
+class TestResolveCallTargetScopeAware(TestCase):
+    """Direct tests for _resolve_call_target's callee_qualified disambiguation
+    and the same-file tiebreak's absolute-vs-relative path fix (Part 3)."""
+
+    def _make_graph(self) -> GraphIntegration:
+        storage = Mock()
+        storage.__len__ = Mock(return_value=0)
+        return GraphIntegration.from_storage(storage)
+
+    def test_qualified_name_disambiguates_same_name_candidates(self):
+        graph = self._make_graph()
+        name_to_chunk_ids = {
+            "helper": ["a.py:1-2:function:helper", "b.py:1-2:function:helper"]
+        }
+        resolved = graph._resolve_call_target(
+            "helper",
+            name_to_chunk_ids,
+            caller_file="c.py",
+            callee_qualified="a.helper",
+        )
+        self.assertEqual(resolved, "a.py:1-2:function:helper")
+
+    def test_qualified_name_none_falls_back_to_unchanged_behavior(self):
+        graph = self._make_graph()
+        name_to_chunk_ids = {
+            "helper": ["a.py:1-2:function:helper", "b.py:1-2:function:helper"]
+        }
+        resolved = graph._resolve_call_target(
+            "helper", name_to_chunk_ids, caller_file="c.py", callee_qualified=None
+        )
+        self.assertIsNone(resolved)  # still ambiguous, same as pre-Part-3 behavior
+
+    def test_qualified_name_no_match_falls_through_to_same_file(self):
+        """When the derived suffix doesn't match any candidate file, fall
+        through to the existing same-file tiebreak rather than erroring."""
+        graph = self._make_graph()
+        name_to_chunk_ids = {
+            "helper": ["c.py:1-2:function:helper", "b.py:1-2:function:helper"]
+        }
+        resolved = graph._resolve_call_target(
+            "helper",
+            name_to_chunk_ids,
+            caller_file="c.py",
+            callee_qualified="nonexistent.module.helper",
+        )
+        self.assertEqual(resolved, "c.py:1-2:function:helper")
+
+    def test_same_file_tiebreak_matches_absolute_caller_file(self):
+        """Regression: caller_file is the ABSOLUTE OS path in production
+        (ChunkMetadata.file_path), while chunk_id file portions are
+        project-relative. The same-file tiebreak must match across that
+        boundary -- this is the fix for the previously-silent same-file
+        mismatch (a raw `caller_file in c` substring check never matches an
+        absolute caller_file against a relative chunk_id)."""
+        graph = self._make_graph()
+        name_to_chunk_ids = {
+            "helper": ["a.py:1-2:function:helper", "d.py:1-2:function:helper"]
+        }
+        resolved = graph._resolve_call_target(
+            "helper",
+            name_to_chunk_ids,
+            caller_file="D:\\proj\\d.py",
+            callee_qualified=None,
+        )
+        self.assertEqual(resolved, "d.py:1-2:function:helper")
+
+    def test_same_file_tiebreak_no_false_positive_on_suffix_overlap(self):
+        """Regression guard: 'oauth.py' must not match a same-file tiebreak
+        intended for 'auth.py' just because one string ends with the other."""
+        graph = self._make_graph()
+        name_to_chunk_ids = {
+            "helper": ["auth.py:1-2:function:helper", "oauth.py:1-2:function:helper"]
+        }
+        resolved = graph._resolve_call_target(
+            "helper",
+            name_to_chunk_ids,
+            caller_file="/repo/oauth.py",
+            callee_qualified=None,
+        )
+        self.assertEqual(resolved, "oauth.py:1-2:function:helper")
+
+
 if __name__ == "__main__":
     import pytest
 
