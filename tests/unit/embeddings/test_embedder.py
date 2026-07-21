@@ -1373,6 +1373,66 @@ class TestContextExtraction:
 
     @patch("embeddings.model_loader.SentenceTransformer")
     @patch("embeddings.embedder.SentenceTransformer")
+    def test_read_source_cached_shared_across_import_and_class_signature(
+        self, mock_sentence_transformer, mock_model_loader_st, tmp_path
+    ):
+        """I1: _extract_import_context and _get_class_signature share one cached
+        read per file (#50 pattern), instead of one `open()` per call.
+
+        A file with two method chunks previously triggered up to 3 separate
+        `open()` calls (1 import-context scan + 2 class-signature reads); with
+        the shared `_read_source_cached` cache they collapse to 1.
+        """
+        from embeddings.embedder import CodeEmbedder
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text(
+            "import os\nimport sys\n\n"
+            'class MyClass:\n    """Doc."""\n\n'
+            "    def method_a(self):\n        pass\n\n"
+            "    def method_b(self):\n        pass\n"
+        )
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+        embedder._class_file_cache = {}  # populated __init__ normally does this
+
+        def make_chunk(name, start_line, end_line):
+            return CodeChunk(
+                file_path=str(test_file),
+                relative_path="test.py",
+                folder_structure=".",
+                chunk_type="method",
+                start_line=start_line,
+                end_line=end_line,
+                name=name,
+                parent_name="MyClass",
+                docstring="",
+                content=f"def {name}(self):\n    pass",
+                decorators=[],
+                imports=[],
+                complexity_score=1.0,
+                tags=[],
+                calls=[],
+                relationships=[],
+            )
+
+        chunk_a = make_chunk("method_a", 7, 8)
+        chunk_b = make_chunk("method_b", 10, 11)
+
+        with patch("embeddings.embedder.open", wraps=open) as mock_open_fn:
+            import_ctx = embedder._extract_import_context(str(test_file))
+            sig_a = embedder._get_class_signature(chunk_a)
+            sig_b = embedder._get_class_signature(chunk_b)
+
+        assert mock_open_fn.call_count == 1  # one shared read across all 3 calls
+        assert "import os" in import_ctx
+        assert "import sys" in import_ctx
+        assert "class MyClass:" in sig_a
+        assert "class MyClass:" in sig_b
+
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
     @patch("embeddings.embedder._get_config_via_service_locator")
     def test_create_embedding_content_with_context(
         self,

@@ -832,6 +832,39 @@ class CodeEmbedder:
         # Sync VRAM usage tracking from ModelLoader
         self._model_vram_usage.update(self._model_loader.model_vram_usage)
 
+    def _read_source_cached(self, file_path: str) -> str:
+        """Read a source file's full content, cached by mtime (#50 / I1).
+
+        Shared by `_extract_import_context` and `_get_class_signature` so a
+        file with N chunks is opened once per index run instead of N times —
+        each used to open the same file separately (O(chunks x filesize)).
+        Cache key is file_path; invalidated when mtime changes.
+
+        Raises whatever `open()`/`.read()` raise (OSError, UnicodeDecodeError);
+        callers handle those themselves so each keeps its own log message.
+        """
+        # getattr: tests that use __new__ (no __init__) won't have _class_file_cache.
+        _file_cache: dict[str, tuple[float, str]] | None = getattr(
+            self, "_class_file_cache", None
+        )
+        cached_mtime, content = (
+            _file_cache.get(file_path, (None, None))
+            if _file_cache is not None
+            else (None, None)
+        )
+        try:
+            current_mtime = Path(file_path).stat().st_mtime
+        except OSError:
+            current_mtime = None
+
+        if content is None or cached_mtime != current_mtime:
+            with open(file_path, encoding="utf-8") as f:
+                content = f.read()
+            if _file_cache is not None and current_mtime is not None:
+                _file_cache[file_path] = (current_mtime, content)
+
+        return content
+
     def _extract_import_context(self, file_path: str, max_imports: int = 10) -> str:
         """Extract first N import statements from file header.
 
@@ -843,32 +876,33 @@ class CodeEmbedder:
             String containing import statements, or empty string if none found
         """
         try:
-            with open(file_path, encoding="utf-8") as f:
-                lines = []
-                for line in f:
-                    stripped = line.strip()
-                    # Collect import statements
-                    if stripped.startswith(("import ", "from ")):
-                        lines.append(line.rstrip())
-                        if len(lines) >= max_imports:
-                            break
-                    # Stop at first non-import, non-comment, non-blank line
-                    elif (
-                        stripped
-                        and not stripped.startswith("#")
-                        and not stripped.startswith('"""')
-                        and not stripped.startswith("'''")
-                    ):
-                        # Check if we've already collected imports
-                        if lines:
-                            break
-                        # Otherwise keep scanning (might have docstring before imports)
-                return "\n".join(lines)
+            content = self._read_source_cached(file_path)
         except (OSError, UnicodeDecodeError) as e:
             self._logger.debug(
                 f"Failed to extract import context from {file_path}: {e}"
             )
             return ""
+
+        lines = []
+        for line in content.splitlines():
+            stripped = line.strip()
+            # Collect import statements
+            if stripped.startswith(("import ", "from ")):
+                lines.append(line.rstrip())
+                if len(lines) >= max_imports:
+                    break
+            # Stop at first non-import, non-comment, non-blank line
+            elif (
+                stripped
+                and not stripped.startswith("#")
+                and not stripped.startswith('"""')
+                and not stripped.startswith("'''")
+            ):
+                # Check if we've already collected imports
+                if lines:
+                    break
+                # Otherwise keep scanning (might have docstring before imports)
+        return "\n".join(lines)
 
     def _get_class_signature(self, chunk: CodeChunk, max_lines: int = 5) -> str:
         """Extract parent class signature (header + docstring) for method chunks.
@@ -887,28 +921,9 @@ class CodeEmbedder:
         try:
             import re
 
-            # Use cached file content to avoid re-reading the same file for every
-            # method chunk in it (O(chunks × filesize) → O(files)) (#50).
-            # Cache key is file_path; invalidated when mtime changes.
-            # getattr: tests that use __new__ (no __init__) won't have _class_file_cache.
-            _file_cache: dict[str, tuple[float, str]] | None = getattr(
-                self, "_class_file_cache", None
-            )
-            cached_mtime, content = (
-                _file_cache.get(chunk.file_path, (None, None))
-                if _file_cache is not None
-                else (None, None)
-            )
-            try:
-                current_mtime = Path(chunk.file_path).stat().st_mtime
-            except OSError:
-                current_mtime = None
-
-            if content is None or cached_mtime != current_mtime:
-                with open(chunk.file_path, encoding="utf-8") as f:
-                    content = f.read()
-                if _file_cache is not None and current_mtime is not None:
-                    _file_cache[chunk.file_path] = (current_mtime, content)
+            # Shared with _extract_import_context (#50 / I1): avoids re-reading
+            # the same file for every method chunk in it (O(chunks × filesize) → O(files)).
+            content = self._read_source_cached(chunk.file_path)
 
             # Find class definition containing this method
             # Pattern: "class ClassName" or "class ClassName(BaseClass)"
