@@ -1,15 +1,18 @@
 """Incremental indexing using Merkle tree change detection."""
 
+from __future__ import annotations
+
 import gc
 import logging
 import tempfile
 import time
 import traceback
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 
 if TYPE_CHECKING:
+    from chunking.repo_profiler import RepoProfile
     from search.symbol_cache import SymbolHashCache
 
 from chunking.multi_language_chunker import MultiLanguageChunker
@@ -123,7 +126,7 @@ class IncrementalIndexer:
             summary_stage=self._summary_stage,
         )
         self._build_write_pipeline()
-        self.repo_profile: object | None = None  # Set during _full_index
+        self.repo_profile: RepoProfile | None = None  # Set during _full_index
 
     def _build_write_pipeline(self) -> None:
         """(Re)build the resource-bound write pipeline.
@@ -145,7 +148,7 @@ class IncrementalIndexer:
             summary_stage=self._summary_stage,
         )
 
-    def _get_symbol_cache(self) -> Optional["SymbolHashCache"]:
+    def _get_symbol_cache(self) -> SymbolHashCache | None:
         """Get symbol cache, handling both CodeIndexManager and HybridSearcher.
 
         Returns:
@@ -456,10 +459,10 @@ class IncrementalIndexer:
         self,
         project_path: str,
         project_name: str,
-        changes: "FileChanges",
+        changes: FileChanges,
         start_time: float,
         should_refresh_communities: bool,
-    ) -> "tuple[IncrementalIndexResult | None, int]":
+    ) -> tuple[IncrementalIndexResult | None, int]:
         """Compute cumulative drift; promote to full reindex when threshold exceeded.
 
         Always returns the new cumulative changed-file count so the caller can include
@@ -942,7 +945,7 @@ class IncrementalIndexer:
         supported_files: list,
         total_chunks: int,
         is_full: bool = False,
-        repo_profile: object | None = None,
+        repo_profile: RepoProfile | None = None,
         **changes,
     ) -> dict[str, Any]:
         """Build metadata dictionary for snapshot storage.
@@ -978,19 +981,12 @@ class IncrementalIndexer:
         # Cache repo profile for incremental indexing reuse
         if repo_profile is not None:
             metadata["repo_profile"] = {
-                # pyrefly: ignore [missing-attribute]
                 "function_count": repo_profile.function_count,
-                # pyrefly: ignore [missing-attribute]
                 "p25_chars": repo_profile.p25_chars,
-                # pyrefly: ignore [missing-attribute]
                 "p50_chars": repo_profile.p50_chars,
-                # pyrefly: ignore [missing-attribute]
                 "p75_chars": repo_profile.p75_chars,
-                # pyrefly: ignore [missing-attribute]
                 "p90_chars": repo_profile.p90_chars,
-                # pyrefly: ignore [missing-attribute]
                 "mean_chars": repo_profile.mean_chars,
-                # pyrefly: ignore [missing-attribute]
                 "max_complexity": repo_profile.max_complexity,
             }
 

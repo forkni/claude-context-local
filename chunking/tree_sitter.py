@@ -15,13 +15,15 @@ Supported languages (8 tree-sitter + 1 AST):
 - Python (.py) - via separate AST-based chunker
 """
 
+from __future__ import annotations
+
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tree_sitter import Language
 
@@ -41,6 +43,10 @@ from .languages import (
     TreeSitterChunk,
     TypeScriptChunker,
 )
+
+
+if TYPE_CHECKING:
+    from chunking.repo_profiler import RepoProfile
 
 
 logger = logging.getLogger(__name__)
@@ -198,7 +204,7 @@ class TreeSitterChunker:
         # Per-thread chunker cache: tree-sitter Parser objects are not thread-safe.
         # Each worker thread gets its own LanguageChunker instances via threading.local.
         self._local = threading.local()
-        self.repo_profile: object | None = None  # chunking.repo_profiler.RepoProfile
+        self.repo_profile: RepoProfile | None = None
 
     def get_chunker(self, file_path: str) -> LanguageChunker | None:
         """Get the appropriate chunker for a file.

@@ -1,12 +1,14 @@
 """Pipeline stage: embed chunks, write index, save snapshot, sync BM25, clear GPU."""
 
+from __future__ import annotations
+
 import logging
 import time
 import traceback
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from chunking.python_ast_chunker import CodeChunk
 from chunking.relationships.call_edge_resolver import run_resolvers
@@ -16,6 +18,10 @@ from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
 
 from .indexer import CodeIndexManager as Indexer
+
+
+if TYPE_CHECKING:
+    from chunking.repo_profiler import RepoProfile
 
 
 logger = logging.getLogger(__name__)
@@ -70,7 +76,7 @@ class IndexWriteStage:
         all_files: list[Any],
         supported_files: list[Any],
         start_time: float,
-        repo_profile: object | None,
+        repo_profile: RepoProfile | None,
         project_path: str = "",
     ) -> IncrementalIndexResult:
         """Embed, index, snapshot, BM25-sync, and GPU-clear for a full index pass.

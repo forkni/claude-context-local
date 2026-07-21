@@ -4,15 +4,18 @@ This module contains the abstract base class and shared data structures
 for all language-specific chunkers.
 """
 
+from __future__ import annotations
+
 import logging
 from abc import ABC
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from tree_sitter import Language, Parser
 
 
 if TYPE_CHECKING:
+    from chunking.repo_profiler import RepoProfile
     from search.config import ChunkingConfig
 
 logger = logging.getLogger(__name__)
@@ -769,8 +772,8 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
     def chunk_code(
         self,
         source_code: str,
-        config: Optional["ChunkingConfig"] = None,
-        repo_profile: Any | None = None,
+        config: ChunkingConfig | None = None,
+        repo_profile: RepoProfile | None = None,
     ) -> list[TreeSitterChunk]:
         """Chunk source code into semantic units.
 
@@ -801,8 +804,8 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         self,
         tree: Any,
         source_code: str,
-        config: Optional["ChunkingConfig"] = None,
-        repo_profile: Any | None = None,
+        config: ChunkingConfig | None = None,
+        repo_profile: RepoProfile | None = None,
     ) -> list[TreeSitterChunk]:
         """Chunk an already-parsed tree into semantic units.
 
@@ -973,7 +976,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
 
     def _collect_module_preamble_chunks(
         self, root_node: Any, source_bytes: bytes
-    ) -> list["TreeSitterChunk"]:
+    ) -> list[TreeSitterChunk]:
         """Collect contiguous root-level statement runs not covered by
         function/class/decorated_definition chunking (Fix A).
 
@@ -1076,7 +1079,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
             return False
         return True
 
-    def _get_chunking_config(self) -> Optional["ChunkingConfig"]:
+    def _get_chunking_config(self) -> ChunkingConfig | None:
         """Get ChunkingConfig from the current search config, or None if unavailable."""
         from search.config import get_chunking_config
 

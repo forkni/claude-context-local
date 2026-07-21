@@ -4,7 +4,7 @@
 repos:
   # Ruff - Fast Python linter and formatter
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.11
+    rev: v0.15.20
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
@@ -17,9 +17,9 @@ repos:
       - id: check-merge-conflict
       - id: detect-private-key
       - id: end-of-file-fixer
-        exclude: ^(tests/test_data/|_archive/|search_config\.json$)
+        exclude: ^(tests/test_data/|_archive/|search_config\.json$|results/)
       - id: trailing-whitespace
-        exclude: ^(tests/test_data/|_archive/|search_config\.json$)
+        exclude: ^(tests/test_data/|_archive/|search_config\.json$|results/)
       - id: check-yaml
       - id: check-added-large-files
         args: ['--maxkb=1000']
