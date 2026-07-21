@@ -1433,6 +1433,92 @@ class TestContextExtraction:
 
     @patch("embeddings.model_loader.SentenceTransformer")
     @patch("embeddings.embedder.SentenceTransformer")
+    def test_extract_import_context_memoized_per_file(
+        self, mock_sentence_transformer, mock_model_loader_st, tmp_path
+    ):
+        """I2: repeated calls for the same file + max_imports hit the cache.
+
+        Without memoization, `"\n".join(lines)` builds a fresh string object
+        on every call. With I2, a second call for the same (file, max_imports)
+        returns the exact cached object rather than re-scanning — proven here
+        via object identity (`is`), not just equality.
+        """
+        from embeddings.embedder import CodeEmbedder
+
+        test_file = tmp_path / "multi.py"
+        test_file.write_text("import os\nimport sys\n\ndef f():\n    pass\n")
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+        embedder._class_file_cache = {}
+        embedder._import_ctx_cache = {}
+
+        first = embedder._extract_import_context(str(test_file), max_imports=10)
+        second = embedder._extract_import_context(str(test_file), max_imports=10)
+
+        assert first == second
+        assert first is second  # I2: cache hit, not a re-scan
+        assert len(embedder._import_ctx_cache) == 1
+
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_get_class_signature_memoized_across_sibling_methods(
+        self, mock_sentence_transformer, mock_model_loader_st, tmp_path
+    ):
+        """I2b: sibling methods of the same class share one regex-search result.
+
+        Without memoization, `content[start:].split("\n")[:max_lines]` (then
+        joined/stripped) builds a fresh string on every call. With I2b, every
+        sibling method after the first gets the exact cached object for the
+        same (file, parent_name, max_lines) — proven via object identity.
+        """
+        from embeddings.embedder import CodeEmbedder
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text(
+            "import os\nimport sys\n\n"
+            'class MyClass:\n    """Doc."""\n\n'
+            "    def method_a(self):\n        pass\n\n"
+            "    def method_b(self):\n        pass\n"
+        )
+
+        embedder = CodeEmbedder.__new__(CodeEmbedder)
+        embedder._logger = MagicMock()
+        embedder._class_file_cache = {}
+        embedder._class_sig_cache = {}
+
+        def make_chunk(name, start_line, end_line):
+            return CodeChunk(
+                file_path=str(test_file),
+                relative_path="test.py",
+                folder_structure=".",
+                chunk_type="method",
+                start_line=start_line,
+                end_line=end_line,
+                name=name,
+                parent_name="MyClass",
+                docstring="",
+                content=f"def {name}(self):\n    pass",
+                decorators=[],
+                imports=[],
+                complexity_score=1.0,
+                tags=[],
+                calls=[],
+                relationships=[],
+            )
+
+        chunk_a = make_chunk("method_a", 7, 8)
+        chunk_b = make_chunk("method_b", 10, 11)
+
+        sig_a = embedder._get_class_signature(chunk_a)
+        sig_b = embedder._get_class_signature(chunk_b)
+
+        assert sig_a == sig_b
+        assert sig_a is sig_b  # I2b: method_b's call is a cache hit
+        assert len(embedder._class_sig_cache) == 1
+
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
     @patch("embeddings.embedder._get_config_via_service_locator")
     def test_create_embedding_content_with_context(
         self,
