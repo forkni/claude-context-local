@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
-    pass
+    from chunking.tree_sitter import ParsedSource
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,7 @@ def profile_repository(
 
 
 def profile_parsed(
-    parsed_source: object,  # chunking.tree_sitter.ParsedSource
+    parsed_source: ParsedSource,
     sizes: list[int],
     complexities: list[int],
 ) -> None:
