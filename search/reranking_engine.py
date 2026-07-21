@@ -1,14 +1,13 @@
 """Reranking engine for result quality improvement.
 
-Coordinates both embedding-based reranking and neural reranking
-for search result quality improvement.
+Coordinates score-based sorting and neural reranking for search result
+quality improvement. (The embedding-based cosine re-score this used to
+also coordinate was removed — verified dead code, see rerank_by_query.)
 """
 
 import logging
 import time
 from typing import TYPE_CHECKING
-
-import numpy as np
 
 from utils.timing import timed
 
@@ -33,7 +32,7 @@ from .neural_reranker import create_reranker
 
 
 class RerankingEngine:
-    """Coordinates embedding-based and neural reranking for search results."""
+    """Coordinates score-based sorting and neural reranking for search results."""
 
     def __init__(self, embedder, metadata_store) -> None:
         """Initialize the reranking engine.
@@ -207,51 +206,21 @@ class RerankingEngine:
         results: list,
         k: int,
         search_mode: str = SearchMode.HYBRID,
-        query_embedding: np.ndarray | None = None,
     ) -> list:
         """
-        Re-rank results by computing fresh relevance scores against the original query.
+        Re-rank results by sorted score, then apply neural reranking.
 
         Args:
             query: Original search query
             results: List of SearchResult objects to re-rank
             k: Number of top results to return
             search_mode: Search mode for re-ranking strategy
-            query_embedding: Pre-computed query embedding (optional)
 
         Returns:
             Top k results sorted by query relevance
         """
         if not results:
             return []
-
-        # For semantic/hybrid modes: re-score using dense similarity
-        if search_mode in (SearchMode.SEMANTIC, SearchMode.HYBRID) and self.embedder:
-            try:
-                # Get query embedding (use cached if provided)
-                if query_embedding is None:
-                    query_embedding = self.embedder.embed_query(query)
-
-                # Re-score each result by cosine similarity to query
-                for result in results:
-                    # Get chunk embedding from dense index
-                    chunk_id = result.chunk_id
-                    chunk_metadata = self.metadata_store.get(chunk_id)
-                    if chunk_metadata and "embedding" in chunk_metadata:
-                        chunk_emb = np.array(chunk_metadata["embedding"])
-                        # Compute cosine similarity
-                        similarity = np.dot(query_embedding, chunk_emb) / (
-                            np.linalg.norm(query_embedding) * np.linalg.norm(chunk_emb)
-                        )
-                        result.score = float(similarity)
-                    # Keep original score if embedding not found
-
-            # ExceptionReplacer: embedding re-score path unreachable with mocked embedder.
-            except Exception as e:  # pragma: no mutate  # noqa: BLE001 - resilience: re-score failure keeps original scores
-                self._logger.warning(
-                    f"[RERANK] Failed to re-score with embeddings: {e}, "
-                    "keeping original scores"
-                )
 
         # Sort by score (descending)
         sorted_results = sorted(results, key=lambda r: r.score, reverse=True)

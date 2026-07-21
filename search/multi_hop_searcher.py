@@ -475,7 +475,6 @@ class MultiHopSearcher:
             results=list(all_results.values()),
             k=k,
             search_mode=search_mode,
-            query_embedding=query_embedding,
         )
 
         timings["rerank"] = time.time() - rerank_start
