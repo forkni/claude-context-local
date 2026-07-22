@@ -1,0 +1,10 @@
+{
+  "name": "code-search-mcpb",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MCPB bundle bridging the Claude app to the local StreamableHTTP MCP server on localhost:8765.",
+  "main": "server/index.js",
+  "dependencies": {
+    "mcp-remote": "^0.1.29"
+  }
+}
