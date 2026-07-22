@@ -198,7 +198,7 @@ def _path_to_uri(path: Path) -> str:
     return urljoin("file:", pathname2url(str(path)))
 
 
-def _kill_process_tree(proc: subprocess.Popen) -> None:
+def _kill_process_tree(proc: subprocess.Popen, logger: logging.Logger) -> None:
     """Kill *proc* and any child processes it spawned, best-effort.
 
     Uses ``psutil`` (already a project dependency) when available, which
@@ -221,7 +221,11 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
                 p.kill()
         with contextlib.suppress(Exception):
             psutil.wait_procs(procs, timeout=3)
-    except Exception:  # noqa: BLE001 - cleanup: psutil unavailable/failed, fall back to plain proc.kill()
+    except Exception as exc:  # noqa: BLE001 - cleanup: psutil unavailable/failed, fall back to plain proc.kill()
+        logger.debug(
+            "[LSP] psutil process-tree kill failed (%s) — falling back to proc.kill()",
+            exc,
+        )
         with contextlib.suppress(Exception):
             proc.kill()
 
@@ -394,7 +398,7 @@ class _LspClient:
         try:
             self._proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            _kill_process_tree(self._proc)
+            _kill_process_tree(self._proc, self._logger)
         self._stop.set()
         with self._cond:
             self._eof = True
@@ -409,7 +413,7 @@ class _LspClient:
             self._max_total_seconds,
         )
         self._stop.set()
-        _kill_process_tree(self._proc)
+        _kill_process_tree(self._proc, self._logger)
         with self._cond:
             self._eof = True
             self._cond.notify_all()
@@ -479,7 +483,10 @@ class _LspClient:
             except _FrameParseError as exc:
                 self._logger.debug("[LSP] Dropping malformed frame: %s", exc)
                 continue
-            except Exception:  # noqa: BLE001 - resilience: reader thread must not crash silently, treat any read failure as EOF
+            except Exception as exc:  # noqa: BLE001 - resilience: reader thread must not crash, treat any read failure as EOF
+                self._logger.debug(
+                    "[LSP] Reader loop terminating on unexpected error: %s", exc
+                )
                 break
             if msg is None:
                 break  # EOF

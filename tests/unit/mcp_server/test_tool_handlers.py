@@ -527,6 +527,8 @@ async def test_handle_clear_index():
     mock_state.current_project = "/tmp/test_project"
     mock_state.index_manager = None
     mock_state.searcher = None
+    # handle_clear_index deletes under the per-project reindex write lock.
+    mock_state.get_reindex_rwlock = Mock(return_value=_make_rwlock_mock())
 
     # Compute hash to match implementation
     project_path = Path(mock_state.current_project).resolve()
@@ -967,6 +969,8 @@ async def test_handle_delete_project_success(tmp_path):
 
     mock_state = Mock()
     mock_state.current_project = None  # Not current project
+    # handle_delete_project deletes under the per-project reindex write lock.
+    mock_state.get_reindex_rwlock = Mock(return_value=_make_rwlock_mock())
 
     with (
         patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
@@ -1029,6 +1033,8 @@ async def test_handle_delete_project_current_project_with_force(tmp_path):
 
     mock_state = Mock()
     mock_state.current_project = str(project_path_resolved)  # IS current project
+    # handle_delete_project deletes under the per-project reindex write lock.
+    mock_state.get_reindex_rwlock = Mock(return_value=_make_rwlock_mock())
 
     with (
         patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
@@ -1087,6 +1093,8 @@ async def test_handle_delete_project_adds_to_cleanup_queue(tmp_path):
 
     mock_state = Mock()
     mock_state.current_project = None
+    # handle_delete_project deletes under the per-project reindex write lock.
+    mock_state.get_reindex_rwlock = Mock(return_value=_make_rwlock_mock())
 
     # Mock shutil.rmtree to raise PermissionError
     with (
@@ -1114,6 +1122,229 @@ async def test_handle_delete_project_adds_to_cleanup_queue(tmp_path):
     assert result["success"] is False
     assert len(result.get("errors", [])) == 1
     assert result.get("queued_for_retry") == 1
+
+
+def _make_recording_rwlock(events: list[str]):
+    """Rwlock mock whose write() CM records enter/exit into ``events``."""
+
+    class _RecordingCM:
+        async def __aenter__(self):
+            events.append("enter")
+
+        async def __aexit__(self, *exc):
+            events.append("exit")
+            return False
+
+    rwlock = MagicMock()
+    rwlock.write = Mock(side_effect=lambda: _RecordingCM())
+    return rwlock
+
+
+@pytest.mark.asyncio
+async def test_handle_clear_index_deletes_under_reindex_write_lock(tmp_path):
+    """Regression guard: clear_index must hold the per-project reindex write
+    lock across resource teardown + index-file deletion, so it drains
+    in-flight searches (read-lock holders) instead of deleting files out
+    from under them. The mutation lock alone does not provide this —
+    searches never acquire it.
+    """
+    events: list[str] = []
+
+    mock_state = Mock()
+    mock_state.current_project = "/tmp/test_project"
+    mock_state.get_reindex_rwlock = Mock(return_value=_make_recording_rwlock(events))
+
+    (tmp_path / "projects").mkdir()
+
+    with (
+        patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
+        patch("mcp_server.tools.index_handlers.get_storage_dir", return_value=tmp_path),
+        patch("mcp_server.server.close_project_resources") as mock_close,
+    ):
+        mock_close.side_effect = lambda *a, **kw: events.append("teardown")
+
+        result = await tool_handlers.handle_clear_index({})
+
+    assert result["success"] is True
+    # Lock keyed by the active project, and teardown happened inside it.
+    mock_state.get_reindex_rwlock.assert_called_once_with("/tmp/test_project")
+    assert events == ["enter", "teardown", "exit"]
+
+
+@pytest.mark.asyncio
+async def test_handle_clear_index_write_lock_drains_inflight_reader(tmp_path):
+    """Same guarantee as the recording-mock test above, but exercised against
+    the REAL _AsyncRWLock: while a fake in-flight search holds .read(),
+    clear_index's .write() must block — no teardown/deletion may start until
+    the reader releases. Catches regressions in the lock's drain semantics,
+    not just call-site wiring.
+    """
+    import asyncio
+
+    from mcp_server.state import _AsyncRWLock
+
+    events: list[str] = []
+    rwlock = _AsyncRWLock()
+
+    mock_state = Mock()
+    mock_state.current_project = "/tmp/test_project"
+    mock_state.get_reindex_rwlock = Mock(return_value=rwlock)
+
+    (tmp_path / "projects").mkdir()
+
+    reader_holding = asyncio.Event()
+    release_reader = asyncio.Event()
+
+    async def inflight_search():
+        async with rwlock.read():
+            events.append("reader_enter")
+            reader_holding.set()
+            await release_reader.wait()
+            events.append("reader_exit")
+
+    with (
+        patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
+        patch("mcp_server.tools.index_handlers.get_storage_dir", return_value=tmp_path),
+        patch("mcp_server.server.close_project_resources") as mock_close,
+    ):
+        mock_close.side_effect = lambda *a, **kw: events.append("teardown")
+
+        reader = asyncio.create_task(inflight_search())
+        await reader_holding.wait()
+
+        clear = asyncio.create_task(tool_handlers.handle_clear_index({}))
+        # Real wall-clock (not just loop turns) so the handler could have
+        # reached its to_thread teardown if write() failed to block.
+        await asyncio.sleep(0.05)
+        assert "teardown" not in events, (
+            "clear_index proceeded past write() while a reader held the lock"
+        )
+        assert not clear.done()
+
+        release_reader.set()
+        result = await clear
+        await reader
+
+    assert result["success"] is True
+    assert events == ["reader_enter", "reader_exit", "teardown"]
+
+
+@pytest.mark.asyncio
+async def test_handle_delete_project_deletes_under_reindex_write_lock(tmp_path):
+    """Regression guard: delete_project must hold the reindex write lock of
+    the project being deleted (which may differ from current_project) across
+    resource teardown + rmtree — same rationale as clear_index.
+    """
+    events: list[str] = []
+
+    project_path = tmp_path / "doomed_project"
+    project_path.mkdir()
+    storage_dir = tmp_path / "storage"
+    (storage_dir / "projects").mkdir(parents=True)
+
+    mock_state = Mock()
+    mock_state.current_project = None
+    mock_state.get_reindex_rwlock = Mock(return_value=_make_recording_rwlock(events))
+    mock_state.discard_reindex_rwlock = Mock(
+        side_effect=lambda key: events.append("discard")
+    )
+
+    with (
+        patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
+        patch(
+            "mcp_server.tools.index_handlers.get_storage_dir",
+            return_value=storage_dir,
+        ),
+        patch("mcp_server.server.close_project_resources") as mock_close,
+        patch("merkle.snapshot_manager.SnapshotManager") as mock_sm,
+    ):
+        mock_close.side_effect = lambda *a, **kw: events.append("teardown")
+        mock_sm.return_value.delete_all_snapshots.return_value = 0
+
+        result = await tool_handlers.handle_delete_project(
+            {"project_path": str(project_path)}
+        )
+
+    assert result["success"] is True
+    # Lock keyed by the resolved path of the project being deleted.
+    mock_state.get_reindex_rwlock.assert_called_once_with(str(project_path.resolve()))
+    # Lock entry dropped only AFTER the write lock is released (deleting it
+    # while held would let a new acquirer get a fresh, uncontended lock).
+    mock_state.discard_reindex_rwlock.assert_called_once_with(
+        str(project_path.resolve())
+    )
+    assert events == ["enter", "teardown", "exit", "discard"]
+
+
+@pytest.mark.asyncio
+async def test_handle_delete_project_write_lock_drains_inflight_reader(tmp_path):
+    """delete_project counterpart of the clear_index real-lock drain test:
+    while a fake in-flight search holds .read() on the doomed project's
+    rwlock, delete_project's .write() must block — teardown/rmtree cannot
+    start until the reader releases.
+    """
+    import asyncio
+
+    from mcp_server.state import _AsyncRWLock
+
+    events: list[str] = []
+    rwlock = _AsyncRWLock()
+
+    project_path = tmp_path / "doomed_project"
+    project_path.mkdir()
+    storage_dir = tmp_path / "storage"
+    (storage_dir / "projects").mkdir(parents=True)
+
+    mock_state = Mock()
+    mock_state.current_project = None
+    mock_state.get_reindex_rwlock = Mock(return_value=rwlock)
+    mock_state.discard_reindex_rwlock = Mock()
+
+    reader_holding = asyncio.Event()
+    release_reader = asyncio.Event()
+
+    async def inflight_search():
+        async with rwlock.read():
+            events.append("reader_enter")
+            reader_holding.set()
+            await release_reader.wait()
+            events.append("reader_exit")
+
+    with (
+        patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
+        patch(
+            "mcp_server.tools.index_handlers.get_storage_dir",
+            return_value=storage_dir,
+        ),
+        patch("mcp_server.server.close_project_resources") as mock_close,
+        patch("merkle.snapshot_manager.SnapshotManager") as mock_sm,
+    ):
+        mock_close.side_effect = lambda *a, **kw: events.append("teardown")
+        mock_sm.return_value.delete_all_snapshots.return_value = 0
+
+        reader = asyncio.create_task(inflight_search())
+        await reader_holding.wait()
+
+        delete = asyncio.create_task(
+            tool_handlers.handle_delete_project({"project_path": str(project_path)})
+        )
+        # Real wall-clock (not just loop turns) so the handler could have
+        # reached its to_thread teardown if write() failed to block.
+        await asyncio.sleep(0.05)
+        assert "teardown" not in events, (
+            "delete_project proceeded past write() while a reader held the lock"
+        )
+        assert not delete.done()
+
+        release_reader.set()
+        result = await delete
+        await reader
+
+    assert result["success"] is True
+    assert events == ["reader_enter", "reader_exit", "teardown"]
+    mock_state.discard_reindex_rwlock.assert_called_once_with(
+        str(project_path.resolve())
+    )
 
 
 # ============================================================================

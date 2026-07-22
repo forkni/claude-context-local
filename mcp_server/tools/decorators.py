@@ -99,8 +99,20 @@ def with_mutation_lock(func: Callable) -> Callable:
     model, search config — see mcp_server/state.py) and HTTP transport runs
     ``stateless=True``, so concurrent clients share it. Without this, one
     client's ``switch_project``/``configure_*``/``clear_index``/
-    ``delete_project`` call could interleave with another client's in-flight
-    search or mutation, corrupting shared state mid-read.
+    ``delete_project`` call could interleave with *another mutation*,
+    corrupting shared state mid-write.
+
+    Scope: this lock serializes mutations against each other ONLY. Searches
+    never acquire it, so it provides no mutation-vs-search protection —
+    handlers that tear down search resources or rewrite/delete index files
+    must additionally take the per-project
+    ``get_reindex_rwlock(project).write()`` to drain in-flight searches
+    (see handle_clear_index / handle_delete_project / handle_index_directory).
+
+    Lock order: mutation lock (outermost) → reindex rwlock. No code may
+    acquire the mutation lock while already holding a reindex rwlock — that
+    would invert the order and risk deadlock against the handlers above.
+    (SearchOrchestrator takes only the rwlock, never this lock.)
 
     Uses ``ApplicationState.get_mutation_lock()`` — a single process-wide
     ``asyncio.Lock`` shared by all state-mutating tools, following the same

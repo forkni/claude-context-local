@@ -116,76 +116,82 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
     base_dir = get_storage_dir()
     projects_dir = base_dir / "projects"
 
-    if not projects_dir.exists():
+    # The whole sweep (iterdir + per-project JSON reads + exists checks) is
+    # blocking I/O whose cost scales with project count — offload as one unit.
+    def _scan_projects() -> list[dict[str, Any]] | None:
+        from pathlib import Path
+
+        from search.filters import find_project_at_different_drive
+
+        if not projects_dir.exists():
+            return None
+
+        # Group projects by path
+        projects_by_path = {}  # project_path -> project_data
+
+        for project_dir in projects_dir.iterdir():
+            if not project_dir.is_dir():
+                continue
+
+            info_file = project_dir / "project_info.json"
+            if not info_file.exists():
+                continue
+
+            with open(info_file) as f:
+                project_info = json.load(f)
+
+            project_path = project_info["project_path"]
+
+            # Initialize project entry if first time seeing this path
+            if project_path not in projects_by_path:
+                # Check if project exists at stored path
+                path_exists = Path(project_path).exists()
+                relocated_to = None
+
+                if not path_exists:
+                    # Try to find at different drive letter
+                    alt_path = find_project_at_different_drive(project_path)
+                    if alt_path:
+                        relocated_to = alt_path
+                        path_exists = True
+
+                project_data = {
+                    "project_name": project_info["project_name"],
+                    "project_path": project_path,
+                    "project_hash": project_info["project_hash"],
+                    "path_exists": path_exists,
+                    "models_indexed": [],
+                }
+                # Only include relocated_to if not None (token optimization)
+                if relocated_to is not None:
+                    project_data["relocated_to"] = relocated_to
+                projects_by_path[project_path] = project_data
+
+            # Prepare model info
+            model_info = {
+                "model": project_info["embedding_model"],
+                "dimension": project_info["model_dimension"],
+                "chunks": None,
+                "created_at": project_info.get("created_at"),
+            }
+
+            # Try to load chunk count from stats
+            stats_file = project_dir / "index" / "stats.json"
+            if stats_file.exists():
+                with open(stats_file) as f:
+                    stats = json.load(f)
+                    model_info["chunks"] = stats.get("total_chunks", 0)
+
+            projects_by_path[project_path]["models_indexed"].append(model_info)
+
+        return list(projects_by_path.values())
+
+    projects = await asyncio.to_thread(_scan_projects)
+    if projects is None:
         return {
             "projects": [],
             "message": "No projects indexed yet",
         }
-
-    # Group projects by path
-    projects_by_path = {}  # project_path -> project_data
-
-    for project_dir in projects_dir.iterdir():
-        if not project_dir.is_dir():
-            continue
-
-        info_file = project_dir / "project_info.json"
-        if not info_file.exists():
-            continue
-
-        with open(info_file) as f:
-            project_info = json.load(f)
-
-        project_path = project_info["project_path"]
-
-        # Initialize project entry if first time seeing this path
-        if project_path not in projects_by_path:
-            # Check if project exists at stored path
-            from pathlib import Path
-
-            from search.filters import find_project_at_different_drive
-
-            path_exists = Path(project_path).exists()
-            relocated_to = None
-
-            if not path_exists:
-                # Try to find at different drive letter
-                alt_path = find_project_at_different_drive(project_path)
-                if alt_path:
-                    relocated_to = alt_path
-                    path_exists = True
-
-            project_data = {
-                "project_name": project_info["project_name"],
-                "project_path": project_path,
-                "project_hash": project_info["project_hash"],
-                "path_exists": path_exists,
-                "models_indexed": [],
-            }
-            # Only include relocated_to if not None (token optimization)
-            if relocated_to is not None:
-                project_data["relocated_to"] = relocated_to
-            projects_by_path[project_path] = project_data
-
-        # Prepare model info
-        model_info = {
-            "model": project_info["embedding_model"],
-            "dimension": project_info["model_dimension"],
-            "chunks": None,
-            "created_at": project_info.get("created_at"),
-        }
-
-        # Try to load chunk count from stats
-        stats_file = project_dir / "index" / "stats.json"
-        if stats_file.exists():
-            with open(stats_file) as f:
-                stats = json.load(f)
-                model_info["chunks"] = stats.get("total_chunks", 0)
-
-        projects_by_path[project_path]["models_indexed"].append(model_info)
-
-    # Convert to list
-    projects = list(projects_by_path.values())
 
     return {
         "projects": projects,

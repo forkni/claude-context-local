@@ -100,14 +100,21 @@ def _time_parse_only(project_path: str, files: list[str]) -> float:
     recoverable just by carrying the tree forward.
     """
     chunker = TreeSitterChunker()
+    skipped = 0
     start = time.perf_counter()
     for rel_path in files:
         abs_path = str(Path(project_path) / rel_path)
         try:
             chunker.parse_file(abs_path, rel_path=rel_path)
         except Exception:  # noqa: BLE001 - benchmark sweep: one bad file shouldn't abort timing
-            continue
-    return time.perf_counter() - start
+            skipped += 1
+    elapsed = time.perf_counter() - start
+    # Report after the timed loop (printing inside it would distort timing):
+    # a high skip count means the parse-only number covers fewer files than
+    # the other phases and the comparison is suspect.
+    if skipped:
+        print(f"  [parse-only] skipped {skipped}/{len(files)} unparseable files")
+    return elapsed
 
 
 def _time_chunk(project_path: str, files: list[str], workers: int) -> float:
@@ -121,6 +128,7 @@ def _time_chunk(project_path: str, files: list[str], workers: int) -> float:
 
 
 def main() -> None:
+    """Run the profile-pass/chunk-pass timing comparison and print a summary."""
     parser = argparse.ArgumentParser(
         description=(
             "Measure the real cost of the profile-pass/chunk-pass double-parse "

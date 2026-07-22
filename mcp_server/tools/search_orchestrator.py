@@ -334,9 +334,13 @@ class SearchOrchestrator:
                             current_project,
                             plan.max_age_minutes,
                         )
-                    if reindexed:
-                        get_state().reset_searcher()
-                        reindexed_flag = True
+                        # Reset inside the write lock so no reader can ever grab
+                        # the stale searcher between reindex and reset (holds by
+                        # analysis today — __aexit__ never suspends — but keep
+                        # the invariant structural, not incidental).
+                        if reindexed:
+                            get_state().reset_searcher()
+                            reindexed_flag = True
             except DimensionMismatchError as e:
                 return responses.dimension_mismatch(e)
 

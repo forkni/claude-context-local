@@ -365,51 +365,64 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     # blocks (gc.collect, torch.cuda ops, time.sleep(0.3)) — offload.
     import asyncio
 
-    # clear_current=False: keep state.current_project alive after closing handles.
-    # clear_index only removes index files — the project dir still exists and
-    # must remain the active project so get_index_status can report empty counts.
-    await asyncio.to_thread(
-        close_project_resources, current_project, clear_current=False
-    )
+    # Exclusive write lock on the per-project reader-writer lock: drains
+    # in-flight searches (readers in Blocks B-D of SearchOrchestrator) before
+    # tearing down the searcher/embedder they use and unlinking index files
+    # they read, and blocks new searches until deletion completes — same
+    # protection handle_index_directory takes around its index rewrite. The
+    # mutation lock (decorator) alone doesn't cover this: searches never
+    # acquire it. Lock order is mutation lock → rwlock.write; nothing acquires
+    # them in reverse, so no deadlock. Trade-off: the global mutation lock is
+    # held across the drain wait (bounded by one in-flight search) — accepted
+    # for this rare admin operation; do NOT invert the order to shorten it,
+    # as holding the rwlock while waiting for the mutation lock can deadlock
+    # against another mutation doing the opposite.
+    async with state.get_reindex_rwlock(current_project).write():
+        # clear_current=False: keep state.current_project alive after closing handles.
+        # clear_index only removes index files — the project dir still exists and
+        # must remain the active project so get_index_status can report empty counts.
+        await asyncio.to_thread(
+            close_project_resources, current_project, clear_current=False
+        )
 
-    project_path = Path(current_project).resolve()
+        project_path = Path(current_project).resolve()
 
-    # File deletion and snapshot removal can block on I/O — offload to thread pool.
-    def _delete_index_files() -> tuple[list[str], int]:
-        """Delete index files + Merkle snapshots; returns (cleared_dirs, snapshots_cleared)."""
-        _cleared: list[str] = []
+        # File deletion and snapshot removal can block on I/O — offload to thread pool.
+        def _delete_index_files() -> tuple[list[str], int]:
+            """Delete index files + Merkle snapshots; returns (cleared_dirs, snapshots_cleared)."""
+            _cleared: list[str] = []
 
-        for _model_dir in _iter_project_model_dirs(project_path):
-            # Delete BM25 directory
-            _bm25 = _model_dir / "index" / "bm25"
-            if _bm25.exists():
-                shutil.rmtree(_bm25)
-                logger.info(f"Deleted BM25 directory: {_bm25}")
+            for _model_dir in _iter_project_model_dirs(project_path):
+                # Delete BM25 directory
+                _bm25 = _model_dir / "index" / "bm25"
+                if _bm25.exists():
+                    shutil.rmtree(_bm25)
+                    logger.info(f"Deleted BM25 directory: {_bm25}")
 
-            # Delete dense index files
-            _idx_dir = _model_dir / "index"
-            for _fname in ["code.index", "chunks_metadata.db", "stats.json"]:
-                _fp = _idx_dir / _fname
-                if _fp.exists():
-                    _fp.unlink()
-                    logger.info(f"Deleted: {_fp}")
+                # Delete dense index files
+                _idx_dir = _model_dir / "index"
+                for _fname in ["code.index", "chunks_metadata.db", "stats.json"]:
+                    _fp = _idx_dir / _fname
+                    if _fp.exists():
+                        _fp.unlink()
+                        logger.info(f"Deleted: {_fp}")
 
-            _cleared.append(_model_dir.name)
+                _cleared.append(_model_dir.name)
 
-        _snaps = 0
-        try:
-            _snap_mgr = SnapshotManager()
-            _snaps = _snap_mgr.delete_all_snapshots(str(project_path))
-            logger.info(f"Cleared {_snaps} Merkle snapshot(s) for {project_path}")
-        except Exception as _e:  # noqa: BLE001 - resilience: optional snapshot cleanup, index deletion still succeeds
-            logger.warning(f"Failed to clear Merkle snapshots: {_e}")
+            _snaps = 0
+            try:
+                _snap_mgr = SnapshotManager()
+                _snaps = _snap_mgr.delete_all_snapshots(str(project_path))
+                logger.info(f"Cleared {_snaps} Merkle snapshot(s) for {project_path}")
+            except Exception as _e:  # noqa: BLE001 - resilience: optional snapshot cleanup, index deletion still succeeds
+                logger.warning(f"Failed to clear Merkle snapshots: {_e}")
 
-        return _cleared, _snaps
+            return _cleared, _snaps
 
-    cleared_dirs, snapshots_cleared = await asyncio.to_thread(_delete_index_files)
+        cleared_dirs, snapshots_cleared = await asyncio.to_thread(_delete_index_files)
 
-    # Cleanup in-memory state (fast lock-guarded assignment, stays on event loop)
-    state.reset_search_components()
+        # Cleanup in-memory state (fast lock-guarded assignment, stays on event loop)
+        state.reset_search_components()
 
     logger.info(f"Cleared indices for {len(cleared_dirs)} models: {cleared_dirs}")
 
@@ -477,43 +490,60 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
     # — offload, mirroring handle_clear_index.
     import asyncio
 
-    logger.info(f"Closing resources for project: {project_path}")
-    await asyncio.to_thread(close_project_resources, str(project_path_resolved))
+    # Exclusive write lock keyed by the project being deleted (may differ from
+    # current_project): drains in-flight searches reading this project's index
+    # before the searcher teardown and rmtree below, and blocks new searches
+    # until deletion completes — same protection handle_index_directory takes.
+    # The mutation lock (decorator) alone doesn't cover this: searches never
+    # acquire it. Lock order is mutation lock → rwlock.write; nothing acquires
+    # them in reverse, so no deadlock. Same mutation-lock hold-time trade-off
+    # as handle_clear_index: held across the drain wait, accepted for this
+    # rare admin operation.
+    async with state.get_reindex_rwlock(str(project_path_resolved)).write():
+        logger.info(f"Closing resources for project: {project_path}")
+        await asyncio.to_thread(close_project_resources, str(project_path_resolved))
 
-    # 4. Find and delete all model directories for this project
-    projects_dir = get_storage_dir() / "projects"
+        # 4. Find and delete all model directories for this project
+        projects_dir = get_storage_dir() / "projects"
 
-    deleted_dirs = []
-    errors = []
+        deleted_dirs = []
+        errors = []
 
-    logger.info(f"Searching for project directories: {project_path_resolved}")
+        logger.info(f"Searching for project directories: {project_path_resolved}")
 
-    for model_dir in _iter_project_model_dirs(project_path_resolved):
-        logger.info(f"Deleting project directory: {model_dir}")
+        for model_dir in _iter_project_model_dirs(project_path_resolved):
+            logger.info(f"Deleting project directory: {model_dir}")
+            try:
+                shutil.rmtree(model_dir)
+                deleted_dirs.append(model_dir.name)
+                logger.info(f"Successfully deleted: {model_dir}")
+            except PermissionError as e:
+                error_msg = f"{model_dir.name}: File locked - {e}"
+                errors.append(error_msg)
+                logger.error(f"Permission error deleting {model_dir}: {e}")
+            except Exception as e:  # noqa: BLE001 - cleanup: per-directory delete, must not block remaining directories
+                error_msg = f"{model_dir.name}: {e}"
+                errors.append(error_msg)
+                logger.error(f"Unexpected error deleting {model_dir}: {e}")
+
+        # 5. Delete Merkle snapshots for this project
+        logger.info(f"Deleting Merkle snapshots for: {project_path_resolved}")
+        snapshot_manager = SnapshotManager()
         try:
-            shutil.rmtree(model_dir)
-            deleted_dirs.append(model_dir.name)
-            logger.info(f"Successfully deleted: {model_dir}")
-        except PermissionError as e:
-            error_msg = f"{model_dir.name}: File locked - {e}"
-            errors.append(error_msg)
-            logger.error(f"Permission error deleting {model_dir}: {e}")
-        except Exception as e:  # noqa: BLE001 - cleanup: per-directory delete, must not block remaining directories
-            error_msg = f"{model_dir.name}: {e}"
-            errors.append(error_msg)
-            logger.error(f"Unexpected error deleting {model_dir}: {e}")
+            deleted_snapshots = snapshot_manager.delete_all_snapshots(
+                str(project_path_resolved)
+            )
+            logger.info(f"Deleted {deleted_snapshots} Merkle snapshot(s)")
+        except Exception as e:  # noqa: BLE001 - cleanup: best-effort snapshot delete, must not block remaining steps
+            deleted_snapshots = 0
+            logger.warning(f"Failed to delete Merkle snapshots: {e}")
 
-    # 5. Delete Merkle snapshots for this project
-    logger.info(f"Deleting Merkle snapshots for: {project_path_resolved}")
-    snapshot_manager = SnapshotManager()
-    try:
-        deleted_snapshots = snapshot_manager.delete_all_snapshots(
-            str(project_path_resolved)
-        )
-        logger.info(f"Deleted {deleted_snapshots} Merkle snapshot(s)")
-    except Exception as e:  # noqa: BLE001 - cleanup: best-effort snapshot delete, must not block remaining steps
-        deleted_snapshots = 0
-        logger.warning(f"Failed to delete Merkle snapshots: {e}")
+    # Deletion finished (possibly partially — failures are queued below for
+    # retry at next startup, which starts with a fresh rwlock dict anyway) —
+    # drop the rwlock entry so _reindex_rwlocks doesn't grow unboundedly
+    # across many index/delete cycles. Waiters keep their own reference; a
+    # later reuse of the path creates a fresh lock.
+    state.discard_reindex_rwlock(str(project_path_resolved))
 
     # 6. If deletion failed, add to cleanup queue for retry on next startup
     if errors:
@@ -659,12 +689,16 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
         get_project_storage_dir(str(directory_path)) / "project_info.json"
     )
 
-    # Load stored filters if project exists
+    # Load stored filters if project exists — file read blocks, offload.
     stored_include = None
     stored_exclude = None
     if project_info_file.exists():
-        with open(project_info_file) as f:
-            project_info = json.load(f)
+
+        def _read_project_info() -> dict[str, Any]:
+            with open(project_info_file) as f:
+                return json.load(f)
+
+        project_info = await asyncio.to_thread(_read_project_info)
         stored_include = project_info.get("user_included_dirs")
         stored_exclude = project_info.get("user_excluded_dirs")
 
