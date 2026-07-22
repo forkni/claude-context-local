@@ -109,6 +109,11 @@ def with_mutation_lock(func: Callable) -> Callable:
     ``get_reindex_rwlock(project).write()`` to drain in-flight searches
     (see handle_clear_index / handle_delete_project / handle_index_directory).
 
+    Lock order: mutation lock (outermost) → reindex rwlock. No code may
+    acquire the mutation lock while already holding a reindex rwlock — that
+    would invert the order and risk deadlock against the handlers above.
+    (SearchOrchestrator takes only the rwlock, never this lock.)
+
     Uses ``ApplicationState.get_mutation_lock()`` — a single process-wide
     ``asyncio.Lock`` shared by all state-mutating tools, following the same
     lazy-creation pattern as the per-project ``get_reindex_rwlock()``. This
