@@ -532,6 +532,11 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
             deleted_snapshots = 0
             logger.warning(f"Failed to delete Merkle snapshots: {e}")
 
+    # Project is gone — drop its rwlock entry so _reindex_rwlocks doesn't grow
+    # unboundedly across many index/delete cycles (waiters keep their own
+    # reference; a later reuse of the path creates a fresh lock).
+    state.discard_reindex_rwlock(str(project_path_resolved))
+
     # 6. If deletion failed, add to cleanup queue for retry on next startup
     if errors:
         from mcp_server.cleanup_queue import CleanupQueue

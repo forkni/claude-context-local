@@ -194,3 +194,17 @@ class TestGetReindexRwlock:
         state.reset()
 
         assert state.get_reindex_rwlock("/proj") is not original
+
+    async def test_discard_removes_entry_and_next_get_creates_fresh(self):
+        state = ApplicationState()
+        original = state.get_reindex_rwlock("/proj")
+
+        state.discard_reindex_rwlock("/proj")
+
+        assert "/proj" not in state._reindex_rwlocks
+        assert state.get_reindex_rwlock("/proj") is not original
+
+    async def test_discard_unknown_project_is_noop(self):
+        state = ApplicationState()
+        state.discard_reindex_rwlock("/never-seen")  # must not raise
+        assert state._reindex_rwlocks == {}

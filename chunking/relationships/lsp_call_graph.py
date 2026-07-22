@@ -198,9 +198,7 @@ def _path_to_uri(path: Path) -> str:
     return urljoin("file:", pathname2url(str(path)))
 
 
-def _kill_process_tree(
-    proc: subprocess.Popen, logger: logging.Logger | None = None
-) -> None:
+def _kill_process_tree(proc: subprocess.Popen, logger: logging.Logger) -> None:
     """Kill *proc* and any child processes it spawned, best-effort.
 
     Uses ``psutil`` (already a project dependency) when available, which
@@ -224,11 +222,10 @@ def _kill_process_tree(
         with contextlib.suppress(Exception):
             psutil.wait_procs(procs, timeout=3)
     except Exception as exc:  # noqa: BLE001 - cleanup: psutil unavailable/failed, fall back to plain proc.kill()
-        if logger is not None:
-            logger.debug(
-                "[LSP] psutil process-tree kill failed (%s) — falling back to proc.kill()",
-                exc,
-            )
+        logger.debug(
+            "[LSP] psutil process-tree kill failed (%s) — falling back to proc.kill()",
+            exc,
+        )
         with contextlib.suppress(Exception):
             proc.kill()
 

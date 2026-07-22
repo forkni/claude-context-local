@@ -115,10 +115,11 @@ class ApplicationState:
     # dict.  Readers = in-flight searches; writer = reindex (auto or manual).
     _reindex_rwlocks: dict[str, _AsyncRWLock] = field(default_factory=dict)
     # Global asyncio lock serializing state-mutating tool calls (switch_project,
-    # configure_*, clear_index, delete_project) so a mutation from one HTTP
-    # client cannot interleave with another client's in-flight search reading
-    # the same global state.  Only touched on the event loop; lazily created
-    # (see get_mutation_lock()) for the same reason _reindex_rwlocks is lazy.
+    # configure_*, clear_index, delete_project) so one client's mutation cannot
+    # interleave with another client's mutation.  Searches never acquire it —
+    # mutation-vs-search protection is the per-project _reindex_rwlocks above.
+    # Only touched on the event loop; lazily created (see get_mutation_lock())
+    # for the same reason _reindex_rwlocks is lazy.
     _mutation_lock: asyncio.Lock | None = None
 
     def reset(self) -> None:
@@ -150,14 +151,27 @@ class ApplicationState:
             self._reindex_rwlocks[project_path] = _AsyncRWLock()
         return self._reindex_rwlocks[project_path]
 
+    def discard_reindex_rwlock(self, project_path: str) -> None:
+        """Drop the per-project reindex rwlock entry, if present.
+
+        Called after `delete_project` finishes tearing a project down so
+        `_reindex_rwlocks` doesn't grow unboundedly on a long-running server
+        that indexes and deletes many distinct paths. Safe to call while
+        other coroutines still wait on the old lock object: they hold their
+        own reference and keep synchronizing against the same instance; a
+        later operation on the same path just creates a fresh lock.
+        """
+        self._reindex_rwlocks.pop(project_path, None)
+
     def get_mutation_lock(self) -> asyncio.Lock:
         """Return the process-wide asyncio.Lock guarding state-mutating tools.
 
         Used to single-flight `switch_project`, `configure_*`,
         `switch_embedding_model`, `clear_index`, and `delete_project` so
-        concurrent HTTP clients can't interleave a mutation with another
-        client's in-flight search over the same global state. Created on
-        first access for the same reason `get_reindex_rwlock` is lazy.
+        concurrent HTTP clients can't interleave two mutations over the same
+        global state. Searches never take this lock — mutation-vs-search
+        protection comes from `get_reindex_rwlock`. Created on first access
+        for the same reason `get_reindex_rwlock` is lazy.
         """
         if self._mutation_lock is None:
             self._mutation_lock = asyncio.Lock()
