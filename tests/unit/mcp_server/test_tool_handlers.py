@@ -1276,6 +1276,77 @@ async def test_handle_delete_project_deletes_under_reindex_write_lock(tmp_path):
     assert events == ["enter", "teardown", "exit", "discard"]
 
 
+@pytest.mark.asyncio
+async def test_handle_delete_project_write_lock_drains_inflight_reader(tmp_path):
+    """delete_project counterpart of the clear_index real-lock drain test:
+    while a fake in-flight search holds .read() on the doomed project's
+    rwlock, delete_project's .write() must block — teardown/rmtree cannot
+    start until the reader releases.
+    """
+    import asyncio
+
+    from mcp_server.state import _AsyncRWLock
+
+    events: list[str] = []
+    rwlock = _AsyncRWLock()
+
+    project_path = tmp_path / "doomed_project"
+    project_path.mkdir()
+    storage_dir = tmp_path / "storage"
+    (storage_dir / "projects").mkdir(parents=True)
+
+    mock_state = Mock()
+    mock_state.current_project = None
+    mock_state.get_reindex_rwlock = Mock(return_value=rwlock)
+    mock_state.discard_reindex_rwlock = Mock()
+
+    reader_holding = asyncio.Event()
+    release_reader = asyncio.Event()
+
+    async def inflight_search():
+        async with rwlock.read():
+            events.append("reader_enter")
+            reader_holding.set()
+            await release_reader.wait()
+            events.append("reader_exit")
+
+    with (
+        patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
+        patch(
+            "mcp_server.tools.index_handlers.get_storage_dir",
+            return_value=storage_dir,
+        ),
+        patch("mcp_server.server.close_project_resources") as mock_close,
+        patch("merkle.snapshot_manager.SnapshotManager") as mock_sm,
+    ):
+        mock_close.side_effect = lambda *a, **kw: events.append("teardown")
+        mock_sm.return_value.delete_all_snapshots.return_value = 0
+
+        reader = asyncio.create_task(inflight_search())
+        await reader_holding.wait()
+
+        delete = asyncio.create_task(
+            tool_handlers.handle_delete_project({"project_path": str(project_path)})
+        )
+        # Real wall-clock (not just loop turns) so the handler could have
+        # reached its to_thread teardown if write() failed to block.
+        await asyncio.sleep(0.05)
+        assert "teardown" not in events, (
+            "delete_project proceeded past write() while a reader held the lock"
+        )
+        assert not delete.done()
+
+        release_reader.set()
+        result = await delete
+        await reader
+
+    assert result["success"] is True
+    assert events == ["reader_enter", "reader_exit", "teardown"]
+    mock_state.discard_reindex_rwlock.assert_called_once_with(
+        str(project_path.resolve())
+    )
+
+
 # ============================================================================
 # REGRESSION: SearchConfigManager has no public `.config` attribute
 # ============================================================================

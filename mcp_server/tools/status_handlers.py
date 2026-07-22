@@ -119,6 +119,10 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
     # The whole sweep (iterdir + per-project JSON reads + exists checks) is
     # blocking I/O whose cost scales with project count — offload as one unit.
     def _scan_projects() -> list[dict[str, Any]] | None:
+        from pathlib import Path
+
+        from search.filters import find_project_at_different_drive
+
         if not projects_dir.exists():
             return None
 
@@ -141,10 +145,6 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
             # Initialize project entry if first time seeing this path
             if project_path not in projects_by_path:
                 # Check if project exists at stored path
-                from pathlib import Path
-
-                from search.filters import find_project_at_different_drive
-
                 path_exists = Path(project_path).exists()
                 relocated_to = None
 
