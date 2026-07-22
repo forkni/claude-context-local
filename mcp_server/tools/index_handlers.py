@@ -372,7 +372,11 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     # protection handle_index_directory takes around its index rewrite. The
     # mutation lock (decorator) alone doesn't cover this: searches never
     # acquire it. Lock order is mutation lock → rwlock.write; nothing acquires
-    # them in reverse, so no deadlock.
+    # them in reverse, so no deadlock. Trade-off: the global mutation lock is
+    # held across the drain wait (bounded by one in-flight search) — accepted
+    # for this rare admin operation; do NOT invert the order to shorten it,
+    # as holding the rwlock while waiting for the mutation lock can deadlock
+    # against another mutation doing the opposite.
     async with state.get_reindex_rwlock(current_project).write():
         # clear_current=False: keep state.current_project alive after closing handles.
         # clear_index only removes index files — the project dir still exists and
@@ -492,7 +496,9 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
     # until deletion completes — same protection handle_index_directory takes.
     # The mutation lock (decorator) alone doesn't cover this: searches never
     # acquire it. Lock order is mutation lock → rwlock.write; nothing acquires
-    # them in reverse, so no deadlock.
+    # them in reverse, so no deadlock. Same mutation-lock hold-time trade-off
+    # as handle_clear_index: held across the drain wait, accepted for this
+    # rare admin operation.
     async with state.get_reindex_rwlock(str(project_path_resolved)).write():
         logger.info(f"Closing resources for project: {project_path}")
         await asyncio.to_thread(close_project_resources, str(project_path_resolved))
@@ -532,9 +538,11 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
             deleted_snapshots = 0
             logger.warning(f"Failed to delete Merkle snapshots: {e}")
 
-    # Project is gone — drop its rwlock entry so _reindex_rwlocks doesn't grow
-    # unboundedly across many index/delete cycles (waiters keep their own
-    # reference; a later reuse of the path creates a fresh lock).
+    # Deletion finished (possibly partially — failures are queued below for
+    # retry at next startup, which starts with a fresh rwlock dict anyway) —
+    # drop the rwlock entry so _reindex_rwlocks doesn't grow unboundedly
+    # across many index/delete cycles. Waiters keep their own reference; a
+    # later reuse of the path creates a fresh lock.
     state.discard_reindex_rwlock(str(project_path_resolved))
 
     # 6. If deletion failed, add to cleanup queue for retry on next startup
