@@ -42,7 +42,7 @@ class DataclassFieldExtractor(BaseRelationshipExtractor):
         self.relationship_type = RelationshipType.DEFINES_FIELD
 
     def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
-        for node in ast.walk(tree):
+        for node in self._walk_once(tree):
             if isinstance(node, ast.ClassDef) and self._has_dataclass_decorator(node):
                 self._extract_dataclass_fields(node, chunk_metadata)
 

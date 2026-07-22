@@ -16,11 +16,32 @@ Example:
 
 import ast
 import logging
+import threading
 from abc import ABC, abstractmethod
 from typing import Any
 
 from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
 from utils.path_utils import normalize_path
+
+
+# Single-entry, per-thread memo for _walk_once (below): keyed by tree identity, storing
+# (tree, nodes) so the tree never references the cache back -- no reference cycle, so refcounting
+# reclaims each tree the moment the next chunk's tree replaces this entry. Thread-local because
+# MultiLanguageChunker already runs each worker's extractors from a per-thread instance
+# (``self._local``, see ``_init_thread_extractors``) -- this mirrors that existing model.
+_WALK_CACHE = threading.local()
+
+
+def _cached_walk(tree: ast.AST) -> list[ast.AST]:
+    """Module-level twin of ``BaseRelationshipExtractor._walk_once`` for the one caller
+    (``ConstantExtractor._collect_assignment_target_ids``) that needs the shared walk from a
+    ``@staticmethod`` and so has no ``self`` to call ``_walk_once`` through."""
+    cached = getattr(_WALK_CACHE, "entry", None)
+    if cached is not None and cached[0] is tree:
+        return cached[1]
+    nodes = list(ast.walk(tree))
+    _WALK_CACHE.entry = (tree, nodes)
+    return nodes
 
 
 class BaseRelationshipExtractor(ABC):
@@ -276,3 +297,39 @@ class BaseRelationshipExtractor(ABC):
         import builtins
 
         return hasattr(builtins, name)
+
+    def _walk_once(self, tree: ast.AST) -> list[ast.AST]:
+        """
+        Return every node in *tree* in ``ast.walk`` order, memoized per-thread by tree identity.
+
+        ``extract_from_tree`` already parses each chunk's source exactly once and shares the
+        resulting tree across every registered extractor (see ``MultiLanguageChunker``'s "Parse
+        once" note) -- but every extractor still ran its OWN independent ``ast.walk(tree)`` over
+        that same shared tree just to re-filter for its own node types (``ClassDef``,
+        ``FunctionDef``, ``Call``, ...), i.e. one full tree walk apiece. Caching the unfiltered
+        node list collapses that fan-out to a single shared walk no matter how many extractors
+        consume it -- each extractor still applies its own ``isinstance`` filter over the shared
+        list, unchanged.
+
+        Order is identical to a fresh ``ast.walk(tree)``: ``ast.walk`` is deterministic BFS, so
+        this is exactly the sequence each extractor's own walk would have produced in isolation --
+        extraction order (and therefore edge order) is unaffected.
+
+        The memo is a single-entry, per-thread ``(tree, nodes)`` pair in ``_WALK_CACHE`` -- NOT an
+        attribute on the tree. Storing it off the tree matters: attaching ``nodes`` directly to
+        the tree (e.g. ``tree._shared_walk = nodes``) would create a reference cycle, since
+        ``ast.walk`` yields the root node first -- the list's own first element would be the tree
+        itself (``tree.__dict__ -> list -> tree``), reachable only by the cyclic GC. Keeping the
+        cache external means refcounting alone reclaims each tree (and its node list) the moment
+        the next chunk's tree replaces this thread's single entry -- no cyclic garbage generated
+        in the first place, which matters to any long-running process that would rather not pay
+        for cycle collection on every parsed chunk.
+
+        Args:
+            tree: Parsed AST for the chunk (the same object every extractor's
+                ``extract_from_tree`` call receives for this chunk)
+
+        Returns:
+            Every node in *tree*, in ``ast.walk``'s BFS order
+        """
+        return _cached_walk(tree)

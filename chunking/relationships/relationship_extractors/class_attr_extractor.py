@@ -45,7 +45,7 @@ class ClassAttributeExtractor(BaseRelationshipExtractor):
         self.relationship_type = RelationshipType.DEFINES_CLASS_ATTR
 
     def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
-        for node in ast.walk(tree):
+        for node in self._walk_once(tree):
             if isinstance(node, ast.ClassDef):
                 self._extract_class_attributes(node, chunk_metadata)
 
