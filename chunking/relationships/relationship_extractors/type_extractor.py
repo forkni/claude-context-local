@@ -66,7 +66,7 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
             tree: AST tree
             chunk_metadata: Chunk metadata
         """
-        for node in ast.walk(tree):
+        for node in self._walk_once(tree):
             # Function/method type hints
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self._extract_from_function(node, chunk_metadata)

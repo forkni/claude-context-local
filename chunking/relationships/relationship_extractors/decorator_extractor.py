@@ -74,7 +74,7 @@ class DecoratorExtractor(BaseRelationshipExtractor):
         """
         chunk_id = chunk_metadata.get("chunk_id", "")
 
-        for node in ast.walk(tree):
+        for node in self._walk_once(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 for decorator in node.decorator_list:
                     decorator_name = self._get_decorator_name(decorator)

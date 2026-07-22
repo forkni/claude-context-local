@@ -48,7 +48,7 @@ class DefaultParameterExtractor(BaseRelationshipExtractor):
         self.relationship_type = RelationshipType.USES_DEFAULT
 
     def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
-        for node in ast.walk(tree):
+        for node in self._walk_once(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self._extract_defaults(node, chunk_metadata)
 

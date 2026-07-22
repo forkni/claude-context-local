@@ -21,6 +21,7 @@ from typing import Any
 
 from chunking.relationships.relationship_extractors.base_extractor import (
     BaseRelationshipExtractor,
+    _cached_walk,
 )
 from chunking.relationships.relationship_types import RelationshipType
 
@@ -109,7 +110,7 @@ class ConstantExtractor(BaseRelationshipExtractor):
         # tree for every candidate Name node below (was O(n^2) per module chunk).
         assignment_target_ids = self._collect_assignment_target_ids(tree)
 
-        for node in ast.walk(tree):
+        for node in self._walk_once(tree):
             # Skip if this is an assignment target or builtin
             if (
                 isinstance(node, ast.Name)
@@ -206,6 +207,11 @@ class ConstantExtractor(BaseRelationshipExtractor):
         the whole tree so callers can do an O(1) `id(node) in target_ids` test
         instead of re-walking the tree for every candidate Name node.
 
+        Uses the same per-thread shared-walk memo as ``BaseRelationshipExtractor._walk_once``
+        (via the module-level ``_cached_walk`` twin, since this is a ``@staticmethod`` with no
+        ``self``) -- when called before ``_extract_constant_usages``'s own walk over the same
+        tree, that second walk becomes a cache hit instead of a second full traversal.
+
         Args:
             tree: Full AST tree to scan
 
@@ -213,7 +219,7 @@ class ConstantExtractor(BaseRelationshipExtractor):
             Set of id() values for nodes on the left-hand side of `=` / `: type =`
         """
         target_ids: set[int] = set()
-        for parent in ast.walk(tree):
+        for parent in _cached_walk(tree):
             if isinstance(parent, ast.Assign):
                 for target in parent.targets:
                     target_ids.add(id(target))

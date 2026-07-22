@@ -45,7 +45,7 @@ class EnumMemberExtractor(BaseRelationshipExtractor):
         self.relationship_type = RelationshipType.DEFINES_ENUM_MEMBER
 
     def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
-        for node in ast.walk(tree):
+        for node in self._walk_once(tree):
             if isinstance(node, ast.ClassDef) and self._is_enum_class(node):
                 self._extract_enum_members(node, chunk_metadata)
 

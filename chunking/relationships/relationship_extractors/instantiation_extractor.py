@@ -86,7 +86,7 @@ class InstantiationExtractor(BaseRelationshipExtractor):
         """
         chunk_id = chunk_metadata.get("chunk_id", "")
 
-        for node in ast.walk(tree):
+        for node in self._walk_once(tree):
             if isinstance(node, ast.Call):
                 self._extract_instantiation(node, chunk_id)
 
