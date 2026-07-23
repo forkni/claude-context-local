@@ -110,7 +110,7 @@ jobs:
 
       - name: Upload mutmut cache (surviving mutants)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: mutmut-cache-${{ github.run_id }}
           path: .mutmut-cache

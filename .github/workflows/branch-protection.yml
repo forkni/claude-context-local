@@ -111,7 +111,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: always()
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: ./coverage.xml
           flags: development
@@ -120,7 +120,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: test-results
           path: test-results/
@@ -161,5 +161,5 @@ jobs:
 
       - name: Run pre-commit hooks
         run: uvx pre-commit run --all-files
-        continue-on-error: true
-        # Enforces markdownlint, file hygiene, ruff --fix; flip to blocking once verified green
+        # Blocking gate — enforces markdownlint, file hygiene, ruff --fix
+        # (ruff-pre-commit pinned to match project's ruff>=0.15.20; verified green 2026-07-21)

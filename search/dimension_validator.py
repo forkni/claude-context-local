@@ -40,7 +40,7 @@ def read_index_metadata(storage_dir: Path) -> dict | None:
             "embedding_model": info.get("embedding_model"),
             "model_dimension": info.get("model_dimension"),
         }
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parse-recovery: malformed project_info.json, treat as missing
         logger.warning(f"Failed to read project_info.json: {e}")
         return None
 
@@ -72,7 +72,7 @@ def validate_embedder_index_compatibility(
         model_info = embedder.get_model_info()
         embedder_dim = model_info.get("embedding_dimension")
         embedder_model = embedder.model_name
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - resilience: embedder info unavailable, assume compatible
         logger.debug(f"Could not get embedder info: {e}")
         return True, None
 

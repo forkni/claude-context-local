@@ -240,7 +240,7 @@ class CodeIndexManager:
                 self._logger.info(
                     f"Successfully saved call graph with {len(self.graph_storage)} nodes"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: optional call graph save, indexing continues without it
                 self._logger.warning(f"Failed to save call graph: {e}")
         else:
             skip_reason = "None" if self.graph_storage is None else "empty (0 nodes)"
@@ -273,6 +273,10 @@ class CodeIndexManager:
         )  # Get more results for filtering
         similarities, indices = self._faiss_index.search(query_embedding, search_k)
 
+        # Build the filter engine once — filters are loop-invariant, so rebuilding
+        # it per-candidate inside the loop below was wasted work on every hit.
+        filter_engine = FilterEngine.from_dict(filters) if filters else None
+
         results = []
         for _i, (similarity, index_id) in enumerate(
             zip(similarities, indices, strict=False)
@@ -289,7 +293,7 @@ class CodeIndexManager:
             metadata = metadata_entry["metadata"]
 
             # Apply filters
-            if filters and not self._matches_filters(metadata, filters):
+            if filter_engine is not None and not filter_engine.matches(metadata):
                 continue
 
             results.append((chunk_id, float(similarity), metadata))
@@ -305,7 +309,9 @@ class CodeIndexManager:
         """Check if metadata matches the provided filters.
 
         Uses FilterEngine for unified filter logic across the codebase.
-        Kept as a method for backward compatibility.
+        Kept as a method for backward compatibility — callers outside the
+        per-candidate search loop above (e.g. multi_hop_searcher's
+        post-expansion filtering) still use this one-shot form.
         """
         return FilterEngine.from_dict(filters).matches(metadata)
 
@@ -529,7 +535,7 @@ class CodeIndexManager:
                 with open(model_info_path, "w") as f:
                     json.dump(model_info, f, indent=2)
                 self._logger.debug(f"Saved model info to {model_info_path}")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: model info save non-critical, indexing continues
                 self._logger.debug(f"Failed to save model info (non-critical): {e}")
 
         self._update_stats()

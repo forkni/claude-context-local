@@ -38,18 +38,29 @@ MODEL_REGISTRY = {
 
 DEFAULT_STORAGE_DIR = Path.home() / ".claude_code_search"
 
+# This script lives at <repo-root>/scripts/get_system_status_fast.py; anchor the
+# primary candidates to the repo root so resolution doesn't depend on process cwd
+# (see project_search_config_guard memory note for the incident this fixes).
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
 
 def get_config_path():
-    """Find search_config.json"""
+    """Find search_config.json (falls back to the committed .example template)."""
     candidates = [
-        "search_config.json",
-        ".search_config.json",
+        _REPO_ROOT / "search_config.json",
+        _REPO_ROOT / ".search_config.json",
         DEFAULT_STORAGE_DIR / "search_config.json",
     ]
     for c in candidates:
         if os.path.exists(c):
             return c
-    return candidates[0]  # Default fallback
+    # No real config anywhere -- fall back to the committed shared-default template
+    # (read-only; never written to) so status reflects the real shared default
+    # instead of a bare hardcoded fallback.
+    example = _REPO_ROOT / "search_config.json.example"
+    if example.exists():
+        return example
+    return candidates[0]  # Default fallback (path only; file may not exist)
 
 
 def get_selection_path():
@@ -84,7 +95,7 @@ def main():
         output = cfg.get("output", {})
 
         # -- Model Status --
-        model_name = embedding.get("model_name", "google/embeddinggemma-300m")
+        model_name = embedding.get("model_name", "BAAI/bge-m3")
         spec = MODEL_REGISTRY.get(
             model_name, {"dim": "?", "vram": "?", "short": model_name}
         )
@@ -95,7 +106,9 @@ def main():
         # -- Reranker Status --
         reranker_enabled = reranker.get("enabled", True)
         if reranker_enabled:
-            r_name = reranker.get("model_name", "BAAI/bge-reranker-v2-m3")
+            r_name = reranker.get(
+                "model_name", "Alibaba-NLP/gte-reranker-modernbert-base"
+            )
             print(f"       Reranker: {r_name.split('/')[-1]} (enabled)")
         else:
             print("       Reranker: Disabled")

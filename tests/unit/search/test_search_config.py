@@ -201,40 +201,61 @@ class TestDefaultConfigPath:
         )
         assert ".claude-context-mcp" not in mgr.config_file
 
-    def test_config_path_fallback_order(self):
-        """Test config path discovery fallback order."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Change to temp directory
-            original_dir = os.getcwd()
-            os.chdir(tmpdir)
+    def test_config_path_fallback_order(self, monkeypatch, tmp_path):
+        """Test config path discovery fallback order.
 
-            try:
-                # Reset global config manager to ensure clean state
-                import search.config as config_module
+        Candidates are anchored to the repo root (not process cwd) since 2026-07-09 --
+        a cwd-relative resolution let ``search_config.json`` silently miss whenever the
+        MCP server or a script was launched from outside the repo root, one of the
+        contributing defects behind the EmbeddingGemma-fallback incident (see
+        project_search_config_guard memory note). Patch ``CONFIG_PATH_CANDIDATES``
+        itself to point at an isolated tmp dir so this test doesn't depend on (or
+        pollute) the real repo's search_config.json, and to prove cwd no longer
+        matters.
+        """
+        import search.config as config_module
+        import search.config_paths as config_paths_module
 
-                config_module._config_manager = None
+        fake_repo_config = str(tmp_path / "search_config.json")
+        monkeypatch.setattr(
+            config_paths_module,
+            "CONFIG_PATH_CANDIDATES",
+            [
+                fake_repo_config,
+                str(tmp_path / ".search_config.json"),
+                str(tmp_path / "storage" / "search_config.json"),
+            ],
+        )
 
-                # No config files exist - should return first candidate
-                mgr = SearchConfigManager()
-                # Should return first candidate which is current directory search_config.json
-                # or the storage location if that exists
-                assert "search_config.json" in mgr.config_file
+        original_dir = os.getcwd()
+        other_dir = tempfile.mkdtemp()
+        try:
+            # Reset global config manager to ensure clean state
+            config_module._config_manager = None
 
-                # Create local config - should be preferred
-                with open("search_config.json", "w") as f:
-                    json.dump({"default_search_mode": "bm25"}, f)
+            # No config files exist - should return first candidate
+            mgr = SearchConfigManager()
+            assert mgr.config_file == fake_repo_config
 
-                # Reset manager to pick up new file
-                config_module._config_manager = None
-                mgr2 = SearchConfigManager()
-                assert mgr2.config_file == "search_config.json"
+            # Create the repo-root candidate - should be preferred
+            with open(fake_repo_config, "w") as f:
+                json.dump({"default_search_mode": "bm25"}, f)
 
-            finally:
-                os.chdir(original_dir)
-                # Reset global state
-                import search.config as config_module
+            # Reset manager to pick up new file
+            config_module._config_manager = None
+            mgr2 = SearchConfigManager()
+            assert mgr2.config_file == fake_repo_config
 
-                config_module._config_manager = None
+            # Changing cwd must NOT change resolution -- this is the behavior the
+            # repo-root anchoring guarantees.
+            os.chdir(other_dir)
+            config_module._config_manager = None
+            mgr3 = SearchConfigManager()
+            assert mgr3.config_file == fake_repo_config
+        finally:
+            os.chdir(original_dir)
+            # Reset global state
+            config_module._config_manager = None
 
     def test_config_persistence_to_storage_location(self, tmp_path):
         """Test saving config to storage directory."""

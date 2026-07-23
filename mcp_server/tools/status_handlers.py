@@ -9,8 +9,8 @@ import json
 import logging
 from typing import Any
 
-from mcp_server.server import (
-    _cleanup_previous_resources,
+from mcp_server.resource_manager import _cleanup_previous_resources
+from mcp_server.search_factory import (
     get_index_manager,
     get_searcher,
 )
@@ -29,7 +29,21 @@ logger = logging.getLogger(__name__)
 
 @error_handler("Status check")
 async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
-    """Get current status and statistics of the search index."""
+    """Get current status and statistics of the search index.
+
+    When ``job_id`` is provided, reports that background indexing job's
+    progress (see ``index_directory``'s ``wait=False`` mode) instead of the
+    regular index snapshot below.
+    """
+    job_id = arguments.get("job_id")
+    if job_id:
+        from mcp_server.tools.job_registry import get_job_registry
+
+        job = await get_job_registry().get(job_id)
+        if job is None:
+            return responses.error(f"Unknown job_id: {job_id}")
+        return job.to_status_dict()
+
     state = get_state()
 
     # Check if a project is selected — offload get_index_manager (may init lazily)
@@ -68,7 +82,7 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
                 stats["bm25_documents"] = hybrid_stats.get("bm25_documents")
                 stats["dense_vectors"] = hybrid_stats.get("dense_vectors")
                 stats["synced"] = hybrid_stats.get("synced")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: optional stats enrichment, degrade to base stats
             logger.warning(f"Could not get hybrid searcher stats: {e}")
 
     # Collect model info (single-model mode)
@@ -84,7 +98,7 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
             metadata = snapshot_mgr.load_metadata(state.current_project)
             if metadata:
                 last_indexed_time = metadata.get("last_snapshot")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: optional metadata enrichment, degrade to no timestamp
             logger.debug(f"Could not get last_indexed_time: {e}")
 
     return {
@@ -102,76 +116,82 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
     base_dir = get_storage_dir()
     projects_dir = base_dir / "projects"
 
-    if not projects_dir.exists():
+    # The whole sweep (iterdir + per-project JSON reads + exists checks) is
+    # blocking I/O whose cost scales with project count — offload as one unit.
+    def _scan_projects() -> list[dict[str, Any]] | None:
+        from pathlib import Path
+
+        from search.filters import find_project_at_different_drive
+
+        if not projects_dir.exists():
+            return None
+
+        # Group projects by path
+        projects_by_path = {}  # project_path -> project_data
+
+        for project_dir in projects_dir.iterdir():
+            if not project_dir.is_dir():
+                continue
+
+            info_file = project_dir / "project_info.json"
+            if not info_file.exists():
+                continue
+
+            with open(info_file) as f:
+                project_info = json.load(f)
+
+            project_path = project_info["project_path"]
+
+            # Initialize project entry if first time seeing this path
+            if project_path not in projects_by_path:
+                # Check if project exists at stored path
+                path_exists = Path(project_path).exists()
+                relocated_to = None
+
+                if not path_exists:
+                    # Try to find at different drive letter
+                    alt_path = find_project_at_different_drive(project_path)
+                    if alt_path:
+                        relocated_to = alt_path
+                        path_exists = True
+
+                project_data = {
+                    "project_name": project_info["project_name"],
+                    "project_path": project_path,
+                    "project_hash": project_info["project_hash"],
+                    "path_exists": path_exists,
+                    "models_indexed": [],
+                }
+                # Only include relocated_to if not None (token optimization)
+                if relocated_to is not None:
+                    project_data["relocated_to"] = relocated_to
+                projects_by_path[project_path] = project_data
+
+            # Prepare model info
+            model_info = {
+                "model": project_info["embedding_model"],
+                "dimension": project_info["model_dimension"],
+                "chunks": None,
+                "created_at": project_info.get("created_at"),
+            }
+
+            # Try to load chunk count from stats
+            stats_file = project_dir / "index" / "stats.json"
+            if stats_file.exists():
+                with open(stats_file) as f:
+                    stats = json.load(f)
+                    model_info["chunks"] = stats.get("total_chunks", 0)
+
+            projects_by_path[project_path]["models_indexed"].append(model_info)
+
+        return list(projects_by_path.values())
+
+    projects = await asyncio.to_thread(_scan_projects)
+    if projects is None:
         return {
             "projects": [],
             "message": "No projects indexed yet",
         }
-
-    # Group projects by path
-    projects_by_path = {}  # project_path -> project_data
-
-    for project_dir in projects_dir.iterdir():
-        if not project_dir.is_dir():
-            continue
-
-        info_file = project_dir / "project_info.json"
-        if not info_file.exists():
-            continue
-
-        with open(info_file) as f:
-            project_info = json.load(f)
-
-        project_path = project_info["project_path"]
-
-        # Initialize project entry if first time seeing this path
-        if project_path not in projects_by_path:
-            # Check if project exists at stored path
-            from pathlib import Path
-
-            from search.filters import find_project_at_different_drive
-
-            path_exists = Path(project_path).exists()
-            relocated_to = None
-
-            if not path_exists:
-                # Try to find at different drive letter
-                alt_path = find_project_at_different_drive(project_path)
-                if alt_path:
-                    relocated_to = alt_path
-                    path_exists = True
-
-            project_data = {
-                "project_name": project_info["project_name"],
-                "project_path": project_path,
-                "project_hash": project_info["project_hash"],
-                "path_exists": path_exists,
-                "models_indexed": [],
-            }
-            # Only include relocated_to if not None (token optimization)
-            if relocated_to is not None:
-                project_data["relocated_to"] = relocated_to
-            projects_by_path[project_path] = project_data
-
-        # Prepare model info
-        model_info = {
-            "model": project_info["embedding_model"],
-            "dimension": project_info["model_dimension"],
-            "chunks": None,
-            "created_at": project_info.get("created_at"),
-        }
-
-        # Try to load chunk count from stats
-        stats_file = project_dir / "index" / "stats.json"
-        if stats_file.exists():
-            with open(stats_file) as f:
-                stats = json.load(f)
-                model_info["chunks"] = stats.get("total_chunks", 0)
-
-        projects_by_path[project_path]["models_indexed"].append(model_info)
-
-    # Convert to list
-    projects = list(projects_by_path.values())
 
     return {
         "projects": projects,
@@ -207,7 +227,7 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
 
             pynvml.nvmlInit()
             nvml_available = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - dep-probe: optional pynvml unavailable, fall back to torch metrics
             logger.debug(
                 "pynvml unavailable, falling back to torch-only VRAM metrics: %s", e
             )
@@ -226,7 +246,7 @@ async def handle_get_memory_status(arguments: dict[str, Any]) -> dict:
                     mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
                     real_used_gb = round(mem_info.used / (1024**3), 2)
                     real_free_gb = round(mem_info.free / (1024**3), 2)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - resilience: optional per-device VRAM query, degrade to None
                     logger.debug(
                         "pynvml per-device query failed for device %d: %s", i, exc
                     )

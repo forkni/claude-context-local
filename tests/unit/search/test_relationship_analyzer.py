@@ -159,6 +159,53 @@ class TestResolveBySymbol(TestCase):
             f"Expected Tier 3 failure log, got: {cm.output}",
         )
 
+    def test_lenient_default_guesses_when_no_name_match(self):
+        """Default (strict_name_match=False, used by _resolve_target/user queries):
+        Tier 3 falls back to the top semantic hit even when no candidate's name
+        actually matches the query. This is the existing, intentionally lenient
+        behavior for ambiguous/fuzzy user-facing symbol lookups."""
+        unrelated_cid = "src/wrong.py:function:unrelated_fn"
+        fake_result = _FakeResult(chunk_id=unrelated_cid)
+
+        analyzer, _ = _make_analyzer(search_side_effect=lambda *a, **kw: [fake_result])
+
+        resolved = analyzer._resolve_by_symbol("len", None)
+        self.assertIsNotNone(resolved)
+        _, resolved_cid = resolved
+        self.assertEqual(resolved_cid, unrelated_cid)
+
+    def test_strict_name_match_returns_none_when_no_name_match(self):
+        """strict_name_match=True (used by the edge-recovery paths): when no Tier 3
+        candidate's name matches the query, return None instead of guessing.
+
+        Regression test for the false-bind bug where an unresolved call-graph
+        symbol (e.g. 'len') was recovered to an unrelated top semantic hit
+        (e.g. 'estimate_tokens') purely because nothing matched by name."""
+        unrelated_cid = "src/wrong.py:function:unrelated_fn"
+        fake_result = _FakeResult(chunk_id=unrelated_cid)
+
+        analyzer, _ = _make_analyzer(search_side_effect=lambda *a, **kw: [fake_result])
+
+        resolved = analyzer._resolve_by_symbol("len", None, strict_name_match=True)
+        self.assertIsNone(resolved)
+
+    def test_strict_name_match_still_resolves_real_match(self):
+        """strict_name_match=True must not block genuine name matches."""
+        cid = "src/util.py:function:frobnicate"
+        fake_result = _FakeResult(chunk_id=cid)
+
+        def _search(query, k=30, filters=None):
+            return [fake_result] if query == "frobnicate" else []
+
+        analyzer, _ = _make_analyzer(search_side_effect=_search)
+
+        resolved = analyzer._resolve_by_symbol(
+            "frobnicate", None, strict_name_match=True
+        )
+        self.assertIsNotNone(resolved)
+        _, resolved_cid = resolved
+        self.assertEqual(resolved_cid, cid)
+
 
 # ---------------------------------------------------------------------------
 # Tests: _enrich_callers
@@ -288,6 +335,114 @@ class TestEnrichCallers(TestCase):
         self.assertEqual(exact, 1)
         self.assertEqual(recovered, 1)
         self.assertEqual(stale, 1)
+
+
+# ---------------------------------------------------------------------------
+# Tests: _enrich_callees — builtin/common-method guard + strict Tier-3 match
+# (Part B regression: the len()->estimate_tokens style false-bind)
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichCallees(TestCase):
+    """_enrich_callees: exact, guarded-builtin, guarded-common-method,
+    no-name-match, and legitimate-recovery paths."""
+
+    def test_exact_hit_tagged_exact(self):
+        """When get_by_chunk_id succeeds, callee gets confidence='exact'."""
+        cid = "src/a.py:function:a_fn"
+        fake_result = _FakeResult(chunk_id=cid)
+        entry = _make_entry(cid)
+
+        analyzer, _ = _make_analyzer(
+            get_by_chunk_id_side_effect=lambda c: fake_result if c == cid else None
+        )
+
+        callees, stale, exact, recovered, ambiguous = analyzer._enrich_callees(
+            [entry], None
+        )
+        self.assertEqual(len(callees), 1)
+        self.assertEqual(callees[0]["confidence"], "exact")
+        self.assertEqual(exact, 1)
+        self.assertEqual(recovered, 0)
+        self.assertEqual(stale, 0)
+
+    def test_builtin_callee_name_not_recovered(self):
+        """A phantom callee node named 'len' (a Python builtin) must never be
+        Tier-3 guessed — it should stay unresolved (stale), and Tier 3 search
+        must not even be invoked."""
+        entry = _make_entry("len")
+        search_calls: list[str] = []
+
+        def _search(query, k=30, filters=None):
+            search_calls.append(query)
+            return [_FakeResult(chunk_id="src/util.py:function:estimate_tokens")]
+
+        analyzer, _ = _make_analyzer(search_side_effect=_search)
+
+        callees, stale, exact, recovered, ambiguous = analyzer._enrich_callees(
+            [entry], None
+        )
+        self.assertEqual(len(callees), 0)
+        self.assertEqual(stale, 1)
+        self.assertEqual(recovered, 0)
+        self.assertEqual(search_calls, [], "builtin guard must short-circuit Tier 3")
+
+    def test_common_method_callee_name_not_recovered(self):
+        """A phantom callee node named 'append' (blocklisted common method) must
+        stay unresolved rather than binding to an unrelated project function."""
+        entry = _make_entry("append")
+
+        def _search(query, k=30, filters=None):
+            return [_FakeResult(chunk_id="src/other.py:function:build_stuff")]
+
+        analyzer, _ = _make_analyzer(search_side_effect=_search)
+
+        callees, stale, exact, recovered, ambiguous = analyzer._enrich_callees(
+            [entry], None
+        )
+        self.assertEqual(len(callees), 0)
+        self.assertEqual(stale, 1)
+        self.assertEqual(recovered, 0)
+
+    def test_unmatched_name_semantic_result_not_recovered(self):
+        """Regression for the len()->estimate_tokens false-bind: a non-builtin,
+        non-blocklisted symbol with no true name match among Tier 3 results must
+        stay unresolved, not bind to the top semantic neighbor."""
+        entry = _make_entry("frobnicate")  # not a builtin, not in _COMMON_METHODS
+
+        def _search(query, k=30, filters=None):
+            return [_FakeResult(chunk_id="src/other.py:function:unrelated_fn")]
+
+        analyzer, _ = _make_analyzer(search_side_effect=_search)
+
+        callees, stale, exact, recovered, ambiguous = analyzer._enrich_callees(
+            [entry], None
+        )
+        self.assertEqual(len(callees), 0)
+        self.assertEqual(stale, 1)
+        self.assertEqual(recovered, 0)
+
+    def test_real_name_match_still_recovered(self):
+        """A phantom callee that legitimately name-matches a project symbol must
+        still be recovered — the guard only blocks false binds, not real ones."""
+        target_cid = "src/util.py:function:frobnicate"
+        entry = _make_entry("frobnicate")
+        fake_result = _FakeResult(chunk_id=target_cid)
+
+        analyzer, _ = _make_analyzer(
+            symbol_cache_map={"frobnicate": target_cid},
+            get_by_chunk_id_side_effect=lambda c: (
+                fake_result if c == target_cid else None
+            ),
+        )
+
+        callees, stale, exact, recovered, ambiguous = analyzer._enrich_callees(
+            [entry], None
+        )
+        self.assertEqual(len(callees), 1)
+        self.assertEqual(callees[0]["confidence"], "recovered")
+        self.assertEqual(recovered, 1)
+        self.assertEqual(stale, 0)
 
 
 # ---------------------------------------------------------------------------

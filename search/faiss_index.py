@@ -286,7 +286,7 @@ class FaissVectorIndex:
                             f"Loaded mmap storage: {self._mmap_storage.count} vectors "
                             f"from {self._mmap_path.name}"
                         )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - resilience: mmap storage optional, fall back to FAISS reconstruct
                     self._logger.debug(f"Could not load mmap storage: {e}")
                     self._mmap_storage = None
 
@@ -491,7 +491,7 @@ class FaissVectorIndex:
 
                     gc.collect()
                     torch.cuda.empty_cache()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - cleanup: GPU cache release best-effort, non-critical
                 self._logger.debug(f"GPU cache cleanup failed (non-critical): {e}")
             finally:
                 self._on_gpu = False
@@ -669,7 +669,7 @@ class FaissVectorIndex:
                 dimension = self._index.d
                 estimated = estimate_index_memory_usage(current_size, dimension)
                 status["estimated_index_memory"] = estimated
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: memory estimate optional, status omits it on failure
                 self._logger.debug(f"Could not estimate index memory: {e}")
 
         return status

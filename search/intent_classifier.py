@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from search.config import SearchMode
 from search.tokenization import (
     CODE_TERM_BLOCKLIST,
     is_camelcase,
@@ -62,7 +63,7 @@ def _load_anchor_config() -> dict | None:
         if config_path.exists():
             with open(config_path, encoding="utf-8") as f:
                 return yaml.safe_load(f)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - parse-recovery: malformed intent_anchors.yaml, fall back to None
         logger.warning(f"[INTENT-SEM] Failed to load intent_anchors.yaml: {exc}")
     return None
 
@@ -400,7 +401,7 @@ class IntentClassifier:
                         norm = float(np.linalg.norm(vec))
                         if norm > 0:
                             vecs.append(vec / norm)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - resilience: per-anchor embed failure skipped, others continue
                     logger.debug(
                         f"[INTENT-SEM] Failed to embed anchor '{q[:40]}': {exc}"
                     )
@@ -451,7 +452,7 @@ class IntentClassifier:
             if norm == 0:
                 return {}
             query_vec = query_vec / norm
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - resilience: optional semantic scoring, empty scores on embed failure
             logger.debug(f"[INTENT-SEM] embed_query failed: {exc}")
             return {}
 
@@ -592,13 +593,13 @@ class IntentClassifier:
         if intent == QueryIntent.GLOBAL:
             # Suggest larger k for architectural queries
             params["k"] = 10
-            params["search_mode"] = "hybrid"
+            params["search_mode"] = SearchMode.HYBRID
 
         elif intent == QueryIntent.LOCAL:
             # Suggest k=5 for symbol lookups (reverted from k=4 in commit 1802322)
             # Wider pool helps graph-isolated symbols that can't benefit from multi-hop
             params["k"] = 5
-            params["search_mode"] = "hybrid"
+            params["search_mode"] = SearchMode.HYBRID
 
             # Existence-checking queries benefit from semantic-heavy weights.
             # BM25 over-matches "index" and "exists" on internal implementation code,

@@ -921,9 +921,10 @@ From `tools/benchmark_models.py`:
 
 **Version**: v0.9.1+
 
-**Advantages over BGE reranker**:
+**Key advantages**:
 
-- **131K context window** (vs 8K for BGE) - handles larger documents
+- **131K context window** - handles much larger documents than typical cross-encoder rerankers
+  (commonly capped around 8K tokens)
 - **Listwise reranking** - scores all documents together for better relative ranking
 - **Better on long code** - 16x larger context allows full function bodies
 
@@ -938,9 +939,10 @@ from search.neural_reranker import create_reranker
 reranker = create_reranker("jinaai/jina-reranker-v3")
 ```
 
-**VRAM Usage**: ~1.2GB (similar to BGE)
+**VRAM Usage**: ~1.2GB
 
-**Performance**: 100-250ms per rerank (slightly slower than BGE due to larger context)
+**Performance**: 100-250ms per rerank (listwise scoring adds latency vs. simpler cross-encoders,
+offset by improved ranking quality)
 
 ---
 

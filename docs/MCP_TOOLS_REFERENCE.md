@@ -29,6 +29,15 @@ This modular reference can be embedded in any project instructions for Claude Co
 | list_embedding_models | Model | View available embedding models | *(no parameters)* |
 | switch_embedding_model | Model | Switch embedding model (instant <150ms) | model_name (required) |
 
+**One active project/model at a time:** `switch_project`, `switch_embedding_model`,
+`configure_search_mode`, `configure_reranking`, `configure_chunking`, `clear_index`, and
+`delete_project` all mutate process-wide server state (active project, active model,
+search config). Over the HTTP transport (`stateless=True`, shared by all connected
+clients) these calls are serialized on a global lock so two concurrent clients can't
+interleave a mutation with each other's reads — but the state itself is still global:
+switching the project/model from one client switches it for every client. Avoid running
+these calls concurrently against unrelated projects from multiple clients.
+
 ---
 
 ## Filter Parameters for search_code
@@ -38,7 +47,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 | **file_pattern** | string | Substring match on file path | Any string (e.g., "auth", "test_", "utils/") |
 | **include_dirs** | array | Only search in these directories (prefix match) | `["src/", "lib/"]` |
 | **exclude_dirs** | array | Exclude from search (prefix match) | `["tests/", "vendor/", "node_modules/"]` |
-| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"community"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"`, `"merged"`, `"split_block"` |
+| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"module_preamble"`, `"community"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"`, `"merged"`, `"split_block"` |
 
 **Synthetic Summary Chunk Types (v0.9.0+)**:
 
@@ -48,6 +57,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 **Chunking Chunk Types (v0.8.4+)**:
 
 - `"merged"`: Community-merged chunks created by community detection. Multiple related code blocks merged together for better semantic context (e.g., related helper functions merged with main class).
+- `"module_preamble"`: Real (non-synthetic) top-of-file statements — import-time side effects, module-level constants/config, `if __name__ == "__main__":` guards — that sit between chunked functions/classes but have no chunkable ancestor node type. Unlike `"module"`, this contains the actual verbatim source with real line numbers, and is never subject to synthetic-chunk demotion/exclusion.
 - `"split_block"`: Large function blocks split at AST boundaries when exceeding `max_chunk_lines` (default: 100 lines). Enables better granularity for very large functions.
 
 ### Directory Filtering (v0.5.9+)

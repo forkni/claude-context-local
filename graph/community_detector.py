@@ -173,7 +173,7 @@ class CommunityDetector:
             communities_list = louvain_communities(
                 undirected, resolution=resolution, seed=42
             )
-        except Exception as e:
+        except (nx.NetworkXError, KeyError, ValueError, ZeroDivisionError) as e:
             self.logger.error(f"Louvain algorithm failed: {e}", exc_info=True)
             return {}
 
@@ -190,7 +190,7 @@ class CommunityDetector:
                 f"Detected {len(communities_list)} communities from {len(community_map)} nodes "
                 f"(resolution={resolution}, modularity={mod_score:.3f})"
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: modularity score is a non-critical quality metric
             self.logger.warning(f"Failed to calculate modularity: {e}", exc_info=True)
             self.logger.info(
                 f"Detected {len(communities_list)} communities from {len(community_map)} nodes "

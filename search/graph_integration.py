@@ -18,6 +18,7 @@ except ImportError:
 
 from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
 from search.chunk_id import is_chunk_id as _is_chunk_id
+from utils.path_utils import normalize_path
 
 
 def is_chunk_id(node_id: str) -> bool:
@@ -33,6 +34,89 @@ def is_chunk_id(node_id: str) -> bool:
         True if node_id is a valid chunk ID, False if it's a bare symbol
     """
     return _is_chunk_id(node_id)
+
+
+def _qualified_to_file_suffix(
+    callee_qualified: str | None, caller_file: str
+) -> str | None:
+    """Convert a dotted qualified callee name into a project-relative
+    ``.py`` file-path suffix, so ``_resolve_call_target`` can scope-match
+    candidates by the file the caller's own import actually points at.
+
+    Absolute imports (``pkg.mod.symbol``) resolve directly: the last dotted
+    segment is the imported symbol, the rest is the module path
+    (``pkg/mod.py``). Relative imports (``.mod.symbol``, ``..pkg.mod.symbol``)
+    resolve relative to the caller's own directory: each leading dot beyond
+    the first walks up one directory from ``caller_file``'s directory.
+
+    Returns None when the suffix can't be derived: no qualified name, a
+    single-segment absolute import (no module/symbol split, e.g. an aliased
+    ``import os as o``), or a relative level that walks above the caller's
+    own directory depth.
+    """
+    if not callee_qualified:
+        return None
+
+    # Count leading dots to determine the relative level (0 = absolute).
+    level = 0
+    while level < len(callee_qualified) and callee_qualified[level] == ".":
+        level += 1
+    rest = callee_qualified[level:]
+    if not rest:
+        return None
+
+    caller_norm = normalize_path(caller_file)
+    dir_parts = caller_norm.rsplit("/", 1)[0].split("/") if "/" in caller_norm else []
+
+    if level == 0:
+        # Absolute: "pkg.mod.symbol" -> module "pkg.mod", trailing "symbol".
+        module_part, sep, _symbol = rest.rpartition(".")
+        if not sep:
+            return None  # single segment: can't split module from symbol
+        return normalize_path(module_part.replace(".", "/") + ".py")
+
+    # Relative: `level` leading dots; level-1 is how many directories to walk
+    # up from the caller's own directory (mirrors Python's import semantics).
+    up_levels = level - 1
+    if up_levels > len(dir_parts):
+        return None
+    if up_levels:
+        dir_parts = dir_parts[: len(dir_parts) - up_levels]
+
+    module_part, sep, _symbol = rest.rpartition(".")
+    if not sep:
+        # Bare single segment after the dots ("from . import helper" ->
+        # ".helper"): the segment itself is the submodule name.
+        module_part = rest
+
+    suffix_parts = (
+        [*dir_parts, module_part.replace(".", "/")] if module_part else dir_parts
+    )
+    if not suffix_parts:
+        return None
+    return normalize_path("/".join(suffix_parts) + ".py")
+
+
+def _file_suffix_matches(chunk_id: str, suffix: str) -> bool:
+    """Return True when a chunk_id's file portion and a derived file suffix
+    refer to the same file, anchored on directory boundaries.
+
+    Handles the absolute-vs-relative path mismatch between ``caller_file``
+    (often the ABSOLUTE OS path — see ``ChunkMetadata.file_path``) and
+    chunk_id file portions (always project-relative): one side may be a
+    longer, absolute-rooted path while the other is the bare relative file.
+    Matching is boundary-anchored on ``/`` so "auth.py" never matches inside
+    "oauth.py" (mirrors ``utils.path_utils.path_matches``'s exact-equality
+    design, widened to a directory-boundary suffix check since one side here
+    is a derived path, not a literal target set).
+    """
+    file_portion = normalize_path(chunk_id.split(":", 1)[0])
+    suffix_norm = normalize_path(suffix)
+    if file_portion == suffix_norm:
+        return True
+    return file_portion.endswith("/" + suffix_norm) or suffix_norm.endswith(
+        "/" + file_portion
+    )
 
 
 # Semantic chunk types that can have relationships
@@ -92,7 +176,9 @@ class _BuildSpec(NamedTuple):
     file_path: str
     language: str
     parent_name: str | None
-    calls: list  # list[dict]: callee_name, line_number, is_method_call
+    calls: (
+        list  # list[dict]: callee_name, line_number, is_method_call, callee_qualified
+    )
     relationships: list  # list[RelationshipEdge] — already constructed
 
 
@@ -123,7 +209,7 @@ class GraphIntegration:
                 self._logger.info(
                     f"Call graph storage initialized for project: {project_id}"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: optional graph storage init, indexing continues without it
                 self._logger.warning(f"Failed to initialize graph storage: {e}")
 
     @classmethod
@@ -198,7 +284,8 @@ class GraphIntegration:
 
         Returns:
             List of call dicts with keys ``callee_name``, ``line_number``,
-            ``is_method_call`` — compatible with the PASS 2 call-resolution loop.
+            ``is_method_call``, ``callee_qualified`` — compatible with the
+            PASS 2 call-resolution loop.
             Returns [] when the method is not found, the file is missing/unreadable,
             the language is not Python, or this is a duplicate split_block piece.
         """
@@ -284,6 +371,7 @@ class GraphIntegration:
                     "callee_name": ce.callee_name,
                     "line_number": ce.line_number,
                     "is_method_call": ce.is_method_call,
+                    "callee_qualified": ce.callee_qualified,
                 }
                 for ce in call_edges
             ]
@@ -292,7 +380,7 @@ class GraphIntegration:
                 f"'{parent_name}.{bare_name}' in {file_path}"
             )
             return result
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: split_block call extraction optional, returns empty on failure
             self._logger.debug(
                 f"split_block call extraction failed for {file_path}:{bare_name}: {e}"
             )
@@ -332,6 +420,7 @@ class GraphIntegration:
                 "callee_name": c.get("callee_name", "unknown"),
                 "line_number": c.get("line_number", 0),
                 "is_method_call": c.get("is_method_call", False),
+                "callee_qualified": c.get("callee_qualified"),
             }
             for c in raw_calls
         ]
@@ -402,6 +491,7 @@ class GraphIntegration:
                         "callee_name": call.callee_name,
                         "line_number": call.line_number,  # pyrefly: ignore [missing-attribute]
                         "is_method_call": call.is_method_call,  # pyrefly: ignore [missing-attribute]
+                        "callee_qualified": getattr(call, "callee_qualified", None),
                     }
                 )
             else:
@@ -410,6 +500,7 @@ class GraphIntegration:
                         "callee_name": call.get("callee_name", "unknown"),
                         "line_number": call.get("line_number", 0),
                         "is_method_call": call.get("is_method_call", False),
+                        "callee_qualified": call.get("callee_qualified"),
                     }
                 )
 
@@ -520,8 +611,12 @@ class GraphIntegration:
                     callee_name = call["callee_name"]
                     line_number = call["line_number"]
                     is_method_call = call["is_method_call"]
+                    callee_qualified = call.get("callee_qualified")
                     resolved = self._resolve_call_target(
-                        callee_name, name_to_chunk_ids, caller_file=spec.file_path
+                        callee_name,
+                        name_to_chunk_ids,
+                        caller_file=spec.file_path,
+                        callee_qualified=callee_qualified,
                     )
                     if resolved:
                         self.storage.add_call_edge(
@@ -536,7 +631,10 @@ class GraphIntegration:
                         resolved_edges += 1
                     else:
                         ambiguous = self._get_ambiguous_candidates(
-                            callee_name, name_to_chunk_ids, caller_file=spec.file_path
+                            callee_name,
+                            name_to_chunk_ids,
+                            caller_file=spec.file_path,
+                            callee_qualified=callee_qualified,
                         )
                         if ambiguous:
                             for candidate_id in ambiguous:
@@ -565,7 +663,7 @@ class GraphIntegration:
                     self.storage.add_relationship_edge(rel)
                     rel_edges += 1
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: per-spec edge failure, continue with remaining specs
                 self._logger.warning(f"Failed to add edges for {spec.chunk_id}: {e}")
 
         return {
@@ -739,20 +837,26 @@ class GraphIntegration:
         callee_name: str,
         name_to_chunk_ids: dict[str, list[str]],
         caller_file: str | None = None,
+        callee_qualified: str | None = None,
     ) -> str | None:
         """Resolve a call target name to its chunk_id.
 
         Returns a chunk_id when exactly one project match exists (or after
-        same-file / split_block disambiguation).  Returns ``None`` when the call
-        should become a phantom node (true builtin, common stdlib name with no
-        project definition, or still-ambiguous multi-candidate).  For the
-        still-ambiguous case, call ``_get_ambiguous_candidates`` to obtain all
-        candidates and create ``confidence="ambiguous"`` edges instead.
+        scope-aware / same-file / split_block disambiguation).  Returns
+        ``None`` when the call should become a phantom node (true builtin,
+        common stdlib name with no project definition, or still-ambiguous
+        multi-candidate).  For the still-ambiguous case, call
+        ``_get_ambiguous_candidates`` to obtain all candidates and create
+        ``confidence="ambiguous"`` edges instead.
 
         Args:
             callee_name: Symbol name from the call (e.g., "foo", "ClassName.method")
             name_to_chunk_ids: Mapping from symbol names to chunk_ids
             caller_file: Optional file path of caller for disambiguation
+            callee_qualified: Optional dotted import-scope name of the callee
+                (``CallEdge.callee_qualified``). When it derives a file suffix
+                that uniquely narrows the candidates, that wins before the
+                same-file fallback.
 
         Returns:
             chunk_id if exactly one match, None otherwise
@@ -777,8 +881,22 @@ class GraphIntegration:
 
         # Context-aware disambiguation: prefer same-file match for ambiguous calls
         if len(candidates) > 1 and caller_file:
-            # Try same-file preference - overwhelmingly the intended target
-            same_file = [c for c in candidates if caller_file in c]
+            # Scope-aware disambiguation: prefer the file the caller's own
+            # import actually points at (Part 3 of the call-graph deepening).
+            suffix = _qualified_to_file_suffix(callee_qualified, caller_file)
+            if suffix:
+                scoped = [c for c in candidates if _file_suffix_matches(c, suffix)]
+                if len(scoped) == 1:
+                    return scoped[0]
+
+            # Try same-file preference - overwhelmingly the intended target.
+            # caller_file may be the ABSOLUTE OS path (ChunkMetadata.file_path)
+            # while chunk_id file portions are project-relative, so match on a
+            # directory-boundary-anchored suffix rather than raw substring
+            # containment (a raw substring check can never match across that
+            # boundary, and would also false-positive "auth.py" inside
+            # "oauth.py").
+            same_file = [c for c in candidates if _file_suffix_matches(c, caller_file)]
             if len(same_file) == 1:
                 return same_file[0]
 
@@ -811,6 +929,7 @@ class GraphIntegration:
         callee_name: str,
         name_to_chunk_ids: dict[str, list[str]],
         caller_file: str | None = None,
+        callee_qualified: str | None = None,
     ) -> list[str]:
         """Return all candidate chunk_ids for a callee name that has multiple matches.
 
@@ -827,6 +946,10 @@ class GraphIntegration:
             callee_name: Symbol name from the call.
             name_to_chunk_ids: Full symbol → chunk_ids map for the indexed project.
             caller_file: Caller file path (unused here, reserved for future use).
+            callee_qualified: Dotted import-scope name of the callee (unused
+                here, reserved for future use — by the time this is called,
+                ``_resolve_call_target`` has already tried and failed to
+                narrow candidates with it).
 
         Returns:
             List of candidate chunk_ids (possibly empty).

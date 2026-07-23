@@ -139,7 +139,7 @@ class BatchOperations:
             # Commit all changes
             try:
                 self._metadata_store.commit()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: metadata commit failure logged, batch continues
                 self._logger.warning(f"Failed to commit metadata changes: {e}")
 
             self._logger.info(
@@ -196,7 +196,7 @@ class BatchOperations:
                 embedding = self._faiss_index.reconstruct(int(pos))
                 embeddings_to_keep.append(embedding)
                 chunk_ids_to_keep.append(chunk_ids[pos])
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: skip unreconstructable embedding, continue rebuild
                 self._logger.warning(
                     f"Failed to reconstruct embedding at position {pos}: {e}"
                 )

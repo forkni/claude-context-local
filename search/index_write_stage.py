@@ -1,12 +1,14 @@
 """Pipeline stage: embed chunks, write index, save snapshot, sync BM25, clear GPU."""
 
+from __future__ import annotations
+
 import logging
 import time
 import traceback
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from chunking.python_ast_chunker import CodeChunk
 from chunking.relationships.call_edge_resolver import run_resolvers
@@ -16,6 +18,10 @@ from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
 
 from .indexer import CodeIndexManager as Indexer
+
+
+if TYPE_CHECKING:
+    from chunking.repo_profiler import RepoProfile
 
 
 logger = logging.getLogger(__name__)
@@ -37,19 +43,12 @@ class IncrementalIndexResult:
     bm25_resync_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "files_added": self.files_added,
-            "files_removed": self.files_removed,
-            "files_modified": self.files_modified,
-            "chunks_added": self.chunks_added,
-            "chunks_removed": self.chunks_removed,
-            "time_taken": self.time_taken,
-            "success": self.success,
-            "error": self.error,
-            "bm25_resynced": self.bm25_resynced,
-            "bm25_resync_count": self.bm25_resync_count,
-        }
+        """Convert to dictionary.
+
+        Uses dataclasses.asdict so a new field is never silently omitted here
+        (the previous hand-listed version required updating this method too).
+        """
+        return asdict(self)
 
 
 class IndexWriteStage:
@@ -77,7 +76,7 @@ class IndexWriteStage:
         all_files: list[Any],
         supported_files: list[Any],
         start_time: float,
-        repo_profile: object | None,
+        repo_profile: RepoProfile | None,
         project_path: str = "",
     ) -> IncrementalIndexResult:
         """Embed, index, snapshot, BM25-sync, and GPU-clear for a full index pass.
@@ -112,7 +111,7 @@ class IndexWriteStage:
                 ):
                     embedding_result.metadata["project_name"] = project_name
                     embedding_result.metadata["content"] = chunk.content
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - api-boundary: embedding failure converted to structured error result
                 logger.error(f"Embedding failed: {e}")
                 logger.error(traceback.format_exc())
                 embed_error = str(e)
@@ -257,7 +256,12 @@ class IndexWriteStage:
             if cg_cfg is not None and cg_cfg.lsp_enabled:
                 from chunking.relationships.lsp_call_graph import LSPResolver
 
-                resolvers.append(LSPResolver(timeout=cg_cfg.lsp_timeout_seconds))
+                resolvers.append(
+                    LSPResolver(
+                        timeout=cg_cfg.lsp_timeout_seconds,
+                        max_total_seconds=cg_cfg.lsp_total_timeout_seconds,
+                    )
+                )
 
             if not resolvers:
                 logger.info("[CALL_EDGES] No resolvers configured — skipping injection")
@@ -337,7 +341,7 @@ class IndexWriteStage:
                 skipped,
             )
 
-        except Exception:
+        except Exception:  # noqa: BLE001 - resilience: optional call-edge injection non-fatal, indexing continues
             logger.warning(
                 "[CALL_EDGES] Edge injection failed (non-fatal):\n%s",
                 traceback.format_exc(),

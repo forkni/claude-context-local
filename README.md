@@ -30,37 +30,29 @@
 ## Highlights
 
 - **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-06-08, 13 queries, k=7): **Hit@5 100%, MRR 0.797, Recall@7 0.736 (recommended k=7)** - [benchmarks](docs/BENCHMARKS.md)
-- **Neural Reranking**: Cross-encoder models (default: `jinaai/jina-reranker-v3`; alternatives: BGE-reranker-v2-m3, gte-reranker-modernbert-base) improve ranking quality by 15-25% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
+- **Neural Reranking**: Cross-encoder models (default: `jinaai/jina-reranker-v3`; alternatives: gte-reranker-modernbert-base, Qwen3-Reranker-0.6B) improve ranking quality by 15-25% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
 - **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-06-08, 13 queries, k=10): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); neural reranker active (all modes MRR 0.797); Hybrid best at deep recall (R@7 0.736, R@10 0.770)**
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Layered Call-Graph Resolver Pipeline**: `find_connections` returns callers **and** callees with per-entry provenance (`resolver_source`, `resolver_confidence`). Confidence ladder: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98. Install `pip install -e ".[callgraph]"` for pyan3 + LibCST; core is Apache-2.0-clean — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
 - **OTel Tracing** (opt-in): Zero-overhead `traced_block` / `@timed` spans across the search and index pipeline — export to Jaeger, Tempo, or any OTLP collector. See [Observability](docs/OBSERVABILITY.md).
 - **ONNX Runtime Backend** (opt-in): `performance.use_onnx` loads eligible models via `ORTModelForFeatureExtraction` with `CUDAExecutionProvider` + `gpu_mem_limit` arena cap — prevents WDDM shared-memory spillover on 8 GB laptop GPUs
 - **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
-- **18 MCP Tools**: Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
+- **18 MCP Tools** (10 core + 8 advanced, gated behind `MCP_EXPOSE_ADVANCED_TOOLS`): Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 - **Source-Position Reranking**: Groups results by file, sorted by line number — LLMs read code in logical order (+5.3% accuracy, DOS RAG)
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 3,127 passing tests | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
+**Status**: ✅ Production-ready | 3,165 passing tests | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
 
-## What's New in v0.20.1
+*Last reviewed: 2026-07-23*
 
-- **Intent-classifier verification-term routing fix (Q12)** — merged a long-pending fix adding `check whether` / `verify` keyword and pattern coverage to the `local` intent rules in `config/intent_rules.yaml`, so existence-checking queries like "verify X exists" route correctly.
+## What's New in v0.21.0
 
-**Previous (v0.20.0)**: Codecov coverage integration (CI uploads `coverage.xml` on every development run); Campaign-2 Tier-1 refactors (six behavior-preserving internal refactors — project-ID hash single owner, `ResultFactory._from_tuples`, `edge_relation_type()` accessor, `BaseReranker` ABC, resolver scoped-file preamble, `_two_pass_build` graph builder); test-suite hardening (mocked model downloads, pyrefly 0 errors, Syrupy snapshot suite).
-
-**Previous (v0.19.0)**: Multi-model routing removed (`RoutingConfig` deleted; `MODEL_REGISTRY` pruned to 5 models; `configure_query_routing` MCP tool removed — server exposes **18 tools**); Launcher UI cleanup (dead code removed, 10 display values corrected); Docs cleanup (routing sections deleted from 4 guides).
-
-**Previous (v0.18.0)**: Default `search_code` output to relevance order (`source_order_output=False`); MCP-pipeline eval (45 A/B/C queries): MRR 0.8278, Hit@7 0.978.
-
-**Previous (v0.17.0)**: DSPy/GEPA agent-evaluation harness, GEPA-optimized CodeNavQA recall (Recall@7 0.668→0.717), search `default_k` 4→7 (MRR +0.093, Recall@7 +0.122), CVE remediation 53→5 advisories, `[gpu]` optional extra, performance improvements. 2,853 tests.
-
-**Previous (v0.16.0)**: Concurrency-safe MCP server (`threading.RLock` on `ApplicationState`), event-loop offloads via `asyncio.to_thread`, deterministic parallel chunking, `DiGraph`→`MultiDiGraph`, index integrity fixes (30 total — Batch 1/2A/2B). 2,533 tests.
-
-**Previous (v0.15.0)**: LSP resolver repair (0 → 938 resolved edges), resolver precision tuning, `min_confidence`/`use_pyproject_toml` config knobs, `docs/CALL_GRAPH_TUNING.md`.
-
-**Previous (v0.14.0)**: Layered call-graph resolver pipeline (AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98), optional `[callgraph]`/`[lsp]` extras, `find_connections` bidirectional callees with `resolver_source`/`resolver_confidence` provenance, `CallGraphConfig`, edge-attribute rename `source`→`resolver_source`. 2,451 tests.
+- **MCP-server hardening**: core/advanced tool tiers (`MCP_EXPOSE_ADVANCED_TOOLS`), async index jobs, dispatch telemetry, mutation lock — per the architecture-patterns paper on tool-count budgets
+- **Default embedding model** switched to `BAAI/bge-m3` across all config readers
+- **LSP call-graph resolver deadlock** eliminated via a persistent reader thread
+- **Security**: 21 dependency CVEs resolved; upgraded to `transformers` 5.x (CVE-2026-4372)
+- Performance sweep across chunking, reranking, and relationship extraction (shared AST walk, memoized import/class context, read-file-once, dedent-once)
 
 Previous release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -284,6 +276,11 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
 - `switch_project` - Switch between projects
 
 **Complete reference**: [MCP Tools Reference](docs/MCP_TOOLS_REFERENCE.md)
+
+> **Note:** The server tracks one active project and one active embedding model at a
+> time (process-wide state). `switch_project`, `switch_embedding_model`, and the
+> `configure_*`/`clear_index`/`delete_project` tools change that shared state for every
+> connected client, not just the caller.
 
 ## Supported Languages
 

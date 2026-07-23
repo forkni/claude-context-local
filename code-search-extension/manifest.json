@@ -1,0 +1,25 @@
+{
+  "manifest_version": "0.3",
+  "name": "code-search",
+  "display_name": "Code Search (local)",
+  "version": "1.1.0",
+  "description": "Semantic code search bridged to the local StreamableHTTP MCP server on localhost:8765 (dependency-free stdio proxy).",
+  "author": {
+    "name": "forkni"
+  },
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"],
+      "env": {}
+    }
+  },
+  "compatibility": {
+    "platforms": ["win32"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

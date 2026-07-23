@@ -4,15 +4,18 @@ This module contains the abstract base class and shared data structures
 for all language-specific chunkers.
 """
 
+from __future__ import annotations
+
 import logging
 from abc import ABC
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from tree_sitter import Language, Parser
 
 
 if TYPE_CHECKING:
+    from chunking.repo_profiler import RepoProfile
     from search.config import ChunkingConfig
 
 logger = logging.getLogger(__name__)
@@ -110,8 +113,11 @@ def estimate_characters(content: str, count_whitespace: bool = False) -> int:
     """
     if count_whitespace:
         return len(content)
-    # Remove all whitespace characters for non-whitespace count
-    return sum(1 for c in content if not c.isspace())
+    # C-level non-whitespace count: str.split() drops runs of (Unicode) whitespace,
+    # so joining the pieces back together and measuring their length avoids a
+    # per-character Python-level generator. Parity with str.isspace() is exact in
+    # CPython (both use the same Unicode whitespace definition).
+    return len("".join(content.split()))
 
 
 @dataclass
@@ -766,10 +772,15 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
     def chunk_code(
         self,
         source_code: str,
-        config: Optional["ChunkingConfig"] = None,
-        repo_profile: Any | None = None,
+        config: ChunkingConfig | None = None,
+        repo_profile: RepoProfile | None = None,
     ) -> list[TreeSitterChunk]:
         """Chunk source code into semantic units.
+
+        Back-compat adapter: parses `source_code` and delegates to
+        `chunk_parsed`. Callers that already hold a parsed tree (e.g. the
+        repo-profiling pass, via TreeSitterChunker.parse_file) should call
+        `chunk_parsed` directly to avoid re-parsing the same source.
 
         Args:
             source_code: Source code string
@@ -785,6 +796,40 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         """
         source_bytes = bytes(source_code, "utf-8")
         tree = self.parser.parse(source_bytes)
+        return self.chunk_parsed(
+            tree, source_code, config=config, repo_profile=repo_profile
+        )
+
+    def chunk_parsed(
+        self,
+        tree: Any,
+        source_code: str,
+        config: ChunkingConfig | None = None,
+        repo_profile: RepoProfile | None = None,
+    ) -> list[TreeSitterChunk]:
+        """Chunk an already-parsed tree into semantic units.
+
+        Same behavior as `chunk_code`, but takes a pre-parsed tree-sitter
+        `Tree` instead of parsing `source_code` itself — lets callers that
+        already produced a tree (e.g. via TreeSitterChunker.parse_file) skip
+        the redundant parse.
+
+        Args:
+            tree: tree_sitter.Tree parsed from `source_code` by this chunker's
+                    `self.parser` (must be produced on the current thread —
+                    tree-sitter Tree/Node objects are not thread-safe).
+            source_code: The source code string `tree` was parsed from.
+            config: Optional ChunkingConfig for merge settings.
+                    If None, uses ServiceLocator to get global config.
+            repo_profile: Optional RepoProfile for adaptive chunk sizing.
+                    When provided and config.sizing_mode == "adaptive", chunk size
+                    thresholds are adjusted per-function based on P75 baseline and
+                    cyclomatic complexity.
+
+        Returns:
+            List of TreeSitterChunk objects (may include merged chunks)
+        """
+        source_bytes = bytes(source_code, "utf-8")
         chunks = []
 
         # Get config BEFORE traverse (needed for splitting decision in closure)
@@ -882,6 +927,21 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
 
         traverse(tree.root_node)
 
+        # Fix A: top-of-file executable statements (import-time side effects,
+        # module constants, `if __name__ == "__main__":` guards, etc.) sit
+        # between chunked def/class nodes at the root level and would
+        # otherwise never be emitted as a chunk — only `should_chunk_node`
+        # types are chunkable, so bare statements are invisible to semantic
+        # search even though the synthetic file-summary chunk never contains
+        # their actual text (see chunking/file_summarizer.py). Collect
+        # contiguous root-level runs of such statements as real, line-numbered
+        # chunks, distinct from the synthetic "module" summary type so they
+        # are never subject to synthetic-chunk demotion/exclusion logic
+        # (search/graph_scoring_stage.py, search/centrality_ranker.py, etc.).
+        chunks.extend(
+            self._collect_module_preamble_chunks(tree.root_node, source_bytes)
+        )
+
         # If no chunks found, create a single module-level chunk
         if not chunks and source_code.strip():
             chunks.append(
@@ -900,7 +960,126 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
 
         return chunks
 
-    def _get_chunking_config(self) -> Optional["ChunkingConfig"]:
+    # Node types that make a root-level statement run boilerplate-only (safe to
+    # skip) when they're the *entire* run — imports carry no side effects and
+    # are already surfaced via the file-summary chunk's import list. A run
+    # containing anything else (assignments, calls, control flow, side-effecting
+    # expressions) is emitted as a real chunk.
+    _PREAMBLE_BOILERPLATE_TYPES = frozenset(
+        {
+            "comment",
+            "import_statement",
+            "import_from_statement",
+            "future_import_statement",
+        }
+    )
+
+    def _collect_module_preamble_chunks(
+        self, root_node: Any, source_bytes: bytes
+    ) -> list[TreeSitterChunk]:
+        """Collect contiguous root-level statement runs not covered by
+        function/class/decorated_definition chunking (Fix A).
+
+        Bare top-of-file statements (import-time side effects, module
+        constants, `if __name__ == "__main__":` guards, ...) sit between
+        chunked def/class nodes but have no chunkable ancestor type, so
+        ``traverse`` never emits them. This collects them as distinct,
+        line-numbered ``module_preamble`` chunks.
+
+        Only inspects *direct* children of the module root — non-chunkable
+        code nested inside e.g. an `if TYPE_CHECKING:` guard is out of scope;
+        the reported gap was specifically top-of-file statements.
+
+        Args:
+            root_node: The tree-sitter root node (whole file).
+            source_bytes: UTF-8-encoded source, for verbatim byte-range slicing.
+
+        Returns:
+            One chunk per contiguous run that contains more than
+            imports/comments/docstring text; empty list if every run is
+            boilerplate-only (e.g. an imports-only file).
+        """
+        preamble_chunks: list[TreeSitterChunk] = []
+        run_nodes: list[Any] = []
+
+        def flush() -> None:
+            if not run_nodes or self._is_boilerplate_run(run_nodes):
+                run_nodes.clear()
+                return
+            start_line = run_nodes[0].start_point[0] + 1
+            end_line = run_nodes[-1].end_point[0] + 1
+            content = source_bytes[
+                run_nodes[0].start_byte : run_nodes[-1].end_byte
+            ].decode("utf-8", errors="replace")
+            if not any(ch.isalnum() for ch in content):
+                # Punctuation-only leftover (e.g. an orphan trailing `;` after
+                # a struct/typedef declaration whose body was already chunked
+                # separately) — nothing worth indexing.
+                run_nodes.clear()
+                return
+            preamble_chunks.append(
+                TreeSitterChunk(
+                    content=content,
+                    start_line=start_line,
+                    end_line=end_line,
+                    node_type="module_preamble",
+                    language=self.language_name,
+                    metadata={"type": "module_preamble"},
+                )
+            )
+            run_nodes.clear()
+
+        for child in root_node.children:
+            if self._child_is_chunked(child):
+                flush()
+                continue
+            run_nodes.append(child)
+        flush()
+
+        return preamble_chunks
+
+    def _child_is_chunked(self, node: Any) -> bool:
+        """True if `traverse()` would emit a chunk for `node` or a descendant.
+
+        Mirrors `traverse()`'s recursive fall-through: a root child that is
+        itself non-chunkable (e.g. TS/JS `export_statement`) still has its
+        children visited, so its wrapped `function_declaration`/
+        `class_declaration` gets chunked independently. Without this check,
+        the preamble collector would re-capture that already-chunked content
+        verbatim as a duplicate `module_preamble` chunk (observed for the TS
+        fixture: the whole file re-appeared as one giant preamble chunk on
+        top of its already-correct per-symbol chunks).
+        """
+        if self.should_chunk_node(node):
+            return True
+        return any(self._child_is_chunked(child) for child in node.children)
+
+    def _is_boilerplate_run(self, nodes: list[Any]) -> bool:
+        """True if a root-level statement run is only imports/comments/docstring.
+
+        Such runs carry no side effects worth indexing separately as a
+        preamble chunk — imports are already surfaced via the file-summary
+        chunk's import list, and a bare docstring-only ``expression_statement``
+        (a lone ``string`` child) has no executable content.
+        """
+        for node in nodes:
+            # Comment node type names vary by grammar (Python/JS/TS/C/C++/Go/
+            # GLSL/C# all use "comment"; Rust splits it into "line_comment"/
+            # "block_comment") — substring match instead of an exhaustive enum.
+            if "comment" in node.type:
+                continue
+            if node.type in self._PREAMBLE_BOILERPLATE_TYPES:
+                continue
+            if (
+                node.type == "expression_statement"
+                and len(node.children) == 1
+                and node.children[0].type == "string"
+            ):
+                continue  # bare docstring/comment-as-string
+            return False
+        return True
+
+    def _get_chunking_config(self) -> ChunkingConfig | None:
         """Get ChunkingConfig from the current search config, or None if unavailable."""
         from search.config import get_chunking_config
 

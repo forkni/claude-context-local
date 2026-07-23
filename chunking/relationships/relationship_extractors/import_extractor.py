@@ -75,7 +75,7 @@ class ImportExtractor(BaseRelationshipExtractor):
             tree: AST tree
             chunk_metadata: Chunk metadata
         """
-        for node in ast.walk(tree):
+        for node in self._walk_once(tree):
             # import module
             if isinstance(node, ast.Import):
                 self._extract_from_import(node, chunk_metadata)

@@ -120,7 +120,7 @@ class ImplementsExtractor(BaseRelationshipExtractor):
             tree: AST tree
             chunk_metadata: Chunk metadata
         """
-        for node in ast.walk(tree):
+        for node in self._walk_once(tree):
             if isinstance(node, ast.ClassDef):
                 self._extract_from_class(node, chunk_metadata)
 

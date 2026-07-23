@@ -363,7 +363,7 @@ def run_resolvers(
 
         try:
             edges = resolver.resolve(project_root, raw_line_map, logger)
-        except Exception:
+        except Exception:  # noqa: BLE001 - resilience: an optional resolver failing must not break the overall call-graph build
             logger.warning(
                 "[RESOLVERS] %s resolver failed (non-fatal):\n%s",
                 resolver.name,

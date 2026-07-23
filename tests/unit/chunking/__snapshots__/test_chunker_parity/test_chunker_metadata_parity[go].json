@@ -30,5 +30,15 @@
     },
     "start_line": 12,
     "type": "method_declaration"
+  },
+  {
+    "content": "// Tiny Go fixture: function, struct type, method with receiver.\npackage main",
+    "end_line": 2,
+    "language": "go",
+    "metadata": {
+      "type": "module_preamble"
+    },
+    "start_line": 1,
+    "type": "module_preamble"
   }
 ]

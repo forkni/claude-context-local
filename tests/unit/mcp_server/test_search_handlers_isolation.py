@@ -61,16 +61,10 @@ async def test_handle_search_code_does_not_mutate_config_singleton():
             return_value=(False, None),
         ),
         # _assemble helpers (prevent format/subgraph code from blowing up on mock data)
+        patch("mcp_server.tools.result_view._format_search_results", return_value=[]),
         patch(
-            "mcp_server.tools.search_handlers._format_search_results", return_value=[]
-        ),
-        patch(
-            "mcp_server.tools.search_handlers._enrich_results_with_graph_data",
+            "mcp_server.tools.result_view._enrich_results_with_graph_data",
             side_effect=lambda r, _: r,
-        ),
-        patch(
-            "mcp_server.tools.search_handlers._get_index_manager_from_searcher",
-            return_value=None,
         ),
     ):
         mock_orch_state.return_value.current_project = "/test"

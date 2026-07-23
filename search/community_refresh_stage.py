@@ -228,7 +228,7 @@ class CommunityRefreshStage:
             logger.info(
                 f"[INCR_COMM] Refreshed {len(new_summaries)} community summary chunk(s)"
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: optional community summary refresh, indexing continues
             logger.warning(
                 f"[INCR_COMM] Failed to embed/index refreshed community summaries: {e}"
             )

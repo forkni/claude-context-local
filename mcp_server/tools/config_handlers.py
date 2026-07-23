@@ -3,23 +3,25 @@
 Handlers that modify system configuration or project state.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
 
 from mcp_server.project_persistence import save_project_selection
-from mcp_server.server import _cleanup_previous_resources
+from mcp_server.resource_manager import _cleanup_previous_resources
 from mcp_server.services import get_state
 from mcp_server.storage_manager import (
     get_project_storage_dir,
     set_current_project,
 )
 from mcp_server.tools import responses
-from mcp_server.tools.decorators import error_handler
+from mcp_server.tools.decorators import error_handler, with_mutation_lock
 from search.config import (
     MODEL_REGISTRY,
     ChunkingConfig,
     RerankerConfig,
+    SearchMode,
     SearchModeConfig,
     get_config_manager,
     validate_field_value,
@@ -116,6 +118,7 @@ def apply_config_patch(
 
 
 @error_handler("Project switch")
+@with_mutation_lock
 async def handle_switch_project(arguments: dict[str, Any]) -> dict:
     """Switch to a different indexed project."""
     project_path = arguments["project_path"]
@@ -124,8 +127,10 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
     if not project_path.exists():
         return responses.error(f"Project path does not exist: {project_path}")
 
-    # Cleanup previous resources
-    _cleanup_previous_resources()
+    # Cleanup previous resources — blocks (gc.collect, torch.cuda ops); offload
+    # so it doesn't stall the shared uvicorn event loop (also reachable via the
+    # HTTP switch-project route).
+    await asyncio.to_thread(_cleanup_previous_resources)
 
     # Set new project using setter function (required for cross-module globals)
     set_current_project(str(project_path))
@@ -154,9 +159,10 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
 
 
 @error_handler("Configure search mode")
+@with_mutation_lock
 async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
     """Configure search mode and parameters."""
-    search_mode = arguments.get("search_mode", "hybrid")
+    search_mode = arguments.get("search_mode", SearchMode.HYBRID)
     bm25_weight = arguments.get("bm25_weight", 0.35)
     dense_weight = arguments.get("dense_weight", 0.65)
     enable_parallel = arguments.get("enable_parallel", True)
@@ -169,7 +175,10 @@ async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
     config = config_manager.load_config()
 
     config.search_mode.default_mode = search_mode
-    config.search_mode.enable_hybrid = search_mode in ["hybrid", "auto"]
+    config.search_mode.enable_hybrid = search_mode in (
+        SearchMode.HYBRID,
+        SearchMode.AUTO,
+    )
     config.search_mode.bm25_weight = bm25_weight
     config.search_mode.dense_weight = dense_weight
     config.performance.use_parallel_search = enable_parallel
@@ -195,6 +204,7 @@ async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
     "Switch model",
     error_context=lambda args: {"available_models": list(MODEL_REGISTRY.keys())},
 )
+@with_mutation_lock
 async def handle_switch_embedding_model(arguments: dict[str, Any]) -> dict:
     """Switch to a different embedding model."""
     model_name = arguments["model_name"]
@@ -212,9 +222,9 @@ async def handle_switch_embedding_model(arguments: dict[str, Any]) -> dict:
     config.embedding.model_name = model_name
     config_manager.save_config(config)
 
-    # Reset embedders to force reload
+    # Reset embedders to force reload — releases VRAM synchronously; offload.
     state = get_state()
-    state.reset_for_model_switch()
+    await asyncio.to_thread(state.reset_for_model_switch)
 
     return responses.ok(
         success=True,
@@ -226,6 +236,7 @@ async def handle_switch_embedding_model(arguments: dict[str, Any]) -> dict:
 
 
 @error_handler("Configure reranking")
+@with_mutation_lock
 async def handle_configure_reranking(arguments: dict[str, Any]) -> dict:
     """Configure neural reranker settings."""
     config_manager = get_config_manager()
@@ -247,6 +258,7 @@ async def handle_configure_reranking(arguments: dict[str, Any]) -> dict:
 
 
 @error_handler("Configure chunking")
+@with_mutation_lock
 async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
     """Configure code chunking settings.
 
@@ -259,7 +271,7 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
     sizing_mode ("fixed"|"adaptive"), adaptive_multiplier_max (1.0-2.0),
     adaptive_multiplier_min (0.1-1.0), max_complexity_cap (5-100).
 
-    Note: min_chunk_tokens (50) and max_merged_tokens (1000) are optimal defaults and
+    Note: min_chunk_tokens (50) and max_merged_tokens (400) are optimal defaults and
     not exposed for user configuration.
     """
     config_manager = get_config_manager()

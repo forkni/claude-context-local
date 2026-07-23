@@ -23,6 +23,7 @@ Essential documentation for setup and initial use.
 | Document | Description |
 |----------|-------------|
 | **[INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md)** | Complete installation process for Windows |
+| **[CLAUDE_DESKTOP_SETUP.md](CLAUDE_DESKTOP_SETUP.md)** | Connect the MCP server to the Claude Desktop app (via `mcp-remote` bridge) |
 | **[LOCAL_LLM_GUIDE.md](LOCAL_LLM_GUIDE.md)** | Use local LLMs via LM Studio instead of Anthropic API |
 | **[CLAUDE_MD_TEMPLATE.md](CLAUDE_MD_TEMPLATE.md)** | CLAUDE.md template for project setup |
 | **[PYTORCH_COMPATIBILITY.md](PYTORCH_COMPATIBILITY.md)** | PyTorch version requirements & installation |
@@ -64,6 +65,7 @@ MCP server implementation and transport options.
 | Document | Description |
 |----------|-------------|
 | **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | All 18 tools with parameters, examples, output formats |
+| **[CLAUDE_DESKTOP_SETUP.md](CLAUDE_DESKTOP_SETUP.md)** | Connect the Claude Desktop app to the running HTTP server via the `mcp-remote` stdio→HTTP bridge |
 
 ### Transport Options
 

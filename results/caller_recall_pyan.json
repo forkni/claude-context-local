@@ -1,20 +1,26 @@
 {
   "aggregate": {
-    "mean_recall": 0.5119,
-    "mean_precision": 0.5032,
-    "perfect_recall_count": 2,
+    "mean_recall": 0.631,
+    "mean_precision": 0.4435,
+    "perfect_recall_count": 3,
     "total_queries": 7,
-    "total_expected_callers": 14,
-    "total_found_callers": 14,
-    "total_missed_callers": 0
+    "total_expected": 13,
+    "total_found": 13,
+    "total_missed": 0,
+    "resolver_sources": {
+      "libcst": 11,
+      "lsp": 4,
+      "ast": 17,
+      "pyan": 3
+    }
   },
   "results": [
     {
       "id": "C001",
       "target": "evaluation/metrics.py:function:normalize_chunk_id",
       "recall": 0.6667,
-      "precision": 0.2727,
-      "retrieved_count": 11,
+      "precision": 0.25,
+      "retrieved_count": 12,
       "expected_count": 3,
       "found": [
         "evaluation/metrics.py:function:build_chunk_line_lookup",
@@ -24,15 +30,21 @@
       "missed": [],
       "extra": [
         "evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
+        "evaluation/dspy_agent_eval.py:method:_extract_reranker_scores_from_observations",
         "mcp_server/tools/search_handlers.py:method:handle_find_path",
         "scripts/benchmark/build_caller_oracle.py:function:build_oracle_for_target",
         "scripts/benchmark/build_caller_oracle.py:method:main",
-        "scripts/benchmark/run_caller_recall.py:function:_get_direct_callers",
+        "scripts/benchmark/run_caller_recall.py:function:_get_direct_edges",
         "scripts/benchmark/run_caller_recall.py:function:_run_single",
-        "search/metadata.py:decorated_definition:MetadataStore.get_chunk_id_variants",
+        "search/indexer.py:method:CodeIndexManager.get_similar_chunks_batched",
         "tools/analyze_batch_results.py:function:check_match"
       ],
-      "latency_ms": 1910.6
+      "resolver_sources": {
+        "libcst": 4,
+        "lsp": 3,
+        "ast": 5
+      },
+      "latency_ms": 6479.3
     },
     {
       "id": "C002",
@@ -48,48 +60,59 @@
       "extra": [
         "search/relationship_analyzer.py:class:RelationshipAnalyzer"
       ],
-      "latency_ms": 1061.8
+      "resolver_sources": {
+        "pyan": 1,
+        "ast": 1
+      },
+      "latency_ms": 8029.8
     },
     {
       "id": "C003",
       "target": "evaluation/metrics.py:function:calculate_recall_at_k",
       "recall": 1.0,
-      "precision": 0.5,
-      "retrieved_count": 2,
+      "precision": 0.2,
+      "retrieved_count": 5,
       "expected_count": 1,
       "found": [
         "evaluation/metrics.py:function:calculate_metrics_from_results"
       ],
       "missed": [],
       "extra": [
+        "evaluation/dspy_agent_eval.py:function:_eval_one",
+        "evaluation/dspy_agent_eval.py:function:trajectory_recall_metric",
+        "evaluation/dspy_gepa_optimize.py:function:gepa_metric",
         "scripts/benchmark/run_caller_recall.py:function:_run_single"
       ],
-      "latency_ms": 49.6
+      "resolver_sources": {
+        "lsp": 1,
+        "libcst": 4
+      },
+      "latency_ms": 1343.2
     },
     {
       "id": "C004",
       "target": "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge",
-      "recall": 0.6667,
-      "precision": 0.75,
-      "retrieved_count": 4,
-      "expected_count": 3,
+      "recall": 1.0,
+      "precision": 1.0,
+      "retrieved_count": 2,
+      "expected_count": 2,
       "found": [
-        "search/graph_integration.py:method:GraphIntegration.add_chunk",
-        "search/graph_integration.py:method:GraphIntegration.build_graph_from_chunks",
-        "search/graph_integration.py:method:GraphIntegration.populate_from_embeddings"
+        "search/graph_integration.py:method:GraphIntegration._two_pass_build",
+        "search/graph_integration.py:method:GraphIntegration.add_chunk"
       ],
       "missed": [],
-      "extra": [
-        "search/graph_integration.py:class:GraphIntegration"
-      ],
-      "latency_ms": 49.0
+      "extra": [],
+      "resolver_sources": {
+        "ast": 2
+      },
+      "latency_ms": 1598.9
     },
     {
       "id": "C005",
       "target": "search/hybrid_searcher.py:method:HybridSearcher.get_by_chunk_id",
-      "recall": 0.25,
-      "precision": 0.5,
-      "retrieved_count": 8,
+      "recall": 0.75,
+      "precision": 0.5714,
+      "retrieved_count": 7,
       "expected_count": 4,
       "found": [
         "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callers",
@@ -99,49 +122,65 @@
       ],
       "missed": [],
       "extra": [
-        "mcp_server/tools/search_handlers.py:function:_handle_chunk_id_lookup",
         "search/metadata.py:method:MetadataStore.get",
-        "search/relationship_analyzer.py:class:RelationshipAnalyzer",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callees",
         "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol"
       ],
-      "latency_ms": 199.5
+      "resolver_sources": {
+        "ast": 7
+      },
+      "latency_ms": 1757.8
     },
     {
       "id": "C006",
       "target": "evaluation/chunk_mapping.py:function:find_enclosing_chunk",
       "recall": 1.0,
-      "precision": 0.5,
-      "retrieved_count": 2,
+      "precision": 0.25,
+      "retrieved_count": 4,
       "expected_count": 1,
       "found": [
         "chunking/relationships/external_call_graph.py:function:_node_to_raw_chunk_id"
       ],
       "missed": [],
       "extra": [
+        "chunking/relationships/lsp_call_graph.py:class:LSPResolver",
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver._session",
         "scripts/benchmark/build_caller_oracle.py:function:_find_enclosing_chunk"
       ],
-      "latency_ms": 49.0
+      "resolver_sources": {
+        "libcst": 2,
+        "pyan": 1,
+        "ast": 1
+      },
+      "latency_ms": 1314.7
     },
     {
       "id": "C007",
       "target": "evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
       "recall": 0.0,
-      "precision": 0.5,
-      "retrieved_count": 2,
+      "precision": 0.3333,
+      "retrieved_count": 3,
       "expected_count": 1,
       "found": [
-        "search/index_write_stage.py:method:IndexWriteStage._inject_pyan_edges"
+        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges"
       ],
       "missed": [],
       "extra": [
-        "scripts/benchmark/build_caller_oracle.py:function:_build_line_to_chunk_map"
+        "scripts/benchmark/build_caller_oracle.py:function:_build_line_to_chunk_map",
+        "search/index_write_stage.py:class:IndexWriteStage"
       ],
-      "latency_ms": 48.6
+      "resolver_sources": {
+        "libcst": 1,
+        "pyan": 1,
+        "ast": 1
+      },
+      "latency_ms": 7259.1
     }
   ],
   "meta": {
-    "project_path": "F:/RD_PROJECTS/COMPONENTS/claude-context-local",
-    "golden_path": "F:\\RD_PROJECTS\\COMPONENTS\\claude-context-local\\evaluation\\caller_golden.json",
+    "project_path": "D:/claude-context-local",
+    "golden_path": "D:\\claude-context-local\\evaluation\\caller_golden.json",
+    "direction": "callers",
     "k": 50
   }
 }

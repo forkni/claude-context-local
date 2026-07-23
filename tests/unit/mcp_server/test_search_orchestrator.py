@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
+from mcp_server.state import ApplicationState
 from mcp_server.tools.search_orchestrator import ExecutionOutcome, SearchOrchestrator
 from search.config import SearchConfig
 from search.exceptions import DimensionMismatchError
@@ -68,6 +72,27 @@ def _dim_mismatch_error():
     return err
 
 
+def _make_async_cm():
+    """A MagicMock usable as an ``async with`` context manager (no-op body)."""
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=None)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return cm
+
+
+def _make_rwlock_mock():
+    """Mock for the object returned by ``ApplicationState.get_reindex_rwlock()``.
+
+    Exposes ``.read()`` and ``.write()``, each returning a fresh async
+    context manager on every call (mirrors real ``_AsyncRWLock`` usage,
+    where both may be entered multiple times across a test).
+    """
+    rwlock = MagicMock()
+    rwlock.read = Mock(side_effect=_make_async_cm)
+    rwlock.write = Mock(side_effect=_make_async_cm)
+    return rwlock
+
+
 def _patch_execute(real_sc=None, project="/test"):
     """Context manager that patches all external deps for _execute."""
     import contextlib
@@ -88,22 +113,20 @@ def _patch_execute(real_sc=None, project="/test"):
                 "mcp_server.tools.search_orchestrator.get_searcher"
             ) as mock_get_searcher,
             patch(
-                "mcp_server.tools.search_handlers._check_auto_reindex",
-                return_value=(False, None),
+                "mcp_server.tools.search_handlers._is_index_stale",
+                return_value=True,
             ),
             patch(
-                "mcp_server.tools.search_handlers._get_index_manager_from_searcher",
-                return_value=None,
+                "mcp_server.tools.search_handlers._check_auto_reindex",
+                return_value=(False, None),
             ),
         ):
             st = Mock()
             st.current_project = project
             st.searcher = None
-            # get_reindex_lock must return an async context manager
-            _reindex_lock_cm = MagicMock()
-            _reindex_lock_cm.__aenter__ = AsyncMock(return_value=None)
-            _reindex_lock_cm.__aexit__ = AsyncMock(return_value=False)
-            st.get_reindex_lock = Mock(return_value=_reindex_lock_cm)
+            # get_reindex_rwlock() must return an object exposing async
+            # context managers from both .read() and .write().
+            st.get_reindex_rwlock = Mock(return_value=_make_rwlock_mock())
             mock_state.return_value = st
             mock_cm.return_value.get_search_mode_for_query.return_value = "hybrid"
             mock_cfg.return_value.performance.use_parallel_search = False
@@ -269,6 +292,138 @@ class TestExecuteConfigIsolation:
         assert sc.ego_graph.enabled == original_ego_enabled
 
 
+class TestExecuteConcurrencyIntegration:
+    """End-to-end concurrency proof (the plan's 'primary red signal' repro).
+
+    Uses a REAL ApplicationState (real _AsyncRWLock via get_reindex_rwlock)
+    so a reindex-triggering _execute() call and several plain-search
+    _execute() calls exercise the actual Block A / Block B-D lock wiring —
+    not a mocked lock. Reproduces (in miniature) the concurrent shape from
+    _archive/ERROR_LOG.md: a stale-index search triggers a reindex while
+    sibling searches are in flight. Proves:
+
+    1. A search's model-inference region (``searcher.search``, standing in
+       for the real embed_query / reranker calls) never overlaps a
+       concurrent reindex's write-locked critical section — the root cause
+       of Errors A and B.
+    2. Concurrent searches still run their inference concurrently with each
+       other — i.e. the fix is a real reader-writer lock, not an
+       accidental full mutex serializing every search.
+    """
+
+    @pytest.mark.asyncio
+    async def test_reindex_and_concurrent_searches_never_overlap(self):
+        state = ApplicationState()
+        state.current_project = "/test-project"
+        searcher = _make_ready_searcher()
+
+        probe_lock = threading.Lock()
+        writer_active = 0
+        reader_active = 0
+        reader_max_concurrent = 0
+        overlap_detected = False
+        writer_entered = threading.Event()
+
+        def fake_is_index_stale(project, max_age_minutes):
+            # Distinguish the reindex-trigger plan from plain search plans by
+            # max_age_minutes: only the trigger plan uses a sub-1 value.
+            return max_age_minutes < 1
+
+        def fake_check_auto_reindex(project, max_age_minutes):
+            nonlocal writer_active, overlap_detected
+            with probe_lock:
+                writer_active += 1
+                if reader_active > 0:
+                    overlap_detected = True
+            writer_entered.set()
+            # Margin, not just realism: dispatching 5 concurrent _execute() calls
+            # each through several asyncio.to_thread hops (_is_index_stale ->
+            # read-lock -> get_searcher -> search) costs tens-to-a-few-hundred ms
+            # of pure scheduling overhead on this machine — verified by neutering
+            # _AsyncRWLock.read() in a throwaway red-capability check, which saw
+            # readers arrive up to ~240ms after writer_entered fired even with no
+            # lock blocking them at all. A too-short critical section here would
+            # make this test pass vacuously (no overlap window survives dispatch
+            # overhead) regardless of whether the read lock actually blocks
+            # readers. 0.3s reliably reproduced overlap_detected=True against a
+            # neutered lock across repeated runs.
+            time.sleep(0.3)
+            with probe_lock:
+                writer_active -= 1
+            return True, None
+
+        def fake_search(*args, **kwargs):
+            nonlocal reader_active, reader_max_concurrent, overlap_detected
+            with probe_lock:
+                reader_active += 1
+                reader_max_concurrent = max(reader_max_concurrent, reader_active)
+                if writer_active > 0:
+                    overlap_detected = True
+            time.sleep(0.03)
+            with probe_lock:
+                reader_active -= 1
+            return []
+
+        searcher.search = Mock(side_effect=fake_search)
+        sc = SearchConfig()
+
+        with (
+            patch("mcp_server.tools.search_orchestrator.get_state", return_value=state),
+            patch(
+                "mcp_server.tools.search_orchestrator.get_search_config",
+                return_value=sc,
+            ),
+            patch("mcp_server.tools.search_orchestrator.get_config_manager") as mock_cm,
+            patch("mcp_server.tools.search_orchestrator.get_config") as mock_cfg,
+            patch(
+                "mcp_server.tools.search_orchestrator.get_searcher",
+                new=lambda: searcher,
+            ),
+            patch(
+                "mcp_server.tools.search_handlers._is_index_stale",
+                side_effect=fake_is_index_stale,
+            ),
+            patch(
+                "mcp_server.tools.search_handlers._check_auto_reindex",
+                side_effect=fake_check_auto_reindex,
+            ),
+        ):
+            mock_cm.return_value.get_search_mode_for_query.return_value = "hybrid"
+            mock_cfg.return_value.performance.use_parallel_search = False
+
+            orchestrator = SearchOrchestrator()
+            reindex_plan = _make_plan(auto_reindex=True, max_age_minutes=0.001)
+            search_plans = [
+                _make_plan(auto_reindex=True, max_age_minutes=5.0) for _ in range(5)
+            ]
+
+            reindex_task = asyncio.create_task(orchestrator._execute(reindex_plan))
+            # Block until the reindex task is confirmed inside the write-locked
+            # critical section before firing the concurrent searches. This
+            # removes sleep-based guessing from "did they actually race" and
+            # turns it into a guaranteed overlap *attempt* against the lock.
+            await asyncio.to_thread(writer_entered.wait, 5)
+
+            search_results = await asyncio.gather(
+                *[orchestrator._execute(p) for p in search_plans]
+            )
+            reindex_result = await reindex_task
+
+        assert not overlap_detected, (
+            "a search's inference region overlapped the reindex's write-locked "
+            "critical section — this is exactly Errors A/B from "
+            "_archive/ERROR_LOG.md"
+        )
+        assert reader_max_concurrent > 1, (
+            "searches never ran concurrently with each other — this looks like "
+            "an accidental full mutex, not a reader-writer lock"
+        )
+        assert isinstance(reindex_result, ExecutionOutcome)
+        assert reindex_result.reindexed is True
+        for r in search_results:
+            assert isinstance(r, ExecutionOutcome)
+
+
 # ---------------------------------------------------------------------------
 # Phase C: _assemble helpers (Blocks F–I)
 # ---------------------------------------------------------------------------
@@ -352,7 +507,7 @@ class TestApplySourceOrderAndBudget:
             {"chunk_id": "a.py:1-5:function:a", "file_path": "a.py", "start_line": 1},
         ]
         with patch(
-            "mcp_server.tools.search_handlers._reorder_by_source_position",
+            "mcp_server.tools.result_view._reorder_by_source_position",
             return_value=list(reversed(results)),
         ) as mock_reorder:
             out = SearchOrchestrator._apply_source_order_and_budget(
@@ -361,13 +516,51 @@ class TestApplySourceOrderAndBudget:
         mock_reorder.assert_called_once()
         assert out == list(reversed(results))
 
+    def test_source_order_with_reranking_logs_warning(self, caplog):
+        """B1: turning source_order_output on while reranking is enabled
+        overrides the reranker's ordering — this should be surfaced as a
+        warning, not silently applied.
+        """
+        sc = SearchConfig()
+        sc.output.source_order_output = True
+        sc.reranker.enabled = True
+        outcome = _make_outcome(effective_config=sc)
+        results = [
+            {"chunk_id": "b.py:10-20:function:b", "file_path": "b.py"},
+            {"chunk_id": "a.py:1-5:function:a", "file_path": "a.py"},
+        ]
+        with caplog.at_level("WARNING"):
+            SearchOrchestrator._apply_source_order_and_budget(
+                _make_plan(max_context_tokens=0), outcome, list(results)
+            )
+        assert any(
+            "source_order_output" in r.message and "reranker" in r.message.lower()
+            for r in caplog.records
+        )
+
+    def test_source_order_without_reranking_no_warning(self, caplog):
+        """No warning when reranking is disabled — no conflict to flag."""
+        sc = SearchConfig()
+        sc.output.source_order_output = True
+        sc.reranker.enabled = False
+        outcome = _make_outcome(effective_config=sc)
+        results = [
+            {"chunk_id": "b.py:10-20:function:b", "file_path": "b.py"},
+            {"chunk_id": "a.py:1-5:function:a", "file_path": "a.py"},
+        ]
+        with caplog.at_level("WARNING"):
+            SearchOrchestrator._apply_source_order_and_budget(
+                _make_plan(max_context_tokens=0), outcome, list(results)
+            )
+        assert not any("source_order_output" in r.message for r in caplog.records)
+
     def test_source_order_skipped_when_single_result(self):
         sc = SearchConfig()
         sc.output.source_order_output = True
         outcome = _make_outcome(effective_config=sc)
         single = [_make_formatted()]
         with patch(
-            "mcp_server.tools.search_handlers._reorder_by_source_position"
+            "mcp_server.tools.result_view._reorder_by_source_position"
         ) as mock_reorder:
             out = SearchOrchestrator._apply_source_order_and_budget(
                 _make_plan(max_context_tokens=0), outcome, list(single)

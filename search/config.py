@@ -5,6 +5,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -90,8 +91,8 @@ MODEL_REGISTRY = {
 class EmbeddingConfig:
     """Embedding model configuration (9 fields)."""
 
-    model_name: str = "google/embeddinggemma-300m"
-    dimension: int = 768
+    model_name: str = "BAAI/bge-m3"
+    dimension: int = 1024
     batch_size: int = 128  # Dynamic based on model, see MODEL_REGISTRY
     query_cache_size: int = 128  # LRU cache size for query embeddings
 
@@ -105,12 +106,31 @@ class EmbeddingConfig:
     )
 
 
+class SearchMode(StrEnum):
+    """The four search-mode values accepted by SearchModeConfig.default_mode.
+
+    A real str subclass — every ``== "hybrid"`` comparison, dict-key lookup,
+    and JSON round-trip (dataclasses.asdict + json.dump) keeps working
+    unchanged. Centralizes the mode literals so a typo can't silently fall
+    through search dispatch logic to the wrong branch.
+    """
+
+    HYBRID = "hybrid"
+    SEMANTIC = "semantic"
+    BM25 = "bm25"
+    AUTO = "auto"
+
+
 @dataclass
 class SearchModeConfig:
     """Search mode and BM25 settings (12 fields)."""
 
+    # Typed as ``str`` (not SearchMode) so values loaded from JSON — which are
+    # always plain str — remain valid without extra coercion; SearchMode.HYBRID
+    # is itself a valid str default since StrEnum subclasses str.
     default_mode: str = field(
-        default="hybrid", metadata={"choices": ("hybrid", "semantic", "bm25", "auto")}
+        default=SearchMode.HYBRID,
+        metadata={"choices": tuple(m.value for m in SearchMode)},
     )  # hybrid, semantic, bm25, auto
     enable_hybrid: bool = True
 
@@ -388,7 +408,7 @@ class ObservabilityConfig:
 
 @dataclass
 class CallGraphConfig:
-    """Call-graph resolver pipeline settings (5 fields).
+    """Call-graph resolver pipeline settings (6 fields).
 
     Controls which static-analysis backends run at full-index time to inject
     cross-module ``calls`` edges into the code graph.
@@ -425,6 +445,16 @@ class CallGraphConfig:
     """Per-request timeout for LSP JSON-RPC calls (seconds).
 
     Increase for large codebases where basedpyright type-checking takes longer.
+    """
+
+    lsp_total_timeout_seconds: float = 120.0
+    """Aggregate wall-clock budget for the *entire* LSP pass (seconds).
+
+    Unlike ``lsp_timeout_seconds`` (per JSON-RPC request), this bounds the
+    whole ``resolve()`` call across all files. If exceeded, the basedpyright
+    subprocess is force-killed and edges collected so far are returned —
+    partial LSP results are safe because LSP only *upgrades confidence* on
+    edges the pyan/libcst resolvers already produced.
     """
 
     use_pyproject_toml: bool = False
@@ -853,8 +883,17 @@ class SearchConfigManager:
         # performance concern. The cache hit-path (mtime unchanged) returns immediately.
         current_mtime = None
         _config_path = Path(self.config_file)
-        if _config_path.exists():
-            current_mtime = _config_path.stat().st_mtime
+        # search_config.json is a gitignored, machine-local file (see .gitignore /
+        # search_config.json.example). When it hasn't been created yet, fall back to
+        # the committed template so shared defaults still apply -- read-only: this
+        # branch never affects save_config(), which always writes self.config_file.
+        _read_path = _config_path
+        if not _config_path.exists():
+            _example_path = _config_path.with_name(_config_path.name + ".example")
+            if _example_path.exists():
+                _read_path = _example_path
+        if _read_path.exists():
+            current_mtime = _read_path.stat().st_mtime
 
         # Return cache only if file hasn't changed
         if self._config is not None and current_mtime == self._config_mtime:
@@ -864,11 +903,11 @@ class SearchConfigManager:
         config_dict: dict[str, Any] = {}
 
         # Load from file if exists
-        if _config_path.exists():
+        if _read_path.exists():
             try:
-                with open(self.config_file) as f:
+                with open(_read_path) as f:
                     raw = json.load(f)
-                self.logger.info(f"Loaded search config from {self.config_file}")
+                self.logger.info(f"Loaded search config from {_read_path}")
                 # Normalise to nested format so env overrides can be deep-merged
                 # without mixing flat and nested keys in a single dict.
                 file_is_nested = any(
@@ -878,10 +917,8 @@ class SearchConfigManager:
                 config_dict = (
                     raw if file_is_nested else SearchConfig._flat_to_nested(raw)
                 )
-            except Exception as e:
-                self.logger.warning(
-                    f"Failed to load config file {self.config_file}: {e}"
-                )
+            except Exception as e:  # noqa: BLE001 - parse-recovery: malformed config file, fall back to defaults
+                self.logger.warning(f"Failed to load config file {_read_path}: {e}")
 
         # Translate env-var flat keys to nested and deep-merge so they apply over
         # a nested config file (previously the update() call was a no-op for nested
@@ -1028,11 +1065,11 @@ class SearchConfigManager:
         config = self.load_config()
 
         # Use explicit mode if provided
-        if explicit_mode and explicit_mode != "auto":
+        if explicit_mode and explicit_mode != SearchMode.AUTO:
             return explicit_mode
 
         # Use default mode if not auto
-        if config.search_mode.default_mode != "auto":
+        if config.search_mode.default_mode != SearchMode.AUTO:
             return config.search_mode.default_mode
 
         # Auto-detect based on query characteristics
@@ -1042,17 +1079,17 @@ class SearchConfigManager:
         if any(
             keyword in query_lower for keyword in ["string", "message", "error", "log"]
         ):
-            return "bm25"
+            return SearchMode.BM25
 
         # Code structure queries -> semantic
         if any(
             keyword in query_lower
             for keyword in ["class", "function", "method", "interface"]
         ):
-            return "semantic"
+            return SearchMode.SEMANTIC
 
         # Default to hybrid for balanced approach
-        return "hybrid"
+        return SearchMode.HYBRID
 
 
 # Global configuration manager instance

@@ -79,7 +79,7 @@ def error_handler(
                             context_fields = error_context(arguments)
                             if context_fields:
                                 error_response.update(context_fields)
-                        except Exception as ctx_error:
+                        except Exception as ctx_error:  # noqa: BLE001 - api-boundary: context enrichment failure must not break error response
                             # Don't let context enrichment failure break error reporting
                             logger.warning(
                                 f"Failed to enrich error context: {ctx_error}",
@@ -90,6 +90,50 @@ def error_handler(
         return wrapper
 
     return decorator
+
+
+def with_mutation_lock(func: Callable) -> Callable:
+    """Decorator that serializes a state-mutating handler on the global lock.
+
+    §IV-C hardening: the server holds global mutable state (active project,
+    model, search config — see mcp_server/state.py) and HTTP transport runs
+    ``stateless=True``, so concurrent clients share it. Without this, one
+    client's ``switch_project``/``configure_*``/``clear_index``/
+    ``delete_project`` call could interleave with *another mutation*,
+    corrupting shared state mid-write.
+
+    Scope: this lock serializes mutations against each other ONLY. Searches
+    never acquire it, so it provides no mutation-vs-search protection —
+    handlers that tear down search resources or rewrite/delete index files
+    must additionally take the per-project
+    ``get_reindex_rwlock(project).write()`` to drain in-flight searches
+    (see handle_clear_index / handle_delete_project / handle_index_directory).
+
+    Lock order: mutation lock (outermost) → reindex rwlock. No code may
+    acquire the mutation lock while already holding a reindex rwlock — that
+    would invert the order and risk deadlock against the handlers above.
+    (SearchOrchestrator takes only the rwlock, never this lock.)
+
+    Uses ``ApplicationState.get_mutation_lock()`` — a single process-wide
+    ``asyncio.Lock`` shared by all state-mutating tools, following the same
+    lazy-creation pattern as the per-project ``get_reindex_rwlock()``. This
+    only prevents *interleaving*; it does not add session-scoped isolation
+    (a full Stateful Session Server is a separate, larger change).
+
+    Apply inside @error_handler so a failure while the lock is held still
+    gets the standard error-response treatment after the lock releases:
+
+        @error_handler("Project switch")
+        @with_mutation_lock
+        async def handle_switch_project(arguments): ...
+    """
+
+    @functools.wraps(func)
+    async def wrapper(arguments: dict[str, Any]) -> dict:
+        async with get_state().get_mutation_lock():
+            return await func(arguments)
+
+    return wrapper
 
 
 def require_indexed_project(func: Callable) -> Callable:

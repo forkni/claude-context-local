@@ -220,6 +220,34 @@ def reset_global_state() -> Generator[None, None, None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
+def detach_server_file_logging() -> Generator[None, None, None]:
+    """Prevent mcp_server's root-logger file handler from capturing pytest output.
+
+    mcp_server.server._configure_logging() attaches a DEBUG _SafeRotatingFileHandler to the
+    ROOT logger at import time, so every test logger (including deliberate Simulated/Mock
+    failure injections) would otherwise propagate into logs/mcp_server.log and masquerade as
+    real server errors. Detach it for the duration of the test session; restore afterward.
+    """
+    root = logging.getLogger()
+    try:
+        import mcp_server.server as _srv  # force _configure_logging() to have run
+
+        safe_cls = _srv._SafeRotatingFileHandler
+    except ImportError:
+        yield
+        return
+
+    detached = [h for h in list(root.handlers) if isinstance(h, safe_cls)]
+    for h in detached:
+        root.removeHandler(h)
+    try:
+        yield
+    finally:
+        for h in detached:
+            root.addHandler(h)
+
+
+@pytest.fixture(scope="session", autouse=True)
 def preserve_original_project_selection() -> Generator[None, None, None]:
     """Preserve and restore original project selection across test session.
 
@@ -374,11 +402,11 @@ def mock_storage_dir(tmp_path: Path) -> Path:
 def test_config() -> dict[str, Any]:
     """Test configuration settings."""
     return {
-        "embedding_model": "google/embeddinggemma-300m",
+        "embedding_model": "BAAI/bge-m3",
         "test_batch_size": 2,  # Small batch size for tests
         "test_timeout": 30,  # Timeout for tests
         "mock_embeddings": False,  # Use real embeddings if available
-        "embedding_dimension": 768,
+        "embedding_dimension": 1024,
         "max_chunks_for_test": 10,  # Limit chunks in tests
     }
 

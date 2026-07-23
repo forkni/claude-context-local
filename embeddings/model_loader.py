@@ -93,7 +93,7 @@ def _get_nvml_used_bytes(device: str = "cuda:0") -> int:
 
         mem = pynvml.nvmlDeviceGetMemoryInfo(_nvml_handles[idx])
         return mem.used
-    except Exception:
+    except Exception:  # noqa: BLE001 - dep-probe: pynvml/NVML unavailable, caller treats 0 as unknown
         return 0
 
 
@@ -162,7 +162,7 @@ class ModelLoader:
                     f"Total={total:.2f}GB "
                     f"({allocated / total * 100:.1f}% used)"
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: diagnostic logging is non-critical
             self._logger.debug(f"GPU memory logging failed: {e}")
 
     def _measure_activation_per_item(
@@ -232,7 +232,7 @@ class ModelLoader:
             )
             return per_item
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - resilience: activation measurement optional, fall back to 0.0
             self._logger.debug(
                 f"[ACTIVATION_MEASURE] Measurement failed for {self.model_name}: {e}"
             )
@@ -267,7 +267,7 @@ class ModelLoader:
                         "[PRECISION] Using bfloat16 (bf16) for model inference (Ampere+ GPU detected)"
                     )
                     return torch.bfloat16
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: bf16 capability check optional, fall back to fp16
                 self._logger.debug(f"bf16 check failed: {e}, falling back to fp16")
 
         # Fallback to fp16 for all CUDA GPUs
@@ -378,7 +378,7 @@ class ModelLoader:
             config = _get_config()
             if not config or not getattr(config.performance, "use_onnx", False):
                 return False
-        except Exception:
+        except Exception:  # noqa: BLE001 - parse-recovery: config unavailable, default to ONNX disabled
             return False
 
         model_config = self._get_model_config()
@@ -436,7 +436,7 @@ class ModelLoader:
                 self._logger.debug(
                     "[ONNX] Warmup inference complete — CUDA memory now allocated"
                 )
-            except Exception:
+            except Exception:  # noqa: BLE001 - resilience: warmup non-fatal, batch sizing falls back
                 # Preserve traceback for diagnostics while keeping severity at debug —
                 # warmup failure is non-fatal (batch sizing falls back to setup-only VRAM).
                 self._logger.debug("[ONNX] Warmup failed (non-fatal)", exc_info=True)
@@ -633,7 +633,7 @@ class ModelLoader:
                     self._logger.info(
                         f"Loading model from validated cache: {local_model_dir}"
                     )
-            except Exception as _e:
+            except Exception as _e:  # noqa: BLE001 - resilience: cache dir detection optional, proceed without it
                 self._logger.debug(f"Cache dir detection skipped: {_e}")
 
         # Step 4: Load model with automatic fallback

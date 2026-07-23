@@ -57,7 +57,7 @@ class ContextManagerExtractor(BaseRelationshipExtractor):
         self.relationship_type = RelationshipType.USES_CONTEXT_MANAGER
 
     def _extract_from_tree(self, tree: ast.AST, chunk_metadata: dict[str, Any]) -> None:
-        for node in ast.walk(tree):
+        for node in self._walk_once(tree):
             if isinstance(node, (ast.With, ast.AsyncWith)):
                 for item in node.items:
                     self._extract_context_expr(item.context_expr, chunk_metadata)

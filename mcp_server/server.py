@@ -12,6 +12,7 @@ Migrated from FastMCP to official MCP SDK for:
 import argparse
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import logging.handlers
@@ -114,7 +115,7 @@ def _enable_windows_ansi() -> None:
             mode = ctypes.c_ulong(0)
             if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
                 kernel32.SetConsoleMode(handle, mode.value | 0x0004)
-    except Exception:
+    except Exception:  # noqa: BLE001 - cosmetic: best-effort ANSI console support
         pass
 
 
@@ -199,6 +200,25 @@ else:
     logging.getLogger("mcp").setLevel(logging.WARNING)
     logging.getLogger("asyncio").setLevel(logging.WARNING)
 
+# Known-benign uvicorn.error messages, filtered out in app_lifespan (HTTP transport only).
+_BENIGN_UVICORN_ERROR_SUBSTRINGS = (
+    "Unexpected ASGI message",  # secondary error after a client BrokenResourceError
+    "ASGI callable returned without completing response",  # standalone SSE stream
+    # cancelled mid-flight when uvicorn shuts down (Ctrl+C) — cosmetic, not a bug.
+)
+
+
+def _drop_benign_uvicorn_errors(record: logging.LogRecord) -> bool:
+    """uvicorn.error filter: drop known-benign shutdown/disconnect noise.
+
+    Both messages are cosmetic: 'Unexpected ASGI message' follows a client
+    BrokenResourceError, and 'ASGI callable returned without completing response'
+    fires when a long-lived standalone SSE stream is cancelled at server shutdown.
+    """
+    msg = record.getMessage()
+    return not any(s in msg for s in _BENIGN_UVICORN_ERROR_SUBSTRINGS)
+
+
 # Multi-model pool configuration imported from search.config
 
 
@@ -226,8 +246,28 @@ from mcp_server.search_factory import (  # noqa: E402, F401 - Re-exported for ba
 # Server instance will be created without custom lifespan
 # Global state initialization happens in Starlette app_lifespan below
 
+
+def _get_server_version() -> str:
+    """Resolve the project version for the MCP `initialize` response.
+
+    Without an explicit version, mcp.server.lowlevel.Server falls back to the
+    MCP SDK's own package version (see create_initialization_options()), which
+    misrepresents this server's version to clients. Read the installed
+    distribution's version (kept in sync with pyproject.toml [project.version]
+    by the build backend); fall back to a literal if the package metadata is
+    unavailable (e.g. running from a source checkout without an editable install).
+    """
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _pkg_version
+
+    try:
+        return _pkg_version("claude-context-local")
+    except PackageNotFoundError:
+        return "0.21.0"
+
+
 # Create server instance
-server = Server("Code Search")
+server = Server("Code Search", version=_get_server_version())
 
 # Import tool registry
 from mcp_server.tool_registry import build_tool_list  # noqa: E402
@@ -246,10 +286,27 @@ async def handle_list_tools() -> list[Tool]:
     return tools
 
 
+def _hash_arguments(arguments: dict[str, Any] | None) -> str:
+    """Stable one-way digest of a tool call's arguments, for log correlation.
+
+    Hashes key+value pairs (not just keys) so repeated/identical calls can be
+    matched across log lines — but the digest is one-way, so raw argument
+    values are never written to logs or error responses (see the keys-only
+    echo in the `except Exception` branch of handle_call_tool, #62).
+    """
+    try:
+        canonical = json.dumps(arguments or {}, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        canonical = str(arguments)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
+
+
 @server.call_tool()
 async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Dispatch tool calls to appropriate handlers."""
     logger.info(f"[TOOL_CALL] {name}")
+    _start = time.monotonic()
+    _input_hash = _hash_arguments(arguments)
 
     try:
         from mcp_server.tool_handlers import TOOL_DISPATCH
@@ -298,6 +355,16 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
                 else str(formatted_result)
             )
 
+        # Per-call observability (§VII-D): one structured line per dispatch with
+        # name, input hash, latency, and output size — independent of whether
+        # OTel tracing (utils/observability.py) is enabled.
+        _elapsed_ms = round((time.monotonic() - _start) * 1000, 1)
+        _out_bytes = len(result_text.encode("utf-8"))
+        logger.info(
+            f"[TOOL_DONE] name={name} input_hash={_input_hash} ms={_elapsed_ms} "
+            f"out_bytes={_out_bytes} status=ok"
+        )
+
         # Return both content (backward compat) and structuredContent (native JSON, no double encoding)
         # MCP SDK 1.25.0+ supports structuredContent - clients can choose which to read.
         # structuredContent is attached ONLY for verbose: compact/ultra clients (e.g. Claude Code UI)
@@ -317,9 +384,15 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
 
     except asyncio.CancelledError:
         # Don't catch CancelledError - let it propagate for proper cleanup
+        _elapsed_ms = round((time.monotonic() - _start) * 1000, 1)
         logger.info(f"[TOOL_CANCELLED] {name} was cancelled by client")
+        logger.info(
+            f"[TOOL_DONE] name={name} input_hash={_input_hash} ms={_elapsed_ms} "
+            f"out_bytes=0 status=cancelled"
+        )
         raise
     except Exception as e:
+        _elapsed_ms = round((time.monotonic() - _start) * 1000, 1)
         logger.error(f"[TOOL_ERROR] {name}: {e}", exc_info=True)
         # Echo only argument keys (not values) to keep error payloads compact and avoid
         # doubling log noise — exc_info=True above already captures full context (#62).
@@ -328,7 +401,13 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
             tool=name,
             arguments_keys=list((arguments or {}).keys()),
         )
-        return [TextContent(type="text", text=json.dumps(error_response, indent=2))]
+        _error_text = json.dumps(error_response, indent=2)
+        logger.info(
+            f"[TOOL_DONE] name={name} input_hash={_input_hash} ms={_elapsed_ms} "
+            f"out_bytes={len(_error_text.encode('utf-8'))} status=error "
+            f"err_type={type(e).__name__}"
+        )
+        return [TextContent(type="text", text=_error_text)]
 
 
 # ============================================================================
@@ -360,7 +439,7 @@ async def handle_read_resource(uri: str) -> str:
             index_manager = get_index_manager()
             stats = index_manager.get_stats()
             return json.dumps(stats, indent=2)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - api-boundary: convert to structured error response
             return json.dumps(
                 responses.error(f"Failed to get statistics: {str(e)}"), indent=2
             )
@@ -561,15 +640,13 @@ if __name__ == "__main__":
                 try:
                     logger.info("[HTTP CONFIG] Config reload requested")
 
-                    # Reload config from file
-                    from search.config import SearchConfigManager
+                    # Reload config from file into the shared singleton so
+                    # get_search_config() consumers across the running server
+                    # pick up the change.
+                    from search.config import get_config_manager
 
-                    config_manager = SearchConfigManager()
-                    config_manager.load_config()  # Re-reads search_config.json
-
-                    # Get updated values for response
-                    # pyrefly: ignore [missing-attribute]
-                    config = config_manager.config
+                    config_manager = get_config_manager()
+                    config = config_manager.load_config()  # Re-reads search_config.json
 
                     logger.info(
                         f"[HTTP CONFIG] Reloaded: mode={config.search_mode.default_mode}, "
@@ -647,7 +724,7 @@ if __name__ == "__main__":
                             embedder = get_embedder()
                             _ = embedder.model
                             logger.info("[INIT] Embedding model pre-loaded")
-                        except Exception as e:
+                        except Exception as e:  # noqa: BLE001 - resilience: optional pre-warm, model loads lazily on first use
                             logger.warning(
                                 f"[INIT] Model pre-load failed (non-critical): {e}"
                             )
@@ -661,12 +738,11 @@ if __name__ == "__main__":
                         )
                     logger.info("=" * 60)
 
-                    # Suppress noisy ASGI errors for disconnected clients
-                    # (secondary errors after BrokenResourceError)
+                    # Suppress noisy-but-benign uvicorn.error messages (disconnected
+                    # clients, SSE streams cancelled at shutdown) — see
+                    # _drop_benign_uvicorn_errors for the full rationale.
                     logging.getLogger("uvicorn.error").addFilter(
-                        lambda record: (
-                            "Unexpected ASGI message" not in record.getMessage()
-                        )
+                        _drop_benign_uvicorn_errors
                     )
 
                     # session_manager.run() creates the task group required by handle_request

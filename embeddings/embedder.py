@@ -350,7 +350,7 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
                 "[VRAM_LIMIT] RAM fallback allowed - skipping PyTorch VRAM cap"
             )
             return True  # Don't set limit, allow PyTorch spillover
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - parse-recovery: config unavailable, use defaults
         logging.getLogger(__name__).debug(f"Config not available, using defaults: {e}")
 
     logger = logging.getLogger(__name__)
@@ -577,20 +577,27 @@ class CodeEmbedder:
     """Embedder for generating code embeddings.
 
     Supports configurable embedding models with automatic configuration detection.
-    Default model is google/embeddinggemma-300m.
+    Default model is BAAI/bge-m3.
     """
 
     def __new__(cls, *args, **kwargs) -> "CodeEmbedder":
+        """Pre-create the lifecycle lock before __init__ runs.
+
+        This is a lock-init hook, NOT a singleton pattern — every call
+        returns a fresh instance. It exists so __new__-only construction
+        paths (test mocks, unpickling) that skip __init__ still end up with
+        a functional ``_lifecycle_lock``, since the many
+        ``with self._lifecycle_lock:`` sites throughout this class assume
+        it is always present.
+        """
         instance = super().__new__(cls)
-        # Initialize lock before __init__ so __new__-only construction (test mocks,
-        # unpickling, etc.) always has a functional lock.
         # pyrefly: ignore [missing-attribute]
         instance._lifecycle_lock = threading.RLock()
         return instance
 
     def __init__(
         self,
-        model_name: str = "google/embeddinggemma-300m",
+        model_name: str = "BAAI/bge-m3",
         cache_dir: str | None = None,
         device: str = "auto",
     ) -> None:
@@ -643,6 +650,15 @@ class CodeEmbedder:
         # Avoids O(chunks × filesize) repeated re-reads when many methods share a file.
         # Maps file_path → (mtime, full_file_content); invalidated on mtime change.
         self._class_file_cache: dict[str, tuple[float, str]] = {}
+        # Derived-result caches for _extract_import_context (I2) and
+        # _get_class_signature (I2b): the splitlines()/regex work over
+        # _class_file_cache's cached content is itself identical per file
+        # (import context) or per (file, parent class) (class signature) across
+        # every chunk that shares it — memoizing collapses O(chunks) redundant
+        # CPU to O(files) / O(classes). Invalidated on mtime change, same as
+        # _class_file_cache.
+        self._import_ctx_cache: dict[str, tuple[float | None, int, str]] = {}
+        self._class_sig_cache: dict[tuple[str, str], tuple[float | None, int, str]] = {}
         # Removed: logging.basicConfig(level=INFO) — library code must not
         # mutate the root logger; it fights the MCP server's dual-handler
         # setup and overrides any earlier basicConfig call (#37).
@@ -825,6 +841,43 @@ class CodeEmbedder:
         # Sync VRAM usage tracking from ModelLoader
         self._model_vram_usage.update(self._model_loader.model_vram_usage)
 
+    def _read_source_cached(self, file_path: str) -> tuple[str, float | None]:
+        """Read a source file's full content, cached by mtime (#50 / I1).
+
+        Shared by `_extract_import_context` and `_get_class_signature` so a
+        file with N chunks is opened once per index run instead of N times —
+        each used to open the same file separately (O(chunks x filesize)).
+        Cache key is file_path; invalidated when mtime changes.
+
+        Returns ``(content, mtime)``. Callers that memoize their own derived
+        result per file (I2 / I2b) validate against this same mtime, so no
+        second ``stat()`` call is needed.
+
+        Raises whatever `open()`/`.read()` raise (OSError, UnicodeDecodeError);
+        callers handle those themselves so each keeps its own log message.
+        """
+        # getattr: tests that use __new__ (no __init__) won't have _class_file_cache.
+        _file_cache: dict[str, tuple[float, str]] | None = getattr(
+            self, "_class_file_cache", None
+        )
+        cached_mtime, content = (
+            _file_cache.get(file_path, (None, None))
+            if _file_cache is not None
+            else (None, None)
+        )
+        try:
+            current_mtime = Path(file_path).stat().st_mtime
+        except OSError:
+            current_mtime = None
+
+        if content is None or cached_mtime != current_mtime:
+            with open(file_path, encoding="utf-8") as f:
+                content = f.read()
+            if _file_cache is not None and current_mtime is not None:
+                _file_cache[file_path] = (current_mtime, content)
+
+        return content, current_mtime
+
     def _extract_import_context(self, file_path: str, max_imports: int = 10) -> str:
         """Extract first N import statements from file header.
 
@@ -836,32 +889,48 @@ class CodeEmbedder:
             String containing import statements, or empty string if none found
         """
         try:
-            with open(file_path, encoding="utf-8") as f:
-                lines = []
-                for line in f:
-                    stripped = line.strip()
-                    # Collect import statements
-                    if stripped.startswith(("import ", "from ")):
-                        lines.append(line.rstrip())
-                        if len(lines) >= max_imports:
-                            break
-                    # Stop at first non-import, non-comment, non-blank line
-                    elif (
-                        stripped
-                        and not stripped.startswith("#")
-                        and not stripped.startswith('"""')
-                        and not stripped.startswith("'''")
-                    ):
-                        # Check if we've already collected imports
-                        if lines:
-                            break
-                        # Otherwise keep scanning (might have docstring before imports)
-                return "\n".join(lines)
+            content, mtime = self._read_source_cached(file_path)
         except (OSError, UnicodeDecodeError) as e:
             self._logger.debug(
                 f"Failed to extract import context from {file_path}: {e}"
             )
             return ""
+
+        # I2: the scan below is identical for every chunk in the same file at
+        # the same max_imports setting — memoize it so a file with N chunks
+        # scans once instead of N times (getattr guards __new__ test instances,
+        # mirroring _read_source_cached's own guard).
+        _ctx_cache: dict[str, tuple[float | None, int, str]] | None = getattr(
+            self, "_import_ctx_cache", None
+        )
+        if _ctx_cache is not None:
+            cached = _ctx_cache.get(file_path)
+            if cached is not None and cached[0] == mtime and cached[1] == max_imports:
+                return cached[2]
+
+        lines = []
+        for line in content.splitlines():
+            stripped = line.strip()
+            # Collect import statements
+            if stripped.startswith(("import ", "from ")):
+                lines.append(line.rstrip())
+                if len(lines) >= max_imports:
+                    break
+            # Stop at first non-import, non-comment, non-blank line
+            elif (
+                stripped
+                and not stripped.startswith("#")
+                and not stripped.startswith('"""')
+                and not stripped.startswith("'''")
+            ):
+                # Check if we've already collected imports
+                if lines:
+                    break
+                # Otherwise keep scanning (might have docstring before imports)
+        result = "\n".join(lines)
+        if _ctx_cache is not None:
+            _ctx_cache[file_path] = (mtime, max_imports, result)
+        return result
 
     def _get_class_signature(self, chunk: CodeChunk, max_lines: int = 5) -> str:
         """Extract parent class signature (header + docstring) for method chunks.
@@ -880,28 +949,21 @@ class CodeEmbedder:
         try:
             import re
 
-            # Use cached file content to avoid re-reading the same file for every
-            # method chunk in it (O(chunks × filesize) → O(files)) (#50).
-            # Cache key is file_path; invalidated when mtime changes.
-            # getattr: tests that use __new__ (no __init__) won't have _class_file_cache.
-            _file_cache: dict[str, tuple[float, str]] | None = getattr(
-                self, "_class_file_cache", None
-            )
-            cached_mtime, content = (
-                _file_cache.get(chunk.file_path, (None, None))
-                if _file_cache is not None
-                else (None, None)
-            )
-            try:
-                current_mtime = Path(chunk.file_path).stat().st_mtime
-            except OSError:
-                current_mtime = None
+            # Shared with _extract_import_context (#50 / I1): avoids re-reading
+            # the same file for every method chunk in it (O(chunks × filesize) → O(files)).
+            content, mtime = self._read_source_cached(chunk.file_path)
 
-            if content is None or cached_mtime != current_mtime:
-                with open(chunk.file_path, encoding="utf-8") as f:
-                    content = f.read()
-                if _file_cache is not None and current_mtime is not None:
-                    _file_cache[chunk.file_path] = (current_mtime, content)
+            # I2b: the regex search + signature extraction below is identical
+            # for every sibling method of the same parent class — memoize per
+            # (file, parent_name) so N methods do it once instead of N times.
+            _sig_cache: dict[tuple[str, str], tuple[float | None, int, str]] | None = (
+                getattr(self, "_class_sig_cache", None)
+            )
+            cache_key = (chunk.file_path, chunk.parent_name)
+            if _sig_cache is not None:
+                cached = _sig_cache.get(cache_key)
+                if cached is not None and cached[0] == mtime and cached[1] == max_lines:
+                    return cached[2]
 
             # Find class definition containing this method
             # Pattern: "class ClassName" or "class ClassName(BaseClass)"
@@ -909,6 +971,8 @@ class CodeEmbedder:
 
             match = re.search(class_pattern, content, re.MULTILINE)
             if not match:
+                if _sig_cache is not None:
+                    _sig_cache[cache_key] = (mtime, max_lines, "")
                 return ""
 
             # Extract class header + first few lines (likely docstring)
@@ -933,6 +997,8 @@ class CodeEmbedder:
                     if close_idx != -1:
                         signature = signature[: close_idx + 3]
 
+            if _sig_cache is not None:
+                _sig_cache[cache_key] = (mtime, max_lines, signature)
             return signature
 
         except (OSError, UnicodeDecodeError) as e:
@@ -965,7 +1031,7 @@ class CodeEmbedder:
             max_import_lines = config.embedding.max_import_lines
             max_class_sig_lines = config.embedding.max_class_signature_lines
             enable_structural_header = config.embedding.enable_structural_header
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - parse-recovery: context config unavailable, use defaults
             self._logger.debug(f"Failed to load context config, using defaults: {e}")
             # Fallback to defaults
             enable_import_ctx = True
@@ -1305,7 +1371,7 @@ class CodeEmbedder:
                         )
                         if _cap_result is not None:
                             ort_cap_gb = _cap_result[1] / 1024**3  # bytes → GB
-                    except Exception as _ort_err:
+                    except Exception as _ort_err:  # noqa: BLE001 - resilience: ORT VRAM cap best-effort, skip on failure
                         self._logger.debug(
                             "Ignoring %s computing ORT cap", type(_ort_err).__name__
                         )
@@ -1825,7 +1891,7 @@ class CodeEmbedder:
                         torch.cuda.empty_cache()
 
                     self._logger.info("Model cleanup complete - VRAM and RAM freed")
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 - cleanup: best-effort model teardown must not raise
                     self._logger.warning(f"Error during model cleanup: {e}")
 
     def __enter__(self) -> "CodeEmbedder":

@@ -1,4 +1,4 @@
-"""Snapshot tests for mcp_server.tools.search_handlers._format_search_results.
+"""Snapshot tests for mcp_server.tools.result_view._format_search_results.
 
 Pins the list[dict] output contract for the HybridSearcher result format
 (the else-branch in _format_search_results that handles SearchResult objects).
@@ -11,7 +11,7 @@ once to generate JSON snapshots, then commit the ``__snapshots__/`` dir.
 import pytest
 from syrupy.extensions.json import JSONSnapshotExtension
 
-from mcp_server.tools.search_handlers import _format_search_results
+from mcp_server.tools.result_view import _format_search_results
 from search.reranker import SearchResult
 
 

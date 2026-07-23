@@ -12,6 +12,25 @@ from tree_sitter import Language
 from .base import LanguageChunker
 
 
+# Node types that always add exactly one decision point to cyclomatic complexity.
+# Module-level so _count_decision_points doesn't rebuild this set on every call.
+_SIMPLE_DECISION_TYPES = frozenset(
+    {
+        "if_statement",  # if/elif
+        "for_statement",  # for loop
+        "while_statement",  # while loop
+        "except_clause",  # except handler
+        "case_clause",  # match/case clause (Python 3.10+)
+        "boolean_operator",  # and, or
+        "conditional_expression",  # ternary: x if cond else y
+    }
+)
+# Comprehension types that add a decision point only when they have an if clause.
+_COMPREHENSION_TYPES = frozenset(
+    {"list_comprehension", "dictionary_comprehension", "set_comprehension"}
+)
+
+
 class PythonChunker(LanguageChunker):
     """Python-specific chunker using tree-sitter."""
 
@@ -248,7 +267,14 @@ class PythonChunker(LanguageChunker):
         return complexity
 
     def _count_decision_points(self, node: Any) -> int:
-        """Recursively count decision points in an AST node.
+        """Count decision points in an AST node's subtree.
+
+        Walks the subtree iteratively (explicit stack) instead of recursing —
+        one Python function call per subtree node was measurably expensive on
+        large functions/repos. Semantics are unchanged from the original
+        recursive implementation: every node in the subtree (including `node`
+        itself) is inspected once, and counting is order-independent, so an
+        iterative traversal produces the identical total.
 
         Args:
             node: Tree-sitter node to analyze
@@ -257,46 +283,26 @@ class PythonChunker(LanguageChunker):
             Number of decision points found
         """
         count = 0
+        stack = [node]
+        while stack:
+            current = stack.pop()
+            node_type = current.type
 
-        # Check current node type
-        if node.type in {
-            "if_statement",  # if/elif
-            "for_statement",  # for loop
-            "while_statement",  # while loop
-            "except_clause",  # except handler
-            "case_clause",  # match/case clause (Python 3.10+)
-        }:
-            count += 1
+            # if/elif/for/while/except/case/boolean-op/ternary: +1 each
+            if node_type in _SIMPLE_DECISION_TYPES:
+                count += 1
 
-        # Special handling for if_statement with elif
-        if node.type == "if_statement":
-            # Count elif clauses (each elif is an additional decision point)
-            for child in node.children:
-                if child.type == "elif_clause":
-                    count += 1
+            if node_type == "if_statement":
+                # Count elif clauses (each elif is an additional decision point)
+                for child in current.children:
+                    if child.type == "elif_clause":
+                        count += 1
+            elif node_type in _COMPREHENSION_TYPES:
+                # List/dict/set comprehensions: +1 only if they have an if clause
+                for child in current.children:
+                    if child.type == "if_clause":
+                        count += 1
 
-        # Boolean operators: and, or
-        if node.type in {"boolean_operator"}:
-            # Each and/or adds a decision point
-            count += 1
-
-        # Conditional expression (ternary): x if cond else y
-        if node.type == "conditional_expression":
-            count += 1
-
-        # List/dict/set comprehensions with if clause
-        if node.type in {
-            "list_comprehension",
-            "dictionary_comprehension",
-            "set_comprehension",
-        }:
-            # Check if comprehension has an if clause
-            for child in node.children:
-                if child.type == "if_clause":
-                    count += 1
-
-        # Recursively process all children
-        for child in node.children:
-            count += self._count_decision_points(child)
+            stack.extend(current.children)
 
         return count

@@ -71,6 +71,20 @@ SWEEP_CONFIGS: list[dict[str, Any]] = [
     {"config_name": "bm25_65_35", "bm25_weight": 0.65, "dense_weight": 0.35},
 ]
 
+# ---------------------------------------------------------------------------
+# Reranker sweep configurations (compare rerankers head-to-head)
+# ---------------------------------------------------------------------------
+RERANKER_SWEEP: list[dict[str, Any]] = [
+    {
+        "config_name": "gte",
+        "reranker_model": "Alibaba-NLP/gte-reranker-modernbert-base",
+    },
+    {"config_name": "jina_v3", "reranker_model": "jinaai/jina-reranker-v3"},
+    {"config_name": "qwen_0.6b", "reranker_model": "Qwen/Qwen3-Reranker-0.6B"},
+    {"config_name": "bge_v2_m3", "reranker_model": "BAAI/bge-reranker-v2-m3"},
+    {"config_name": "none", "reranker_enabled": False},
+]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -114,6 +128,32 @@ def _apply_weight_overrides(
             cfg.search_mode.default_mode = search_mode
     except Exception as e:
         print(f"[WARN] Could not apply weight overrides: {e}", file=sys.stderr)
+
+
+def _apply_reranker_override(
+    reranker_model: str | None,
+    reranker_enabled: bool | None,
+) -> None:
+    """Override the reranker model/enabled flag in the in-memory search config singleton.
+
+    In-memory only (no file write): does not touch ``search_config.json``, so it survives
+    the config-revert hook and never bumps the file mtime that ``SearchConfigManager``
+    watches for reload. ``RerankingEngine._ensure_reranker()`` picks up the change on the
+    next search and hot-swaps the loaded model (cleanup + rebuild) when ``model_name``
+    differs from what is currently loaded.
+    """
+    if reranker_model is None and reranker_enabled is None:
+        return
+    try:
+        from search.config import get_search_config
+
+        cfg = get_search_config()
+        if reranker_model is not None:
+            cfg.reranker.model_name = reranker_model
+        if reranker_enabled is not None:
+            cfg.reranker.enabled = reranker_enabled
+    except Exception as e:
+        print(f"[WARN] Could not apply reranker override: {e}", file=sys.stderr)
 
 
 def _get_searcher(project_path: str):
@@ -212,7 +252,8 @@ def run_benchmark(
         searcher: Initialized HybridSearcher instance.
         queries: List of query dicts from golden_dataset.json.
         k: Number of search results to retrieve.
-        category_filter: If set, only run queries in this category.  When ``None``
+        category_filter: If set, only run queries in categories from this comma-separated
+            set (e.g. ``"A,B,C"`` or a single letter like ``"D"``).  When ``None``
             (default), category D is excluded automatically — the pure-searcher
             cannot traverse the call graph and D rows would score ~0 recall,
             polluting the A/B/C aggregate.  Pass ``"D"`` explicitly to benchmark D.
@@ -226,7 +267,8 @@ def run_benchmark(
         Tuple of (per_query_results, latencies).
     """
     if category_filter:
-        filtered = [q for q in queries if q.get("category") == category_filter]
+        cats = {c.strip() for c in category_filter.split(",") if c.strip()}
+        filtered = [q for q in queries if q.get("category") in cats]
         print(f"  Filtered to {len(filtered)} queries in category '{category_filter}'")
     else:
         # Exclude category D by default: this runner uses search_code only and cannot
@@ -354,16 +396,25 @@ def print_leaderboard(
     title: str = "BENCHMARK LEADERBOARD",
 ) -> None:
     """Print a leaderboard table comparing one or more benchmark runs."""
-    # Detect whether any run has line-overlap metrics
+    # Detect whether any run has line-overlap metrics or reranker VRAM data
     has_line = any("line_iou" in run.get("aggregate", {}) for run in runs)
+    has_vram = any(
+        run.get("config_metadata", {}).get("peak_vram_reserved_gb") is not None
+        for run in runs
+    )
+
+    def _vram_str(run: dict[str, Any]) -> str:
+        vram = run.get("config_metadata", {}).get("peak_vram_reserved_gb")
+        return f" {vram:>8.2f}" if vram is not None else f" {'-':>8}"
 
     if has_line:
-        width = 107
+        width = 107 + (9 if has_vram else 0)
         sep = "=" * width
         print(f"\n{sep}\n{title}\n{sep}")
+        vram_header = f" {'VRAM(GB)':>8}" if has_vram else ""
         header = (
             f"{'Config':<22} {'MRR':>6} {'R@5':>6} {'R@7':>6} {'R@10':>6} {'HR@5':>6} "
-            f"{'NDCG@5':>8} {'Lat(ms)':>8} | {'LR':>6} {'LP':>6} {'LIoU':>6}"
+            f"{'NDCG@5':>8} {'Lat(ms)':>8}{vram_header} | {'LR':>6} {'LP':>6} {'LIoU':>6}"
         )
         print(header)
         print("-" * width)
@@ -378,12 +429,13 @@ def print_leaderboard(
                 if lr is not None
                 else " |      -      -      -"
             )
+            vram_str = _vram_str(run) if has_vram else ""
             print(
                 f"{run['config_name']:<22} "
                 f"{agg['mrr']:>6.3f} {agg['recall@5']:>6.3f} {agg.get('recall@7', 0.0):>6.3f} "
                 f"{agg['recall@10']:>6.3f} "
                 f"{agg['hit_rate@5']:>6.3f} {agg['ndcg@5']:>8.3f} "
-                f"{lat:>8.0f}{line_str}"
+                f"{lat:>8.0f}{vram_str}{line_str}"
             )
         if has_line:
             n = next(
@@ -400,12 +452,13 @@ def print_leaderboard(
                 )
         print(sep)
     else:
-        width = 87
+        width = 87 + (9 if has_vram else 0)
         sep = "=" * width
         print(f"\n{sep}\n{title}\n{sep}")
+        vram_header = f" {'VRAM(GB)':>8}" if has_vram else ""
         header = (
             f"{'Config':<22} {'MRR':>6} {'R@5':>6} {'R@7':>6} {'R@10':>6} {'HR@5':>6} "
-            f"{'NDCG@5':>8} {'Lat(ms)':>8} {'MRR':>5} {'R@5':>5} {'HR@5':>5}"
+            f"{'NDCG@5':>8} {'Lat(ms)':>8}{vram_header} {'MRR':>5} {'R@5':>5} {'HR@5':>5}"
         )
         print(header)
         print("-" * width)
@@ -414,12 +467,13 @@ def print_leaderboard(
             pf = agg.get("pass_fail", {})
             pf_str = f"{pf.get('mrr', '?'):>5} {pf.get('recall@5', '?'):>5} {pf.get('hit_rate@5', '?'):>5}"
             lat = run.get("avg_latency_ms", agg.get("avg_latency_ms", 0))
+            vram_str = _vram_str(run) if has_vram else ""
             print(
                 f"{run['config_name']:<22} "
                 f"{agg['mrr']:>6.3f} {agg['recall@5']:>6.3f} {agg.get('recall@7', 0.0):>6.3f} "
                 f"{agg['recall@10']:>6.3f} "
                 f"{agg['hit_rate@5']:>6.3f} {agg['ndcg@5']:>8.3f} "
-                f"{lat:>8.0f} {pf_str}"
+                f"{lat:>8.0f}{vram_str} {pf_str}"
             )
         print(sep)
 
@@ -553,10 +607,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--category",
-        choices=["A", "B", "C", "D"],
         help=(
-            "Filter queries by category (A=small_function, B=sibling, C=class_overview, "
-            "D=connection). Category D is excluded by default because this runner uses "
+            "Filter queries by category, comma-separated (A=small_function, B=sibling, "
+            "C=class_overview, D=connection, E=path/flow, F=similarity). Example: "
+            "'A,B,C'. Category D is excluded by default because this runner uses "
             "search_code only and cannot traverse the call graph; pass --category D to "
             "run it explicitly (expect low recall — use find_connections for D queries)."
         ),
@@ -580,6 +634,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--sweep",
         action="store_true",
         help="Run parameter sweep across predefined BM25/dense weight combinations",
+    )
+    parser.add_argument(
+        "--reranker-model",
+        help=(
+            "Override the reranker model for this run (e.g. "
+            "'jinaai/jina-reranker-v3', 'Qwen/Qwen3-Reranker-0.6B', "
+            "'Alibaba-NLP/gte-reranker-modernbert-base'). Default: use config value."
+        ),
+    )
+    parser.add_argument(
+        "--reranker-enabled",
+        choices=["true", "false"],
+        help="Override whether neural reranking is enabled for this run (baseline: 'false').",
+    )
+    parser.add_argument(
+        "--reranker-sweep",
+        action="store_true",
+        help="Run reranker comparison across predefined models (see RERANKER_SWEEP)",
     )
     parser.add_argument(
         "--compare",
@@ -611,9 +683,12 @@ def run_single(
     search_mode: str | None,
     category_filter: str | None,
     verbose: bool,
+    reranker_model: str | None = None,
+    reranker_enabled: bool | None = None,
 ) -> dict[str, Any]:
     """Execute one benchmark run and return the result dict."""
     _apply_weight_overrides(bm25_weight, dense_weight, search_mode)
+    _apply_reranker_override(reranker_model, reranker_enabled)
 
     try:
         searcher = _get_searcher(project_path)
@@ -628,6 +703,29 @@ def run_single(
         print(
             f"  Weights: BM25={bm25_weight or 'default'}  dense={dense_weight or 'default'}"
         )
+    if reranker_model is not None or reranker_enabled is not None:
+        print(
+            f"  Reranker: model={reranker_model or 'default'}  "
+            f"enabled={reranker_enabled if reranker_enabled is not None else 'default'}"
+        )
+
+    # Reset peak VRAM stats and issue a warm-up search so a reranker model swap's
+    # first-call load/download cost lands here, not in the timed latency average.
+    torch_module = None
+    if reranker_model is not None or reranker_enabled is not None:
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch_module = torch
+                torch.cuda.reset_peak_memory_stats()
+        except ImportError:
+            pass
+        if queries:
+            try:
+                searcher.search(queries[0]["query"], k=k)
+            except Exception as exc:
+                print(f"  [WARN] Warm-up search failed: {exc}", file=sys.stderr)
 
     # Build line-range lookup for line-overlap metrics (one-time scan of MetadataStore)
     line_lookup = _build_line_lookup(searcher)
@@ -657,6 +755,14 @@ def run_single(
         config_metadata["dense_weight"] = dense_weight
     if search_mode is not None:
         config_metadata["search_mode"] = search_mode
+    if reranker_model is not None:
+        config_metadata["reranker_model"] = reranker_model
+    if reranker_enabled is not None:
+        config_metadata["reranker_enabled"] = reranker_enabled
+    if torch_module is not None:
+        config_metadata["peak_vram_reserved_gb"] = round(
+            torch_module.cuda.max_memory_reserved() / 1e9, 2
+        )
 
     return {
         "config_name": config_name,
@@ -693,6 +799,47 @@ def main() -> None:
 
     dataset = _load_golden_dataset(Path(args.golden_dataset))
     verbose = not args.quiet
+    reranker_enabled = (
+        None if args.reranker_enabled is None else args.reranker_enabled == "true"
+    )
+
+    # -----------------------------------------------------------------------
+    # Reranker sweep mode: run predefined rerankers head-to-head
+    # -----------------------------------------------------------------------
+    if args.reranker_sweep:
+        print(f"\n{'=' * 70}")
+        print("RERANKER SWEEP: model comparison")
+        print(f"{'=' * 70}")
+        reranker_results: list[dict[str, Any]] = []
+        for sweep_cfg in RERANKER_SWEEP:
+            result = run_single(
+                project_path=project_path,
+                dataset=dataset,
+                config_name=sweep_cfg["config_name"],
+                k=args.k,
+                bm25_weight=args.bm25_weight,
+                dense_weight=args.dense_weight,
+                search_mode=args.search_mode,
+                category_filter=args.category,
+                verbose=False,  # quiet during sweep
+                reranker_model=sweep_cfg.get("reranker_model"),
+                reranker_enabled=sweep_cfg.get("reranker_enabled"),
+            )
+            reranker_results.append(result)
+
+        print_leaderboard(reranker_results, title="RERANKER SWEEP LEADERBOARD")
+
+        # Save sweep results
+        output_path = args.output or str(
+            _PROJECT_ROOT
+            / "benchmark_results"
+            / f"sscg_reranker_sweep_{time.strftime('%Y%m%d_%H%M%S')}.json"
+        )
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump({"sweep_results": reranker_results}, f, indent=2)
+        print(f"\nReranker sweep results saved to: {output_path}")
+        return
 
     # -----------------------------------------------------------------------
     # Sweep mode: run multiple weight combinations and print leaderboard
@@ -713,6 +860,8 @@ def main() -> None:
                 search_mode=args.search_mode,
                 category_filter=args.category,
                 verbose=False,  # quiet during sweep
+                reranker_model=args.reranker_model,
+                reranker_enabled=reranker_enabled,
             )
             sweep_results.append(result)
 
@@ -743,6 +892,8 @@ def main() -> None:
         search_mode=args.search_mode,
         category_filter=args.category,
         verbose=verbose,
+        reranker_model=args.reranker_model,
+        reranker_enabled=reranker_enabled,
     )
 
     # Print leaderboard (single row)

@@ -512,7 +512,7 @@ class BM25Index:
                     self._logger.info(
                         f"[BM25_SAVE] Saved recovered index: {self.index_path.stat().st_size} bytes"
                     )
-                except Exception as recovery_error:
+                except Exception as recovery_error:  # noqa: BLE001 - resilience: BM25 recovery best-effort, save skipped on failure
                     self._logger.error(
                         f"[BM25_SAVE] Failed to recover BM25 index: {recovery_error}"
                     )

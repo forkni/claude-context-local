@@ -12,7 +12,7 @@ class TestStructuralHeaderContextInjection:
     @pytest.fixture
     def embedder(self):
         """Create CodeEmbedder instance with minimal config."""
-        return CodeEmbedder(model_name="google/embeddinggemma-300m")
+        return CodeEmbedder(model_name="BAAI/bge-m3")
 
     def test_structural_header_method_chunk(self, embedder):
         """Verify structural header for method chunks includes parent class."""

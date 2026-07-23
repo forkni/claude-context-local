@@ -264,7 +264,7 @@ class TestHandlerChunkerOwnership:
             lock_mock = AsyncMock()
             lock_mock.__aenter__ = AsyncMock(return_value=None)
             lock_mock.__aexit__ = AsyncMock(return_value=None)
-            mock_state.return_value.get_reindex_lock.return_value = lock_mock
+            mock_state.return_value.get_reindex_rwlock.return_value.write.return_value = lock_mock
             proj_dir = tmp_path / "storage" / "proj"
             proj_dir.mkdir(parents=True)
             index_dir = proj_dir / "index"
@@ -338,6 +338,146 @@ class TestHandlerChunkerOwnership:
 
         mock_chunker_cls.for_project.assert_called_once()
         mock_chunker_cls.assert_not_called()
+
+
+class TestIndexDirectoryAsyncJob:
+    """P2-A: index_directory(wait=False) launches a background job and returns
+    a job_id immediately instead of blocking for the full indexing run.
+    """
+
+    async def test_wait_true_default_still_returns_inline_result(self, tmp_path):
+        """wait defaults to True: behavior is unchanged (no job_id, inline result)."""
+        from mcp_server.tools import index_handlers
+        from mcp_server.tools.job_registry import reset_job_registry
+
+        reset_job_registry()
+
+        async def _fake_run(_arguments):
+            return {"success": True, "files_added": 1}
+
+        with patch.object(index_handlers, "_run_index_directory", _fake_run):
+            result = await index_handlers.handle_index_directory(
+                {"directory_path": str(tmp_path)}
+            )
+
+        assert result == {"success": True, "files_added": 1}
+        assert "job_id" not in result
+
+    async def test_wait_false_returns_job_id_immediately_then_completes(self, tmp_path):
+        from mcp_server.tools import index_handlers
+        from mcp_server.tools.job_registry import (
+            JobRegistry,
+            get_job_registry,
+            reset_job_registry,
+        )
+
+        reset_job_registry()
+        captured_tasks = []
+        original_track = JobRegistry.track_background_task
+
+        def _capture(self, task):
+            captured_tasks.append(task)
+            return original_track(self, task)
+
+        async def _fake_run(_arguments):
+            return {"success": True, "files_added": 1}
+
+        project_dir = tmp_path / "proj"
+        project_dir.mkdir()
+
+        with (
+            patch.object(index_handlers, "_run_index_directory", _fake_run),
+            patch.object(JobRegistry, "track_background_task", _capture),
+        ):
+            result = await index_handlers.handle_index_directory(
+                {"directory_path": str(project_dir), "wait": False}
+            )
+
+            assert result["success"] is True
+            assert result["status"] == "running"
+            assert "job_id" in result
+
+            # Await the background task while the patches are still active —
+            # the task's coroutine looks up `_run_index_directory` as a module
+            # global at *call* time, so it must run before the patch unwinds.
+            assert captured_tasks, "background task was never tracked"
+            await captured_tasks[0]
+
+        job = await get_job_registry().get(result["job_id"])
+        assert job is not None
+        assert job.status == "done"
+        assert job.result == {"success": True, "files_added": 1}
+
+    async def test_wait_false_job_marks_error_on_exception(self, tmp_path):
+        from mcp_server.tools import index_handlers
+        from mcp_server.tools.job_registry import (
+            JobRegistry,
+            get_job_registry,
+            reset_job_registry,
+        )
+
+        reset_job_registry()
+        captured_tasks = []
+        original_track = JobRegistry.track_background_task
+
+        def _capture(self, task):
+            captured_tasks.append(task)
+            return original_track(self, task)
+
+        async def _fake_run(_arguments):
+            raise RuntimeError("disk full")
+
+        project_dir = tmp_path / "proj"
+        project_dir.mkdir()
+
+        with (
+            patch.object(index_handlers, "_run_index_directory", _fake_run),
+            patch.object(JobRegistry, "track_background_task", _capture),
+        ):
+            result = await index_handlers.handle_index_directory(
+                {"directory_path": str(project_dir), "wait": False}
+            )
+            await captured_tasks[0]
+
+        job = await get_job_registry().get(result["job_id"])
+        assert job.status == "error"
+        assert "disk full" in job.error
+
+    async def test_wait_false_job_marks_error_on_error_response(self, tmp_path):
+        """A non-raising error dict (responses.error(...)) also lands as job error."""
+        from mcp_server.tools import index_handlers
+        from mcp_server.tools.job_registry import (
+            JobRegistry,
+            get_job_registry,
+            reset_job_registry,
+        )
+
+        reset_job_registry()
+        captured_tasks = []
+        original_track = JobRegistry.track_background_task
+
+        def _capture(self, task):
+            captured_tasks.append(task)
+            return original_track(self, task)
+
+        async def _fake_run(_arguments):
+            return {"error": "Directory does not exist: /nope"}
+
+        project_dir = tmp_path / "proj"
+        project_dir.mkdir()
+
+        with (
+            patch.object(index_handlers, "_run_index_directory", _fake_run),
+            patch.object(JobRegistry, "track_background_task", _capture),
+        ):
+            result = await index_handlers.handle_index_directory(
+                {"directory_path": str(project_dir), "wait": False}
+            )
+            await captured_tasks[0]
+
+        job = await get_job_registry().get(result["job_id"])
+        assert job.status == "error"
+        assert job.error == "Directory does not exist: /nope"
 
 
 if __name__ == "__main__":

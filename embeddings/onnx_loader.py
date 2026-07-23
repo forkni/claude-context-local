@@ -147,7 +147,7 @@ def _convert_model(model_name: str, onnx_dir: Path, device: str) -> None:
         from transformers import AutoTokenizer
 
         AutoTokenizer.from_pretrained(model_name).save_pretrained(str(onnx_dir))
-    except Exception as tok_err:
+    except Exception as tok_err:  # noqa: BLE001 - resilience: tokenizer save-alongside optional, load-time fallback exists
         _log.warning(f"[ONNX] Could not save tokenizer to {onnx_dir}: {tok_err}")
 
     # Write metadata
@@ -155,7 +155,7 @@ def _convert_model(model_name: str, onnx_dir: Path, device: str) -> None:
         import optimum
 
         optimum_version = optimum.__version__
-    except Exception:
+    except Exception:  # noqa: BLE001 - dep-probe: optimum version optional metadata, default to "unknown"
         optimum_version = "unknown"
 
     model_file = (
@@ -294,7 +294,7 @@ class ONNXModelLoader:
                             f"[ONNX] Ignoring invalid model_file in convert_meta.json: "
                             f"{meta.get('model_file')!r} — using {default_model_file!r}"
                         )
-                except Exception:
+                except Exception:  # noqa: BLE001 - parse-recovery: convert_meta.json malformed, use default model file
                     _log.debug(
                         "[ONNX] Failed to parse convert_meta.json — "
                         f"using default model file {default_model_file!r}",
@@ -360,7 +360,7 @@ class ONNXModelLoader:
                             _log.debug(
                                 "[ONNX_VRAM] CUDA not available — gpu_mem_limit not set"
                             )
-                except Exception as _e:
+                except Exception as _e:  # noqa: BLE001 - resilience: VRAM cap computation non-fatal
                     _log.debug(f"[ONNX_VRAM] Could not compute cap (non-fatal): {_e}")
 
             # Suppress benign "incorrect regex pattern" warning from transformers.
@@ -379,7 +379,7 @@ class ONNXModelLoader:
                 )
                 try:
                     tokenizer = AutoTokenizer.from_pretrained(str(self._onnx_dir))
-                except Exception:
+                except Exception:  # noqa: BLE001 - resilience: tokenizer missing from ONNX dir, fall back to source model
                     # Unoptimized fallback exports may not have tokenizer files in the ONNX dir
                     tokenizer = AutoTokenizer.from_pretrained(self.model_name)
             finally:

@@ -12,6 +12,7 @@ from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 from mcp_server.utils.config_helpers import (
     get_config_via_service_locator as _get_config_via_service_locator,
 )
+from search.config import SearchMode
 from search.graph_integration import is_chunk_id
 from utils.timing import timed
 
@@ -144,7 +145,7 @@ class MultiHopSearcher:
                             all_results[cid] = reranker_result
                             hop_discovered += 1
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: per-hop expansion optional, continue without it
                 self._logger.warning(
                     f"[MULTI_HOP] Batched search failed for hop {hop}: {e}"
                 )
@@ -326,7 +327,7 @@ class MultiHopSearcher:
         self,
         query: str,
         k: int = 5,
-        search_mode: str = "hybrid",
+        search_mode: str = SearchMode.HYBRID,
         hops: int = 2,
         expansion_factor: float = 0.3,
         use_parallel: bool = True,
@@ -377,13 +378,13 @@ class MultiHopSearcher:
 
         # Pre-compute query embedding once for reuse (optimization)
         query_embedding = None
-        if search_mode in ("semantic", "hybrid") and self.embedder:
+        if search_mode in (SearchMode.SEMANTIC, SearchMode.HYBRID) and self.embedder:
             try:
                 query_embedding = self.embedder.embed_query(query)
                 self._logger.debug(
                     "[MULTI_HOP] Pre-computed query embedding for caching"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: query embedding pre-cache optional, recomputed later if needed
                 self._logger.warning(
                     f"[MULTI_HOP] Failed to pre-compute embedding: {e}"
                 )
@@ -474,7 +475,6 @@ class MultiHopSearcher:
             results=list(all_results.values()),
             k=k,
             search_mode=search_mode,
-            query_embedding=query_embedding,
         )
 
         timings["rerank"] = time.time() - rerank_start

@@ -164,22 +164,63 @@ class GraphScoringStage:
 
         Intent-aware synthetic chunk ordering (post-centrality reranking).
         Research: TNO, GRACE, GraphRAG all separate summaries from code retrieval.
+
+        Score-aware guard: a synthetic chunk that out-scores every real chunk is a
+        strong reranker/centrality signal, not the score-blind noise this reorder
+        is meant to suppress — demoting it anyway would silently override the
+        reranker's judgment (companion fix to ``source_order_output`` defaulting
+        off under reranking; see CHANGELOG). Only demote when we have no scoring
+        basis to prefer keeping it in place, matching the historical behavior.
         """
-        if intent_decision and intent_decision.intent != QueryIntent.GLOBAL:
-            real_results = [
-                r for r in results if r.get("kind") not in ("module", "community")
-            ]
-            synthetic_results = [
-                r for r in results if r.get("kind") in ("module", "community")
-            ]
-            if synthetic_results:
-                results = real_results + synthetic_results
-                logger.debug(
-                    f"[INTENT] Moved {len(synthetic_results)} synthetic chunks "
-                    f"after {len(real_results)} real code chunks "
-                    f"(intent: {intent_decision.intent.value})"
-                )
+        if not intent_decision or intent_decision.intent == QueryIntent.GLOBAL:
+            return results
+
+        real_scores = [
+            score
+            for r in results
+            if r.get("kind") not in ("module", "community")
+            for score in (self._result_score(r),)
+            if score is not None
+        ]
+        top_real_score = max(real_scores) if real_scores else None
+
+        kept: list[dict] = []
+        demoted: list[dict] = []
+        for r in results:
+            is_synthetic = r.get("kind") in ("module", "community")
+            synthetic_score = self._result_score(r) if is_synthetic else None
+            outranks_real = (
+                top_real_score is not None
+                and synthetic_score is not None
+                and synthetic_score > top_real_score
+            )
+            if is_synthetic and not outranks_real:
+                demoted.append(r)
+            else:
+                kept.append(r)
+
+        if demoted:
+            results = kept + demoted
+            logger.debug(
+                f"[INTENT] Moved {len(demoted)} synthetic chunks "
+                f"after {len(kept)} higher/equal-scoring chunks "
+                f"(intent: {intent_decision.intent.value})"
+            )
         return results
+
+    @staticmethod
+    def _result_score(result: dict) -> float | None:
+        """Best available relevance score for a result, or ``None`` if absent.
+
+        Prefers the neural reranker's score, then the blended hybrid score,
+        then the raw similarity score — mirrors the precedence used elsewhere
+        when comparing result quality.
+        """
+        for key in ("reranker_score", "blended_score", "score"):
+            value = result.get(key)
+            if value is not None:
+                return value
+        return None
 
     # ------------------------------------------------------------------
     # Cap
@@ -245,7 +286,7 @@ class GraphScoringStage:
                         logger.info(
                             f"[SSCG] No graph nodes found for {len(result_chunk_ids)} chunk_ids"
                         )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - resilience: optional SSCG subgraph extraction, search continues without it
                 logger.debug(f"[SSCG] Subgraph extraction failed: {e}")
 
         return subgraph_data

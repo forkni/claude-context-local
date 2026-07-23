@@ -12,7 +12,7 @@ from typing import Any
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from mcp_server.model_pool_manager import get_embedder
-from mcp_server.server import (
+from mcp_server.search_factory import (
     get_index_manager,
     get_searcher,
 )
@@ -25,7 +25,7 @@ from mcp_server.storage_manager import (
     update_project_filters,
 )
 from mcp_server.tools import responses
-from mcp_server.tools.decorators import error_handler
+from mcp_server.tools.decorators import error_handler, with_mutation_lock
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import (
     MODEL_REGISTRY,
@@ -74,6 +74,46 @@ def _check_file_accessibility(
             pass
 
     return inaccessible
+
+
+def _run_accessibility_precheck(directory_path: Path) -> None:
+    """Sample project files and warn if any are locked/inaccessible.
+
+    Synchronous by design — walks the directory tree and opens up to 50
+    files, so the caller offloads this via asyncio.to_thread rather than
+    running it inline on the event loop.
+
+    Args:
+        directory_path: Resolved project root to scan.
+    """
+    try:
+        # Quick file accessibility check on a sample of files
+        from chunking.tree_sitter import TreeSitterChunker
+
+        ext_set = set(TreeSitterChunker.get_supported_extensions())
+        sample_files = []
+
+        # Single lazy pass over the directory tree; break early at 50 files.
+        # Avoids up to 19 separate rglob walks (one per extension) and eliminates
+        # the materialize-before-slice anti-pattern that defeats rglob laziness.
+        for p in directory_path.rglob("*"):
+            if p.is_file() and p.suffix.lower() in ext_set:
+                sample_files.append(p)
+                if len(sample_files) >= 50:
+                    break
+
+        if sample_files:
+            inaccessible = _check_file_accessibility(sample_files, sample_size=50)
+            if inaccessible:
+                logger.warning(
+                    f"[ACCESSIBILITY] {len(inaccessible)}/{len(sample_files)} sampled files "
+                    f"are currently locked or inaccessible. Indexing will skip these files.\n"
+                    f"  Example: {inaccessible[0]}\n"
+                    f"  Tip: Close other programs (TouchDesigner, IDEs) that may have files open."
+                )
+    except Exception as e:  # noqa: BLE001 - resilience: optional accessibility check, indexing proceeds regardless
+        # Don't fail indexing if accessibility check fails
+        logger.debug(f"[ACCESSIBILITY] Check failed (non-critical): {e}")
 
 
 def _run_indexing(
@@ -304,6 +344,7 @@ def _switch_active_model(model_name: str) -> None:
 
 
 @error_handler("Clear index")
+@with_mutation_lock
 async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     """Clear the entire search index for ALL models."""
     import shutil
@@ -324,51 +365,64 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     # blocks (gc.collect, torch.cuda ops, time.sleep(0.3)) — offload.
     import asyncio
 
-    # clear_current=False: keep state.current_project alive after closing handles.
-    # clear_index only removes index files — the project dir still exists and
-    # must remain the active project so get_index_status can report empty counts.
-    await asyncio.to_thread(
-        close_project_resources, current_project, clear_current=False
-    )
+    # Exclusive write lock on the per-project reader-writer lock: drains
+    # in-flight searches (readers in Blocks B-D of SearchOrchestrator) before
+    # tearing down the searcher/embedder they use and unlinking index files
+    # they read, and blocks new searches until deletion completes — same
+    # protection handle_index_directory takes around its index rewrite. The
+    # mutation lock (decorator) alone doesn't cover this: searches never
+    # acquire it. Lock order is mutation lock → rwlock.write; nothing acquires
+    # them in reverse, so no deadlock. Trade-off: the global mutation lock is
+    # held across the drain wait (bounded by one in-flight search) — accepted
+    # for this rare admin operation; do NOT invert the order to shorten it,
+    # as holding the rwlock while waiting for the mutation lock can deadlock
+    # against another mutation doing the opposite.
+    async with state.get_reindex_rwlock(current_project).write():
+        # clear_current=False: keep state.current_project alive after closing handles.
+        # clear_index only removes index files — the project dir still exists and
+        # must remain the active project so get_index_status can report empty counts.
+        await asyncio.to_thread(
+            close_project_resources, current_project, clear_current=False
+        )
 
-    project_path = Path(current_project).resolve()
+        project_path = Path(current_project).resolve()
 
-    # File deletion and snapshot removal can block on I/O — offload to thread pool.
-    def _delete_index_files() -> tuple[list[str], int]:
-        """Delete index files + Merkle snapshots; returns (cleared_dirs, snapshots_cleared)."""
-        _cleared: list[str] = []
+        # File deletion and snapshot removal can block on I/O — offload to thread pool.
+        def _delete_index_files() -> tuple[list[str], int]:
+            """Delete index files + Merkle snapshots; returns (cleared_dirs, snapshots_cleared)."""
+            _cleared: list[str] = []
 
-        for _model_dir in _iter_project_model_dirs(project_path):
-            # Delete BM25 directory
-            _bm25 = _model_dir / "index" / "bm25"
-            if _bm25.exists():
-                shutil.rmtree(_bm25)
-                logger.info(f"Deleted BM25 directory: {_bm25}")
+            for _model_dir in _iter_project_model_dirs(project_path):
+                # Delete BM25 directory
+                _bm25 = _model_dir / "index" / "bm25"
+                if _bm25.exists():
+                    shutil.rmtree(_bm25)
+                    logger.info(f"Deleted BM25 directory: {_bm25}")
 
-            # Delete dense index files
-            _idx_dir = _model_dir / "index"
-            for _fname in ["code.index", "chunks_metadata.db", "stats.json"]:
-                _fp = _idx_dir / _fname
-                if _fp.exists():
-                    _fp.unlink()
-                    logger.info(f"Deleted: {_fp}")
+                # Delete dense index files
+                _idx_dir = _model_dir / "index"
+                for _fname in ["code.index", "chunks_metadata.db", "stats.json"]:
+                    _fp = _idx_dir / _fname
+                    if _fp.exists():
+                        _fp.unlink()
+                        logger.info(f"Deleted: {_fp}")
 
-            _cleared.append(_model_dir.name)
+                _cleared.append(_model_dir.name)
 
-        _snaps = 0
-        try:
-            _snap_mgr = SnapshotManager()
-            _snaps = _snap_mgr.delete_all_snapshots(str(project_path))
-            logger.info(f"Cleared {_snaps} Merkle snapshot(s) for {project_path}")
-        except Exception as _e:
-            logger.warning(f"Failed to clear Merkle snapshots: {_e}")
+            _snaps = 0
+            try:
+                _snap_mgr = SnapshotManager()
+                _snaps = _snap_mgr.delete_all_snapshots(str(project_path))
+                logger.info(f"Cleared {_snaps} Merkle snapshot(s) for {project_path}")
+            except Exception as _e:  # noqa: BLE001 - resilience: optional snapshot cleanup, index deletion still succeeds
+                logger.warning(f"Failed to clear Merkle snapshots: {_e}")
 
-        return _cleared, _snaps
+            return _cleared, _snaps
 
-    cleared_dirs, snapshots_cleared = await asyncio.to_thread(_delete_index_files)
+        cleared_dirs, snapshots_cleared = await asyncio.to_thread(_delete_index_files)
 
-    # Cleanup in-memory state (fast lock-guarded assignment, stays on event loop)
-    state.reset_search_components()
+        # Cleanup in-memory state (fast lock-guarded assignment, stays on event loop)
+        state.reset_search_components()
 
     logger.info(f"Cleared indices for {len(cleared_dirs)} models: {cleared_dirs}")
 
@@ -382,6 +436,7 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
 
 
 @error_handler("Delete project")
+@with_mutation_lock
 async def handle_delete_project(arguments: dict[str, Any]) -> dict:
     """Delete an indexed project completely (indices + Merkle snapshots).
 
@@ -431,43 +486,64 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
         )
 
     # 3. Close all resources for this project
-    logger.info(f"Closing resources for project: {project_path}")
-    close_project_resources(str(project_path_resolved))
+    # close_project_resources() blocks (gc.collect, torch.cuda ops, time.sleep(0.3))
+    # — offload, mirroring handle_clear_index.
+    import asyncio
 
-    # 4. Find and delete all model directories for this project
-    projects_dir = get_storage_dir() / "projects"
+    # Exclusive write lock keyed by the project being deleted (may differ from
+    # current_project): drains in-flight searches reading this project's index
+    # before the searcher teardown and rmtree below, and blocks new searches
+    # until deletion completes — same protection handle_index_directory takes.
+    # The mutation lock (decorator) alone doesn't cover this: searches never
+    # acquire it. Lock order is mutation lock → rwlock.write; nothing acquires
+    # them in reverse, so no deadlock. Same mutation-lock hold-time trade-off
+    # as handle_clear_index: held across the drain wait, accepted for this
+    # rare admin operation.
+    async with state.get_reindex_rwlock(str(project_path_resolved)).write():
+        logger.info(f"Closing resources for project: {project_path}")
+        await asyncio.to_thread(close_project_resources, str(project_path_resolved))
 
-    deleted_dirs = []
-    errors = []
+        # 4. Find and delete all model directories for this project
+        projects_dir = get_storage_dir() / "projects"
 
-    logger.info(f"Searching for project directories: {project_path_resolved}")
+        deleted_dirs = []
+        errors = []
 
-    for model_dir in _iter_project_model_dirs(project_path_resolved):
-        logger.info(f"Deleting project directory: {model_dir}")
+        logger.info(f"Searching for project directories: {project_path_resolved}")
+
+        for model_dir in _iter_project_model_dirs(project_path_resolved):
+            logger.info(f"Deleting project directory: {model_dir}")
+            try:
+                shutil.rmtree(model_dir)
+                deleted_dirs.append(model_dir.name)
+                logger.info(f"Successfully deleted: {model_dir}")
+            except PermissionError as e:
+                error_msg = f"{model_dir.name}: File locked - {e}"
+                errors.append(error_msg)
+                logger.error(f"Permission error deleting {model_dir}: {e}")
+            except Exception as e:  # noqa: BLE001 - cleanup: per-directory delete, must not block remaining directories
+                error_msg = f"{model_dir.name}: {e}"
+                errors.append(error_msg)
+                logger.error(f"Unexpected error deleting {model_dir}: {e}")
+
+        # 5. Delete Merkle snapshots for this project
+        logger.info(f"Deleting Merkle snapshots for: {project_path_resolved}")
+        snapshot_manager = SnapshotManager()
         try:
-            shutil.rmtree(model_dir)
-            deleted_dirs.append(model_dir.name)
-            logger.info(f"Successfully deleted: {model_dir}")
-        except PermissionError as e:
-            error_msg = f"{model_dir.name}: File locked - {e}"
-            errors.append(error_msg)
-            logger.error(f"Permission error deleting {model_dir}: {e}")
-        except Exception as e:
-            error_msg = f"{model_dir.name}: {e}"
-            errors.append(error_msg)
-            logger.error(f"Unexpected error deleting {model_dir}: {e}")
+            deleted_snapshots = snapshot_manager.delete_all_snapshots(
+                str(project_path_resolved)
+            )
+            logger.info(f"Deleted {deleted_snapshots} Merkle snapshot(s)")
+        except Exception as e:  # noqa: BLE001 - cleanup: best-effort snapshot delete, must not block remaining steps
+            deleted_snapshots = 0
+            logger.warning(f"Failed to delete Merkle snapshots: {e}")
 
-    # 5. Delete Merkle snapshots for this project
-    logger.info(f"Deleting Merkle snapshots for: {project_path_resolved}")
-    snapshot_manager = SnapshotManager()
-    try:
-        deleted_snapshots = snapshot_manager.delete_all_snapshots(
-            str(project_path_resolved)
-        )
-        logger.info(f"Deleted {deleted_snapshots} Merkle snapshot(s)")
-    except Exception as e:
-        deleted_snapshots = 0
-        logger.warning(f"Failed to delete Merkle snapshots: {e}")
+    # Deletion finished (possibly partially — failures are queued below for
+    # retry at next startup, which starts with a fresh rwlock dict anyway) —
+    # drop the rwlock entry so _reindex_rwlocks doesn't grow unboundedly
+    # across many index/delete cycles. Waiters keep their own reference; a
+    # later reuse of the path creates a fresh lock.
+    state.discard_reindex_rwlock(str(project_path_resolved))
 
     # 6. If deletion failed, add to cleanup queue for retry on next startup
     if errors:
@@ -513,7 +589,72 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
 
 @error_handler("Index")
 async def handle_index_directory(arguments: dict[str, Any]) -> dict:
-    """Index a directory for code search."""
+    """Index a directory for code search.
+
+    By default (``wait=True``) this blocks until indexing completes, exactly
+    as before. Pass ``wait=False`` to launch indexing as a background job and
+    get a ``job_id`` back immediately (§V-C: don't block a tool call for the
+    full duration of a long-running operation) — poll progress with
+    ``get_index_status(job_id=...)``.
+    """
+    wait = arguments.get("wait", True)
+    if wait:
+        return await _run_index_directory(arguments)
+    return await _start_index_directory_job(arguments)
+
+
+async def _start_index_directory_job(arguments: dict[str, Any]) -> dict:
+    """Launch ``_run_index_directory`` as a tracked background task.
+
+    Returns immediately with a ``job_id``; the background task reports its
+    outcome into the job registry rather than back through this call, so
+    errors raised inside the indexing pipeline are captured on the Job
+    (status="error") instead of propagating to a caller who already
+    disconnected from this request.
+    """
+    from mcp_server.tools.job_registry import get_job_registry
+
+    directory_path = str(Path(arguments["directory_path"]).resolve())
+    registry = get_job_registry()
+    job = await registry.create(kind="index_directory", target=directory_path)
+
+    async def _background() -> None:
+        try:
+            result = await _run_index_directory(arguments)
+        except Exception as e:  # noqa: BLE001 - background job boundary: capture into registry, nothing left to propagate to
+            logger.error(f"[INDEX_JOB] {job.job_id} failed: {e}", exc_info=True)
+            await registry.mark_error(job.job_id, str(e))
+            return
+        if "error" in result:
+            await registry.mark_error(job.job_id, str(result["error"]))
+        else:
+            await registry.mark_done(job.job_id, result)
+
+    import asyncio
+
+    task = asyncio.create_task(_background())
+    registry.track_background_task(task)
+
+    return responses.ok(
+        success=True,
+        job_id=job.job_id,
+        status="running",
+        project=directory_path,
+        system_message=(
+            f"Indexing started in the background (job_id={job.job_id}). "
+            "Poll get_index_status(job_id=...) until status is 'done' or "
+            "'error' before relying on search results reflecting this run."
+        ),
+    )
+
+
+async def _run_index_directory(arguments: dict[str, Any]) -> dict:
+    """Do the actual indexing work (the body formerly inline in the handler).
+
+    Split out of ``handle_index_directory`` so it can be run either inline
+    (``wait=True``, default) or as a background task (``wait=False``) without
+    duplicating logic.
+    """
     directory_path = arguments["directory_path"]
     arguments.get("project_name")
     incremental = arguments.get("incremental", True)
@@ -523,44 +664,22 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
     logger.info(f"[INDEX] directory={directory_path}, incremental={incremental}")
 
     # Step 1: Cleanup previous resources BEFORE starting indexing
+    # _cleanup_previous_resources() blocks (gc.collect, torch.cuda ops) — offload,
+    # mirroring the pattern used at status_handlers.py and server.py.
     logger.info("[INDEX] Releasing previous resources before indexing...")
+    import asyncio
+
     from mcp_server.resource_manager import _cleanup_previous_resources
 
-    _cleanup_previous_resources()
+    await asyncio.to_thread(_cleanup_previous_resources)
 
     directory_path = Path(directory_path).resolve()
     if not directory_path.exists():
         return responses.error(f"Directory does not exist: {directory_path}")
 
-    # Step 2: Optional pre-index accessibility check (sample files for locks)
-    try:
-        # Quick file accessibility check on a sample of files
-        from chunking.tree_sitter import TreeSitterChunker
-
-        ext_set = set(TreeSitterChunker.get_supported_extensions())
-        sample_files = []
-
-        # Single lazy pass over the directory tree; break early at 50 files.
-        # Avoids up to 19 separate rglob walks (one per extension) and eliminates
-        # the materialize-before-slice anti-pattern that defeats rglob laziness.
-        for p in directory_path.rglob("*"):
-            if p.is_file() and p.suffix.lower() in ext_set:
-                sample_files.append(p)
-                if len(sample_files) >= 50:
-                    break
-
-        if sample_files:
-            inaccessible = _check_file_accessibility(sample_files, sample_size=50)
-            if inaccessible:
-                logger.warning(
-                    f"[ACCESSIBILITY] {len(inaccessible)}/{len(sample_files)} sampled files "
-                    f"are currently locked or inaccessible. Indexing will skip these files.\n"
-                    f"  Example: {inaccessible[0]}\n"
-                    f"  Tip: Close other programs (TouchDesigner, IDEs) that may have files open."
-                )
-    except Exception as e:
-        # Don't fail indexing if accessibility check fails
-        logger.debug(f"[ACCESSIBILITY] Check failed (non-critical): {e}")
+    # Step 2: Optional pre-index accessibility check (sample files for locks).
+    # Walks the directory tree and opens files — offload off the event loop.
+    await asyncio.to_thread(_run_accessibility_precheck, directory_path)
 
     # Check if project already exists and handle filter immutability.
     # Use get_canonical_project_info() so filter reads work regardless of which
@@ -570,12 +689,16 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
         get_project_storage_dir(str(directory_path)) / "project_info.json"
     )
 
-    # Load stored filters if project exists
+    # Load stored filters if project exists — file read blocks, offload.
     stored_include = None
     stored_exclude = None
     if project_info_file.exists():
-        with open(project_info_file) as f:
-            project_info = json.load(f)
+
+        def _read_project_info() -> dict[str, Any]:
+            with open(project_info_file) as f:
+                return json.load(f)
+
+        project_info = await asyncio.to_thread(_read_project_info)
         stored_include = project_info.get("user_included_dirs")
         stored_exclude = project_info.get("user_excluded_dirs")
 
@@ -623,10 +746,12 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
                 "[INDEX] RAM fallback auto-disabled for this indexing operation"
             )
 
-        # Per-project asyncio.Lock prevents two concurrent index_directory calls
-        # (or a concurrent search_code auto-reindex) from reindexing the same
-        # project simultaneously.
-        async with get_state().get_reindex_lock(str(directory_path)):
+        # Exclusive write lock on the per-project reader-writer lock: prevents
+        # two concurrent index_directory calls (or a concurrent search_code
+        # auto-reindex) from reindexing the same project simultaneously, and
+        # blocks until any in-flight searches (readers) currently reading the
+        # index have drained.
+        async with get_state().get_reindex_rwlock(str(directory_path)).write():
             logger.info(f"Indexing for: {directory_path}")
 
             # Get or create project storage

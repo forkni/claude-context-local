@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 
 if TYPE_CHECKING:
-    pass
+    from chunking.tree_sitter import ParsedSource
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +62,10 @@ def profile_repository(
 ) -> RepoProfile | None:
     """Profile a repository's function size and complexity distribution.
 
-    Performs a lightweight AST scan — reuses the same tree-sitter parsers
-    as the main chunking pipeline (TreeSitterChunker.get_chunker()), so
-    no additional parsing infrastructure is needed.
+    Performs a lightweight AST scan — reuses the same read+parse seam
+    as the main chunking pipeline (TreeSitterChunker.parse_file()), so
+    no additional parsing infrastructure is needed and both passes agree
+    on which files parse.
 
     Args:
         project_path: Absolute path to the repository root
@@ -89,7 +90,8 @@ def profile_repository(
     for rel_path in supported_files:
         abs_path = str(Path(project_path) / rel_path)
 
-        # Skip files that are too large
+        # Skip files that are too large (caller-side policy — parse_file
+        # itself has no size cap, so this stays a check here)
         try:
             file_size = os.path.getsize(abs_path)
             if file_size > MAX_FILE_SIZE_BYTES:
@@ -99,39 +101,24 @@ def profile_repository(
             files_skipped += 1
             continue
 
-        # Get language-specific chunker (reuses cached parsers)
-        chunker = chunker_dispatcher.get_chunker(abs_path)
-        if chunker is None:
-            continue
-
-        # Read file content
+        # Read + parse via the same seam the chunking pass uses — a single
+        # source of truth for "which files parse" (binary/HTML detection,
+        # timeout read) shared between the profile and chunk passes.
         try:
-            with open(abs_path, encoding="utf-8", errors="ignore") as f:
-                content = f.read()
-        except OSError:
-            files_skipped += 1
-            continue
-
-        if not content.strip():
-            continue
-
-        # Parse and scan for function nodes
-        try:
-            source_bytes = bytes(content, "utf-8")
-            tree = chunker.parser.parse(source_bytes)
-
-            _scan_tree(
-                tree.root_node,
-                source_bytes,
-                chunker,
-                sizes,
-                complexities,
-            )
-            files_scanned += 1
-        except Exception as e:
+            parsed_source = chunker_dispatcher.parse_file(abs_path, rel_path=rel_path)
+        except Exception as e:  # noqa: BLE001 - parse-recovery: tree-sitter parsing of one file failing shouldn't abort the profiling scan
             logger.debug(f"[PROFILER] Skipped {rel_path}: {e}")
             files_skipped += 1
             continue
+
+        if parsed_source is None:
+            continue
+
+        if not parsed_source.content.strip():
+            continue
+
+        profile_parsed(parsed_source, sizes, complexities)
+        files_scanned += 1
 
     logger.info(
         f"[PROFILER] Scanned {files_scanned} files "
@@ -164,26 +151,27 @@ def profile_repository(
     return profile
 
 
-def _scan_tree(
-    root_node: object,
-    source_bytes: bytes,
-    chunker: object,
+def profile_parsed(
+    parsed_source: ParsedSource,
     sizes: list[int],
     complexities: list[int],
 ) -> None:
-    """Recursively walk the AST, collecting function node sizes and complexities.
+    """Walk an already-parsed file's AST, collecting function sizes/complexities.
 
     Only collects top-level functions and methods (not nested functions) to
-    avoid double-counting. Uses depth-first traversal matching chunk_code().
+    avoid double-counting. Uses depth-first traversal matching chunk_parsed().
 
     Args:
-        root_node: Tree-sitter root node
-        source_bytes: Source bytes for text extraction
-        chunker: LanguageChunker instance (provides splittable_node_types)
+        parsed_source: ParsedSource produced by TreeSitterChunker.parse_file
+                (provides the tree, its source, and the chunker that parsed it)
         sizes: Accumulator for non-whitespace character counts
         complexities: Accumulator for cyclomatic complexity scores (Python only)
     """
     from chunking.languages.base import estimate_characters
+
+    root_node = parsed_source.tree.root_node
+    source_bytes = parsed_source.content.encode("utf-8")
+    chunker = parsed_source.chunker
 
     function_node_types = _get_function_node_types(chunker)
     if not function_node_types:

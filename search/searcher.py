@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from embeddings.embedder import CodeEmbedder
 
 from .base_searcher import BaseSearcher
+from .config import SearchMode
 from .indexer import CodeIndexManager
 from .ranking_heuristics import RankingHeuristics
 from .reranker import SearchResult
@@ -56,7 +57,7 @@ class IntelligentSearcher(BaseSearcher):
         self,
         query: str,
         k: int = 4,
-        search_mode: str = "semantic",
+        search_mode: str = SearchMode.SEMANTIC,
         context_depth: int = 1,
         filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
@@ -106,18 +107,23 @@ class IntelligentSearcher(BaseSearcher):
         raw_results = self.index_manager.search(query_embedding, search_k, filters)
         self._logger.info(f"Index manager returned {len(raw_results)} raw results")
 
-        # Convert to rich search results
-        search_results = []
-        for chunk_id, similarity, metadata in raw_results:
-            result = self._create_search_result(
-                chunk_id, similarity, metadata, context_depth
-            )
-            search_results.append(result)
+        # Build thin (unenriched) results for all candidates. Enrichment
+        # (get_similar_chunks: a metadata lookup + FAISS reconstruct + nested
+        # FAISS search) is deferred until after ranking + truncation so it's
+        # only paid for the results actually returned, not all ~search_k of them.
+        search_results = [
+            self._create_search_result(chunk_id, similarity, metadata, context_depth=0)
+            for chunk_id, similarity, metadata in raw_results
+        ]
 
-        # Post-process and rank results
+        # Post-process and rank results, then truncate before enriching survivors
         ranked_results = self._ranking.rank(search_results, query)
+        top_results = ranked_results[:k]
 
-        return ranked_results[:k]
+        for result in top_results:
+            self._enrich_result(result, context_depth)
+
+        return top_results
 
     def _optimize_query(self, query: str) -> str:
         """Optimize query for better embedding generation."""
@@ -133,14 +139,32 @@ class IntelligentSearcher(BaseSearcher):
         context_depth: int,
     ) -> SearchResult:
         """Create a thin search result, enriching metadata with context information."""
+        result = SearchResult(
+            chunk_id=chunk_id,
+            score=similarity,
+            metadata={**metadata, "context_info": {}},
+            source="semantic",
+        )
+        self._enrich_result(result, context_depth)
+        return result
 
-        # Context information
-        context_info: dict[str, Any] = {}
+    def _enrich_result(self, result: SearchResult, context_depth: int) -> None:
+        """Enrich a search result's metadata with context information, in place.
 
-        if context_depth > 0:
-            # Add related chunks context
-            similar_chunks = self.index_manager.get_similar_chunks(chunk_id, k=3)
-            context_info["similar_chunks"] = [
+        Extracted from `_create_search_result` so `_semantic_search` can defer
+        this — `get_similar_chunks` costs a metadata lookup + FAISS reconstruct
+        + a nested FAISS search — until after ranking and truncation, instead of
+        paying it for every raw candidate that ranking then discards.
+        """
+        if context_depth <= 0:
+            return
+
+        metadata = result.metadata
+
+        # Add related chunks context
+        similar_chunks = self.index_manager.get_similar_chunks(result.chunk_id, k=3)
+        context_info: dict[str, Any] = {
+            "similar_chunks": [
                 {
                     "chunk_id": cid,
                     "similarity": sim,
@@ -149,22 +173,18 @@ class IntelligentSearcher(BaseSearcher):
                 }
                 for cid, sim, meta in similar_chunks[:2]  # Top 2 similar
             ]
+        }
 
-            # Add file context (folder_path only — total_chunks_in_file was
-            # returning the project-wide file count, not the per-file chunk count,
-            # and was read nowhere downstream so it has been removed (#45))
-            folder_structure = metadata.get("folder_structure", [])
-            # pyrefly: ignore [unsupported-operation]
-            context_info["file_context"] = {
-                "folder_path": "/".join(folder_structure) if folder_structure else None,
-            }
+        # Add file context (folder_path only — total_chunks_in_file was
+        # returning the project-wide file count, not the per-file chunk count,
+        # and was read nowhere downstream so it has been removed (#45))
+        folder_structure = metadata.get("folder_structure", [])
+        # pyrefly: ignore [unsupported-operation]
+        context_info["file_context"] = {
+            "folder_path": "/".join(folder_structure) if folder_structure else None,
+        }
 
-        return SearchResult(
-            chunk_id=chunk_id,
-            score=similarity,
-            metadata={**metadata, "context_info": context_info},
-            source="semantic",
-        )
+        metadata["context_info"] = context_info
 
     def search_by_file_pattern(
         self,

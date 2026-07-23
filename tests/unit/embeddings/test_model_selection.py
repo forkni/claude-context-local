@@ -50,11 +50,11 @@ class TestModelRegistry:
 class TestSearchConfigModelFields:
     """Test SearchConfig dataclass with model fields."""
 
-    def test_default_config_uses_gemma(self):
-        """Test that default config uses Gemma (backward compatibility)."""
+    def test_default_config_uses_bge_m3(self):
+        """Test that default config uses BGE-M3 (shared default, 2026-07-09)."""
         config = SearchConfig()
-        assert config.embedding.model_name == "google/embeddinggemma-300m"
-        assert config.embedding.dimension == 768
+        assert config.embedding.model_name == "BAAI/bge-m3"
+        assert config.embedding.dimension == 1024
 
     def test_config_with_bge_m3(self):
         """Test creating config with BGE-M3."""
@@ -105,8 +105,9 @@ class TestSearchConfigManager:
             config_file = Path(tmpdir) / "test_config.json"
             mgr = SearchConfigManager(config_file=str(config_file))
             config = mgr.load_config()
-            # Should default to Gemma when no config exists
-            assert "gemma" in config.embedding.model_name.lower()
+            # Should default to BGE-M3 when no config file (and no .example
+            # sibling in this temp dir) exists
+            assert "bge" in config.embedding.model_name.lower()
 
     def test_config_manager_save_and_load(self):
         """Test saving and loading model configuration."""
@@ -158,10 +159,10 @@ class TestCodeEmbedderModelSupport:
             mock_st.return_value = mock_model
             yield mock_st
 
-    def test_default_model_is_gemma(self):
-        """Test that default model is Gemma (backward compatibility)."""
+    def test_default_model_is_bge_m3(self):
+        """Test that default model is BGE-M3 (shared default, 2026-07-09)."""
         embedder = CodeEmbedder()
-        assert "gemma" in embedder.model_name.lower()
+        assert "bge" in embedder.model_name.lower()
 
     def test_embedder_with_bge_m3(self):
         """Test creating embedder with BGE-M3."""
@@ -240,9 +241,9 @@ class TestBackwardCompatibility:
 
     def test_old_code_still_works(self):
         """Test that code not specifying model still works."""
-        # This should default to Gemma
+        # This should default to BGE-M3
         embedder = CodeEmbedder()
-        assert embedder.model_name == "google/embeddinggemma-300m"
+        assert embedder.model_name == "BAAI/bge-m3"
 
     def test_config_without_model_fields(self):
         """Test that config works without new model fields."""
@@ -255,8 +256,8 @@ class TestBackwardCompatibility:
 
         config = SearchConfig.from_dict(old_config)
         # Should use defaults for missing fields
-        assert config.embedding.model_name == "google/embeddinggemma-300m"
-        assert config.embedding.dimension == 768
+        assert config.embedding.model_name == "BAAI/bge-m3"
+        assert config.embedding.dimension == 1024
 
 
 if __name__ == "__main__":
