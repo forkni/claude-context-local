@@ -7,7 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.21.0] - 2026-07-04
+## [0.21.0] - 2026-07-23
+
+### Added
+
+- **MCPB extension bundle** (`code-search-extension/`) — packages the MCP server as a distributable
+  Claude Desktop extension.
+- **Module-preamble chunks** — emit a dedicated chunk for each file's leading imports/module
+  docstring and respect it in reranker ordering, giving searches import-context without inflating
+  the first code chunk.
+- **MCP-server hardening** per the architecture-patterns paper on tool-count budgets (arXiv:2606.30317):
+  core/advanced tool tiers gated behind `MCP_EXPOSE_ADVANCED_TOOLS` (10 core tools always listed, 8
+  advanced config/tuning/destructive tools hidden from `list_tools` by default but still dispatchable
+  by name), async index jobs, dispatch telemetry, and a mutation lock serializing index-mutating calls.
+- **Claude Desktop MCP setup guide** — new doc walking through StreamableHTTP client configuration.
+- **Parse-once measurement harness** — profiled a single shared `ParsedSource` per file across chunking
+  and relationship extraction; declined as its own ADR (ADR-0009) since the seam landed as a
+  straightforward refactor rather than an architecturally contentious choice.
+- **Reranker comparison benchmarking** (`scripts/benchmark/run_sscg_benchmark.py`) — `--reranker-model`
+  and `--reranker-enabled` flags override the reranker for a single run; `--reranker-sweep` runs a
+  predefined `RERANKER_SWEEP` (gte, jina_v3, qwen_0.6b, bge_v2_m3, none) and prints a comparison
+  leaderboard. `--category` now accepts a comma-separated list (e.g. `A,B,C`). Leaderboard gained a
+  `VRAM(GB)` column (peak `torch.cuda.max_memory_reserved()` per run).
+
+### Changed
+
+- **Default embedding model** switched to `BAAI/bge-m3` across every config reader
+  (`search/config.py:EmbeddingConfig`, `ModelPoolManager`), replacing the prior per-reader defaults.
+- **`SearchMode` StrEnum** (`search/config.py`) centralizes the `hybrid`/`semantic`/`bm25`/`auto`
+  search-mode literals that were previously scattered as bare strings.
+- **`ParsedSource` seam** extracted for `TreeSitterChunker`, decoupling parse output from the chunker's
+  internal representation.
+- Removed the superseded `mcp-search-tool` skill (folded into `auto-git-workflow`).
+- Untracked `search_config.json` from the repo index; added a `.example` template with a loader
+  fallback so a missing local config no longer breaks startup.
+- `call_graph.use_pyproject_toml` default corrected; added `lsp_total_timeout_seconds` config knob.
+- **Reranker selection UI** (`start_mcp_server.cmd`) — removed BGE (`BAAI/bge-reranker-v2-m3`) from the
+  interactive "Select Reranker Model" menu: benchmarked as strictly dominated by GTE on speed (MRR
+  0.748 @ 193ms vs BGE's 0.716 @ 268ms, same VRAM) and by Qwen3/Jina on quality, with no scenario where
+  it's the right pick. Remaining GTE/Qwen3/Jina v3 choices renumbered 1-3 and annotated with
+  VRAM-tier guidance and benchmark numbers (MRR/latency/VRAM) to help pick a model for a given machine.
+  `README.md` and `docs/ADVANCED_FEATURES_GUIDE.md` updated to match (BGE reranker mentions removed
+  from current-facing docs; dated historical/changelog records elsewhere left untouched).
 
 ### Fixed
 
@@ -26,24 +67,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ModelPoolManager.initialize_pool`, `ModelPoolManager._load_pool_embedder` — confirmed removed via
   direct index lookup). Retargeted to the live `ModelPoolManager.get_embedder` equivalent; 0 stale
   references remain.
+- **LSP call-graph resolver deadlock** eliminated via a persistent reader thread instead of a
+  per-request subprocess pipe.
+- **Scope-aware call-graph resolution** — fixed alias mis-binding where an imported name shadowed by a
+  local variable of the same name was resolved to the wrong callee.
+- Serialized auto-reindex against in-flight searches; added reranker inference locks to prevent
+  concurrent GPU access during model swap.
+- **Effective-Python audit** — narrowed broad `except` handlers to their real raise surface, added
+  write-locks around shared mutable state, offloaded event-loop-blocking calls (`asyncio.to_thread`),
+  fixed an O(n²) constant-usage scan, and addressed the remaining PR #40 review follow-ups (rwlock
+  cleanup, a real-lock drain test, a logger parameter fix).
+- Corrected several drifted golden-dataset caller/callee relevance grades (C004, OB02, OB07) and
+  `ParsedSource` typing in `repo_profiler.profile_parsed` / `measure_parse_once`.
+- Silenced a benign uvicorn ASGI error on Ctrl+C HTTP-server shutdown.
+- Stopped pytest failure-injection logs from bleeding into `logs/mcp_server.log`.
+- Aligned CI and local quality gates (pyrefly, Node 20 `upload-artifact@v6`, pre-commit).
 
-### Added
+### Performance
 
-- **Reranker comparison benchmarking** (`scripts/benchmark/run_sscg_benchmark.py`) — `--reranker-model`
-  and `--reranker-enabled` flags override the reranker for a single run; `--reranker-sweep` runs a
-  predefined `RERANKER_SWEEP` (gte, jina_v3, qwen_0.6b, bge_v2_m3, none) and prints a comparison
-  leaderboard. `--category` now accepts a comma-separated list (e.g. `A,B,C`). Leaderboard gained a
-  `VRAM(GB)` column (peak `torch.cuda.max_memory_reserved()` per run).
+- Shared a single AST walk across relationship extractors instead of re-walking per extractor.
+- Dedent-once for call-graph and phase-3 relationship extraction.
+- Memoized per-file import context and class signature lookups (I2/I2b).
+- Collapsed per-query config fetches in the reranking engine (R1).
+- Shared mtime-cached file read between context-extraction helpers (I1).
+- Removed a dead metadata re-score loop from `rerank_by_query` (Q1).
+- Read each source file once during chunking instead of re-reading per chunk (B3).
+- Deferred semantic-search enrichment until after rank+truncate (A1).
+- Iterative (non-recursive) complexity walk; faster non-whitespace counting in the chunker.
 
-### Changed
+### Security
 
-- **Reranker selection UI** (`start_mcp_server.cmd`) — removed BGE (`BAAI/bge-reranker-v2-m3`) from the
-  interactive "Select Reranker Model" menu: benchmarked as strictly dominated by GTE on speed (MRR
-  0.748 @ 193ms vs BGE's 0.716 @ 268ms, same VRAM) and by Qwen3/Jina on quality, with no scenario where
-  it's the right pick. Remaining GTE/Qwen3/Jina v3 choices renumbered 1-3 and annotated with
-  VRAM-tier guidance and benchmark numbers (MRR/latency/VRAM) to help pick a model for a given machine.
-  `README.md` and `docs/ADVANCED_FEATURES_GUIDE.md` updated to match (BGE reranker mentions removed
-  from current-facing docs; dated historical/changelog records elsewhere left untouched).
+- Resolved 21 dependency CVEs; re-synced `transformers` to its security-patched pin.
+- Upgraded `transformers` to 5.x and dropped the ONNX optional extra to unblock CVE-2026-4372.
+
+*3 chore-only commits (uv.lock relocks, a trailing-newline cleanup) omitted as non-user-facing.*
 
 ---
 
