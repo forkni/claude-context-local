@@ -252,7 +252,7 @@ def _make_resolver(
     def _available() -> bool:
         return available
 
-    def _resolve(project_root, raw_line_map, logger):  # type: ignore[return]
+    def _resolve(project_root, raw_line_map, logger, py_files=None):  # type: ignore[return]
         if raise_on_resolve:
             raise RuntimeError("resolver exploded")
         return edges

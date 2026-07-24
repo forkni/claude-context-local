@@ -199,7 +199,7 @@ projects):
 manager = FullRepoManager(
     repo_root_str,
     abs_keys,
-    {FullyQualifiedNameProvider, PositionProvider},
+    {FullyQualifiedNameProvider},
     use_pyproject_toml=use_pyproject_toml,
 )
 manager.resolve_cache()  # front-load batch cache
@@ -215,7 +215,12 @@ manager.resolve_cache()  # front-load batch cache
 | `PositionProvider` | AST | Line/column offsets | — |
 | `TypeInferenceProvider` | pyre + watchman | Type-aware, most precise | ❌ Windows-incompatible (see §3.6) |
 
-We use **`FullyQualifiedNameProvider` + `PositionProvider`** only.
+We use **`FullyQualifiedNameProvider`** only. `PositionProvider` was dropped
+(profiling measured it as ~10% marginal cost on top of FQN resolution — its
+own whole-tree `visit_batched` pass per file, just to populate the edge's
+call-site `line`). Every libcst-sourced edge now reports `line=0`, which the
+injection seam treats as "unknown" and omits from the output payload rather
+than an error (see `search/index_write_stage.py` / `subgraph_extractor.py`).
 
 `FullyQualifiedNameProvider` produces **import-site names** — the name that
 `import x.y.z` would resolve to.  It does **not** chase re-exports

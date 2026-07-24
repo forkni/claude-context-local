@@ -156,6 +156,7 @@ class CallEdgeResolver(Protocol):
         project_root: Path,
         raw_line_map: dict[str, list[tuple[int, int, str]]],
         logger: logging.Logger,
+        py_files: list[str] | None = None,
     ) -> list[ResolvedEdge]:
         """Run the resolver and return call edges.
 
@@ -164,6 +165,13 @@ class CallEdgeResolver(Protocol):
             raw_line_map: Per-file sorted ``(start, end, raw_chunk_id)`` list,
                 built with ``normalize=False`` so ids match graph node keys.
             logger: Logger for progress and warning messages.
+            py_files: Pre-gathered/scoped/validated absolute ``.py`` paths (see
+                :func:`prepare_scoped_files`). When supplied, the resolver must
+                use these directly instead of recomputing its own scope —
+                :func:`run_resolvers` hoists this computation once for all
+                resolvers. When ``None`` (the default), the resolver computes
+                its own scope exactly as before, so direct callers (e.g.
+                ``build_call_edges``) are unaffected.
 
         Returns:
             List of :class:`ResolvedEdge`.  The injection seam filters edges
@@ -331,9 +339,19 @@ def run_resolvers(
 ) -> dict[tuple[str, str], ResolvedEdge]:
     """Run each available resolver and merge edges by maximum confidence.
 
-    Resolvers are run in *ascending* ``base_confidence`` order so that
-    higher-confidence resolvers overwrite lower-confidence entries for the same
-    ``(caller_id, callee_id)`` pair.
+    Available resolvers are dispatched *concurrently* on a thread pool — pure
+    Python CPU resolvers (pyan, LibCST) serialize against each other on the
+    GIL either way, but the I/O-bound LSP resolver (waiting on the
+    ``basedpyright-langserver`` subprocess) genuinely overlaps with them.
+    Results are then merged **serially**, iterating resolvers in *ascending*
+    ``base_confidence`` order, so higher-confidence resolvers overwrite
+    lower-confidence entries for the same ``(caller_id, callee_id)`` pair —
+    this preserves the exact tie-break semantics of the old strictly-serial
+    implementation regardless of which future finishes first.
+
+    The shared ``gather → scope → validate`` file-list preamble
+    (:func:`prepare_scoped_files`) is computed **once here** instead of once
+    per resolver, and passed to each resolver's ``resolve(..., py_files=...)``.
 
     Args:
         resolvers: Resolver instances in any order; sorted internally by
@@ -348,49 +366,86 @@ def run_resolvers(
         the same pair, the first (lower-precedence) value is kept.
     """
     import traceback
+    from concurrent.futures import ThreadPoolExecutor
+
+    from utils.observability import wrap_in_context
 
     merged: dict[tuple[str, str], ResolvedEdge] = {}
 
-    # Sort ascending so higher-confidence resolvers overwrite lower-confidence ones.
+    # Sort ascending so higher-confidence resolvers overwrite lower-confidence
+    # ones; filter to available() up-front so the preamble below is skipped
+    # entirely when every resolver is unavailable.
+    available_resolvers: list[CallEdgeResolver] = []
     for resolver in sorted(resolvers, key=lambda r: r.base_confidence):
-        if not resolver.available():
+        if resolver.available():
+            available_resolvers.append(resolver)
+        else:
             logger.info(
                 "[RESOLVERS] %s resolver unavailable (optional dep missing) — "
                 "install '[callgraph]' extra for higher-recall cross-module edges",
                 resolver.name,
             )
-            continue
 
-        try:
-            edges = resolver.resolve(project_root, raw_line_map, logger)
-        except Exception:  # noqa: BLE001 - resilience: an optional resolver failing must not break the overall call-graph build
-            logger.warning(
-                "[RESOLVERS] %s resolver failed (non-fatal):\n%s",
-                resolver.name,
-                traceback.format_exc(),
+    if not available_resolvers:
+        return merged
+
+    # Hoisted once for all resolvers (was previously recomputed identically by
+    # each of pyan/libcst/lsp). A resolver still falls back to computing its
+    # own scope if this comes back None (e.g. no files at all under the root).
+    py_files = prepare_scoped_files(project_root, raw_line_map, logger, "RESOLVERS")
+
+    executor = ThreadPoolExecutor(max_workers=len(available_resolvers))
+    try:
+        futures = [
+            executor.submit(
+                wrap_in_context(resolver.resolve),
+                project_root,
+                raw_line_map,
+                logger,
+                py_files,
             )
-            continue
+            for resolver in available_resolvers
+        ]
 
-        added = upgraded = (
-            0  # pragma: no mutate — logging counters only; value doesn't affect logic
-        )
-        for edge in edges:
-            key = (edge.caller_id, edge.callee_id)
-            existing = merged.get(key)
-            if existing is None:
-                merged[key] = edge
-                added += 1  # pragma: no mutate — logging counter
-            elif edge.confidence > existing.confidence:
-                merged[key] = edge
-                upgraded += 1  # pragma: no mutate — logging counter
+        # Collected in the same ascending-confidence order the resolvers were
+        # submitted in, so merge precedence is unaffected by which finishes first.
+        for resolver, future in zip(available_resolvers, futures, strict=True):
+            try:
+                edges = future.result()
+            except Exception:  # noqa: BLE001 - resilience: an optional resolver failing must not break the overall call-graph build
+                logger.warning(
+                    "[RESOLVERS] %s resolver failed (non-fatal):\n%s",
+                    resolver.name,
+                    traceback.format_exc(),
+                )
+                continue
 
-        logger.info(
-            "[RESOLVERS] %s: %d edges → added=%d, upgraded=%d (total merged so far: %d)",
-            resolver.name,
-            len(edges),
-            added,
-            upgraded,
-            len(merged),
-        )
+            added = upgraded = (
+                0  # pragma: no mutate — logging counters only; value doesn't affect logic
+            )
+            for edge in edges:
+                key = (edge.caller_id, edge.callee_id)
+                existing = merged.get(key)
+                if existing is None:
+                    merged[key] = edge
+                    added += 1  # pragma: no mutate — logging counter
+                elif edge.confidence > existing.confidence:
+                    merged[key] = edge
+                    upgraded += 1  # pragma: no mutate — logging counter
+
+            logger.info(
+                "[RESOLVERS] %s: %d edges → added=%d, upgraded=%d (total merged so far: %d)",
+                resolver.name,
+                len(edges),
+                added,
+                upgraded,
+                len(merged),
+            )
+    finally:
+        # Do not use the bare `with ThreadPoolExecutor(...)` form — its
+        # __exit__ calls shutdown(wait=True), which can deadlock against
+        # uninterruptible pure-Python resolver loops (see VERSION_HISTORY).
+        # cancel_futures=True is a no-op for already-running/finished futures.
+        executor.shutdown(wait=False, cancel_futures=True)
 
     return merged

@@ -319,14 +319,18 @@ class IndexWriteStage:
                         caller_id, callee_id, "calls"
                     ].get("resolver_confidence", 0.0)
                     if edge.confidence > existing_confidence:
-                        storage.upgrade_call_edge(
-                            caller_id,
-                            callee_id,
-                            resolver_source=edge.source,
-                            resolver_confidence=edge.confidence,
-                            is_resolved=True,
-                            line=edge.line,
-                        )
+                        upgrade_attrs: dict[str, Any] = {
+                            "resolver_source": edge.source,
+                            "resolver_confidence": edge.confidence,
+                            "is_resolved": True,
+                        }
+                        # Only overwrite the existing line if this edge actually
+                        # has one — a resolver that doesn't track lines (e.g.
+                        # libcst with PositionProvider dropped) reports line=0,
+                        # which must not clobber a good AST-sourced line number.
+                        if edge.line > 0:
+                            upgrade_attrs["line"] = edge.line
+                        storage.upgrade_call_edge(caller_id, callee_id, **upgrade_attrs)
                         upgraded += 1
                         injected += 1
                     else:

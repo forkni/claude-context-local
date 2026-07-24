@@ -573,6 +573,7 @@ class LSPResolver:
         project_root: Path,
         raw_line_map: dict[str, list[tuple[int, int, str]]],
         logger: logging.Logger,
+        py_files: list[str] | None = None,
     ) -> list[ResolvedEdge]:
         """Spawn basedpyright-langserver, query callHierarchy, return edges.
 
@@ -580,6 +581,9 @@ class LSPResolver:
             project_root: Absolute path to the project root.
             raw_line_map: Per-file sorted ``(start, end, raw_chunk_id)`` list.
             logger: Logger for progress and warning messages.
+            py_files: Pre-gathered/scoped/validated absolute ``.py`` paths.
+                When ``None`` (direct callers), this resolver computes its own
+                scope as before.
 
         Returns:
             Deduplicated list of :class:`ResolvedEdge` with ``source="lsp"``
@@ -592,8 +596,10 @@ class LSPResolver:
             )
             return []
 
-        # Gather, scope to indexed files, and validate — single preamble owner.
-        py_files = prepare_scoped_files(project_root, raw_line_map, logger, "LSP")
+        # Gather, scope to indexed files, and validate — single preamble owner
+        # (skipped when the caller already hoisted this via run_resolvers()).
+        if py_files is None:
+            py_files = prepare_scoped_files(project_root, raw_line_map, logger, "LSP")
         if py_files is None:
             return []
 

@@ -2149,7 +2149,7 @@ v0.14.0 introduced a pluggable `CallEdgeResolver` protocol with confidence-prece
 }
 ```
 
-**Merge semantics**: `run_resolvers()` iterates resolvers in ascending `base_confidence` order; each resolver can only *upgrade* an edge (never downgrade). The edge emitted for any `(caller_id, callee_id)` pair carries the provenance of the highest-confidence resolver that resolved it.
+**Merge semantics**: `run_resolvers()` dispatches available resolvers concurrently on a thread pool (the I/O-bound LSP resolver overlaps with the CPU-bound pyan/LibCST ones; pyan and LibCST still serialize against each other on the GIL), then **merges** results serially in ascending `base_confidence` order; each resolver can only *upgrade* an edge (never downgrade). The edge emitted for any `(caller_id, callee_id)` pair carries the provenance of the highest-confidence resolver that resolved it.
 
 **Per-entry provenance** (every caller and callee entry in `find_connections` output):
 

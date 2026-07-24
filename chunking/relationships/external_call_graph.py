@@ -203,6 +203,7 @@ class PyanResolver:
         project_root: Path,
         raw_line_map: dict[str, list[tuple[int, int, str]]],
         logger: logging.Logger,
+        py_files: list[str] | None = None,
     ) -> list[ResolvedEdge]:
         """Run pyan3 on the project and return :class:`ResolvedEdge` instances.
 
@@ -211,6 +212,9 @@ class PyanResolver:
             raw_line_map: Per-file sorted ``(start, end, raw_chunk_id)`` list,
                 built with ``normalize=False`` so ids match graph node keys.
             logger: Logger for progress and warning messages.
+            py_files: Pre-gathered/scoped/validated absolute ``.py`` paths.
+                When ``None`` (direct callers, e.g. ``build_call_edges``), this
+                resolver computes its own scope as before.
 
         Returns:
             Deduplicated list of :class:`ResolvedEdge` for edges where both
@@ -223,8 +227,10 @@ class PyanResolver:
             )
             return []
 
-        # Gather, scope to indexed files, and validate — single preamble owner.
-        py_files = prepare_scoped_files(project_root, raw_line_map, logger, "PYAN")
+        # Gather, scope to indexed files, and validate — single preamble owner
+        # (skipped when the caller already hoisted this via run_resolvers()).
+        if py_files is None:
+            py_files = prepare_scoped_files(project_root, raw_line_map, logger, "PYAN")
         if py_files is None:
             return []
 

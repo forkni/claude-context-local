@@ -447,7 +447,7 @@ class CallGraphConfig:
     Increase for large codebases where basedpyright type-checking takes longer.
     """
 
-    lsp_total_timeout_seconds: float = 120.0
+    lsp_total_timeout_seconds: float = 180.0
     """Aggregate wall-clock budget for the *entire* LSP pass (seconds).
 
     Unlike ``lsp_timeout_seconds`` (per JSON-RPC request), this bounds the
