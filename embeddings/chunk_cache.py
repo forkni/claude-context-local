@@ -38,6 +38,7 @@ raw chunk content would serve stale vectors for such chunks.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import os
@@ -217,14 +218,11 @@ class ChunkEmbeddingCache:
             logger.warning(
                 "Failed to save chunk embedding cache to %s: %s", self._path, exc
             )
-            try:
+            # Cleanup of the partial .tmp file is best-effort — e.g. its parent may
+            # itself not be a directory (the same failure mode that put us in this
+            # except branch). Never let cleanup promote a fail-soft save() into a raise.
+            with contextlib.suppress(OSError):
                 tmp.unlink(missing_ok=True)
-            except OSError:
-                # Cleanup of the partial .tmp file is best-effort — e.g. its
-                # parent may itself not be a directory (the same failure
-                # mode that put us in this except branch). Never let cleanup
-                # promote a fail-soft save() into a raise.
-                pass
 
     def _evict(self, live_keys: set[str]) -> None:
         """Drop least-recently-used, non-live entries down to the cap.
