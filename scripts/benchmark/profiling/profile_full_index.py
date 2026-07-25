@@ -21,8 +21,9 @@ this harness pays that same small fixed ceremony cost, same as the CLI does.
 
 Layer 1 (phase wall-clock attribution): every entry point below is
 class/module patched with a `time.perf_counter()` wrapper before the run,
-so nested calls (e.g. the 3x `prepare_scoped_files` preamble) are captured
-per-call, not just as one lump sum.
+so nested calls (e.g. the resolver preamble, hoisted to run once via
+`prepare_scoped_files_hoisted` since round 1 of the optimization campaign)
+are captured per-call, not just as one lump sum.
 
 Layer 2 (function-level cProfile): on the *last* run only (so profiling
 overhead never pollutes the timed median), `PyanResolver.resolve`,

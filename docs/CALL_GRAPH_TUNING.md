@@ -382,13 +382,22 @@ its name from the list.
 ```json
 "call_graph": {
   "lsp_enabled": true,
-  "lsp_timeout_seconds": 30.0
+  "lsp_timeout_seconds": 30.0,
+  "lsp_total_timeout_seconds": 180.0
 }
 ```
 
 basedpyright must be installed (`pip install basedpyright`) and the LSP server
 must be startable.  On Windows, `lsp_call_graph.py` falls back to the venv
 `basedpyright` binary if the system-level one is absent.
+
+`lsp_timeout_seconds` bounds each individual JSON-RPC request; increase it for
+large codebases where a single `callHierarchy/outgoingCalls` type-check pass
+takes longer than 30s. `lsp_total_timeout_seconds` is the separate aggregate
+budget for the *whole* LSP resolver pass across all files — if exceeded, the
+basedpyright subprocess is force-killed and whatever edges were collected so
+far are kept (safe, since LSP only upgrades confidence on edges pyan/libcst
+already found).
 
 **Requires v0.14.0+** — earlier builds silently resolved 0 edges due to three
 protocol bugs (probe at column 0 instead of the symbol-name position, missing

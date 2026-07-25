@@ -25,7 +25,7 @@ Enable via ``search_config.json``::
     "call_graph": {
         "lsp_enabled": true,
         "lsp_timeout_seconds": 30.0,
-        "lsp_total_timeout_seconds": 120.0
+        "lsp_total_timeout_seconds": 180.0
     }
 
 When disabled or unavailable, :class:`LSPResolver` returns ``[]`` immediately.
@@ -150,10 +150,10 @@ def _read_frame(stdout: Any) -> dict[str, Any] | None:
     """
     header = b""
     while b"\r\n\r\n" not in header:
-        ch = stdout.read(1)
-        if not ch:
+        line = stdout.readline()
+        if not line:
             return None  # EOF
-        header += ch
+        header += line
 
     length = 0
     found_length = False

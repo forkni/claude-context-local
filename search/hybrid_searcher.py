@@ -1049,20 +1049,15 @@ class HybridSearcher(BaseSearcher):
         return optimizer.optimize(test_queries, ground_truth=ground_truth)
 
     def save_indices(self) -> None:
-        """Save BM25, dense indices, and call graph. Delegates to IndexSynchronizer."""
-        self.index_sync.save_indices()
+        """Save BM25, dense indices, and call graph. Delegates to IndexSynchronizer.
 
-        # Save call graph if populated
-        if self._graph_storage is not None and len(self._graph_storage) > 0:
-            try:
-                self._logger.info(
-                    f"[SAVE_INDICES] Saving call graph with {len(self._graph_storage)} nodes, "
-                    f"{self._graph_storage.graph.number_of_edges()} edges"
-                )
-                self._graph_storage.save()
-                self._logger.info("[SAVE_INDICES] Call graph saved successfully")
-            except (OSError, RuntimeError) as e:
-                self._logger.warning(f"[SAVE_INDICES] Failed to save call graph: {e}")
+        The call graph save happens inside index_sync.save_indices() (via
+        CodeIndexManager.save_index() -> GraphIntegration.save()) on the same
+        CodeGraphStorage object as self._graph_storage (aliased at __init__ -
+        see the "Reuse the CodeGraphStorage" comment above). A second explicit
+        save here would just re-serialize the identical graph a moment later.
+        """
+        self.index_sync.save_indices()
 
     def validate_index_sync(self) -> bool:
         """Validate BM25 and Dense indices are synchronized. Delegates to IndexSynchronizer."""
