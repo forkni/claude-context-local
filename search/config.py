@@ -89,7 +89,7 @@ MODEL_REGISTRY = {
 
 @dataclass
 class EmbeddingConfig:
-    """Embedding model configuration (9 fields)."""
+    """Embedding model configuration (11 fields)."""
 
     model_name: str = "BAAI/bge-m3"
     dimension: int = 1024
@@ -104,6 +104,10 @@ class EmbeddingConfig:
     enable_structural_header: bool = (
         True  # Prepend file path + chunk type + qualified name
     )
+
+    # Persistent content-hash embedding cache (Round 3)
+    enable_chunk_cache: bool = True  # Skip GPU re-embedding for unchanged chunks
+    chunk_cache_max_entries: int = 0  # 0 = auto (max(4 * live_keys, 20_000))
 
 
 class SearchMode(StrEnum):

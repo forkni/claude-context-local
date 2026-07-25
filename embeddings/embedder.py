@@ -26,6 +26,7 @@ from rich.progress import (
 )
 
 from chunking.python_ast_chunker import CodeChunk
+from embeddings.chunk_cache import ChunkEmbeddingCache
 from embeddings.chunk_metadata import ChunkMetadata
 from embeddings.model_cache import ModelCacheManager
 from embeddings.model_loader import ModelLoader
@@ -1235,7 +1236,11 @@ class CodeEmbedder:
         )
 
     def embed_chunks(
-        self, chunks: list[CodeChunk], batch_size: int | None = None
+        self,
+        chunks: list[CodeChunk],
+        batch_size: int | None = None,
+        *,
+        cache: ChunkEmbeddingCache | None = None,
     ) -> list[EmbeddingResult]:
         """Generate embeddings for multiple chunks with dynamic batching.
 
@@ -1247,17 +1252,89 @@ class CodeEmbedder:
             batch_size: Optional override for batch size. When ``None``,
                 resolves batch size from config (dynamic GPU sizing when
                 enabled, otherwise ``config.embedding.batch_size``).
+            cache: Optional persistent content-hash embedding cache (see
+                ``embeddings.chunk_cache.ChunkEmbeddingCache``). When
+                provided, chunks whose assembled embedding content is
+                unchanged since the last run are served from disk instead
+                of the GPU. On a 100% cache hit the model is never loaded.
+                ``None`` (the default) reproduces today's behavior exactly.
 
         Returns:
             List of ``EmbeddingResult`` (one per input chunk, in order).
             Each result's ``embedding`` field is an ``np.ndarray`` of shape
             ``(embedding_dim,)`` with dtype ``float32``.
         """
-        results = []
-
         # Get model-specific configuration for prefixing
         model_config = self._get_model_config()
         passage_prefix = model_config.get("passage_prefix", "")
+
+        # Precompute embedding content once per chunk (was recomputed inside the
+        # batch loop every call). Hoisted above the model-load block (moved down
+        # below, #Round-3) so a cache hit can be checked — and, on a 100% hit,
+        # returned early — without ever loading the model. create_embedding_content
+        # needs no model; passage_prefix is already resolved above.
+        if passage_prefix:
+            all_contents = [
+                passage_prefix + self.create_embedding_content(chunk)
+                for chunk in chunks
+            ]
+        else:
+            all_contents = [self.create_embedding_content(chunk) for chunk in chunks]
+
+        # --- Content-hash embedding cache (opt-in via cache=) ---------------
+        # Partition chunks into cache hits and misses using the exact strings
+        # that would be handed to model.encode() — all_contents already folds
+        # in import context / class signature / structural header, so hashing
+        # this string (never raw chunk.content) is correct even when a
+        # neighbouring part of the file changed a chunk's assembled content.
+        ordered_results: list[EmbeddingResult | None] = [None] * len(chunks)
+        cache_keys: list[str | None] = [None] * len(chunks)
+        pending_indices: list[int] = list(range(len(chunks)))
+
+        # A cache failure must never fail the index. `cache_enabled` (not
+        # `cache is not None`) gates every later cache use, including the
+        # write-back — a read failure here disables the cache for the rest
+        # of this call, falling back to embedding every chunk normally.
+        cache_enabled = cache is not None
+        if cache_enabled:
+            try:
+                pending_indices = []
+                for idx, content in enumerate(all_contents):
+                    key = cache.key_for(content)
+                    cache_keys[idx] = key
+                    cached_vector = cache.get(key)
+                    if cached_vector is None:
+                        pending_indices.append(idx)
+                        continue
+                    chunk = chunks[idx]
+                    ordered_results[idx] = EmbeddingResult(
+                        embedding=cached_vector,
+                        chunk_id=self._build_chunk_id(chunk),
+                        metadata=self._build_chunk_metadata(chunk),
+                    )
+            except Exception as exc:  # noqa: BLE001 - fail-soft: a cache read failure must never fail the index
+                self._logger.warning(
+                    "embed_chunks: chunk embedding cache read failed (%s) — "
+                    "embedding all %d chunks without it",
+                    exc,
+                    len(chunks),
+                )
+                cache_enabled = False
+                ordered_results = [None] * len(chunks)
+                cache_keys = [None] * len(chunks)
+                pending_indices = list(range(len(chunks)))
+
+            if cache_enabled and not pending_indices:
+                self._logger.info(
+                    "embed_chunks: 100%% cache hit for %d chunks — skipping model load",
+                    len(chunks),
+                )
+                return cast(list[EmbeddingResult], ordered_results)
+
+        pending_chunks = [chunks[idx] for idx in pending_indices]
+        pending_contents = [all_contents[idx] for idx in pending_indices]
+
+        results: list[EmbeddingResult] = []
 
         # Ensure model is loaded BEFORE batch calculation (to get accurate VRAM).
         # ModelLoader.load() already performs warmup + activation measurement on both
@@ -1388,53 +1465,51 @@ class CodeEmbedder:
                     is_onnx=self._is_onnx,
                 )
                 self._logger.info(
-                    f"Using dynamic GPU-optimized batch size {batch_size} for {len(chunks)} chunks"
+                    f"Using dynamic GPU-optimized batch size {batch_size} "
+                    f"for {len(pending_chunks)} chunks"
                 )
             else:
                 batch_size = config.embedding.batch_size
                 self._logger.info(
-                    f"Using static batch size {batch_size} from config for {len(chunks)} chunks"
+                    f"Using static batch size {batch_size} from config "
+                    f"for {len(pending_chunks)} chunks"
                 )
         else:
             self._logger.info(
-                f"Using explicit batch size {batch_size} for {len(chunks)} chunks"
+                f"Using explicit batch size {batch_size} for {len(pending_chunks)} chunks"
             )
 
         # Process in batches for efficiency with progress bar
         console = get_progress_console()
         # current_batch_size tracks the live batch size — may be halved on OOM.
         current_batch_size = batch_size
-        total_batches = (len(chunks) + current_batch_size - 1) // current_batch_size
+        total_batches = (
+            len(pending_chunks) + current_batch_size - 1
+        ) // current_batch_size
 
-        # Precompute embedding content once per chunk (was recomputed inside the
-        # batch loop every call), then sort by content length descending before
-        # slicing into fixed-size batches. Fixed-size windows over arbitrary chunk
-        # order pad every batch to the longest member of a random draw; chunk
-        # lengths are heavily right-skewed (median ~845 chars, p90 ~3083, capped
-        # at 6000), so an unsorted batch routinely pads short chunks out to a
-        # rare long one. Sorting first means each batch's members are near-uniform
-        # length, so padding tracks real content instead of the corpus's long
-        # tail (#B1) — mirrors the ONNX path's per-call sort (onnx_wrapper.py#51),
-        # applied globally here since PyTorch batches are caller-sliced rather
-        # than handled inside one encode() call.
+        # Sort the miss subset by content length descending before slicing into
+        # fixed-size batches. Fixed-size windows over arbitrary chunk order pad
+        # every batch to the longest member of a random draw; chunk lengths are
+        # heavily right-skewed (median ~845 chars, p90 ~3083, capped at 6000), so
+        # an unsorted batch routinely pads short chunks out to a rare long one.
+        # Sorting first means each batch's members are near-uniform length, so
+        # padding tracks real content instead of the corpus's long tail (#B1) —
+        # mirrors the ONNX path's per-call sort (onnx_wrapper.py#51), applied
+        # globally here since PyTorch batches are caller-sliced rather than
+        # handled inside one encode() call.
         #
         # Descending order so the single largest batch (worst-case VRAM) runs
         # first — an OOM surfaces on batch 1, not after 100 successful batches.
         # Results are appended in this sorted order and un-permuted back to
-        # input order just before returning.
-        if passage_prefix:
-            all_contents = [
-                passage_prefix + self.create_embedding_content(chunk)
-                for chunk in chunks
-            ]
-        else:
-            all_contents = [self.create_embedding_content(chunk) for chunk in chunks]
-
+        # pending order (then scattered into the caller's input order, alongside
+        # any cache hits) just before returning.
         sort_order = sorted(
-            range(len(chunks)), key=lambda idx: len(all_contents[idx]), reverse=True
+            range(len(pending_chunks)),
+            key=lambda idx: len(pending_contents[idx]),
+            reverse=True,
         )
-        sorted_chunks = [chunks[idx] for idx in sort_order]
-        sorted_contents = [all_contents[idx] for idx in sort_order]
+        sorted_chunks = [pending_chunks[idx] for idx in sort_order]
+        sorted_contents = [pending_contents[idx] for idx in sort_order]
 
         # Suppress INFO logs during progress bar to prevent line mixing.
         # Use try/finally to restore the level even if VRAMExhaustedError or
@@ -1455,7 +1530,7 @@ class CodeEmbedder:
                 task = progress.add_task("Embedding...", total=total_batches)
                 i = 0
                 batch_num = 0
-                while i < len(chunks):
+                while i < len(pending_chunks):
                     batch = sorted_chunks[i : i + current_batch_size]
                     batch_contents = sorted_contents[i : i + current_batch_size]
                     batch_num += 1
@@ -1524,7 +1599,7 @@ class CodeEmbedder:
                             current_batch_size = new_size
                             # Recalculate progress-bar total for the remaining smaller batches
                             completed = int(progress.tasks[task].completed)
-                            remaining_chunks = len(chunks) - i
+                            remaining_chunks = len(pending_chunks) - i
                             remaining_batches = (
                                 remaining_chunks + current_batch_size - 1
                             ) // current_batch_size
@@ -1579,18 +1654,45 @@ class CodeEmbedder:
             # Restore log level even if VRAMExhaustedError / OOM escapes (#20).
             self._logger.setLevel(original_log_level)
 
-        # `results` was built in length-sorted order (see sort_order above);
-        # restore the caller's original input order before returning. Callers
-        # (index_write_stage.py, incremental_indexer.py, community_refresh_stage.py)
-        # all zip this return value positionally against the original `chunks`
-        # list, so a permuted return would silently mis-associate metadata.
-        ordered_results: list[EmbeddingResult | None] = [None] * len(chunks)
-        for sorted_pos, original_idx in enumerate(sort_order):
-            ordered_results[original_idx] = results[sorted_pos]
-        assert all(r is not None for r in ordered_results), (
+        # `results` was built in length-sorted order over the miss subset (see
+        # sort_order above); restore pending order first, then scatter into the
+        # `ordered_results` array that cache hits (if any) already populated
+        # during partitioning above. Callers (index_write_stage.py,
+        # incremental_indexer.py, community_refresh_stage.py) all zip this
+        # return value positionally against the original `chunks` list, so a
+        # mis-scattered return would silently mis-associate metadata.
+        pending_ordered: list[EmbeddingResult | None] = [None] * len(pending_chunks)
+        for sorted_pos, pending_idx in enumerate(sort_order):
+            pending_ordered[pending_idx] = results[sorted_pos]
+        assert all(r is not None for r in pending_ordered), (
             "embed_chunks: un-permute produced a hole — batch loop did not "
-            "append exactly one result per input chunk"
+            "append exactly one result per pending chunk"
         )
+
+        for pending_idx, original_idx in enumerate(pending_indices):
+            ordered_results[original_idx] = pending_ordered[pending_idx]
+
+        assert all(r is not None for r in ordered_results), (
+            "embed_chunks: cache/miss scatter produced a hole — every input "
+            "chunk must resolve to exactly one cache hit or fresh embedding"
+        )
+
+        # Write fresh embeddings back to the persistent cache. `cache_keys` was
+        # fully populated for every index during partitioning above whenever
+        # `cache_enabled` (both hits and misses got a key), so `live_keys`
+        # covers this run's entire input — exactly what save()'s eviction must
+        # never drop. Gated on `cache_enabled`, not `cache is not None`: a
+        # cache-read failure above disables the cache for the rest of this
+        # call, so a broken cache is never written back to either.
+        if cache_enabled and cache is not None:
+            for pending_idx, original_idx in enumerate(pending_indices):
+                key = cache_keys[original_idx]
+                if key is not None:
+                    result = pending_ordered[pending_idx]
+                    assert result is not None
+                    cache.put(key, result.embedding)
+            live_keys = {key for key in cache_keys if key is not None}
+            cache.save(live_keys)
 
         self._logger.info("Embedding generation completed")
         return cast(list[EmbeddingResult], ordered_results)

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from chunking.python_ast_chunker import CodeChunk
 from chunking.relationships.call_edge_resolver import run_resolvers
 from chunking.relationships.external_call_graph import PyanResolver
+from embeddings.chunk_cache import ChunkEmbeddingCache
 from evaluation.chunk_mapping import build_line_to_chunk_map
 from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
@@ -102,7 +103,9 @@ class IndexWriteStage:
         if all_chunks:
             try:
                 logger.info(f"Starting embedding for {len(all_chunks)} chunks")
-                all_embedding_results = self._embedder.embed_chunks(all_chunks)
+                all_embedding_results = self._embedder.embed_chunks(
+                    all_chunks, cache=self._resolve_chunk_cache()
+                )
                 logger.info(
                     f"Successfully embedded {len(all_embedding_results)} chunks"
                 )
@@ -188,6 +191,46 @@ class IndexWriteStage:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _resolve_chunk_cache(self) -> ChunkEmbeddingCache | None:
+        """Resolve this run's persistent chunk-embedding cache, if enabled.
+
+        Resolved lazily here — inside :meth:`run`, never at ``__init__`` —
+        for two reasons. First, ``IndexWriteStage`` is rebuilt in
+        ``incremental_indexer.py``'s ``_build_write_pipeline`` after
+        ``_release_and_verify_resources()``, so a cache captured at
+        construction time could outlive that rebind stale; resolving per-run
+        sidesteps that. Second, several existing tests construct
+        ``IndexWriteStage(indexer=Mock(), ...)``, so eagerly building a
+        ``Path`` from ``storage_dir`` at construction time would raise on a
+        ``Mock``.
+
+        Fail-soft: disabled by config, a missing/non-path ``storage_dir``, or
+        any other error while resolving all return ``None`` — ``embed_chunks``
+        then behaves exactly as it does without a cache. A cache problem must
+        never fail an index.
+        """
+        try:
+            from search.config import get_search_config
+
+            embedding_cfg = get_search_config().embedding
+            if not embedding_cfg.enable_chunk_cache:
+                return None
+
+            cache_path = Path(self._indexer.storage_dir) / "chunk_embeddings.bin"
+            return ChunkEmbeddingCache(
+                cache_path=cache_path,
+                model_name=embedding_cfg.model_name,
+                dimension=embedding_cfg.dimension,
+                max_entries=embedding_cfg.chunk_cache_max_entries,
+            )
+        except Exception:  # noqa: BLE001 - fail-soft: a cache problem must never fail an index
+            logger.warning(
+                "[CHUNK_CACHE] Unable to resolve persistent embedding cache "
+                "(non-fatal):\n%s",
+                traceback.format_exc(),
+            )
+            return None
 
     def _inject_call_edges(self, project_path: str) -> None:
         """Inject cross-module call edges from the resolver pipeline into the code graph.

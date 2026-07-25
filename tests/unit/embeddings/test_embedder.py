@@ -2671,3 +2671,316 @@ class TestEmbedChunksOrderPreservation:
         assert encode_call_batch_max_lens == sorted(
             encode_call_batch_max_lens, reverse=True
         )
+
+
+class TestEmbedChunksContentHashCache:
+    """Round 3: persistent content-hash embedding cache integration in
+    embed_chunks(). The `cache=` kwarg is opt-in; `cache=None` (the default,
+    used throughout TestEmbedChunksOrderPreservation above) must reproduce
+    today's behavior exactly.
+    """
+
+    @staticmethod
+    def _make_chunk(
+        content: str,
+        name: str,
+        start_line: int,
+        relative_path: str = "fake/path/file.py",
+    ) -> CodeChunk:
+        return CodeChunk(
+            content=content,
+            file_path=f"/fake/{relative_path}",
+            relative_path=relative_path,
+            folder_structure="fake/path",
+            start_line=start_line,
+            end_line=start_line + 1,
+            chunk_type="function",
+            name=name,
+        )
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_partial_hit_encodes_only_misses_in_input_order(
+        self, mock_sentence_transformer, mock_model_loader_st, tmp_path
+    ):
+        """60 of 100 chunks pre-cached: model.encode must see exactly the
+        other 40, and every one of the 100 results must still match its own
+        input chunk, in input order — hits and misses scattered correctly."""
+        from embeddings.chunk_cache import ChunkEmbeddingCache
+
+        encoded_batches: list[str] = []
+
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
+            encoded_batches.extend(sentences)
+            dim = 8
+            return np.array(
+                [[float(len(s))] * dim for s in sentences], dtype=np.float32
+            )
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_model.device = "cpu"
+        mock_sentence_transformer.return_value = mock_model
+        mock_model_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+
+        chunks = [
+            self._make_chunk(content="x" * (10 + i), name=f"fn{i}", start_line=i)
+            for i in range(100)
+        ]
+        contents = [embedder.create_embedding_content(c) for c in chunks]
+
+        cache = ChunkEmbeddingCache(
+            tmp_path / "chunk_embeddings.bin", model_name="BAAI/bge-m3", dimension=8
+        )
+        hit_value = np.full(8, 999.0, dtype=np.float32)
+        for i in range(60):
+            cache.put(ChunkEmbeddingCache.key_for(contents[i]), hit_value)
+
+        results = embedder.embed_chunks(chunks, batch_size=16, cache=cache)
+
+        assert len(encoded_batches) == 40
+        assert len(results) == 100
+        for i, (chunk, result) in enumerate(zip(chunks, results, strict=True)):
+            assert result.chunk_id == CodeEmbedder._build_chunk_id(chunk)
+            if i < 60:
+                assert np.array_equal(result.embedding, hit_value)
+            else:
+                assert result.embedding[0] == len(contents[i])
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_full_hit_skips_model_load_entirely(
+        self, mock_sentence_transformer, mock_model_loader_st, tmp_path
+    ):
+        """A 100% cache hit must never load the model at all."""
+        from embeddings.chunk_cache import ChunkEmbeddingCache
+
+        mock_model = MagicMock()
+        mock_model.device = "cpu"
+        mock_sentence_transformer.return_value = mock_model
+        mock_model_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+
+        chunks = [
+            self._make_chunk(content=f"content {i}", name=f"fn{i}", start_line=i)
+            for i in range(5)
+        ]
+        contents = [embedder.create_embedding_content(c) for c in chunks]
+
+        cache = ChunkEmbeddingCache(
+            tmp_path / "chunk_embeddings.bin", model_name="BAAI/bge-m3", dimension=8
+        )
+        hit_value = np.full(8, 7.0, dtype=np.float32)
+        for content in contents:
+            cache.put(ChunkEmbeddingCache.key_for(content), hit_value)
+
+        results = embedder.embed_chunks(chunks, batch_size=2, cache=cache)
+
+        assert len(results) == 5
+        for result in results:
+            assert np.array_equal(result.embedding, hit_value)
+
+        # The model must never have been loaded.
+        assert embedder._model is None
+        mock_model.encode.assert_not_called()
+        mock_model_loader_st.assert_not_called()
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_same_content_different_path_different_key(
+        self, mock_sentence_transformer, mock_model_loader_st
+    ):
+        """Two chunks with byte-identical `content` but different
+        `relative_path` must hash to different keys — `create_embedding_content`
+        folds the path into a structural header, so the assembled strings
+        genuinely differ."""
+        from embeddings.chunk_cache import ChunkEmbeddingCache
+
+        mock_model = MagicMock()
+        mock_model.device = "cpu"
+        mock_sentence_transformer.return_value = mock_model
+        mock_model_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+
+        chunk_a = self._make_chunk(
+            content="identical body", name="fn", start_line=1, relative_path="a/mod.py"
+        )
+        chunk_b = self._make_chunk(
+            content="identical body", name="fn", start_line=1, relative_path="b/mod.py"
+        )
+
+        content_a = embedder.create_embedding_content(chunk_a)
+        content_b = embedder.create_embedding_content(chunk_b)
+        assert content_a != content_b  # sanity: the hazard actually exists
+
+        key_a = ChunkEmbeddingCache.key_for(content_a)
+        key_b = ChunkEmbeddingCache.key_for(content_b)
+        assert key_a != key_b
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_changed_import_block_changes_key_for_unchanged_chunk(
+        self, mock_sentence_transformer, mock_model_loader_st, tmp_path
+    ):
+        """A chunk's own text is unchanged, but a neighbouring import line in
+        its file changed. create_embedding_content folds the file's import
+        block into every chunk's assembled content, so the key must change
+        too — hashing raw chunk.content instead would miss this and silently
+        serve a stale vector (see chunk_cache.py's module docstring)."""
+        from embeddings.chunk_cache import ChunkEmbeddingCache
+
+        mock_model = MagicMock()
+        mock_model.device = "cpu"
+        mock_sentence_transformer.return_value = mock_model
+        mock_model_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+
+        test_file = tmp_path / "mod.py"
+        test_file.write_text("import os\n\ndef func():\n    pass\n")
+
+        chunk = CodeChunk(
+            content="def func():\n    pass",
+            file_path=str(test_file),
+            relative_path="mod.py",
+            folder_structure=".",
+            start_line=3,
+            end_line=4,
+            chunk_type="function",
+            name="func",
+        )
+
+        content_before = embedder.create_embedding_content(chunk)
+        key_before = ChunkEmbeddingCache.key_for(content_before)
+
+        # Add an import line. The chunk's own start/end lines and body text
+        # are unchanged, but the file's import block is different now.
+        test_file.write_text("import os\nimport sys\n\ndef func():\n    pass\n")
+        # _read_source_cached is keyed by file_path + mtime; clear it so a
+        # same-tick rewrite (mtime unchanged at the OS's clock resolution)
+        # cannot mask the change with a stale cached read.
+        embedder._class_file_cache.clear()
+
+        content_after = embedder.create_embedding_content(chunk)
+        key_after = ChunkEmbeddingCache.key_for(content_after)
+
+        assert content_before != content_after
+        assert key_before != key_after
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_cache_none_is_byte_identical_to_no_cache_arg(
+        self, mock_sentence_transformer, mock_model_loader_st
+    ):
+        """Explicitly passing cache=None must be indistinguishable from
+        omitting the kwarg entirely — the default reproduces today's
+        behavior exactly."""
+
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
+            dim = 8
+            return np.array(
+                [[float(len(s))] * dim for s in sentences], dtype=np.float32
+            )
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_model.device = "cpu"
+        mock_sentence_transformer.return_value = mock_model
+        mock_model_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+        chunks = [
+            self._make_chunk(content="x" * (10 + i), name=f"fn{i}", start_line=i)
+            for i in range(7)
+        ]
+
+        results_default = embedder.embed_chunks(chunks, batch_size=2)
+        results_explicit_none = embedder.embed_chunks(chunks, batch_size=2, cache=None)
+
+        assert len(results_default) == len(results_explicit_none) == 7
+        for r1, r2 in zip(results_default, results_explicit_none, strict=True):
+            assert r1.chunk_id == r2.chunk_id
+            assert np.array_equal(r1.embedding, r2.embedding)
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_cache_get_raising_falls_back_to_normal_embed(
+        self, mock_sentence_transformer, mock_model_loader_st
+    ):
+        """A cache problem must never fail an index: if cache.get() raises
+        mid-partition, embed_chunks must discard the partial cache state and
+        embed every chunk normally instead of propagating the exception."""
+        from embeddings.chunk_cache import ChunkEmbeddingCache
+
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
+            dim = 8
+            return np.array(
+                [[float(len(s))] * dim for s in sentences], dtype=np.float32
+            )
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_model.device = "cpu"
+        mock_sentence_transformer.return_value = mock_model
+        mock_model_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+        chunks = [
+            self._make_chunk(content="x" * (10 + i), name=f"fn{i}", start_line=i)
+            for i in range(5)
+        ]
+        contents = [embedder.create_embedding_content(c) for c in chunks]
+
+        broken_cache = MagicMock(spec=ChunkEmbeddingCache)
+        broken_cache.key_for.side_effect = ChunkEmbeddingCache.key_for
+        broken_cache.get.side_effect = RuntimeError("simulated disk read error")
+
+        results = embedder.embed_chunks(chunks, batch_size=2, cache=broken_cache)
+
+        assert len(results) == 5
+        for i, (chunk, result) in enumerate(zip(chunks, results, strict=True)):
+            assert result.chunk_id == CodeEmbedder._build_chunk_id(chunk)
+            assert result.embedding[0] == len(contents[i])
+        # The broken cache must never be written to.
+        broken_cache.put.assert_not_called()
+        broken_cache.save.assert_not_called()

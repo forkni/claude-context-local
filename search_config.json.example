@@ -8,7 +8,9 @@
     "enable_class_context": true,
     "max_import_lines": 25,
     "max_class_signature_lines": 20,
-    "enable_structural_header": true
+    "enable_structural_header": true,
+    "enable_chunk_cache": true,
+    "chunk_cache_max_entries": 0
   },
   "search_mode": {
     "default_mode": "hybrid",

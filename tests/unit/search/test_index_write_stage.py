@@ -531,6 +531,123 @@ class TestIndexWriteStageEmbeddingFailure:
         assert result.chunks_added == 0
 
 
+# ---------------------------------------------------------------------------
+# Round 3 — persistent content-hash embedding cache wiring
+# ---------------------------------------------------------------------------
+
+
+class TestResolveChunkCache:
+    """_resolve_chunk_cache: lazy per-run resolution, fail-soft on Mock storage_dir."""
+
+    def test_mock_storage_dir_yields_no_cache_and_run_still_succeeds(self):
+        """All five pre-existing Mock()-based cases above already exercise this
+        path unmodified (indexer=Mock() ⇒ indexer.storage_dir is a Mock, so
+        Path(...) on it fails inside the try/except and _resolve_chunk_cache
+        returns None). This test pins that behaviour explicitly: embed_chunks
+        must be called with cache=None and the run must still succeed."""
+        chunk = _make_chunk()
+        embed_result = Mock()
+        embed_result.metadata = {}
+        stage, embedder, _, _, _, _, dag = _make_stage(embed_results=[embed_result])
+
+        result = stage.run(
+            all_chunks=[chunk],
+            project_name="p",
+            dag=dag,
+            all_files=[],
+            supported_files=[],
+            start_time=time.time(),
+            repo_profile=None,
+        )
+
+        assert result.success is True
+        call_kwargs = embedder.embed_chunks.call_args.kwargs
+        assert call_kwargs.get("cache") is None
+
+    def test_real_storage_dir_passes_cache_with_expected_path(self, tmp_path):
+        """A real tmp_path storage_dir ⇒ embed_chunks receives a non-None
+        cache whose on-disk path is storage_dir / "chunk_embeddings.bin"."""
+        from search.config import EmbeddingConfig
+
+        chunk = _make_chunk()
+        embed_result = Mock()
+        embed_result.metadata = {}
+        embedder = Mock()
+        embedder.embed_chunks.return_value = [embed_result]
+
+        indexer = Mock()
+        indexer.storage_dir = tmp_path
+        indexer.resync_if_desynced.return_value = (False, 0)
+
+        stage = IndexWriteStage(
+            embedder=embedder,
+            indexer=indexer,
+            snapshot_manager=Mock(),
+            build_metadata_fn=Mock(return_value={"project_name": "test"}),
+            clear_gpu_fn=Mock(),
+        )
+
+        mock_cfg = Mock()
+        mock_cfg.embedding = EmbeddingConfig(enable_chunk_cache=True)
+
+        with patch("search.config.get_search_config", return_value=mock_cfg):
+            result = stage.run(
+                all_chunks=[chunk],
+                project_name="p",
+                dag=Mock(),
+                all_files=[],
+                supported_files=[],
+                start_time=time.time(),
+                repo_profile=None,
+            )
+
+        assert result.success is True
+        call_kwargs = embedder.embed_chunks.call_args.kwargs
+        cache = call_kwargs.get("cache")
+        assert cache is not None
+        assert cache._path == tmp_path / "chunk_embeddings.bin"
+
+    def test_disabled_by_config_yields_no_cache(self, tmp_path):
+        """enable_chunk_cache=False ⇒ embed_chunks receives cache=None even
+        with a real, writable storage_dir."""
+        from search.config import EmbeddingConfig
+
+        chunk = _make_chunk()
+        embed_result = Mock()
+        embed_result.metadata = {}
+        embedder = Mock()
+        embedder.embed_chunks.return_value = [embed_result]
+
+        indexer = Mock()
+        indexer.storage_dir = tmp_path
+        indexer.resync_if_desynced.return_value = (False, 0)
+
+        stage = IndexWriteStage(
+            embedder=embedder,
+            indexer=indexer,
+            snapshot_manager=Mock(),
+            build_metadata_fn=Mock(return_value={"project_name": "test"}),
+            clear_gpu_fn=Mock(),
+        )
+
+        mock_cfg = Mock()
+        mock_cfg.embedding = EmbeddingConfig(enable_chunk_cache=False)
+
+        with patch("search.config.get_search_config", return_value=mock_cfg):
+            stage.run(
+                all_chunks=[chunk],
+                project_name="p",
+                dag=Mock(),
+                all_files=[],
+                supported_files=[],
+                start_time=time.time(),
+                repo_profile=None,
+            )
+
+        call_kwargs = embedder.embed_chunks.call_args.kwargs
+        assert call_kwargs.get("cache") is None
+
+
 class TestIncrementalIndexResultDataclass:
     """Verify IncrementalIndexResult fields and to_dict."""
 
