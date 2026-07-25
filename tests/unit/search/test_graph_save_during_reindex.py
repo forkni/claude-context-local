@@ -3,7 +3,7 @@
 import tempfile
 from pathlib import Path
 from unittest import TestCase
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from search.graph_integration import GraphIntegration
 from search.hybrid_searcher import HybridSearcher
@@ -26,29 +26,30 @@ class TestGraphSaveDuringReindex(TestCase):
 
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    def test_clear_index_preserves_graph_storage_reference(self):
-        """Test that clear_index() updates graph_storage reference to match new dense_index.
+    @staticmethod
+    def _make_mock_graph_integration(storage, node_count):
+        """Build a mock GraphIntegration whose truthiness matches the real class.
 
-        Regression test for bug where graph_storage became None after clear_index()
-        because IndexSynchronizer created a new CodeIndexManager but graph_storage
-        reference wasn't updated.
+        A plain `Mock(spec=GraphIntegration)` does NOT implement `__len__` even
+        though the spec class defines it — only `MagicMock` wires up magic
+        methods from a spec. That gap is why the original version of this test
+        passed even with the truthiness bug present: its mock was truthy no
+        matter what, so it never exercised the "new graph has 0 nodes" case
+        that made `if self.dense_index._graph:` evaluate False in production.
         """
-        # Create mock HybridSearcher with minimal setup
+        mock_graph_integration = MagicMock(spec=GraphIntegration)
+        mock_graph_integration.storage = storage
+        mock_graph_integration.__len__.return_value = node_count
+        return mock_graph_integration
+
+    def _make_mock_searcher(self, mock_dense_index):
+        """Build a mock HybridSearcher with the attributes clear_index() touches."""
         mock_searcher = Mock(spec=HybridSearcher)
 
-        # Create mock dense_index with valid graph storage
-        mock_dense_index = Mock(spec=CodeIndexManager)
-        mock_graph_integration = Mock(spec=GraphIntegration)
-        mock_graph_storage = Mock()
-        mock_graph_integration.storage = mock_graph_storage
-        mock_dense_index._graph = mock_graph_integration
-
-        # Create mock index_sync
         mock_index_sync = Mock()
         mock_index_sync.dense_index = mock_dense_index
         mock_index_sync.bm25_index = Mock()
 
-        # Set up searcher attributes
         mock_searcher.index_sync = mock_index_sync
         mock_searcher._logger = Mock()
         mock_searcher.bm25_index = Mock()
@@ -56,16 +57,65 @@ class TestGraphSaveDuringReindex(TestCase):
         mock_searcher.reranking_engine = None
         mock_searcher.search_executor = Mock()
         mock_searcher.multi_hop_searcher = Mock()
-        mock_searcher._graph_storage = Mock()  # Old reference
+        mock_searcher._graph_storage = Mock()  # Old (pre-clear) reference
         mock_searcher._metadata_cache = {}  # Added by BaseSearcher.__init__; cleared by clear_index()
+        return mock_searcher
 
-        # Call the REAL clear_index method
+    def test_clear_index_resyncs_when_new_graph_is_empty(self):
+        """clear_index() must re-sync graph_storage/_graph even when the freshly
+        cleared graph has zero nodes.
+
+        Regression test for the __len__-without-__bool__ trap: GraphIntegration
+        defines __len__ (node count) but no __bool__, so Python falls back to
+        `len(obj) != 0` for `bool(obj)`. A guard written as
+        `if self.dense_index._graph:` is therefore False immediately after a
+        full-reindex clear (0 nodes), silently skipping the re-sync and leaving
+        self._graph/_graph_storage pointed at the stale pre-clear object for the
+        rest of the reindex — which throws away 100% of that reindex's resolver
+        edges. The fix uses an explicit `is not None` check instead.
+        """
+        mock_graph_storage = Mock()
+        mock_graph_integration = self._make_mock_graph_integration(
+            mock_graph_storage, node_count=0
+        )
+        # Sanity: confirm the mock actually reproduces the falsy-when-empty
+        # behavior being tested against — if this assertion ever fails, the
+        # test below would silently stop covering the bug.
+        self.assertFalse(mock_graph_integration)
+
+        mock_dense_index = Mock(spec=CodeIndexManager)
+        mock_dense_index._graph = mock_graph_integration
+        mock_searcher = self._make_mock_searcher(mock_dense_index)
+
         HybridSearcher.clear_index(mock_searcher)
 
-        # Verify _graph_storage was updated to match new dense_index._graph.storage
-        # Note: clear_index() sets self._graph_storage directly, not via property setter
-        self.assertEqual(mock_searcher._graph_storage, mock_graph_storage)
-        self.assertIsNotNone(mock_searcher._graph_storage)
+        self.assertIs(mock_searcher._graph_storage, mock_graph_storage)
+        # The re-sync must have rebuilt _graph via GraphIntegration.from_storage
+        # (a real instance, not the mock) wrapping the same storage object.
+        self.assertIsInstance(mock_searcher._graph, GraphIntegration)
+        self.assertIs(mock_searcher._graph.storage, mock_graph_storage)
+
+    def test_clear_index_resyncs_when_new_graph_is_nonempty(self):
+        """Same re-sync must also happen when the new graph already has nodes.
+
+        Pins the branch the original test covered, so a fix for the empty-graph
+        case above can't accidentally regress this one.
+        """
+        mock_graph_storage = Mock()
+        mock_graph_integration = self._make_mock_graph_integration(
+            mock_graph_storage, node_count=100
+        )
+        self.assertTrue(mock_graph_integration)
+
+        mock_dense_index = Mock(spec=CodeIndexManager)
+        mock_dense_index._graph = mock_graph_integration
+        mock_searcher = self._make_mock_searcher(mock_dense_index)
+
+        HybridSearcher.clear_index(mock_searcher)
+
+        self.assertIs(mock_searcher._graph_storage, mock_graph_storage)
+        self.assertIsInstance(mock_searcher._graph, GraphIntegration)
+        self.assertIs(mock_searcher._graph.storage, mock_graph_storage)
 
     @patch("search.graph_integration.CodeGraphStorage")
     @patch("search.graph_integration.GRAPH_STORAGE_AVAILABLE", True)

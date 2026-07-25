@@ -179,6 +179,11 @@ class MultiHopSearcher:
         """
         expansion_timings = {}
 
+        # Truthiness, not `is not None`: a valid-but-empty graph_storage (0 nodes)
+        # also short-circuits here and gets the same "is None" log message, since
+        # CodeGraphStorage is falsy when empty (see its __len__ docstring). Left
+        # as-is intentionally — empty and absent both mean "nothing to expand"
+        # for this caller — but the message is imprecise about which it was.
         if not self.graph_storage:
             self._logger.warning(
                 "[MULTI_HOP] Graph expansion requested but graph_storage is None"

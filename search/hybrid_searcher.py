@@ -1215,8 +1215,12 @@ class HybridSearcher(BaseSearcher):
         # Update MultiHopSearcher reference to new dense index
         self.multi_hop_searcher.dense_index = self.dense_index
 
-        # Update graph_storage reference to match new dense_index (prevents stale references)
-        if hasattr(self.dense_index, "_graph") and self.dense_index._graph:
+        # Update graph_storage reference to match new dense_index (prevents stale references).
+        # NOTE: must be an explicit `is not None` check, not truthiness — GraphIntegration
+        # defines __len__ (node count) but not __bool__, so a freshly-cleared, still-empty
+        # graph is falsy and would silently skip this re-sync, leaving self._graph/_graph_storage
+        # pointed at the orphaned pre-clear storage object for the rest of the reindex.
+        if hasattr(self.dense_index, "_graph") and self.dense_index._graph is not None:
             self._graph_storage = self.dense_index._graph.storage
             self._graph = GraphIntegration.from_storage(self._graph_storage)
             self._logger.debug(

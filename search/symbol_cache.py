@@ -367,7 +367,12 @@ class SymbolHashCache:
         }
 
     def __len__(self) -> int:
-        """Return total number of symbols in cache."""
+        """Return total number of symbols in cache.
+
+        WARNING: no __bool__ is defined, so `bool(obj)` falls back to
+        `len(obj) != 0` — a valid, empty cache is falsy. Use `is not None`
+        for existence checks, not truthiness.
+        """
         return self._total_symbols
 
     def __contains__(self, chunk_id: str) -> bool:

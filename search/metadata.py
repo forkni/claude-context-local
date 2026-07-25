@@ -243,6 +243,10 @@ class MetadataStore:
     def __len__(self) -> int:
         """Return number of chunks in metadata store.
 
+        WARNING: no __bool__ is defined, so `bool(obj)` falls back to
+        `len(obj) != 0` — a valid, open store with zero chunks is falsy.
+        Use `is not None` for existence checks, not truthiness.
+
         Returns:
             Count of chunks
         """

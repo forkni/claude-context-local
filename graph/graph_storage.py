@@ -930,7 +930,14 @@ class CodeGraphStorage:
         }
 
     def __len__(self) -> int:
-        """Return number of nodes in graph."""
+        """Return number of nodes in graph.
+
+        WARNING: this class defines __len__ but not __bool__, so Python falls
+        back to `len(obj) != 0` for `bool(obj)`. A valid instance with an empty
+        (or just-cleared) graph is therefore falsy. Callers checking for
+        *existence* must use `is not None`, not truthiness — see the
+        clear_index() re-sync bug this caused in hybrid_searcher.py.
+        """
         return self.graph.number_of_nodes()
 
     def __contains__(self, chunk_id: str) -> bool:

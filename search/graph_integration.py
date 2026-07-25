@@ -998,5 +998,13 @@ class GraphIntegration:
         return len(self.storage) if self.storage else 0
 
     def __len__(self) -> int:
-        """Return node count for len() support."""
+        """Return node count for len() support.
+
+        WARNING: this class defines __len__ but not __bool__, so Python falls
+        back to `len(obj) != 0` for `bool(obj)`. A freshly-created or just-cleared
+        instance has 0 nodes and is therefore falsy despite being a perfectly
+        valid, usable object. Callers checking for *existence* (as opposed to
+        "does this have anything in it") must use `is not None`, not truthiness —
+        see the clear_index() re-sync bug this caused in hybrid_searcher.py.
+        """
         return self.node_count
