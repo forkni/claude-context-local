@@ -331,6 +331,27 @@ def prepare_scoped_files(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_in_subprocess(
+    resolver: CallEdgeResolver,
+    project_root: Path,
+    raw_line_map: dict[str, list[tuple[int, int, str]]],
+    py_files: list[str] | None,
+) -> list[ResolvedEdge]:
+    """Process-pool entry point for CPU-bound resolvers (pyan, LibCST).
+
+    Must stay a module-level function — Windows' spawn-only multiprocessing
+    pickles callables by import path, so a closure or bound-method-of-a-local
+    object would fail to submit. The parent's ``logging.Logger`` is never
+    passed across the process boundary either: its ancestor loggers can carry
+    ``Handler`` objects holding a ``threading.RLock``, which pickle rejects,
+    so the child builds its own logger by name instead.
+    """
+    import logging
+
+    child_logger = logging.getLogger(f"{__name__}.subprocess.{resolver.name}")
+    return resolver.resolve(project_root, raw_line_map, child_logger, py_files)
+
+
 def run_resolvers(
     resolvers: list[CallEdgeResolver],
     project_root: Path,
@@ -339,10 +360,14 @@ def run_resolvers(
 ) -> dict[tuple[str, str], ResolvedEdge]:
     """Run each available resolver and merge edges by maximum confidence.
 
-    Available resolvers are dispatched *concurrently* on a thread pool — pure
-    Python CPU resolvers (pyan, LibCST) serialize against each other on the
-    GIL either way, but the I/O-bound LSP resolver (waiting on the
-    ``basedpyright-langserver`` subprocess) genuinely overlaps with them.
+    Available resolvers are dispatched *concurrently* — ``PyanResolver`` and
+    ``LibCSTResolver`` (pure Python, CPU-bound) each get their own child
+    process so they no longer serialize against each other on the GIL; the
+    I/O-bound LSP resolver (waiting on the ``basedpyright-langserver``
+    subprocess) stays on a thread, where it already overlapped with them
+    without needing process isolation. Dispatch is keyed on the *concrete*
+    resolver class (not ``resolver.name``, which test doubles can set freely)
+    so only the real pyan/libcst implementations pay the process-spawn cost.
     Results are then merged **serially**, iterating resolvers in *ascending*
     ``base_confidence`` order, so higher-confidence resolvers overwrite
     lower-confidence entries for the same ``(caller_id, callee_id)`` pair —
@@ -366,9 +391,16 @@ def run_resolvers(
         the same pair, the first (lower-precedence) value is kept.
     """
     import traceback
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
     from utils.observability import wrap_in_context
+
+    # Deferred import: both modules import FROM this one at their top level,
+    # so importing them at this module's top level would cycle.
+    from .external_call_graph import PyanResolver
+    from .libcst_call_graph import LibCSTResolver
+
+    process_isolated_classes = (PyanResolver, LibCSTResolver)
 
     merged: dict[tuple[str, str], ResolvedEdge] = {}
 
@@ -394,22 +426,45 @@ def run_resolvers(
     # own scope if this comes back None (e.g. no files at all under the root).
     py_files = prepare_scoped_files(project_root, raw_line_map, logger, "RESOLVERS")
 
-    executor = ThreadPoolExecutor(max_workers=len(available_resolvers))
+    process_resolvers = [
+        r for r in available_resolvers if isinstance(r, process_isolated_classes)
+    ]
+    thread_resolvers = [
+        r for r in available_resolvers if not isinstance(r, process_isolated_classes)
+    ]
+
+    process_executor: ProcessPoolExecutor | None = None
+    thread_executor: ThreadPoolExecutor | None = None
     try:
-        futures = [
-            executor.submit(
-                wrap_in_context(resolver.resolve),
-                project_root,
-                raw_line_map,
-                logger,
-                py_files,
-            )
-            for resolver in available_resolvers
-        ]
+        futures_by_resolver: dict[CallEdgeResolver, object] = {}
+
+        if process_resolvers:
+            process_executor = ProcessPoolExecutor(max_workers=len(process_resolvers))
+            for resolver in process_resolvers:
+                futures_by_resolver[resolver] = process_executor.submit(
+                    _resolve_in_subprocess,
+                    resolver,
+                    project_root,
+                    raw_line_map,
+                    py_files,
+                )
+
+        if thread_resolvers:
+            thread_executor = ThreadPoolExecutor(max_workers=len(thread_resolvers))
+            for resolver in thread_resolvers:
+                futures_by_resolver[resolver] = thread_executor.submit(
+                    wrap_in_context(resolver.resolve),
+                    project_root,
+                    raw_line_map,
+                    logger,
+                    py_files,
+                )
 
         # Collected in the same ascending-confidence order the resolvers were
-        # submitted in, so merge precedence is unaffected by which finishes first.
-        for resolver, future in zip(available_resolvers, futures, strict=True):
+        # submitted in, so merge precedence is unaffected by which finishes
+        # first or which pool (thread vs process) ran it.
+        for resolver in available_resolvers:
+            future = futures_by_resolver[resolver]
             try:
                 edges = future.result()
             except Exception:  # noqa: BLE001 - resilience: an optional resolver failing must not break the overall call-graph build
@@ -442,10 +497,15 @@ def run_resolvers(
                 len(merged),
             )
     finally:
-        # Do not use the bare `with ThreadPoolExecutor(...)` form — its
-        # __exit__ calls shutdown(wait=True), which can deadlock against
-        # uninterruptible pure-Python resolver loops (see VERSION_HISTORY).
-        # cancel_futures=True is a no-op for already-running/finished futures.
-        executor.shutdown(wait=False, cancel_futures=True)
+        # Do not use the bare `with ThreadPoolExecutor(...)` / `with
+        # ProcessPoolExecutor(...)` form — __exit__ calls shutdown(wait=True),
+        # which can deadlock against uninterruptible pure-Python resolver
+        # loops (see VERSION_HISTORY). cancel_futures=True is a no-op for
+        # already-running/finished futures; every future above is already
+        # resolved (or logged as failed) by this point.
+        if process_executor is not None:
+            process_executor.shutdown(wait=False, cancel_futures=True)
+        if thread_executor is not None:
+            thread_executor.shutdown(wait=False, cancel_futures=True)
 
     return merged
