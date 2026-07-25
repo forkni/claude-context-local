@@ -45,9 +45,9 @@ class MetadataStore:
         self.db_path = db_path
         self._db: SqliteDict | None = None
 
-        # Symbol hash cache for O(1) chunk_id lookups
-        cache_path = db_path.parent / f"{db_path.stem}_symbol_cache.json"
-        self._symbol_cache = SymbolHashCache(cache_path)
+        # In-memory symbol hash cache for O(1) chunk_id lookups (never persisted —
+        # see SymbolHashCache's module docstring for why)
+        self._symbol_cache = SymbolHashCache()
 
     def _ensure_open(self) -> None:
         """Lazy-load database connection.
@@ -297,9 +297,6 @@ class MetadataStore:
         self._ensure_open()
         # pyrefly: ignore [missing-attribute]
         self._db.commit()
-
-        # Save symbol cache
-        self._symbol_cache.save()
 
     def close(self) -> None:
         """Close database connection.

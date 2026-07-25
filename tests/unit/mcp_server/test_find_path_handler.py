@@ -163,7 +163,6 @@ async def test_source_symbol_unresolved_returns_error(dec_state, passthrough_met
     mock_gs.graph.nodes.return_value = []
 
     mock_searcher = Mock()
-    mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
     mock_searcher.graph_storage = mock_gs
     mock_searcher.search.return_value = []  # all resolution tiers miss
 
@@ -196,7 +195,6 @@ async def test_target_symbol_unresolved_returns_error(dec_state, passthrough_met
     mock_gs.graph.nodes.return_value = []
 
     mock_searcher = Mock()
-    mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
     mock_searcher.graph_storage = mock_gs
     mock_searcher.search.return_value = []  # all resolution tiers miss
 
@@ -239,7 +237,6 @@ async def test_symbol_resolution_via_semantic_search(dec_state):
     mock_gs.graph.__contains__ = Mock(return_value=False)
 
     mock_searcher = Mock()
-    mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
     mock_searcher.graph_storage = mock_gs
     # Return different results for source vs target resolution calls
     mock_searcher.search.side_effect = [[source_result], [target_result]]
@@ -267,32 +264,14 @@ async def test_symbol_resolution_via_semantic_search(dec_state):
 
 
 @pytest.mark.asyncio
-async def test_resolve_tier1_symbol_cache_hit():
-    """Tier-1: symbol_cache hit returns chunk_id with direct_lookup method."""
-    from mcp_server.tools.search_handlers import _resolve_symbol_to_chunk_id
-
-    mock_searcher = Mock()
-    mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = (
-        "file.py:1-10:function:my_func"
-    )
-
-    chunk_id, info = await _resolve_symbol_to_chunk_id("my_func", mock_searcher)
-
-    assert chunk_id == "file.py:1-10:function:my_func"
-    assert info["resolution_method"] == "direct_lookup"
-    assert info["resolved_from"] == "my_func"
-
-
-@pytest.mark.asyncio
-async def test_resolve_tier2_graph_name_exact():
-    """Tier-2: get_nodes_by_name hit returns first match with graph_lookup method."""
+async def test_resolve_tier1_graph_name_exact():
+    """Tier-1: get_nodes_by_name hit returns first match with graph_lookup method."""
     from mcp_server.tools.search_handlers import _resolve_symbol_to_chunk_id
 
     mock_gs = Mock()
     mock_gs.get_nodes_by_name.return_value = ["file.py:1-10:function:my_func"]
 
     mock_searcher = Mock()
-    mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
     mock_searcher.graph_storage = mock_gs
 
     chunk_id, info = await _resolve_symbol_to_chunk_id("my_func", mock_searcher)
@@ -302,8 +281,8 @@ async def test_resolve_tier2_graph_name_exact():
 
 
 @pytest.mark.asyncio
-async def test_resolve_tier2_suffix_colon():
-    """Tier-2: suffix scan matches ':name' pattern when name index returns nothing."""
+async def test_resolve_tier1_suffix_colon():
+    """Tier-1: suffix scan matches ':name' pattern when name index returns nothing."""
     from mcp_server.tools.search_handlers import _resolve_symbol_to_chunk_id
 
     mock_gs = Mock()
@@ -314,7 +293,6 @@ async def test_resolve_tier2_suffix_colon():
     ]
 
     mock_searcher = Mock()
-    mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
     mock_searcher.graph_storage = mock_gs
 
     chunk_id, info = await _resolve_symbol_to_chunk_id("my_func", mock_searcher)
@@ -324,8 +302,8 @@ async def test_resolve_tier2_suffix_colon():
 
 
 @pytest.mark.asyncio
-async def test_resolve_tier2_suffix_dot():
-    """Tier-2: suffix scan matches '.name' pattern for class-qualified chunk_ids.
+async def test_resolve_tier1_suffix_dot():
+    """Tier-1: suffix scan matches '.name' pattern for class-qualified chunk_ids.
 
     Regression guard: the old inline code only checked ':{name}', missing
     class-qualified IDs like 'ClassName.method_name'.
@@ -340,7 +318,6 @@ async def test_resolve_tier2_suffix_dot():
     ]
 
     mock_searcher = Mock()
-    mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
     mock_searcher.graph_storage = mock_gs
 
     chunk_id, info = await _resolve_symbol_to_chunk_id("my_method", mock_searcher)
@@ -350,8 +327,8 @@ async def test_resolve_tier2_suffix_dot():
 
 
 @pytest.mark.asyncio
-async def test_resolve_tier3_semantic_name_match_preferred():
-    """Tier-3: semantic result whose name matches the symbol is preferred over first."""
+async def test_resolve_tier2_semantic_name_match_preferred():
+    """Tier-2: semantic result whose name matches the symbol is preferred over first."""
     from mcp_server.tools.search_handlers import _resolve_symbol_to_chunk_id
 
     first_result = Mock()
@@ -367,7 +344,6 @@ async def test_resolve_tier3_semantic_name_match_preferred():
     mock_gs.graph.nodes.return_value = []
 
     mock_searcher = Mock()
-    mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
     mock_searcher.graph_storage = mock_gs
     mock_searcher.search.return_value = [first_result, exact_match]
 
@@ -387,7 +363,6 @@ async def test_resolve_not_found_returns_none_none():
     mock_gs.graph.nodes.return_value = []
 
     mock_searcher = Mock()
-    mock_searcher.index_manager.symbol_cache.get_by_symbol_name.return_value = None
     mock_searcher.graph_storage = mock_gs
     mock_searcher.search.return_value = []
 

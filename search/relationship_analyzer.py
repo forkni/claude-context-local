@@ -42,15 +42,6 @@ class RelationshipAnalyzer:
         self.searcher = searcher
         self.graph_engine = graph_engine
 
-        # O(1) symbol-name → chunk_id cache (optional, for inherits resolution)
-        self.symbol_cache = None
-        if hasattr(searcher, "dense_index") and hasattr(
-            searcher.dense_index, "symbol_cache"
-        ):
-            self.symbol_cache = searcher.dense_index.symbol_cache
-        elif hasattr(searcher, "symbol_cache"):
-            self.symbol_cache = searcher.symbol_cache
-
         if graph_engine is None:
             logger.warning(
                 "[INIT] No GraphQueryEngine supplied — relationship queries will be empty"
@@ -404,24 +395,6 @@ class RelationshipAnalyzer:
             )
             return info
 
-        # Try O(1) symbol cache
-        resolved_id = (
-            self.symbol_cache.get_by_symbol_name(target) if self.symbol_cache else None
-        )
-        if resolved_id:
-            chunk_info = self._get_chunk_info(resolved_id)
-            if not should_include(chunk_info.get("file", "")):
-                return None
-            return {
-                "chunk_id": resolved_id,
-                "target_name": target,
-                "kind": chunk_info.get("kind", "unknown"),
-                "file": chunk_info.get("file"),
-                "line": line,
-                "confidence": confidence,
-                "relationship_type": rel_type,
-            }
-
         if not should_include(""):
             return None
         return {
@@ -481,7 +454,7 @@ class RelationshipAnalyzer:
     ) -> tuple[list[dict[str, Any]], int, int, int, int]:
         """Convert inbound RelationshipEntry objects to enriched caller dicts.
 
-        On exact lookup miss, retries via the Tier 1→3 symbol-resolution cascade
+        On exact lookup miss, retries via the Tier 1→2 symbol-resolution cascade
         (_resolve_by_symbol) instead of silently discarding graph-found callers.
         Callers are tagged with ``confidence``:
           - ``"exact"``     — found directly by chunk_id; edge was unambiguous
@@ -524,11 +497,11 @@ class RelationshipAnalyzer:
             else:
                 # Exact lookup missed — likely line-range drift after incremental
                 # reindex, split_block fragmentation, or graph/metadata divergence.
-                # Derive the symbol name and retry via Tier 1→3 resolution cascade.
+                # Derive the symbol name and retry via Tier 1→2 resolution cascade.
                 symbol = caller_id.split(":")[-1] if ":" in caller_id else caller_id
                 # Skip builtins/common-method names before recovery — matches the
                 # index-time policy (graph_integration._resolve_call_target) so we
-                # don't Tier-3-guess a target for a name that's never a real caller.
+                # don't Tier-2-guess a target for a name that's never a real caller.
                 if hasattr(builtins, symbol) or symbol in _COMMON_METHODS:
                     recovered = None
                 else:
@@ -570,7 +543,7 @@ class RelationshipAnalyzer:
         ``chunk_id`` field is the *callee* node (a full chunk_id for pyan/libcst-resolved
         edges, or a symbol name for in-house AST edges).
 
-        On exact lookup miss, retries via the Tier 1→3 symbol-resolution cascade
+        On exact lookup miss, retries via the Tier 1→2 symbol-resolution cascade
         (:meth:`_resolve_by_symbol`) so that symbol-name callee nodes from the in-house
         extractor are still surfaced when they can be re-resolved.  Callees are tagged
         with ``confidence``:
@@ -619,7 +592,7 @@ class RelationshipAnalyzer:
                 # Skip builtins/common-method names before recovery — matches the
                 # index-time policy (graph_integration._resolve_call_target) so an
                 # unresolved bare call like len()/append() stays phantom instead of
-                # Tier-3-guessing an unrelated project function.
+                # Tier-2-guessing an unrelated project function.
                 if hasattr(builtins, symbol) or symbol in _COMMON_METHODS:
                     recovered = None
                 else:
@@ -660,19 +633,18 @@ class RelationshipAnalyzer:
         exclude_dirs: list[str] | None,
         strict_name_match: bool = False,
     ) -> tuple[Any, str] | None:
-        """Resolve a symbol name to (result, chunk_id) via the Tier 1→3 cascade.
+        """Resolve a symbol name to (result, chunk_id) via the Tier 1→2 cascade.
 
         Unlike _resolve_target, returns ``None`` on failure instead of raising
         ``SearchError``.  Extracted for reuse in _enrich_callers fallback so that
         stale/drifted caller IDs can be re-resolved by symbol rather than dropped.
 
         Tiers:
-          1. O(1) symbol-cache lookup (populated by indexer for all indexed chunks).
-          2. Graph exact-name lookup + suffix scan (":<name>" / ".<name>").
-          3. Semantic search with name-match + type-priority ranking.
+          1. Graph exact-name lookup + suffix scan (":<name>" / ".<name>").
+          2. Semantic search with name-match + type-priority ranking.
 
         Args:
-            strict_name_match: When True, Tier 3 only returns a candidate whose
+            strict_name_match: When True, Tier 2 only returns a candidate whose
                 name actually matches ``symbol_name`` — it will NOT fall back to
                 the nearest semantic neighbor when no name matches. Used by the
                 edge-recovery callers (_enrich_callers/_enrich_callees) so an
@@ -682,18 +654,7 @@ class RelationshipAnalyzer:
                 lenient default so ambiguous/fuzzy lookups still return a best
                 guess.
         """
-        # Tier 1: O(1) exact symbol-cache lookup
-        if self.symbol_cache:
-            cid = self.symbol_cache.get_by_symbol_name(symbol_name)
-            if cid:
-                result = self.searcher.get_by_chunk_id(cid)
-                if result:
-                    logger.debug(
-                        f"[RESOLVE_SYM] '{symbol_name}' → '{cid}' (symbol_cache)"
-                    )
-                    return result, cid
-
-        # Tier 2: graph exact-name lookup + suffix scan
+        # Tier 1: graph exact-name lookup + suffix scan
         graph_storage = None
         if self.graph_engine is not None:
             graph_storage = getattr(self.graph_engine, "storage", None)
@@ -717,12 +678,12 @@ class RelationshipAnalyzer:
                     )
                     return result, cid
 
-        # Tier 3: semantic search fallback
+        # Tier 2: semantic search fallback
         filters = {"exclude_dirs": exclude_dirs} if exclude_dirs else None
         try:
             results = self.searcher.search(symbol_name, k=30, filters=filters)
-        except Exception as exc:  # noqa: BLE001 - resilience: Tier 3 semantic search fallback, resolution returns None
-            logger.debug(f"Tier 3 semantic search failed for '{symbol_name}': {exc}")
+        except Exception as exc:  # noqa: BLE001 - resilience: Tier 2 semantic search fallback, resolution returns None
+            logger.debug(f"Tier 2 semantic search failed for '{symbol_name}': {exc}")
             return None
         if not results:
             return None
@@ -789,7 +750,7 @@ class RelationshipAnalyzer:
             # line range embedded in the chunk_id has drifted (e.g. after editing a
             # file, `path:339-342:method:Cls.m` becomes `path:350-353:method:Cls.m`
             # but the old node survives in the call graph). Derive the symbol name
-            # from the last colon-segment and fall through to the Tier 1→3 symbol-
+            # from the last colon-segment and fall through to the Tier 1→2 symbol-
             # resolution block below so we can locate the *current* chunk.
             parts = chunk_id.split(":")
             if len(parts) >= 3:
@@ -801,7 +762,7 @@ class RelationshipAnalyzer:
             else:
                 raise SearchError(f"Chunk not found: {chunk_id}")
 
-        # Delegate Tier 1→3 cascade to shared helper; raise on failure.
+        # Delegate Tier 1→2 cascade to shared helper; raise on failure.
         if symbol_name is None:
             raise SearchError(
                 "No chunk_id or symbol_name provided for target resolution"
@@ -1005,15 +966,6 @@ class RelationshipAnalyzer:
             ),
             "kind": getattr(result, "chunk_type", "unknown"),
             "name": symbol_name or target_id.split(":")[-1],
-        }
-
-    @staticmethod
-    def _get_chunk_info(chunk_id: str) -> dict[str, Any]:
-        parts = chunk_id.split(":")
-        return {
-            "file": parts[0] if parts else "",
-            "kind": parts[2] if len(parts) > 2 else "unknown",
-            "name": parts[3] if len(parts) > 3 else "",
         }
 
     @staticmethod

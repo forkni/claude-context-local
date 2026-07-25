@@ -62,20 +62,23 @@ def test_phase2_symbol_hash_cache():
     print(f"  Average lookup time: {avg_time_us:.2f} us")
     print(f"  Total time for {iterations * 10:,} lookups: {(end - start):.3f}s")
 
-    # Verify cache file persistence
+    # The hash cache is in-memory only (PYTHONHASHSEED randomizes hash() per
+    # process, so a persisted cache would carry no working entries in a fresh
+    # process anyway) — no cache file is ever written.
     cache_path = db_path.parent / f"{db_path.stem}_symbol_cache.json"
-    assert cache_path.exists(), "Symbol cache file should exist"
+    assert not cache_path.exists(), "Symbol cache should never be persisted to disk"
 
-    print(f"  Cache file: {cache_path.name}")
-
-    # Test cache reload
+    # A fresh MetadataStore starts with an empty in-memory cache, but the
+    # underlying SQLite data is still there and reachable via get().
     store.close()
     store2 = MetadataStore(db_path)
 
-    # Verify symbols reloaded
     for chunk_id in test_chunks[:5]:
-        assert chunk_id in store2._symbol_cache, (
-            f"Symbol {chunk_id} should be in reloaded cache"
+        assert chunk_id not in store2._symbol_cache, (
+            f"Fresh store's in-memory cache should not contain {chunk_id}"
+        )
+        assert store2.get(chunk_id) is not None, (
+            f"Symbol {chunk_id} should still be retrievable from SQLite"
         )
 
     print("\n[OK] Phase 2 tests passed!")

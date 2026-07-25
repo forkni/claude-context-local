@@ -11,7 +11,6 @@ import numpy as np
 
 if TYPE_CHECKING:
     from embeddings.embedder import CodeEmbedder
-    from search.symbol_cache import SymbolHashCache
 
 
 try:
@@ -117,16 +116,6 @@ class CodeIndexManager:
         Returns the MetadataStore instance for chunk metadata operations.
         """
         return self._metadata_store
-
-    @property
-    def symbol_cache(self) -> "SymbolHashCache":
-        """Expose symbol cache for direct symbol lookup.
-
-        Returns the SymbolHashCache instance from metadata_store,
-        enabling O(1) symbol name → chunk_id lookups for find_path
-        and other tools without relying on semantic search.
-        """
-        return self._metadata_store._symbol_cache
 
     def create_index(self, embedding_dimension: int, index_type: str = "flat") -> None:
         """Create a new FAISS index.

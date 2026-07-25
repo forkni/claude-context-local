@@ -40,9 +40,6 @@ def mock_graph_engine():
 @pytest.fixture
 def impact_analyzer(mock_searcher, mock_graph_engine):
     """Create a RelationshipAnalyzer instance with mocked dependencies."""
-    # Prevent symbol_cache auto-creation from mock attributes
-    del mock_searcher.dense_index
-    del mock_searcher.symbol_cache
     return RelationshipAnalyzer(searcher=mock_searcher, graph_engine=mock_graph_engine)
 
 
@@ -629,10 +626,8 @@ def _make_mock_result(chunk_id: str, chunk_type: str = "function"):
 class TestResolveTarget:
     """_resolve_target should prefer exact lookups over semantic search."""
 
-    def _make_analyzer_with_caches(
-        self, mock_searcher, symbol_cache=None, graph_storage=None
-    ):
-        """Build a RelationshipAnalyzer with optional pre-wired caches."""
+    def _make_analyzer_with_caches(self, mock_searcher, graph_storage=None):
+        """Build a RelationshipAnalyzer with an optional pre-wired graph_storage mock."""
         from graph.graph_queries import GraphQueryEngine
         from search.relationship_analyzer import RelationshipAnalyzer
 
@@ -641,54 +636,24 @@ class TestResolveTarget:
             engine = Mock(spec=GraphQueryEngine)
             engine.storage = graph_storage
 
-        # Inject symbol_cache by patching the constructor check
-        analyzer = RelationshipAnalyzer(searcher=mock_searcher, graph_engine=engine)
-        analyzer.symbol_cache = symbol_cache
-        return analyzer
+        return RelationshipAnalyzer(searcher=mock_searcher, graph_engine=engine)
 
-    def test_resolve_via_symbol_cache_does_not_call_search(self, mock_searcher):
-        """Tier-1 exact lookup: symbol cache hit avoids calling searcher.search."""
-        mock_cache = Mock()
-        mock_cache.get_by_symbol_name.return_value = "pkg/mod.py:10-20:function:my_func"
+    def test_resolve_via_graph_lookup_does_not_call_search(self, mock_searcher):
+        """Tier-1 exact lookup: graph name index hit avoids searcher.search."""
+        mock_gs = Mock()
+        mock_gs.get_nodes_by_name.return_value = ["pkg/mod.py:10-20:function:my_func"]
 
         mock_result = _make_mock_result("pkg/mod.py:10-20:function:my_func", "function")
         mock_searcher.get_by_chunk_id.return_value = mock_result
 
-        analyzer = self._make_analyzer_with_caches(
-            mock_searcher, symbol_cache=mock_cache
-        )
+        analyzer = self._make_analyzer_with_caches(mock_searcher, graph_storage=mock_gs)
         result, cid = analyzer._resolve_target(None, "my_func", None)
 
         assert cid == "pkg/mod.py:10-20:function:my_func"
         mock_searcher.search.assert_not_called()
 
-    def test_resolve_via_graph_lookup_does_not_call_search(self, mock_searcher):
-        """Tier-2 exact lookup: graph name index hit avoids searcher.search."""
-        # Symbol cache misses
-        mock_cache = Mock()
-        mock_cache.get_by_symbol_name.return_value = None
-
-        # Graph storage hits
-        mock_gs = Mock()
-        mock_gs.get_nodes_by_name.return_value = ["pkg/mod.py:30-50:method:Foo.bar"]
-
-        mock_result = _make_mock_result("pkg/mod.py:30-50:method:Foo.bar", "method")
-        mock_searcher.get_by_chunk_id.return_value = mock_result
-
-        analyzer = self._make_analyzer_with_caches(
-            mock_searcher, symbol_cache=mock_cache, graph_storage=mock_gs
-        )
-        result, cid = analyzer._resolve_target(None, "bar", None)
-
-        assert cid == "pkg/mod.py:30-50:method:Foo.bar"
-        mock_searcher.search.assert_not_called()
-
     def test_resolve_via_graph_suffix_scan_class_qualified(self, mock_searcher):
-        """Tier-2 suffix scan: chunk_id ending with '.method_name' is matched."""
-        # Symbol cache misses; graph exact-name lookup also misses (key is qualified)
-        mock_cache = Mock()
-        mock_cache.get_by_symbol_name.return_value = None
-
+        """Tier-1 suffix scan: chunk_id ending with '.method_name' is matched."""
         mock_gs = Mock()
         mock_gs.get_nodes_by_name.return_value = []  # "get_project_storage_dir" not in _name_index as bare
 
@@ -702,19 +667,15 @@ class TestResolveTarget:
         mock_result = _make_mock_result(qualified_cid, "method")
         mock_searcher.get_by_chunk_id.return_value = mock_result
 
-        analyzer = self._make_analyzer_with_caches(
-            mock_searcher, symbol_cache=mock_cache, graph_storage=mock_gs
-        )
+        analyzer = self._make_analyzer_with_caches(mock_searcher, graph_storage=mock_gs)
         result, cid = analyzer._resolve_target(None, "get_project_storage_dir", None)
 
         assert cid == qualified_cid
         mock_searcher.search.assert_not_called()
 
     def test_resolve_semantic_fallback_prefers_method_over_class(self, mock_searcher):
-        """Tier-3 semantic: inverted type priority picks method/function before class."""
+        """Tier-2 semantic: inverted type priority picks method/function before class."""
         # Both exact tiers miss
-        mock_cache = Mock()
-        mock_cache.get_by_symbol_name.return_value = None
         mock_gs = Mock()
         mock_gs.get_nodes_by_name.return_value = []
         mock_gs.graph.nodes.return_value = []
@@ -726,9 +687,7 @@ class TestResolveTarget:
         mock_searcher.search.return_value = [class_result, method_result]
         mock_searcher.get_by_chunk_id.return_value = None
 
-        analyzer = self._make_analyzer_with_caches(
-            mock_searcher, symbol_cache=mock_cache, graph_storage=mock_gs
-        )
+        analyzer = self._make_analyzer_with_caches(mock_searcher, graph_storage=mock_gs)
         result, cid = analyzer._resolve_target(None, "get_project_storage_dir", None)
 
         assert "method" in cid or "method_result" not in cid
@@ -737,8 +696,6 @@ class TestResolveTarget:
     def test_resolve_name_matching_handles_class_qualified_method(self, mock_searcher):
         """Name-match filter accepts 'Foo.bar' when querying bare 'bar'."""
         # Both exact tiers miss → falls to semantic
-        mock_cache = Mock()
-        mock_cache.get_by_symbol_name.return_value = None
         mock_gs = Mock()
         mock_gs.get_nodes_by_name.return_value = []
         mock_gs.graph.nodes.return_value = []
@@ -750,9 +707,7 @@ class TestResolveTarget:
         mock_searcher.search.return_value = [class_result, qualified_method]
         mock_searcher.get_by_chunk_id.return_value = None
 
-        analyzer = self._make_analyzer_with_caches(
-            mock_searcher, symbol_cache=mock_cache, graph_storage=mock_gs
-        )
+        analyzer = self._make_analyzer_with_caches(mock_searcher, graph_storage=mock_gs)
         result, cid = analyzer._resolve_target(None, "bar", None)
 
         # The qualified method matches via .split(".")[-1] == "bar"; class does not match
@@ -763,16 +718,12 @@ class TestResolveTarget:
         """All tiers miss → SearchError raised."""
         from search.exceptions import SearchError
 
-        mock_cache = Mock()
-        mock_cache.get_by_symbol_name.return_value = None
         mock_gs = Mock()
         mock_gs.get_nodes_by_name.return_value = []
         mock_gs.graph.nodes.return_value = []
         mock_searcher.search.return_value = []
 
-        analyzer = self._make_analyzer_with_caches(
-            mock_searcher, symbol_cache=mock_cache, graph_storage=mock_gs
-        )
+        analyzer = self._make_analyzer_with_caches(mock_searcher, graph_storage=mock_gs)
 
         import pytest
 
@@ -783,27 +734,25 @@ class TestResolveTarget:
     # Fix 1: stale chunk_id falls back to symbol resolution
     # ------------------------------------------------------------------
 
-    def test_stale_chunk_id_falls_back_via_symbol_cache(self, mock_searcher):
-        """A chunk_id that misses the store but whose symbol is in the cache resolves.
+    def test_stale_chunk_id_falls_back_via_graph_lookup(self, mock_searcher):
+        """A chunk_id that misses the store but whose symbol is in the graph resolves.
 
         Reproduces: find_connections('path:339-342:method:Cls.method') where the
         file was edited and the current chunk is at 'path:350-353:method:Cls.method'.
-        The symbol cache maps 'Cls.method' → current chunk_id.
+        The graph name index maps 'Cls.method' → current chunk_id.
         """
         stale_id = "td_exporter/CUDAIPCExtension.py:339-342:method:CUDAIPCExtension.verbose_performance"
         current_id = "td_exporter/CUDAIPCExtension.py:350-353:method:CUDAIPCExtension.verbose_performance"
 
-        mock_cache = Mock()
-        mock_cache.get_by_symbol_name.return_value = current_id
+        mock_gs = Mock()
+        mock_gs.get_nodes_by_name.return_value = [current_id]
 
         current_result = _make_mock_result(current_id, "method")
         mock_searcher.get_by_chunk_id.side_effect = lambda cid: (
             current_result if cid == current_id else None
         )
 
-        analyzer = self._make_analyzer_with_caches(
-            mock_searcher, symbol_cache=mock_cache
-        )
+        analyzer = self._make_analyzer_with_caches(mock_searcher, graph_storage=mock_gs)
         result, cid = analyzer._resolve_target(stale_id, None, None)
 
         assert cid == current_id
@@ -814,8 +763,6 @@ class TestResolveTarget:
 
         stale_id = "src/auth.py:10-20:method:AuthManager.validate"
 
-        mock_cache = Mock()
-        mock_cache.get_by_symbol_name.return_value = None
         mock_gs = Mock()
         mock_gs.get_nodes_by_name.return_value = []
         mock_gs.graph.nodes.return_value = []
@@ -826,9 +773,7 @@ class TestResolveTarget:
         mock_searcher.get_by_chunk_id.return_value = None
         mock_searcher.search.return_value = [current_result]
 
-        analyzer = self._make_analyzer_with_caches(
-            mock_searcher, symbol_cache=mock_cache, graph_storage=mock_gs
-        )
+        analyzer = self._make_analyzer_with_caches(mock_searcher, graph_storage=mock_gs)
         result, cid = analyzer._resolve_target(stale_id, None, None)
 
         assert cid == "src/auth.py:15-25:method:AuthManager.validate"
@@ -859,12 +804,6 @@ class TestLeakPrevention:
         from search.relationship_analyzer import RelationshipAnalyzer
 
         searcher = Mock()
-        # Set symbol_cache to None so RelationshipAnalyzer doesn't pick up
-        # a live Mock from dense_index.symbol_cache (which would auto-return
-        # Mocks instead of None and confuse the resolution tiers).
-        searcher.dense_index = Mock()
-        searcher.dense_index.symbol_cache = None
-        searcher.symbol_cache = None
         searcher.get_by_chunk_id.return_value = get_by_chunk_id_return
 
         engine = Mock()

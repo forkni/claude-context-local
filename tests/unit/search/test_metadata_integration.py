@@ -90,8 +90,13 @@ class TestMetadataStoreHashCacheIntegration(unittest.TestCase):
         # Verify removed from hash cache
         self.assertFalse(chunk_id in self.store._symbol_cache)
 
-    def test_commit_saves_hash_cache(self):
-        """Test that commit() persists hash cache to disk."""
+    def test_commit_does_not_persist_hash_cache(self):
+        """Test that commit() never writes the in-memory hash cache to disk.
+
+        PYTHONHASHSEED randomizes hash() per process, so a persisted cache
+        would carry no working entries in a fresh process anyway — the cache
+        is in-memory only, for the lifetime of one process.
+        """
         chunk_id = "search/indexer.py:10-20:function:test_func"
         metadata = {"relative_path": "search/indexer.py", "chunk_type": "function"}
 
@@ -99,14 +104,16 @@ class TestMetadataStoreHashCacheIntegration(unittest.TestCase):
         self.store.set(chunk_id, 0, metadata)
         self.store.commit()
 
-        # Verify cache file exists
+        # No cache file should ever be written
         cache_path = self.db_path.parent / f"{self.db_path.stem}_symbol_cache.json"
-        self.assertTrue(cache_path.exists())
+        self.assertFalse(cache_path.exists())
 
-        # Reload and verify persisted
+        # A fresh MetadataStore starts with an empty in-memory cache, even
+        # though the underlying SQLite data is still there
         self.store.close()
         store2 = MetadataStore(self.db_path)
-        self.assertTrue(chunk_id in store2._symbol_cache)
+        self.assertFalse(chunk_id in store2._symbol_cache)
+        self.assertIsNotNone(store2.get(chunk_id))
         store2.close()
 
     def test_multiple_chunks_hash_cache(self):

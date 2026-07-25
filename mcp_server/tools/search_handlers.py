@@ -246,33 +246,17 @@ async def _resolve_symbol_to_chunk_id(
     symbol_name: str,
     searcher: Any,
 ) -> tuple[str | None, dict[str, str] | None]:
-    """Resolve a symbol name to a chunk_id via a 3-tier cascade.
+    """Resolve a symbol name to a chunk_id via a 2-tier cascade.
 
     Returns ``(chunk_id, resolution_info)`` on success, or ``(None, None)`` when
     the symbol cannot be resolved.  Callers are responsible for returning an
     appropriate error response.
 
-    Tier 1: O(1) symbol_cache direct lookup
-    Tier 2: graph node name index + suffix scan (both ``:name`` and ``.name`` so
+    Tier 1: graph node name index + suffix scan (both ``:name`` and ``.name`` so
             class-qualified names like ``ClassName.method_name`` are handled)
-    Tier 3: semantic search with name-preference filter
+    Tier 2: semantic search with name-preference filter
     """
-    # Tier 1 — O(1) symbol cache
-    index_manager = _get_index_manager_from_searcher(searcher)
-    if (
-        index_manager
-        and hasattr(index_manager, "symbol_cache")
-        and index_manager.symbol_cache
-    ):
-        resolved = index_manager.symbol_cache.get_by_symbol_name(symbol_name)
-        if resolved:
-            return resolved, {
-                "resolved_from": symbol_name,
-                "chunk_id": resolved,
-                "resolution_method": "direct_lookup",
-            }
-
-    # Tier 2 — graph node name index + suffix scan
+    # Tier 1 — graph node name index + suffix scan
     from mcp_server.tools.searcher_view import SearcherView
 
     gs = SearcherView(searcher).graph_storage
@@ -296,7 +280,7 @@ async def _resolve_symbol_to_chunk_id(
                 "resolution_method": "graph_lookup",
             }
 
-    # Tier 3 — semantic search with name-preference filter
+    # Tier 2 — semantic search with name-preference filter
     results = await asyncio.to_thread(searcher.search, symbol_name, k=5)
     for r in results:
         meta = r.metadata if hasattr(r, "metadata") else {}

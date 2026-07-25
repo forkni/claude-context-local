@@ -1,7 +1,7 @@
 """Unit tests for RelationshipAnalyzer — Phase 1 & Phase 4 changes.
 
 Tests cover:
-  * _resolve_by_symbol: returns None on all-tier miss; resolves via symbol_cache (Tier 1)
+  * _resolve_by_symbol: returns None on all-tier miss; resolves via graph lookup (Tier 1)
   * _enrich_callers: exact hit, stale-ID recovery, ambiguous-confidence passthrough
   * ImpactReport.to_dict: caller_confidence breakdown only emitted when non-zero
 """
@@ -60,10 +60,13 @@ def _make_analyzer(
     *,
     get_by_chunk_id_side_effect=None,
     search_side_effect=None,
-    symbol_cache_map: dict[str, str] | None = None,
-    graph_nodes: list[str] | None = None,
+    graph_nodes_map: dict[str, list[str]] | None = None,
 ):
-    """Return (analyzer, mock_searcher) with the given side-effects pre-wired."""
+    """Return (analyzer, mock_searcher) with the given side-effects pre-wired.
+
+    ``graph_nodes_map`` simulates the Tier 1 graph exact-name lookup
+    (``graph_storage.get_nodes_by_name``) used by ``_resolve_by_symbol``.
+    """
     from search.relationship_analyzer import RelationshipAnalyzer
 
     mock_searcher = MagicMock()
@@ -75,12 +78,16 @@ def _make_analyzer(
     analyzer = RelationshipAnalyzer.__new__(RelationshipAnalyzer)
     analyzer.searcher = mock_searcher
     analyzer.graph_engine = None
-    analyzer.symbol_cache = None
 
-    if symbol_cache_map is not None:
-        sc = MagicMock()
-        sc.get_by_symbol_name.side_effect = lambda name: symbol_cache_map.get(name)
-        analyzer.symbol_cache = sc
+    if graph_nodes_map is not None:
+        storage = MagicMock()
+        storage.get_nodes_by_name.side_effect = lambda name: graph_nodes_map.get(
+            name, []
+        )
+        storage.graph.nodes.return_value = []
+        graph_engine = MagicMock()
+        graph_engine.storage = storage
+        analyzer.graph_engine = graph_engine
 
     # Lightweight stub for _result_to_dict so we don't pull in the full stack
     def _result_to_dict(result, cid):
@@ -101,21 +108,21 @@ def _make_analyzer(
 
 
 class TestResolveBySymbol(TestCase):
-    """_resolve_by_symbol: Tier 1→3 cascade with None-on-miss contract."""
+    """_resolve_by_symbol: Tier 1→2 cascade with None-on-miss contract."""
 
     def test_returns_none_when_all_tiers_miss(self):
-        """No cache, no graph, empty search → None."""
+        """No graph, empty search → None."""
         analyzer, _ = _make_analyzer(search_side_effect=lambda *a, **kw: [])
         result = analyzer._resolve_by_symbol("missing_fn", None)
         self.assertIsNone(result)
 
-    def test_tier1_symbol_cache_hit(self):
-        """Symbol cache match → returns (result, cid) immediately."""
+    def test_tier1_graph_lookup_hit(self):
+        """Graph exact-name match → returns (result, cid) immediately."""
         cid = "src/foo.py:function:normalize_chunk_id"
         fake_result = _FakeResult(chunk_id=cid)
 
         analyzer, mock_searcher = _make_analyzer(
-            symbol_cache_map={"normalize_chunk_id": cid},
+            graph_nodes_map={"normalize_chunk_id": [cid]},
             get_by_chunk_id_side_effect=lambda c: fake_result if c == cid else None,
         )
 
@@ -125,8 +132,8 @@ class TestResolveBySymbol(TestCase):
         self.assertEqual(resolved_cid, cid)
         self.assertIs(result, fake_result)
 
-    def test_tier1_cache_miss_falls_through_to_tier3(self):
-        """Symbol cache miss → falls through to semantic search (Tier 3)."""
+    def test_tier1_graph_miss_falls_through_to_tier2(self):
+        """Graph lookup miss → falls through to semantic search (Tier 2)."""
         cid = "src/bar.py:function:bar_fn"
         fake_result = _FakeResult(chunk_id=cid)
 
@@ -135,7 +142,7 @@ class TestResolveBySymbol(TestCase):
             return [fake_result] if query == "bar_fn" else []
 
         analyzer, _ = _make_analyzer(
-            symbol_cache_map={"other_fn": "src/other.py:function:other_fn"},
+            graph_nodes_map={"other_fn": ["src/other.py:function:other_fn"]},
             search_side_effect=_search,
         )
         resolved = analyzer._resolve_by_symbol("bar_fn", None)
@@ -144,7 +151,7 @@ class TestResolveBySymbol(TestCase):
         self.assertEqual(resolved_cid, cid)
 
     def test_search_exception_returns_none(self):
-        """If Tier 3 search raises, _resolve_by_symbol returns None (not raised)."""
+        """If Tier 2 search raises, _resolve_by_symbol returns None (not raised)."""
 
         def _bad_search(*a, **kw):
             raise RuntimeError("index unavailable")
@@ -155,13 +162,13 @@ class TestResolveBySymbol(TestCase):
             result = analyzer._resolve_by_symbol("anything", None)
         self.assertIsNone(result)
         self.assertTrue(
-            any("Tier 3 semantic search failed" in msg for msg in cm.output),
-            f"Expected Tier 3 failure log, got: {cm.output}",
+            any("Tier 2 semantic search failed" in msg for msg in cm.output),
+            f"Expected Tier 2 failure log, got: {cm.output}",
         )
 
     def test_lenient_default_guesses_when_no_name_match(self):
         """Default (strict_name_match=False, used by _resolve_target/user queries):
-        Tier 3 falls back to the top semantic hit even when no candidate's name
+        Tier 2 falls back to the top semantic hit even when no candidate's name
         actually matches the query. This is the existing, intentionally lenient
         behavior for ambiguous/fuzzy user-facing symbol lookups."""
         unrelated_cid = "src/wrong.py:function:unrelated_fn"
@@ -175,7 +182,7 @@ class TestResolveBySymbol(TestCase):
         self.assertEqual(resolved_cid, unrelated_cid)
 
     def test_strict_name_match_returns_none_when_no_name_match(self):
-        """strict_name_match=True (used by the edge-recovery paths): when no Tier 3
+        """strict_name_match=True (used by the edge-recovery paths): when no Tier 2
         candidate's name matches the query, return None instead of guessing.
 
         Regression test for the false-bind bug where an unresolved call-graph
@@ -265,12 +272,12 @@ class TestEnrichCallers(TestCase):
         def _get_by_chunk_id(cid):
             return fake_result if cid == current_id else None
 
-        symbol_cache = {"c_fn": current_id}
+        graph_nodes_map = {"c_fn": [current_id]}
 
         entry = _make_entry(stale_id)
         analyzer, _ = _make_analyzer(
             get_by_chunk_id_side_effect=_get_by_chunk_id,
-            symbol_cache_map=symbol_cache,
+            graph_nodes_map=graph_nodes_map,
         )
 
         callers, stale, exact, recovered, ambiguous = analyzer._enrich_callers(
@@ -288,7 +295,7 @@ class TestEnrichCallers(TestCase):
         bad_id = "src/d.py:1-5:function:ghost_fn"
         entry = _make_entry(bad_id)
 
-        # Exact lookup: always None; symbol_cache: empty; search: empty
+        # Exact lookup: always None; graph: no engine; search: empty
         analyzer, _ = _make_analyzer()
 
         callers, stale, exact, recovered, ambiguous = analyzer._enrich_callers(
@@ -316,7 +323,7 @@ class TestEnrichCallers(TestCase):
                 return result_current
             return None
 
-        sym_cache = {"stale_fn": cid_current}
+        graph_nodes_map = {"stale_fn": [cid_current]}
 
         entries = [
             _make_entry(cid_exact),
@@ -325,7 +332,7 @@ class TestEnrichCallers(TestCase):
         ]
         analyzer, _ = _make_analyzer(
             get_by_chunk_id_side_effect=_get_by_chunk_id,
-            symbol_cache_map=sym_cache,
+            graph_nodes_map=graph_nodes_map,
         )
 
         callers, stale, exact, recovered, ambiguous = analyzer._enrich_callers(
@@ -430,7 +437,7 @@ class TestEnrichCallees(TestCase):
         fake_result = _FakeResult(chunk_id=target_cid)
 
         analyzer, _ = _make_analyzer(
-            symbol_cache_map={"frobnicate": target_cid},
+            graph_nodes_map={"frobnicate": [target_cid]},
             get_by_chunk_id_side_effect=lambda c: (
                 fake_result if c == target_cid else None
             ),
