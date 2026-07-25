@@ -135,6 +135,120 @@ class TestTextPreprocessor:
         assert len(get_tokens) > 0, "Should find 'get' related tokens"
 
 
+class TestTextPreprocessorRound5aEquivalence:
+    """Round 5a: hoisting the tokenizer probe to __init__ and memoizing the
+    stemmer must not change tokenize()'s output versus the original
+    per-document try/except + unmemoized stem() behavior."""
+
+    @staticmethod
+    def _naive_tokenize(preprocessor: TextPreprocessor, text: str) -> list[str]:
+        """Reference reimplementation of tokenize() before Round 5a: probes
+        word_tokenize with a try/except on every call and re-stems every
+        token with no cache."""
+        import search.bm25_index as bm25_module
+
+        if not text or not isinstance(text, str):
+            return []
+
+        if bm25_module.word_tokenize:
+            try:
+                tokens = bm25_module.word_tokenize(text.lower())
+            except (LookupError, RuntimeError):
+                tokens = text.lower().split()
+        else:
+            tokens = text.lower().split()
+
+        tokens = [preprocessor._clean_token(t) for t in tokens if t and not t.isspace()]
+        tokens = [
+            t
+            for t in tokens
+            if t
+            and (not preprocessor.use_stopwords or t not in preprocessor._stop_words)
+        ]
+
+        if preprocessor.use_stemming and preprocessor._stemmer:
+            tokens = [preprocessor._stemmer.stem(t) for t in tokens]
+
+        return tokens
+
+    def test_matches_naive_per_call_tokenization(self):
+        """tokenize() output must be byte-identical to the naive reference
+        across a variety of inputs (code, prose, punctuation, empty/blank)."""
+        preprocessor = TextPreprocessor(use_stopwords=True, use_stemming=True)
+
+        documents = [
+            "def calculate_sum(a, b): return a + b",
+            "class UserManager: def __init__(self): pass",
+            "function processData(data) { return data.map(x => x * 2); }",
+            "SELECT * FROM users WHERE age > 18",
+            "def find_user(user_id): return database.get(user_id)",
+            "indexing indexed indexes index managed managing manages",
+            "test@example.com -> func() { return value; }",
+            "",
+            "   ",
+            "!@#$%^&*()",
+            "123 456 789",
+        ]
+
+        for doc in documents:
+            preprocessed = preprocessor.preprocess_code(doc)
+            expected = self._naive_tokenize(preprocessor, preprocessed)
+            actual = preprocessor.tokenize(preprocessed)
+            assert actual == expected, f"Mismatch for {doc!r}: {actual} != {expected}"
+
+    def test_tokenizer_probe_falls_back_and_does_not_reprobe(self):
+        """When word_tokenize can't run, the fallback decision is made once
+        at construction — later tokenize() calls must not retry it."""
+        import search.bm25_index as bm25_module
+
+        call_log = []
+
+        def always_raises(text, *_args, **_kwargs):
+            call_log.append(text)
+            raise LookupError("punkt_tab not found")
+
+        with patch.object(bm25_module, "word_tokenize", always_raises):
+            preprocessor = TextPreprocessor(use_stopwords=False, use_stemming=False)
+            assert call_log == ["probe"]
+            assert preprocessor._tokenize_words is str.split
+
+            for doc in ["hello world", "foo bar", "alpha beta gamma"]:
+                preprocessor.tokenize(doc)
+
+            assert call_log == ["probe"], (
+                "word_tokenize must not be retried per document once the "
+                "fallback has been resolved at init"
+            )
+
+    def test_stem_cache_is_bounded(self):
+        """The stemmer memo must evict the least-recently-used entry once
+        past its cap, not grow unbounded."""
+        preprocessor = TextPreprocessor(use_stopwords=False, use_stemming=True)
+        preprocessor._STEM_CACHE_MAX_SIZE = 3
+
+        for token in ["alpha", "beta", "gamma", "delta"]:
+            preprocessor._stem_token(token)
+
+        assert len(preprocessor._stem_cache) <= 3
+        assert "alpha" not in preprocessor._stem_cache
+        assert "delta" in preprocessor._stem_cache
+
+    def test_stem_cache_lru_touch_order(self):
+        """Re-accessing a cached token must count as a use, protecting it
+        from eviction ahead of entries that haven't been touched since."""
+        preprocessor = TextPreprocessor(use_stopwords=False, use_stemming=True)
+        preprocessor._STEM_CACHE_MAX_SIZE = 2
+
+        preprocessor._stem_token("alpha")
+        preprocessor._stem_token("beta")
+        preprocessor._stem_token("alpha")  # touch -> now most-recently-used
+        preprocessor._stem_token("gamma")  # must evict "beta", not "alpha"
+
+        assert "alpha" in preprocessor._stem_cache
+        assert "beta" not in preprocessor._stem_cache
+        assert "gamma" in preprocessor._stem_cache
+
+
 class TestBM25Index:
     """Test BM25 index functionality."""
 
