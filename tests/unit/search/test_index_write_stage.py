@@ -339,6 +339,94 @@ class TestInjectCallEdgesMinConfidence:
 
 
 # ---------------------------------------------------------------------------
+# resolvers=[] vs resolvers=None (config-driven resolver selection)
+# ---------------------------------------------------------------------------
+
+
+class TestInjectCallEdgesResolverSelection:
+    """CallGraphConfig.resolvers=[] must skip pyan/libcst entirely (per its own
+    docstring: "Set to [] to skip entirely"), distinct from resolvers=None
+    (unset, falls back to the ["pyan", "libcst"] default). Regression test for
+    a bug where `cg_cfg.resolvers or ["pyan", "libcst"]` treated an explicit
+    empty list the same as unset, because `[]` is falsy in Python.
+    """
+
+    @staticmethod
+    def _make_stage_for_injection() -> tuple[IndexWriteStage, Mock]:
+        import networkx as nx
+
+        g = nx.MultiDiGraph()
+        storage = Mock()
+        storage.graph = g
+
+        graph_integration = Mock()
+        graph_integration.storage = storage
+
+        meta_store = Mock()
+        dense_index = Mock()
+        dense_index.metadata_store = meta_store
+
+        indexer = Mock()
+        indexer._graph = graph_integration
+        indexer.dense_index = dense_index
+
+        stage = IndexWriteStage(
+            embedder=Mock(),
+            indexer=indexer,
+            snapshot_manager=Mock(),
+            build_metadata_fn=Mock(return_value={}),
+            clear_gpu_fn=Mock(),
+        )
+        return stage, storage
+
+    def test_empty_resolvers_list_skips_injection_entirely(self) -> None:
+        """resolvers=[] with lsp_enabled=False must leave zero resolvers -- no
+        call to run_resolvers, no edges injected."""
+        from search.config import CallGraphConfig
+
+        stage, storage = self._make_stage_for_injection()
+
+        cg_cfg = CallGraphConfig(resolvers=[], lsp_enabled=False)
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
+            patch("search.config.get_search_config", return_value=mock_cfg),
+            patch("search.index_write_stage.run_resolvers") as mock_run_resolvers,
+        ):
+            stage._inject_call_edges("/fake/project")
+
+        mock_run_resolvers.assert_not_called()
+        storage.add_call_edge.assert_not_called()
+
+    def test_none_resolvers_falls_back_to_default_pair(self) -> None:
+        """resolvers=None (unset) must still default to pyan+libcst."""
+        from search.config import CallGraphConfig
+
+        stage, storage = self._make_stage_for_injection()
+
+        cg_cfg = CallGraphConfig(resolvers=None, lsp_enabled=False)
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
+            patch("search.config.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.index_write_stage.run_resolvers", return_value={}
+            ) as mock_run_resolvers,
+        ):
+            stage._inject_call_edges("/fake/project")
+
+        mock_run_resolvers.assert_called_once()
+        resolver_instances = mock_run_resolvers.call_args.args[0]
+        assert len(resolver_instances) == 2, (
+            f"Expected pyan+libcst (2 resolvers) with resolvers=None; got {resolver_instances}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # MultiDiGraph edge-injection correctness (#3 follow-up)
 # ---------------------------------------------------------------------------
 

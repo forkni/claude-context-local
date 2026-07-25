@@ -552,11 +552,13 @@ def main() -> None:
     run_records: list[_Recorder] = []
     run_totals: list[float] = []
     run_results: list[dict[str, Any]] = []
+    instrumented_run_idx: int | None = None  # 1-based; the run cProfile ran on, if any
 
     for run_idx in range(1, args.runs + 1):
         is_last = run_idx == args.runs
         _profile_active = is_last and not args.no_profile
         if _profile_active:
+            instrumented_run_idx = run_idx
             _profile_dir.mkdir(parents=True, exist_ok=True)
             print(
                 f"\nTimed run {run_idx}/{args.runs} (cProfile ON for resolvers + embed_chunks)..."
@@ -582,20 +584,46 @@ def main() -> None:
     _profile_active = False
 
     # ------------------------------------------------------------------
-    # Cross-run summary (median across timed runs).
+    # Cross-run summary (median across CLEAN timed runs only).
     # ------------------------------------------------------------------
-    median_total = statistics.median(run_totals)
+    # The last run is optionally cProfile-instrumented (Layer 2) — cProfile's
+    # per-call overhead measurably inflates that run's wall-clock (it wraps
+    # PyanResolver.resolve/LibCSTResolver.resolve/LSPResolver.resolve/
+    # CodeEmbedder.embed_chunks), so folding it into the median would
+    # contaminate the timing stats with instrumentation noise rather than
+    # real pipeline cost. Excluded here; still present in the JSON artifact's
+    # full per-run list below, tagged via "cprofile_instrumented".
+    if instrumented_run_idx is not None and args.runs > 1:
+        clean_indices = [i for i in range(args.runs) if i != instrumented_run_idx - 1]
+    else:
+        clean_indices = list(range(args.runs))
+        if instrumented_run_idx is not None:
+            print(
+                "\n[WARN] Only one run and it was cProfile-instrumented — the "
+                "summary below includes instrumentation overhead. Pass "
+                "--runs 2+ or --no-profile for a clean measurement.",
+                file=sys.stderr,
+            )
+    clean_totals = [run_totals[i] for i in clean_indices]
+    clean_records = [run_records[i] for i in clean_indices]
+
+    median_total = statistics.median(clean_totals)
     print()
     print("#" * 78)
-    print(f"SUMMARY — median of {args.runs} timed run(s)")
+    excluded_note = (
+        f" (run {instrumented_run_idx} excluded — cProfile-instrumented)"
+        if instrumented_run_idx is not None and args.runs > 1
+        else ""
+    )
+    print(f"SUMMARY — median of {len(clean_totals)} clean run(s){excluded_note}")
     print("#" * 78)
     print(
-        f"{'total wall-clock':<32} {median_total:>10.3f}s  (spread: {min(run_totals):.1f}-{max(run_totals):.1f}s)"
+        f"{'total wall-clock':<32} {median_total:>10.3f}s  (spread: {min(clean_totals):.1f}-{max(clean_totals):.1f}s)"
     )
     all_phase_names = _TOP_LEVEL_PHASES + _RESOLVER_SUBPHASES + _EMBED_SUBPHASES
     medians: dict[str, float] = {}
     for name in all_phase_names:
-        vals = [r.total(name) for r in run_records]
+        vals = [r.total(name) for r in clean_records]
         medians[name] = statistics.median(vals)
         if medians[name] > 0:
             pct = medians[name] / median_total * 100 if median_total > 0 else 0.0
@@ -617,9 +645,11 @@ def main() -> None:
         },
         "runs": [
             {
+                "run_index": idx,
                 "total_wall_clock": total,
                 "files_added": res["files_added"],
                 "chunks_added": res["chunks_added"],
+                "cprofile_instrumented": idx == instrumented_run_idx,
                 "phases": {
                     name: rec.total(name) for name in all_phase_names if rec.count(name)
                 },
@@ -628,11 +658,17 @@ def main() -> None:
                 },
                 "extra": {k: v for k, v in rec.extra.items() if v},
             }
-            for total, res, rec in zip(
-                run_totals, run_results, run_records, strict=True
+            for idx, (total, res, rec) in enumerate(
+                zip(run_totals, run_results, run_records, strict=True), start=1
             )
         ],
-        "median": {"total_wall_clock": median_total, "phases": medians},
+        "instrumented_run_index": instrumented_run_idx,
+        "clean_run_indices": [i + 1 for i in clean_indices],
+        "median": {
+            "total_wall_clock": median_total,
+            "phases": medians,
+            "note": "computed over clean_run_indices only -- excludes the cProfile-instrumented run",
+        },
         "profile_dir": str(_profile_dir) if not args.no_profile else None,
     }
     json_path = output_dir / f"full_index_profile_{timestamp}.json"

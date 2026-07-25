@@ -282,7 +282,11 @@ class IndexWriteStage:
 
             cg_cfg = getattr(get_search_config(), "call_graph", None)
             enabled_names: set[str] = (
-                set(cg_cfg.resolvers or ["pyan", "libcst"])
+                set(
+                    cg_cfg.resolvers
+                    if cg_cfg.resolvers is not None
+                    else ["pyan", "libcst"]
+                )
                 if cg_cfg is not None
                 else {"pyan", "libcst"}
             )
