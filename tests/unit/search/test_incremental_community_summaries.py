@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 from chunking.python_ast_chunker import CodeChunk
 from merkle.change_detector import FileChanges
-from search.incremental_indexer import IncrementalIndexer
+from search.incremental_indexer import IncrementalIndexer, IncrementalIndexResult
 
 
 # ---------------------------------------------------------------------------
@@ -116,10 +116,23 @@ class TestThresholdRouting:
 
         changes = self._make_changes(n_added=5)  # 5 more → 33/100 = 0.33 > 0.3
 
+        # A real IncrementalIndexResult (not an opaque Mock): the promotion
+        # path runs dataclasses.replace() on it, which raises on a Mock —
+        # the raise was previously swallowed by incremental_index()'s outer
+        # except and silently retried via _attempt_recovery, which called
+        # _full_index a second time and made this assertion fail with
+        # "Called 2 times" instead of surfacing the real TypeError.
+        full_result = IncrementalIndexResult(
+            files_added=100,
+            files_removed=0,
+            files_modified=0,
+            chunks_added=42,
+            chunks_removed=0,
+            time_taken=1.0,
+            success=True,
+        )
         with (
-            patch.object(
-                incr, "_full_index", return_value=MagicMock(success=True)
-            ) as mock_full,
+            patch.object(incr, "_full_index", return_value=full_result) as mock_full,
             patch.object(incr, "detect_changes") as mock_dc,
         ):
             mock_dc.return_value = (changes, MagicMock())

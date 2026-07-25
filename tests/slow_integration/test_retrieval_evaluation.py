@@ -384,7 +384,7 @@ class TestRetrievalEvaluation:
     # -------------------------------------------------------------------
 
     def test_metrics_pipeline_produces_all_keys(self, indexed_environment):
-        """calculate_metrics_from_results returns all 10 expected keys
+        """calculate_metrics_from_results returns all 12 expected keys
         when fed real search results."""
         searcher = indexed_environment["searcher"]
         q = GOLDEN_QUERIES[0]
@@ -403,6 +403,7 @@ class TestRetrievalEvaluation:
         expected_keys = {
             "recall@1",
             "recall@5",
+            "recall@7",
             "recall@10",
             "precision@1",
             "precision@5",
@@ -411,6 +412,7 @@ class TestRetrievalEvaluation:
             "ndcg@5",
             "ndcg@10",
             "hit",
+            "hit@7",
         }
         assert set(metrics.keys()) == expected_keys
 

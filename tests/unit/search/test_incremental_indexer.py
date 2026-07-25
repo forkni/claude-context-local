@@ -194,18 +194,23 @@ class TestIncrementalIndexer:
             self.mock_chunker.is_supported.return_value = True
             self.mock_chunker.chunk_file.return_value = [mock_chunk]
 
-            # Mock embedder
-            mock_embedding_result = Mock()
-            mock_embedding_result.metadata = {}
-            self.mock_embedder.embed_chunks.return_value = [mock_embedding_result]
+            # Mock embedder — return one result per input chunk (1:1,
+            # order-preserved), matching the real embed_chunks contract.
+            # index_write_stage.py now zips the input chunks against this
+            # return value with strict=True, so a fixed-length mock here
+            # (e.g. always 1 result) would raise instead of silently
+            # truncating.
+            self.mock_embedder.embed_chunks.side_effect = lambda chunks, **kwargs: [
+                Mock(metadata={}) for _ in chunks
+            ]
 
             result = indexer.incremental_index(str(self.project_path), "test_project")
 
             assert result.success is True
             assert result.files_added == 3
             assert (
-                result.chunks_added == 1
-            )  # embed_chunks returns 1 result for all chunks
+                result.chunks_added == 3
+            )  # one embed_chunks result per chunk (3 files -> 3 chunks)
             assert result.files_removed == 0
             assert result.files_modified == 0
 
@@ -1409,7 +1414,9 @@ class TestCheckCommunityDrift:
         assert cumulative == 4  # 2 prev + 2 new
 
     def test_above_threshold_calls_full_index_and_returns_result(self):
-        """When drift fraction >= threshold, calls _full_index and returns its result."""
+        """When drift fraction >= threshold, calls _full_index and returns its
+        result with the true change counts substituted in (not the full-index
+        file totals) — see _check_community_drift's dataclasses.replace step."""
         indexer = self._make_indexer()
         indexer.snapshot_manager.load_metadata.return_value = {
             "cumulative_changed_files": 80,
@@ -1418,7 +1425,17 @@ class TestCheckCommunityDrift:
         # 80 + 20 = 100 changes → 100% drift, well above 50% threshold
         changes = self._make_changes(added=10, modified=5, removed=5)
 
-        mock_full_result = Mock()
+        # A real IncrementalIndexResult (not an opaque Mock): the promotion
+        # path runs dataclasses.replace() on it, which raises on a Mock.
+        mock_full_result = IncrementalIndexResult(
+            files_added=100,  # full-index reports every supported file...
+            files_removed=0,
+            files_modified=0,
+            chunks_added=42,
+            chunks_removed=0,
+            time_taken=1.0,
+            success=True,
+        )
         with (
             patch.object(indexer, "_full_index", return_value=mock_full_result),
             patch("search.incremental_indexer.get_search_config") as mock_cfg,
@@ -1431,7 +1448,11 @@ class TestCheckCommunityDrift:
                 "/p", "proj", changes, 0.0, should_refresh_communities=True
             )
 
-        assert result is mock_full_result
+        # ...but the caller is told the true change set, not the rebuild total.
+        assert result.files_added == 10
+        assert result.files_removed == 5
+        assert result.files_modified == 5
+        assert result.chunks_added == 42  # untouched — real work done
         assert cumulative == 100  # 80 prev + 20 new
 
     def test_no_prior_tracking_skips_drift_check(self):

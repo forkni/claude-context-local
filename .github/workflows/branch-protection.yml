@@ -109,6 +109,14 @@ jobs:
             --ignore=tests/slow_integration/ \
             --cov --cov-branch --cov-report=term-missing --cov-report=xml --cov-fail-under=77
 
+      - name: Slow-integration collection guard
+        # tests/slow_integration/ is excluded from the run above (real model
+        # downloads, GPU work, ~4 min). --collect-only only catches import
+        # and signature-level rot (e.g. a constructor gaining a required arg)
+        # in seconds; it does NOT catch runtime/assertion failures, so this
+        # is not a substitute for periodically running the suite for real.
+        run: uv run pytest tests/slow_integration --collect-only -q
+
       - name: Upload coverage to Codecov
         if: always()
         uses: codecov/codecov-action@v6

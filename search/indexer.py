@@ -225,26 +225,13 @@ class CodeIndexManager:
         with contextlib.suppress(sqlite3.Error):
             self.metadata_store.commit()
 
-        # Save call graph if populated
-        graph_status = "not None" if self.graph_storage is not None else "None"
-        graph_nodes = len(self.graph_storage) if self.graph_storage else 0
-        self._logger.info(
-            f"Graph storage check before save: graph_storage={graph_status}, nodes={graph_nodes}"
-        )
-        if self.graph_storage is not None and len(self.graph_storage) > 0:
-            try:
-                self._logger.info(
-                    f"Saving call graph with {len(self.graph_storage)} nodes to {self.graph_storage.graph_path}"
-                )
-                self.graph_storage.save()
-                self._logger.info(
-                    f"Successfully saved call graph with {len(self.graph_storage)} nodes"
-                )
-            except Exception as e:  # noqa: BLE001 - resilience: optional call graph save, indexing continues without it
-                self._logger.warning(f"Failed to save call graph: {e}")
-        else:
-            skip_reason = "None" if self.graph_storage is None else "empty (0 nodes)"
-            self._logger.warning(f"Skipping graph save: graph_storage is {skip_reason}")
+        # NOTE: the call graph is intentionally *not* saved here. At this point
+        # in the pipeline it's missing both populate_from_embeddings' call
+        # edges and phase-9's resolver-injected edges, so a save here would
+        # just be overwritten moments later. The graph is persisted once the
+        # full pipeline is done, via save_indices() (see index_write_stage.py /
+        # incremental_indexer.py, both of which call save_indices() after every
+        # add_embeddings() path).
 
         # Update statistics
         self._update_stats()
@@ -760,6 +747,17 @@ class CodeIndexManager:
 
         # Reinitialize metadata store AFTER deletion
         self._metadata_store = MetadataStore(self.metadata_path)
+
+        # Re-wire BatchOperations to the new store — it was nulled out above
+        # to release the Windows file handle, but remove_files() (the
+        # true-incremental deletion/modification path) reads
+        # self._batch_ops._metadata_store directly. Leaving it None here
+        # means the *next* incremental call after any clear_index() crashes
+        # with "'NoneType' object has no attribute 'get'", which gets caught
+        # by incremental_index()'s blanket except and silently falls back to
+        # a full reindex, masking true incremental behavior entirely.
+        if hasattr(self, "_batch_ops") and self._batch_ops is not None:
+            self._batch_ops._metadata_store = self._metadata_store
 
         self._logger.info("Index cleared")
 

@@ -7,6 +7,7 @@ import logging
 import tempfile
 import time
 import traceback
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -498,10 +499,19 @@ class IncrementalIndexer:
                     "index.full",
                     **{ATTR_PROJECT_ID: project_name, ATTR_INDEX_TYPE: "full"},
                 ):
-                    return (
-                        self._full_index(project_path, project_name, start_time),
-                        _new_cumulative,
+                    _result = self._full_index(project_path, project_name, start_time)
+                # The pass really did rebuild everything, but the caller asked
+                # what *changed* — report the true change set from `changes`,
+                # not the full-rebuild file count. chunks_added/chunks_removed
+                # stay as-is (they describe real work done during the rebuild).
+                if _result.success:
+                    _result = replace(
+                        _result,
+                        files_added=len(changes.added),
+                        files_removed=len(changes.removed),
+                        files_modified=len(changes.modified),
                     )
+                return (_result, _new_cumulative)
         return None, _new_cumulative
 
     def _attempt_recovery(

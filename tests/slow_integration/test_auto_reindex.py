@@ -127,7 +127,12 @@ def test_auto_reindex(mock_sentence_transformer, tmp_path):
     results = searcher.search("database connection", k=3)
     print(f"   - Search returned {len(results)} results")
     if results:
-        print(f"   - Top result: {results[0].name} in {results[0].file_path}")
+        # SearchResult carries name/file_path in .metadata, not as top-level
+        # attributes — see search/reranker.py.
+        top_metadata = results[0].metadata
+        print(
+            f"   - Top result: {top_metadata.get('name')} in {top_metadata.get('file_path')}"
+        )
 
     # Test needs_reindex function
     print("\n6. Testing needs_reindex function...")

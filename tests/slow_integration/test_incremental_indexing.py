@@ -100,6 +100,32 @@ class Database:
 '''
         )
 
+        # Two more files so a single-file change/deletion stays under the
+        # community-redetection drift threshold (30%, search/config.py
+        # incremental_community_redetect_threshold). With only 3 files,
+        # touching one is 33% churn and _check_community_drift
+        # (search/incremental_indexer.py) always promotes to a full
+        # reindex, which reports chunks_added/chunks_removed for the whole
+        # rebuild rather than the true incremental delta these tests check.
+        (self.test_path / "config.py").write_text(
+            '''
+DEBUG = True
+
+def get_config():
+    """Return app config."""
+    return {"debug": DEBUG}
+'''
+        )
+        (self.test_path / "lib" / "models.py").write_text(
+            '''
+class User:
+    """User model."""
+
+    def __init__(self, name):
+        self.name = name
+'''
+        )
+
     @patch("embeddings.embedder.SentenceTransformer")
     def test_full_index(self, mock_sentence_transformer):
         """Test full indexing of a codebase."""

@@ -5,9 +5,7 @@ Tests the semantic search functionality with isolated test data.
 """
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
 
 from chunking.multi_language_chunker import MultiLanguageChunker
@@ -19,30 +17,16 @@ from tests.helpers.embeddings import create_test_embeddings
 
 @pytest.mark.slow
 class TestSemanticSearch:
-    """Test semantic search functionality with isolated test index."""
+    """Test semantic search functionality with isolated test index.
 
-    @pytest.fixture(autouse=True)
-    def mock_embedder(self):
-        """Mock SentenceTransformer to prevent model downloads."""
-
-        def mock_encode(
-            sentences,
-            show_progress_bar=False,
-            convert_to_tensor=False,
-            device=None,
-            **kwargs,
-        ):
-            if isinstance(sentences, str):
-                return np.ones(768, dtype=np.float32) * 0.5
-            else:
-                return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
-
-        with patch("embeddings.embedder.SentenceTransformer") as mock_st:
-            mock_model = MagicMock()
-            mock_model.encode.side_effect = mock_encode
-            mock_model.get_sentence_embedding_dimension.return_value = 768
-            mock_st.return_value = mock_model
-            yield mock_st
+    Uses the real embedder (no mock): patching
+    ``embeddings.embedder.SentenceTransformer`` is a no-op since the model is
+    actually constructed in ``embeddings.model_loader``, so a prior version of
+    this fixture silently loaded the real model anyway while lying about it
+    with a hardcoded 768-dim stub. Building the index through the real
+    embedder keeps query/index dimensions in agreement by construction,
+    whatever the configured model's dimension is.
+    """
 
     @pytest.fixture(scope="class")
     def test_project_path(self):
@@ -57,9 +41,10 @@ class TestSemanticSearch:
         index_dir = tmp_path / "test_index"
         index_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize components
-        index_manager = CodeIndexManager(str(index_dir))
+        # Initialize components. embedder is constructed before index_manager
+        # and passed in so the FAISS dimension-validation guard is armed.
         embedder = CodeEmbedder(cache_dir=str(tmp_path / "models"))
+        index_manager = CodeIndexManager(str(index_dir), embedder=embedder)
         chunker = MultiLanguageChunker(str(test_project_path))
 
         # Get chunks from test project
@@ -68,8 +53,9 @@ class TestSemanticSearch:
             file_chunks = chunker.chunk_file(str(py_file))
             chunks.extend(file_chunks)
 
-        # Create embeddings
-        embeddings = create_test_embeddings(chunks, embedder=None, embedding_dim=768)
+        # Create embeddings with the real embedder so the index dimension
+        # always matches whatever the configured model actually produces.
+        embeddings = create_test_embeddings(chunks, embedder=embedder)
 
         # Add to index
         index_manager.add_embeddings(embeddings)
@@ -153,12 +139,14 @@ class TestSemanticSearch:
 
         assert len(results) > 0, "Should find authentication-related code"
 
-        # Verify all results have valid file paths
+        # Verify all results have valid file paths (SearchResult carries this
+        # in .metadata, not as a top-level attribute — see search/reranker.py)
         for result in results:
-            assert result.file_path, "Each result should have a file path"
-            assert isinstance(result.file_path, str), "File path should be string"
+            file_path = result.metadata.get("file_path")
+            assert file_path, "Each result should have a file path"
+            assert isinstance(file_path, str), "File path should be string"
             # Should be Python files
-            assert result.file_path.endswith(".py"), "Results should be from .py files"
+            assert file_path.endswith(".py"), "Results should be from .py files"
 
 
 if __name__ == "__main__":

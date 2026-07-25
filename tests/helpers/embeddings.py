@@ -58,35 +58,13 @@ def create_test_embeddings(
 
     # Mode 1: Real embedder provided - use it for actual embeddings
     if embedder:
-        texts = [chunk.content for chunk in chunks]
-        chunk_ids = [generate_chunk_id(chunk) for chunk in chunks]
-
-        # Use embedder to generate real embeddings
-        embed_results = embedder.embed_batch(
-            texts=texts,
-            chunk_ids=chunk_ids,
-            metadata=[
-                {
-                    "name": chunk.name,
-                    "chunk_type": chunk.chunk_type,
-                    "file_path": chunk.file_path,
-                    "relative_path": chunk.relative_path,
-                    "folder_structure": chunk.folder_structure,
-                    "start_line": chunk.start_line,
-                    "end_line": chunk.end_line,
-                    "docstring": chunk.docstring,
-                    "tags": chunk.tags,
-                    "complexity_score": chunk.complexity_score,
-                    "content_preview": (
-                        chunk.content[:200] + "..."
-                        if len(chunk.content) > 200
-                        else chunk.content
-                    ),
-                }
-                for chunk in chunks
-            ],
-        )
-        return embed_results
+        # CodeEmbedder.embed_chunks() builds chunk_id/metadata itself from the
+        # CodeChunk objects (embeddings/embedder.py _build_chunk_id /
+        # _build_chunk_metadata) — there is no embed_batch(texts=..., ...)
+        # API to hand-assemble those for; embed_chunks is the current surface
+        # (see also the indexed_project fixture in
+        # test_relationship_extraction_integration.py).
+        return embedder.embed_chunks(chunks)
 
     # Mode 2: No embedder - use deterministic embeddings for fast tests
     for chunk in chunks:

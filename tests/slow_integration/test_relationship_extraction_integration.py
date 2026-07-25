@@ -379,7 +379,7 @@ class TestPhase3RelationshipExtraction:
 
         # Create searcher from indexer
         searcher = IntelligentSearcher(indexer, session_embedder)
-        analyzer = CodeRelationshipAnalyzer(searcher)
+        analyzer = CodeRelationshipAnalyzer.from_searcher(searcher)
 
         chunk_id = f"{test_chunk.relative_path}:{test_chunk.start_line}-{test_chunk.end_line}:{test_chunk.chunk_type}"
         if test_chunk.name:
@@ -389,31 +389,36 @@ class TestPhase3RelationshipExtraction:
 
         # Convert to dict (as MCP tool would return)
         result = report.to_dict()
+        assert isinstance(result, dict)
 
-        # Verify Phase 3 fields are present
-        assert "parent_classes" in result
-        assert "child_classes" in result
-        assert "uses_types" in result
-        assert "used_as_type_in" in result
-        assert "imports" in result
-        assert "imported_by" in result
+        # ImpactReport always carries every Phase 3 field (dataclass default
+        # factories in search/types.py), but to_dict() intentionally omits
+        # falsy/empty ones from the serialized payload ("omitting empty
+        # fields") to keep MCP responses lean. So check presence on the
+        # dataclass itself, not the (deliberately sparse) dict.
+        assert hasattr(report, "parent_classes")
+        assert hasattr(report, "child_classes")
+        assert hasattr(report, "uses_types")
+        assert hasattr(report, "used_as_type_in")
+        assert hasattr(report, "imports")
+        assert hasattr(report, "imported_by")
 
         print(f"\nfind_connections output for {chunk_id}:")
-        print(f"  parent_classes: {len(result['parent_classes'])}")
-        print(f"  child_classes: {len(result['child_classes'])}")
-        print(f"  uses_types: {len(result['uses_types'])}")
-        print(f"  used_as_type_in: {len(result['used_as_type_in'])}")
-        print(f"  imports: {len(result['imports'])}")
-        print(f"  imported_by: {len(result['imported_by'])}")
+        print(f"  parent_classes: {len(report.parent_classes)}")
+        print(f"  child_classes: {len(report.child_classes)}")
+        print(f"  uses_types: {len(report.uses_types)}")
+        print(f"  used_as_type_in: {len(report.used_as_type_in)}")
+        print(f"  imports: {len(report.imports)}")
+        print(f"  imported_by: {len(report.imported_by)}")
 
         # At least one Phase 3 field should have data
         total_phase3 = (
-            len(result["parent_classes"])
-            + len(result["child_classes"])
-            + len(result["uses_types"])
-            + len(result["used_as_type_in"])
-            + len(result["imports"])
-            + len(result["imported_by"])
+            len(report.parent_classes)
+            + len(report.child_classes)
+            + len(report.uses_types)
+            + len(report.used_as_type_in)
+            + len(report.imports)
+            + len(report.imported_by)
         )
 
         assert total_phase3 > 0, (
@@ -448,7 +453,7 @@ class TestPhase3RelationshipExtraction:
 
         # Create searcher from indexer
         searcher = IntelligentSearcher(indexer, session_embedder)
-        analyzer = CodeRelationshipAnalyzer(searcher)
+        analyzer = CodeRelationshipAnalyzer.from_searcher(searcher)
 
         chunk_id = f"{test_chunk.relative_path}:{test_chunk.start_line}-{test_chunk.end_line}:{test_chunk.chunk_type}"
         if test_chunk.name:
@@ -732,7 +737,7 @@ class TestPriority2RelationshipExtraction:
         from search.searcher import IntelligentSearcher
 
         searcher = IntelligentSearcher(indexer, session_embedder)
-        analyzer = CodeRelationshipAnalyzer(searcher)
+        analyzer = CodeRelationshipAnalyzer.from_searcher(searcher)
 
         chunk_id = f"{test_chunk.relative_path}:{test_chunk.start_line}-{test_chunk.end_line}:{test_chunk.chunk_type}"
         if test_chunk.name:
@@ -740,29 +745,38 @@ class TestPriority2RelationshipExtraction:
 
         report = analyzer.analyze_impact(chunk_id=chunk_id)
         result = report.to_dict()
+        assert isinstance(result, dict)
 
-        # Verify Priority 2 fields are present
-        assert "decorates" in result, "decorates field missing from ImpactReport"
-        assert "decorated_by" in result, "decorated_by field missing from ImpactReport"
-        assert "exceptions_raised" in result, (
+        # ImpactReport always carries every Priority 2 field (dataclass
+        # default factories in search/types.py), but to_dict() intentionally
+        # omits falsy/empty ones from the serialized payload ("omitting
+        # empty fields") to keep MCP responses lean. So check presence on
+        # the dataclass itself, not the (deliberately sparse) dict.
+        assert hasattr(report, "decorates"), "decorates field missing from ImpactReport"
+        assert hasattr(report, "decorated_by"), (
+            "decorated_by field missing from ImpactReport"
+        )
+        assert hasattr(report, "exceptions_raised"), (
             "exceptions_raised field missing from ImpactReport"
         )
-        assert "exception_handlers" in result, (
+        assert hasattr(report, "exception_handlers"), (
             "exception_handlers field missing from ImpactReport"
         )
-        assert "exceptions_caught" in result, (
+        assert hasattr(report, "exceptions_caught"), (
             "exceptions_caught field missing from ImpactReport"
         )
-        assert "instantiates" in result, "instantiates field missing from ImpactReport"
-        assert "instantiated_by" in result, (
+        assert hasattr(report, "instantiates"), (
+            "instantiates field missing from ImpactReport"
+        )
+        assert hasattr(report, "instantiated_by"), (
             "instantiated_by field missing from ImpactReport"
         )
 
         print(f"\nfind_connections Priority 2 fields for {chunk_id}:")
-        print(f"  decorates: {len(result['decorates'])}")
-        print(f"  decorated_by: {len(result['decorated_by'])}")
-        print(f"  exceptions_raised: {len(result['exceptions_raised'])}")
-        print(f"  exception_handlers: {len(result['exception_handlers'])}")
-        print(f"  exceptions_caught: {len(result['exceptions_caught'])}")
-        print(f"  instantiates: {len(result['instantiates'])}")
-        print(f"  instantiated_by: {len(result['instantiated_by'])}")
+        print(f"  decorates: {len(report.decorates)}")
+        print(f"  decorated_by: {len(report.decorated_by)}")
+        print(f"  exceptions_raised: {len(report.exceptions_raised)}")
+        print(f"  exception_handlers: {len(report.exception_handlers)}")
+        print(f"  exceptions_caught: {len(report.exceptions_caught)}")
+        print(f"  instantiates: {len(report.instantiates)}")
+        print(f"  instantiated_by: {len(report.instantiated_by)}")
