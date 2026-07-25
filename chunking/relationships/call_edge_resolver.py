@@ -391,7 +391,7 @@ def run_resolvers(
         the same pair, the first (lower-precedence) value is kept.
     """
     import traceback
-    from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+    from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
 
     from utils.observability import wrap_in_context
 
@@ -436,7 +436,7 @@ def run_resolvers(
     process_executor: ProcessPoolExecutor | None = None
     thread_executor: ThreadPoolExecutor | None = None
     try:
-        futures_by_resolver: dict[CallEdgeResolver, object] = {}
+        futures_by_resolver: dict[CallEdgeResolver, Future] = {}
 
         if process_resolvers:
             process_executor = ProcessPoolExecutor(max_workers=len(process_resolvers))
