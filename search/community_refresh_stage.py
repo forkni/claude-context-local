@@ -220,7 +220,12 @@ class CommunityRefreshStage:
         # Embed and index the refreshed summaries
         try:
             embedding_results = self._embedder.embed_chunks(new_summaries)
-            for chunk, result in zip(new_summaries, embedding_results, strict=False):
+            # strict=True: embed_chunks guarantees a 1:1, order-preserved
+            # result per input chunk (see embedder.py's un-permute step). A
+            # length mismatch here would otherwise silently attach the wrong
+            # chunk's source text to a community-summary vector — better to
+            # fail loudly (caught by the except below) than corrupt metadata.
+            for chunk, result in zip(new_summaries, embedding_results, strict=True):
                 result.metadata["project_name"] = project_name
                 result.metadata["content"] = chunk.content
             if embedding_results:

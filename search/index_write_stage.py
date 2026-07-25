@@ -106,8 +106,14 @@ class IndexWriteStage:
                 logger.info(
                     f"Successfully embedded {len(all_embedding_results)} chunks"
                 )
+                # strict=True: embed_chunks guarantees a 1:1, order-preserved
+                # result per input chunk (see embedder.py's un-permute step). A
+                # length mismatch here would otherwise silently attach the wrong
+                # chunk's source text to a vector's metadata on the full-index
+                # path — better to fail loudly (caught by the except below)
+                # than corrupt metadata across an entire reindex.
                 for chunk, embedding_result in zip(
-                    all_chunks, all_embedding_results, strict=False
+                    all_chunks, all_embedding_results, strict=True
                 ):
                     embedding_result.metadata["project_name"] = project_name
                     embedding_result.metadata["content"] = chunk.content

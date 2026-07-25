@@ -14,7 +14,7 @@ import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from rich.progress import (
@@ -1406,6 +1406,36 @@ class CodeEmbedder:
         current_batch_size = batch_size
         total_batches = (len(chunks) + current_batch_size - 1) // current_batch_size
 
+        # Precompute embedding content once per chunk (was recomputed inside the
+        # batch loop every call), then sort by content length descending before
+        # slicing into fixed-size batches. Fixed-size windows over arbitrary chunk
+        # order pad every batch to the longest member of a random draw; chunk
+        # lengths are heavily right-skewed (median ~845 chars, p90 ~3083, capped
+        # at 6000), so an unsorted batch routinely pads short chunks out to a
+        # rare long one. Sorting first means each batch's members are near-uniform
+        # length, so padding tracks real content instead of the corpus's long
+        # tail (#B1) — mirrors the ONNX path's per-call sort (onnx_wrapper.py#51),
+        # applied globally here since PyTorch batches are caller-sliced rather
+        # than handled inside one encode() call.
+        #
+        # Descending order so the single largest batch (worst-case VRAM) runs
+        # first — an OOM surfaces on batch 1, not after 100 successful batches.
+        # Results are appended in this sorted order and un-permuted back to
+        # input order just before returning.
+        if passage_prefix:
+            all_contents = [
+                passage_prefix + self.create_embedding_content(chunk)
+                for chunk in chunks
+            ]
+        else:
+            all_contents = [self.create_embedding_content(chunk) for chunk in chunks]
+
+        sort_order = sorted(
+            range(len(chunks)), key=lambda idx: len(all_contents[idx]), reverse=True
+        )
+        sorted_chunks = [chunks[idx] for idx in sort_order]
+        sorted_contents = [all_contents[idx] for idx in sort_order]
+
         # Suppress INFO logs during progress bar to prevent line mixing.
         # Use try/finally to restore the level even if VRAMExhaustedError or
         # an OOM re-raise escapes the loop — without this the module logger
@@ -1426,7 +1456,8 @@ class CodeEmbedder:
                 i = 0
                 batch_num = 0
                 while i < len(chunks):
-                    batch = chunks[i : i + current_batch_size]
+                    batch = sorted_chunks[i : i + current_batch_size]
+                    batch_contents = sorted_contents[i : i + current_batch_size]
                     batch_num += 1
 
                     # Log VRAM before batch
@@ -1446,17 +1477,6 @@ class CodeEmbedder:
 
                     if should_warn:
                         self._logger.warning(f"[VRAM] High VRAM usage: {vram_pct:.1%}")
-
-                    # Prepend passage prefix if it exists
-                    if passage_prefix:
-                        batch_contents = [
-                            passage_prefix + self.create_embedding_content(chunk)
-                            for chunk in batch
-                        ]
-                    else:
-                        batch_contents = [
-                            self.create_embedding_content(chunk) for chunk in batch
-                        ]
 
                     # Generate embeddings for batch with OOM recovery
                     # Use convert_to_tensor for GPU to avoid CPU<->GPU transfers (10-20% faster)
@@ -1559,8 +1579,21 @@ class CodeEmbedder:
             # Restore log level even if VRAMExhaustedError / OOM escapes (#20).
             self._logger.setLevel(original_log_level)
 
+        # `results` was built in length-sorted order (see sort_order above);
+        # restore the caller's original input order before returning. Callers
+        # (index_write_stage.py, incremental_indexer.py, community_refresh_stage.py)
+        # all zip this return value positionally against the original `chunks`
+        # list, so a permuted return would silently mis-associate metadata.
+        ordered_results: list[EmbeddingResult | None] = [None] * len(chunks)
+        for sorted_pos, original_idx in enumerate(sort_order):
+            ordered_results[original_idx] = results[sorted_pos]
+        assert all(r is not None for r in ordered_results), (
+            "embed_chunks: un-permute produced a hole — batch loop did not "
+            "append exactly one result per input chunk"
+        )
+
         self._logger.info("Embedding generation completed")
-        return results
+        return cast(list[EmbeddingResult], ordered_results)
 
     def get_cache_stats(self) -> dict:
         """Get cache hit/miss statistics."""

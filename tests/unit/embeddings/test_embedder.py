@@ -2525,3 +2525,149 @@ class TestBuildChunkMetadata:
         chunk = self._make_chunk(relationships=[rel_mock])
         meta = CodeEmbedder._build_chunk_metadata(chunk)
         assert meta["relationships"] == [{"rel": "imports"}]
+
+
+class TestEmbedChunksOrderPreservation:
+    """B1: embed_chunks sorts chunks by content length (descending) before
+    slicing into batches, to cut padding waste (#B1). Callers
+    (index_write_stage.py, incremental_indexer.py, community_refresh_stage.py)
+    all zip the return value positionally against their input chunk list, so
+    the sort must be fully undone before returning — a permuted result would
+    silently mis-associate metadata rather than raise.
+    """
+
+    @staticmethod
+    def _make_chunk(content: str, name: str, start_line: int) -> CodeChunk:
+        return CodeChunk(
+            content=content,
+            file_path="/fake/path/file.py",
+            relative_path="fake/path/file.py",
+            folder_structure="fake/path",
+            start_line=start_line,
+            end_line=start_line + 1,
+            chunk_type="function",
+            name=name,
+        )
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_results_match_input_order_across_batches(
+        self, mock_sentence_transformer, mock_model_loader_st
+    ):
+        """Deliberately un-sorted, varied-length chunks forced through several
+        small batches must still come back in input order — each result's
+        embedding must reflect *its own* chunk's content, not a neighbor's
+        that landed in the same sorted batch."""
+
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
+            # Bake each sentence's own length into its embedding so we can
+            # check, after un-permuting, that result[i] really came from
+            # chunks[i]'s content rather than a batch neighbor's.
+            dim = 8
+            return np.array(
+                [[float(len(s))] * dim for s in sentences], dtype=np.float32
+            )
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_model.device = "cpu"
+        mock_sentence_transformer.return_value = mock_model
+        mock_model_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+
+        # Deliberately not length-sorted, so the internal sort must reorder
+        # them and un-permute must reorder them back.
+        lengths = [500, 10, 250, 1, 800, 50, 300]
+        chunks = [
+            self._make_chunk(content="x" * n, name=f"fn{i}", start_line=i)
+            for i, n in enumerate(lengths)
+        ]
+        expected_content_lengths = [
+            len(embedder.create_embedding_content(c)) for c in chunks
+        ]
+
+        # 7 chunks / batch_size=2 -> 4 batches, so the sort genuinely
+        # straddles batch boundaries rather than landing in one batch.
+        results = embedder.embed_chunks(chunks, batch_size=2)
+
+        assert len(results) == len(chunks)
+        for i, (chunk, result) in enumerate(zip(chunks, results, strict=True)):
+            assert result.embedding[0] == expected_content_lengths[i], (
+                f"result[{i}] embedding does not match chunk[{i}]'s own "
+                "content length — un-permute mismatched the result order"
+            )
+            assert result.chunk_id == CodeEmbedder._build_chunk_id(chunk)
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_empty_input_returns_empty_list(
+        self, mock_sentence_transformer, mock_model_loader_st
+    ):
+        mock_model = MagicMock()
+        mock_model.device = "cpu"
+        mock_sentence_transformer.return_value = mock_model
+        mock_model_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+        # Explicit batch_size bypasses the dynamic GPU-sizing branch (which
+        # calls _get_model_vram_gb() against this bare MagicMock and would
+        # otherwise raise) — matches the pattern used by the other tests in
+        # this class.
+        assert embedder.embed_chunks([], batch_size=1) == []
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_largest_batch_encoded_first(
+        self, mock_sentence_transformer, mock_model_loader_st
+    ):
+        """Descending sort means the single largest batch (worst-case VRAM)
+        must be the first call to model.encode() — an OOM should surface on
+        batch 1, not after many successful smaller batches."""
+        encode_call_batch_max_lens = []
+
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
+            encode_call_batch_max_lens.append(max(len(s) for s in sentences))
+            dim = 8
+            return np.zeros((len(sentences), dim), dtype=np.float32)
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_model.device = "cpu"
+        mock_sentence_transformer.return_value = mock_model
+        mock_model_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+
+        lengths = [10, 800, 50, 300, 1, 500, 250]
+        chunks = [
+            self._make_chunk(content="x" * n, name=f"fn{i}", start_line=i)
+            for i, n in enumerate(lengths)
+        ]
+
+        embedder.embed_chunks(chunks, batch_size=2)
+
+        assert encode_call_batch_max_lens == sorted(
+            encode_call_batch_max_lens, reverse=True
+        )
