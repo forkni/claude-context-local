@@ -169,10 +169,22 @@ def _get_searcher(project_path: str):
         return get_searcher()
 
 
-def _run_query(searcher: Any, query: str, k: int) -> tuple[list[Any], float]:
-    """Execute a single search query and return (raw SearchResult objects, latency_ms)."""
+def _run_query(
+    searcher: Any, query: str, k: int, search_mode: str | None = None
+) -> tuple[list[Any], float]:
+    """Execute a single search query and return (raw SearchResult objects, latency_ms).
+
+    Args:
+        search_mode: When set, threaded explicitly into ``HybridSearcher.search()``.
+            ``_apply_weight_overrides`` only updates ``cfg.search_mode.default_mode``,
+            which ``HybridSearcher.search``'s ``search_mode`` parameter never reads
+            (it defaults to ``SearchMode.HYBRID`` at the call site) — so ``--search-mode``
+            was previously a silent no-op. Omitted (``None``) preserves prior default
+            behaviour (hybrid) exactly.
+    """
     start = time.perf_counter()
-    results = searcher.search(query, k=k)
+    kwargs = {"search_mode": search_mode} if search_mode else {}
+    results = searcher.search(query, k=k, **kwargs)
     latency_ms = (time.perf_counter() - start) * 1000.0
     return results, latency_ms
 
@@ -245,6 +257,7 @@ def run_benchmark(
     category_filter: str | None,
     verbose: bool,
     line_lookup: dict[str, tuple[str, int, int]] | None = None,
+    search_mode: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[float]]:
     """Run all queries and return (per_query_results, latencies).
 
@@ -262,6 +275,8 @@ def run_benchmark(
             from ``_build_line_lookup``. When provided, line-overlap metrics
             (line_recall, line_precision, line_iou) are computed for each query
             whose golden primary chunks resolve to line ranges.
+        search_mode: Passed through to ``_run_query`` (see its docstring for why
+            this parameter exists — closes the previous ``--search-mode`` no-op).
 
     Returns:
         Tuple of (per_query_results, latencies).
@@ -295,7 +310,9 @@ def run_benchmark(
             print(f"{prefix} {query}")
 
         try:
-            raw_results, latency_ms = _run_query(searcher, query, k=k)
+            raw_results, latency_ms = _run_query(
+                searcher, query, k=k, search_mode=search_mode
+            )
             latencies.append(latency_ms)
 
             # Normalize chunk IDs for chunk-level metrics
@@ -737,6 +754,7 @@ def run_single(
         category_filter=category_filter,
         verbose=verbose,
         line_lookup=line_lookup,
+        search_mode=search_mode,
     )
 
     dataset_thresholds = dataset.get("thresholds") or {}
