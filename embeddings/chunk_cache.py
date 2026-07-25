@@ -217,7 +217,14 @@ class ChunkEmbeddingCache:
             logger.warning(
                 "Failed to save chunk embedding cache to %s: %s", self._path, exc
             )
-            tmp.unlink(missing_ok=True)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                # Cleanup of the partial .tmp file is best-effort — e.g. its
+                # parent may itself not be a directory (the same failure
+                # mode that put us in this except branch). Never let cleanup
+                # promote a fail-soft save() into a raise.
+                pass
 
     def _evict(self, live_keys: set[str]) -> None:
         """Drop least-recently-used, non-live entries down to the cap.
