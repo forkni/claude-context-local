@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77.0.3", "wheel"]
+requires = ["setuptools>=83.0.0", "wheel"]  # Security: fixes CVE-2026-59890 (MANIFEST.in path traversal)
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -112,6 +112,7 @@ dev = [
     "pyrefly>=1.1.1",
     "mutmut>=2.5.1",  # Phase 4.2: mutation testing; run periodically, not per-commit (Linux CI only)
     "cosmic-ray>=8.4",  # Phase 4.2: mutation testing; local cross-platform runner
+    "gitpython>=3.1.55",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
 ]
 profile = [
     "snoop>=0.6.0",
@@ -156,10 +157,11 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-07-20 (pip-audit - re-synced venv to existing transformers>=5.3.0,<6 pin
-#             (venv had drifted to 4.57.6, resolving CVE-2026-4372/CVE-2026-1839 in practice);
-#             bumped mcp/pillow/click/setuptools/pip for newly published CVEs.
-#             Remaining: diskcache/sqlitedict/nltk/transformers(X-CLIP,LightGlue), no upstream fix.)
+# Last audit: 2026-07-25 (pip-audit — bumped gitpython (8 CVEs, transitive via cosmic-ray) and
+#             setuptools (1 CVE); the vulnerable setuptools 82.0.1 was also fully removed from
+#             .venv as a side effect of a venv rebuild (uv no longer seeds setuptools/wheel).
+#             Remaining: diskcache/sqlitedict/nltk, no upstream fix — see
+#             audit_reports/deferred-cves-2026-07-25.md.)
 #
 # Direct dependency security updates:
 # mcp>=1.28.1,<2       # Fixes CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin); <2 guards against mcp v2 breaking changes (beta 2026-06-30)
@@ -182,7 +184,8 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # pyjwt>=2.13.0            # Fixes CVE-2026-32597 (2.12.0), 4× CVEs (2.13.0: 48522/48524/48525/48526)
 # python-multipart>=0.0.32 # Fixes CVE-2026-24486, CVE-2026-40347, CVE-2026-42561, CVE-2026-53538, CVE-2026-53539, CVE-2026-53540 (DoS)
 # requests>=2.34.2         # Fixes CVE-2026-25645 (predictable tempfile name)
-# setuptools>=83.0.0       # Fixes CVE-2026-59890 (MANIFEST.in path traversal)
+# setuptools>=83.0.0       # Fixes CVE-2026-59890 (MANIFEST.in path traversal); enforced via [build-system].requires
+#                          # (not a runtime dependency — uv doesn't seed setuptools into .venv at all as of 2026-07-25)
 # urllib3>=2.7.0           # Fixes CVE-2026-44431 (cross-origin redirect), CVE-2026-44432 (decompression)
 # uv>=0.11.24              # Fixes GHSA-4gg8-gxpx-9rph (0.11.15, malicious-wheel path traversal)
 # werkzeug>=3.1.4          # Fixes CVE-2025-66221 (Windows device name handling)
@@ -192,8 +195,19 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # * transformers PYSEC-2025-217 (X-CLIP checkpoint-conversion RCE) — no fix; not applicable (no X-CLIP conversion use)
 # * transformers PYSEC-2026-2290 / CVE-2026-5241 (LightGlue model-load RCE) — no fix; not applicable (no LightGlue use)
 # * diskcache CVE-2025-69872, sqlitedict CVE-2024-35515 (pickle RCE) — no upstream fix; sqlitedict mitigated via JSON serialization (metadata.py)
-# * nltk CVE-2026-12243 (path traversal, incomplete fix of CVE-2025-14009) — no upstream fix; no untrusted NLTK data paths in this project
+# * nltk CVE-2026-12243 (path traversal, incomplete fix of CVE-2025-14009) — no upstream fix as of nltk 3.10.0
+#   (checked 2026-07-25: no changelog/advisory confirms a fix; OSV still reports fix_versions=[]);
+#   no untrusted NLTK data paths in this project. Related: GHSA-p4gq-832x-fm9v / CVE-2026-54293
+#   (same nltk.data.load() path-traversal class) not yet seen in pip-audit's OSV feed — watch for it.
 # * pyjwt PYSEC-2025-183 (disputed weak encryption) — no upstream fix
+#
+# Resolved 2026-07-25: gitpython CVE set (8 argument-injection advisories: GHSA-2f96-g7mh-g2hx,
+#   GHSA-v396-v7q4-x2qj, GHSA-956x-8gvw-wg5v, GHSA-3rp5-jjmw-4wv2, GHSA-fjr4-x663-mwxc,
+#   GHSA-6p8h-3wgx-97gf, GHSA-r9mr-m37c-5fr3, GHSA-94p4-4cq8-9g67) via gitpython>=3.1.55 (dev extra;
+#   transitive via cosmic-ray, unimported by project code). setuptools CVE-2026-59890 via
+#   [build-system].requires>=83.0.0 — moot for the runtime venv, which no longer contains
+#   setuptools at all post-rebuild. Tested: CUDA verified intact (torch 2.8.0+cu128), pip check
+#   clean.
 #
 # Resolved 2026-07-20: transformers CVE-2026-4372 (config.json RCE), CVE-2026-1839 (Trainer RCE)
 #   — venv re-synced to existing transformers>=5.3.0,<6 pin (was drifted at 4.57.6, installed 5.14.1).
