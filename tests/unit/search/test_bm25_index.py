@@ -462,7 +462,16 @@ class TestBM25Index:
         import sys
 
         # Temporarily hide rank_bm25 to simulate missing dependency
-        original = sys.modules.pop("rank_bm25", None)
+        original_rank_bm25 = sys.modules.pop("rank_bm25", None)
+        # Save the *original* bm25_index module object (not just re-import a fresh
+        # one afterwards) — a fresh import_module() call creates a brand-new module
+        # object with its own TextPreprocessor/BM25Index classes, distinct from the
+        # ones this test file (and every other test module) already imported at
+        # collection time via `from search.bm25_index import ...`. Swapping in a new
+        # object left those bindings stale, so patches applied through a freshly
+        # re-imported `bm25_module` alias (e.g. in the tokenizer-probe test below)
+        # silently missed the class actually in use.
+        original_bm25_index = sys.modules.get("search.bm25_index")
         sys.modules["rank_bm25"] = None  # type: ignore[assignment]
         try:
             # Force re-import of bm25_index module (removing cached version)
@@ -471,12 +480,15 @@ class TestBM25Index:
                 importlib.import_module("search.bm25_index")
         finally:
             # Restore original state
-            if original is not None:
-                sys.modules["rank_bm25"] = original
+            if original_rank_bm25 is not None:
+                sys.modules["rank_bm25"] = original_rank_bm25
             else:
                 sys.modules.pop("rank_bm25", None)
-            sys.modules.pop("search.bm25_index", None)
-            importlib.import_module("search.bm25_index")  # Re-cache with real module
+            if original_bm25_index is not None:
+                sys.modules["search.bm25_index"] = original_bm25_index
+            else:
+                sys.modules.pop("search.bm25_index", None)
+                importlib.import_module("search.bm25_index")
 
     def test_large_document_handling(self):
         """Test handling of large documents."""
