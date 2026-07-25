@@ -130,7 +130,7 @@ class RelationshipAnalyzer:
             enriched_indirect, stale_i, _ex_i, _rec_i, _amb_i = self._enrich_callers(
                 indirect_raw, exclude_dirs
             )
-            direct_callers = enriched_direct
+            direct_callers = self._dedup_and_sort_edges(enriched_direct)
             indirect_callers = enriched_indirect
             stale_count = stale_d + stale_i
         else:
@@ -157,9 +157,10 @@ class RelationshipAnalyzer:
             # Step 5b: outbound `calls` edges → direct callees (bidirectional).
             # _build_graph_relationships explicitly skips calls edges; pull them here.
             calls_outbound = [e for e in outbound if e.relationship_type == "calls"]
-            direct_callees, _stale_ce, exact_ce, recovered_ce, ambiguous_ce = (
+            enriched_callees, _stale_ce, exact_ce, recovered_ce, ambiguous_ce = (
                 self._enrich_callees(calls_outbound, exclude_dirs)
             )
+            direct_callees = self._dedup_and_sort_edges(enriched_callees)
 
         # Step 5.5: filter to requested relationship types
         if relationship_types and graph_relationships:
@@ -225,6 +226,38 @@ class RelationshipAnalyzer:
             direct_callees_exact=exact_ce if self.graph_engine else 0,
             direct_callees_recovered=recovered_ce if self.graph_engine else 0,
             direct_callees_ambiguous=ambiguous_ce if self.graph_engine else 0,
+        )
+
+    # ------------------------------------------------------------------
+    # Dedup + sort helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _dedup_and_sort_edges(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Dedup by ``chunk_id`` (keep highest ``resolver_confidence``) and sort
+        by ``(-resolver_confidence, chunk_id)``.
+
+        ``_enrich_callers``/``_enrich_callees`` can emit the same ``chunk_id``
+        more than once with different provenance — e.g. a symbol-name AST edge
+        recovered at 0.5 confidence and a directly-resolved LSP/libcst edge at
+        0.9-0.98 pointing at the same target. Graph edge-iteration order is
+        otherwise unordered and non-deterministic (it depends on which resolver
+        finishes first under the thread pool), so keeping the first-seen entry
+        both discards the better provenance and makes output order irreproducible
+        run-to-run. Keeping the best-provenance entry per chunk_id and sorting
+        explicitly fixes both problems for every consumer of these lists.
+        """
+        best: dict[str, dict[str, Any]] = {}
+        for entry in entries:
+            cid = entry.get("chunk_id", "")
+            current = best.get(cid)
+            if current is None or entry.get("resolver_confidence", 0.5) > current.get(
+                "resolver_confidence", 0.5
+            ):
+                best[cid] = entry
+        return sorted(
+            best.values(),
+            key=lambda e: (-e.get("resolver_confidence", 0.5), e.get("chunk_id", "")),
         )
 
     # ------------------------------------------------------------------
