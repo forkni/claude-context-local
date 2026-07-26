@@ -174,6 +174,45 @@ def _apply_reranker_budget_override(top_k_candidates: int | None) -> None:
         print(f"[WARN] Could not apply reranker budget override: {e}", file=sys.stderr)
 
 
+def _apply_rrf_k_override(rrf_k: int | None) -> None:
+    """Override the RRF fusion constant in the in-memory config singleton.
+
+    Unlike ``top_k_candidates``, ``rrf_k_parameter`` is baked into ``RRFReranker``
+    at HybridSearcher construction (``search_factory.py``) — callers must reset
+    the cached searcher afterwards for the value to take effect.
+    """
+    if rrf_k is None:
+        return
+    try:
+        from search.config import get_search_config
+
+        get_search_config().search_mode.rrf_k_parameter = rrf_k
+    except Exception as e:
+        print(f"[WARN] Could not apply rrf_k override: {e}", file=sys.stderr)
+
+
+def _maybe_reset_for_construction_overrides(
+    bm25_weight: float | None,
+    dense_weight: float | None,
+    rrf_k: int | None,
+) -> None:
+    """Drop the cached HybridSearcher when construction-baked params are overridden.
+
+    ``search_factory.get_searcher()`` caches the searcher in server state, and
+    bm25/dense weights plus rrf_k are baked in at construction — without this
+    reset, a ``--sweep`` silently reuses the first iteration's fusion params
+    for every subsequent config (Blocker B).
+    """
+    if bm25_weight is None and dense_weight is None and rrf_k is None:
+        return
+    try:
+        from mcp_server.services import get_state
+
+        get_state().reset_searcher()
+    except Exception as e:
+        print(f"[WARN] Could not reset cached searcher: {e}", file=sys.stderr)
+
+
 def _get_searcher(project_path: str):
     """Get an initialized HybridSearcher for the given project."""
     try:
@@ -707,7 +746,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help=(
             "Override reranker.top_k_candidates (rerank pool budget) for this run. "
-            "Default: use config value (50)."
+            "Default: use config value (30)."
+        ),
+    )
+    parser.add_argument(
+        "--rrf-k",
+        type=int,
+        help=(
+            "Override search_mode.rrf_k_parameter (RRF fusion constant) for this "
+            "run. Resets the cached searcher so the value takes effect. "
+            "Default: use config value (100)."
         ),
     )
     parser.add_argument(
@@ -748,11 +796,14 @@ def run_single(
     reranker_model: str | None = None,
     reranker_enabled: bool | None = None,
     top_k_candidates: int | None = None,
+    rrf_k: int | None = None,
 ) -> dict[str, Any]:
     """Execute one benchmark run and return the result dict."""
     _apply_weight_overrides(bm25_weight, dense_weight, search_mode)
     _apply_reranker_override(reranker_model, reranker_enabled)
     _apply_reranker_budget_override(top_k_candidates)
+    _apply_rrf_k_override(rrf_k)
+    _maybe_reset_for_construction_overrides(bm25_weight, dense_weight, rrf_k)
 
     try:
         searcher = _get_searcher(project_path)
@@ -774,6 +825,8 @@ def run_single(
         )
     if top_k_candidates is not None:
         print(f"  Reranker pool budget: top_k_candidates={top_k_candidates}")
+    if rrf_k is not None:
+        print(f"  RRF fusion constant: rrf_k={rrf_k}")
 
     # Reset peak VRAM stats and issue a warm-up search so a reranker model swap's
     # first-call load/download cost lands here, not in the timed latency average.
@@ -828,6 +881,8 @@ def run_single(
         config_metadata["reranker_enabled"] = reranker_enabled
     if top_k_candidates is not None:
         config_metadata["top_k_candidates"] = top_k_candidates
+    if rrf_k is not None:
+        config_metadata["rrf_k"] = rrf_k
     if torch_module is not None:
         config_metadata["peak_vram_reserved_gb"] = round(
             torch_module.cuda.max_memory_reserved() / 1e9, 2
@@ -894,6 +949,7 @@ def main() -> None:
                 reranker_model=sweep_cfg.get("reranker_model"),
                 reranker_enabled=sweep_cfg.get("reranker_enabled"),
                 top_k_candidates=args.top_k_candidates,
+                rrf_k=args.rrf_k,
             )
             reranker_results.append(result)
 
@@ -933,6 +989,7 @@ def main() -> None:
                 reranker_model=args.reranker_model,
                 reranker_enabled=reranker_enabled,
                 top_k_candidates=args.top_k_candidates,
+                rrf_k=args.rrf_k,
             )
             sweep_results.append(result)
 
@@ -966,6 +1023,7 @@ def main() -> None:
         reranker_model=args.reranker_model,
         reranker_enabled=reranker_enabled,
         top_k_candidates=args.top_k_candidates,
+        rrf_k=args.rrf_k,
     )
 
     # Print leaderboard (single row)

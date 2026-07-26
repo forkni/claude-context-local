@@ -624,3 +624,79 @@ class TestApplyRerankerBudgetOverride:
         monkeypatch.setattr("search.config.get_search_config", lambda: calls.append(1))
         self._apply(None)
         assert calls == []
+
+
+class TestApplyRrfKOverride:
+    """Q4: --rrf-k must mutate the in-memory config; None is a strict no-op."""
+
+    def _apply(self, value):
+        from scripts.benchmark.run_sscg_benchmark import _apply_rrf_k_override
+
+        return _apply_rrf_k_override(value)
+
+    def test_sets_rrf_k_parameter_on_config(self, monkeypatch):
+        from search.config import SearchConfig
+
+        cfg = SearchConfig()
+        assert cfg.search_mode.rrf_k_parameter == 100  # deployed default
+        monkeypatch.setattr("search.config.get_search_config", lambda: cfg)
+        self._apply(60)
+        assert cfg.search_mode.rrf_k_parameter == 60
+
+    def test_none_is_noop(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr("search.config.get_search_config", lambda: calls.append(1))
+        self._apply(None)
+        assert calls == []
+
+
+class TestMaybeResetForConstructionOverrides:
+    """Q4 Blocker-B fix: the cached searcher must be dropped whenever a
+    construction-baked param (bm25/dense weight, rrf_k) is overridden, so
+    each sweep iteration builds a searcher with its own fusion params."""
+
+    def _call(self, monkeypatch, **kwargs):
+        from unittest.mock import MagicMock
+
+        from scripts.benchmark.run_sscg_benchmark import (
+            _maybe_reset_for_construction_overrides,
+        )
+
+        state = MagicMock()
+        monkeypatch.setattr("mcp_server.services.get_state", lambda: state)
+        _maybe_reset_for_construction_overrides(
+            kwargs.get("bm25_weight"),
+            kwargs.get("dense_weight"),
+            kwargs.get("rrf_k"),
+        )
+        return state
+
+    def test_resets_when_weights_overridden(self, monkeypatch):
+        state = self._call(monkeypatch, bm25_weight=0.5, dense_weight=0.5)
+        state.reset_searcher.assert_called_once()
+
+    def test_resets_when_rrf_k_overridden(self, monkeypatch):
+        state = self._call(monkeypatch, rrf_k=60)
+        state.reset_searcher.assert_called_once()
+
+    def test_no_reset_without_construction_overrides(self, monkeypatch):
+        state = self._call(monkeypatch)
+        state.reset_searcher.assert_not_called()
+
+    def test_reset_called_per_sweep_iteration(self, monkeypatch):
+        """Each run_single-style invocation with weights resets again — the
+        property that fixes Blocker B for --sweep loops."""
+        from unittest.mock import MagicMock
+
+        from scripts.benchmark.run_sscg_benchmark import (
+            SWEEP_CONFIGS,
+            _maybe_reset_for_construction_overrides,
+        )
+
+        state = MagicMock()
+        monkeypatch.setattr("mcp_server.services.get_state", lambda: state)
+        for sweep_cfg in SWEEP_CONFIGS:
+            _maybe_reset_for_construction_overrides(
+                sweep_cfg["bm25_weight"], sweep_cfg["dense_weight"], None
+            )
+        assert state.reset_searcher.call_count == len(SWEEP_CONFIGS)
