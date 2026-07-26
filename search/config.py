@@ -241,7 +241,9 @@ class RerankerConfig:
     model_name: str = (
         "Alibaba-NLP/gte-reranker-modernbert-base"  # Cross-encoder reranker model
     )
-    top_k_candidates: int = 50  # Rerank top 50 from RRF
+    top_k_candidates: int = 30  # Rerank top 30 from RRF (Q2 sweep 2026-07-26:
+    # 30 vs 50 quality-neutral within ±0.025 on both golden sets, -32% latency;
+    # listwise reranking saturates ≈30 candidates)
     min_vram_gb: float = 2.0  # Auto-disable below this threshold (reranker uses ~1.5GB)
     batch_size: int = 16  # Reranker inference batch size
     dedupe_split_blocks: bool = (

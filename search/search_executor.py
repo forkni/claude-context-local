@@ -133,7 +133,7 @@ class SearchExecutor:
         else:  # hybrid mode
             # Widened funnel (R1a): retrieve enough per leg that the fused pool
             # can actually fill the neural reranker's candidate budget
-            # (reranker.top_k_candidates, deployed 50) instead of starving it at
+            # (reranker.top_k_candidates, deployed 30) instead of starving it at
             # k*2. Exact FlatIP dense search makes the wider sweep ~free.
             reranker_budget = get_search_config().reranker.top_k_candidates
             search_k = max(reranker_budget, k * 5)

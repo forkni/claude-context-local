@@ -16,7 +16,7 @@ This modular reference can be embedded in any project instructions for Claude Co
 | **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), project_name, incremental=True |
 | **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=4 |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.35, dense_weight=0.65, enable_parallel=True |
-| configure_reranking | Config | Configure neural reranker settings (BGE OR Jina v3, runtime configurable) | enabled, model_name, top_k_candidates=50 |
+| configure_reranking | Config | Configure neural reranker settings (BGE OR Jina v3, runtime configurable) | enabled, model_name, top_k_candidates=30 |
 | configure_chunking | Config | Configure code chunking settings | enable_community_detection, enable_community_merge, community_resolution, token_estimation, enable_large_node_splitting, max_chunk_lines, split_size_method, max_split_chars, enable_file_summaries, enable_community_summaries |
 | get_search_config_status | Config | View current configuration | *(no parameters)* |
 | get_index_status | Status | Check index health & model info | *(no parameters)* |

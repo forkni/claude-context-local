@@ -816,7 +816,7 @@ Neural reranking uses a cross-encoder model to re-score initial search results, 
 |-----------|---------|-------------|
 | `enabled` | `True` | Enable/disable neural reranking |
 | `model_name` | `"Alibaba-NLP/gte-reranker-modernbert-base"` | HuggingFace model path |
-| `top_k_candidates` | `50` | Number of candidates to rerank |
+| `top_k_candidates` | `30` | Number of candidates to rerank |
 | `min_vram_gb` | `2.0` | Minimum VRAM required |
 | `batch_size` | `16` | Reranking batch size |
 

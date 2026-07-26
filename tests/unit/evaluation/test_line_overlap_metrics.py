@@ -592,3 +592,35 @@ class TestAggregateMetricsThresholds:
         assert "mrr" in THRESHOLDS
         assert "recall_at_5" in THRESHOLDS
         assert "hit_rate_at_5" in THRESHOLDS
+
+
+# ---------------------------------------------------------------------------
+# _apply_reranker_budget_override  (Q2: --top-k-candidates flag)
+# ---------------------------------------------------------------------------
+
+
+class TestApplyRerankerBudgetOverride:
+    """The override must mutate the in-memory config singleton only when a
+    value is supplied; None must be a strict no-op (config never touched)."""
+
+    def _apply(self, value):
+        from scripts.benchmark.run_sscg_benchmark import (
+            _apply_reranker_budget_override,
+        )
+
+        return _apply_reranker_budget_override(value)
+
+    def test_sets_top_k_candidates_on_config(self, monkeypatch):
+        from search.config import SearchConfig
+
+        cfg = SearchConfig()
+        assert cfg.reranker.top_k_candidates == 30  # deployed default (Q2 sweep)
+        monkeypatch.setattr("search.config.get_search_config", lambda: cfg)
+        self._apply(50)
+        assert cfg.reranker.top_k_candidates == 50
+
+    def test_none_is_noop(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr("search.config.get_search_config", lambda: calls.append(1))
+        self._apply(None)
+        assert calls == []

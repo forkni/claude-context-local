@@ -156,6 +156,24 @@ def _apply_reranker_override(
         print(f"[WARN] Could not apply reranker override: {e}", file=sys.stderr)
 
 
+def _apply_reranker_budget_override(top_k_candidates: int | None) -> None:
+    """Override the reranker candidate-pool budget in the in-memory config singleton.
+
+    In-memory only, like ``_apply_reranker_override``. ``top_k_candidates`` is read
+    live from config on every search (``search_executor.py``), so no searcher reset
+    is needed between runs with different values.
+    """
+    if top_k_candidates is None:
+        return
+    try:
+        from search.config import get_search_config
+
+        cfg = get_search_config()
+        cfg.reranker.top_k_candidates = top_k_candidates
+    except Exception as e:
+        print(f"[WARN] Could not apply reranker budget override: {e}", file=sys.stderr)
+
+
 def _get_searcher(project_path: str):
     """Get an initialized HybridSearcher for the given project."""
     try:
@@ -685,6 +703,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override whether neural reranking is enabled for this run (baseline: 'false').",
     )
     parser.add_argument(
+        "--top-k-candidates",
+        type=int,
+        help=(
+            "Override reranker.top_k_candidates (rerank pool budget) for this run. "
+            "Default: use config value (50)."
+        ),
+    )
+    parser.add_argument(
         "--reranker-sweep",
         action="store_true",
         help="Run reranker comparison across predefined models (see RERANKER_SWEEP)",
@@ -721,10 +747,12 @@ def run_single(
     verbose: bool,
     reranker_model: str | None = None,
     reranker_enabled: bool | None = None,
+    top_k_candidates: int | None = None,
 ) -> dict[str, Any]:
     """Execute one benchmark run and return the result dict."""
     _apply_weight_overrides(bm25_weight, dense_weight, search_mode)
     _apply_reranker_override(reranker_model, reranker_enabled)
+    _apply_reranker_budget_override(top_k_candidates)
 
     try:
         searcher = _get_searcher(project_path)
@@ -744,6 +772,8 @@ def run_single(
             f"  Reranker: model={reranker_model or 'default'}  "
             f"enabled={reranker_enabled if reranker_enabled is not None else 'default'}"
         )
+    if top_k_candidates is not None:
+        print(f"  Reranker pool budget: top_k_candidates={top_k_candidates}")
 
     # Reset peak VRAM stats and issue a warm-up search so a reranker model swap's
     # first-call load/download cost lands here, not in the timed latency average.
@@ -796,6 +826,8 @@ def run_single(
         config_metadata["reranker_model"] = reranker_model
     if reranker_enabled is not None:
         config_metadata["reranker_enabled"] = reranker_enabled
+    if top_k_candidates is not None:
+        config_metadata["top_k_candidates"] = top_k_candidates
     if torch_module is not None:
         config_metadata["peak_vram_reserved_gb"] = round(
             torch_module.cuda.max_memory_reserved() / 1e9, 2
@@ -861,6 +893,7 @@ def main() -> None:
                 verbose=False,  # quiet during sweep
                 reranker_model=sweep_cfg.get("reranker_model"),
                 reranker_enabled=sweep_cfg.get("reranker_enabled"),
+                top_k_candidates=args.top_k_candidates,
             )
             reranker_results.append(result)
 
@@ -899,6 +932,7 @@ def main() -> None:
                 verbose=False,  # quiet during sweep
                 reranker_model=args.reranker_model,
                 reranker_enabled=reranker_enabled,
+                top_k_candidates=args.top_k_candidates,
             )
             sweep_results.append(result)
 
@@ -931,6 +965,7 @@ def main() -> None:
         verbose=verbose,
         reranker_model=args.reranker_model,
         reranker_enabled=reranker_enabled,
+        top_k_candidates=args.top_k_candidates,
     )
 
     # Print leaderboard (single row)

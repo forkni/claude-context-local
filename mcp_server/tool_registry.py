@@ -770,7 +770,7 @@ RETURNS:
 Args:
     enabled: Enable/disable neural reranking (default: True)
     model_name: Cross-encoder model to use (default: BAAI/bge-reranker-v2-m3)
-    top_k_candidates: Number of candidates to rerank (default: 50)
+    top_k_candidates: Number of candidates to rerank (default: 30)
 
 NOTE: this changes global server config (one active setting at a time). On the
 HTTP transport this affects all connected clients — verify with
