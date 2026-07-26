@@ -59,6 +59,8 @@ class TestIncrementalIndexResult:
             "error": "Test error",
             "bm25_resynced": True,
             "bm25_resync_count": 100,
+            "call_edges_injected": 0,
+            "call_edge_resolvers": (),
         }
 
         assert result_dict == expected

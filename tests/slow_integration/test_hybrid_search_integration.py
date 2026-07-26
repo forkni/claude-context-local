@@ -6,6 +6,7 @@ data flow through the hybrid search system.
 """
 
 import json
+import math
 import shutil
 import tempfile
 from pathlib import Path
@@ -362,8 +363,10 @@ class DatabaseConnection:
                 assert hasattr(result, "chunk_id"), "Result missing chunk_id"
                 assert hasattr(result, "score"), "Result missing score"
                 assert hasattr(result, "metadata"), "Result missing metadata"
-                assert result.score > 0, (
-                    f"Result score should be positive: {result.score}"
+                # Reranker scores are raw cross-encoder logits (unbounded, can be
+                # negative for weak-but-top-k matches) — assert finiteness, not sign.
+                assert math.isfinite(result.score), (
+                    f"Result score should be finite: {result.score}"
                 )
 
     def test_bm25_vs_dense_results_differ(self, indexed_hybrid_environment):

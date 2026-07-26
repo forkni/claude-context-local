@@ -6,22 +6,39 @@ This comprehensive guide covers the testing infrastructure for the Claude Contex
 
 ### Current Test Status
 
-✅ **All tests passing** (as of 2026-07-02, v0.20.1):
+✅ **Full suite green in one process** (re-measured 2026-07-26, honest baseline — Phase 5 of the
+test-suite hardening campaign):
 
-- **Unit Tests**: ~3,066 tests (`tests/unit/`)
+- **Unit Tests**: 3,377 tests (`tests/unit/`)
   - Chunking (incl. relationships): includes `test_call_edge_resolver.py`, `test_call_graph_config.py`, `test_libcst_call_graph.py`, `test_lsp_call_graph.py` (1 POSIX skip)
   - Embeddings, Graph, Merkle, Search, MCP Server, Evaluation, Benchmark, Utils, Tools
-- **Integration Tests**: ~22 tests (`tests/integration/`)
-- **Fast Integration Tests**: ~38 tests (`tests/fast_integration/`)
-- **Total**: 3,127 passed, 13 skipped (measured 2026-07-02)
+- **Fast Integration + Integration Tests**: included in the full-suite total below
+- **Slow Integration Tests**: included in the full-suite total below
+- **Total**: `pytest tests/` (single process, no `--ignore`) — **3,592 passed, 7 skipped, 0 failed**
+  in 478.55s, deterministic (`-p no:randomly`) and randomized order both clean. Branch coverage on
+  this run: **82.02%** (vs. the `fail_under = 77` gate — see Coverage Requirements below).
+- **Known issue**: one intermittent, low-frequency failure has been observed in
+  `tests/unit/search/test_index_write_stage.py::TestInjectCallEdgesResolverSelection::test_none_resolvers_falls_back_to_default_pair`
+  (~1 in 3–4 full `tests/unit/` runs under `-p no:randomly`; passes in isolation every time). It
+  matches the known global-singleton-reset gap (`ModelPoolManager` / `JobRegistry` / intent-classifier
+  caches not reset between tests) and is tracked for a root-cause fix in the next hardening phase,
+  validated against a 20-consecutive-green-run gate. It is **not** currently reproducible from a
+  fixed seed — treat it as a known flake under active investigation, not a silenced failure.
 
-**Note**: Run `uv run pytest tests/ --ignore=tests/slow_integration -q` for the full suite (excluding GPU-dependent slow tests).
+**Note**: Run `uv run pytest tests/ --ignore=tests/slow_integration -q` for the fast CI subset
+(excludes GPU-dependent slow tests, ~2 min).
 
 ## Recommended Testing Approach
 
-### Why Run Tests by Module?
+### Why Run Tests by Module? (legacy workaround — being phased out)
 
-The test suite has been optimized for module-by-module execution. Running all tests together in one process (e.g. plain `./scripts/test/run_tests.sh` with no args) can hit cross-module resource-cleanup contamination — observed 2026-07-02: 11 failures (dimension mismatches, stale model state) that vanish when run via the excluded-slow-integration command below. **All 3,127 tests pass when run via `uv run pytest tests/ --ignore=tests/slow_integration -q`**, or module-by-module per the commands below.
+Earlier measurements (2026-07-02) documented 11 cross-module contamination failures when running
+the full suite in one process, and recommended module-by-module execution as a workaround. The
+2026-07-26 re-measurement above shows the full suite now passes cleanly in one process in the
+overwhelming majority of runs — the three test-drift bugs behind the originally-documented failures
+have been identified and fixed, and only the one intermittent flake noted above remains open. The
+module-by-module commands below still work as a mitigation if you hit that flake, but are no longer
+required for a clean run.
 
 ### Quick Start: Run Tests by Module
 
@@ -427,9 +444,43 @@ The test suite uses a 3-tier system optimized for CI/CD performance:
 
 | Tier | Location | Count | Execution Time | Purpose |
 |------|----------|-------|----------------|---------|
-| **Unit** | `tests/unit/` | 82 tests | < 1s per test | Component isolation testing |
-| **Fast Integration** | `tests/fast_integration/` | 77 tests | < 5s per test | Quick workflow validation |
-| **Slow Integration** | `tests/slow_integration/` | 67 tests | > 10s per test | Comprehensive end-to-end |
+| **Unit** | `tests/unit/` | 3,377 tests | < 1s per test (~126s total) | Component isolation testing |
+| **Fast Integration** | `tests/fast_integration/` | see full-suite total | < 5s per test | Quick workflow validation |
+| **Slow Integration** | `tests/slow_integration/` | see full-suite total | > 10s per test | Comprehensive end-to-end |
+
+Measured 2026-07-26: `pytest tests/` (all tiers, one process) — 3,592 passed, 7 skipped, 0 failed,
+478.55s total. See Current Test Status above for the per-run coverage and known-flake note.
+
+**Tests over 5s** (`--durations=0`, 2026-07-26 — tier-placement input for the collection-surface
+hygiene phase):
+
+| Duration | Test | Current tier |
+|----------|------|---------------|
+| 66.81s | `test_auto_reindex.py::test_auto_reindex` | slow_integration |
+| 60.22s | `test_semantic_search.py::...test_semantic_search_basic` (setup) | slow_integration |
+| 14.80s | `test_observability_e2e.py::test_search_span_hierarchy_via_mcp_handlers` | integration |
+| 13.26s | `test_hybrid_search_integration.py::...test_hybrid_search_returns_results` | slow_integration |
+| 10.32s | `test_hybrid_search_integration.py::...test_index_persistence` | slow_integration |
+| 9.26s | `test_multi_hop_flow.py::...test_multi_hop_basic_functionality` | slow_integration |
+| 8.83s | `test_mcp_server.py::...test_mcp_server_can_import_as_first_module` | unit |
+| 7.19s | `test_hybrid_search.py::...test_weight_optimization` | unit |
+| 6.87s | `test_mcp_indexing.py::...test_incremental_indexing_mcp_path` | slow_integration |
+| 6.84s | `test_hybrid_search.py::...test_performance_tracking` | unit |
+| 6.82s | `test_hybrid_search.py::...test_sequential_search` | unit |
+| 6.62s | `test_auto_reindex_fixes.py::...test_uses_config_default_when_not_specified` | integration |
+| 6.60s | `test_hybrid_search.py::...test_search_with_filters` | unit |
+| 6.54s | `test_retrieval_evaluation.py::...test_bm25_file_hit[RQ01]` | slow_integration |
+| 6.45s | `test_hybrid_search.py::...test_parallel_search` | unit |
+| 6.31s | `test_hybrid_search.py::...test_multi_hop_uses_batched_search` | unit |
+| 6.05s | `test_observability_e2e.py::test_index_full_span_via_mcp_handler` | integration |
+| 5.89s | `test_phase_implementations.py::test_phase2_symbol_hash_cache` | integration |
+
+All 5 `tests/integration/` files have at least one sub-15s test — none are candidates for folding
+into `tests/fast_integration/` (< 5s) outright; Phase 6 should keep `tests/integration/` as a
+documented 4th tier rather than merging it. `tests/test_mmap_cleanup.py` (repo-root) did not appear
+in the >5s durations list, i.e. it runs fast — a reasonable Phase 6 relocation target is
+`tests/unit/search/` or `tests/fast_integration/`, whichever matches its actual mocking level once
+reviewed.
 
 ### Slow Test Marker
 
@@ -706,6 +757,22 @@ class TestNewWorkflow:
 6. **Test both success and failure paths**
 7. **Include edge cases and boundary conditions**
 8. **Use temporary directories** for file system operations
+9. **Assert on counts produced, not on calls made** — when a test's job is to
+   catch a regression in an object's *value* (a count, a result, a persisted
+   field), assert on that value from a real run, not on whether a mocked
+   dependency was called. A `Mock().method.call_args_list` assertion proves
+   the call happened; it says nothing about whether the return value was
+   ever used. This is exactly the shape that let a call-edge injection bug
+   ship silently (`3adc724`): `tests/unit/search/test_index_write_stage.py`
+   asserted only `storage.add_call_edge.call_args_list` against a `Mock`
+   graph, so the call always looked correct even after the real return value
+   started being discarded. Pair fast Mock-based unit tests (for branch
+   coverage) with at least one real integration test that drives production
+   objects end-to-end and asserts on the resulting count or persisted state
+   — see `tests/integration/test_call_edge_injection_integration.py`, which
+   indexes `tests/fixtures/mini_repo/` for real and asserts
+   `result.call_edges_injected > 0` plus `resolver_source` in the saved
+   graph JSON.
 
 ### Best Practices from Recent Fixes (2025-01-10)
 
