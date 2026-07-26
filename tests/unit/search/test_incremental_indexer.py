@@ -250,6 +250,41 @@ class TestIncrementalIndexer:
         assert result.chunks_added == 0
         assert result.chunks_removed == 0
 
+    def test_incremental_update_no_changes_preserves_drift_accumulator(self):
+        """Regression guard for Fix 1b: a no-change pass must carry the prior
+        cumulative_changed_files/cumulative_changed_paths forward in the saved
+        snapshot metadata rather than dropping them — the previous behavior
+        silently reset drift tracking on the next pass whenever a no-op run
+        happened to run in between."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        self.mock_snapshot_manager.has_snapshot.return_value = True
+        self.mock_snapshot_manager.load_metadata.return_value = {
+            "cumulative_changed_files": 7,
+            "cumulative_changed_paths": ["a.py", "b.py"],
+        }
+
+        mock_changes = Mock()
+        mock_changes.has_changes.return_value = False
+        mock_dag = Mock()
+        mock_dag.get_all_files.return_value = []
+        indexer.change_detector.detect_changes_from_snapshot = Mock(
+            return_value=(mock_changes, mock_dag)
+        )
+
+        result = indexer.incremental_index(str(self.project_path), "test_project")
+
+        assert result.success is True
+        self.mock_snapshot_manager.save_snapshot.assert_called_once()
+        _dag_arg, metadata_arg = self.mock_snapshot_manager.save_snapshot.call_args[0]
+        assert metadata_arg["cumulative_changed_files"] == 7
+        assert metadata_arg["cumulative_changed_paths"] == ["a.py", "b.py"]
+
     def test_incremental_update_with_changes(self):
         """Test incremental update with detected changes."""
         indexer = IncrementalIndexer(
@@ -312,6 +347,64 @@ class TestIncrementalIndexer:
         assert result.files_modified == 1
         assert result.chunks_removed == 10  # 2 files * 5 chunks each
         assert result.chunks_added == 2
+
+    def test_add_new_chunks_passes_partial_pass_cache_to_embedder(self):
+        """_add_new_chunks must resolve the chunk cache and forward cache_full_pass=False.
+
+        Regression guard for Fix 3: this embed site previously ran cold every
+        time. cache_full_pass=False matters because a full-pass eviction cap
+        here would wrongly collapse a cache built by prior full indexes down
+        to this run's handful of live keys — see ChunkEmbeddingCache._evict.
+        """
+        self.mock_indexer.storage_dir = "/fake/storage_dir"
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        self.mock_snapshot_manager.has_snapshot.return_value = True
+
+        mock_changes = Mock()
+        mock_changes.has_changes.return_value = True
+        mock_changes.added = ["new_file.py"]
+        mock_changes.removed = []
+        mock_changes.modified = []
+        mock_dag = Mock()
+        mock_dag.get_all_files.return_value = ["new_file.py"]
+
+        indexer.change_detector.detect_changes_from_snapshot = Mock(
+            return_value=(mock_changes, mock_dag)
+        )
+        indexer.change_detector.get_files_to_remove = Mock(return_value=[])
+        indexer.change_detector.get_files_to_reindex = Mock(
+            return_value=["new_file.py"]
+        )
+
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
+
+        mock_chunk = Mock()
+        mock_chunk.content = "test content"
+        self.mock_chunker.is_supported.return_value = True
+        self.mock_chunker.chunk_file.return_value = [mock_chunk]
+
+        mock_embedding_result = Mock()
+        mock_embedding_result.metadata = {}
+        self.mock_embedder.embed_chunks.return_value = [mock_embedding_result]
+
+        sentinel_cache = Mock()
+        with patch(
+            "search.incremental_indexer.resolve_chunk_cache",
+            return_value=sentinel_cache,
+        ) as mock_resolve:
+            result = indexer.incremental_index(str(self.project_path), "test_project")
+
+        assert result.success is True
+        mock_resolve.assert_called_once_with("/fake/storage_dir", self.mock_embedder)
+        call_kwargs = self.mock_embedder.embed_chunks.call_args.kwargs
+        assert call_kwargs["cache"] is sentinel_cache
+        assert call_kwargs["cache_full_pass"] is False
 
     @patch.object(IncrementalIndexer, "_release_and_verify_resources")
     def test_error_handling_full_index(self, mock_release):
@@ -1376,7 +1469,13 @@ class TestRestoreRepoProfile:
 
 
 class TestCheckCommunityDrift:
-    """Direct tests for IncrementalIndexer._check_community_drift."""
+    """Direct tests for IncrementalIndexer._check_community_drift.
+
+    Drift is tracked as a *set* of distinct changed file paths (see
+    _check_community_drift's docstring) — so unlike the old event-counting
+    version, these helpers must produce distinct path values per changed
+    file, not just a count of entries.
+    """
 
     def _make_indexer(self):
         return IncrementalIndexer(
@@ -1386,43 +1485,75 @@ class TestCheckCommunityDrift:
             snapshot_manager=Mock(),
         )
 
-    def _make_changes(self, added=1, modified=1, removed=0):
+    def _make_changes(self, added=1, modified=1, removed=0, prefix=""):
         changes = Mock()
-        changes.added = ["f"] * added
-        changes.modified = ["g"] * modified
-        changes.removed = ["h"] * removed
+        changes.added = [f"{prefix}added_{i}" for i in range(added)]
+        changes.modified = [f"{prefix}modified_{i}" for i in range(modified)]
+        changes.removed = [f"{prefix}removed_{i}" for i in range(removed)]
         return changes
 
     def test_below_threshold_returns_none_and_new_cumulative(self):
-        """When drift fraction < threshold, returns (None, new_cumulative)."""
+        """When drift fraction < threshold, returns (None, new_cumulative, new_paths)."""
         indexer = self._make_indexer()
-        indexer.snapshot_manager.load_metadata.return_value = {
+        prev_meta = {
             "cumulative_changed_files": 2,
+            "cumulative_changed_paths": ["prev_a", "prev_b"],
             "supported_files": 100,
         }
-        changes = self._make_changes(added=1, modified=1, removed=0)  # 2 new → 4 total
+        changes = self._make_changes(
+            added=1, modified=1, removed=0
+        )  # 2 new distinct → 4 total
 
         with patch("search.incremental_indexer.get_search_config") as mock_cfg:
             mock_cfg.return_value.chunking.incremental_community_redetect_threshold = (
                 0.5
             )
-            result, cumulative = indexer._check_community_drift(
-                "/p", "proj", changes, 0.0, should_refresh_communities=True
+            result, cumulative, paths = indexer._check_community_drift(
+                "/p", "proj", changes, 0.0, True, prev_meta
             )
 
         assert result is None
-        assert cumulative == 4  # 2 prev + 2 new
+        assert cumulative == 4  # 2 prev + 2 new distinct
+        assert set(paths) == {"prev_a", "prev_b", "added_0", "modified_0"}
+
+    def test_same_file_across_passes_does_not_inflate_drift(self):
+        """Re-editing the same file across many passes must not, by itself,
+        approach the redetect threshold the way summing per-pass change
+        events would (this is the 1a regression guard)."""
+        indexer = self._make_indexer()
+        prev_meta = {
+            "cumulative_changed_files": 1,
+            "cumulative_changed_paths": ["hot_file"],
+            "supported_files": 100,
+        }
+        changes = Mock()
+        changes.added = []
+        changes.modified = ["hot_file"] * 20  # same file, 20 edit events
+        changes.removed = []
+
+        with patch("search.incremental_indexer.get_search_config") as mock_cfg:
+            mock_cfg.return_value.chunking.incremental_community_redetect_threshold = (
+                0.5
+            )
+            result, cumulative, paths = indexer._check_community_drift(
+                "/p", "proj", changes, 0.0, True, prev_meta
+            )
+
+        assert result is None
+        assert cumulative == 1  # still just the one distinct file
+        assert paths == ["hot_file"]
 
     def test_above_threshold_calls_full_index_and_returns_result(self):
         """When drift fraction >= threshold, calls _full_index and returns its
         result with the true change counts substituted in (not the full-index
         file totals) — see _check_community_drift's dataclasses.replace step."""
         indexer = self._make_indexer()
-        indexer.snapshot_manager.load_metadata.return_value = {
+        prev_meta = {
             "cumulative_changed_files": 80,
+            "cumulative_changed_paths": [f"prev_{i}" for i in range(80)],
             "supported_files": 100,
         }
-        # 80 + 20 = 100 changes → 100% drift, well above 50% threshold
+        # 80 prev distinct + 20 new distinct = 100 → 100% drift, well above 50%
         changes = self._make_changes(added=10, modified=5, removed=5)
 
         # A real IncrementalIndexResult (not an opaque Mock): the promotion
@@ -1444,8 +1575,8 @@ class TestCheckCommunityDrift:
             mock_cfg.return_value.chunking.incremental_community_redetect_threshold = (
                 0.5
             )
-            result, cumulative = indexer._check_community_drift(
-                "/p", "proj", changes, 0.0, should_refresh_communities=True
+            result, cumulative, paths = indexer._check_community_drift(
+                "/p", "proj", changes, 0.0, True, prev_meta
             )
 
         # ...but the caller is told the true change set, not the rebuild total.
@@ -1453,21 +1584,23 @@ class TestCheckCommunityDrift:
         assert result.files_removed == 5
         assert result.files_modified == 5
         assert result.chunks_added == 42  # untouched — real work done
-        assert cumulative == 100  # 80 prev + 20 new
+        assert cumulative == 100  # 80 prev + 20 new distinct
+        assert paths == []  # promotion resets the on-disk accumulator
 
     def test_no_prior_tracking_skips_drift_check(self):
-        """When 'cumulative_changed_files' absent, always returns (None, this_count)."""
+        """When 'cumulative_changed_files' absent, always returns (None, this_count, paths)."""
         indexer = self._make_indexer()
         # No 'cumulative_changed_files' key → _has_prior_tracking is False
-        indexer.snapshot_manager.load_metadata.return_value = {"supported_files": 100}
+        prev_meta = {"supported_files": 100}
         # Would be 99% drift if tracking were applied
         changes = self._make_changes(added=99, modified=0, removed=0)
 
         with patch.object(indexer, "_full_index") as mock_full:
-            result, cumulative = indexer._check_community_drift(
-                "/p", "proj", changes, 0.0, should_refresh_communities=True
+            result, cumulative, paths = indexer._check_community_drift(
+                "/p", "proj", changes, 0.0, True, prev_meta
             )
 
         assert result is None
-        assert cumulative == 99  # 0 prev + 99 new
+        assert cumulative == 99  # 0 prev + 99 new distinct
+        assert len(paths) == 99
         mock_full.assert_not_called()

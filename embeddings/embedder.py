@@ -1250,6 +1250,7 @@ class CodeEmbedder:
         batch_size: int | None = None,
         *,
         cache: ChunkEmbeddingCache | None = None,
+        cache_full_pass: bool = True,
     ) -> list[EmbeddingResult]:
         """Generate embeddings for multiple chunks with dynamic batching.
 
@@ -1267,6 +1268,14 @@ class CodeEmbedder:
                 unchanged since the last run are served from disk instead
                 of the GPU. On a 100% cache hit the model is never loaded.
                 ``None`` (the default) reproduces today's behavior exactly.
+            cache_full_pass: Forwarded to ``ChunkEmbeddingCache.save`` as
+                ``full_pass``. ``True`` (the default — matches a full index)
+                lets the save prune down to exactly this run's ``live_keys``.
+                Callers embedding only a subset of the project's chunks (an
+                incremental update, a community-summary refresh) must pass
+                ``False``, or the tiny ``live_keys`` from that partial run
+                would evict the vast majority of a cache built by prior full
+                passes. Ignored when ``cache`` is ``None``.
 
         Returns:
             List of ``EmbeddingResult`` (one per input chunk, in order).
@@ -1698,7 +1707,7 @@ class CodeEmbedder:
                     assert result is not None
                     cache.put(key, result.embedding)
             live_keys = {key for key in cache_keys if key is not None}
-            cache.save(live_keys)
+            cache.save(live_keys, full_pass=cache_full_pass)
             self._log_chunk_cache_stats(cache, "run complete")
 
         self._logger.info("Embedding generation completed")

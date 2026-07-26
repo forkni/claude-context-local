@@ -259,7 +259,9 @@ class SearchPlanner:
             exclude_dirs=arguments.get("exclude_dirs"),
             chunk_type=arguments.get("chunk_type"),
             include_context=bool(arguments.get("include_context", True)),
-            auto_reindex=bool(arguments.get("auto_reindex", True)),
+            auto_reindex=bool(
+                arguments.get("auto_reindex", config.performance.enable_auto_reindex)
+            ),
             max_age_minutes=max_age_minutes,
             max_context_tokens=max_context_tokens,
             suggested_bm25=suggested_bm25,

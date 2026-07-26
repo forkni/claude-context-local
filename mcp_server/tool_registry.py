@@ -140,7 +140,9 @@ RETURNS:
                 "auto_reindex": {
                     "type": "boolean",
                     "default": True,
-                    "description": "Automatically reindex if index is stale (default: True)",
+                    "description": "Automatically reindex if index is stale (schema default: True; "
+                    "the running server may be configured with a different effective default — "
+                    "check get_search_config_status.auto_reindex_enabled)",
                 },
                 "max_age_minutes": {
                     "type": "number",

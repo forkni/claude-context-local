@@ -43,6 +43,7 @@ import hashlib
 import logging
 import os
 import struct
+import traceback
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -210,7 +211,7 @@ class ChunkEmbeddingCache:
             )
             self._entries = OrderedDict()
 
-    def save(self, live_keys: set[str]) -> None:
+    def save(self, live_keys: set[str], *, full_pass: bool = True) -> None:
         """Persist the cache to disk, atomically.
 
         Evicts down to the configured cap first (see :meth:`_evict`), always
@@ -218,10 +219,20 @@ class ChunkEmbeddingCache:
         that just completed. Never raises: a save failure is logged and
         otherwise ignored, meaning only that the next run starts colder than
         it could have.
+
+        Args:
+            full_pass: Whether *live_keys* is the authoritative set for the
+                whole project (a full index) or only a subset (an incremental
+                update, a community-summary refresh). ``True`` allows
+                eviction to target the entries-based cap derived from
+                ``len(live_keys)`` — correct only when ``live_keys`` really is
+                everything the project needs. ``False`` caps by the byte
+                ceiling alone, so a small partial-run ``live_keys`` cannot
+                collapse a cache built by prior full passes. See :meth:`_evict`.
         """
         tmp = Path(str(self._path) + ".tmp")
         try:
-            self._evict(live_keys)
+            self._evict(live_keys, full_pass=full_pass)
             self._path.parent.mkdir(parents=True, exist_ok=True)
             name_bytes = self._model_name.encode("utf-8")
             prov_bytes = self._provenance.encode("utf-8")
@@ -253,19 +264,34 @@ class ChunkEmbeddingCache:
             with contextlib.suppress(OSError):
                 tmp.unlink(missing_ok=True)
 
-    def _evict(self, live_keys: set[str]) -> None:
+    def _evict(self, live_keys: set[str], *, full_pass: bool = True) -> None:
         """Drop least-recently-used, non-live entries down to the cap.
 
         ``live_keys`` always survives eviction, even if that means staying
         over the nominal cap — correctness for the run just completed takes
         priority over the size target.
+
+        The entries-based cap (``2 * len(live_keys)``, floored at
+        ``_AUTO_MIN_ENTRIES``) is only sound when ``live_keys`` is the
+        authoritative set for the whole project — i.e. ``full_pass=True``. A
+        partial run (incremental update, community-summary refresh) touches
+        only the handful of chunks that changed; naively applying the same
+        formula would shrink a cache built by prior full passes down to
+        roughly twice *that* handful. When ``full_pass=False`` the cap is
+        instead the byte ceiling alone, so a small partial-run ``live_keys``
+        only trims genuinely excess entries (oldest-first, via the
+        ``OrderedDict``'s LRU order), never the bulk of an already-populated
+        cache.
         """
         if self._max_entries > 0:
             cap = self._max_entries
         else:
             record_bytes = _KEY_BYTES + self._dimension * 4
-            cap = max(2 * len(live_keys), _AUTO_MIN_ENTRIES)
-            cap = min(cap, max(len(live_keys), _AUTO_MAX_BYTES // record_bytes))
+            byte_cap = max(len(live_keys), _AUTO_MAX_BYTES // record_bytes)
+            if full_pass:
+                cap = min(max(2 * len(live_keys), _AUTO_MIN_ENTRIES), byte_cap)
+            else:
+                cap = byte_cap
         if len(self._entries) <= cap:
             return
         # OrderedDict iterates oldest-first; drop LRU non-live entries until
@@ -288,3 +314,81 @@ class ChunkEmbeddingCache:
             "cache_size": len(self._entries),
             "max_entries": self._max_entries if self._max_entries > 0 else "auto",
         }
+
+
+# -- shared resolution helpers --------------------------------------------
+#
+# Module-level so every embed_chunks() call site (full index, incremental
+# update, community-summary refresh) resolves a cache the same fail-soft
+# way instead of each reimplementing it. Originally lived as private methods
+# on IndexWriteStage, which only ever wired the full-index path.
+
+
+def resolve_embedding_provenance(embedder: Any) -> str:
+    """Best-effort provenance string for *embedder*, never raising.
+
+    A constant sentinel (``"unavailable"``) on failure — not a
+    config-derived approximation, which would differ from the real
+    provenance string and manufacture a permanent 0%-hit-rate mismatch. The
+    ``isinstance`` guard matters: tests routinely construct a ``Mock``
+    embedder, whose auto-attribute would otherwise return a ``Mock`` that
+    reaches ``provenance.encode("utf-8")`` in :meth:`ChunkEmbeddingCache.save`
+    and fail-soft into a cache that silently never persists.
+    """
+    getter = getattr(embedder, "get_embedding_provenance", None)
+    if callable(getter):
+        try:
+            value = getter()
+            if isinstance(value, str) and value:
+                return value
+        except Exception:  # noqa: BLE001 - fail-soft: provenance is best-effort
+            logger.debug("[CHUNK_CACHE] provenance unavailable", exc_info=True)
+    # A missing get_embedding_provenance(), an intermittent failure, or a
+    # non-str/empty return all land here and silently rewrite the cache with
+    # the sentinel on every run — a permanent 0% hit rate that otherwise
+    # looks identical to a healthy cold cache. WARNING (not DEBUG/INFO)
+    # because this degrades every subsequent run, not just this one.
+    logger.warning(
+        "[CHUNK_CACHE] Embedding provenance unavailable — persistent chunk "
+        "cache will use the 'unavailable' sentinel and may never hit"
+    )
+    return "unavailable"
+
+
+def resolve_chunk_cache(storage_dir: Any, embedder: Any) -> ChunkEmbeddingCache | None:
+    """Resolve a run's persistent chunk-embedding cache, if enabled.
+
+    Resolve lazily, per-run — never hold the result across runs — for two
+    reasons. First, the embedder/indexer a caller builds this from may be
+    rebuilt between runs (e.g. after resource release and verification), so
+    a cache captured once could outlive that rebind stale. Second, tests
+    routinely construct a ``Mock`` indexer, so eagerly building a ``Path``
+    from ``storage_dir`` at construction time would raise on a ``Mock``.
+
+    Fail-soft: disabled by config, a missing/non-path ``storage_dir``, or
+    any other error while resolving all return ``None`` — ``embed_chunks``
+    then behaves exactly as it does without a cache. A cache problem must
+    never fail an index.
+    """
+    try:
+        from search.config import get_search_config
+
+        embedding_cfg = get_search_config().embedding
+        if not embedding_cfg.enable_chunk_cache:
+            return None
+
+        cache_path = Path(storage_dir) / "chunk_embeddings.bin"
+        return ChunkEmbeddingCache(
+            cache_path=cache_path,
+            model_name=embedding_cfg.model_name,
+            dimension=embedding_cfg.dimension,
+            provenance=resolve_embedding_provenance(embedder),
+            max_entries=embedding_cfg.chunk_cache_max_entries,
+        )
+    except Exception:  # noqa: BLE001 - fail-soft: a cache problem must never fail an index
+        logger.warning(
+            "[CHUNK_CACHE] Unable to resolve persistent embedding cache "
+            "(non-fatal):\n%s",
+            traceback.format_exc(),
+        )
+        return None

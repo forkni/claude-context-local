@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from chunking.python_ast_chunker import CodeChunk
 from chunking.relationships.call_edge_resolver import run_resolvers
 from chunking.relationships.external_call_graph import PyanResolver
-from embeddings.chunk_cache import ChunkEmbeddingCache
+from embeddings.chunk_cache import ChunkEmbeddingCache, resolve_chunk_cache
 from evaluation.chunk_mapping import build_line_to_chunk_map
 from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
@@ -166,9 +166,9 @@ class IndexWriteStage:
         )
         self._snapshot_manager.save_snapshot(dag, metadata)
 
-        logger.info("[INCREMENTAL] Saving index...")
+        logger.info("[FULL_INDEX] Saving index...")
         self._indexer.save_indices()
-        logger.info("[INCREMENTAL] Index saved")
+        logger.info("[FULL_INDEX] Index saved")
 
         bm25_resynced, bm25_resync_count = self._indexer.resync_if_desynced(
             "FULL_INDEX"
@@ -205,54 +205,11 @@ class IndexWriteStage:
         ``Path`` from ``storage_dir`` at construction time would raise on a
         ``Mock``.
 
-        Fail-soft: disabled by config, a missing/non-path ``storage_dir``, or
-        any other error while resolving all return ``None`` — ``embed_chunks``
-        then behaves exactly as it does without a cache. A cache problem must
-        never fail an index.
+        Thin wrapper over ``embeddings.chunk_cache.resolve_chunk_cache`` —
+        shared with the incremental and community-refresh embed sites so all
+        three resolve a cache the same fail-soft way.
         """
-        try:
-            from search.config import get_search_config
-
-            embedding_cfg = get_search_config().embedding
-            if not embedding_cfg.enable_chunk_cache:
-                return None
-
-            cache_path = Path(self._indexer.storage_dir) / "chunk_embeddings.bin"
-            return ChunkEmbeddingCache(
-                cache_path=cache_path,
-                model_name=embedding_cfg.model_name,
-                dimension=embedding_cfg.dimension,
-                provenance=self._resolve_embedding_provenance(),
-                max_entries=embedding_cfg.chunk_cache_max_entries,
-            )
-        except Exception:  # noqa: BLE001 - fail-soft: a cache problem must never fail an index
-            logger.warning(
-                "[CHUNK_CACHE] Unable to resolve persistent embedding cache "
-                "(non-fatal):\n%s",
-                traceback.format_exc(),
-            )
-            return None
-
-    def _resolve_embedding_provenance(self) -> str:
-        """Best-effort provenance string for this run's embedder, never raising.
-
-        A constant sentinel on failure — not a config-derived approximation,
-        which would differ from the real provenance string and manufacture
-        a permanent 0%-hit-rate mismatch. The ``isinstance`` guard matters:
-        tests construct ``IndexWriteStage(embedder=Mock(), ...)``, whose
-        auto-attribute would otherwise return a ``Mock`` that reaches
-        ``provenance.encode("utf-8")`` in ``ChunkEmbeddingCache.save`` and
-        fail-soft into a cache that silently never persists.
-        """
-        getter = getattr(self._embedder, "get_embedding_provenance", None)
-        if callable(getter):
-            try:
-                value = getter()
-                if isinstance(value, str) and value:
-                    return value
-            except Exception:  # noqa: BLE001 - fail-soft: provenance is best-effort
-                logger.debug("[CHUNK_CACHE] provenance unavailable", exc_info=True)
-        return "unavailable"
+        return resolve_chunk_cache(self._indexer.storage_dir, self._embedder)
 
     def _inject_call_edges(self, project_path: str) -> None:
         """Inject cross-module call edges from the resolver pipeline into the code graph.

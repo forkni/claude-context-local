@@ -109,12 +109,13 @@ class TestThresholdRouting:
 
         prior_meta = {
             "cumulative_changed_files": 28,
+            "cumulative_changed_paths": [f"prev_file_{i}.py" for i in range(28)],
             "supported_files": 100,
         }
         incr.snapshot_manager.load_metadata.return_value = prior_meta
         incr.snapshot_manager.has_snapshot.return_value = True
 
-        changes = self._make_changes(n_added=5)  # 5 more → 33/100 = 0.33 > 0.3
+        changes = self._make_changes(n_added=5)  # 5 distinct new → 33/100 = 0.33 > 0.3
 
         # A real IncrementalIndexResult (not an opaque Mock): the promotion
         # path runs dataclasses.replace() on it, which raises on a Mock —

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from chunking.python_ast_chunker import CodeChunk
+from embeddings.chunk_cache import resolve_chunk_cache
 from merkle.change_detector import FileChanges
 from utils.path_utils import normalize_path
 
@@ -88,7 +89,7 @@ class CommunityRefreshStage:
             )
             return
 
-        self._regenerate_summaries(member_chunks, sub_map, project_name)
+        self._regenerate_summaries(member_chunks, sub_map, project_name, storage_dir)
 
     # ------------------------------------------------------------------
     # Phase helpers (decomposed from run)
@@ -207,6 +208,7 @@ class CommunityRefreshStage:
         member_chunks: list[CodeChunk],
         sub_map: dict[str, int],
         project_name: str,
+        storage_dir: Path,
     ) -> None:
         """Recompute, embed, and index community summaries for affected communities."""
         # Regenerate summaries (no centrality in incremental — approximate refresh)
@@ -219,7 +221,17 @@ class CommunityRefreshStage:
 
         # Embed and index the refreshed summaries
         try:
-            embedding_results = self._embedder.embed_chunks(new_summaries)
+            # cache_full_pass=False: this refresh only ever re-embeds the
+            # handful of summaries for affected communities, never the whole
+            # project — see ChunkEmbeddingCache._evict for why a full-pass
+            # cap here would wrongly collapse a cache built by prior full
+            # indexes. Hit rate is expected to be low (summaries regenerate
+            # nondeterministically), but wiring costs one hash per summary.
+            embedding_results = self._embedder.embed_chunks(
+                new_summaries,
+                cache=resolve_chunk_cache(storage_dir, self._embedder),
+                cache_full_pass=False,
+            )
             # strict=True: embed_chunks guarantees a 1:1, order-preserved
             # result per input chunk (see embedder.py's un-permute step). A
             # length mismatch here would otherwise silently attach the wrong

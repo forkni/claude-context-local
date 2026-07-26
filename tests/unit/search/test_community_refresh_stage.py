@@ -206,6 +206,57 @@ class TestRefreshHappyPath:
         stage._embedder.embed_chunks.assert_called_once()
         stage._indexer.add_embeddings.assert_called_once()
 
+    def test_embed_chunks_receives_partial_pass_cache_flag(self, tmp_path):
+        """Fix 3 wiring: the community-refresh embed call must resolve a
+        cache from this stage's own storage_dir and pass cache_full_pass=
+        False — see chunk_cache.py's _evict docstring for why the full-pass
+        default would be unsafe for a partial (community-refresh) embed."""
+        stage = _make_stage(tmp_path)
+
+        community_map = {"a.py:1-5:function:foo": 7}
+        mock_graph = MagicMock()
+        mock_graph.storage.load_community_map.return_value = community_map
+
+        member_meta = {
+            "chunk_type": "function",
+            "content": "def foo(): pass",
+            "start_line": 1,
+            "end_line": 5,
+            "file_path": "/proj/a.py",
+            "relative_path": "a.py",
+            "folder_structure": [],
+            "name": "foo",
+            "language": "python",
+            "imports": [],
+        }
+        stage._indexer.metadata_store.items.return_value = [
+            ("a.py:1-5:function:foo", member_meta)
+        ]
+        stage._summary_stage.compute_community_summaries.return_value = [Mock()]
+
+        fake_embed = MagicMock()
+        fake_embed.metadata = {}
+        stage._embedder.embed_chunks.return_value = [fake_embed]
+
+        sentinel_cache = Mock()
+        with (
+            patch(
+                "search.community_refresh_stage.GraphIntegration",
+                return_value=mock_graph,
+            ),
+            patch(
+                "search.community_refresh_stage.resolve_chunk_cache",
+                return_value=sentinel_cache,
+            ) as mock_resolve,
+        ):
+            stage.run(_changes(added=["a.py"]), "proj")
+
+        mock_resolve.assert_called_once_with(tmp_path, stage._embedder)
+        stage._embedder.embed_chunks.assert_called_once()
+        _args, kwargs = stage._embedder.embed_chunks.call_args
+        assert kwargs["cache"] is sentinel_cache
+        assert kwargs["cache_full_pass"] is False
+
     def test_no_member_chunks_skips_embed(self, tmp_path):
         """When no member chunks survive, no embed or add_embeddings call is made."""
         stage = _make_stage(tmp_path)

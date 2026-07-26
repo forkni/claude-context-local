@@ -2996,6 +2996,64 @@ class TestEmbedChunksContentHashCache:
     )
     @patch("embeddings.model_loader.SentenceTransformer")
     @patch("embeddings.embedder.SentenceTransformer")
+    def test_cache_full_pass_flag_forwarded_to_save(
+        self, mock_sentence_transformer, mock_model_loader_st
+    ):
+        """cache_full_pass must reach ChunkEmbeddingCache.save() verbatim as
+        `full_pass` -- this is the plumbing the incremental and
+        community-refresh call sites rely on to pass full_pass=False (see
+        chunk_cache.py's _evict docstring for why the True default would be
+        unsafe for a partial pass), and IndexWriteStage relies on to keep
+        today's full_pass=True behavior unchanged."""
+        from embeddings.chunk_cache import ChunkEmbeddingCache
+
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
+            dim = 8
+            return np.array(
+                [[float(len(s))] * dim for s in sentences], dtype=np.float32
+            )
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_model.device = "cpu"
+        mock_sentence_transformer.return_value = mock_model
+        mock_model_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+        chunks = [
+            self._make_chunk(content="x" * (10 + i), name=f"fn{i}", start_line=i)
+            for i in range(3)
+        ]
+
+        mock_cache = MagicMock(spec=ChunkEmbeddingCache)
+        mock_cache.key_for.side_effect = ChunkEmbeddingCache.key_for
+        # Every chunk a miss -> pending_indices is non-empty -> the 100%-hit
+        # early return (which never calls save()) is not taken.
+        mock_cache.get.return_value = None
+
+        embedder.embed_chunks(
+            chunks, batch_size=2, cache=mock_cache, cache_full_pass=False
+        )
+        mock_cache.save.assert_called_once()
+        assert mock_cache.save.call_args.kwargs == {"full_pass": False}
+
+        mock_cache.reset_mock()
+        mock_cache.get.return_value = None
+        embedder.embed_chunks(chunks, batch_size=2, cache=mock_cache)  # default
+        mock_cache.save.assert_called_once()
+        assert mock_cache.save.call_args.kwargs == {"full_pass": True}
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
     def test_full_hit_logs_stats(
         self, mock_sentence_transformer, mock_model_loader_st, tmp_path, caplog
     ):

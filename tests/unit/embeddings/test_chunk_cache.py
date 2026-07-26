@@ -293,6 +293,55 @@ class TestAutoEvictionCap:
         assert cache.get_stats()["cache_size"] == 10
 
 
+class TestFullPassFlag:
+    """save(..., full_pass=False) must not apply the entries-based cap that is
+    only sound when live_keys is the whole project's authoritative set (a
+    full index) -- see _evict's docstring. A partial pass (incremental
+    update, community-summary refresh) touches only a handful of chunks, and
+    naively applying the same 2x-live-keys formula would collapse a cache
+    built by prior full passes down to roughly twice that handful.
+    """
+
+    def test_partial_pass_preserves_cache_full_pass_would_shrink(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(chunk_cache_module, "_AUTO_MIN_ENTRIES", 10)
+        # record_bytes = 16 + 4*4 = 32; size the byte ceiling to exactly fit
+        # the pre-populated 50-entry cache, so a full_pass=False save is a no-op.
+        monkeypatch.setattr(chunk_cache_module, "_AUTO_MAX_BYTES", 50 * 32)
+        cache_path = tmp_path / "chunk_embeddings.bin"
+        cache = ChunkEmbeddingCache(
+            cache_path, model_name="BAAI/bge-m3", dimension=4, provenance=_PROV
+        )
+        for i in range(50):
+            cache.put(f"{i:032d}", _vec(4, float(i)))
+        # Only 2 keys are "live" this run -- a partial pass touching a
+        # handful of chunks out of a much larger, previously-built cache.
+        live = {f"{0:032d}", f"{1:032d}"}
+
+        cache.save(live, full_pass=False)
+        assert cache.get_stats()["cache_size"] == 50  # byte cap only -> untouched
+
+    def test_full_pass_with_same_live_keys_shrinks_to_entries_cap(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setattr(chunk_cache_module, "_AUTO_MIN_ENTRIES", 10)
+        monkeypatch.setattr(chunk_cache_module, "_AUTO_MAX_BYTES", 50 * 32)
+        cache_path = tmp_path / "chunk_embeddings.bin"
+        cache = ChunkEmbeddingCache(
+            cache_path, model_name="BAAI/bge-m3", dimension=4, provenance=_PROV
+        )
+        for i in range(50):
+            cache.put(f"{i:032d}", _vec(4, float(i)))
+        live = {f"{0:032d}", f"{1:032d}"}
+
+        # Default full_pass=True applies the entries-based cap -- correct
+        # only when live_keys really is the whole project, which the same
+        # 2-key live set here is not; contrast with the partial-pass test above.
+        cache.save(live, full_pass=True)
+        assert cache.get_stats()["cache_size"] == 10  # min(max(2*2, floor=10), 50)
+
+
 class TestGetStats:
     def test_hit_miss_counts(self, tmp_path):
         cache_path = tmp_path / "chunk_embeddings.bin"

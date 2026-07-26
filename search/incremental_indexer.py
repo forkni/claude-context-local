@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from chunking.python_ast_chunker import CodeChunk
+from embeddings.chunk_cache import resolve_chunk_cache
 from embeddings.embedder import CodeEmbedder
 from merkle.change_detector import ChangeDetector, FileChanges
 from merkle.merkle_dag import MerkleDAG
@@ -247,6 +248,13 @@ class IncrementalIndexer:
             logger.info(f"Detecting changes in {project_name}")
             changes, current_dag = self.detect_changes(project_path)
 
+            # Loaded once and shared with _check_community_drift below so a
+            # no-change pass and a changed pass agree on prior drift state
+            # (previously each read the snapshot independently, and the
+            # no-change branch dropped the cumulative fields entirely).
+            _prev_meta = self.snapshot_manager.load_metadata(project_path)
+            _prev_meta_dict = _prev_meta if isinstance(_prev_meta, dict) else {}
+
             if not changes.has_changes():
                 logger.info(f"No changes detected in {project_name}")
                 # Even with no changes, save current statistics
@@ -260,6 +268,16 @@ class IncrementalIndexer:
                     supported_files=supported_files,
                     total_chunks=total_chunks,
                     is_full=False,
+                    # Carry the drift accumulator forward unchanged — dropping
+                    # these on a no-change pass previously reset the drift
+                    # tracking silently, making the next promotion decision
+                    # depend on whether an intervening no-op run had occurred.
+                    cumulative_changed_files=_prev_meta_dict.get(
+                        "cumulative_changed_files", 0
+                    ),
+                    cumulative_changed_paths=_prev_meta_dict.get(
+                        "cumulative_changed_paths", []
+                    ),
                 )
                 self.snapshot_manager.save_snapshot(current_dag, metadata)
 
@@ -275,12 +293,15 @@ class IncrementalIndexer:
                 _config.chunking.enable_community_summaries
                 and _config.chunking.enable_incremental_community_summaries
             )
-            _drift_result, _new_cumulative = self._check_community_drift(
-                project_path,
-                project_name,
-                changes,
-                start_time,
-                _should_refresh_communities,
+            _drift_result, _new_cumulative, _new_cumulative_paths = (
+                self._check_community_drift(
+                    project_path,
+                    project_name,
+                    changes,
+                    start_time,
+                    _should_refresh_communities,
+                    _prev_meta_dict,
+                )
             )
             if _drift_result is not None:
                 return _drift_result
@@ -336,6 +357,7 @@ class IncrementalIndexer:
                 files_removed=len(changes.removed),
                 files_modified=len(changes.modified),
                 cumulative_changed_files=_new_cumulative,
+                cumulative_changed_paths=_new_cumulative_paths,
             )
             self.snapshot_manager.save_snapshot(current_dag, metadata)
 
@@ -444,28 +466,45 @@ class IncrementalIndexer:
         changes: FileChanges,
         start_time: float,
         should_refresh_communities: bool,
-    ) -> tuple[IncrementalIndexResult | None, int]:
+        prev_meta_dict: dict[str, Any],
+    ) -> tuple[IncrementalIndexResult | None, int, list[str]]:
         """Compute cumulative drift; promote to full reindex when threshold exceeded.
 
-        Always returns the new cumulative changed-file count so the caller can include
-        it in snapshot metadata whether or not a promotion occurred.
+        Drift is tracked as a *set* of distinct changed file paths, not a running
+        count of change events — re-editing the same file across many incremental
+        passes must not, by itself, approach the redetect threshold the way
+        summing per-pass change counts would.
+
+        Always returns the new cumulative state so the caller can include it in
+        snapshot metadata whether or not a promotion occurred.
+
+        Args:
+            prev_meta_dict: Previously loaded snapshot metadata (already loaded by
+                the caller — avoids a second disk read here).
 
         Returns:
-            (None, new_cumulative) — continue with incremental update.
-            (full_index_result, new_cumulative) — drift exceeded threshold; caller
-                should immediately return full_index_result.
+            (None, new_cumulative_count, new_cumulative_paths) — continue with
+                incremental update; caller persists the cumulative state.
+            (full_index_result, new_cumulative_count, new_cumulative_paths) — drift
+                exceeded threshold; caller should immediately return
+                full_index_result. The full index itself resets the on-disk
+                cumulative state to zero, so the returned paths are unused by
+                the caller in this case.
         """
-        _prev_meta = self.snapshot_manager.load_metadata(project_path)
-        _prev_meta_dict = _prev_meta if isinstance(_prev_meta, dict) else {}
-        _has_prior_tracking = "cumulative_changed_files" in _prev_meta_dict
-        _prev_cumulative = int(_prev_meta_dict.get("cumulative_changed_files", 0))
-        _this_change_count = (
-            len(changes.added) + len(changes.modified) + len(changes.removed)
-        )
-        _new_cumulative = _prev_cumulative + _this_change_count
+        _has_prior_tracking = "cumulative_changed_files" in prev_meta_dict
+        _prev_paths = {
+            normalize_path(p)
+            for p in prev_meta_dict.get("cumulative_changed_paths", [])
+        }
+        _this_paths = {
+            normalize_path(p)
+            for p in (*changes.added, *changes.modified, *changes.removed)
+        }
+        _new_paths = _prev_paths | _this_paths
+        _new_cumulative = len(_new_paths)
         if should_refresh_communities and _has_prior_tracking:
             _config = get_search_config()
-            _prev_supported = max(1, int(_prev_meta_dict.get("supported_files", 1)))
+            _prev_supported = max(1, int(prev_meta_dict.get("supported_files", 1)))
             _drift_fraction = _new_cumulative / _prev_supported
             if (
                 _drift_fraction
@@ -492,8 +531,8 @@ class IncrementalIndexer:
                         files_removed=len(changes.removed),
                         files_modified=len(changes.modified),
                     )
-                return (_result, _new_cumulative)
-        return None, _new_cumulative
+                return (_result, _new_cumulative, [])
+        return None, _new_cumulative, sorted(_new_paths)
 
     def _attempt_recovery(
         self,
@@ -1075,7 +1114,15 @@ class IncrementalIndexer:
             # Let embed failures propagate — the caller's except routes to
             # _attempt_recovery, preventing a silent snapshot advance over
             # chunks that were removed but never re-embedded (#1).
-            all_embedding_results = self.embedder.embed_chunks(chunks_to_embed)
+            # cache_full_pass=False: this run's live_keys only covers the
+            # handful of chunks that changed, never the whole project — see
+            # ChunkEmbeddingCache._evict for why a full-pass cap here would
+            # wrongly collapse a cache built by prior full indexes.
+            all_embedding_results = self.embedder.embed_chunks(
+                chunks_to_embed,
+                cache=resolve_chunk_cache(self.indexer.storage_dir, self.embedder),
+                cache_full_pass=False,
+            )
             # Update metadata
             for chunk, embedding_result in zip(
                 chunks_to_embed, all_embedding_results, strict=True
