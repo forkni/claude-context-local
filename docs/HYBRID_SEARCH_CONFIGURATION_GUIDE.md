@@ -636,6 +636,42 @@ stats = cache.get_stats()
 - **After TTL expiration**: Re-generate embedding (~50ms)
 - **Cache overhead**: <0.1ms per access (negligible)
 
+### Chunk Embedding Cache Configuration
+
+**Feature**: Persistent, content-hash-keyed cache of *chunk* embedding vectors (distinct from the
+query embedding cache above), stored per model in `chunk_embeddings.bin`.
+
+**Purpose**: Skips re-embedding chunks whose content hash is unchanged between reindexes — on a
+full reindex of an otherwise-unchanged codebase this cuts the embedding phase from ~34s to well
+under 1s.
+
+**Configuration** (`search_config.json`):
+
+```json
+{
+  "enable_chunk_cache": true,
+  "chunk_cache_max_entries": 0
+}
+```
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `enable_chunk_cache` | `true` | Enable/disable the persistent chunk cache entirely |
+| `chunk_cache_max_entries` | `0` (auto) | Hard cap on cached entries. `0` uses an auto cap: `max(2× live chunks, 2,000)`, clamped so the cache never exceeds ~32MB on disk |
+
+**Cache invalidation**: The cache header records the embedding model name, vector dimension, and a
+provenance string (effective device/dtype/backend, e.g. `v1|device=cuda|dtype=fp16|backend=pytorch`).
+Changing the embedding model, or flipping `enable_fp16`, `prefer_bf16`, or `use_onnx` in
+`PerformanceConfig`, changes this provenance and invalidates the entire cache — the next reindex
+cold-starts (full re-embed) and then re-populates the cache under the new numerics. This is
+expected, one-time behavior, not a bug.
+
+**Cache Statistics**: hit rate is logged at INFO level during indexing:
+
+```
+[CHUNK_CACHE] run complete: hits=2100 misses=31 hit_rate=98.5% size=2131 cap=4262
+```
+
 ## Monitoring and Diagnostics
 
 ### Check System Status

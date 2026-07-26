@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Persistent chunk embedding cache** (`embeddings/chunk_cache.py`) — content-hash-keyed cache of
+  chunk embedding vectors persisted to `chunk_embeddings.bin`, cutting a full reindex's embedding
+  phase from 33.94s to 0.78s (43×) once the codebase is unchanged. On by default
+  (`enable_chunk_cache`, `search/config.py`).
+
+### Changed
+
+- **Chunk embedding cache now records provenance** — the cache header stores a
+  `device|dtype|backend` string (`ModelLoader.describe_numerics()`, computed without loading the
+  model) alongside the existing model/dimension check, so flipping `enable_fp16`, `prefer_bf16`, or
+  `use_onnx` now correctly invalidates cached vectors instead of silently reusing ones computed
+  under different numerics. Cache format bumped to version 2; existing v1 cache files cold-start
+  once on upgrade (one full re-embed, then cached as normal).
+- **Auto size cap retuned** from `max(4× live entries, 20,000)` to `max(2× live entries, 2,000)`
+  (clamped to a 32MB byte ceiling) — cuts the eviction ceiling from ~82MB to ~17.5MB for a typical
+  project without discarding any currently-live entries.
+- Chunk cache hit rate is now logged (`[CHUNK_CACHE] ... hits=N misses=N hit_rate=X% size=N cap=N`)
+  on both the all-cached-hit and normal save paths; previously silent even on a 0% hit-rate
+  regression.
+
+### Fixed
+
+- **`handle_clear_index` deleted a filename that never existed** (`chunks_metadata.db` instead of
+  the real `metadata.db`), silently leaving the metadata DB, its `-wal`/`-shm` sidecars (routinely
+  full-size, not crash-only debris), `chunk_ids.pkl`, and the call graph behind after a "clear
+  index." Consolidated the three divergent index-deletion lists (`index_handlers.py` ×2,
+  `search/indexer.py::clear_index`) onto one corrected file set, including cleanup of the legacy
+  `metadata_symbol_cache.json` orphan. An explicit clear-index now also drops the chunk embedding
+  cache itself — the escape hatch for suspect vectors — while the internal pre-reindex clear path
+  correctly preserves it.
+
+---
+
 ## [0.21.0] - 2026-07-23
 
 ### Added
