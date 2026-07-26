@@ -7,18 +7,12 @@ Ported from: _archive/BENCHMARKING/tools/benchmark_retrieval_quality.py
 """
 
 import math
-import re
 from statistics import mean
 from typing import Any
 
+from search.chunk_id import dedup_key
 from utils.path_utils import normalize_path
 
-
-# Regex to strip line-number ranges from chunk IDs.
-# Matches: "file/path.py:123-456:type:name" → "file/path.py:type:name"
-# Also handles module chunks: "file/path.py:1-8:module" → "file/path.py:module"
-_LINE_RANGE_RE = re.compile(r":\d+-\d+:")
-_SPLIT_BLOCK_RE = re.compile(r":split_block:")
 
 THRESHOLDS = {
     "mrr": 0.50,
@@ -31,7 +25,11 @@ def normalize_chunk_id(chunk_id: str) -> str:
     """Strip line-range component and normalize split_block type from a chunk ID.
 
     Line numbers shift as code evolves; split_block is a structural detail.
-    Comparison uses only the stable ``file_path:type:name`` portion.
+    Comparison uses only the stable ``file_path:type:name`` portion, with path
+    separators canonicalized to forward slashes.
+
+    Thin wrapper over :func:`search.chunk_id.dedup_key` — the single owner of
+    dedup-key semantics shared by the live search path and this evaluation code.
 
     Examples::
 
@@ -44,8 +42,7 @@ def normalize_chunk_id(chunk_id: str) -> str:
         "graph/graph_integration.py:276-310:split_block:GraphIntegration.populate_from_embeddings"
         → "graph/graph_integration.py:method:GraphIntegration.populate_from_embeddings"
     """
-    result = _LINE_RANGE_RE.sub(":", chunk_id, count=1)
-    return _SPLIT_BLOCK_RE.sub(":method:", result)
+    return dedup_key(chunk_id)
 
 
 def normalize_chunk_ids(chunk_ids: list[str]) -> list[str]:

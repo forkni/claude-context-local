@@ -6,6 +6,7 @@ from search.chunk_id import (
     MIN_CHUNK_ID_COLONS,
     ChunkId,
     build,
+    dedup_key,
     extract_line_count,
     extract_name,
     is_chunk_id,
@@ -350,3 +351,65 @@ class TestBuild:
         result = build("src/a.py", 5, 40, "merged", None)
         assert "merged" in result
         assert result == "src/a.py:5-40:merged"
+
+
+# ---------------------------------------------------------------------------
+# dedup_key
+# ---------------------------------------------------------------------------
+
+
+class TestDedupKey:
+    def test_strips_line_range(self):
+        assert (
+            dedup_key("search/filters.py:22-31:function:normalize_path")
+            == "search/filters.py:function:normalize_path"
+        )
+
+    def test_split_block_collapses_to_method(self):
+        assert (
+            dedup_key(
+                "graph/graph_integration.py:276-310:split_block:GraphIntegration.populate_from_embeddings"
+            )
+            == "graph/graph_integration.py:method:GraphIntegration.populate_from_embeddings"
+        )
+
+    def test_split_block_fragments_share_key(self):
+        a = dedup_key("src/big.py:10-40:split_block:Cls.long_method")
+        b = dedup_key("src/big.py:41-80:split_block:Cls.long_method")
+        parent = dedup_key("src/big.py:10-80:method:Cls.long_method")
+        assert a == b == parent
+
+    def test_module_id_three_parts(self):
+        assert dedup_key("merkle/__init__.py:1-8:module") == "merkle/__init__.py:module"
+
+    def test_windows_backslash_normalized(self):
+        assert (
+            dedup_key("search\\reranker.py:36-137:method:rerank")
+            == "search/reranker.py:method:rerank"
+        )
+
+    def test_drive_letter_path(self):
+        assert (
+            dedup_key("F:/proj/src/a.py:10-20:function:fn")
+            == "F:/proj/src/a.py:function:fn"
+        )
+
+    def test_bare_symbol_passthrough(self):
+        assert dedup_key("login") == "login"
+
+    def test_no_kind_after_range_passthrough(self):
+        # ":10-20" with nothing after it is not a strippable chunk_id
+        assert dedup_key("file.py:10-20") == "file.py:10-20"
+
+    def test_non_numeric_range_passthrough(self):
+        assert dedup_key("file.py:a-b:function:fn") == "file.py:a-b:function:fn"
+
+    def test_idempotent(self):
+        raw = "src/big.py:10-40:split_block:Cls.long_method"
+        assert dedup_key(dedup_key(raw)) == dedup_key(raw)
+
+    def test_other_kinds_not_collapsed(self):
+        assert (
+            dedup_key("search/config.py:148-161:decorated_definition:EmbeddingConfig")
+            == "search/config.py:decorated_definition:EmbeddingConfig"
+        )

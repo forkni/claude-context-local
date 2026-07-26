@@ -80,6 +80,19 @@ class TestNormalizeChunkId:
     def test_empty_string(self):
         assert normalize_chunk_id("") == ""
 
+    def test_split_block_collapses_to_method(self):
+        raw = "graph/graph_integration.py:276-310:split_block:GraphIntegration.populate_from_embeddings"
+        assert (
+            normalize_chunk_id(raw)
+            == "graph/graph_integration.py:method:GraphIntegration.populate_from_embeddings"
+        )
+
+    def test_windows_backslash_canonicalized(self):
+        # Delegation to search.chunk_id.dedup_key adds separator canonicalization:
+        # backslash and forward-slash forms of one chunk share a normalized ID.
+        raw = "search\\reranker.py:36-137:method:rerank"
+        assert normalize_chunk_id(raw) == "search/reranker.py:method:rerank"
+
 
 # ---------------------------------------------------------------------------
 # normalize_chunk_ids
