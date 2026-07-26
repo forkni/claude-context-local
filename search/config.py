@@ -396,6 +396,9 @@ class GraphEnhancedConfig:
     )
     centrality_boost_factor: float = 5.0  # Multiplier: boost = centrality * factor
     centrality_boost_cap: float = 0.15  # Maximum boost added to blended_score
+    # Post-centrality result cap: total results kept = k * this multiplier
+    # (k primary + (multiplier-1)*k graph/ego/parent context chunks)
+    max_results_multiplier: int = 8
 
 
 @dataclass
@@ -750,6 +753,7 @@ class SearchConfig:
         "centrality_boost_threshold": ("graph_enhanced", "centrality_boost_threshold"),
         "centrality_boost_factor": ("graph_enhanced", "centrality_boost_factor"),
         "centrality_boost_cap": ("graph_enhanced", "centrality_boost_cap"),
+        "max_results_multiplier": ("graph_enhanced", "max_results_multiplier"),
         # ObservabilityConfig
         "otel_enabled": ("observability", "enabled"),
         "otel_service_name": ("observability", "service_name"),

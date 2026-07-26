@@ -318,6 +318,8 @@ _EXPECTED_KEYS = {
     "recall@5",
     "recall@7",
     "recall@10",
+    "recall@20",
+    "recall@50",
     "precision@1",
     "precision@5",
     "precision@10",

@@ -151,7 +151,8 @@
     "centrality_bm25_boost": true,
     "centrality_boost_threshold": 0.02,
     "centrality_boost_factor": 5.0,
-    "centrality_boost_cap": 0.15
+    "centrality_boost_cap": 0.15,
+    "max_results_multiplier": 8
   },
   "observability": {
     "enabled": false,

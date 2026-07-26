@@ -155,8 +155,14 @@ def calculate_metrics_from_results(
             Falls back to ``expected`` if not provided (for MRR calculation).
 
     Returns:
-        Dict with keys: recall@1, recall@5, recall@7, recall@10, precision@1,
-        precision@5, precision@10, mrr, ndcg@5, ndcg@10, hit, hit@7.
+        Dict with keys: recall@1, recall@5, recall@7, recall@10, recall@20,
+        recall@50, precision@1, precision@5, precision@10, mrr, ndcg@5,
+        ndcg@10, hit, hit@7.
+
+    Note:
+        recall@20 / recall@50 are only meaningful when ``retrieved`` is at
+        least that deep — with a shallower list they degenerate to recall
+        at the list length (recall-headroom instrumentation, R0).
     """
     primary = expected_primary if expected_primary is not None else expected
     recall_5 = calculate_recall_at_k(retrieved, expected, 5)  # pragma: no mutate
@@ -169,6 +175,16 @@ def calculate_metrics_from_results(
             retrieved,
             expected,
             10,  # pragma: no mutate
+        ),
+        "recall@20": calculate_recall_at_k(
+            retrieved,
+            expected,
+            20,  # pragma: no mutate
+        ),
+        "recall@50": calculate_recall_at_k(
+            retrieved,
+            expected,
+            50,  # pragma: no mutate
         ),
         "precision@1": calculate_precision_at_k(retrieved, expected, 1),
         "precision@5": calculate_precision_at_k(retrieved, expected, 5),
@@ -207,6 +223,8 @@ def aggregate_metrics(
         "recall@5",
         "recall@7",
         "recall@10",
+        "recall@20",
+        "recall@50",
         "precision@1",
         "precision@5",
         "precision@10",
@@ -258,6 +276,20 @@ def aggregate_metrics(
         if vals:
             agg[key] = round(mean(vals), 4)  # pragma: no mutate
             agg[f"{key}_count"] = len(vals)
+
+    # Pre-rerank pool-hit-rate (R0) — presence-based like line metrics.
+    # pool_hit answers "was any gold chunk in the fused candidate pool at
+    # all?", splitting failures into retrieval misses (pool too narrow /
+    # vocabulary gap) vs ranking misses (in pool, ranked below cutoff).
+    pool_rows = [q for q in per_query if "pool_hit" in q]
+    if pool_rows:
+        agg["pool_hit_rate"] = round(
+            mean([1.0 if q["pool_hit"] else 0.0 for q in pool_rows]),
+            4,  # pragma: no mutate
+        )
+        agg["pool_hit_count"] = len(pool_rows)
+        sizes = [float(q.get("pool_size", 0)) for q in pool_rows]
+        agg["avg_pool_size"] = round(mean(sizes), 1)  # pragma: no mutate
 
     return agg
 

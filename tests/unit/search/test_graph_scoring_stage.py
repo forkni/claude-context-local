@@ -365,24 +365,34 @@ class TestPrivateHelpers:
     # _cap_results ---------------------------------------------------------
 
     def test_cap_results_under_limit_unchanged(self):
-        """Fewer than k*4 results → unchanged."""
+        """Fewer than k*8 (default multiplier) results → unchanged."""
         stage = GraphScoringStage()
-        results = [{"chunk_id": str(i)} for i in range(15)]
+        results = [{"chunk_id": str(i)} for i in range(31)]
         out = stage._cap_results(results, k=4)
-        assert len(out) == 15  # 15 < 16
+        assert len(out) == 31  # 31 < 32
 
     def test_cap_results_exactly_at_limit_unchanged(self):
-        """Exactly k*4 results → unchanged."""
+        """Exactly k*8 results → unchanged."""
         stage = GraphScoringStage()
-        results = [{"chunk_id": str(i)} for i in range(16)]
+        results = [{"chunk_id": str(i)} for i in range(32)]
         out = stage._cap_results(results, k=4)
-        assert len(out) == 16
+        assert len(out) == 32
 
     def test_cap_results_over_limit_truncated(self):
-        """More than k*4 results → truncated to k*4."""
+        """More than k*8 results → truncated to k*8."""
         stage = GraphScoringStage()
-        results = [{"chunk_id": str(i)} for i in range(20)]
+        results = [{"chunk_id": str(i)} for i in range(40)]
         out = stage._cap_results(results, k=4)
+        assert len(out) == 32
+
+    def test_cap_results_respects_config_multiplier(self):
+        """graph_config.max_results_multiplier overrides the default cap."""
+        from search.config import GraphEnhancedConfig
+
+        stage = GraphScoringStage()
+        config = GraphEnhancedConfig(max_results_multiplier=4)
+        results = [{"chunk_id": str(i)} for i in range(20)]
+        out = stage._cap_results(results, k=4, graph_config=config)
         assert len(out) == 16
 
 
@@ -390,16 +400,16 @@ class TestGraphScoringStageIntegration:
     """End-to-end tests across Block F, the k*4 cap, and Block G."""
 
     def test_cap_applied_between_centrality_and_subgraph(self):
-        """k*4 cap fires; Block G sees the capped list."""
+        """k*8 default cap fires; Block G sees the capped list."""
         stage = GraphScoringStage()
         im = Mock()
         im.graph_storage = None  # skip subgraph
         results = [
             _make_formatted(chunk_id=f"f.py:{i}-{i + 1}:function:fn{i}")
-            for i in range(20)
+            for i in range(40)
         ]
         out_results, subgraph_data = stage.run("q", None, 4, results, im, None, None)
-        assert len(out_results) == 16  # k*4 = 4*4
+        assert len(out_results) == 32  # k*8 = 4*8
         assert subgraph_data is None
 
     def test_subgraph_runs_when_centrality_annotation_off(self):

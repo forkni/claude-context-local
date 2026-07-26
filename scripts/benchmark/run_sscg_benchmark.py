@@ -309,6 +309,12 @@ def run_benchmark(
         if verbose:
             print(f"{prefix} {query}")
 
+        # Reset the pool-hit instrumentation so a query that never reaches a
+        # rerank pass doesn't inherit the previous query's candidate pool.
+        rerank_engine = getattr(searcher, "reranking_engine", None)
+        if rerank_engine is not None:
+            rerank_engine.last_candidate_ids = None
+
         try:
             raw_results, latency_ms = _run_query(
                 searcher, query, k=k, search_mode=search_mode
@@ -323,6 +329,16 @@ def run_benchmark(
                 expected=expected,
                 expected_primary=expected_primary,
             )
+
+            # Pool-hit-rate (R0): was any gold chunk in the fused candidate
+            # pool that entered the final rerank pass?
+            pool_metrics: dict[str, Any] = {}
+            if rerank_engine is not None and rerank_engine.last_candidate_ids:
+                pool_ids = set(normalize_chunk_ids(rerank_engine.last_candidate_ids))
+                pool_metrics = {
+                    "pool_size": len(pool_ids),
+                    "pool_hit": any(e in pool_ids for e in expected),
+                }
 
             # Line-overlap metrics (when line_lookup is available)
             line_metrics: dict[str, float] = {}
@@ -374,6 +390,7 @@ def run_benchmark(
                     "latency_ms": round(latency_ms, 1),
                     **metrics,
                     **line_metrics,
+                    **pool_metrics,
                 }
             )
 
@@ -391,6 +408,8 @@ def run_benchmark(
                     "recall@5": 0.0,
                     "recall@7": 0.0,
                     "recall@10": 0.0,
+                    "recall@20": 0.0,
+                    "recall@50": 0.0,
                     "precision@1": 0.0,
                     "precision@5": 0.0,
                     "precision@10": 0.0,
@@ -920,6 +939,17 @@ def main() -> None:
     # Per-query drill-down (Lesson 2 pattern)
     if not args.no_drilldown and verbose:
         print_per_query_drilldown(result["per_query"], result["config_name"])
+
+    # Recall-headroom summary (R0): deep recall + pre-rerank pool hit rate
+    agg = result["aggregate"]
+    if "pool_hit_rate" in agg:
+        print(
+            f"\nRecall headroom: R@20={agg.get('recall@20', 0.0):.3f}  "
+            f"R@50={agg.get('recall@50', 0.0):.3f}  "
+            f"pool_hit_rate={agg['pool_hit_rate']:.3f} "
+            f"(avg pool {agg.get('avg_pool_size', 0.0):.1f} candidates, "
+            f"n={agg.get('pool_hit_count', 0)} queries)"
+        )
 
     # Pass/fail summary
     pf = result["aggregate"].get("pass_fail", {})

@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from search.config import GraphEnhancedConfig
 from search.hybrid_searcher import HybridSearcher
 from search.intent_classifier import IntentDecision, QueryIntent
 
 
 if TYPE_CHECKING:
-    from search.config import GraphEnhancedConfig
     from search.indexer import CodeIndexManager
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ class GraphScoringStage:
         results, centrality_scores = self._apply_centrality(
             query, intent_decision, results, index_manager, searcher, graph_config
         )
-        results = self._cap_results(results, k)
+        results = self._cap_results(results, k, graph_config)
         subgraph_data = self._extract_subgraph(
             results, k, index_manager, centrality_scores
         )
@@ -226,9 +226,23 @@ class GraphScoringStage:
     # Cap
     # ------------------------------------------------------------------
 
-    def _cap_results(self, results: list[dict], k: int) -> list[dict]:
-        """Cap total results to prevent token bloat (k primary + up to 3k context)."""
-        max_total = k * 4
+    def _cap_results(
+        self,
+        results: list[dict],
+        k: int,
+        graph_config: GraphEnhancedConfig | None = None,
+    ) -> list[dict]:
+        """Cap total results to prevent token bloat (k primary + context chunks).
+
+        The multiplier comes from ``graph_config.max_results_multiplier``
+        (default 8); ``None`` graph_config falls back to the dataclass default.
+        """
+        multiplier = (
+            graph_config.max_results_multiplier
+            if graph_config is not None
+            else GraphEnhancedConfig().max_results_multiplier
+        )
+        max_total = k * multiplier
         if len(results) > max_total:
             logger.info(f"Capping total results: {len(results)} -> {max_total}")
             results = results[:max_total]
