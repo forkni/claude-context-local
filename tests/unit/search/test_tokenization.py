@@ -17,6 +17,7 @@ from pathlib import Path
 
 from search.tokenization import (
     CODE_TERM_BLOCKLIST,
+    augment_bm25_document,
     build_path_symbol_text,
     is_camelcase,
     is_dotted_symbol,
@@ -411,3 +412,37 @@ class TestBuildPathSymbolText:
 
     def test_empty_inputs(self):
         assert build_path_symbol_text("", "") == ""
+
+
+class TestAugmentBM25Document:
+    """Track D: path/symbol augmentation of BM25 documents at build time."""
+
+    def test_appends_augmentation_after_content(self):
+        out = augment_bm25_document(
+            "search/hybrid_searcher.py:10-20:method:HybridSearcher.add_embeddings",
+            "def add_embeddings(self):\n    pass",
+        )
+        body, _, augmentation = out.rpartition("\n")
+        assert body == "def add_embeddings(self):\n    pass"
+        assert "hybrid_searcher" in augmentation.split()
+        assert "embeddings" in augmentation.split()
+
+    def test_malformed_chunk_id_returns_content_unchanged(self):
+        content = "def foo():\n    pass"
+        assert augment_bm25_document("test_chunk_0", content) == content
+
+    def test_empty_content_returns_augmentation_only(self):
+        out = augment_bm25_document(
+            "embeddings/query_cache.py:5-9:method:QueryEmbeddingCache.get_stats", ""
+        )
+        assert not out.startswith("\n")
+        assert {"query_cache", "query", "cache", "get_stats", "stats"} <= set(
+            out.split()
+        )
+
+    def test_name_containing_colons_is_preserved(self):
+        # Chunk IDs join everything past the third colon back into the name.
+        out = augment_bm25_document(
+            "search/config.py:1-2:class:Outer.Inner", "class Inner: pass"
+        )
+        assert {"Outer", "Inner"} <= set(out.split())

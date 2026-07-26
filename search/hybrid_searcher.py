@@ -49,7 +49,7 @@ from .reranker import RRFReranker, SearchResult
 from .reranking_engine import RerankingEngine
 from .result_factory import ResultFactory
 from .search_executor import SearchExecutor
-from .tokenization import build_path_symbol_text
+from .tokenization import augment_bm25_document
 from .weight_optimizer import WeightOptimizer
 
 
@@ -1131,24 +1131,6 @@ class HybridSearcher(BaseSearcher):
         """Load both BM25 and dense indices. Delegates to IndexSynchronizer."""
         return self.index_sync.load_indices()
 
-    @staticmethod
-    def _augment_bm25_document(chunk_id: str, content: str) -> str:
-        """Append path/symbol tokens to a BM25 document (Track D, INDEX_VERSION 4).
-
-        Chunk IDs are ``path:lines:type:name``; the path components and symbol
-        name (whole + camel/snake-split forms) are appended once so identifier
-        and file-name queries match chunks whose code body never repeats them.
-        Gated on BM25-standalone metrics (evaluation/BM25_K1B_SWEEP_20260726.md
-        context): 63q MRR +0.113 / R@5 +0.081, 96q MRR +0.083 / R@5 +0.060.
-        """
-        parts = chunk_id.split(":")
-        if len(parts) < 4:
-            return content
-        augmentation = build_path_symbol_text(parts[0], ":".join(parts[3:]))
-        if not augmentation:
-            return content
-        return f"{content}\n{augmentation}" if content else augmentation
-
     def add_embeddings(self, embedding_results: list["EmbeddingResult"]) -> None:
         """
         Add embeddings to both BM25 and dense indices.
@@ -1189,10 +1171,11 @@ class HybridSearcher(BaseSearcher):
                     or result.metadata.get("raw_content")
                     or ""
                 )
-            # Path/symbol augmentation flows into both the BM25 document and the
-            # persisted bm25_text below, so resync_bm25_from_dense reproduces it.
-            content = self._augment_bm25_document(chunk_id, content)
-            documents.append(content)
+            # BM25 documents get path/symbol augmentation at build time while
+            # bm25_text below stays raw — resync_bm25_from_dense re-augments
+            # from the raw text, so augmentation is applied exactly once no
+            # matter how often the BM25 index is rebuilt.
+            documents.append(augment_bm25_document(chunk_id, content))
 
             # Embeddings for dense index
             if hasattr(result.embedding, "tolist"):

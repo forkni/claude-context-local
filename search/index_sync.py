@@ -11,6 +11,7 @@ from typing import Any
 
 from .bm25_index import BM25Index
 from .indexer import CodeIndexManager
+from .tokenization import augment_bm25_document
 
 
 # Threshold ratio above which a BM25/Dense count difference triggers resync.
@@ -253,7 +254,13 @@ class IndexSynchronizer:
                 # unconditionally.  Skipping them here caused a chronic
                 # BM25 < Dense desync for module/community chunks that have
                 # no bm25_text key.
-                documents.append(entry["metadata"].get("bm25_text", ""))
+                # bm25_text is stored raw; path/symbol augmentation is applied
+                # at document-build time here exactly as in add_embeddings.
+                documents.append(
+                    augment_bm25_document(
+                        chunk_id, entry["metadata"].get("bm25_text", "")
+                    )
+                )
                 doc_ids.append(chunk_id)
                 metadata[chunk_id] = entry["metadata"]
 

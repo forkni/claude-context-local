@@ -154,6 +154,33 @@ def build_path_symbol_text(relative_path: str, symbol_name: str) -> str:
     return " ".join(out)
 
 
+def augment_bm25_document(chunk_id: str, content: str) -> str:
+    """Append path/symbol tokens to a BM25 document (Track D, INDEX_VERSION 4).
+
+    Chunk IDs are ``path:lines:type:name``; the path components and symbol name
+    (whole + camel/snake-split forms) are appended once so identifier and
+    file-name queries match chunks whose code body never repeats them.
+
+    Applied at BM25 document-build time in BOTH indexing paths
+    (``HybridSearcher.add_embeddings`` and
+    ``IndexSynchronizer.resync_bm25_from_dense``) while the persisted
+    ``bm25_text`` metadata stays raw — augmentation is therefore applied
+    exactly once no matter how often the BM25 index is rebuilt from dense
+    metadata, and a version-mismatch resync upgrades an old index without
+    re-embedding.
+
+    Gated on BM25-standalone metrics (scripts/benchmark/bm25_path_token_ab.py,
+    2026-07-26): 63q MRR +0.113 / R@5 +0.081, 96q MRR +0.083 / R@5 +0.060.
+    """
+    parts = chunk_id.split(":")
+    if len(parts) < 4:
+        return content
+    augmentation = build_path_symbol_text(parts[0], ":".join(parts[3:]))
+    if not augmentation:
+        return content
+    return f"{content}\n{augmentation}" if content else augmentation
+
+
 # ---------------------------------------------------------------------------
 # Symbol predicates (extracted verbatim from intent_classifier._detect_code_symbols)
 # These run on the ORIGINAL (non-lowercased) token — they are case-sensitive.
