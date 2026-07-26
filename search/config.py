@@ -79,6 +79,20 @@ MODEL_REGISTRY = {
         "model_type": "code-optimized",
         "onnx_pooling": "cls",  # GTE-ModernBERT uses CLS pooling
     },
+    "codefuse-ai/F2LLM-v2-0.6B": {
+        "dimension": 1024,
+        "max_context": 40960,
+        "description": "Qwen3-0.6B-based embedding (MTEB avg 66.47 vs Qwen3-0.6B 64.02)",
+        "vram_gb": "2.2GB",
+        "fallback_batch_size": 256,
+        "vram_tier": "minimal",  # Usable on all GPUs
+        "onnx_supported": False,  # Last-token (EOS) pooling not handled by onnx_wrapper
+        # Instruction tuning for code retrieval (same "Instruct: ...\nQuery: "
+        # template family as Qwen3-Embedding; documents are embedded raw)
+        "instruction_mode": "custom",  # "custom" or "prompt_name"
+        "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
+        "prompt_name": "query",  # Alternative: model's built-in generic passage prompt
+    },
 }
 
 
