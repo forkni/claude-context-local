@@ -393,7 +393,7 @@ Companion fix to v0.11.5. The full-index path got extension-aware stat-based has
 
 ### Verification
 
-- `tests/unit/merkle/test_merkle.py::test_incremental_consistent_with_new_scheme_snapshot` — reproduces the exact failure mode (binary asset mis-classified as modified) and guards the fix.
+- `tests/unit/merkle/test_merkle.py::test_incremental_consistent_with_new_scheme_snapshot` — reproduces the exact failure mode (binary asset misclassified as modified) and guards the fix.
 - `tests/unit/merkle/test_merkle.py::test_supported_extensions_propagated_to_built_dag` — confirms `ChangeDetector` passes `supported_extensions` through to the DAG it builds.
 - All 62 `tests/unit/merkle/` + `tests/unit/search/test_incremental_indexer.py` tests pass.
 - All 199 `tests/unit/mcp_server/` tests pass.
