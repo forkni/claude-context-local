@@ -307,6 +307,7 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
   - EmbeddingGemma: ~1.2GB (default)
   - BGE-M3: 1–1.5 GB
   - Qwen3-0.6B: ~2.3GB
+  - F2LLM-v2-0.6B: ~2.2GB
 - **Windows**: Windows 10/11 with PowerShell
 - **PyTorch**: 2.6.0+ (auto-installed with CUDA 11.8/12.4/12.6 support)
 - **GPU** (optional): NVIDIA GPU with CUDA for 8.6x faster indexing
@@ -359,6 +360,7 @@ Weights should sum to 1.0.
 | **EmbeddingGemma-300m** | ~1.2GB | Default — lightweight, low-VRAM systems |
 | **BGE-M3** | 1-1.5GB | Hybrid search, balanced quality/VRAM |
 | **Qwen3-0.6B** | 2.3GB | High efficiency, excellent value |
+| **F2LLM-v2-0.6B** | 2.2GB | Best retrieval ordering (MTEB avg 66.47) |
 | **CodeRankEmbed** | 0.5-0.6GB | Code-specific retrieval |
 | **GTE-ModernBERT** | ~0.28GB | Lightest option |
 
@@ -407,6 +409,7 @@ For automation and CI/CD, settings can be overridden via environment variables. 
 | **EmbeddingGemma-300m** | 768 | ~1.2GB | Default — lightweight, low-VRAM systems |
 | **BGE-M3** | 1024 | 1-1.5GB | Hybrid search, balanced quality/VRAM |
 | **Qwen3-0.6B** | 1024 | 2.3GB | High efficiency, excellent value |
+| **F2LLM-v2-0.6B** | 1024 | 2.2GB | Best retrieval ordering (MTEB avg 66.47) |
 | **CodeRankEmbed** | 768 | 0.5-0.6GB | Code-specific retrieval |
 | **GTE-ModernBERT** | 768 | ~0.28GB | Lightest option |
 
