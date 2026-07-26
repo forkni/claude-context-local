@@ -115,3 +115,36 @@ predicted displacement cost (R@5 −0.025, hit@5 −0.010).
 behavior-neutral experiment knob. The plausible fix for these queries shifts to
 Track D (path/symbol tokens in BM25 documents), which raises BM25-leg recall itself
 rather than re-allocating pool membership.
+
+---
+
+## Correction (2026-07-26, later): direct BM25-leg probe refines the Track I addendum
+
+A read-only probe of the live index (whole tokenizer, 2,174 docs; `BM25Index.search`
+at k=30, `min_score` 0.0 vs 0.1) corrects two statements above:
+
+| Query | BM25 raw leg | leg after min_score=0.1 | raw score range | gold in BM25 top-30? |
+|---|---|---|---|---|
+| Q102 | 30 | 30 | 6.08–11.52 | **yes — rank 19, score 6.61** |
+| Q103 | 30 | 30 | 5.53–11.77 | no |
+| Q122 | 30 | 30 | 5.94–11.98 | no |
+
+1. **Q102 is a fusion-cut miss, not a dual-leg miss.** Its gold chunk *is* in the
+   whole-tokenizer BM25 top-30 (rank 19), but its RRF-fused rank falls below the
+   top-30 pool cut (the dense leg lacks it), and reserve fill — which takes
+   BM25-unique candidates in BM25 rank order — exhausts its slots on higher-ranked
+   candidates before reaching rank 19. Q103/Q122 remain true dual-leg misses.
+2. **The "knob is live: 88/96 retrieved sets changed" evidence was noise.** Retrieved
+   sets differ 82/96 even between the reserve=3 and reserve=5 runs — GPU-reranker
+   near-tie nondeterminism, not knob engagement. The knob *did* engage (each leg
+   returns 30 raw candidates, so the fused union always exceeds the pool cut and the
+   no-truncation guard in `_select_with_reserve` never fires; note `pool_size` in the
+   benchmark is a post-dedup count and can read < 30 even when the raw pool is full),
+   but per-query retrieved-set diffs across runs are not usable as evidence for it.
+   The stable signal is the identical miss set at every reserve level.
+3. `min_bm25_score = 0.1` is inert for real queries: raw Okapi scores sit at 5–12,
+   so the filter removes nothing. Lowering it to 0.0 is a provable no-op.
+
+The Track I verdict is unchanged (default stays 0), and Track D remains the plausible
+fix for all three misses: Q103/Q122 golds need to *enter* the BM25 top-30; Q102's
+needs to *climb* from rank 19.

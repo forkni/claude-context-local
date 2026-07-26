@@ -143,7 +143,13 @@ class SearchModeConfig:
     dense_weight: float = 0.65
 
     # BM25 Configuration
-    bm25_k_parameter: int = 100
+    # Okapi BM25 scoring parameters (rank_bm25 defaults). k1 controls term-
+    # frequency saturation; b controls document-length normalization. Applied
+    # at query time — changing them takes effect on next load, no re-index
+    # needed. (Replaces the dead ``bm25_k_parameter`` field, which was never
+    # read by any scoring path.)
+    bm25_k1: float = 1.5
+    bm25_b: float = 0.75
     bm25_use_stopwords: bool = True
     bm25_use_stemming: bool = True  # Snowball stemmer for word normalization
     # Tokenizer variant (arXiv 2605.18561): "legacy" = destructive camel/snake
@@ -702,7 +708,8 @@ class SearchConfig:
         "enable_hybrid_search": ("search_mode", "enable_hybrid"),
         "bm25_weight": ("search_mode", "bm25_weight"),
         "dense_weight": ("search_mode", "dense_weight"),
-        "bm25_k_parameter": ("search_mode", "bm25_k_parameter"),
+        "bm25_k1": ("search_mode", "bm25_k1"),
+        "bm25_b": ("search_mode", "bm25_b"),
         "bm25_use_stopwords": ("search_mode", "bm25_use_stopwords"),
         "bm25_use_stemming": ("search_mode", "bm25_use_stemming"),
         "bm25_tokenizer": ("search_mode", "bm25_tokenizer"),

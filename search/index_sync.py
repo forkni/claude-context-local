@@ -29,6 +29,8 @@ class IndexSynchronizer:
         bm25_use_stopwords: bool = True,
         bm25_use_stemming: bool = True,
         bm25_tokenizer: str = "legacy",
+        bm25_k1: float = 1.5,
+        bm25_b: float = 0.75,
         project_id: str | None = None,
         config=None,
         embedder=None,
@@ -43,6 +45,8 @@ class IndexSynchronizer:
             bm25_use_stopwords: BM25 stopwords configuration
             bm25_use_stemming: BM25 stemming configuration
             bm25_tokenizer: BM25 tokenizer variant (legacy/whole/additive)
+            bm25_k1: Okapi BM25 term-frequency saturation parameter
+            bm25_b: Okapi BM25 document-length normalization parameter
             project_id: Project identifier for index recreation
             config: SearchConfig instance for mmap storage and other settings
             embedder: Code embedder for dimension validation during index recreation
@@ -53,6 +57,8 @@ class IndexSynchronizer:
         self.bm25_use_stopwords = bm25_use_stopwords
         self.bm25_use_stemming = bm25_use_stemming
         self.bm25_tokenizer = bm25_tokenizer
+        self.bm25_k1 = bm25_k1
+        self.bm25_b = bm25_b
         self.project_id = project_id
         self.config = config
         self.embedder = embedder
@@ -263,6 +269,8 @@ class IndexSynchronizer:
             use_stopwords=self.bm25_use_stopwords,
             use_stemming=self.bm25_use_stemming,
             tokenizer=self.bm25_tokenizer,
+            k1=self.bm25_k1,
+            b=self.bm25_b,
         )
         self.bm25_index.index_documents(documents, doc_ids, metadata)
         self.bm25_index.save()
@@ -315,6 +323,8 @@ class IndexSynchronizer:
                 use_stopwords=self.bm25_use_stopwords,
                 use_stemming=self.bm25_use_stemming,
                 tokenizer=self.bm25_tokenizer,
+                k1=self.bm25_k1,
+                b=self.bm25_b,
             )
 
             # Clear dense index - MUST close metadata before recreating

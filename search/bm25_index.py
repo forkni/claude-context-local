@@ -281,6 +281,8 @@ class BM25Index:
         use_stopwords: bool = True,
         use_stemming: bool = True,
         tokenizer: str = "legacy",
+        k1: float = 1.5,
+        b: float = 0.75,
     ):
         """Initialize BM25 index.
 
@@ -290,6 +292,8 @@ class BM25Index:
             use_stemming: Whether to apply Snowball stemming (default: True;
                 ignored by the "whole"/"additive" tokenizer variants)
             tokenizer: Tokenizer variant (see TextPreprocessor.TOKENIZER_VARIANTS)
+            k1: Okapi BM25 term-frequency saturation parameter
+            b: Okapi BM25 document-length normalization parameter
         """
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
@@ -303,6 +307,8 @@ class BM25Index:
         self.use_stopwords = use_stopwords
         self.use_stemming = use_stemming
         self.tokenizer = tokenizer
+        self.k1 = k1
+        self.b = b
 
         # Components
         self.preprocessor = TextPreprocessor(use_stopwords, use_stemming, tokenizer)
@@ -396,7 +402,7 @@ class BM25Index:
                 raise ValueError("[BM25_INDEX] All tokenized documents are empty")
 
             try:
-                self._bm25 = BM25Okapi(self._tokenized_docs)
+                self._bm25 = BM25Okapi(self._tokenized_docs, k1=self.k1, b=self.b)
 
                 # Verify the BM25 index was created successfully
                 if self._bm25 is None:
@@ -509,7 +515,7 @@ class BM25Index:
         # Rebuild BM25 index if we removed anything
         if removed_count > 0:
             if self._tokenized_docs:
-                self._bm25 = BM25Okapi(self._tokenized_docs)
+                self._bm25 = BM25Okapi(self._tokenized_docs, k1=self.k1, b=self.b)
             else:
                 self._bm25 = None
 
@@ -613,7 +619,7 @@ class BM25Index:
                     "[BM25_SAVE] BM25 index is None but documents exist, attempting recovery..."
                 )
                 try:
-                    self._bm25 = BM25Okapi(self._tokenized_docs)
+                    self._bm25 = BM25Okapi(self._tokenized_docs, k1=self.k1, b=self.b)
                     self._logger.info(
                         f"[BM25_SAVE] Successfully recovered BM25 index with {len(self._tokenized_docs)} documents"
                     )
@@ -655,6 +661,8 @@ class BM25Index:
                 "use_stopwords": self.use_stopwords,
                 "use_stemming": self.use_stemming,
                 "tokenizer": self.tokenizer,
+                "k1": self.k1,
+                "b": self.b,
                 "doc_metadata": self._metadata,
             }
             with open(self.metadata_path, "w", encoding="utf-8") as f:
@@ -740,6 +748,23 @@ class BM25Index:
                     self._logger.warning(
                         f"⚠️  Stopwords config mismatch: index={saved_stopwords}, current={self.use_stopwords}"
                     )
+
+                # k1/b are query-time scoring parameters — unlike tokenizer
+                # settings they can be changed without re-indexing, so the
+                # configured values are applied to the unpickled index rather
+                # than warned about.
+                saved_k1 = metadata.get("k1", 1.5)
+                saved_b = metadata.get("b", 0.75)
+                if saved_k1 != self.k1 or saved_b != self.b:
+                    self._logger.info(
+                        f"Applying configured BM25 params k1={self.k1}, b={self.b} "
+                        f"to loaded index (saved with k1={saved_k1}, b={saved_b}; "
+                        f"no re-index needed)"
+                    )
+
+            if self._bm25 is not None:
+                self._bm25.k1 = self.k1
+                self._bm25.b = self.b
 
             self._logger.info(
                 f"BM25 index loaded from {self.storage_dir} with {self.size} documents "
@@ -839,7 +864,7 @@ class BM25Index:
                     del self._metadata[doc_id]
 
             if self._tokenized_docs:
-                self._bm25 = BM25Okapi(self._tokenized_docs)
+                self._bm25 = BM25Okapi(self._tokenized_docs, k1=self.k1, b=self.b)
                 self._logger.info(
                     f"Rebuilt BM25 index: {len(self._tokenized_docs)} documents "
                     f"(removed {removed_count})"

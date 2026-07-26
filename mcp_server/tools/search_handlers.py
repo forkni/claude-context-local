@@ -175,6 +175,8 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
             bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
             bm25_use_stemming=config.search_mode.bm25_use_stemming,
             bm25_tokenizer=config.search_mode.bm25_tokenizer,
+            bm25_k1=config.search_mode.bm25_k1,
+            bm25_b=config.search_mode.bm25_b,
             project_id=project_id,
             config=config,
         )

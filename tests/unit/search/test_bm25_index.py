@@ -742,3 +742,116 @@ class TestBM25Index:
         import shutil
 
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+
+class TestBM25ScoringParams:
+    """Okapi k1/b scoring parameters: construction, persistence, load-override."""
+
+    def setup_method(self):
+        import tempfile
+
+        self.temp_dir = tempfile.mkdtemp()
+        self.documents = [
+            "def authenticate_user(username, password): pass",
+            "class DatabaseConnection: pass",
+            "def send_notification(recipient, message): pass",
+        ]
+        self.doc_ids = ["doc1", "doc2", "doc3"]
+
+    def teardown_method(self):
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_defaults_match_rank_bm25(self):
+        """Default k1/b equal the rank_bm25 library defaults (behavior-neutral)."""
+        index = BM25Index(self.temp_dir)
+        assert index.k1 == 1.5
+        assert index.b == 0.75
+        index.index_documents(self.documents, self.doc_ids)
+        assert index._bm25.k1 == 1.5
+        assert index._bm25.b == 0.75
+
+    def test_custom_params_reach_bm25okapi(self):
+        """Custom k1/b propagate to the underlying BM25Okapi object."""
+        index = BM25Index(self.temp_dir, k1=2.0, b=0.4)
+        index.index_documents(self.documents, self.doc_ids)
+        assert index._bm25.k1 == 2.0
+        assert index._bm25.b == 0.4
+
+    def test_params_persisted_in_metadata(self):
+        """save() records k1/b in bm25_metadata.json."""
+        import json
+
+        index = BM25Index(self.temp_dir, k1=1.2, b=1.0)
+        index.index_documents(self.documents, self.doc_ids)
+        index.save()
+
+        with open(index.metadata_path, encoding="utf-8") as f:
+            metadata = json.load(f)
+        assert metadata["k1"] == 1.2
+        assert metadata["b"] == 1.0
+
+    def test_load_applies_configured_params(self):
+        """Configured k1/b override the pickled values on load (no re-index)."""
+        index = BM25Index(self.temp_dir)  # defaults 1.5/0.75
+        index.index_documents(self.documents, self.doc_ids)
+        index.save()
+
+        reloaded = BM25Index(self.temp_dir, k1=1.2, b=1.0)
+        assert reloaded.load()
+        assert reloaded._bm25.k1 == 1.2
+        assert reloaded._bm25.b == 1.0
+
+    def test_load_old_metadata_without_params(self):
+        """Pre-k1/b metadata (no keys) loads fine and applies configured values."""
+        import json
+
+        index = BM25Index(self.temp_dir)
+        index.index_documents(self.documents, self.doc_ids)
+        index.save()
+
+        with open(index.metadata_path, encoding="utf-8") as f:
+            metadata = json.load(f)
+        del metadata["k1"]
+        del metadata["b"]
+        with open(index.metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f)
+
+        reloaded = BM25Index(self.temp_dir, k1=2.0, b=0.4)
+        assert reloaded.load()
+        assert reloaded._bm25.k1 == 2.0
+        assert reloaded._bm25.b == 0.4
+
+    def test_b_changes_length_normalization(self):
+        """b=0 vs b=1 produce different scores for docs of different lengths."""
+        # The query term must appear in a strict subset of the corpus:
+        # with df == N the Okapi IDF goes negative and every score falls
+        # below the min_score cut, leaving both result sets empty.
+        short_long_docs = [
+            "def search_index(): pass",
+            "def search_index_with_filters(query, filters, limits): "
+            + "return filtered_results " * 20,
+            "def unrelated_helper(value): return value",
+        ]
+        ids = ["short", "long", "other"]
+
+        import tempfile
+
+        dir_b0 = tempfile.mkdtemp()
+        dir_b1 = tempfile.mkdtemp()
+        try:
+            idx_b0 = BM25Index(dir_b0, use_stopwords=False, b=0.0)
+            idx_b0.index_documents(short_long_docs, ids)
+            idx_b1 = BM25Index(dir_b1, use_stopwords=False, b=1.0)
+            idx_b1.index_documents(short_long_docs, ids)
+
+            scores_b0 = {r[0]: r[1] for r in idx_b0.search("search", k=3)}
+            scores_b1 = {r[0]: r[1] for r in idx_b1.search("search", k=3)}
+            assert scores_b0 and scores_b1, "expected non-empty BM25 results"
+            assert scores_b0 != scores_b1, "b should change length-normalized scoring"
+        finally:
+            import shutil
+
+            shutil.rmtree(dir_b0, ignore_errors=True)
+            shutil.rmtree(dir_b1, ignore_errors=True)

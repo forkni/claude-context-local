@@ -66,6 +66,8 @@ class HybridSearcher(BaseSearcher):
         bm25_use_stopwords: bool = True,
         bm25_use_stemming: bool = True,
         bm25_tokenizer: str = "legacy",
+        bm25_k1: float = 1.5,
+        bm25_b: float = 0.75,
         project_id: str | None = None,
         config: Optional["SearchConfig"] = None,
     ):
@@ -82,6 +84,8 @@ class HybridSearcher(BaseSearcher):
             bm25_use_stopwords: Whether BM25 should filter stopwords
             bm25_use_stemming: Whether BM25 should use Snowball stemming
             bm25_tokenizer: BM25 tokenizer variant (legacy/whole/additive)
+            bm25_k1: Okapi BM25 term-frequency saturation parameter
+            bm25_b: Okapi BM25 document-length normalization parameter
             project_id: Project identifier for graph storage
             config: SearchConfig instance for mmap storage and other settings
         """
@@ -108,6 +112,8 @@ class HybridSearcher(BaseSearcher):
         self.bm25_use_stopwords = bm25_use_stopwords
         self.bm25_use_stemming = bm25_use_stemming
         self.bm25_tokenizer = bm25_tokenizer
+        self.bm25_k1 = bm25_k1
+        self.bm25_b = bm25_b
 
         # Override logger with module-specific logger (set by BaseSearcher)
         self._logger = logging.getLogger(__name__)
@@ -124,6 +130,8 @@ class HybridSearcher(BaseSearcher):
                 use_stopwords=bm25_use_stopwords,
                 use_stemming=bm25_use_stemming,
                 tokenizer=bm25_tokenizer,
+                k1=bm25_k1,
+                b=bm25_b,
             )
             self._logger.info("[INIT] BM25Index created successfully")
         except Exception as e:
@@ -172,6 +180,8 @@ class HybridSearcher(BaseSearcher):
             bm25_use_stopwords=bm25_use_stopwords,
             bm25_use_stemming=bm25_use_stemming,
             bm25_tokenizer=bm25_tokenizer,
+            bm25_k1=bm25_k1,
+            bm25_b=bm25_b,
             project_id=project_id,
         )
 
@@ -200,6 +210,8 @@ class HybridSearcher(BaseSearcher):
         bm25_use_stopwords: bool,
         bm25_use_stemming: bool,
         bm25_tokenizer: str,
+        bm25_k1: float,
+        bm25_b: float,
         project_id: str | None,
     ) -> None:
         """Initialize search execution components.
@@ -216,6 +228,8 @@ class HybridSearcher(BaseSearcher):
             bm25_use_stopwords: Whether BM25 uses stopwords
             bm25_use_stemming: Whether BM25 uses stemming
             bm25_tokenizer: BM25 tokenizer variant (legacy/whole/additive)
+            bm25_k1: Okapi BM25 term-frequency saturation parameter
+            bm25_b: Okapi BM25 document-length normalization parameter
             project_id: Project identifier
         """
         # Reranker and GPU monitor
@@ -235,6 +249,8 @@ class HybridSearcher(BaseSearcher):
             bm25_use_stopwords=bm25_use_stopwords,
             bm25_use_stemming=bm25_use_stemming,
             bm25_tokenizer=bm25_tokenizer,
+            bm25_k1=bm25_k1,
+            bm25_b=bm25_b,
             project_id=project_id,
             config=self.config,
             embedder=embedder,
