@@ -401,3 +401,7 @@ cr-*.toml
 # Local-only project files (not for version control)
 SESSION_LOG.md
 CONTEXT.md
+
+# Local-only agent/skill state
+.agents/
+skills-lock.json
