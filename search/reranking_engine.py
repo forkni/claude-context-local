@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from utils.timing import timed
 
+from .chunk_id import dedupe_results
 from .config import SearchMode, get_search_config
 
 
@@ -269,6 +270,13 @@ class RerankingEngine:
             sorted_results = self._run_rerank(
                 query, sorted_results, k, "[NEURAL_RERANK]", config=config
             )
+
+        # Collapse split_block fragments before truncation so freed slots
+        # backfill with distinct chunks. Not applied at hop-1
+        # (apply_neural_reranking) — deduping there would shrink the
+        # multi-hop/ego expansion-seed pool.
+        if config.reranker.dedupe_split_blocks:
+            sorted_results = dedupe_results(sorted_results)
 
         return sorted_results[:k]
 

@@ -264,6 +264,27 @@ def dedup_key(raw: str) -> str:
     return normalize(raw)
 
 
+def dedupe_results(results: list) -> list:
+    """Collapse results sharing a :func:`dedup_key` to the first occurrence.
+
+    *results* is any sequence of objects with a ``chunk_id`` attribute, already
+    ordered by relevance (best first) — the surviving entry per key is therefore
+    the best-ranked fragment.  Order of survivors is preserved.
+
+    Used to keep split_block fragments of one oversized function from occupying
+    multiple top-k slots; must run *before* truncation so freed slots backfill
+    with distinct chunks.
+    """
+    seen: set[str] = set()
+    survivors = []
+    for result in results:
+        key = dedup_key(result.chunk_id)
+        if key not in seen:
+            seen.add(key)
+            survivors.append(result)
+    return survivors
+
+
 def build(
     file_path: str,
     line_start: int,

@@ -38,6 +38,7 @@ from utils.otel_attributes import (
 
 from .base_searcher import BaseSearcher
 from .bm25_index import BM25Index
+from .chunk_id import dedupe_results
 from .ego_graph_retriever import EgoGraphRetriever
 from .gpu_monitor import GPUMemoryMonitor
 from .index_sync import IndexSynchronizer
@@ -736,6 +737,13 @@ class HybridSearcher(BaseSearcher):
                     k=len(results),  # Keep all results, just re-score and re-sort
                     search_mode=search_mode,
                 )
+
+            # Safety-net dedup for paths that bypass rerank_by_query (e.g.
+            # single-hop with no ego growth): split_block fragments of one
+            # function must not occupy multiple final slots. Idempotent when
+            # rerank_by_query already deduped upstream.
+            if effective_config.reranker.dedupe_split_blocks and results:
+                results = dedupe_results(results)
 
             span.set_attribute(ATTR_RESULT_COUNT, len(results))
             return results

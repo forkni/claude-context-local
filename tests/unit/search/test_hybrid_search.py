@@ -949,3 +949,102 @@ def test_search_accepts_per_call_weights(mock_bm25, mock_dense):
         import shutil
 
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+class TestSearchTailDedup:
+    """Q1: split_block dedup at the tail of HybridSearcher.search()."""
+
+    def _make_searcher_and_config(self, mock_bm25, mock_dense, dedupe: bool):
+        from search.config import (
+            MultiHopConfig,
+            RerankerConfig,
+            SearchConfig,
+        )
+
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(tempfile.mkdtemp())
+
+        # Indices ready for hybrid mode
+        mock_bm25.return_value.is_empty = False
+        dense_index = Mock()
+        dense_index.ntotal = 100
+        mock_dense.return_value.index = dense_index
+
+        # Single-hop only: no multi-hop, no ego, no parent expansion — the
+        # tail dedup is the ONLY dedup site on this path.
+        config = SearchConfig(
+            multi_hop=MultiHopConfig(enabled=False),
+            reranker=RerankerConfig(dedupe_split_blocks=dedupe),
+        )
+        config.ego_graph.enabled = False
+        config.parent_retrieval.enabled = False
+        return searcher, config
+
+    def _dup_results(self):
+        from search.reranker import SearchResult
+
+        return [
+            SearchResult(
+                chunk_id="src/big.py:10-40:split_block:Cls.long_method",
+                score=0.9,
+                metadata={},
+            ),
+            SearchResult(
+                chunk_id="src/big.py:41-80:split_block:Cls.long_method",
+                score=0.8,
+                metadata={},
+            ),
+            SearchResult(
+                chunk_id="src/other.py:5-15:function:helper",
+                score=0.7,
+                metadata={},
+            ),
+        ]
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_tail_dedup_collapses_fragments(self, mock_bm25, mock_dense):
+        """Fragments of one function collapse even when no rerank_by_query fires
+        (single-hop path with ego expansion disabled)."""
+        searcher, config = self._make_searcher_and_config(
+            mock_bm25, mock_dense, dedupe=True
+        )
+        with (
+            patch(
+                "search.hybrid_searcher._get_config_via_service_locator",
+                return_value=config,
+            ),
+            patch.object(
+                searcher, "_single_hop_search", return_value=self._dup_results()
+            ),
+        ):
+            results = searcher.search("query", k=5)
+
+        assert [r.chunk_id for r in results] == [
+            "src/big.py:10-40:split_block:Cls.long_method",
+            "src/other.py:5-15:function:helper",
+        ]
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_tail_dedup_disabled_keeps_fragments(self, mock_bm25, mock_dense):
+        """dedupe_split_blocks=False preserves the pre-Q1 behaviour."""
+        searcher, config = self._make_searcher_and_config(
+            mock_bm25, mock_dense, dedupe=False
+        )
+        with (
+            patch(
+                "search.hybrid_searcher._get_config_via_service_locator",
+                return_value=config,
+            ),
+            patch.object(
+                searcher, "_single_hop_search", return_value=self._dup_results()
+            ),
+        ):
+            results = searcher.search("query", k=5)
+
+        assert [r.chunk_id for r in results] == [
+            "src/big.py:10-40:split_block:Cls.long_method",
+            "src/big.py:41-80:split_block:Cls.long_method",
+            "src/other.py:5-15:function:helper",
+        ]

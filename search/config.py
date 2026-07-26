@@ -235,7 +235,7 @@ class IntentConfig:
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (5 fields)."""
+    """Neural reranker settings (6 fields)."""
 
     enabled: bool = True  # Enabled by default (Quality First)
     model_name: str = (
@@ -244,6 +244,9 @@ class RerankerConfig:
     top_k_candidates: int = 50  # Rerank top 50 from RRF
     min_vram_gb: float = 2.0  # Auto-disable below this threshold (reranker uses ~1.5GB)
     batch_size: int = 16  # Reranker inference batch size
+    dedupe_split_blocks: bool = (
+        True  # Collapse split_block fragments to one result before final truncation
+    )
 
 
 @dataclass
@@ -716,6 +719,7 @@ class SearchConfig:
         "reranker_top_k_candidates": ("reranker", "top_k_candidates"),
         "reranker_min_vram_gb": ("reranker", "min_vram_gb"),
         "reranker_batch_size": ("reranker", "batch_size"),
+        "reranker_dedupe_split_blocks": ("reranker", "dedupe_split_blocks"),
         # OutputConfig
         "output_format": ("output", "format"),
         "source_order_output": ("output", "source_order_output"),
@@ -994,6 +998,10 @@ class SearchConfigManager:
             "CLAUDE_RERANKER_TOP_K": ("reranker_top_k_candidates", int),
             "CLAUDE_RERANKER_MIN_VRAM_GB": ("reranker_min_vram_gb", float),
             "CLAUDE_RERANKER_BATCH_SIZE": ("reranker_batch_size", int),
+            "CLAUDE_RERANKER_DEDUPE_SPLIT_BLOCKS": (
+                "reranker_dedupe_split_blocks",
+                self._bool_from_env,
+            ),
             # Observability (OTel tracing) env vars
             "CLAUDE_OTEL_ENABLED": ("otel_enabled", self._bool_from_env),
             "CLAUDE_OTEL_EXPORTER": ("otel_exporter", str),
