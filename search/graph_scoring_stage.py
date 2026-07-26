@@ -49,7 +49,8 @@ class GraphScoringStage:
             query: The search query string.
             intent_decision: Classified query intent (``None`` → no intent-aware
                 synthetic-chunk ordering).
-            k: Primary result count; used for the ``k*4`` cap and the primary /
+            k: Primary result count; used for the ``k*8`` cap (via
+                ``graph_config.max_results_multiplier``) and the primary /
                 ego-graph chunk split inside subgraph extraction.
             results: Formatted search result dicts (mutated and reordered here).
             index_manager: Active ``CodeIndexManager``; ``None`` → both blocks skip.
