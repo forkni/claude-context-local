@@ -295,10 +295,14 @@ class TestInjectCallEdgesMinConfidence:
         mock_cfg.call_graph = cg_cfg
 
         with (
-            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
-            patch("search.config.get_search_config", return_value=mock_cfg),
-            patch("search.index_write_stage.run_resolvers", return_value=merged_edges),
-            patch("search.index_write_stage.PyanResolver", return_value=Mock()),
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.call_edge_injection.run_resolvers", return_value=merged_edges
+            ),
+            patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
             stage._inject_call_edges("/fake/project")
 
@@ -325,10 +329,14 @@ class TestInjectCallEdgesMinConfidence:
         mock_cfg.call_graph = cg_cfg
 
         with (
-            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
-            patch("search.config.get_search_config", return_value=mock_cfg),
-            patch("search.index_write_stage.run_resolvers", return_value=merged_edges),
-            patch("search.index_write_stage.PyanResolver", return_value=Mock()),
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.call_edge_injection.run_resolvers", return_value=merged_edges
+            ),
+            patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
             stage._inject_call_edges("/fake/project")
 
@@ -353,9 +361,15 @@ class TestInjectCallEdgesResolverSelection:
 
     @staticmethod
     def _make_stage_for_injection() -> tuple[IndexWriteStage, Mock]:
+        """Graph must be non-empty — an empty graph now short-circuits via the
+        loud empty-graph guard (G0) before resolver selection is even reached,
+        which is exactly what these tests exercise."""
         import networkx as nx
 
         g = nx.MultiDiGraph()
+        g.add_node("caller_a")
+        g.add_node("callee_a")
+
         storage = Mock()
         storage.graph = g
 
@@ -391,9 +405,11 @@ class TestInjectCallEdgesResolverSelection:
         mock_cfg.call_graph = cg_cfg
 
         with (
-            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
-            patch("search.config.get_search_config", return_value=mock_cfg),
-            patch("search.index_write_stage.run_resolvers") as mock_run_resolvers,
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch("search.call_edge_injection.run_resolvers") as mock_run_resolvers,
         ):
             stage._inject_call_edges("/fake/project")
 
@@ -411,10 +427,12 @@ class TestInjectCallEdgesResolverSelection:
         mock_cfg.call_graph = cg_cfg
 
         with (
-            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
-            patch("search.config.get_search_config", return_value=mock_cfg),
             patch(
-                "search.index_write_stage.run_resolvers", return_value={}
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.call_edge_injection.run_resolvers", return_value={}
             ) as mock_run_resolvers,
         ):
             stage._inject_call_edges("/fake/project")
@@ -519,10 +537,12 @@ class TestInjectCallEdgesMultiGraph:
         mock_cfg.call_graph = cg_cfg
 
         with (
-            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
-            patch("search.config.get_search_config", return_value=mock_cfg),
-            patch("search.index_write_stage.run_resolvers", return_value=merged),
-            patch("search.index_write_stage.PyanResolver", return_value=Mock()),
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch("search.call_edge_injection.run_resolvers", return_value=merged),
+            patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
             # Must not raise ValueError (was the crash)
             stage._inject_call_edges("/fake/project")
@@ -553,10 +573,12 @@ class TestInjectCallEdgesMultiGraph:
         mock_cfg.call_graph = cg_cfg
 
         with (
-            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
-            patch("search.config.get_search_config", return_value=mock_cfg),
-            patch("search.index_write_stage.run_resolvers", return_value=merged),
-            patch("search.index_write_stage.PyanResolver", return_value=Mock()),
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch("search.call_edge_injection.run_resolvers", return_value=merged),
+            patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
             stage._inject_call_edges("/fake/project")
 
