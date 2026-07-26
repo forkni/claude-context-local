@@ -387,7 +387,11 @@ class GraphEnhancedConfig:
     """Graph-enhanced search settings."""
 
     centrality_method: str = "pagerank"  # Centrality algorithm
-    centrality_alpha: float = 0.3  # Blending weight (0=semantic, 1=centrality)
+    # Blending weight (0=semantic, 1=centrality). 0.0 per 2026-07-26 SSCG sweep:
+    # recall falls monotonically with alpha on both golden sets (replicated
+    # R@5 -0.027 at 0.2, -0.038 at 0.3 vs 0.0) with no MRR gain; the
+    # query-aware boost suite in CentralityRanker.rerank() stays active.
+    centrality_alpha: float = 0.0
     centrality_annotation: bool = True  # Always annotate centrality when graph exists
     centrality_reranking: bool = True  # Always rerank by blended score
     # Chunk-size normalization (penalize oversized chunks)

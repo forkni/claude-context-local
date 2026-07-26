@@ -143,7 +143,7 @@
   },
   "graph_enhanced": {
     "centrality_method": "pagerank",
-    "centrality_alpha": 0.2,
+    "centrality_alpha": 0.0,
     "centrality_annotation": true,
     "centrality_reranking": true,
     "enable_size_normalization": true,
