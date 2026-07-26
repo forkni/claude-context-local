@@ -86,3 +86,32 @@ pre-expansion pool.
 
 **Track B verdict**: expanded set stays at 0.9792 with 2 documented true misses; the
 eval gate is clear for Tracks A/C/D with the adjusted gate above.
+
+---
+
+## Addendum (2026-07-26): Track I result — reserved slots do NOT rescue the misses
+
+The follow-up recommended in item 3 was implemented (`bm25_reserved_slots` in
+`SearchModeConfig`, reserve logic in `RRFReranker`) and swept at reserve ∈ {3, 5, 8}
+on the expanded set with matched flags (`--with-centrality --centrality-alpha 0.0`,
+whole tokenizer, INDEX_VERSION 3):
+
+| Config | MRR | R@5 | hit@5 | pool_hit | misses |
+|---|---|---|---|---|---|
+| reserve=0 | 0.6517 | 0.6696 | 0.9583 | 0.9688 | Q102, Q103, Q122 |
+| reserve=3 | 0.6611 | 0.6690 | 0.9479 | 0.9688 | Q102, Q103, Q122 |
+| reserve=5 | 0.6495 | 0.6699 | 0.9583 | 0.9688 | Q102, Q103, Q122 |
+| reserve=8 | 0.6757 | 0.6449 | 0.9479 | 0.9688 | Q102, Q103, Q122 |
+
+The knob is confirmed live (88/96 queries had changed retrieved sets at reserve=8),
+yet pool_hit never moves and the miss set is identical at every level. Conclusion:
+the gold chunks for Q102/Q103/Q122 are absent from the BM25 leg's top-30 candidates
+too — these are **dual-leg retrieval misses**, not fusion-membership artifacts.
+Reserving pool slots cannot inject a candidate BM25 never retrieved. Ranking-metric
+movement across reserve levels is within run noise, with reserve=8 showing the
+predicted displacement cost (R@5 −0.025, hit@5 −0.010).
+
+**Verdict**: default stays `bm25_reserved_slots = 0`. The wiring is kept as a
+behavior-neutral experiment knob. The plausible fix for these queries shifts to
+Track D (path/symbol tokens in BM25 documents), which raises BM25-leg recall itself
+rather than re-allocating pool membership.

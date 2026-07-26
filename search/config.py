@@ -127,7 +127,7 @@ class SearchMode(StrEnum):
 
 @dataclass
 class SearchModeConfig:
-    """Search mode and BM25 settings (12 fields)."""
+    """Search mode and BM25 settings."""
 
     # Typed as ``str`` (not SearchMode) so values loaded from JSON — which are
     # always plain str — remain valid without extra coercion; SearchMode.HYBRID
@@ -156,6 +156,13 @@ class SearchModeConfig:
         default="whole",
         metadata={"choices": ("legacy", "whole", "additive")},
     )
+    # Reserved fused-pool slots for BM25-unique candidates. Under weighted RRF
+    # (bm25 0.35 / dense 0.65, rrf_k 100) the best BM25-unique candidate scores
+    # below the worst dense candidate, so the fused pool is 100% dense-sourced
+    # (see evaluation/POOL_MISS_DIAGNOSIS.md). N > 0 fills the last N pool
+    # slots with the top BM25-only candidates so the neural reranker can judge
+    # them. 0 = disabled (today's behavior).
+    bm25_reserved_slots: int = 0
     min_bm25_score: float = 0.1
 
     # Reranking Configuration
@@ -699,6 +706,7 @@ class SearchConfig:
         "bm25_use_stopwords": ("search_mode", "bm25_use_stopwords"),
         "bm25_use_stemming": ("search_mode", "bm25_use_stemming"),
         "bm25_tokenizer": ("search_mode", "bm25_tokenizer"),
+        "bm25_reserved_slots": ("search_mode", "bm25_reserved_slots"),
         "min_bm25_score": ("search_mode", "min_bm25_score"),
         "rrf_k_parameter": ("search_mode", "rrf_k_parameter"),
         "enable_result_reranking": ("search_mode", "enable_result_reranking"),

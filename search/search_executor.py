@@ -169,6 +169,7 @@ class SearchExecutor:
                 max_results=fusion_k,
                 bm25_weight=eff_bm25,
                 dense_weight=eff_dense,
+                reserved_slots=get_search_config().search_mode.bm25_reserved_slots,
             )
             rerank_time = time.time() - rerank_start
             self._logger.debug(

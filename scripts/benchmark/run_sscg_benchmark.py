@@ -174,6 +174,22 @@ def _apply_reranker_budget_override(top_k_candidates: int | None) -> None:
         print(f"[WARN] Could not apply reranker budget override: {e}", file=sys.stderr)
 
 
+def _apply_reserved_slots_override(reserved_slots: int | None) -> None:
+    """Override the BM25 reserved fused-pool slots in the in-memory config.
+
+    In-memory only. Read live from config on every search
+    (``search_executor.py``), so no searcher reset is needed between runs.
+    """
+    if reserved_slots is None:
+        return
+    try:
+        from search.config import get_search_config
+
+        get_search_config().search_mode.bm25_reserved_slots = reserved_slots
+    except Exception as e:
+        print(f"[WARN] Could not apply reserved-slots override: {e}", file=sys.stderr)
+
+
 def _apply_rrf_k_override(rrf_k: int | None) -> None:
     """Override the RRF fusion constant in the in-memory config singleton.
 
@@ -837,6 +853,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--bm25-reserved-slots",
+        type=int,
+        help=(
+            "Override search_mode.bm25_reserved_slots (fused-pool slots reserved "
+            "for BM25-unique candidates) for this run. Default: use config "
+            "value (0 = disabled)."
+        ),
+    )
+    parser.add_argument(
         "--rrf-k",
         type=int,
         help=(
@@ -904,6 +929,7 @@ def run_single(
     reranker_enabled: bool | None = None,
     top_k_candidates: int | None = None,
     rrf_k: int | None = None,
+    bm25_reserved_slots: int | None = None,
     with_centrality: bool = False,
     centrality_alpha: float | None = None,
 ) -> dict[str, Any]:
@@ -912,6 +938,7 @@ def run_single(
     _apply_reranker_override(reranker_model, reranker_enabled)
     _apply_reranker_budget_override(top_k_candidates)
     _apply_rrf_k_override(rrf_k)
+    _apply_reserved_slots_override(bm25_reserved_slots)
     _maybe_reset_for_construction_overrides(bm25_weight, dense_weight, rrf_k)
 
     try:
@@ -936,6 +963,8 @@ def run_single(
         print(f"  Reranker pool budget: top_k_candidates={top_k_candidates}")
     if rrf_k is not None:
         print(f"  RRF fusion constant: rrf_k={rrf_k}")
+    if bm25_reserved_slots is not None:
+        print(f"  BM25 reserved pool slots: {bm25_reserved_slots}")
     if with_centrality or centrality_alpha is not None:
         alpha_str = "config default" if centrality_alpha is None else centrality_alpha
         print(f"  Centrality stage: ON (alpha={alpha_str})")
@@ -997,6 +1026,8 @@ def run_single(
         config_metadata["top_k_candidates"] = top_k_candidates
     if rrf_k is not None:
         config_metadata["rrf_k"] = rrf_k
+    if bm25_reserved_slots is not None:
+        config_metadata["bm25_reserved_slots"] = bm25_reserved_slots
     if with_centrality or centrality_alpha is not None:
         config_metadata["with_centrality"] = True
         config_metadata["centrality_alpha"] = (
@@ -1069,6 +1100,7 @@ def main() -> None:
                 reranker_enabled=sweep_cfg.get("reranker_enabled"),
                 top_k_candidates=args.top_k_candidates,
                 rrf_k=args.rrf_k,
+                bm25_reserved_slots=args.bm25_reserved_slots,
                 with_centrality=args.with_centrality,
                 centrality_alpha=args.centrality_alpha,
             )
@@ -1111,6 +1143,7 @@ def main() -> None:
                 reranker_enabled=reranker_enabled,
                 top_k_candidates=args.top_k_candidates,
                 rrf_k=args.rrf_k,
+                bm25_reserved_slots=args.bm25_reserved_slots,
                 with_centrality=args.with_centrality,
                 centrality_alpha=args.centrality_alpha,
             )
@@ -1147,6 +1180,7 @@ def main() -> None:
         reranker_enabled=reranker_enabled,
         top_k_candidates=args.top_k_candidates,
         rrf_k=args.rrf_k,
+        bm25_reserved_slots=args.bm25_reserved_slots,
         with_centrality=args.with_centrality,
         centrality_alpha=args.centrality_alpha,
     )
