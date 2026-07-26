@@ -19,3 +19,4 @@ extend-ignore-re = [
 tese = "tese"  # GLSL tessellation evaluation shader extension
 tesc = "tesc"  # GLSL tessellation control shader extension
 certifi = "certifi"  # PyPI package name
+unparseable = "unparseable"  # valid spelling variant of unparsable, used in docs/

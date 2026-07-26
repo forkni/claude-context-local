@@ -106,7 +106,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   references remain.
 - **LSP call-graph resolver deadlock** eliminated via a persistent reader thread instead of a
   per-request subprocess pipe.
-- **Scope-aware call-graph resolution** — fixed alias mis-binding where an imported name shadowed by a
+- **Scope-aware call-graph resolution** — fixed alias misbinding where an imported name shadowed by a
   local variable of the same name was resolved to the wrong callee.
 - Serialized auto-reindex against in-flight searches; added reranker inference locks to prevent
   concurrent GPU access during model swap.
