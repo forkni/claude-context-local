@@ -107,7 +107,7 @@ class EmbeddingConfig:
 
     # Persistent content-hash embedding cache (Round 3)
     enable_chunk_cache: bool = True  # Skip GPU re-embedding for unchanged chunks
-    chunk_cache_max_entries: int = 0  # 0 = auto (max(4 * live_keys, 20_000))
+    chunk_cache_max_entries: int = 0  # 0 = auto (max(2 * live_keys, 2_000), 32MB clamp)
 
 
 class SearchMode(StrEnum):

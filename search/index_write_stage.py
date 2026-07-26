@@ -222,6 +222,7 @@ class IndexWriteStage:
                 cache_path=cache_path,
                 model_name=embedding_cfg.model_name,
                 dimension=embedding_cfg.dimension,
+                provenance=self._resolve_embedding_provenance(),
                 max_entries=embedding_cfg.chunk_cache_max_entries,
             )
         except Exception:  # noqa: BLE001 - fail-soft: a cache problem must never fail an index
@@ -231,6 +232,27 @@ class IndexWriteStage:
                 traceback.format_exc(),
             )
             return None
+
+    def _resolve_embedding_provenance(self) -> str:
+        """Best-effort provenance string for this run's embedder, never raising.
+
+        A constant sentinel on failure — not a config-derived approximation,
+        which would differ from the real provenance string and manufacture
+        a permanent 0%-hit-rate mismatch. The ``isinstance`` guard matters:
+        tests construct ``IndexWriteStage(embedder=Mock(), ...)``, whose
+        auto-attribute would otherwise return a ``Mock`` that reaches
+        ``provenance.encode("utf-8")`` in ``ChunkEmbeddingCache.save`` and
+        fail-soft into a cache that silently never persists.
+        """
+        getter = getattr(self._embedder, "get_embedding_provenance", None)
+        if callable(getter):
+            try:
+                value = getter()
+                if isinstance(value, str) and value:
+                    return value
+            except Exception:  # noqa: BLE001 - fail-soft: provenance is best-effort
+                logger.debug("[CHUNK_CACHE] provenance unavailable", exc_info=True)
+        return "unavailable"
 
     def _inject_call_edges(self, project_path: str) -> None:
         """Inject cross-module call edges from the resolver pipeline into the code graph.

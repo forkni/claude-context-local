@@ -2741,7 +2741,10 @@ class TestEmbedChunksContentHashCache:
         contents = [embedder.create_embedding_content(c) for c in chunks]
 
         cache = ChunkEmbeddingCache(
-            tmp_path / "chunk_embeddings.bin", model_name="BAAI/bge-m3", dimension=8
+            tmp_path / "chunk_embeddings.bin",
+            model_name="BAAI/bge-m3",
+            dimension=8,
+            provenance="v1|device=cpu|dtype=fp32|backend=pytorch",
         )
         hit_value = np.full(8, 999.0, dtype=np.float32)
         for i in range(60):
@@ -2783,7 +2786,10 @@ class TestEmbedChunksContentHashCache:
         contents = [embedder.create_embedding_content(c) for c in chunks]
 
         cache = ChunkEmbeddingCache(
-            tmp_path / "chunk_embeddings.bin", model_name="BAAI/bge-m3", dimension=8
+            tmp_path / "chunk_embeddings.bin",
+            model_name="BAAI/bge-m3",
+            dimension=8,
+            provenance="v1|device=cpu|dtype=fp32|backend=pytorch",
         )
         hit_value = np.full(8, 7.0, dtype=np.float32)
         for content in contents:
@@ -2984,3 +2990,170 @@ class TestEmbedChunksContentHashCache:
         # The broken cache must never be written to.
         broken_cache.put.assert_not_called()
         broken_cache.save.assert_not_called()
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_full_hit_logs_stats(
+        self, mock_sentence_transformer, mock_model_loader_st, tmp_path, caplog
+    ):
+        """The 100%-hit early return must still log the cache's hit rate —
+        the whole point of B is that a silent drop to 0% would otherwise be
+        invisible."""
+        from embeddings.chunk_cache import ChunkEmbeddingCache
+
+        mock_model = MagicMock()
+        mock_model.device = "cpu"
+        mock_sentence_transformer.return_value = mock_model
+        mock_model_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+        chunks = [
+            self._make_chunk(content="x" * (10 + i), name=f"fn{i}", start_line=i)
+            for i in range(3)
+        ]
+        contents = [embedder.create_embedding_content(c) for c in chunks]
+
+        cache = ChunkEmbeddingCache(
+            tmp_path / "chunk_embeddings.bin",
+            model_name="BAAI/bge-m3",
+            dimension=8,
+            provenance="v1|device=cpu|dtype=fp32|backend=pytorch",
+        )
+        for content in contents:
+            cache.put(
+                ChunkEmbeddingCache.key_for(content), np.full(8, 1.0, dtype=np.float32)
+            )
+
+        with caplog.at_level("INFO"):
+            embedder.embed_chunks(chunks, batch_size=2, cache=cache)
+
+        assert "[CHUNK_CACHE] 100% hit, model load skipped" in caplog.text
+        assert "hits=3" in caplog.text
+        assert "misses=0" in caplog.text
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_partial_hit_logs_stats_after_save(
+        self, mock_sentence_transformer, mock_model_loader_st, tmp_path, caplog
+    ):
+        """A run with misses must log stats after the cache save, not just
+        on the (never-reached) 100%-hit path."""
+        from embeddings.chunk_cache import ChunkEmbeddingCache
+
+        def mock_encode(
+            sentences,
+            show_progress_bar=False,
+            convert_to_tensor=False,
+            device=None,
+            **kwargs,
+        ):
+            dim = 8
+            return np.array(
+                [[float(len(s))] * dim for s in sentences], dtype=np.float32
+            )
+
+        mock_model = MagicMock()
+        mock_model.encode.side_effect = mock_encode
+        mock_model.device = "cpu"
+        mock_sentence_transformer.return_value = mock_model
+        mock_model_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+        chunks = [
+            self._make_chunk(content="x" * (10 + i), name=f"fn{i}", start_line=i)
+            for i in range(3)
+        ]
+        contents = [embedder.create_embedding_content(c) for c in chunks]
+
+        cache = ChunkEmbeddingCache(
+            tmp_path / "chunk_embeddings.bin",
+            model_name="BAAI/bge-m3",
+            dimension=8,
+            provenance="v1|device=cpu|dtype=fp32|backend=pytorch",
+        )
+        cache.put(
+            ChunkEmbeddingCache.key_for(contents[0]), np.full(8, 1.0, dtype=np.float32)
+        )
+
+        with caplog.at_level("INFO"):
+            embedder.embed_chunks(chunks, batch_size=2, cache=cache)
+
+        assert "[CHUNK_CACHE] run complete" in caplog.text
+        assert "hits=1" in caplog.text
+        assert "misses=2" in caplog.text
+
+
+class TestGetEmbeddingProvenance:
+    """get_embedding_provenance() must never depend on CodeEmbedder.device."""
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_stable_across_device_mutation(
+        self, mock_sentence_transformer, mock_model_loader_st
+    ):
+        """CodeEmbedder.device starts as the requested value and is
+        overwritten with the *resolved* value after model load
+        (embedder.py:849). Deriving provenance from it would yield a
+        different string before vs after a load in the same process ->
+        permanent 0% cache hit rate. Mutate embedder.device directly and
+        confirm the provenance string doesn't move."""
+        mock_model = MagicMock()
+        mock_model.device = "cpu"
+        mock_sentence_transformer.return_value = mock_model
+        mock_model_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+        before = embedder.get_embedding_provenance()
+
+        embedder.device = "some-mutated-sentinel-value"
+        after = embedder.get_embedding_provenance()
+
+        assert before == after
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_format(self, mock_sentence_transformer, mock_model_loader_st):
+        mock_model = MagicMock()
+        mock_model.device = "cpu"
+        mock_sentence_transformer.return_value = mock_model
+        mock_model_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+        provenance = embedder.get_embedding_provenance()
+
+        assert provenance.startswith("v1|device=")
+        assert "|dtype=" in provenance
+        assert "|backend=" in provenance
+
+    @patch(
+        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+    )
+    @patch("embeddings.model_loader.SentenceTransformer")
+    @patch("embeddings.embedder.SentenceTransformer")
+    def test_raises_after_cleanup(
+        self, mock_sentence_transformer, mock_model_loader_st
+    ):
+        """A cleaned-up embedder must fail loudly rather than silently
+        returning a sentinel that could poison a cache with fake provenance."""
+        mock_model = MagicMock()
+        mock_model.device = "cpu"
+        mock_sentence_transformer.return_value = mock_model
+        mock_model_loader_st.return_value = mock_model
+
+        embedder = CodeEmbedder(model_name="BAAI/bge-m3")
+        embedder._model_loader = None
+
+        with pytest.raises(RuntimeError, match="cleaned up"):
+            embedder.get_embedding_provenance()

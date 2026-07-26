@@ -53,9 +53,12 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 _MAGIC = b"CHNK"
-_VERSION = 1
+_VERSION = 2
 _KEY_BYTES = 16  # 128-bit truncated SHA-256 -> 32 hex chars
-_HEADER_FIXED_STRUCT = "<IIII"  # version, dimension, entry_count, model_name_len
+# version, dimension, entry_count, model_name_len, provenance_len
+_HEADER_FIXED_STRUCT = "<IIIII"
+_AUTO_MIN_ENTRIES = 2_000
+_AUTO_MAX_BYTES = 32 * 1024 * 1024
 
 
 class ChunkEmbeddingCache:
@@ -73,6 +76,7 @@ class ChunkEmbeddingCache:
         cache_path: Path,
         model_name: str,
         dimension: int,
+        provenance: str,
         max_entries: int = 0,
     ) -> None:
         """Initialize and immediately (best-effort) load the on-disk cache.
@@ -81,12 +85,21 @@ class ChunkEmbeddingCache:
             cache_path: Path to the cache file (created on first save).
             model_name: Embedding model name — must match to reuse the file.
             dimension: Embedding dimension — must match to reuse the file.
-            max_entries: Eviction cap for :meth:`save`. ``0`` means auto:
-                ``max(4 * len(live_keys), 20_000)`` at save time.
+            provenance: Stable description of the numerics (device/dtype/
+                backend) that will produce new vectors — see
+                ``ModelLoader.describe_numerics()``. Required with no
+                default: a silent default is exactly how an unstable or
+                wrong provenance string would ship undetected. Must match
+                to reuse the file — this is what prevents a precision or
+                backend change from silently re-serving cross-numerics
+                vectors.
+            max_entries: Eviction cap for :meth:`save`. ``0`` means auto —
+                see :meth:`_evict`.
         """
         self._path = Path(cache_path)
         self._model_name = model_name
         self._dimension = dimension
+        self._provenance = provenance
         self._max_entries = max_entries if max_entries > 0 else 0
         # Insertion order = LRU order (oldest first); get()/put() move the
         # touched key to the end. Mirrors QueryEmbeddingCache's OrderedDict use.
@@ -146,14 +159,20 @@ class ChunkEmbeddingCache:
                 raise ValueError("file too short for magic bytes")
             if data[:4] != _MAGIC:
                 raise ValueError(f"bad magic bytes {data[:4]!r}")
+            # Version is field 0 at a fixed offset (4) in every format
+            # version — check it before the wide unpack so a v1 file (which
+            # used a narrower header) fails with a readable "unsupported
+            # format version 1" instead of a struct-size error. This INFO
+            # line is the only signal a user gets when a cache is discarded.
+            (version,) = struct.unpack_from("<I", data, 4)
+            if version != _VERSION:
+                raise ValueError(f"unsupported format version {version}")
             offset = 4
             header_size = struct.calcsize(_HEADER_FIXED_STRUCT)
-            version, dimension, entry_count, name_len = struct.unpack_from(
+            version, dimension, entry_count, name_len, prov_len = struct.unpack_from(
                 _HEADER_FIXED_STRUCT, data, offset
             )
             offset += header_size
-            if version != _VERSION:
-                raise ValueError(f"unsupported format version {version}")
             if dimension != self._dimension:
                 raise ValueError(
                     f"dimension mismatch: file has {dimension}, expected {self._dimension}"
@@ -163,6 +182,13 @@ class ChunkEmbeddingCache:
             if model_name != self._model_name:
                 raise ValueError(
                     f"model mismatch: file has {model_name!r}, expected {self._model_name!r}"
+                )
+            provenance = data[offset : offset + prov_len].decode("utf-8")
+            offset += prov_len
+            if provenance != self._provenance:
+                raise ValueError(
+                    f"provenance mismatch: file has {provenance!r}, "
+                    f"expected {self._provenance!r}"
                 )
             record_size = _KEY_BYTES + dimension * 4
             expected_size = offset + entry_count * record_size
@@ -198,6 +224,7 @@ class ChunkEmbeddingCache:
             self._evict(live_keys)
             self._path.parent.mkdir(parents=True, exist_ok=True)
             name_bytes = self._model_name.encode("utf-8")
+            prov_bytes = self._provenance.encode("utf-8")
             with open(tmp, "wb") as f:
                 f.write(_MAGIC)
                 f.write(
@@ -207,9 +234,11 @@ class ChunkEmbeddingCache:
                         self._dimension,
                         len(self._entries),
                         len(name_bytes),
+                        len(prov_bytes),
                     )
                 )
                 f.write(name_bytes)
+                f.write(prov_bytes)
                 for key, vector in self._entries.items():
                     f.write(bytes.fromhex(key))
                     f.write(vector.astype(np.float32).tobytes())
@@ -231,11 +260,12 @@ class ChunkEmbeddingCache:
         over the nominal cap — correctness for the run just completed takes
         priority over the size target.
         """
-        cap = (
-            self._max_entries
-            if self._max_entries > 0
-            else max(4 * len(live_keys), 20_000)
-        )
+        if self._max_entries > 0:
+            cap = self._max_entries
+        else:
+            record_bytes = _KEY_BYTES + self._dimension * 4
+            cap = max(2 * len(live_keys), _AUTO_MIN_ENTRIES)
+            cap = min(cap, max(len(live_keys), _AUTO_MAX_BYTES // record_bytes))
         if len(self._entries) <= cap:
             return
         # OrderedDict iterates oldest-first; drop LRU non-live entries until
@@ -256,5 +286,5 @@ class ChunkEmbeddingCache:
             "misses": self.misses,
             "hit_rate": f"{hit_rate:.1f}%",
             "cache_size": len(self._entries),
-            "max_entries": self._max_entries,
+            "max_entries": self._max_entries if self._max_entries > 0 else "auto",
         }

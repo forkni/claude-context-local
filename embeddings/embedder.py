@@ -734,6 +734,15 @@ class CodeEmbedder:
             )
         return self._model_loader.get_torch_dtype()
 
+    def get_embedding_provenance(self) -> str:
+        """Delegate to ModelLoader.describe_numerics()."""
+        if self._model_loader is None:
+            raise RuntimeError(
+                "Embedder has been cleaned up; obtain a fresh instance "
+                "via model_pool_manager.get_embedder()."
+            )
+        return self._model_loader.describe_numerics()
+
     def _is_gpu_device(self) -> bool:
         """Check if current device is GPU (cuda/mps).
 
@@ -1325,10 +1334,7 @@ class CodeEmbedder:
                 pending_indices = list(range(len(chunks)))
 
             if cache_enabled and not pending_indices:
-                self._logger.info(
-                    "embed_chunks: 100%% cache hit for %d chunks — skipping model load",
-                    len(chunks),
-                )
+                self._log_chunk_cache_stats(cache, "100% hit, model load skipped")
                 return cast(list[EmbeddingResult], ordered_results)
 
         pending_chunks = [chunks[idx] for idx in pending_indices]
@@ -1693,12 +1699,41 @@ class CodeEmbedder:
                     cache.put(key, result.embedding)
             live_keys = {key for key in cache_keys if key is not None}
             cache.save(live_keys)
+            self._log_chunk_cache_stats(cache, "run complete")
 
         self._logger.info("Embedding generation completed")
         return cast(list[EmbeddingResult], ordered_results)
 
+    def _log_chunk_cache_stats(self, cache: Any, label: str) -> None:
+        """Log the persistent chunk-embedding cache's hit rate, best-effort.
+
+        Without this, a normal high-hit run logs nothing at all about the
+        cache's health — a silent drop to 0% hit rate would be invisible.
+        Never raises: stats retrieval is diagnostic only.
+        """
+        try:
+            stats = cache.get_stats()
+            self._logger.info(
+                "[CHUNK_CACHE] %s: hits=%s misses=%s hit_rate=%s size=%s cap=%s",
+                label,
+                stats["hits"],
+                stats["misses"],
+                stats["hit_rate"],
+                stats["cache_size"],
+                stats["max_entries"],
+            )
+        except Exception:  # noqa: BLE001 - fail-soft: stats are diagnostic only
+            self._logger.debug("[CHUNK_CACHE] stats unavailable", exc_info=True)
+
     def get_cache_stats(self) -> dict:
-        """Get cache hit/miss statistics."""
+        """Get query-embedding cache hit/miss statistics.
+
+        Note: this is the *query* cache (``QueryEmbeddingCache``, used by
+        ``embed_query``/``embed_queries_batch``) — not the persistent
+        chunk-embedding cache passed into ``embed_chunks`` via ``cache=``.
+        For that cache's stats, call ``.get_stats()`` on the
+        ``ChunkEmbeddingCache`` instance directly.
+        """
         return self._query_cache.get_stats()
 
     def clear_query_cache(self) -> None:
