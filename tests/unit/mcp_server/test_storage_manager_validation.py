@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from mcp_server.storage_manager import (
     STORAGE_SENTINEL,
@@ -123,3 +124,161 @@ class TestGetStorageDir:
         # Second call (state already set) doesn't re-write, but test the file stays
         assert (storage / STORAGE_SENTINEL).exists()
         assert (storage / STORAGE_SENTINEL).stat().st_mtime == mtime1
+
+
+# ---------------------------------------------------------------------------
+# get_canonical_project_info — current-model precedence (H2 regression)
+# ---------------------------------------------------------------------------
+
+
+class TestGetCanonicalProjectInfo:
+    """Regression tests for the alphabetical-model-dir precedence bug.
+
+    Previously ``get_canonical_project_info`` took the first hit from
+    ``sorted(projects_dir.glob(...))`` across all per-model dirs, regardless
+    of which model is actually configured. With two model dirs present for
+    the same project (e.g. bge-m3 and qwen3-0.6b, both 1024d), alphabetical
+    order put bge-m3 first even when qwen3-0.6b is the configured model and
+    holds the project's real ``user_excluded_dirs`` — silently reading back
+    ``None`` instead of the stored exclusion list.
+    """
+
+    @staticmethod
+    def _make_model_dir(
+        projects_dir: Path,
+        project_name: str,
+        project_hash: str,
+        model_slug: str,
+        dimension: int,
+        user_excluded_dirs: list[str] | None,
+    ) -> Path:
+        model_dir = (
+            projects_dir / f"{project_name}_{project_hash}_{model_slug}_{dimension}d"
+        )
+        model_dir.mkdir(parents=True)
+        info = {
+            "project_name": project_name,
+            "embedding_model": model_slug,
+            "user_excluded_dirs": user_excluded_dirs,
+            "user_included_dirs": None,
+        }
+        (model_dir / "project_info.json").write_text(json.dumps(info))
+        return model_dir
+
+    def test_prefers_configured_model_over_alphabetically_first(
+        self, tmp_path: Path
+    ) -> None:
+        from mcp_server.storage_manager import (
+            compute_drive_agnostic_hash,
+            get_canonical_project_info,
+        )
+
+        project_dir = tmp_path / "myproject"
+        project_dir.mkdir()
+        storage_dir = tmp_path / "storage"
+        projects_dir = storage_dir / "projects"
+        projects_dir.mkdir(parents=True)
+
+        project_hash = compute_drive_agnostic_hash(str(project_dir.resolve()))
+
+        # "bge-m3" sorts alphabetically before "qwen3-0.6b" — the bug returned
+        # this one regardless of which model is configured.
+        self._make_model_dir(
+            projects_dir, "myproject", project_hash, "bge-m3", 1024, None
+        )
+        qwen_dir = self._make_model_dir(
+            projects_dir,
+            "myproject",
+            project_hash,
+            "qwen3-0.6b",
+            1024,
+            ["tests", "_archive"],
+        )
+
+        fake_config = MagicMock()
+        fake_config.embedding.model_name = "Qwen/Qwen3-Embedding-0.6B"
+
+        with (
+            patch(
+                "mcp_server.storage_manager.get_storage_dir",
+                return_value=storage_dir,
+            ),
+            patch(
+                "mcp_server.storage_manager.get_search_config",
+                return_value=fake_config,
+            ),
+        ):
+            result = get_canonical_project_info(str(project_dir))
+
+        assert result == qwen_dir / "project_info.json"
+
+    def test_falls_back_when_configured_model_has_no_info(self, tmp_path: Path) -> None:
+        """H1 fallback must still work: configured model's dir has no
+        project_info.json yet, so the other model's file is returned."""
+        from mcp_server.storage_manager import (
+            compute_drive_agnostic_hash,
+            get_canonical_project_info,
+        )
+
+        project_dir = tmp_path / "myproject"
+        project_dir.mkdir()
+        storage_dir = tmp_path / "storage"
+        projects_dir = storage_dir / "projects"
+        projects_dir.mkdir(parents=True)
+
+        project_hash = compute_drive_agnostic_hash(str(project_dir.resolve()))
+
+        bge_dir = self._make_model_dir(
+            projects_dir,
+            "myproject",
+            project_hash,
+            "bge-m3",
+            1024,
+            ["tests", "_archive"],
+        )
+        # Configured model's own dir exists but has no project_info.json yet.
+        (projects_dir / f"myproject_{project_hash}_qwen3-0.6b_1024d").mkdir(
+            parents=True
+        )
+
+        fake_config = MagicMock()
+        fake_config.embedding.model_name = "Qwen/Qwen3-Embedding-0.6B"
+
+        with (
+            patch(
+                "mcp_server.storage_manager.get_storage_dir",
+                return_value=storage_dir,
+            ),
+            patch(
+                "mcp_server.storage_manager.get_search_config",
+                return_value=fake_config,
+            ),
+        ):
+            result = get_canonical_project_info(str(project_dir))
+
+        assert result == bge_dir / "project_info.json"
+
+    def test_returns_none_when_no_model_dir_has_info(self, tmp_path: Path) -> None:
+        from mcp_server.storage_manager import get_canonical_project_info
+
+        project_dir = tmp_path / "myproject"
+        project_dir.mkdir()
+        storage_dir = tmp_path / "storage"
+        (storage_dir / "projects").mkdir(parents=True)
+
+        fake_config = MagicMock()
+        fake_config.embedding.model_name = "Qwen/Qwen3-Embedding-0.6B"
+
+        with (
+            patch(
+                "mcp_server.storage_manager.get_storage_dir",
+                return_value=storage_dir,
+            ),
+            patch(
+                "mcp_server.storage_manager.get_search_config",
+                return_value=fake_config,
+            ),
+        ):
+            result = get_canonical_project_info(str(project_dir))
+
+        assert result is None

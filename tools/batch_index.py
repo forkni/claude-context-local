@@ -163,6 +163,19 @@ def main():
 
             # Single-model results
             else:
+                # Effective filters actually used for this run (explicit CLI
+                # flag or, when omitted, the project's stored filters) —
+                # surfaced here so a corpus-size surprise (e.g. 9,211 chunks
+                # instead of ~2,182) is visible instead of silently indexing
+                # the whole tree.
+                effective_include = result.get("include_dirs")
+                effective_exclude = result.get("exclude_dirs")
+                if effective_include:
+                    print(f"Include dirs (effective): {effective_include}")
+                if effective_exclude:
+                    print(f"Exclude dirs (effective): {effective_exclude}")
+                if effective_include or effective_exclude:
+                    print()
                 print(f"Files added: {result.get('files_added', 0)}")
                 print(f"Files removed: {result.get('files_removed', 0)}")
                 print(f"Files modified: {result.get('files_modified', 0)}")

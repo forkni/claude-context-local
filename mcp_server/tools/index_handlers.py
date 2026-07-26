@@ -162,11 +162,24 @@ def _run_indexing(
         "files_removed": result.files_removed,
         "chunks_added": result.chunks_added,
         "time_taken": round(elapsed, 2),
+        # Propagated so _build_index_response can turn a caught indexing
+        # exception (e.g. PermissionError during force-full pre-clear) into a
+        # hard failure instead of reporting success with zeroed counts.
+        # Named indexing_succeeded/indexing_error (not success/error) — this is
+        # an internal transport dict, not a client-facing response envelope;
+        # "success"/"error" keys are reserved for mcp_server.tools.responses
+        # (see test_response_envelope_ownership.py's stray-literal gate).
+        "indexing_succeeded": result.success,
+        "indexing_error": result.error,
     }
 
 
 def _build_index_response(
-    results: list[dict], directory_path: str, incremental: bool
+    results: list[dict],
+    directory_path: str,
+    incremental: bool,
+    include_dirs: list[str] | None = None,
+    exclude_dirs: list[str] | None = None,
 ) -> dict:
     """Build the final index response.
 
@@ -174,11 +187,39 @@ def _build_index_response(
         results: List with one indexing result dict
         directory_path: The indexed directory
         incremental: Whether incremental mode was used
+        include_dirs: Effective include-dirs filter actually used for this run
+            (after resolving stored project filters) — surfaced so a caller
+            can tell at a glance whether a corpus-size surprise traces back to
+            an unexpected filter instead of having to re-derive it.
+        exclude_dirs: Effective exclude-dirs filter actually used for this run
 
     Returns:
-        dict: Complete response with success status and statistics
+        dict: Complete response with success status and statistics. An
+        indexing pass that raised internally (``r["indexing_succeeded"] is
+        False``) or a full reindex that silently added zero chunks is
+        reported as a hard failure rather than the caught/zeroed result being
+        papered over as success — both are exactly the "half-purged index,
+        reported OK" failure mode this guards against.
     """
     r = results[0]
+
+    if not r.get("indexing_succeeded", True):
+        return responses.error(
+            r.get("indexing_error") or "Indexing failed (see server logs for detail)",
+            project=str(directory_path),
+            mode="incremental" if incremental else "full",
+        )
+
+    if not incremental and r["chunks_added"] == 0:
+        return responses.error(
+            "Full reindex added 0 chunks. This is never a legitimate outcome "
+            "for a non-empty project — the index may be left in a partially "
+            "cleared state (a common cause is another process, e.g. a running "
+            "MCP server, holding metadata.db open during the pre-clear).",
+            project=str(directory_path),
+            mode="full",
+        )
+
     response = responses.ok(
         success=True,
         project=str(directory_path),
@@ -189,11 +230,18 @@ def _build_index_response(
         # Only include modified/removed counts when non-zero (token optimization)
         files_modified=r["files_modified"] if r["files_modified"] > 0 else None,
         files_removed=r["files_removed"] if r["files_removed"] > 0 else None,
+        # Surfaces the resolved filters (explicit arg or recovered stored
+        # project filter) so an unexpectedly large/small corpus is visible in
+        # the response itself, not just inferred from the chunk count.
+        include_dirs=include_dirs if include_dirs else None,
+        exclude_dirs=exclude_dirs if exclude_dirs else None,
     )
     return response
 
 
-def _purge_index_dir(index_dir: Path, *, keep_chunk_cache: bool) -> list[str]:
+def _purge_index_dir(
+    index_dir: Path, *, keep_chunk_cache: bool
+) -> tuple[list[str], list[str]]:
     """Delete every file that makes up one model's index; return what was deleted.
 
     Single source of truth for "what files make up an index" — this repo
@@ -214,14 +262,19 @@ def _purge_index_dir(index_dir: Path, *, keep_chunk_cache: bool) -> list[str]:
             escape hatch for suspect vectors, so it must not re-serve them).
 
     Returns:
-        Names of the files/directories actually deleted (relative to
-        ``index_dir``, except call-graph/community files which are bare
-        filenames from the parent directory).
+        ``(deleted, failed)``: names of the files/directories actually
+        deleted, and names that raised ``OSError`` and are still on disk
+        (relative to ``index_dir``, except call-graph/community files which
+        are bare filenames from the parent directory). A non-empty ``failed``
+        means the purge left a half-cleared index — callers that need this to
+        be a hard failure (as opposed to the previous behaviour of only
+        logging a warning) must check it explicitly.
     """
     import glob
     import shutil
 
     deleted: list[str] = []
+    failed: list[str] = []
 
     bm25_dir = index_dir / "bm25"
     if bm25_dir.exists():
@@ -230,6 +283,7 @@ def _purge_index_dir(index_dir: Path, *, keep_chunk_cache: bool) -> list[str]:
             deleted.append("bm25/")
         except OSError as e:
             logger.warning(f"Could not delete {bm25_dir}: {e}")
+            failed.append("bm25/")
 
     filenames = [
         "code.index",
@@ -252,6 +306,7 @@ def _purge_index_dir(index_dir: Path, *, keep_chunk_cache: bool) -> list[str]:
                 deleted.append(fname)
             except OSError as e:
                 logger.warning(f"Could not delete {fp}: {e}")
+                failed.append(fname)
 
     for pattern in ("*_call_graph.json", "*_communities.json"):
         for graph_file in glob.glob(str(index_dir.parent / pattern)):
@@ -260,8 +315,9 @@ def _purge_index_dir(index_dir: Path, *, keep_chunk_cache: bool) -> list[str]:
                 deleted.append(Path(graph_file).name)
             except OSError as e:
                 logger.warning(f"Could not delete {graph_file}: {e}")
+                failed.append(Path(graph_file).name)
 
-    return deleted
+    return deleted, failed
 
 
 def _clear_index_files_before_create(index_dir: Path) -> None:
@@ -286,8 +342,10 @@ def _clear_index_files_before_create(index_dir: Path) -> None:
     logger.info(
         f"[PRE-CLEAR] Deleting index files before HybridSearcher creation: {index_dir}"
     )
-    deleted = _purge_index_dir(index_dir, keep_chunk_cache=True)
+    deleted, failed = _purge_index_dir(index_dir, keep_chunk_cache=True)
     logger.info(f"[PRE-CLEAR] Deleted: {deleted}")
+    if failed:
+        logger.warning(f"[PRE-CLEAR] Failed to delete (still on disk): {failed}")
 
 
 def _release_gpu_memory() -> None:
@@ -419,14 +477,26 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
         project_path = Path(current_project).resolve()
 
         # File deletion and snapshot removal can block on I/O — offload to thread pool.
-        def _delete_index_files() -> tuple[list[str], int]:
-            """Delete index files + Merkle snapshots; returns (cleared_dirs, snapshots_cleared)."""
+        def _delete_index_files() -> tuple[list[str], int, dict[str, list[str]]]:
+            """Delete index files + Merkle snapshots.
+
+            Returns (cleared_dirs, snapshots_cleared, failed_by_dir) — a
+            model dir is still listed in cleared_dirs even if some of its
+            files failed to delete (the operation was attempted for every
+            dir), but failed_by_dir surfaces exactly what was left behind so
+            the response can report it as a partial failure instead of
+            unconditional success.
+            """
             _cleared: list[str] = []
+            _failed_by_dir: dict[str, list[str]] = {}
 
             for _model_dir in _iter_project_model_dirs(project_path):
                 _idx_dir = _model_dir / "index"
-                _deleted = _purge_index_dir(_idx_dir, keep_chunk_cache=False)
+                _deleted, _failed = _purge_index_dir(_idx_dir, keep_chunk_cache=False)
                 logger.info(f"Deleted from {_idx_dir}: {_deleted}")
+                if _failed:
+                    logger.warning(f"Failed to delete from {_idx_dir}: {_failed}")
+                    _failed_by_dir[_model_dir.name] = _failed
                 _cleared.append(_model_dir.name)
 
             _snaps = 0
@@ -437,14 +507,24 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
             except Exception as _e:  # noqa: BLE001 - resilience: optional snapshot cleanup, index deletion still succeeds
                 logger.warning(f"Failed to clear Merkle snapshots: {_e}")
 
-            return _cleared, _snaps
+            return _cleared, _snaps, _failed_by_dir
 
-        cleared_dirs, snapshots_cleared = await asyncio.to_thread(_delete_index_files)
+        cleared_dirs, snapshots_cleared, failed_by_dir = await asyncio.to_thread(
+            _delete_index_files
+        )
 
         # Cleanup in-memory state (fast lock-guarded assignment, stays on event loop)
         state.reset_search_components()
 
     logger.info(f"Cleared indices for {len(cleared_dirs)} models: {cleared_dirs}")
+
+    if failed_by_dir:
+        return responses.error(
+            "Clear index left files behind (likely file locks — a running "
+            "MCP server or open file handle): "
+            f"{failed_by_dir}",
+            cleared_models=cleared_dirs,
+        )
 
     result = responses.ok(
         success=True,
@@ -825,4 +905,6 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
                 [result],
                 str(directory_path),
                 incremental=incremental,
+                include_dirs=include_dirs,
+                exclude_dirs=exclude_dirs,
             )
