@@ -551,7 +551,11 @@ async def test_handle_clear_index():
             bm25_dir = index_dir / "bm25"
             bm25_dir.mkdir()
             (index_dir / "code.index").touch()
-            (index_dir / "chunks_metadata.db").touch()
+            (index_dir / "metadata.db").touch()
+            (index_dir / "metadata.db-wal").touch()
+            (index_dir / "metadata.db-shm").touch()
+            (index_dir / "stats.json").touch()
+            (index_dir / "chunk_embeddings.bin").touch()
 
         with (
             patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
@@ -572,6 +576,20 @@ async def test_handle_clear_index():
             # Verify dense index files deleted
             assert not (model1_dir / "index" / "code.index").exists()
             assert not (model2_dir / "index" / "code.index").exists()
+
+            # Verify metadata.db and its WAL/SHM sidecars are deleted too —
+            # these were the actual bug: the old code deleted a filename
+            # ("chunks_metadata.db") that never existed, leaving the real
+            # metadata.db and its (often full-size) WAL/SHM behind.
+            for model_dir in [model1_dir, model2_dir]:
+                index_dir = model_dir / "index"
+                assert not (index_dir / "metadata.db").exists()
+                assert not (index_dir / "metadata.db-wal").exists()
+                assert not (index_dir / "metadata.db-shm").exists()
+                assert not (index_dir / "stats.json").exists()
+                # An explicit clear_index must also drop the chunk cache —
+                # it's the escape hatch for suspect vectors.
+                assert not (index_dir / "chunk_embeddings.bin").exists()
 
 
 @pytest.mark.asyncio

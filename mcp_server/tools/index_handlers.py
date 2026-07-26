@@ -193,6 +193,77 @@ def _build_index_response(
     return response
 
 
+def _purge_index_dir(index_dir: Path, *, keep_chunk_cache: bool) -> list[str]:
+    """Delete every file that makes up one model's index; return what was deleted.
+
+    Single source of truth for "what files make up an index" — this repo
+    previously had four independently-drifted deletion lists, one of which
+    named a file (``chunks_metadata.db``) that never existed while silently
+    orphaning the ``metadata.db`` WAL/SHM sidecars (routinely full-size, not
+    a crash-only edge case) and a legacy ``metadata_symbol_cache.json``.
+
+    ``index_dir`` is a model's ``index/`` directory; the call-graph and
+    community-detection files live one level up, in its parent.
+
+    Args:
+        index_dir: The model's ``index/`` directory to purge.
+        keep_chunk_cache: When True, leave ``chunk_embeddings.bin`` in place
+            (the mechanical pre-clear for a force-full reindex, where
+            deleting it would destroy the persistent chunk-embedding cache).
+            When False, delete it too (an explicit "clear index" is the
+            escape hatch for suspect vectors, so it must not re-serve them).
+
+    Returns:
+        Names of the files/directories actually deleted (relative to
+        ``index_dir``, except call-graph/community files which are bare
+        filenames from the parent directory).
+    """
+    import glob
+    import shutil
+
+    deleted: list[str] = []
+
+    bm25_dir = index_dir / "bm25"
+    if bm25_dir.exists():
+        try:
+            shutil.rmtree(bm25_dir)
+            deleted.append("bm25/")
+        except OSError as e:
+            logger.warning(f"Could not delete {bm25_dir}: {e}")
+
+    filenames = [
+        "code.index",
+        "chunk_ids.pkl",
+        "code_vectors.mmap",
+        "metadata.db",
+        "metadata.db-wal",
+        "metadata.db-shm",
+        "metadata_symbol_cache.json",  # legacy orphan; writer removed in dff893d7
+        "stats.json",
+    ]
+    if not keep_chunk_cache:
+        filenames.append("chunk_embeddings.bin")
+
+    for fname in filenames:
+        fp = index_dir / fname
+        if fp.exists():
+            try:
+                fp.unlink()
+                deleted.append(fname)
+            except OSError as e:
+                logger.warning(f"Could not delete {fp}: {e}")
+
+    for pattern in ("*_call_graph.json", "*_communities.json"):
+        for graph_file in glob.glob(str(index_dir.parent / pattern)):
+            try:
+                Path(graph_file).unlink()
+                deleted.append(Path(graph_file).name)
+            except OSError as e:
+                logger.warning(f"Could not delete {graph_file}: {e}")
+
+    return deleted
+
+
 def _clear_index_files_before_create(index_dir: Path) -> None:
     """Clear index files before creating a new HybridSearcher.
 
@@ -203,8 +274,6 @@ def _clear_index_files_before_create(index_dir: Path) -> None:
     Args:
         index_dir: Directory containing index files to clear
     """
-    import shutil
-
     from mcp_server.storage_manager import get_storage_dir
 
     storage_root = get_storage_dir().resolve()
@@ -217,44 +286,8 @@ def _clear_index_files_before_create(index_dir: Path) -> None:
     logger.info(
         f"[PRE-CLEAR] Deleting index files before HybridSearcher creation: {index_dir}"
     )
-
-    # Delete metadata.db (SQLite database)
-    metadata_path = index_dir / "metadata.db"
-    if metadata_path.exists():
-        try:
-            metadata_path.unlink()
-            logger.info("[PRE-CLEAR] Deleted metadata.db")
-        except OSError as e:
-            logger.warning(f"[PRE-CLEAR] Could not delete metadata.db: {e}")
-
-    # Delete BM25 directory
-    bm25_dir = index_dir / "bm25"
-    if bm25_dir.exists():
-        try:
-            shutil.rmtree(bm25_dir)
-            logger.info("[PRE-CLEAR] Deleted BM25 directory")
-        except OSError as e:
-            logger.warning(f"[PRE-CLEAR] Could not delete BM25 directory: {e}")
-
-    # Delete FAISS index
-    faiss_path = index_dir / "code.index"
-    if faiss_path.exists():
-        try:
-            faiss_path.unlink()
-            logger.info("[PRE-CLEAR] Deleted FAISS index")
-        except OSError as e:
-            logger.warning(f"[PRE-CLEAR] Could not delete FAISS index: {e}")
-
-    # Delete call graph
-    call_graph_pattern = str(index_dir.parent / "*_call_graph.json")
-    import glob
-
-    for graph_file in glob.glob(call_graph_pattern):
-        try:
-            Path(graph_file).unlink()
-            logger.info(f"[PRE-CLEAR] Deleted call graph: {graph_file}")
-        except OSError as e:
-            logger.warning(f"[PRE-CLEAR] Could not delete call graph: {e}")
+    deleted = _purge_index_dir(index_dir, keep_chunk_cache=True)
+    logger.info(f"[PRE-CLEAR] Deleted: {deleted}")
 
 
 def _release_gpu_memory() -> None:
@@ -347,8 +380,6 @@ def _switch_active_model(model_name: str) -> None:
 @with_mutation_lock
 async def handle_clear_index(arguments: dict[str, Any]) -> dict:
     """Clear the entire search index for ALL models."""
-    import shutil
-
     from mcp_server.server import close_project_resources
     from merkle.snapshot_manager import SnapshotManager
 
@@ -393,20 +424,9 @@ async def handle_clear_index(arguments: dict[str, Any]) -> dict:
             _cleared: list[str] = []
 
             for _model_dir in _iter_project_model_dirs(project_path):
-                # Delete BM25 directory
-                _bm25 = _model_dir / "index" / "bm25"
-                if _bm25.exists():
-                    shutil.rmtree(_bm25)
-                    logger.info(f"Deleted BM25 directory: {_bm25}")
-
-                # Delete dense index files
                 _idx_dir = _model_dir / "index"
-                for _fname in ["code.index", "chunks_metadata.db", "stats.json"]:
-                    _fp = _idx_dir / _fname
-                    if _fp.exists():
-                        _fp.unlink()
-                        logger.info(f"Deleted: {_fp}")
-
+                _deleted = _purge_index_dir(_idx_dir, keep_chunk_cache=False)
+                logger.info(f"Deleted from {_idx_dir}: {_deleted}")
                 _cleared.append(_model_dir.name)
 
             _snaps = 0

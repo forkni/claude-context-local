@@ -726,8 +726,29 @@ class CodeIndexManager:
 
         gc.collect()
 
-        # Remove additional files - NOW safe because store is closed
-        for file_path in [self.metadata_path, self.stats_path]:
+        # Remove additional files - NOW safe because store is closed.
+        # metadata.db-wal/-shm are not a defensive nicety: SQLite routinely
+        # leaves a full-size WAL sidecar (13MB+ observed, larger than the DB
+        # itself) even outside a crash, and deleting metadata.db while it
+        # survives risks an unopenable DB on Windows. metadata_symbol_cache.json
+        # is legacy debris — its only writer was removed in dff893d7.
+        #
+        # chunk_embeddings.bin is deliberately NOT deleted here: this method is
+        # the mechanics behind every force-full reindex (IncrementalIndexer.
+        # incremental_index(force_full=True) -> HybridSearcher.clear_index() ->
+        # IndexSynchronizer.clear_index() -> CodeIndexManager.clear_index()),
+        # not just the explicit admin "clear index" action — deleting the cache
+        # here would cold-start the embedding phase on every force-full run,
+        # defeating the whole point of the cache. The explicit admin clear
+        # (handle_clear_index) drops the cache itself, independently, via its
+        # own file purge — it never calls this method.
+        for file_path in [
+            self.metadata_path,
+            Path(str(self.metadata_path) + "-wal"),
+            Path(str(self.metadata_path) + "-shm"),
+            self.stats_path,
+            self.storage_dir / "metadata_symbol_cache.json",
+        ]:
             if file_path.exists():
                 file_path.unlink()
 
