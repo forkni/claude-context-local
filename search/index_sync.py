@@ -28,6 +28,7 @@ class IndexSynchronizer:
         dense_index: CodeIndexManager,
         bm25_use_stopwords: bool = True,
         bm25_use_stemming: bool = True,
+        bm25_tokenizer: str = "legacy",
         project_id: str | None = None,
         config=None,
         embedder=None,
@@ -41,6 +42,7 @@ class IndexSynchronizer:
             dense_index: Dense vector index instance
             bm25_use_stopwords: BM25 stopwords configuration
             bm25_use_stemming: BM25 stemming configuration
+            bm25_tokenizer: BM25 tokenizer variant (legacy/whole/additive)
             project_id: Project identifier for index recreation
             config: SearchConfig instance for mmap storage and other settings
             embedder: Code embedder for dimension validation during index recreation
@@ -50,6 +52,7 @@ class IndexSynchronizer:
         self.dense_index = dense_index
         self.bm25_use_stopwords = bm25_use_stopwords
         self.bm25_use_stemming = bm25_use_stemming
+        self.bm25_tokenizer = bm25_tokenizer
         self.project_id = project_id
         self.config = config
         self.embedder = embedder
@@ -259,6 +262,7 @@ class IndexSynchronizer:
             str(self.storage_dir / "bm25"),
             use_stopwords=self.bm25_use_stopwords,
             use_stemming=self.bm25_use_stemming,
+            tokenizer=self.bm25_tokenizer,
         )
         self.bm25_index.index_documents(documents, doc_ids, metadata)
         self.bm25_index.save()
@@ -310,6 +314,7 @@ class IndexSynchronizer:
                 str(self.storage_dir / "bm25"),
                 use_stopwords=self.bm25_use_stopwords,
                 use_stemming=self.bm25_use_stemming,
+                tokenizer=self.bm25_tokenizer,
             )
 
             # Clear dense index - MUST close metadata before recreating

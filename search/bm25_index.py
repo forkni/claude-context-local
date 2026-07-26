@@ -49,20 +49,49 @@ class TextPreprocessor:
     - Stopword filtering
     - Snowball stemming (Porter2 algorithm)
     - Code-specific preprocessing (camelCase/snake_case splitting)
+
+    Tokenizer variants (arXiv 2605.18561 — BM25 code tokenization):
+    - "legacy": destructive camelCase/snake_case splitting via preprocess_code,
+      then word tokenization + optional stemming (parts-only; the whole
+      identifier is never a token).
+    - "whole": identifiers kept whole (lowercased, underscores preserved);
+      no destructive split, no stemming (T1 in the paper).
+    - "additive": whole identifiers PLUS their camel/snake sub-tokens, so
+      both `get_user_name` and `get`/`user`/`name` are index terms (T2).
     """
+
+    TOKENIZER_VARIANTS = ("legacy", "whole", "additive")
+
+    # Identifier-preserving token extraction: identifiers (incl. underscores)
+    # or bare number runs. Used by the "whole"/"additive" variants.
+    _IDENTIFIER_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|\d+")
 
     # Bounded LRU cap for the stemmer memo (see _stem_token). This project's
     # corpus has ~18k distinct tokens today; the cap leaves headroom for
     # corpus growth while still bounding worst-case memory.
     _STEM_CACHE_MAX_SIZE = 50_000
 
-    def __init__(self, use_stopwords: bool = True, use_stemming: bool = True) -> None:
+    def __init__(
+        self,
+        use_stopwords: bool = True,
+        use_stemming: bool = True,
+        tokenizer: str = "legacy",
+    ) -> None:
         """Initialize text preprocessor.
 
         Args:
             use_stopwords: Whether to filter English stopwords
             use_stemming: Whether to apply Snowball stemming for word normalization
+                (only honored by the "legacy" tokenizer; "whole"/"additive"
+                never stem — stemming corrupts code identifiers)
+            tokenizer: Tokenizer variant — one of TOKENIZER_VARIANTS
         """
+        if tokenizer not in self.TOKENIZER_VARIANTS:
+            raise ValueError(
+                f"Unknown tokenizer {tokenizer!r}, expected one of "
+                f"{self.TOKENIZER_VARIANTS}"
+            )
+        self.tokenizer = tokenizer
         self.use_stopwords = use_stopwords
         self.use_stemming = use_stemming
         self._stop_words = set()
@@ -201,22 +230,66 @@ class TextPreprocessor:
 
         return code
 
+    def _tokenize_identifiers(self, text: str, *, additive: bool) -> list[str]:
+        """Identifier-preserving tokenization ("whole"/"additive" variants).
+
+        Extracts identifiers and numbers, lowercases them but keeps them
+        intact (`getUserName` → `getusername`, `get_user_name` unchanged).
+        In additive mode, multi-part identifiers additionally emit their
+        camel/snake sub-tokens via normalize_to_tokens — whole AND parts,
+        never parts-only. No stemming in either mode.
+        """
+        from search.tokenization import normalize_to_tokens
+
+        tokens: list[str] = []
+        for raw in self._IDENTIFIER_RE.findall(text):
+            tokens.append(raw.lower())
+            if additive:
+                parts = normalize_to_tokens(raw, split_acronyms=True)
+                if len(parts) > 1:
+                    tokens.extend(parts)
+        if self.use_stopwords:
+            tokens = [t for t in tokens if t not in self._stop_words]
+        return tokens
+
+    def process(self, text: str) -> list[str]:
+        """Preprocess and tokenize `text` per the configured tokenizer variant.
+
+        Single entry point used for both index-time documents and query
+        strings, guaranteeing index/query tokenization always match.
+        """
+        if not text or not isinstance(text, str):
+            return []
+        if self.tokenizer == "whole":
+            return self._tokenize_identifiers(text, additive=False)
+        if self.tokenizer == "additive":
+            return self._tokenize_identifiers(text, additive=True)
+        return self.tokenize(self.preprocess_code(text))
+
 
 class BM25Index:
     """BM25 sparse index manager (CPU-only)."""
 
     # Index version for compatibility tracking
-    INDEX_VERSION = 2  # Version 2: Added stemming support
+    # Version 2: Added stemming support
+    # Version 3: Tokenizer variants (bm25_tokenizer knob, default "whole")
+    INDEX_VERSION = 3
 
     def __init__(
-        self, storage_dir: str, use_stopwords: bool = True, use_stemming: bool = True
+        self,
+        storage_dir: str,
+        use_stopwords: bool = True,
+        use_stemming: bool = True,
+        tokenizer: str = "legacy",
     ):
         """Initialize BM25 index.
 
         Args:
             storage_dir: Directory to store index files
             use_stopwords: Whether to filter stopwords
-            use_stemming: Whether to apply Snowball stemming (default: True)
+            use_stemming: Whether to apply Snowball stemming (default: True;
+                ignored by the "whole"/"additive" tokenizer variants)
+            tokenizer: Tokenizer variant (see TextPreprocessor.TOKENIZER_VARIANTS)
         """
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
@@ -229,9 +302,10 @@ class BM25Index:
         # Store configuration for version tracking
         self.use_stopwords = use_stopwords
         self.use_stemming = use_stemming
+        self.tokenizer = tokenizer
 
         # Components
-        self.preprocessor = TextPreprocessor(use_stopwords, use_stemming)
+        self.preprocessor = TextPreprocessor(use_stopwords, use_stemming, tokenizer)
         self._bm25 = None
         self._documents = []  # Original documents
         self._doc_ids = []  # Document IDs
@@ -303,9 +377,8 @@ class BM25Index:
             self._logger.debug(f"[BM25_INDEX] Tokenizing {len(documents)} documents")
             new_tokenized = []
             for i, doc in enumerate(documents):
-                # Special preprocessing for code content
-                preprocessed = self.preprocessor.preprocess_code(doc)
-                tokens = self.preprocessor.tokenize(preprocessed)
+                # Variant-aware preprocessing + tokenization for code content
+                tokens = self.preprocessor.process(doc)
                 new_tokenized.append(tokens)
 
                 if i % 100 == 0 and i > 0:
@@ -363,9 +436,8 @@ class BM25Index:
             self._logger.warning("BM25 index is empty")
             return []
 
-        # Preprocess and tokenize query
-        preprocessed_query = self.preprocessor.preprocess_code(query)
-        query_tokens = self.preprocessor.tokenize(preprocessed_query)
+        # Preprocess and tokenize query (must match index-time tokenization)
+        query_tokens = self.preprocessor.process(query)
 
         if not query_tokens:
             self._logger.warning("Query tokenized to empty list")
@@ -582,6 +654,7 @@ class BM25Index:
                 "size": self.size,
                 "use_stopwords": self.use_stopwords,
                 "use_stemming": self.use_stemming,
+                "tokenizer": self.tokenizer,
                 "doc_metadata": self._metadata,
             }
             with open(self.metadata_path, "w", encoding="utf-8") as f:
@@ -635,8 +708,26 @@ class BM25Index:
                     "use_stemming", False
                 )  # Old indices don't have stemming
                 saved_stopwords = metadata.get("use_stopwords", True)
+                saved_tokenizer = metadata.get(
+                    "tokenizer", "legacy"
+                )  # Pre-tokenizer-knob indices are all legacy
 
                 # Detect configuration mismatch
+                if index_version != self.INDEX_VERSION:
+                    self._logger.warning(
+                        f"⚠️  BM25 index version mismatch: on-disk v{index_version}, "
+                        f"current v{self.INDEX_VERSION}.\n"
+                        f"   Re-index the project to rebuild with the current format."
+                    )
+
+                if saved_tokenizer != self.tokenizer:
+                    self._logger.warning(
+                        f"⚠️  BM25 tokenizer mismatch detected!\n"
+                        f"   Index built with tokenizer={saved_tokenizer!r}, current config={self.tokenizer!r}\n"
+                        f"   Query and index tokenization will diverge — search quality WILL be degraded.\n"
+                        f"   Re-index the project to rebuild with the configured tokenizer."
+                    )
+
                 if saved_stemming != self.use_stemming:
                     self._logger.warning(
                         f"⚠️  BM25 index configuration mismatch detected!\n"
@@ -672,6 +763,7 @@ class BM25Index:
             "total_documents": self.size,
             "has_index": self._bm25 is not None,
             "use_stopwords": self.preprocessor.use_stopwords,
+            "tokenizer": self.preprocessor.tokenizer,
             "avg_doc_length": (
                 sum(len(tokens) for tokens in self._tokenized_docs)
                 / len(self._tokenized_docs)

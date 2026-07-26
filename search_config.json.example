@@ -20,6 +20,7 @@
     "bm25_k_parameter": 100,
     "bm25_use_stopwords": true,
     "bm25_use_stemming": true,
+    "bm25_tokenizer": "whole",
     "min_bm25_score": 0.1,
     "rrf_k_parameter": 100,
     "enable_result_reranking": true,

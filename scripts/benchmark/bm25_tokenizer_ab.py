@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
-"""BM25 tokenizer A/B recall harness (Round 6).
+"""BM25 tokenizer A/B recall harness (Round 6 → Track A, arXiv 2605.18561).
 
-Isolates the effect of BM25 tokenization on retrieval recall — the one
-variable Round 5a could not evaluate because no working recall harness
-existed at the time. Round 5a shipped ``str.split`` tokenization purely on
-indexing-time speed (0.54s vs 1.80s/0.69s for the NLTK-backed variants).
-This script re-decides that choice on recall.
+Round 6 compared word-tokenizer callables (split/nltk/wordpunct) under the
+legacy destructive camel/snake preprocessing; split won and remains the
+production default. Track A re-frames the question per arXiv 2605.18561
+("Improving BM25 Code Retrieval Under Fixed Generic Tokenization"): the
+destructive parts-only preprocessing itself is the paper's worst-case
+configuration, and identifier-preserving variants should beat it.
 
-Three variants are compared:
-  - split      str.split (today's shipped default)
-  - nltk       nltk.tokenize.word_tokenize(text, preserve_line=True)
-  - wordpunct  nltk.tokenize.wordpunct_tokenize
+Variants compared (all via TextPreprocessor.process, the exact production
+path used by BM25Index.index_documents/search):
+  - split         legacy: destructive camel/snake split + stemming (shipped default)
+  - split_nostem  legacy preprocessing with stemming disabled (isolates stemming)
+  - whole         T1: identifiers kept whole (lowercased), no stemming
+  - additive      T2: whole identifiers + camel/snake sub-tokens, no stemming
 
 Design notes:
-  - No production code is touched. Each variant is a ``TextPreprocessor``
-    built the normal way (so stopword/stemmer setup is identical and
-    production-accurate), with only its ``_tokenize_words`` callable swapped
-    afterwards — mirroring what a tokenizer-choice config knob would select
-    internally, without editing ``_resolve_tokenizer()``.
+  - No production code is monkey-patched for whole/additive — they are the
+    real ``tokenizer=`` variants shipped in TextPreprocessor, selected the
+    same way the ``bm25_tokenizer`` config knob selects them.
   - The whole corpus is re-tokenized **in memory** from the on-disk
     ``bm25_docs.json`` (raw ``documents`` + ``doc_ids``), which is exactly
     what ``BM25Index.index_documents`` does at index time. No reindex, no
@@ -29,14 +30,18 @@ Design notes:
   - Scoring reuses ``evaluation.metrics`` untouched (calculate_metrics_from_results,
     aggregate_metrics, normalize_chunk_ids) — the same functions the other
     benchmark harnesses use, so results are comparable across runs.
+  - These are BM25-STANDALONE metrics — per evaluation/POOL_MISS_DIAGNOSIS.md
+    this is the primary Track A gate (BM25-unique candidates cannot enter the
+    fused pool under current fusion parameters, so fused pool_hit is
+    insensitive to this leg by construction).
 
 Usage:
     ./scripts/benchmark/bm25_tokenizer_ab.sh --project-path D:/claude-context-local
-    ./scripts/benchmark/bm25_tokenizer_ab.sh --project-path D:/claude-context-local --emit-raw-results
+    ./scripts/benchmark/bm25_tokenizer_ab.sh --project-path D:/claude-context-local \
+        --golden-dataset evaluation/golden_dataset_expanded.json
 """
 
 import argparse
-import functools
 import json
 import sys
 import time
@@ -63,38 +68,32 @@ except ImportError as e:
         "Install with: pip install rank_bm25"
     ) from e
 
-try:
-    from nltk.tokenize import word_tokenize, wordpunct_tokenize
-except ImportError:
-    word_tokenize = None
-    wordpunct_tokenize = None
-
-
-VARIANTS = ("split", "nltk", "wordpunct")
+VARIANTS = ("split", "split_nostem", "whole", "additive")
 
 
 def _make_preprocessor(variant: str) -> TextPreprocessor:
-    """Build a TextPreprocessor bound to `variant`'s tokenizer.
+    """Build a TextPreprocessor bound to `variant`.
 
-    Stopwords and stemming are held fixed (use_stopwords=True, use_stemming=True
-    — today's production defaults) across all three variants so the tokenizer
-    is the sole variable under test. TextPreprocessor.tokenize has exactly two
-    production callers (BM25Index.index_documents, BM25Index.search), both of
-    which reuse one preprocessor instance for index- and query-time
-    tokenization alike — this mirrors that.
+    Stopwords are held fixed (use_stopwords=True — production default) across
+    all variants. The two legacy variants pin ``_tokenize_words`` to str.split
+    (the shipped Round-6 winner) so the destructive-preprocessing pipeline is
+    byte-identical to production; whole/additive are the real ``tokenizer=``
+    config variants and never touch that callable.
     """
-    prep = TextPreprocessor(use_stopwords=True, use_stemming=True)
     if variant == "split":
+        prep = TextPreprocessor(use_stopwords=True, use_stemming=True)
         prep._tokenize_words = str.split
-    elif variant == "nltk":
-        if word_tokenize is None:
-            raise RuntimeError("nltk.tokenize.word_tokenize unavailable")
-        prep._tokenize_words = functools.partial(word_tokenize, preserve_line=True)
-    elif variant == "wordpunct":
-        if wordpunct_tokenize is None:
-            raise RuntimeError("nltk.tokenize.wordpunct_tokenize unavailable")
-        # pyrefly: ignore [bad-assignment]  -- deliberate monkey-patch for this A/B harness only
-        prep._tokenize_words = wordpunct_tokenize
+    elif variant == "split_nostem":
+        prep = TextPreprocessor(use_stopwords=True, use_stemming=False)
+        prep._tokenize_words = str.split
+    elif variant == "whole":
+        prep = TextPreprocessor(
+            use_stopwords=True, use_stemming=False, tokenizer="whole"
+        )
+    elif variant == "additive":
+        prep = TextPreprocessor(
+            use_stopwords=True, use_stemming=False, tokenizer="additive"
+        )
     else:
         raise ValueError(f"Unknown variant: {variant!r}, expected one of {VARIANTS}")
     return prep
@@ -120,7 +119,7 @@ def _tokenize_corpus(
 ) -> tuple[list[list[str]], float]:
     """Re-tokenize every document, mirroring BM25Index.index_documents exactly."""
     start = time.perf_counter()
-    tokenized = [prep.tokenize(prep.preprocess_code(doc)) for doc in documents]
+    tokenized = [prep.process(doc) for doc in documents]
     elapsed = time.perf_counter() - start
     return tokenized, elapsed
 
@@ -129,7 +128,7 @@ def _search(
     bm25: "BM25Okapi", prep: TextPreprocessor, doc_ids: list[str], query: str, k: int
 ) -> list[tuple[float, str]]:
     """Score `query` against `bm25`, mirroring BM25Index.search exactly."""
-    query_tokens = prep.tokenize(prep.preprocess_code(query))
+    query_tokens = prep.process(query)
     if not query_tokens:
         return []
     scores = bm25.get_scores(query_tokens)
@@ -331,7 +330,7 @@ def main() -> None:
         for q in results["split"]["per_query"]
         if next(qq for qq in queries if qq["id"] == q["query_id"])["category"] != "D"
     ]
-    for variant in ("nltk", "wordpunct"):
+    for variant in VARIANTS[1:]:
         variant_subset = [
             q
             for q in results[variant]["per_query"]
@@ -343,7 +342,7 @@ def main() -> None:
     # --- Decision rule (Phase 3) ----------------------------------------------
     print(f"\n{'=' * 88}\nDECISION (excluding-D, Recall@5 / MRR vs split)\n{'=' * 88}")
     split_agg = excl_d_aggs["split"]
-    for variant in ("nltk", "wordpunct"):
+    for variant in VARIANTS[1:]:
         agg = excl_d_aggs[variant]
         d_r5 = agg["recall@5"] - split_agg["recall@5"]
         d_mrr = agg["mrr"] - split_agg["mrr"]
@@ -388,7 +387,7 @@ def main() -> None:
     if args.emit_raw_results:
         # Prefer the ADOPT variant if any; otherwise refresh with the split baseline.
         chosen = "split"
-        for variant in ("nltk", "wordpunct"):
+        for variant in VARIANTS[1:]:
             agg = excl_d_aggs[variant]
             if (
                 agg["recall@5"] - split_agg["recall@5"] > 0.01

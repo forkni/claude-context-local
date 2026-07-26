@@ -65,6 +65,7 @@ class HybridSearcher(BaseSearcher):
         max_workers: int = 2,
         bm25_use_stopwords: bool = True,
         bm25_use_stemming: bool = True,
+        bm25_tokenizer: str = "legacy",
         project_id: str | None = None,
         config: Optional["SearchConfig"] = None,
     ):
@@ -80,6 +81,7 @@ class HybridSearcher(BaseSearcher):
             max_workers: Maximum thread pool workers for parallel execution
             bm25_use_stopwords: Whether BM25 should filter stopwords
             bm25_use_stemming: Whether BM25 should use Snowball stemming
+            bm25_tokenizer: BM25 tokenizer variant (legacy/whole/additive)
             project_id: Project identifier for graph storage
             config: SearchConfig instance for mmap storage and other settings
         """
@@ -105,6 +107,7 @@ class HybridSearcher(BaseSearcher):
         # BM25 configuration
         self.bm25_use_stopwords = bm25_use_stopwords
         self.bm25_use_stemming = bm25_use_stemming
+        self.bm25_tokenizer = bm25_tokenizer
 
         # Override logger with module-specific logger (set by BaseSearcher)
         self._logger = logging.getLogger(__name__)
@@ -112,13 +115,15 @@ class HybridSearcher(BaseSearcher):
         # BM25 index gets its own subdirectory
         self._logger.info(
             f"[INIT] Creating BM25Index at: {self.storage_dir / 'bm25'} "
-            f"(stopwords={bm25_use_stopwords}, stemming={bm25_use_stemming})"
+            f"(stopwords={bm25_use_stopwords}, stemming={bm25_use_stemming}, "
+            f"tokenizer={bm25_tokenizer})"
         )
         try:
             self.bm25_index = BM25Index(
                 str(self.storage_dir / "bm25"),
                 use_stopwords=bm25_use_stopwords,
                 use_stemming=bm25_use_stemming,
+                tokenizer=bm25_tokenizer,
             )
             self._logger.info("[INIT] BM25Index created successfully")
         except Exception as e:
@@ -166,6 +171,7 @@ class HybridSearcher(BaseSearcher):
             max_workers=max_workers,
             bm25_use_stopwords=bm25_use_stopwords,
             bm25_use_stemming=bm25_use_stemming,
+            bm25_tokenizer=bm25_tokenizer,
             project_id=project_id,
         )
 
@@ -193,6 +199,7 @@ class HybridSearcher(BaseSearcher):
         max_workers: int,
         bm25_use_stopwords: bool,
         bm25_use_stemming: bool,
+        bm25_tokenizer: str,
         project_id: str | None,
     ) -> None:
         """Initialize search execution components.
@@ -208,6 +215,7 @@ class HybridSearcher(BaseSearcher):
             max_workers: Maximum thread pool workers
             bm25_use_stopwords: Whether BM25 uses stopwords
             bm25_use_stemming: Whether BM25 uses stemming
+            bm25_tokenizer: BM25 tokenizer variant (legacy/whole/additive)
             project_id: Project identifier
         """
         # Reranker and GPU monitor
@@ -226,6 +234,7 @@ class HybridSearcher(BaseSearcher):
             dense_index=self.dense_index,
             bm25_use_stopwords=bm25_use_stopwords,
             bm25_use_stemming=bm25_use_stemming,
+            bm25_tokenizer=bm25_tokenizer,
             project_id=project_id,
             config=self.config,
             embedder=embedder,

@@ -161,6 +161,9 @@ def get_searcher(
                         dense_weight=config.search_mode.dense_weight,
                         rrf_k=config.search_mode.rrf_k_parameter,
                         max_workers=2,
+                        bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
+                        bm25_use_stemming=config.search_mode.bm25_use_stemming,
+                        bm25_tokenizer=config.search_mode.bm25_tokenizer,
                         project_id=project_id,
                         config=config,
                     )

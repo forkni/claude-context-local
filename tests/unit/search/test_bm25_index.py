@@ -118,6 +118,95 @@ class TestTextPreprocessor:
                 f"Expected {expected_unique_stems} unique stem(s) for {word_list}, got {unique_stems}"
             )
 
+    def test_invalid_tokenizer_rejected(self):
+        """Unknown tokenizer names must fail fast at construction."""
+        with pytest.raises(ValueError, match="Unknown tokenizer"):
+            TextPreprocessor(tokenizer="bogus")
+
+    def test_process_legacy_matches_manual_pipeline(self):
+        """process() on the legacy variant must equal preprocess_code+tokenize."""
+        preprocessor = TextPreprocessor(use_stopwords=True, use_stemming=True)
+
+        code = "def getUserName(user_id): return user.name  # fetches the name"
+        manual = preprocessor.tokenize(preprocessor.preprocess_code(code))
+        assert preprocessor.process(code) == manual
+
+    def test_whole_preserves_identifiers(self):
+        """ "whole" keeps camelCase and snake_case identifiers intact."""
+        preprocessor = TextPreprocessor(
+            use_stopwords=False, use_stemming=False, tokenizer="whole"
+        )
+
+        tokens = preprocessor.process("def getUserName(user_id): pass")
+
+        assert "getusername" in tokens
+        assert "user_id" in tokens
+        # Destructive parts must NOT appear on their own
+        assert "user" not in tokens
+        assert "name" not in tokens
+
+    def test_whole_never_stems(self):
+        """ "whole" ignores use_stemming — identifiers are never stemmed."""
+        preprocessor = TextPreprocessor(
+            use_stopwords=False, use_stemming=True, tokenizer="whole"
+        )
+
+        tokens = preprocessor.process("indexing documents")
+
+        assert "indexing" in tokens
+        assert "documents" in tokens
+
+    def test_additive_emits_whole_and_parts(self):
+        """ "additive" emits the whole identifier AND its sub-tokens."""
+        preprocessor = TextPreprocessor(
+            use_stopwords=False, use_stemming=False, tokenizer="additive"
+        )
+
+        tokens = preprocessor.process("def getUserName(user_id): pass")
+
+        # Whole identifiers preserved
+        assert "getusername" in tokens
+        assert "user_id" in tokens
+        # Sub-tokens additionally emitted
+        assert "get" in tokens
+        assert "user" in tokens
+        assert "name" in tokens
+        assert "id" in tokens
+
+    def test_additive_acronym_splitting(self):
+        """ "additive" splits uppercase acronym runs (HTMLParser → html, parser)."""
+        preprocessor = TextPreprocessor(
+            use_stopwords=False, use_stemming=False, tokenizer="additive"
+        )
+
+        tokens = preprocessor.process("class HTMLParser: pass")
+
+        assert "htmlparser" in tokens
+        assert "html" in tokens
+        assert "parser" in tokens
+
+    def test_code_variant_stopword_filtering(self):
+        """Stopwords are filtered from whole tokens and sub-tokens alike."""
+        preprocessor = TextPreprocessor(
+            use_stopwords=True, use_stemming=False, tokenizer="additive"
+        )
+
+        tokens = preprocessor.process("this is the get_or_else helper")
+
+        assert "this" not in tokens
+        assert "is" not in tokens
+        assert "the" not in tokens
+        assert "or" not in tokens  # sub-token of get_or_else is a stopword
+        assert "get_or_else" in tokens
+        assert "helper" in tokens
+
+    def test_code_variant_empty_input(self):
+        """Code variants handle empty/None input like the legacy path."""
+        preprocessor = TextPreprocessor(tokenizer="whole")
+
+        assert preprocessor.process("") == []
+        assert preprocessor.process(None) == []
+
     def test_code_stemming(self):
         """Test stemming on code-specific terms."""
         preprocessor = TextPreprocessor(use_stopwords=False, use_stemming=True)
@@ -582,6 +671,9 @@ class TestBM25Index:
         assert metadata["index_version"] == BM25Index.INDEX_VERSION
         assert "use_stemming" in metadata, "Metadata should contain use_stemming flag"
         assert "use_stopwords" in metadata, "Metadata should contain use_stopwords flag"
+        assert metadata.get("tokenizer") == "legacy", (
+            "Metadata should record the tokenizer variant"
+        )
 
     def test_config_mismatch_detection(self):
         """Test detection of stemming configuration mismatches."""
@@ -607,6 +699,43 @@ class TestBM25Index:
             assert "mismatch" in warning_msg.lower(), (
                 "Warning should mention configuration mismatch"
             )
+
+    def test_tokenizer_mismatch_detection(self):
+        """Loading an index built with a different tokenizer variant warns."""
+        self.index = BM25Index(self.temp_dir, tokenizer="legacy")
+        self.index.index_documents(self.documents, self.doc_ids)
+        self.index.save()
+
+        new_index = BM25Index(self.temp_dir, tokenizer="whole")
+
+        with patch("logging.Logger.warning") as mock_warning:
+            success = new_index.load()
+
+            assert success, "Index should load despite tokenizer mismatch"
+            assert mock_warning.called, "Should warn about tokenizer mismatch"
+            all_warnings = " ".join(str(c) for c in mock_warning.call_args_list)
+            assert "tokenizer mismatch" in all_warnings.lower(), (
+                "Warning should mention tokenizer mismatch"
+            )
+
+    def test_whole_tokenizer_end_to_end_search(self):
+        """A "whole"-tokenizer index matches exact identifiers."""
+        whole_index = BM25Index(
+            self.temp_dir, use_stopwords=False, use_stemming=False, tokenizer="whole"
+        )
+        # Three docs so a df=1 term has positive IDF (with N=2, df=1 the
+        # BM25 IDF is ln((2-1+0.5)/(1+0.5)) = 0 and every score ties at 0).
+        docs = [
+            "def get_user_name(user_id): return name",
+            "class PaymentProcessor: pass",
+            "def send_email(recipient): pass",
+        ]
+        ids = ["doc1", "doc2", "doc3"]
+        whole_index.index_documents(docs, ids)
+
+        results = whole_index.search("get_user_name", k=2)
+        assert results, "Whole-identifier query should match"
+        assert results[0][0] == "doc1"
 
     def teardown_method(self):
         """Clean up test fixtures."""

@@ -146,6 +146,16 @@ class SearchModeConfig:
     bm25_k_parameter: int = 100
     bm25_use_stopwords: bool = True
     bm25_use_stemming: bool = True  # Snowball stemmer for word normalization
+    # Tokenizer variant (arXiv 2605.18561): "legacy" = destructive camel/snake
+    # split + stemming; "whole" = identifiers kept intact, no stemming;
+    # "additive" = whole identifiers + camel/snake sub-tokens. Changing this
+    # requires a re-index (index/query tokenization must match).
+    # Default "whole": +0.05/+0.07 Recall@5, +0.09/+0.10 MRR vs legacy on the
+    # 96q/63q golden sets (BM25-standalone, bm25_tokenizer_ab.py 2026-07-26).
+    bm25_tokenizer: str = field(
+        default="whole",
+        metadata={"choices": ("legacy", "whole", "additive")},
+    )
     min_bm25_score: float = 0.1
 
     # Reranking Configuration
@@ -688,6 +698,7 @@ class SearchConfig:
         "bm25_k_parameter": ("search_mode", "bm25_k_parameter"),
         "bm25_use_stopwords": ("search_mode", "bm25_use_stopwords"),
         "bm25_use_stemming": ("search_mode", "bm25_use_stemming"),
+        "bm25_tokenizer": ("search_mode", "bm25_tokenizer"),
         "min_bm25_score": ("search_mode", "min_bm25_score"),
         "rrf_k_parameter": ("search_mode", "rrf_k_parameter"),
         "enable_result_reranking": ("search_mode", "enable_result_reranking"),
