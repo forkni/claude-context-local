@@ -148,3 +148,13 @@ at k=30, `min_score` 0.0 vs 0.1) corrects two statements above:
 The Track I verdict is unchanged (default stays 0), and Track D remains the plausible
 fix for all three misses: Q103/Q122 golds need to *enter* the BM25 top-30; Q102's
 needs to *climb* from rank 19.
+
+## Outcome (2026-07-26, Track D shipped): Q102 rescued, Q103/Q122 confirmed dense-leg-only
+
+Path/symbol token augmentation (INDEX_VERSION 4, see
+`BM25_PATH_AUG_TRACK_D_20260726.md`) resolved the fusion-cut miss: Q102's gold now
+enters the rerank pool in both replicate runs (expanded pool_hit 0.9688 → 0.9792,
+misses {Q102, Q103, Q122} → {Q103, Q122}). Q103/Q122 golds barely move at BM25
+full-corpus ranks ~1,650/~1,500 — their queries share no lexical material with path
+or symbol tokens, so they are rescuable only via the dense leg or query-side
+expansion, not any BM25-side knob.
