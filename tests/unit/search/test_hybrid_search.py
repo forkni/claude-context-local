@@ -1048,3 +1048,101 @@ class TestSearchTailDedup:
             "src/big.py:41-80:split_block:Cls.long_method",
             "src/other.py:5-15:function:helper",
         ]
+
+
+class TestSinglePassTailRerank:
+    """Q3: single_pass runs exactly one listwise rerank at the search() tail."""
+
+    def _make_searcher_and_config(self, mock_bm25, mock_dense, single_pass: bool):
+        from search.config import (
+            MultiHopConfig,
+            RerankerConfig,
+            SearchConfig,
+        )
+
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(tempfile.mkdtemp())
+
+        # Indices ready for hybrid mode
+        mock_bm25.return_value.is_empty = False
+        dense_index = Mock()
+        dense_index.ntotal = 100
+        mock_dense.return_value.index = dense_index
+
+        # Single-hop only, ego/parent expansion off: on the default path the
+        # tail rerank never fires here; under single_pass it must fire anyway.
+        config = SearchConfig(
+            multi_hop=MultiHopConfig(enabled=False),
+            reranker=RerankerConfig(single_pass=single_pass),
+        )
+        config.ego_graph.enabled = False
+        config.parent_retrieval.enabled = False
+        return searcher, config
+
+    def _results(self):
+        from search.reranker import SearchResult
+
+        return [
+            SearchResult(
+                chunk_id="src/a.py:1-10:function:alpha", score=0.9, metadata={}
+            ),
+            SearchResult(
+                chunk_id="src/b.py:1-10:function:beta", score=0.8, metadata={}
+            ),
+            SearchResult(
+                chunk_id="src/c.py:1-10:function:gamma", score=0.7, metadata={}
+            ),
+        ]
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_single_pass_reranks_once_with_k(self, mock_bm25, mock_dense):
+        """The tail pass fires exactly once with k=k even though ego expansion
+        never grew results past k (the default path's trigger condition)."""
+        searcher, config = self._make_searcher_and_config(
+            mock_bm25, mock_dense, single_pass=True
+        )
+        engine = Mock()
+        engine.rerank_by_query.side_effect = lambda **kw: kw["results"][: kw["k"]]
+        searcher.reranking_engine = engine
+        with (
+            patch(
+                "search.hybrid_searcher._get_config_via_service_locator",
+                return_value=config,
+            ),
+            patch.object(searcher, "_single_hop_search", return_value=self._results()),
+        ):
+            results = searcher.search("query", k=2)
+
+        engine.rerank_by_query.assert_called_once()
+        assert engine.rerank_by_query.call_args.kwargs["k"] == 2
+        assert [r.chunk_id for r in results] == [
+            "src/a.py:1-10:function:alpha",
+            "src/b.py:1-10:function:beta",
+        ]
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_default_path_unchanged_when_single_pass_off(self, mock_bm25, mock_dense):
+        """single_pass=False preserves pre-Q3 behaviour: no tail rerank when
+        ego expansion is disabled."""
+        searcher, config = self._make_searcher_and_config(
+            mock_bm25, mock_dense, single_pass=False
+        )
+        engine = Mock()
+        searcher.reranking_engine = engine
+        with (
+            patch(
+                "search.hybrid_searcher._get_config_via_service_locator",
+                return_value=config,
+            ),
+            patch.object(searcher, "_single_hop_search", return_value=self._results()),
+        ):
+            results = searcher.search("query", k=2)
+
+        engine.rerank_by_query.assert_not_called()
+        assert [r.chunk_id for r in results] == [
+            "src/a.py:1-10:function:alpha",
+            "src/b.py:1-10:function:beta",
+            "src/c.py:1-10:function:gamma",
+        ]

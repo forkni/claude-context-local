@@ -450,3 +450,14 @@ def test_reranker_dedupe_split_blocks_default_and_flat_alias():
 
     restored = SearchConfig.from_dict(config.to_dict())
     assert restored.reranker.dedupe_split_blocks is False
+
+
+def test_reranker_single_pass_default_and_flat_alias():
+    """Q3 toggle: defaults to False; flat key maps into the nested schema."""
+    assert RerankerConfig().single_pass is False
+
+    config = SearchConfig.from_dict({"reranker_single_pass": True})
+    assert config.reranker.single_pass is True
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.reranker.single_pass is True

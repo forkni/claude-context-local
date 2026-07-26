@@ -68,6 +68,22 @@ def test_hybrid_mode_calls_both_and_reranks(executor):
     assert results == [mock_result]
 
 
+def test_hybrid_single_pass_skips_hop1_neural_rerank(executor):
+    """Q3 single_pass: hop-1 keeps RRF order; neural rerank deferred to the
+    one listwise pass at the tail of HybridSearcher.search()."""
+    mock_result = Mock()
+    executor.reranker.rerank_simple.return_value = [mock_result]
+
+    cfg = Mock()
+    cfg.reranker.top_k_candidates = 30
+    cfg.reranker.single_pass = True
+    with patch("search.search_executor.get_search_config", return_value=cfg):
+        results = executor.execute_single_hop("test query", k=5, search_mode="hybrid")
+
+    executor.reranking_engine.apply_neural_reranking.assert_not_called()
+    assert results == [mock_result]
+
+
 def test_hybrid_skips_neural_reranking_when_rrf_returns_empty(executor):
     """Neural reranking is skipped when RRF produces no results."""
     executor.reranker.rerank_simple.return_value = []

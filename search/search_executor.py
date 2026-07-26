@@ -175,8 +175,10 @@ class SearchExecutor:
                 f"[RERANK] Produced {len(final_results)} results in {rerank_time:.3f}s"
             )
 
-            # Neural reranking (Quality First mode) - delegate to reranking_engine
-            if len(final_results) > 0:
+            # Neural reranking (Quality First mode) - delegate to reranking_engine.
+            # Skipped under reranker.single_pass: the one listwise pass runs at
+            # the tail of HybridSearcher.search(); hop-1 seeds keep RRF order.
+            if len(final_results) > 0 and not get_search_config().reranker.single_pass:
                 final_results = self.reranking_engine.apply_neural_reranking(
                     query, final_results, k, context="search"
                 )

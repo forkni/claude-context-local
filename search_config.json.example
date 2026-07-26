@@ -67,7 +67,8 @@
     "model_name": "Alibaba-NLP/gte-reranker-modernbert-base",
     "top_k_candidates": 30,
     "min_vram_gb": 2.0,
-    "batch_size": 16
+    "batch_size": 16,
+    "single_pass": false
   },
   "output": {
     "format": "ultra",

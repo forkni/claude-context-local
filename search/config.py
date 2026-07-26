@@ -235,7 +235,7 @@ class IntentConfig:
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (6 fields)."""
+    """Neural reranker settings (7 fields)."""
 
     enabled: bool = True  # Enabled by default (Quality First)
     model_name: str = (
@@ -249,6 +249,10 @@ class RerankerConfig:
     dedupe_split_blocks: bool = (
         True  # Collapse split_block fragments to one result before final truncation
     )
+    single_pass: bool = False  # Q3: skip hop-1 and multi-hop-merge neural rerank
+    # passes; run ONE listwise pass over the final merged pool (hop-1 + multi-hop
+    # + ego expansion) at the tail of HybridSearcher.search(). Trade-off: multi-hop
+    # expansion seeds degrade from neural-reranked to RRF-fusion order.
 
 
 @dataclass
@@ -722,6 +726,7 @@ class SearchConfig:
         "reranker_min_vram_gb": ("reranker", "min_vram_gb"),
         "reranker_batch_size": ("reranker", "batch_size"),
         "reranker_dedupe_split_blocks": ("reranker", "dedupe_split_blocks"),
+        "reranker_single_pass": ("reranker", "single_pass"),
         # OutputConfig
         "output_format": ("output", "format"),
         "source_order_output": ("output", "source_order_output"),
@@ -1002,6 +1007,10 @@ class SearchConfigManager:
             "CLAUDE_RERANKER_BATCH_SIZE": ("reranker_batch_size", int),
             "CLAUDE_RERANKER_DEDUPE_SPLIT_BLOCKS": (
                 "reranker_dedupe_split_blocks",
+                self._bool_from_env,
+            ),
+            "CLAUDE_RERANKER_SINGLE_PASS": (
+                "reranker_single_pass",
                 self._bool_from_env,
             ),
             # Observability (OTel tracing) env vars

@@ -475,12 +475,20 @@ class MultiHopSearcher:
         )
 
         rerank_start = time.time()
-        final_results = self.reranking_engine.rerank_by_query(
-            query=query,
-            results=list(all_results.values()),
-            k=k,
-            search_mode=search_mode,
-        )
+        merged_results = list(all_results.values())
+        if _get_config_via_service_locator().reranker.single_pass:
+            # Q3 single-pass: defer neural reranking to the one listwise pass
+            # at the tail of HybridSearcher.search(); keep fusion/expansion
+            # score order so ego expansion still seeds from this top-k.
+            merged_results.sort(key=lambda r: r.score, reverse=True)
+            final_results = merged_results[:k]
+        else:
+            final_results = self.reranking_engine.rerank_by_query(
+                query=query,
+                results=merged_results,
+                k=k,
+                search_mode=search_mode,
+            )
 
         timings["rerank"] = time.time() - rerank_start
 

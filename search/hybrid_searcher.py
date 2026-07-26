@@ -725,12 +725,28 @@ class HybridSearcher(BaseSearcher):
                 )
 
             # Post-expansion neural reranking: unify scoring across primary + ego results
-            # Only runs when ego-graph added results, putting all on same cross-encoder scale
             if (
+                effective_config.reranker.single_pass
+                and self.reranking_engine
+                and results
+            ):
+                # Q3 single-pass: THE one listwise pass over the final merged
+                # pool (hop-1 + multi-hop + ego expansion). Earlier per-stage
+                # passes were skipped; truncate to k here (rerank_by_query
+                # dedups split_block fragments before the cut).
+                results = self.reranking_engine.rerank_by_query(
+                    query=query,
+                    results=results,
+                    k=k,
+                    search_mode=search_mode,
+                )
+            elif (
                 effective_config.ego_graph.enabled
                 and self.reranking_engine
                 and len(results) > k
             ):
+                # Default path: only runs when ego-graph added results, putting
+                # all on the same cross-encoder scale
                 results = self.reranking_engine.rerank_by_query(
                     query=query,
                     results=results,
