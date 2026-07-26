@@ -17,6 +17,7 @@ from pathlib import Path
 
 from search.tokenization import (
     CODE_TERM_BLOCKLIST,
+    build_path_symbol_text,
     is_camelcase,
     is_dotted_symbol,
     is_snake_or_dunder,
@@ -373,3 +374,40 @@ class TestTokenizationOwnership:
         assert Path(self._OWNER).exists(), (
             f"{self._OWNER} was deleted — P8 single tokenization owner is gone."
         )
+
+
+class TestBuildPathSymbolText:
+    """Track D: BM25 path/symbol augmentation text builder."""
+
+    def test_basic_path_and_symbol(self):
+        out = build_path_symbol_text(
+            "search/hybrid_searcher.py", "HybridSearcher.add_embeddings"
+        )
+        assert out == (
+            "search hybrid_searcher hybrid searcher "
+            "HybridSearcher add_embeddings add embeddings"
+        )
+
+    def test_extension_stripped(self):
+        out = build_path_symbol_text("embeddings/query_cache.py", "get_stats")
+        tokens = out.split()
+        assert "py" not in tokens
+        assert {"embeddings", "query_cache", "query", "cache", "get_stats"} <= set(
+            tokens
+        )
+
+    def test_backslash_path_normalized(self):
+        forward = build_path_symbol_text("search/bm25_index.py", "BM25Index")
+        backward = build_path_symbol_text(r"search\bm25_index.py", "BM25Index")
+        assert forward == backward
+
+    def test_case_insensitive_dedupe_keeps_first_form(self):
+        # "Embedder" segment collides with the "embedder" filename token.
+        out = build_path_symbol_text("embeddings/embedder.py", "Embedder")
+        assert out == "embeddings embedder"
+
+    def test_single_char_tokens_dropped(self):
+        assert build_path_symbol_text("a/b.py", "x") == ""
+
+    def test_empty_inputs(self):
+        assert build_path_symbol_text("", "") == ""

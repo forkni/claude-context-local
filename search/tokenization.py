@@ -105,6 +105,56 @@ def normalize_to_tokens(
 
 
 # ---------------------------------------------------------------------------
+# Path/symbol augmentation text (Track D — BM25 document enrichment)
+# ---------------------------------------------------------------------------
+
+
+def build_path_symbol_text(relative_path: str, symbol_name: str) -> str:
+    """Build a BM25 augmentation string from a chunk's file path and symbol name.
+
+    Emits each path component and symbol segment both whole and camel/snake-split
+    so the identifier-preserving ("whole") tokenizer indexes both forms: a query
+    for "query cache" matches ``embeddings/query_cache.py`` chunks, while a query
+    for the exact identifier ``query_cache`` still matches the whole token.
+
+    The file extension is stripped (``.py`` adds no signal), tokens are deduped
+    case-insensitively in first-seen order (term frequency of augmentation tokens
+    stays 1 so code-body occurrences keep dominating BM25 TF), and single-char
+    tokens are dropped.
+
+    Args:
+        relative_path: Chunk's file path relative to the project root
+            (``/`` or ``\\`` separators).
+        symbol_name: Qualified symbol name, e.g. ``"HybridSearcher.add_embeddings"``.
+
+    Returns:
+        Space-joined augmentation terms, e.g.
+        ``"search hybrid_searcher hybrid searcher HybridSearcher add_embeddings add embeddings"``.
+        Empty string if there is nothing to add.
+    """
+    terms: list[str] = []
+    parts = [p for p in relative_path.replace("\\", "/").split("/") if p]
+    for i, comp in enumerate(parts):
+        if i == len(parts) - 1:
+            comp = comp.rsplit(".", 1)[0]  # strip file extension
+        terms.append(comp)
+        terms.extend(normalize_to_tokens(comp))
+    for seg in symbol_name.split("."):
+        terms.append(seg)
+        terms.extend(normalize_to_tokens(seg))
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for term in terms:
+        key = term.lower()
+        if len(key) < 2 or key in seen:
+            continue
+        seen.add(key)
+        out.append(term)
+    return " ".join(out)
+
+
+# ---------------------------------------------------------------------------
 # Symbol predicates (extracted verbatim from intent_classifier._detect_code_symbols)
 # These run on the ORIGINAL (non-lowercased) token — they are case-sensitive.
 # ---------------------------------------------------------------------------

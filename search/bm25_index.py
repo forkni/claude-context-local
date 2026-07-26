@@ -273,7 +273,8 @@ class BM25Index:
     # Index version for compatibility tracking
     # Version 2: Added stemming support
     # Version 3: Tokenizer variants (bm25_tokenizer knob, default "whole")
-    INDEX_VERSION = 3
+    # Version 4: Path/symbol token augmentation of BM25 documents (Track D)
+    INDEX_VERSION = 4
 
     def __init__(
         self,
