@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 from merkle.change_detector import FileChanges
 from search.community_refresh_stage import CommunityRefreshStage
+from search.storage_layout import project_id_from_index_dir
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +41,7 @@ def _changes(added=(), modified=(), removed=()):
 
 
 def _write_community_map(tmp_path: Path, community_map: dict) -> None:
-    project_id = tmp_path.parent.name.rsplit("_", 1)[0]
+    project_id = project_id_from_index_dir(tmp_path)
     community_path = tmp_path / f"{project_id}_communities.json"
     community_path.write_text(json.dumps(community_map))
 

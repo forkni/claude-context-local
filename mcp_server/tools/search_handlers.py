@@ -26,6 +26,7 @@ from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
 from search.metadata import MetadataStore
 from search.relationship_analyzer import RelationshipAnalyzer
+from search.storage_layout import project_id_from_model_dir_name
 
 
 logger = logging.getLogger(__name__)
@@ -163,8 +164,7 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
     config = get_config()
     if config.search_mode.enable_hybrid:
         storage_dir = project_storage / "index"
-        # Extract project_id from storage directory name (same pattern as search_factory.py:175)
-        project_id = project_storage.name.rsplit("_", 1)[0]  # Remove dimension suffix
+        project_id = project_id_from_model_dir_name(project_storage.name)
         indexer = HybridSearcher(
             storage_dir=str(storage_dir),
             embedder=embedder,

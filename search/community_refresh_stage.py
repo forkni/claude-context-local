@@ -12,6 +12,7 @@ from merkle.change_detector import FileChanges
 from utils.path_utils import normalize_path
 
 from .graph_integration import GraphIntegration
+from .storage_layout import project_id_from_index_dir
 from .summary_stage import SummaryStage
 
 
@@ -277,7 +278,7 @@ class CommunityRefreshStage:
             return None
 
         project_id = (
-            storage_dir.parent.name.rsplit("_", 1)[0] if storage_dir.exists() else None
+            project_id_from_index_dir(storage_dir) if storage_dir.exists() else None
         )
         if project_id is None:
             logger.debug(

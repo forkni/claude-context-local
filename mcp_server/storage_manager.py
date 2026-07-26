@@ -22,6 +22,7 @@ from search.filters import (
     compute_legacy_hash,
     extract_drive_agnostic_path,
 )
+from search.storage_layout import build_model_dir_name
 
 
 logger = logging.getLogger(__name__)
@@ -149,13 +150,15 @@ def _find_existing_project_dir(
         Path to existing directory or None if not found
     """
     # Try drive-agnostic hash first
-    new_dir = projects_dir / f"{project_name}_{new_hash}_{model_slug}_{dimension}d"
+    new_dir = projects_dir / build_model_dir_name(
+        project_name, new_hash, model_slug, dimension
+    )
     if new_dir.exists():
         return new_dir
 
     # Try legacy hash (backward compatibility)
-    legacy_dir = (
-        projects_dir / f"{project_name}_{legacy_hash}_{model_slug}_{dimension}d"
+    legacy_dir = projects_dir / build_model_dir_name(
+        project_name, legacy_hash, model_slug, dimension
     )
     if legacy_dir.exists():
         logger.info(f"Found project with legacy hash: {legacy_dir.name}")
@@ -265,7 +268,7 @@ def get_project_storage_dir(
     project_dir = (
         base_dir
         / "projects"
-        / f"{project_name}_{project_hash}_{model_slug}_{dimension}d"
+        / build_model_dir_name(project_name, project_hash, model_slug, dimension)
     )
     project_dir.mkdir(parents=True, exist_ok=True)
     logger.info(

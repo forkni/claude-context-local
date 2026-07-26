@@ -37,6 +37,7 @@ from .graph_integration import GraphIntegration
 from .index_write_stage import IncrementalIndexResult, IndexWriteStage
 from .indexer import CodeIndexManager as Indexer
 from .parallel_chunker import ParallelChunker
+from .storage_layout import project_id_from_index_dir
 from .summary_stage import SummaryStage
 
 
@@ -873,10 +874,8 @@ class IncrementalIndexer:
             else Path(tempfile.mkdtemp(prefix="temp_graph_"))
         )
 
-        # Extract project ID from parent directory name matching search_factory.py convention
-        # Parent dir name = "projectname_hash_modelslug_dimd", strip "_dimd" suffix
         project_id = (
-            storage_dir.parent.name.rsplit("_", 1)[0]
+            project_id_from_index_dir(storage_dir)
             if storage_dir.exists()
             else "temp_community_graph"
         )
