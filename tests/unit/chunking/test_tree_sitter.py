@@ -433,10 +433,61 @@ class TestParseFileSingleRead(TestCase):
             f"expected exactly 1 open() of {file_path}, got {len(matching_calls)}"
         )
 
-    def test_parse_error_warning_default_still_fires(self):
-        """Regression guard: the default call (as used by the chunking pass)
-        must keep warning on a genuinely malformed file -- only the
-        profiling pre-pass opts out (see next test)."""
+    def test_parse_error_warning_fires_when_content_dropped(self):
+        """Regression guard: the chunking pass must keep warning when ERROR
+        content genuinely goes missing from the emitted chunks. A
+        punctuation-only ERROR run is dropped by the module-preamble
+        builder's isalnum guard, so no chunk covers its lines."""
+        import chunking.tree_sitter as tsf
+
+        if "python" not in tsf.AVAILABLE_LANGUAGES:
+            self.skipTest("tree-sitter-python not installed")
+
+        file_path = Path(self.temp_dir) / "broken.py"
+        file_path.write_text("def good():\n    return 1\n\n)))) ((((\n")
+
+        with self.assertLogs("chunking.tree_sitter", level="WARNING") as cm:
+            chunks = self.chunker.chunk_file(str(file_path))
+
+        assert chunks, "the intact function must still chunk"
+        warning = next(msg for msg in cm.output if "PARSE_ERROR" in msg)
+        assert "dropped from chunking" in warning
+        assert "4" in warning, f"expected uncovered line 4 in: {warning}"
+
+    def test_parse_error_downgraded_when_content_retained(self):
+        """A file that is 100% parse error but whose text survives as a
+        module_preamble chunk (e.g. a TouchDesigner textport-command file
+        like `opcook -F override` externalized to `.py`) logs the
+        [PARSE_ERROR] verdict at DEBUG, not WARNING."""
+        import logging
+
+        import chunking.tree_sitter as tsf
+
+        if "python" not in tsf.AVAILABLE_LANGUAGES:
+            self.skipTest("tree-sitter-python not installed")
+
+        file_path = Path(self.temp_dir) / "time__ParExecute__forcecook_override__td.py"
+        file_path.write_text("opcook -F override\n")
+
+        with self.assertLogs("chunking.tree_sitter", level="DEBUG") as cm:
+            chunks = self.chunker.chunk_file(str(file_path))
+
+        assert len(chunks) == 1
+        assert chunks[0].node_type == "module_preamble"
+        assert chunks[0].content == "opcook -F override"
+        parse_error_records = [r for r in cm.records if "PARSE_ERROR" in r.getMessage()]
+        assert parse_error_records, "expected a DEBUG-level [PARSE_ERROR] outcome"
+        assert all(r.levelno == logging.DEBUG for r in parse_error_records), (
+            f"retained ERROR content must not WARN: "
+            f"{[r.getMessage() for r in parse_error_records]}"
+        )
+
+    def test_parse_error_alnum_garbage_also_retained_and_downgraded(self):
+        """Garbage with alphanumeric content is rescued into a
+        module_preamble chunk (unlike the punctuation-only run above), so it
+        too downgrades to DEBUG — nothing was actually lost."""
+        import logging
+
         import chunking.tree_sitter as tsf
 
         if "python" not in tsf.AVAILABLE_LANGUAGES:
@@ -445,17 +496,20 @@ class TestParseFileSingleRead(TestCase):
         file_path = Path(self.temp_dir) / "broken.py"
         file_path.write_text(")))) invalid python (((\n")
 
-        with self.assertLogs("chunking.tree_sitter", level="WARNING") as cm:
-            result = self.chunker.parse_file(str(file_path))
+        with self.assertLogs("chunking.tree_sitter", level="DEBUG") as cm:
+            chunks = self.chunker.chunk_file(str(file_path))
 
-        assert result is not None
-        assert any("PARSE_ERROR" in msg for msg in cm.output)
+        assert any(c.node_type == "module_preamble" for c in chunks)
+        parse_error_records = [r for r in cm.records if "PARSE_ERROR" in r.getMessage()]
+        assert parse_error_records
+        assert all(r.levelno == logging.DEBUG for r in parse_error_records)
 
     def test_parse_error_warning_suppressed_when_opted_out(self):
         """`emit_parse_warnings=False` (used by the repo-profiling pre-pass)
-        parses the same malformed file silently -- the profiler and the
-        chunking pass share this seam, so without the opt-out a bad file
-        logged [PARSE_ERROR] twice per index run instead of once."""
+        parses the same malformed file silently and collects no error
+        ranges -- the profiler and the chunking pass share this seam, so
+        without the opt-out a bad file logged [PARSE_ERROR] twice per index
+        run instead of once."""
         import chunking.tree_sitter as tsf
 
         if "python" not in tsf.AVAILABLE_LANGUAGES:
@@ -468,3 +522,4 @@ class TestParseFileSingleRead(TestCase):
             result = self.chunker.parse_file(str(file_path), emit_parse_warnings=False)
 
         assert result is not None
+        assert result.error_line_ranges == ()

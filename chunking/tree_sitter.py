@@ -156,10 +156,15 @@ class ParsedSource:
     language_name: str
     chunker: LanguageChunker  # per-thread chunker that produced `tree`
     tree: Any  # tree_sitter.Tree
+    # 1-based line ranges of genuine ERROR nodes, collected at parse time so
+    # chunk_parsed can decide (post-chunking) whether their content actually
+    # went missing. Empty when the parse is clean or the caller opted out of
+    # parse warnings (the repo-profiling pre-pass).
+    error_line_ranges: tuple[tuple[int, int], ...] = ()
 
 
-def _count_error_nodes(root_node: Any) -> int:
-    """Count genuine ERROR-typed nodes in a parsed tree.
+def _collect_error_line_ranges(root_node: Any) -> tuple[tuple[int, int], ...]:
+    """Collect 1-based line ranges of genuine ERROR-typed nodes in a tree.
 
     Deliberately stricter than `tree.root_node.has_error`, which also fires
     on harmless isolated MISSING-node artifacts (a single zero-width
@@ -176,16 +181,62 @@ def _count_error_nodes(root_node: Any) -> int:
         root_node: Root node of a parsed tree_sitter.Tree.
 
     Returns:
-        Count of nodes where `node.type == "ERROR"`.
+        One `(start_line, end_line)` pair per node where
+        `node.type == "ERROR"` (nested ERROR nodes included, like the error
+        count this replaces).
     """
-    count = 0
+    ranges: list[tuple[int, int]] = []
     stack = [root_node]
     while stack:
         node = stack.pop()
         if node.type == "ERROR":
-            count += 1
+            ranges.append((node.start_point[0] + 1, node.end_point[0] + 1))
         stack.extend(node.children)
-    return count
+    return tuple(ranges)
+
+
+def _uncovered_line_ranges(
+    error_ranges: tuple[tuple[int, int], ...],
+    chunks: list[TreeSitterChunk],
+) -> list[tuple[int, int]]:
+    """Subtract the chunks' line spans from `error_ranges`.
+
+    Integer-line interval subtraction: chunk spans are merged first (adjacent
+    spans coalesce — there is no line between N and N+1 to fall through), then
+    each error range is reduced to the sub-ranges no chunk covers. Chunk
+    content is the verbatim contiguous source slice of its line span, so a
+    fully-covered error range means the ERROR text was indexed, not dropped.
+    """
+
+    def merge(ranges: list[tuple[int, int]]) -> list[list[int]]:
+        merged: list[list[int]] = []
+        for start, end in sorted(ranges):
+            if merged and start <= merged[-1][1] + 1:
+                merged[-1][1] = max(merged[-1][1], end)
+            else:
+                merged.append([start, end])
+        return merged
+
+    covered = merge([(c.start_line, c.end_line) for c in chunks])
+
+    uncovered: list[tuple[int, int]] = []
+    # Merging the error ranges too keeps nested ERROR nodes (subranges of
+    # their parent ERROR) from reporting the same uncovered lines twice.
+    for start, end in merge(list(error_ranges)):
+        cursor = start
+        for cov_start, cov_end in covered:
+            if cov_end < cursor:
+                continue
+            if cov_start > end:
+                break
+            if cov_start > cursor:
+                uncovered.append((cursor, cov_start - 1))
+            cursor = cov_end + 1
+            if cursor > end:
+                break
+        if cursor <= end:
+            uncovered.append((cursor, end))
+    return uncovered
 
 
 class TreeSitterChunker:
@@ -299,10 +350,13 @@ class TreeSitterChunker:
             rel_path: Optional path to record on the result for callers that
                     track both absolute and relative paths. Defaults to
                     `file_path`.
-            emit_parse_warnings: Whether to log `[PARSE_ERROR]` when the parse
-                    tree contains real ERROR nodes. Defaults to True (today's
-                    behaviour). The repo-profiling pre-pass parses every file
-                    a second time before the chunking pass does and passes
+            emit_parse_warnings: Whether to collect ERROR-node line ranges
+                    onto the result's `error_line_ranges`, which
+                    `chunk_parsed` turns into a `[PARSE_ERROR]` warning only
+                    if the ERROR content is missing from the emitted chunks
+                    (retained content logs at DEBUG instead). Defaults to
+                    True. The repo-profiling pre-pass parses every file a
+                    second time before the chunking pass does and passes
                     False here, so a malformed file is only ever warned about
                     once per index run — by the chunking pass, which is the
                     one whose dropped content actually matters to the user.
@@ -377,18 +431,17 @@ class TreeSitterChunker:
         # tree.root_node.has_error also fires on harmless isolated
         # MISSING-node artifacts (e.g. GLSL's `precision highp float;`
         # recovers via a single zero-width MISSING identifier — no content
-        # lost, zero ERROR nodes). Only a genuine ERROR node means a
-        # cascading parse failure that can silently drop content from
-        # chunking, so gate the (tree-walk) count behind the cheap flag
-        # first and only warn when real ERROR nodes are found.
+        # lost, zero ERROR nodes). Only a genuine ERROR node can mean
+        # dropped content, so gate the (tree-walk) collection behind the
+        # cheap flag. Whether anything actually went missing is only
+        # knowable after chunking — root-level ERROR text routinely
+        # survives verbatim as a module_preamble chunk (e.g. TouchDesigner
+        # textport-command files like `opcook -F override` externalized to
+        # `.py`) — so the [PARSE_ERROR] verdict is deferred to
+        # chunk_parsed, which sees the emitted chunks.
+        error_line_ranges: tuple[tuple[int, int], ...] = ()
         if emit_parse_warnings and tree.root_node.has_error:
-            error_count = _count_error_nodes(tree.root_node)
-            if error_count:
-                logger.warning(
-                    f"[PARSE_ERROR] {file_path}: {error_count} ERROR node(s) "
-                    f"after parsing — some content may be silently dropped "
-                    f"from chunking"
-                )
+            error_line_ranges = _collect_error_line_ranges(tree.root_node)
 
         return ParsedSource(
             abs_path=file_path,
@@ -397,6 +450,7 @@ class TreeSitterChunker:
             language_name=chunker.language_name,
             chunker=chunker,
             tree=tree,
+            error_line_ranges=error_line_ranges,
         )
 
     def chunk_parsed(self, parsed_source: ParsedSource) -> list[TreeSitterChunk]:
@@ -410,7 +464,7 @@ class TreeSitterChunker:
         """
         try:
             config = self._get_chunking_config()
-            return parsed_source.chunker.chunk_parsed(
+            chunks = parsed_source.chunker.chunk_parsed(
                 parsed_source.tree,
                 parsed_source.content,
                 config=config,
@@ -422,6 +476,39 @@ class TreeSitterChunker:
                 exc_info=True,
             )
             return []
+        if parsed_source.error_line_ranges:
+            self._log_parse_error_outcome(parsed_source, chunks)
+        return chunks
+
+    def _log_parse_error_outcome(
+        self, parsed_source: ParsedSource, chunks: list[TreeSitterChunk]
+    ) -> None:
+        """Emit the deferred `[PARSE_ERROR]` verdict now that chunks are known.
+
+        Warning at parse time overstated the failure: tree-sitter ERROR spans
+        frequently survive into chunks verbatim (root-level garbage lands in a
+        module_preamble chunk), so warn only when some ERROR line ended up in
+        no chunk — with the exact uncovered spans — and otherwise log the
+        retained outcome at DEBUG.
+        """
+        uncovered = _uncovered_line_ranges(parsed_source.error_line_ranges, chunks)
+        error_count = len(parsed_source.error_line_ranges)
+        if uncovered:
+            spans = ", ".join(
+                str(start) if start == end else f"{start}-{end}"
+                for start, end in uncovered
+            )
+            logger.warning(
+                f"[PARSE_ERROR] {parsed_source.abs_path}: {error_count} ERROR "
+                f"node(s) after parsing — content at line(s) {spans} was "
+                f"dropped from chunking"
+            )
+        else:
+            logger.debug(
+                f"[PARSE_ERROR] {parsed_source.abs_path}: {error_count} ERROR "
+                f"node(s) after parsing, but all ERROR content was retained "
+                f"in emitted chunks"
+            )
 
     def chunk_file(
         self, file_path: str, content: str | None = None
