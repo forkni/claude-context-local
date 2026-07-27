@@ -135,7 +135,7 @@ def _timed_wrap(obj: Any, attr_name: str, phase_name: str) -> bool:
     (obj=class — getattr/setattr operate on the plain function, so instance
     calls still pass `self` through *args correctly).
 
-    `orig` may be a coroutine function (e.g. `SearchOrchestrator._execute`) —
+    `orig` may be a coroutine function (e.g. `SearchOrchestrator._search`) —
     calling it only *creates* a coroutine object without running its body, so
     a plain synchronous wrapper would measure near-zero (the coroutine object
     construction), and the real cost would be attributed to whatever line
@@ -202,8 +202,13 @@ def _install_patches() -> None:
     _timed_wrap(GraphScoringStage, "_extract_subgraph", "subgraph_extract")
 
     # Fix 5 — the block whose scope moves inside the reindex read lock.
+    # `_execute` no longer exists (search-latency plan Fix 5 split it): Block A
+    # is now `_maybe_reindex` (its own write-lock scope, outside the read
+    # lock), Blocks B-D are `_search` (runs under the read lock, alongside
+    # `_assemble` after the ADR-0008 amendment).
     _timed_wrap(SearchOrchestrator, "_assemble", "assemble")
-    _timed_wrap(SearchOrchestrator, "_execute", "execute")
+    _timed_wrap(SearchOrchestrator, "_maybe_reindex", "maybe_reindex")
+    _timed_wrap(SearchOrchestrator, "_search", "search")
 
     # Background context only — NOT a fix target (~80% of wall-clock, buys
     # ranking quality; explicitly out of scope per "we do not trade speed
@@ -217,7 +222,8 @@ _PHASE_NAMES = [
     "centrality_compute",
     "subgraph_extract",
     "assemble",
-    "execute",
+    "maybe_reindex",
+    "search",
     "rerank",
 ]
 
