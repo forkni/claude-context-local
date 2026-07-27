@@ -29,8 +29,8 @@ class GraphScoringStage:
 
     - **Block F** (centrality) fires only when
       ``graph_config.centrality_annotation`` is ``True``.
-    - **Block G** (subgraph) fires whenever ``index_manager.graph_storage`` exists,
-      regardless of whether Block F ran.
+    - **Block G** (subgraph) fires whenever ``index_manager.graph_storage`` exists
+      AND ``include_subgraph`` is ``True``, regardless of whether Block F ran.
     """
 
     def run(
@@ -42,6 +42,7 @@ class GraphScoringStage:
         index_manager: CodeIndexManager | None,
         searcher: Any,
         graph_config: GraphEnhancedConfig | None,
+        include_subgraph: bool = True,
     ) -> tuple[list[dict], dict | None]:
         """Apply graph-enhanced scoring and extract the SSCG subgraph.
 
@@ -58,18 +59,27 @@ class GraphScoringStage:
                 centrality-score injection before subgraph extraction.
             graph_config: ``GraphEnhancedConfig`` controlling centrality behaviour;
                 ``None`` → Block F skips.
+            include_subgraph: Whether the caller will actually use Block G's
+                output. Defaults to ``True`` (unconditional extraction, the
+                historical behaviour) so existing callers are unaffected;
+                ``search_orchestrator.py`` passes the request's
+                ``output.include_subgraph`` flag so Block G is skipped
+                entirely when the response would discard it anyway.
 
         Returns:
             ``(results, subgraph_data)`` where ``subgraph_data`` is the SSCG
             subgraph dict (``{"nodes": [...], "edges": [...], ...}``) or ``None``
-            when no graph nodes are found.
+            when no graph nodes are found, or when ``include_subgraph`` is
+            ``False``.
         """
         results, centrality_scores = self._apply_centrality(
             query, intent_decision, results, index_manager, searcher, graph_config
         )
         results = self._cap_results(results, k, graph_config)
-        subgraph_data = self._extract_subgraph(
-            results, k, index_manager, centrality_scores
+        subgraph_data = (
+            self._extract_subgraph(results, k, index_manager, centrality_scores)
+            if include_subgraph
+            else None
         )
         return results, subgraph_data
 

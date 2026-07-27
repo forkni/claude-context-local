@@ -633,7 +633,8 @@ class SearchOrchestrator:
             )
 
         # Blocks F–G: centrality scoring, cap, SSCG subgraph extraction
-        # subgraph_data is always computed (ego_graph drives ranking), only serialization is gated
+        # Block G (subgraph extraction) is itself skipped when include_subgraph
+        # is false, since _build_response would discard its output anyway.
         formatted_results, subgraph_data = self._graph_scoring_stage.run(
             plan.query,
             plan.intent_decision,
@@ -642,6 +643,7 @@ class SearchOrchestrator:
             index_manager,
             outcome.searcher,
             getattr(outcome.effective_config, "graph_enhanced", None),
+            include_subgraph=output_cfg.include_subgraph,
         )
 
         # Block H: source-position reorder + context-budget truncation
@@ -649,10 +651,10 @@ class SearchOrchestrator:
             plan, outcome, formatted_results
         )
 
-        # Block I: response assembly (subgraph serialization gated by include_subgraph)
-        subgraph_for_response = subgraph_data if output_cfg.include_subgraph else None
+        # Block I: response assembly (subgraph_data is already None here when
+        # include_subgraph is false — Block G above skipped extraction)
         return self._build_response(
-            plan, formatted_results, subgraph_for_response, outcome.reindexed
+            plan, formatted_results, subgraph_data, outcome.reindexed
         )
 
     # ---------------------------------------------------------------------------

@@ -396,6 +396,65 @@ class TestPrivateHelpers:
         assert len(out) == 16
 
 
+class TestIncludeSubgraphGate:
+    """Fix 4 (search-latency plan): include_subgraph=False skips Block G
+    (SubgraphExtractor construction) entirely, instead of computing it and
+    discarding the result at response-assembly time (the old behavior in
+    search_orchestrator.py's _assemble).
+    """
+
+    def test_include_subgraph_false_skips_extraction_entirely(self):
+        """SubgraphExtractor must never even be constructed when the caller
+        has already said it won't use the subgraph."""
+        stage = GraphScoringStage()
+        im = Mock()
+        im.graph_storage = Mock()
+        formatted = [{"chunk_id": "a.py:1-5:function:foo"}]
+
+        with patch("search.subgraph_extractor.SubgraphExtractor") as mock_se:
+            results, subgraph_data = stage.run(
+                "q", None, 4, list(formatted), im, None, None, include_subgraph=False
+            )
+
+        assert subgraph_data is None
+        mock_se.assert_not_called()
+        assert results == formatted
+
+    def test_include_subgraph_false_response_equals_old_discard_behavior(self):
+        """Equivalence proof: the response-relevant output (subgraph_data) is
+        identical whether Block G is skipped outright (new) or run and then
+        discarded by the caller (old) — even when Block G would have found a
+        non-empty subgraph, proving this is a pure no-op skip, not a filter
+        that happens to agree only on the empty case.
+        """
+        stage = GraphScoringStage()
+        im = Mock()
+        im.graph_storage = Mock()
+        formatted = [{"chunk_id": "a.py:1-5:function:foo"}]
+
+        fake_subgraph = Mock()
+        fake_subgraph.nodes = [Mock()]
+        fake_subgraph.edges = []
+        fake_subgraph.to_dict.return_value = {"nodes": [{}], "edges": []}
+
+        # Old behavior: Block G always ran; caller discarded the result
+        # (search_orchestrator.py's old `subgraph_data if include_subgraph else None`).
+        with patch("search.subgraph_extractor.SubgraphExtractor") as mock_se:
+            mock_se.return_value.extract_subgraph.return_value = fake_subgraph
+            old_results, _ = stage.run("q", None, 4, list(formatted), im, None, None)
+        old_subgraph_for_response = None  # simulates the caller-side discard
+
+        # New behavior: Block G is skipped outright via include_subgraph=False.
+        with patch("search.subgraph_extractor.SubgraphExtractor") as mock_se:
+            new_results, new_subgraph_data = stage.run(
+                "q", None, 4, list(formatted), im, None, None, include_subgraph=False
+            )
+
+        assert new_results == old_results
+        assert new_subgraph_data == old_subgraph_for_response  # both None
+        mock_se.assert_not_called()
+
+
 class TestGraphScoringStageIntegration:
     """End-to-end tests across Block F, the k*4 cap, and Block G."""
 
