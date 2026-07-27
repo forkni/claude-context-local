@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -130,6 +131,12 @@ def _patch_execute(real_sc=None, project="/test"):
             mock_state.return_value = st
             mock_cm.return_value.get_search_mode_for_query.return_value = "hybrid"
             mock_cfg.return_value.performance.use_parallel_search = False
+            # run() plans via SearchPlanner.plan(), which checks config.intent.enabled
+            # before running IntentClassifier. None of the current _run_execute-based
+            # callers reach plan() (they call _maybe_reindex/_search directly), so this
+            # is a no-op for them; composition tests that call orchestrator.run()
+            # directly need it to skip intent classification against a bare MagicMock.
+            mock_cfg.return_value.intent.enabled = False
             yield mock_state, mock_get_searcher
 
     return _ctx()
@@ -642,3 +649,160 @@ class TestApplySourceOrderAndBudget:
             plan, outcome, list(results)
         )
         assert len(out) == 10
+
+
+# ---------------------------------------------------------------------------
+# Composition (end-to-end, deterministic) — search-latency plan Verification
+# ---------------------------------------------------------------------------
+
+
+def _build_composition_graph_storage(tmp_path):
+    """A real, tiny CodeGraphStorage — a→b→c call chain — used in place of a
+    mock so Fix 3's storage-level centrality memo (version-keyed cache on
+    CodeGraphStorage) is genuinely exercised: cold on the first run() call,
+    warm on the second, against the *same* instance across both calls.
+    """
+    from graph.graph_storage import CodeGraphStorage
+
+    storage = CodeGraphStorage(project_id="composition-test", storage_dir=tmp_path)
+    storage.add_node("a.py:1-10:function:alpha", "alpha", "function", "a.py")
+    storage.add_node("b.py:1-10:function:beta", "beta", "function", "b.py")
+    storage.add_node("c.py:1-10:function:gamma", "gamma", "function", "c.py")
+    # Full chunk_ids as callee_name (not bare names) so the edges land directly
+    # between the tracked nodes instead of spawning separate symbol-name stubs.
+    storage.add_call_edge(
+        "a.py:1-10:function:alpha",
+        "b.py:1-10:function:beta",
+        line_number=5,
+        is_resolved=True,
+    )
+    storage.add_call_edge(
+        "b.py:1-10:function:beta",
+        "c.py:1-10:function:gamma",
+        line_number=7,
+        is_resolved=True,
+    )
+    return storage
+
+
+def _make_composition_results():
+    """Fresh SearchResult-like objects each call — chunk_ids match the graph
+    nodes above so centrality annotation has something real to attach to.
+    """
+    specs = [
+        ("a.py:1-10:function:alpha", 0.9, "a.py", "alpha"),
+        ("b.py:1-10:function:beta", 0.8, "b.py", "beta"),
+        ("c.py:1-10:function:gamma", 0.7, "c.py", "gamma"),
+    ]
+    return [
+        SimpleNamespace(
+            chunk_id=chunk_id,
+            score=score,
+            metadata={
+                "relative_path": path,
+                "start_line": 1,
+                "end_line": 10,
+                "chunk_type": "function",
+                "name": name,
+            },
+        )
+        for chunk_id, score, path, name in specs
+    ]
+
+
+def _make_composition_searcher(graph_storage):
+    """A non-HybridSearcher mock (isinstance checks in _search/_assemble stay
+    False, matching _make_ready_searcher's style) whose dense_index carries
+    the real graph_storage, so GraphScoringStage reads it via
+    SearcherView(searcher).index_manager -> dense_index.graph_storage.
+    """
+    searcher = Mock()
+    searcher.is_ready = True
+    searcher.index_manager = None  # HybridSearcher-shaped: manager is at .dense_index
+    dense = Mock()
+    dense.index = Mock()
+    dense.index.ntotal = 1000
+    dense.graph_storage = graph_storage
+    searcher.dense_index = dense
+    searcher.search = Mock(side_effect=lambda **kwargs: _make_composition_results())
+    return searcher
+
+
+class TestSearchLatencyComposition:
+    """End-to-end composition proof for the search-latency plan (Fixes 3-5).
+
+    The per-fix equivalence tests (test_centrality_ranker.py, test_graph_storage.py,
+    test_graph_scoring_stage.py) each prove one fix preserves its own output in
+    isolation. This class proves the fixes compose: a full SearchOrchestrator.run()
+    round-trip through a REAL CodeGraphStorage — so Fix 3's memo is genuinely cold
+    on the first call and genuinely warm on the second, both under the read lock
+    Fix 5 now extends through _assemble — must not change the response between
+    calls. HybridSearcher's own retrieval (BM25/FAISS/RRF) stays mocked with a
+    fixed, deterministic return, as elsewhere in this file; the composition risk
+    under test lives in SearchOrchestrator/GraphScoringStage/CentralityRanker/
+    CodeGraphStorage, not in the mocked searcher.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cold_and_warm_centrality_memo_produce_identical_response(
+        self, tmp_path
+    ):
+        """First run() populates the storage-level centrality memo (cold);
+        second run() hits it (warm, Fix 3). Both skip discarded subgraph
+        extraction by default (Fix 4 — output.include_subgraph=False). The
+        two responses must be byte-identical.
+        """
+        graph_storage = _build_composition_graph_storage(tmp_path)
+        searcher = _make_composition_searcher(graph_storage)
+        sc = SearchConfig()
+        sc.reranker.enabled = False
+
+        args = {
+            "query": "alpha",
+            "k": 3,
+            "auto_reindex": False,
+            "max_age_minutes": 5.0,
+            "max_context_tokens": 0,
+        }
+
+        with _patch_execute(real_sc=sc) as (_, mock_gs):
+            mock_gs.return_value = searcher
+            orchestrator = SearchOrchestrator()
+            first = await orchestrator.run(dict(args))
+            second = await orchestrator.run(dict(args))
+
+        assert first == second
+        # Sanity: prove centrality actually ran and annotated real scores — a
+        # vacuous pass (e.g. an empty-graph short-circuit) would make the
+        # equivalence assertion above meaningless.
+        assert any(r.get("centrality", 0) > 0 for r in first["results"])
+
+    @pytest.mark.asyncio
+    async def test_reranker_enabled_does_not_crash(self, tmp_path):
+        """Smoke check only, per the plan's explicit non-determinism carve-out:
+        with reranker.enabled=True the composed pipeline must not crash. Not
+        asserting output equality here — the real neural reranker is
+        nondeterministic run-to-run (no torch.manual_seed anywhere in the
+        stack); this test keeps the searcher mocked/deterministic and only
+        flips the config flag, proving the reranker-on branches (source-order
+        warning check, response assembly) compose without raising.
+        """
+        graph_storage = _build_composition_graph_storage(tmp_path)
+        searcher = _make_composition_searcher(graph_storage)
+        sc = SearchConfig()
+        sc.reranker.enabled = True
+
+        args = {
+            "query": "alpha",
+            "k": 3,
+            "auto_reindex": False,
+            "max_age_minutes": 5.0,
+            "max_context_tokens": 0,
+        }
+
+        with _patch_execute(real_sc=sc) as (_, mock_gs):
+            mock_gs.return_value = searcher
+            result = await SearchOrchestrator().run(args)
+
+        assert isinstance(result, dict)
+        assert "results" in result
