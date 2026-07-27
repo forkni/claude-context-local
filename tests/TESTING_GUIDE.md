@@ -908,6 +908,19 @@ corrupting real data — but they are a safety net, not a substitute for the pra
 `storage_dir=` is still mandatory for `CodeGraphStorage` in particular, since it is the one
 component the redirect doesn't cover.
 
+**Known false-positive source: a concurrent live MCP client.** If this repo's `code-search` MCP
+server (port 8765) is also being used interactively — e.g. from another Claude Code window working
+on a different project — while the test suite runs, that server writes to the *real*
+`~/.claude_code_search` independently of pytest, on its own schedule. `_no_real_storage_pollution`
+cannot distinguish that from genuine test leakage, since both look like "a new top-level entry
+appeared." Observed once during Phase 9 measurement: a teardown error reported a new
+`agentic-perf-loop_<hash>_f2llm-v2-0.6b_1024d` project entry, but `~/.claude_code_search/project_selection.json`
+showed `last_project_path` pointing at that same unrelated real project, updated minutes after the
+directory appeared — confirming a different concurrent session, not this repo's test suite, wrote
+it. If this fires, check whether the leaked project name matches something in `tests/` fixtures
+(e.g. `test_project`, a `tmp_path` name) before assuming a real regression; if it's an unrelated
+real project path, it's this exception, not a bug in the code under test.
+
 ### Required Isolation Practices
 
 #### 1. Always Use `tmp_path` Fixture
@@ -1507,7 +1520,7 @@ pytest tests/ -n auto --dist=loadfile
 
 - Unit tests (~5s)
 - Fast integration tests (~2 min)
-- Coverage check with `fail_under=77` threshold (active in CI)
+- Coverage check with `--cov-fail-under=80` threshold (active in CI)
 - **Total time**: ~3 minutes
 - **Purpose**: Quick feedback for developers
 
@@ -1516,7 +1529,7 @@ pytest tests/ -n auto --dist=loadfile
 - All unit tests
 - All fast integration tests
 - All slow integration tests
-- Coverage check with `fail_under=77` threshold
+- Coverage check with `fail_under=81` threshold (full suite, `pyproject.toml`)
 - **Total time**: ~15 minutes
 - **Purpose**: Complete validation before merge
 
@@ -1748,18 +1761,47 @@ global state not reset between tests). The autouse fixtures `reset_global_state`
 
 Coverage config lives in `pyproject.toml` `[tool.coverage.*]`. Branch coverage is on.
 
-**Baseline (measured 2026-06-30):** 78.53% branch+statement combined (3104 tests passing, 15 565 stmts).
-`fail_under = 77` is set in `[tool.coverage.report]` and `--cov-fail-under=77` is active in CI.
-(Previous baseline 2026-06-27: 76.94% at 2840 tests; ratcheted after adding ~276 tests.)
+**The two gates measure different runs — they are not the same number.** `[tool.coverage.report]
+fail_under` (`pyproject.toml`) gates whatever `pytest tests/` covers by default, which includes
+`tests/slow_integration/`. CI's `--cov-fail-under` (`branch-protection.yml`) gates the
+`--ignore=tests/slow_integration/` run only, since CI never runs that tier. The CI number is always
+the lower of the two — ratchet both, from the run that actually produces each number, never from
+one run's total applied to both gates.
+
+**Baseline (measured 2026-07-26, post-Phase-8 storage isolation, Phase 9 of the hardening
+campaign):**
+
+- Full suite incl. `slow_integration/`: **82.59%** (3594 passed, 7 skipped) → `fail_under = 81` in
+  `[tool.coverage.report]`.
+- CI-equivalent, `--ignore=tests/slow_integration/`: **81.69%** (3516 passed, 5 skipped; two new test
+  files added to close the two lowest-covered `mcp_server/` modules — see below) → `--cov-fail-under=80`
+  in CI.
+
+(Previous baseline 2026-06-30: 78.53% combined at 3104 tests, gated both at 77 — see git history for
+that measurement's methodology; it predates the two-gates-differ correction above.)
 
 ```bash
-# Re-measure (with gate enforced):
+# Re-measure the CI-gating number (excludes slow_integration/):
 bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration/ \
-  --cov --cov-branch --cov-report=term-missing --cov-fail-under=77
+  --cov --cov-branch --cov-report=term-missing --cov-fail-under=80
+
+# Re-measure the full-suite number that pyproject.toml's fail_under actually gates:
+bash scripts/test/run_tests.sh tests/ --cov --cov-branch --cov-report=term-missing --cov-fail-under=81
 ```
 
-Ratchet upward: when coverage improves, bump `fail_under` in `pyproject.toml` and
-`--cov-fail-under` in `.github/workflows/branch-protection.yml`.
+Ratchet upward: when coverage improves, bump `fail_under` in `pyproject.toml` **and**
+`--cov-fail-under` in `.github/workflows/branch-protection.yml` — from their respective runs, not
+the same number copied to both. Both files ship a comment recording the date, the measured
+percentage, and the passing-test count the measurement was taken at.
+
+**Phase 9 coverage additions:** `tests/unit/mcp_server/test_metrics.py` (`SessionMetrics` was at 0%
+coverage — a small, zero-mock, deterministic class with no prior tests at all) and
+`tests/unit/mcp_server/test_tool_registry.py` (`build_tool_list()` / `_advanced_tools_enabled()` were
+at 35%, exercised only incidentally through integration tests). Both are pure in-memory logic with no
+I/O beyond `monkeypatch.setenv`, so no mocking was needed. Remaining low-coverage modules
+(`mcp_server/guidance.py` 34%, `mcp_server/server.py` 62%, `mcp_server/resource_manager.py` 54%,
+`search/searcher.py` 54%, `search/bm25_index.py` 64%) were left untouched — they need async/process-
+boundary mocking to test properly, which is a larger, separate effort than this ratchet pass.
 
 ### Snapshot / golden-file regression testing (Phase 4 — Syrupy)
 
@@ -1966,7 +2008,7 @@ failures, so regressions remain visible on Codecov. The README badge tracks the 
 
 **Notes:**
 - `fail_ci_if_error: false` — Codecov outages or missing token never fail the CI gate.
-- Authoritative gate remains `--cov-fail-under=77` in CI; Codecov is reporting/visualization only.
+- Authoritative gate remains `--cov-fail-under=80` in CI; Codecov is reporting/visualization only.
 - No `codecov.yml` — relying on Codecov defaults.
 - `pyrefly` is now a **blocking gate** (2026-06-30) — `continue-on-error` removed after verified green.
 - `pre-commit` remains `continue-on-error: true`; flip to blocking when it exits 0 consistently on CI.
