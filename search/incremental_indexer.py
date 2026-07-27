@@ -789,18 +789,10 @@ class IncrementalIndexer:
             )
             all_chunks = self._chunk_files_parallel(project_path, supported_files)
 
-            # Log any files that didn't produce chunks (O(files+chunks) set lookup)
-            chunked_paths = {c.file_path for c in all_chunks}
-            files_with_chunks = sum(
-                1
-                for f in supported_files
-                if str(Path(project_path) / f) in chunked_paths
-            )
-            if files_with_chunks < len(supported_files):
-                logger.warning(
-                    f"{len(supported_files) - files_with_chunks} files produced no chunks"
-                )
-
+            # Zero-chunk files are now named directly by ParallelChunker's own
+            # summary log (collected live during chunking, not reconciled here
+            # afterwards by fragile file_path string-equality) — see
+            # ParallelChunker._log_chunking_summary.
             logger.info(f"Total chunks collected: {len(all_chunks)}")
 
             # Stage 1: community detection, summarisation, remerge

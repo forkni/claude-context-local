@@ -694,7 +694,14 @@ class LSPResolver:
         n_null_prepares = 0
         n_items = 0
         n_outgoing_calls = 0
-        n_dropped_uri = 0
+        # Split from one shared "dropped_uri" counter: the two causes are not
+        # the same failure mode. A non-file URI (virtual doc, untitled buffer)
+        # would be a real defect worth investigating; a callee outside the
+        # project root (stdlib/site-packages) is expected and correct — see
+        # the summary log below, which now reports them separately instead of
+        # conflating a 79%-of-total "expected" count with a real one.
+        n_dropped_non_file_uri = 0
+        n_dropped_outside_root = 0
         n_dropped_no_chunk = 0
         max_uri_debug = 10
 
@@ -799,8 +806,8 @@ class LSPResolver:
                         # Path.resolve() to produce garbage.
                         callee_path = _uri_to_path(callee_uri)
                         if callee_path is None:
-                            n_dropped_uri += 1
-                            if n_dropped_uri <= max_uri_debug:
+                            n_dropped_non_file_uri += 1
+                            if n_dropped_non_file_uri <= max_uri_debug:
                                 logger.debug(
                                     "[LSP] Dropped callee — non-file URI: %s",
                                     callee_uri,
@@ -811,8 +818,8 @@ class LSPResolver:
                                 callee_path.resolve().relative_to(project_root)
                             ).replace("\\", "/")
                         except (ValueError, OSError):
-                            n_dropped_uri += 1
-                            if n_dropped_uri <= max_uri_debug:
+                            n_dropped_outside_root += 1
+                            if n_dropped_outside_root <= max_uri_debug:
                                 logger.debug(
                                     "[LSP] Dropped callee — outside project root: %s",
                                     callee_path,
@@ -851,12 +858,15 @@ class LSPResolver:
         )
         logger.info(
             "[LSP] probes=%d null_prepares=%d items=%d outgoing_calls=%d "
-            "dropped_uri=%d dropped_no_chunk=%d",
+            "dropped_non_file_uri=%d (real-defect signal) "
+            "dropped_outside_root=%d (expected: stdlib/site-packages) "
+            "dropped_no_chunk=%d",
             n_probes,
             n_null_prepares,
             n_items,
             n_outgoing_calls,
-            n_dropped_uri,
+            n_dropped_non_file_uri,
+            n_dropped_outside_root,
             n_dropped_no_chunk,
         )
         return result

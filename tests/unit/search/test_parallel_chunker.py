@@ -163,6 +163,32 @@ class TestLogChunkingSummary:
         messages = [r.message for r in caplog.records]
         assert any("0 chunks" in m for m in messages)
 
+    def test_names_zero_chunk_files_when_present(self, caplog):
+        """zero_chunk_files, when non-empty, is named in a warning (log-hygiene item 5:
+        replaces the old unnamed 'N files produced no chunks' line)."""
+        import logging
+
+        from search.parallel_chunker import ParallelChunker
+
+        with caplog.at_level(logging.WARNING, logger="search.parallel_chunker"):
+            ParallelChunker._log_chunking_summary(
+                ["a.py", "b.py"], [Mock()], 1, 1, ["b.py"]
+            )
+
+        messages = [r.message for r in caplog.records]
+        assert any("1 files produced no chunks" in m and "b.py" in m for m in messages)
+
+    def test_no_zero_chunk_warning_when_list_empty(self, caplog):
+        """No zero_chunk_files given (or empty list) → no 'produced no chunks' warning."""
+        import logging
+
+        from search.parallel_chunker import ParallelChunker
+
+        with caplog.at_level(logging.WARNING, logger="search.parallel_chunker"):
+            ParallelChunker._log_chunking_summary(["a.py"], [Mock()], 1, 1, [])
+
+        assert not any("produced no chunks" in r.message for r in caplog.records)
+
 
 class TestChunkFilesPublicInterface:
     """Tests for chunk_files behaviour exercised through the public interface."""
@@ -181,6 +207,49 @@ class TestChunkFilesPublicInterface:
 
         assert len(result) == 6
         assert mock_chunker.chunk_file.call_count == 3
+
+    def test_zero_chunk_file_named_sequential(self, tmp_path, caplog):
+        """Sequential branch (enable_parallel=False): a file chunking to [] is named,
+        not just counted -- the exact regression this log-hygiene fix targets."""
+        import logging
+
+        from search.parallel_chunker import ParallelChunker
+
+        mock_chunker = Mock()
+        mock_chunker.chunk_file.side_effect = lambda path: (
+            [] if path.endswith("empty.py") else [Mock()]
+        )
+
+        pc = ParallelChunker(mock_chunker, enable_parallel=False)
+
+        with caplog.at_level(logging.WARNING, logger="search.parallel_chunker"):
+            pc.chunk_files(str(tmp_path), ["a.py", "empty.py"])
+
+        messages = [r.message for r in caplog.records]
+        assert any(
+            "1 files produced no chunks" in m and "empty.py" in m for m in messages
+        )
+
+    def test_zero_chunk_file_named_parallel(self, tmp_path, caplog):
+        """Parallel branch (>=2 files): same guarantee as the sequential branch."""
+        import logging
+
+        from search.parallel_chunker import ParallelChunker
+
+        mock_chunker = Mock()
+        mock_chunker.chunk_file.side_effect = lambda path: (
+            [] if path.endswith("empty.py") else [Mock()]
+        )
+
+        pc = ParallelChunker(mock_chunker, enable_parallel=True, max_workers=2)
+
+        with caplog.at_level(logging.WARNING, logger="search.parallel_chunker"):
+            pc.chunk_files(str(tmp_path), ["a.py", "b.py", "empty.py"])
+
+        messages = [r.message for r in caplog.records]
+        assert any(
+            "1 files produced no chunks" in m and "empty.py" in m for m in messages
+        )
 
     def test_merge_stats_propagation_in_summary_log(self, tmp_path, caplog):
         """Chunks with _merge_stats cause the summary to log a merge percentage."""

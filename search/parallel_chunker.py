@@ -75,8 +75,21 @@ class ParallelChunker:
         all_chunks: list,
         total_original: int,
         total_merged: int,
+        zero_chunk_files: list[str] | None = None,
     ) -> None:
-        """Log the post-chunking summary; show merge-% when greedy-merge reduced count."""
+        """Log the post-chunking summary; show merge-% when greedy-merge reduced count.
+
+        ``zero_chunk_files`` is collected live during the chunking loops (both the
+        parallel and sequential branches, in ``chunk_files``) rather than
+        reconciled afterwards by set-membership on ``chunk.file_path`` strings —
+        the latter is what silently produced an unnamed "N files produced no
+        chunks" warning previously (``incremental_indexer.py``'s own
+        recomputation, now collapsed into this call), and was fragile besides:
+        comparing ``str(Path(project_path) / f)`` against ``chunk.file_path`` by
+        string equality can false-positive on Windows separator/case
+        normalization. Naming the files at the point they're known to be empty
+        sidesteps both problems.
+        """
         if total_original > 0 and total_original != total_merged:
             merge_pct = 100.0 * (1 - total_merged / total_original)
             logger.info(
@@ -86,6 +99,11 @@ class ParallelChunker:
         else:
             logger.info(
                 f"Chunking complete: {len(file_paths)} files → {len(all_chunks)} chunks"
+            )
+        if zero_chunk_files:
+            logger.warning(
+                f"{len(zero_chunk_files)} files produced no chunks: "
+                f"{', '.join(zero_chunk_files)}"
             )
 
     @staticmethod
@@ -134,6 +152,7 @@ class ParallelChunker:
         all_chunks = []
         start_time = time.time()
         stalled_files = []
+        zero_chunk_files: list[str] = []
         total_original = 0
         total_merged = 0
 
@@ -168,13 +187,17 @@ class ParallelChunker:
                                 logger.debug(
                                     f"Chunked {file_path}: {len(chunks)} chunks"
                                 )
+                            else:
+                                zero_chunk_files.append(file_path)
                         except TimeoutError:
                             logger.warning(
                                 f"[TIMEOUT] File chunking timed out: {file_path}"
                             )
                             stalled_files.append(file_path)
+                            zero_chunk_files.append(file_path)
                         except Exception as e:  # noqa: BLE001 - resilience: per-file chunking failure skipped, batch continues
                             logger.warning(f"Failed to chunk {file_path}: {e}")
+                            zero_chunk_files.append(file_path)
                         finally:
                             progress.update(task, advance=1)
         else:
@@ -202,13 +225,18 @@ class ParallelChunker:
                             )
                             all_chunks.extend(chunks)
                             logger.debug(f"Chunked {file_path}: {len(chunks)} chunks")
+                        else:
+                            zero_chunk_files.append(file_path)
                     except Exception as e:  # noqa: BLE001 - resilience: per-file chunking failure skipped, batch continues
                         logger.warning(f"Failed to chunk {file_path}: {e}")
+                        zero_chunk_files.append(file_path)
                     finally:
                         progress.update(task, advance=1)
 
         # Both branches converge here — summary applies to both paths
-        self._log_chunking_summary(file_paths, all_chunks, total_original, total_merged)
+        self._log_chunking_summary(
+            file_paths, all_chunks, total_original, total_merged, zero_chunk_files
+        )
 
         if stalled_files:
             logger.warning(
