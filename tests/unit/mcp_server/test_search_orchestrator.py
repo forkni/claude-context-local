@@ -154,8 +154,24 @@ def _make_ready_searcher():
     return s
 
 
+async def _run_execute(orchestrator: SearchOrchestrator, plan):
+    """Mirror the deleted ``_execute`` for these Block-level tests: run
+    ``_maybe_reindex`` (Block A) then ``_search`` (Blocks B-D), short-circuiting
+    on a dict (error) from either stage — exactly what ``run()`` does, minus
+    the read lock ``run()`` now holds across ``_search`` *and* ``_assemble``
+    (ADR-0008 amendment). Omitting the lock here changes no assertion: every
+    test below stubs ``get_reindex_rwlock()`` via ``_patch_execute()`` /
+    ``_make_rwlock_mock()`` with no-op async context managers.
+    """
+    early = await orchestrator._maybe_reindex(plan)
+    if isinstance(early, dict):
+        return early
+    reindexed, _lock_project = early
+    return await orchestrator._search(plan, reindexed)
+
+
 # ---------------------------------------------------------------------------
-# Phase B: _execute
+# Phase B: _maybe_reindex + _search
 # ---------------------------------------------------------------------------
 
 
@@ -171,7 +187,7 @@ class TestExecuteDimensionMismatch:
                 side_effect=err,
             ),
         ):
-            result = await SearchOrchestrator()._execute(plan)
+            result = await _run_execute(SearchOrchestrator(), plan)
         assert isinstance(result, dict)
         assert result["error"] == "Dimension mismatch"
         assert "force_reindex" in result["recovery_suggestion"]
@@ -182,7 +198,7 @@ class TestExecuteDimensionMismatch:
         err = _dim_mismatch_error()
         with _patch_execute() as (_, mock_gs):
             mock_gs.side_effect = err
-            result = await SearchOrchestrator()._execute(plan)
+            result = await _run_execute(SearchOrchestrator(), plan)
         assert isinstance(result, dict)
         assert result["error"] == "Dimension mismatch"
 
@@ -200,7 +216,7 @@ class TestExecuteReadinessCheck:
         s.dense_index = dense
         with _patch_execute() as (_, mock_gs):
             mock_gs.return_value = s
-            result = await SearchOrchestrator()._execute(plan)
+            result = await _run_execute(SearchOrchestrator(), plan)
         assert isinstance(result, dict)
         assert "No indexed project" in result["error"]
 
@@ -211,7 +227,7 @@ class TestExecuteReadinessCheck:
         s.index_manager.get_stats.return_value = {"total_chunks": 0}
         with _patch_execute() as (_, mock_gs):
             mock_gs.return_value = s
-            result = await SearchOrchestrator()._execute(plan)
+            result = await _run_execute(SearchOrchestrator(), plan)
         assert isinstance(result, dict)
         assert "No indexed project" in result["error"]
 
@@ -223,7 +239,7 @@ class TestExecuteHappyPath:
         searcher = _make_ready_searcher()
         with _patch_execute() as (_, mock_gs):
             mock_gs.return_value = searcher
-            result = await SearchOrchestrator()._execute(plan)
+            result = await _run_execute(SearchOrchestrator(), plan)
         assert isinstance(result, ExecutionOutcome)
         assert result.searcher is searcher
         assert isinstance(result.effective_config, SearchConfig)
@@ -234,7 +250,7 @@ class TestExecuteHappyPath:
         searcher = _make_ready_searcher()
         with _patch_execute() as (_, mock_gs):
             mock_gs.return_value = searcher
-            await SearchOrchestrator()._execute(plan)
+            await _run_execute(SearchOrchestrator(), plan)
         call_kwargs = searcher.search.call_args.kwargs
         assert call_kwargs["query"] == "find embedder"
         assert call_kwargs["k"] == 7
@@ -253,7 +269,7 @@ class TestExecuteHappyPath:
 
         with _patch_execute() as (_, mock_gs):
             mock_gs.return_value = searcher
-            await SearchOrchestrator()._execute(plan)
+            await _run_execute(SearchOrchestrator(), plan)
 
         call_kwargs = searcher.search.call_args.kwargs
         f = call_kwargs.get("filters", {}) or {}
@@ -273,7 +289,7 @@ class TestExecuteHappyPath:
             ) as mock_reindex,
         ):
             mock_gs.return_value = searcher
-            await SearchOrchestrator()._execute(plan)
+            await _run_execute(SearchOrchestrator(), plan)
         mock_reindex.assert_not_called()
 
 
@@ -288,7 +304,7 @@ class TestExecuteConfigIsolation:
         searcher = _make_ready_searcher()
         with _patch_execute(real_sc=sc) as (_, mock_gs):
             mock_gs.return_value = searcher
-            await SearchOrchestrator()._execute(plan)
+            await _run_execute(SearchOrchestrator(), plan)
         assert sc.ego_graph.enabled == original_ego_enabled
 
 
@@ -296,11 +312,14 @@ class TestExecuteConcurrencyIntegration:
     """End-to-end concurrency proof (the plan's 'primary red signal' repro).
 
     Uses a REAL ApplicationState (real _AsyncRWLock via get_reindex_rwlock)
-    so a reindex-triggering _execute() call and several plain-search
-    _execute() calls exercise the actual Block A / Block B-D lock wiring —
-    not a mocked lock. Reproduces (in miniature) the concurrent shape from
-    _archive/ERROR_LOG.md: a stale-index search triggers a reindex while
-    sibling searches are in flight. Proves:
+    so a reindex-triggering run() call and several plain-search run() calls
+    exercise the actual _maybe_reindex (Block A) / read-locked _search+_assemble
+    (Blocks B-I) lock wiring — not a mocked lock. Targets run() rather than the
+    old _execute() so the covered lock span matches the ADR-0008 amendment: the
+    read lock now extends through _assemble, not just Blocks B-D. Reproduces
+    (in miniature) the concurrent shape from _archive/ERROR_LOG.md: a
+    stale-index search triggers a reindex while sibling searches are in
+    flight. Proves:
 
     1. A search's model-inference region (``searcher.search``, standing in
        for the real embed_query / reranker calls) never overlaps a
@@ -336,7 +355,7 @@ class TestExecuteConcurrencyIntegration:
                 if reader_active > 0:
                     overlap_detected = True
             writer_entered.set()
-            # Margin, not just realism: dispatching 5 concurrent _execute() calls
+            # Margin, not just realism: dispatching 5 concurrent run() calls
             # each through several asyncio.to_thread hops (_is_index_stale ->
             # read-lock -> get_searcher -> search) costs tens-to-a-few-hundred ms
             # of pure scheduling overhead on this machine — verified by neutering
@@ -390,14 +409,36 @@ class TestExecuteConcurrencyIntegration:
         ):
             mock_cm.return_value.get_search_mode_for_query.return_value = "hybrid"
             mock_cfg.return_value.performance.use_parallel_search = False
+            # run() plans via SearchPlanner.plan(), which checks config.intent.enabled
+            # before running IntentClassifier — disable it so this test exercises only
+            # the lock wiring, not semantic intent classification (mock_cfg is a bare
+            # MagicMock; leaving other config.* attributes as auto-Mocks is fine since
+            # the intent branch that would touch them never runs).
+            mock_cfg.return_value.intent.enabled = False
 
             orchestrator = SearchOrchestrator()
-            reindex_plan = _make_plan(auto_reindex=True, max_age_minutes=0.001)
-            search_plans = [
-                _make_plan(auto_reindex=True, max_age_minutes=5.0) for _ in range(5)
+            # Raw MCP arguments, not SearchPlan objects — run() builds the plan itself
+            # via SearchPlanner.plan(). max_context_tokens is set explicitly because
+            # SearchPlanner.plan() computes int(arguments.get("max_context_tokens",
+            # config.search_mode.default_max_context_tokens)); leaving the key out would
+            # evaluate the MagicMock default and crash the int() conversion.
+            reindex_args = {
+                "query": "test query",
+                "auto_reindex": True,
+                "max_age_minutes": 0.001,
+                "max_context_tokens": 0,
+            }
+            search_args_list = [
+                {
+                    "query": "test query",
+                    "auto_reindex": True,
+                    "max_age_minutes": 5.0,
+                    "max_context_tokens": 0,
+                }
+                for _ in range(5)
             ]
 
-            reindex_task = asyncio.create_task(orchestrator._execute(reindex_plan))
+            reindex_task = asyncio.create_task(orchestrator.run(reindex_args))
             # Block until the reindex task is confirmed inside the write-locked
             # critical section before firing the concurrent searches. This
             # removes sleep-based guessing from "did they actually race" and
@@ -405,7 +446,7 @@ class TestExecuteConcurrencyIntegration:
             await asyncio.to_thread(writer_entered.wait, 5)
 
             search_results = await asyncio.gather(
-                *[orchestrator._execute(p) for p in search_plans]
+                *[orchestrator.run(a) for a in search_args_list]
             )
             reindex_result = await reindex_task
 
@@ -418,10 +459,14 @@ class TestExecuteConcurrencyIntegration:
             "searches never ran concurrently with each other — this looks like "
             "an accidental full mutex, not a reader-writer lock"
         )
-        assert isinstance(reindex_result, ExecutionOutcome)
-        assert reindex_result.reindexed is True
+        # run() returns the full response dict (Blocks A-I) rather than an
+        # ExecutionOutcome — _assemble now runs inside the same read-locked
+        # scope this test is proving, so the return value reflects that.
+        assert isinstance(reindex_result, dict)
+        assert reindex_result.get("index_refreshed") is True
         for r in search_results:
-            assert isinstance(r, ExecutionOutcome)
+            assert isinstance(r, dict)
+            assert "results" in r
 
 
 # ---------------------------------------------------------------------------

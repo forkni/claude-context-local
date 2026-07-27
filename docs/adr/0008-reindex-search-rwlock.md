@@ -1,6 +1,6 @@
 # Reader-writer lock for auto-reindex vs. in-flight searches
 
-Status: accepted
+Status: accepted (amended 2026-07-27 — see Amendment below)
 Date: 2026-07-12
 
 Per-project async reader-writer lock on the event loop: searches hold the
@@ -9,6 +9,11 @@ shared read lock across searcher acquisition and execution
 stale search, or a manual `index_directory` call) holds the exclusive write
 lock. Combined with deleting the now-defunct single-model embedder teardown
 that previously ran at the start of every auto-reindex.
+
+**2026-07-27 amendment:** the read lock's scope widened to also cover result
+assembly (former Blocks E-I), not just Blocks B-D — see Amendment section.
+`_execute` no longer exists; it split into `_maybe_reindex` (Block A) and
+`_search` (Blocks B-D).
 
 ## Context
 
@@ -123,3 +128,60 @@ mid-reindex, which the teardown removal alone does not fix.
   must only be constructed/acquired from coroutines, never from a
   `threading.Thread` worker — mirrors the existing constraint on
   `get_reindex_lock` / `get_mutation_lock`.
+
+## Amendment (2026-07-27): widen the read lock through `_assemble`
+
+**Context.** A separate latency pass added a version-keyed centrality memo
+to `CodeGraphStorage` (own ADR) so `_assemble`'s graph-scoring step —
+Block F (`CentralityRanker`) and Block G (`SubgraphExtractor`) — now reads
+`index_manager.graph_storage` against a long-lived cache instead of a
+throwaway per-query copy. Tracing that path surfaced a pre-existing gap
+that the memo makes more consequential: `_assemble` ran *outside* the read
+lock this ADR established. `_assemble` is synchronous, so it can't be
+interleaved with other coroutines on the event loop, but a concurrent reindex runs its heavy
+work via `asyncio.to_thread` — a real OS thread — so it mutates
+`graph_storage.graph` (`add_node`, `add_call_edge`, `remove_file_nodes`,
+etc.) in true parallel with a search's Block F/G reads. This is exactly the
+failure class this ADR exists to prevent: a request that reports
+`status=ok` while silently scoring against a graph that is being rewritten
+underneath it.
+
+**Decision.** Extend the read lock to span `_search` (Blocks B-D) *and*
+`_assemble` (Blocks E-I). `_AsyncRWLock` is non-reentrant (a reader blocks
+while a writer is waiting; a writer blocks while readers hold the lock), so
+simply moving the `async with ... .read():` block to wrap the old
+`_execute` call in `run()` would deadlock against Block A's own write lock.
+Block A was split out into its own method, `_maybe_reindex`, so it can run
+*before* the read lock opens and fully release before it does:
+
+```python
+early = await self._maybe_reindex(plan)          # Block A — own write-lock scope
+if isinstance(early, dict):
+    return early
+reindexed_flag, lock_project = early
+async with get_state().get_reindex_rwlock(lock_project).read():
+    outcome = await self._search(plan, reindexed_flag)   # Blocks B-D
+    if isinstance(outcome, dict):
+        return outcome
+    return self._assemble(plan, outcome)                 # now inside the lock
+```
+
+`_execute` (Blocks A-D, self-managing its own read lock around B-D) no
+longer exists. `_maybe_reindex` covers Block A only; `_search` covers
+Blocks B-D and expects the caller to already hold the read lock — `run()`
+is the only caller.
+
+**Consequences.**
+
+- A pending reindex now waits for a search's assembly step (formatting,
+  centrality scoring, subgraph extraction, source-order/budget truncation),
+  not just its raw search call, before the write lock can proceed. Measured
+  as a low tens-of-ms addition to worst-case reindex latency — assembly is
+  CPU-bound formatting/graph-read work, not another model inference pass.
+  Searches are unaffected: read-side concurrency is unchanged.
+- No new call sites acquire `get_reindex_rwlock` directly; the widening is
+  entirely inside `SearchOrchestrator.run()`.
+- Covered by `tests/unit/mcp_server/test_search_orchestrator.py::TestExecuteConcurrencyIntegration`,
+  retargeted from `_execute()` to `run()` so the exercised lock span matches
+  production (previously it only proved Blocks B-D were race-free; it now
+  proves Blocks B-I are).

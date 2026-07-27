@@ -27,10 +27,12 @@ from typing import Any
 class _AsyncRWLock:
     """Writer-preference async reader-writer lock, event-loop only.
 
-    Readers are concurrent in-flight searches (Blocks B-D of
-    ``SearchOrchestrator._execute``); the writer is the project's reindex
-    workflow (auto-reindex, or a manual ``index_directory`` call — both
-    rewrite index files and must not overlap a search reading them).
+    Readers are concurrent in-flight searches — ``SearchOrchestrator.run()``
+    holds this across ``_search`` (Blocks B-D) *and* ``_assemble`` (Blocks
+    E-I), per the ADR-0008 amendment; the writer is the project's reindex
+    workflow (auto-reindex via ``_maybe_reindex``, or a manual
+    ``index_directory`` call — both rewrite index files and must not overlap
+    a search reading them).
     Writer preference: once a writer is waiting, new readers queue behind
     it, so a steady stream of searches can't starve out a pending reindex.
 
