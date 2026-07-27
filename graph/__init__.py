@@ -5,7 +5,7 @@ This module provides call graph extraction, storage, and querying capabilities
 for code understanding and structural analysis.
 
 Current Features:
-- Call graph extraction (Python)
+- Call graph extraction (Python, GLSL)
 - NetworkX-based graph storage
 - Graph persistence (JSON format)
 - Graph queries (callers, callees, neighbors)
@@ -14,7 +14,7 @@ Planned Enhancements:
 - Type information extraction
 - Import dependency graphs
 - PageRank-based ranking
-- C++ and GLSL support
+- C++ support
 """
 
 from chunking.relationships.call_graph_extractor import (
