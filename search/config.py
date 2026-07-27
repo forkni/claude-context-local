@@ -201,7 +201,7 @@ class SearchModeConfig:
 
 @dataclass
 class PerformanceConfig:
-    """GPU, parallelism, caching settings (14 fields)."""
+    """GPU, parallelism, caching settings (17 fields)."""
 
     use_parallel_search: bool = True
     max_parallel_workers: int = 2
