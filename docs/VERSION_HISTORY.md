@@ -2,59 +2,192 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-07-02)
+## Current Status: All Features Operational (2026-07-27)
 
-- **Version**: 0.20.1
+- **Version**: 0.22.0
 - **Status**: Production-ready, concurrency-safe
-- **Test Coverage**: 3,140 tests (3,127 pass / 13 skip, 2026-07-02)
-- **Dependencies**: 125 packages + optional `[callgraph]` / `[lsp]` / `[gpu]` extras
-- **SSCG Benchmark**: MRR 0.797, Recall@5 0.689, Recall@7 0.736, Hit@5 100% — recommended k=7 (2026-06-08)
+- **Test Coverage**: 3,359 unit tests · 103 fast_integration · 22 integration · 93 slow_integration (2026-07-27)
+- **Dependencies**: 38 direct (`pyproject.toml`) + optional `[callgraph]` / `[lsp]` / `[gpu]` / `[otel]` extras
+- **SSCG Benchmark**: MRR 0.787-0.796, Recall@7 0.719-0.734, Recall@20 0.80-0.81 (2026-07-26/27)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: v0.20.1 — intent-classifier verification-term routing fix (Q12); v0.20.0 — Codecov CI integration, Campaign-2 Tier-1 refactors; v0.19.0 — multi-model routing removed, 18 MCP tools (down from 19), MODEL_REGISTRY pruned 7→5 models
+- **Recent**: v0.22.0 — GLSL indexing parity, persistent chunk embedding cache (43× reindex speedup), BM25 path/symbol augmentation (MRR +0.113), `HybridSearcher.clear_index()` truthiness fix (was discarding 100% of resolver-derived call edges); v0.21.0 — MCPB extension bundle, module-preamble chunks, core/advanced MCP tool tiering, default embedder corrected to `BAAI/bge-m3`, Qwen3-Reranker official-template fix (MRR 0.311→0.754); v0.20.1 — intent-classifier verification-term routing fix (Q12)
 
 ---
 
-## v0.17.0 - DSPy/GEPA Agent-Evaluation Harness + Search Default Uplift (2026-06-24)
+## v0.22.0 - GLSL Parity, Persistent Chunk Cache, BM25 Path Augmentation (2026-07-27)
 
-New agent-evaluation and optimization subsystem built on DSPy, plus search quality improvements discovered by running GEPA on the MCP tool-use benchmark.
+Largest release since the v0.18-0.21 test-remediation campaign: GLSL indexing reaches
+feature parity with Python, a persistent chunk embedding cache cuts full-reindex time by
+43×, and a BM25 path/symbol augmentation pass lifts hybrid MRR +0.113 on the 63-query
+benchmark. Also fixes the highest-severity bug found this cycle — every full reindex was
+silently discarding 100% of resolver-derived call-graph edges.
 
-### Added — DSPy/GEPA agent-evaluation harness
+### Migration
 
-- **`ClaudeCodeLM` subscription backend** (`utils/dspy_claude_code.py`) — `dspy.BaseLM` subclass that shells to `claude -p --output-format json`; routes rollout and reflection calls through a Claude Max subscription with zero API cost. Handles dict and array CLI JSON shapes, async dispatch, intentionally-zero cost accounting. `configure_dspy()` helper. See `docs/DSPY_SETUP.md`.
-- **DSPy ReAct → MCP HTTP bridge** — wraps the running code-search HTTP server as DSPy-callable tools for structured agent rollouts against the live index.
-- **DSPy agent-evaluation harness** — `dspy.Evaluate` + `dspy.GEPA` end-to-end harness; dataset loading, metric wiring, trace collection.
-- **GEPA optimization on CodeNavQA** — reflective evolutionary search with the subscription LM as proposer. GEPA-discovered guidance improved **Recall@7 0.668→0.717** after distillation back into the `CodeNavQA` signature. Includes chunk-id verbatim copy fix, unranked recall ceiling metric, tool-vs-agent recall diagnostic.
-- **Optional `[gpu]` extra** — `nvidia-ml-py>=12.535.77` for NVML-backed VRAM monitoring.
-- **`ClaudeCodeLM` test suite** — CLI array-format and dict-format JSON parsing tests; 2,853 unit tests total.
+- **Existing indices need one full, non-incremental reindex.** `INDEX_VERSION` 4 (up from
+  2), the `bm25_tokenizer="whole"` switch, and GLSL parity each change the on-disk index
+  format, and each fails **silently**: a version or tokenizer mismatch only logs a warning,
+  never surfaces in the MCP response, and the auto-heal resync only triggers on a >10%
+  BM25-vs-dense document-count gap, which a version bump never produces. Run
+  `index_directory(..., incremental=False)` once. Skipping it measured −0.05 to −0.11
+  Recall@5 and −0.09 to −0.11 MRR across the two migrations with dedicated A/B evidence.
+
+### Added
+
+- **GLSL indexing parity with Python** — corrected 18 fictional tree-sitter node types
+  across GLSL/JS/TS/TSX/Go and rewrote `GLSLChunker` around the real grammar: named
+  uniforms/UBO blocks/structs/macros/includes, comment-docstring attachment, a
+  chunk-granularity gate, GLSL call-graph edges with TouchDesigner `TD*`-prefix filtering, a
+  `"shader"` file role, `.glslinc` as an 8th GLSL extension (20 extensions total), and a
+  base-class fix that had left `complexity_score` at 0 for every tree-sitter language
+  overriding `get_node_complexity`. One measured file: 4 chunks (0 call edges) → 13 chunks
+  (1 resolved call edge, non-zero complexity).
+- **Persistent chunk embedding cache** (`embeddings/chunk_cache.py`) — content-hash-keyed,
+  cuts a full reindex's embedding phase from 33.94s to 0.75s (43×) once the codebase is
+  unchanged. On by default.
+- **Widened retrieval funnel** — hybrid `search_k` raised to `max(reranker_budget, k*5)`;
+  the graph-enhanced cap became configurable (`max_results_multiplier`, default 8); added
+  `recall@20`/`recall@50`/`pool_hit_rate` benchmark metrics — the single largest recall win
+  this release.
+- **Identifier-preserving BM25 tokenizer** (`bm25_tokenizer`, default now `"whole"`) —
+  identifiers stay intact instead of being stemmed apart.
+- **BM25 path/symbol token augmentation** — adopted after A/B verification: 63-query MRR
+  0.3207→0.4337 (+0.113), Recall@5 0.3180→0.3992 (+0.081). Drives `INDEX_VERSION` 3→4.
+- Real Okapi `bm25_k1`/`bm25_b` now wired and query-time tunable; shipped defaults
+  (1.5/0.75) confirmed not decisively beaten in a k1×b sweep.
+- **Opt-in single-pass rerank mode** (`RerankerConfig.single_pass`, default off) — roughly
+  halves reranking latency at a measured recall cost; documented as a latency knob.
+- **`codefuse-ai/F2LLM-v2-0.6B` embedding model registered** — a new available model via the
+  launcher's Quick Model Switch, MRR +0.026/+0.027 mean over Qwen3-Embedding-0.6B, recall
+  flat. **Not a changed default** — the packaged default embedder remains `BAAI/bge-m3`.
+- `index_directory` responses now include `call_edges_injected`; new search-latency and
+  full-index phase profilers; a 96-query expanded golden evaluation set.
 
 ### Changed
 
-- **Search `default_k` 4→7** — SSCG benchmark (k=7 hybrid, 2026-05-25): MRR 0.806, Recall@7 0.700, Hit@7 100% — vs k=4 baseline: MRR +0.093, Recall@7 +0.122.
-- **`mcp<2` upper pin** — prevents accidental uptake of v2 breaking-change release; `starlette>=1.3.1` promoted to a direct dependency.
-- **Search guidance** — GEPA-discovered multi-query strategy, `include_context=true` default, `reranker_score`-first sort, MRR lead-chunk rule ported to the `mcp-search-tool` skill.
-
-### Security
-
-- **CVE remediation: 53→5 advisories** (two rounds):
-  - Round 1 (`3331c57`): 12 packages upgraded; 53→11 advisories. `aiohttp>=3.14.1`, `python-dotenv>=1.2.2`, `certifi`, `urllib3`, `requests`, `cryptography`, others.
-  - Round 2 (`946f087`): `starlette 0.52.1→1.3.1`; 11→5 advisories. 5 remain (low/medium; documented in `pyproject.toml`).
-
-### Performance
-
-- **AST parse-once** (`#15`) — shared parse result across all relationship extractors; 2–4× CPU reduction per file.
-- **Single-pass `rglob` probe** (`#17`, `#18`) — `chunked_paths` set hoisted; accessibility probe runs once per index operation.
-- **Batch 4 — embedding throughput + NVML** (`#50–#56`, `#59`) — batch-size auto-tuner, ONNX warm-up, NVML polling, and related micro-opts.
+- Reranker pool budget (`top_k_candidates`) 50→30 — quality-neutral within ±0.025, −32%
+  reranking latency.
+- `search_code` now collapses `split_block` fragments by default
+  (`dedupe_split_blocks=True`) — manual client-side dedupe is no longer necessary.
+- `graph_enhanced.centrality_alpha` default 0.3→0.0 — centrality now only reorders results
+  via `CentralityRanker.rerank()` rather than blending into the ranking score directly.
+- `call_graph.lsp_total_timeout_seconds` default 120→180.
+- `auto_reindex` now honors `enable_auto_reindex` instead of being silently ignored; drift
+  detection counts changed *files* rather than change *events*.
+- Chunk embedding cache now records `device|dtype|backend` provenance so flipping
+  `enable_fp16`/`prefer_bf16`/`use_onnx` correctly invalidates cached vectors (cache format
+  v2; v1 caches cold-start once).
+- Auto size cap retuned from `max(4× live entries, 20,000)` to `max(2× live entries, 2,000)`
+  (32MB ceiling) — cuts the eviction ceiling from ~82MB to ~17.5MB.
+- **`mcp-search-tool` skill reinstated** — removed earlier in the v0.21.0 window, restored
+  and substantially expanded here to document the widened retrieval funnel, core/advanced
+  tool tiers, and the 2026-07-25/26 benchmark results.
 
 ### Fixed
 
-- **Merged community edge union** (`#28`, `#16`) — `union_edges` now iterates all members, not just the first.
-- **Batch 3** (`#43–#49`) — six event-loop offloads, metadata cache clear on reindex, ONNX 2048-token contract, dead-field removal, graph-id normalization, Merkle sentinel.
-- **Batch 5** (`#57`, `#58`, `#60–#62`) — routing-metadata `None` propagation fix, five clarity refactors.
-- **RAM-fallback config decoupling** — override no longer mutates the shared `SearchConfig` singleton.
-- **Arena-polluted ONNX batch sizing** — first measurement discarded to avoid over-conservative ceilings.
-- **Non-hybrid path persisted content** — BM25-only and semantic-only paths now strip `content` fields consistently.
-- **Windows cp1252 decode on `claude` subprocess** — `encoding="utf-8"` added to prevent `UnicodeDecodeError` on Windows.
-- **Pyrefly type cleanup** — `get_embedder` non-None assertion, `_class_file_cache` `Optional` annotation.
+- **Every full reindex discarded 100% of resolver-derived call edges** —
+  `HybridSearcher.clear_index()`'s graph re-sync was guarded on a `GraphIntegration` object
+  that defines `__len__` without `__bool__`, so a freshly-created 0-node graph was falsy and
+  the re-sync silently never ran. Verified before the fix: 4,720 nodes / 14,118 edges saved
+  with **0** pyan/libcst/LSP-sourced edges. The highest-severity fix in this release.
+- `handle_clear_index` deleted the wrong filename (`chunks_metadata.db` instead of the real
+  `metadata.db`), leaving the metadata DB, its WAL/SHM sidecars, `chunk_ids.pkl`, and the
+  call graph behind after a "clear index." Consolidated three divergent deletion lists onto
+  one corrected file set; an explicit clear-index now also drops the chunk embedding cache.
+- `CodeGraphStorage.clear()` left an orphaned `communities.json` behind, read back live by
+  three downstream stages — the same phantom-artifact class as the fix above.
+- **Non-semantic chunks lost relationship edges on the live indexing path** —
+  `_make_spec_from_embedding` dropped every chunk outside `SEMANTIC_TYPES`
+  unconditionally, silently losing GLSL `include`/`macro`/`declaration` edges. Now mirrors
+  `add_chunk`'s escape hatch.
+- A caught `PermissionError` during a force-full pre-clear previously reported success with
+  0 chunks; force-reindex now hard-fails instead. `get_canonical_project_info` picked the
+  alphabetically-first per-model `project_info.json`, silently dropping stored
+  `user_excluded_dirs`.
+- Drift-based reindex promotion counted change *events* rather than distinct changed
+  *files*; repairing this uncovered a rotted `slow_integration` suite and that
+  `clear_index()` nulled `BatchOperations._metadata_store` without re-wiring it.
+- **Centrality memo never actually hit** — moved from the per-query `CentralityRanker`
+  instance (recreated every call) to the long-lived `CodeGraphStorage`, keyed on a
+  monotonic version counter. Eliminates ~53ms/query of redundant PageRank recompute
+  (`docs/adr/0010-centrality-memo-invalidation.md`).
+- SSCG subgraph extraction now skipped when `include_subgraph` is false. Result assembly
+  was running outside the reindex read lock; `SearchOrchestrator._execute` split into
+  `_maybe_reindex` (write-lock) + `_search`, closing the ADR-0008 gap.
+
+### Performance
+
+- Composite search-latency win from six independent fixes: **138ms/query (13.5%)** measured
+  on an isolated before/after A/B, with the untouched rerank phase differing by only 0.43%
+  as a comparability check.
+- Full-index embedding phase: 33.94s → 0.75s warm-cache median (43×).
+
+### Security
+
+- `gitpython` ≥3.1.55 (8 argument-injection CVEs) and `setuptools` ≥83.0.0
+  (CVE-2026-59890) — 9 CVEs total.
+
+### Removed
+
+- `bm25_k_parameter` config field (dead code) and the unused `tree-sitter-java` dependency.
+
+---
+
+## v0.21.0 - MCP-Server Hardening, Default Embedder Correction, Qwen3-Reranker Fix (2026-07-23)
+
+### Added
+
+- **MCPB extension bundle** (`code-search-extension/`) — packages the MCP server as a
+  distributable Claude Desktop extension.
+- **Module-preamble chunks** — a dedicated chunk per file for leading imports/module
+  docstring, respected in reranker ordering, giving import-context without inflating the
+  first code chunk.
+- **MCP-server hardening** — core/advanced tool tiers gated behind
+  `MCP_EXPOSE_ADVANCED_TOOLS` (10 core tools always listed, 8 advanced config/tuning/
+  destructive tools hidden from `list_tools` by default but still dispatchable by name),
+  async index jobs, dispatch telemetry, a mutation lock serializing index-mutating calls.
+- Claude Desktop MCP setup guide; reranker comparison benchmarking (`--reranker-sweep`,
+  `--category` comma-separated lists, a `VRAM(GB)` leaderboard column).
+
+### Changed
+
+- **Default embedding model corrected to `BAAI/bge-m3`** across every config reader.
+- `SearchMode` StrEnum centralizes the `hybrid`/`semantic`/`bm25`/`auto` literals.
+- Removed the `mcp-search-tool` skill (superseded by `auto-git-workflow`) — **reinstated
+  and expanded later in the v0.22.0 window** once its search-guidance content proved still
+  needed alongside the git-workflow skill.
+- Untracked `search_config.json` from the repo; added a `.example` template with a loader
+  fallback so a missing local config no longer breaks startup.
+- Reranker selection UI (`start_mcp_server.cmd`) dropped BGE — strictly dominated by GTE on
+  speed and by Qwen3/Jina on quality; remaining GTE/Qwen3/Jina v3 choices annotated with
+  VRAM-tier guidance.
+
+### Fixed
+
+- **Qwen3-Reranker prompt bug** — used an ad-hoc prompt instead of the official instruct
+  template (arXiv:2506.05176 §2), causing degenerate scores (MRR 0.311, below the
+  no-reranker baseline of 0.372). Fixed to the official template: MRR 0.754, competitive
+  with GTE (0.748).
+- Stale golden-dataset chunk IDs (Q12, Q48, Q53) referencing symbols removed by the v0.12.3
+  multi-model-pool refactor — retargeted to the live equivalents.
+- LSP call-graph resolver deadlock eliminated via a persistent reader thread. Scope-aware
+  call-graph resolution fixed alias misbinding where a local variable shadowed an imported
+  name of the same name.
+- Serialized auto-reindex against in-flight searches; added reranker inference locks to
+  prevent concurrent GPU access during model swap.
+- Effective-Python audit: narrowed broad `except` handlers, added write-locks around shared
+  mutable state, offloaded event-loop-blocking calls, fixed an O(n²) constant-usage scan.
+
+### Performance
+
+- Shared a single AST walk across relationship extractors; dedent-once for call-graph and
+  phase-3 extraction; memoized per-file import context and class signature lookups; read
+  each source file once during chunking instead of per chunk.
+
+### Security
+
+- Resolved 21 dependency CVEs; `transformers` upgraded to 5.x (dropping the ONNX optional
+  extra to unblock CVE-2026-4372).
 
 ---
 
@@ -113,6 +246,50 @@ New agent-evaluation and optimization subsystem built on DSPy, plus search quali
 ### Added
 
 - **`scripts/benchmark/run_mcp_pipeline_eval.py`** — emission-order SSCG eval through the real `SearchOrchestrator.run()` pipeline (position-sensitive MRR/Recall@7 in emission order).
+
+---
+
+## v0.17.0 - DSPy/GEPA Agent-Evaluation Harness + Search Default Uplift (2026-06-24)
+
+New agent-evaluation and optimization subsystem built on DSPy, plus search quality improvements discovered by running GEPA on the MCP tool-use benchmark.
+
+### Added — DSPy/GEPA agent-evaluation harness
+
+- **`ClaudeCodeLM` subscription backend** (`utils/dspy_claude_code.py`) — `dspy.BaseLM` subclass that shells to `claude -p --output-format json`; routes rollout and reflection calls through a Claude Max subscription with zero API cost. Handles dict and array CLI JSON shapes, async dispatch, intentionally-zero cost accounting. `configure_dspy()` helper. See `docs/DSPY_SETUP.md`.
+- **DSPy ReAct → MCP HTTP bridge** — wraps the running code-search HTTP server as DSPy-callable tools for structured agent rollouts against the live index.
+- **DSPy agent-evaluation harness** — `dspy.Evaluate` + `dspy.GEPA` end-to-end harness; dataset loading, metric wiring, trace collection.
+- **GEPA optimization on CodeNavQA** — reflective evolutionary search with the subscription LM as proposer. GEPA-discovered guidance improved **Recall@7 0.668→0.717** after distillation back into the `CodeNavQA` signature. Includes chunk-id verbatim copy fix, unranked recall ceiling metric, tool-vs-agent recall diagnostic.
+- **Optional `[gpu]` extra** — `nvidia-ml-py>=12.535.77` for NVML-backed VRAM monitoring.
+- **`ClaudeCodeLM` test suite** — CLI array-format and dict-format JSON parsing tests; 2,853 unit tests total.
+
+### Changed
+
+- **`search_config.json.example` `default_k` 4→7** — SSCG benchmark (k=7 hybrid, 2026-05-25): MRR 0.806, Recall@7 0.700, Hit@7 100% — vs k=4 baseline: MRR +0.093, Recall@7 +0.122. (Only the shipped example config changed; the `SearchConfig` dataclass factory default remains 4.)
+- **`mcp<2` upper pin** — prevents accidental uptake of v2 breaking-change release; `starlette>=1.3.1` promoted to a direct dependency.
+- **Search guidance** — GEPA-discovered multi-query strategy, `include_context=true` default, `reranker_score`-first sort, MRR lead-chunk rule ported to the `mcp-search-tool` skill.
+
+### Security
+
+- **CVE remediation: 53→5 advisories** (two rounds):
+  - Round 1 (`3331c57`): 12 packages upgraded; 53→11 advisories. `aiohttp>=3.14.1`, `python-dotenv>=1.2.2`, `certifi`, `urllib3`, `requests`, `cryptography`, others.
+  - Round 2 (`946f087`): `starlette 0.52.1→1.3.1`; 11→5 advisories. 5 remain (low/medium; documented in `pyproject.toml`).
+
+### Performance
+
+- **AST parse-once** (`#15`) — shared parse result across all relationship extractors; 2–4× CPU reduction per file.
+- **Single-pass `rglob` probe** (`#17`, `#18`) — `chunked_paths` set hoisted; accessibility probe runs once per index operation.
+- **Batch 4 — embedding throughput + NVML** (`#50–#56`, `#59`) — batch-size auto-tuner, ONNX warm-up, NVML polling, and related micro-opts.
+
+### Fixed
+
+- **Merged community edge union** (`#28`, `#16`) — `union_edges` now iterates all members, not just the first.
+- **Batch 3** (`#43–#49`) — six event-loop offloads, metadata cache clear on reindex, ONNX 2048-token contract, dead-field removal, graph-id normalization, Merkle sentinel.
+- **Batch 5** (`#57`, `#58`, `#60–#62`) — routing-metadata `None` propagation fix, five clarity refactors.
+- **RAM-fallback config decoupling** — override no longer mutates the shared `SearchConfig` singleton.
+- **Arena-polluted ONNX batch sizing** — first measurement discarded to avoid over-conservative ceilings.
+- **Non-hybrid path persisted content** — BM25-only and semantic-only paths now strip `content` fields consistently.
+- **Windows cp1252 decode on `claude` subprocess** — `encoding="utf-8"` added to prevent `UnicodeDecodeError` on Windows.
+- **Pyrefly type cleanup** — `get_embedder` non-None assertion, `_class_file_cache` `Optional` annotation.
 
 ---
 

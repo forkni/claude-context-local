@@ -71,6 +71,7 @@
     "top_k_candidates": 30,
     "min_vram_gb": 2.0,
     "batch_size": 16,
+    "dedupe_split_blocks": true,
     "single_pass": false
   },
   "output": {
@@ -99,7 +100,8 @@
     "sizing_mode": "adaptive",
     "adaptive_multiplier_max": 1.3,
     "adaptive_multiplier_min": 0.5,
-    "max_complexity_cap": 30
+    "max_complexity_cap": 30,
+    "glsl_filter_td_prefix": true
   },
   "ego_graph": {
     "enabled": true,

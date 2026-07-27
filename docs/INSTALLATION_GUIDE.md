@@ -26,9 +26,10 @@ This guide covers the complete installation process for the Claude Context MCP s
 - **Python**: 3.11+ (tested with Python 3.11.1)
 - **Operating System**: Windows 10/11
 - **Disk Space**: 3-6 GB free space
-  - EmbeddingGemma model: ~1.2 GB (default)
-  - BGE-M3 model: 1–1.5 GB
+  - BGE-M3 model: 1–1.5 GB (default)
+  - EmbeddingGemma model: ~1.2 GB
   - Qwen3-0.6B model: ~2.3 GB (long-context, MRL support)
+  - F2LLM-v2-0.6B model: ~2.2 GB (best retrieval ordering, opt-in)
   - CodeRankEmbed model: ~0.6 GB (code-specific, CSN: 77.9 MRR)
   - GTE-ModernBERT-base model: ~0.28 GB (lightest, code-optimized)
   - PyTorch with CUDA: ~2.4 GB
@@ -36,11 +37,14 @@ This guide covers the complete installation process for the Claude Context MCP s
 - **Memory**: 4GB RAM minimum, 8GB+ recommended
 - **GPU** (optional): NVIDIA GPU with CUDA 11.8+ or 12.x support
   - **Startup VRAM (v0.5.17+)**: 0 MB (lazy loading enabled)
-  - **After first search**: 1.5-2 GB VRAM (single model) or 5.3 GB VRAM (multi-model)
+  - **After first search**: 1.5-2 GB VRAM (single embedding model, plus ~2GB for the neural reranker if enabled)
   - Single-model mode: 2-4 GB VRAM total
-  - Multi-model mode (v0.5.4+): 6-8 GB VRAM recommended (5.3 GB for 3 models after first search)
-  - RTX 3060 12GB: Comfortable for multi-model (7 GB headroom)
-  - RTX 4090 24GB: Excellent for multi-model (19 GB headroom)
+  - RTX 3060 12GB: Comfortable headroom
+  - RTX 4090 24GB: Excellent headroom
+
+  Multi-model routing (loading several embedders concurrently) was removed in v0.19.0 —
+  the system now loads exactly one embedding model at a time (instant `<150ms` switching
+  via per-model index storage).
 
 > **Windows Focus**: This system is optimized for Windows environments with automated installers and comprehensive verification tools.
 
@@ -64,10 +68,10 @@ git clone https://github.com/forkni/claude-context-local.git
 cd claude-context-local
 
 # 2. Run the unified Windows installer
-install-windows.bat
+install-windows.cmd
 
 # 3. Verify installation
-verify-installation.bat
+verify-installation.cmd
 
 # 4. Automatic Claude Code configuration (included in installation)
 # If configuration fails, run manually:
@@ -83,7 +87,7 @@ verify-installation.bat
 - ✅ **Complete Setup**: All dependencies including hybrid search components
 - ✅ **Automatic MCP Configuration**: Claude Code integration configured during installation
 - ✅ **Path Verification**: Validates MCP server paths and detects configuration errors
-- ✅ **Comprehensive Verification**: Built-in testing with verify-installation.bat
+- ✅ **Comprehensive Verification**: Built-in testing with verify-installation.cmd
 - ✅ **Windows Optimized**: Specifically designed for Windows environments
 
 ### Alternative Platforms
@@ -104,7 +108,7 @@ The EmbeddingGemma model (`google/embeddinggemma-300m`) requires HuggingFace aut
 
 ### Installation Integration
 
-The Windows installer (`install-windows.bat`) includes automatic HuggingFace authentication:
+The Windows installer (`install-windows.cmd`) includes automatic HuggingFace authentication:
 
 1. **Automatic Detection**: Checks if you're already authenticated
 2. **Interactive Setup**: Prompts for your token if needed
@@ -196,7 +200,7 @@ Test your authentication with these commands:
 .venv\Scripts\python.exe -c "from huggingface_hub import model_info; print(model_info('google/embeddinggemma-300m').modelId)"
 
 # Full verification
-verify-installation.bat
+verify-installation.cmd
 ```
 
 ### Security Notes
@@ -209,7 +213,7 @@ verify-installation.bat
 
 ### Automatic Configuration
 
-The Windows installer (`install-windows.bat`) automatically configures Claude Code MCP integration during installation:
+The Windows installer (`install-windows.cmd`) automatically configures Claude Code MCP integration during installation:
 
 1. **Automatic Detection**: Checks if Claude Code is installed and accessible
 2. **MCP Server Registration**: Registers the code-search MCP server with Claude Code
@@ -509,7 +513,7 @@ The system includes a professional verification tool that tests all components:
 
 ```powershell
 # Run the comprehensive verification script
-verify-installation.bat
+verify-installation.cmd
 
 # Expected output:
 # [PASS] 15 tests completed successfully

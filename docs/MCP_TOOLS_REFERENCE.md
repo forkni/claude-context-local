@@ -8,9 +8,18 @@ This modular reference can be embedded in any project instructions for Claude Co
 
 ## Available MCP Tools (18)
 
+Tools are split into two tiers (`mcp_server/tool_registry.py`): **10 core tools** are
+always listed by `list_tools`; **8 advanced tools** — `configure_search_mode`,
+`configure_reranking`, `configure_chunking`, `switch_embedding_model`,
+`list_embedding_models`, `get_search_config_status`, `clear_index`, `delete_project`
+(runtime-tuning / destructive / rarely-needed operations) — are hidden by default and
+only appear once the server env var `MCP_EXPOSE_ADVANCED_TOOLS=1` (or `true`/`yes`) is
+set. This keeps the advertised tool count small without removing the capability. All
+18 tools remain callable directly regardless of the `list_tools` filter.
+
 | Tool | Priority | Purpose | Parameters |
 |------|----------|---------|------------|
-| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=7, search_mode="hybrid", file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0 |
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=4 (schema default; `search_config.json.example` sets the effective default to 7), search_mode="hybrid", file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0 |
 | **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types |
 | **find_path** | 🟡 **IMPACT** | Trace shortest path between code entities in relationship graph | source OR source_chunk_id, target OR target_chunk_id, edge_types, max_hops=10 |
 | **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), project_name, incremental=True |
@@ -1119,7 +1128,7 @@ def process_order(order: Order, payment: PaymentGateway):
 
 ## Supported Features
 
-- **Languages**: Python, JavaScript, TypeScript, Go, Rust, C, C++, C#, GLSL (9 languages, 19 extensions)
+- **Languages**: Python, JavaScript, TypeScript, Go, Rust, C, C++, C#, GLSL (9 languages, 20 extensions)
 - **Parsing**: AST (Python) + Tree-sitter (all others)
 - **Search Modes**: Semantic, BM25, Hybrid
 - **Chunking**: Functions, classes, methods, interfaces, enums, modules, etc.
@@ -1131,7 +1140,7 @@ def process_order(order: Order, payment: PaymentGateway):
 
 ```powershell
 # 1. Install system
-.\install-windows.bat
+.\install-windows.cmd
 
 # 2. Configure Claude Code
 .\scripts\batch\manual_configure.bat

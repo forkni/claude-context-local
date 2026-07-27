@@ -314,10 +314,10 @@ Multi-hop is **enabled by default** with optimal settings validated through empi
 
 **Optimal Values (Do Not Change Unless Necessary):**
 
-- `enable_multi_hop`: `true` (enabled by default)
-- `multi_hop_count`: `2` (two hops - validated optimal)
-- `multi_hop_expansion`: `0.3` (30% expansion - validated optimal)
-- `multi_hop_initial_k_multiplier`: `2.0` (2× initial results)
+- `enabled`: `true` (enabled by default)
+- `hop_count`: `2` (two hops - validated optimal)
+- `expansion`: `0.5` (50% expansion in `search_config.json.example`; dataclass factory default is `0.3`)
+- `initial_k_multiplier`: `2.0` (2× initial results)
 
 #### To Disable Multi-Hop
 
@@ -345,10 +345,10 @@ export CLAUDE_ENABLE_MULTI_HOP=false
 
 ```json
 {
-  "enable_multi_hop": true,
-  "multi_hop_count": 2,
-  "multi_hop_expansion": 0.3,
-  "multi_hop_initial_k_multiplier": 2.0
+  "enabled": true,
+  "hop_count": 2,
+  "expansion": 0.5,
+  "initial_k_multiplier": 2.0
 }
 ```
 
@@ -382,9 +382,18 @@ The Snowball stemmer (Porter2 algorithm) normalizes words during BM25 text prepr
 
 #### Configuration
 
-Stemming is **enabled by default** with optimal settings validated through empirical testing:
+> **Default tokenizer is `bm25_tokenizer: "whole"`, which does not apply stemming at
+> all** — `bm25_use_stemming` is only consulted by the `"legacy"` tokenizer variant
+> (`search/bm25_index.py`). The `"whole"` default keeps identifiers intact (no
+> camelCase/snake_case split, no stemming) and outperforms `"legacy"` on the golden
+> sets (+0.05/+0.07 Recall@5, +0.09/+0.10 MRR — `search/config.py:173-174`). The
+> stemming behavior and benchmark numbers below apply only if you opt back into
+> `bm25_tokenizer: "legacy"`; switching tokenizers requires a full reindex.
 
-**Default Setting:**
+`bm25_use_stemming` defaults to `true` and, under `"legacy"` mode, is validated
+through empirical testing:
+
+**Default Setting (legacy mode only):**
 
 - `bm25_use_stemming`: `true` (enabled by default)
 
@@ -506,26 +515,27 @@ The system includes weight optimization that can automatically tune weights base
 
 ### GPU Memory Management
 
-Configure GPU usage and memory thresholds:
+Configure GPU usage and the VRAM ceiling (`search/config.py` `PerformanceConfig`):
 
 ```json
 {
   "prefer_gpu": true,
-  "gpu_memory_threshold": 0.8,
+  "vram_limit_fraction": 0.8,
+  "allow_ram_fallback": true,
   "enable_auto_reindex": true
 }
 ```
 
 ### Parallel Processing Settings
 
-Control CPU and GPU coordination:
+Control search and chunking parallelism:
 
 ```json
 {
   "use_parallel_search": true,
-  "max_worker_threads": 4,
-  "gpu_batch_size": 32,
-  "cpu_chunk_size": 100
+  "max_parallel_workers": 2,
+  "enable_parallel_chunking": true,
+  "max_chunking_workers": 8
 }
 ```
 
@@ -536,8 +546,7 @@ Configure automatic reindexing behavior:
 ```json
 {
   "enable_auto_reindex": true,
-  "max_index_age_minutes": 5.0,
-  "force_reindex_on_startup": false
+  "max_index_age_minutes": 5.0
 }
 ```
 
@@ -550,7 +559,6 @@ Configure automatic reindexing behavior:
   "bm25_weight": 0.3,
   "dense_weight": 0.7,
   "use_parallel_search": true,
-  "gpu_batch_size": 64,
   "prefer_gpu": true
 }
 ```
@@ -860,28 +868,29 @@ start_mcp_server.bat
     "enable_hybrid": true,
     "bm25_weight": 0.35,
     "dense_weight": 0.65,
-    "bm25_use_stemming": true,
+    "bm25_tokenizer": "whole",
     "rrf_k_parameter": 100
   },
   "performance": {
     "use_parallel_search": true,
+    "max_parallel_workers": 2,
     "prefer_gpu": true,
-    "gpu_batch_size": 32,
-    "cpu_chunk_size": 100,
-    "max_worker_threads": 4,
+    "vram_limit_fraction": 0.8,
+    "allow_ram_fallback": true,
     "enable_auto_reindex": true,
-    "max_index_age_minutes": 5.0,
-    "force_reindex_on_startup": false,
-    "gpu_memory_threshold": 0.8,
-    "cache_embeddings": true,
-    "debug_mode": false
+    "max_index_age_minutes": 30.0
   },
   "multi_hop": {
-    "enable_multi_hop": true,
-    "multi_hop_count": 2,
-    "multi_hop_expansion": 0.3
+    "enabled": true,
+    "hop_count": 2,
+    "expansion": 0.5
   }
 }
 ```
+
+Field names mirror `search_config.json.example` — see that file (and `search/config.py`'s
+`SearchModeConfig`/`PerformanceConfig`/`MultiHopConfig` dataclasses) for the authoritative
+list; this excerpt is illustrative, not exhaustive. Note `bm25_tokenizer: "whole"` keeps
+identifiers intact with **no stemming** — changing it requires a full reindex.
 
 This configuration provides optimal performance for most Windows development environments with CUDA-capable GPUs.

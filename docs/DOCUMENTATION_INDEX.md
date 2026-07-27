@@ -12,7 +12,7 @@ Complete navigation hub for claude-context-local documentation.
 - [Git Automation](#git-automation)
 - [Testing & Validation](#testing--validation)
 - [Technical Implementation](#technical-implementation)
-- [Research & Analysis](#research--analysis)
+- [Version History](#version-history)
 
 ---
 
@@ -39,7 +39,6 @@ Fundamental documentation for daily use.
 | **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | Complete API reference for all 18 MCP tools |
 | **[HYBRID_SEARCH_CONFIGURATION_GUIDE.md](HYBRID_SEARCH_CONFIGURATION_GUIDE.md)** | Search modes configuration (hybrid/semantic/BM25/auto) |
 | **[BENCHMARKS.md](BENCHMARKS.md)** | Performance benchmarks: SSCG retrieval (MRR/Recall/NDCG/line-overlap), token efficiency, caller recall |
-| **[KNOWN_ISSUES.md](KNOWN_ISSUES.md)** | Known issues and workarounds |
 
 ---
 
@@ -53,7 +52,7 @@ Comprehensive guides for advanced functionality.
 | - Multi-Hop Search | Discover interconnected code relationships (93% queries benefit) |
 | - Graph-Enhanced Search | Call relationship tracking for Python code |
 | - Per-Model Index Storage | Instant model switching <150ms |
-| - Model Selection Guide | Complete model comparison tables (5 models) |
+| - Model Selection Guide | Complete model comparison tables (6 models) |
 | - Neural Reranking | Cross-encoder reranker (Alibaba-NLP/gte-reranker-modernbert-base) |
 
 ---
@@ -69,7 +68,7 @@ MCP server implementation and transport options.
 
 ### Transport Options
 
-- **StreamableHTTP** (port 8765, `/mcp` endpoint) — **current default** (v0.12.0+): `{"type": "http", "url": "http://localhost:8765/mcp"}`. Re-run `scripts\batch\manual_configure.bat` to apply.
+- **StreamableHTTP** (port 8765, `/mcp` endpoint) — **current default** (v0.12.0+): `{"type": "http", "url": "http://localhost:8765/mcp"}`. Re-run `scripts/batch/manual_configure.bat` to apply.
 - **stdio** (legacy): Standard MCP mode via `manual_configure.bat`
 - **SSE** (port 8765, legacy): Bypasses Claude Code stdio bugs (#3426, #768)
 - **Dual SSE** (ports 8765/8766, legacy): VSCode + CLI simultaneous access
@@ -92,7 +91,7 @@ Interactive scripts and batch files.
 
 | Script | Purpose |
 |--------|---------|
-| `start_mcp_server.bat` | Main launcher (8 options: Quick Start, Project Management, Search Config, Advanced) |
+| `start_mcp_server.cmd` | Main launcher (8 options: Quick Start, Project Management, Search Config, Advanced) |
 | `scripts/batch/start_mcp_sse.bat` | SSE transport (port 8765) |
 | `scripts/batch/start_mcp_sse_cli.bat` | CLI SSE transport (port 8766) |
 | `scripts/batch/start_both_sse_servers.bat` | Dual SSE servers |
@@ -107,30 +106,30 @@ Git workflow automation and safety.
 
 | Document | Description |
 |----------|-------------|
-| **[AUTOMATED_GIT_WORKFLOW.md](AUTOMATED_GIT_WORKFLOW.md)** | Step-by-step git workflow for Claude Code |
+| **[auto-git-workflow SKILL.md](../.claude/skills/auto-git-workflow/SKILL.md)** | Step-by-step git workflow rule book for Claude Code |
 | **[GIT_WORKFLOW.md](GIT_WORKFLOW.md)** | Troubleshooting and advanced operations |
 | **[PRE_COMMIT_HOOKS.md](PRE_COMMIT_HOOKS.md)** | Pre-commit hook configuration |
-| **[scripts/git/README.md](../scripts/git/README.md)** | Complete git scripts documentation |
 
 ### Git Scripts
 
 **Directory Structure**:
 
-- **Shell scripts (.sh)**: `scripts/git/` - **PRIMARY for automated workflows**
-- **Batch scripts (.bat)**: `scripts/git/batch/` - Manual Windows CMD execution
+- **Shell scripts (.sh)**: `scripts/git/` - the only supported workflow scripts, run via Git Bash
 
-| Script | Shell (PRIMARY) | Batch (manual) | Purpose |
-|--------|----------------|----------------|---------|
-| `commit_enhanced` | `scripts/git/` | `scripts/git/batch/` | Enhanced commits with validation |
-| `merge_with_validation` | `scripts/git/` | `scripts/git/batch/` | Merge with comprehensive validation |
-| `check_lint` | `scripts/git/` | `scripts/git/batch/` | Lint validation (ruff) |
-| `fix_lint` | `scripts/git/` | `scripts/git/batch/` | Auto-fix lint issues (ruff) |
-| `validate_branches` | `scripts/git/` | `scripts/git/batch/` | Pre-merge validation |
-| `cherry_pick_commits` | `scripts/git/` | `scripts/git/batch/` | Cherry-pick specific commits |
-| `merge_docs` | `scripts/git/` | `scripts/git/batch/` | Documentation-only merge |
-| `rollback_merge` | `scripts/git/` | `scripts/git/batch/` | Emergency rollback |
-| `install_hooks` | `scripts/git/` | `scripts/git/batch/` | Install pre-commit hooks |
-| `_common` | `scripts/git/` | `scripts/git/batch/` | Shared utility functions |
+| Script | Purpose |
+|--------|---------|
+| `commit_enhanced.sh` | Enhanced commits with validation |
+| `merge_with_validation.sh` | Merge with comprehensive validation |
+| `check_lint.sh` | Lint validation (ruff) |
+| `fix_lint.sh` | Auto-fix lint issues (ruff) |
+| `validate_branches.sh` | Pre-merge validation |
+| `cherry_pick_commits.sh` | Cherry-pick specific commits |
+| `merge_docs.sh` | Documentation-only merge |
+| `rollback_merge.sh` | Emergency rollback |
+| `install_hooks.sh` | Install pre-commit hooks |
+| `push_validated.sh` | Push with CI-gate verification |
+| `create_pr.sh` | Create a pull request |
+| `create_release.sh` | Tag + publish a GitHub release |
 
 ---
 
@@ -140,7 +139,7 @@ Test suite documentation and validation reports.
 
 | Document | Description |
 |----------|-------------|
-| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (3,140 tests, 3,127 pass / 13 skip) |
+| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (3,359 unit tests · 103 fast_integration · 22 integration · 93 slow_integration) |
 | **[tests/README.md](../tests/README.md)** | Test suite organization and best practices |
 
 ### Testing Tools (scripts/test/)
@@ -164,7 +163,6 @@ Detailed technical documentation.
 
 | Document | Description |
 |----------|-------------|
-| **[CHUNKING_ENHANCEMENTS_PLAN.md](CHUNKING_ENHANCEMENTS_PLAN.md)** | Code chunking enhancements and strategy |
 | **[CALL_GRAPH_TUNING.md](CALL_GRAPH_TUNING.md)** | pyan3 + LibCST + LSP API reference, confidence tiers, `min_confidence` recipes, §6.4 LSP diagnostics counters |
 
 ### Architecture Files
@@ -172,8 +170,9 @@ Detailed technical documentation.
 - `chunking/` - Semantic chunking (AST + Tree-sitter)
 - `embeddings/` - Model loading & embedding generation
   - `query_cache.py` - LRU cache with TTL for query embeddings (v0.8.6+)
-- `graph/` - Call graph extraction and relationship tracking
+- `chunking/relationships/` - Call graph extraction and relationship tracking
   - `resolvers/` - Type, import, and assignment resolvers
+- `graph/` - Graph storage, queries & community detection
 - `mcp_server/` - MCP tool implementations (18 tools)
 - `merkle/` - Incremental indexing (snapshot management)
 - `search/` - FAISS + BM25 hybrid search
@@ -186,15 +185,17 @@ Detailed technical documentation.
 
 | Document | Description |
 |----------|-------------|
-| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.20.1 |
+| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.22.0 |
 
 ### Key Versions
 
+- **v0.22.0** (2026-07-27): GLSL indexing parity, persistent chunk embedding cache (43× reindex speedup), BM25 path-token augmentation (`INDEX_VERSION` 4), widened retrieval funnel, `mcp-search-tool` skill reinstated
+- **v0.21.0** (2026-07-23): MCP-server hardening, default embedder corrected to `BAAI/bge-m3` in docs, Qwen3-reranker fix
 - **v0.20.1** (2026-07-02): Intent-classifier verification-term routing fix (Q12)
 - **v0.20.0** (2026-06-30): Codecov CI integration, Campaign-2 Tier-1 behavior-preserving refactors, 3,100 tests
 - **v0.19.0** (2026-06-27): Multi-model routing removed; `configure_query_routing` MCP tool deleted; **18 tools** (down from 19); `MODEL_REGISTRY` pruned 7→5 models; launcher display values corrected (BM25/Dense 0.35/0.65, reranker gain +15-25%)
 - **v0.18.0** (2026-06-26): `source_order_output` default `True→False` (results now in relevance order); MCP-pipeline eval MRR 0.700→0.8278; `run_mcp_pipeline_eval.py` script added
-- **v0.17.0** (2026-06-24): DSPy/GEPA agent-eval harness, `ClaudeCodeLM` subscription backend, `default_k` 4→7 (MRR +0.093, Recall@7 +0.122), CVE remediation 53→5, Batch 3/4/5 perf+fixes, 2,853 tests
+- **v0.17.0** (2026-06-24): DSPy/GEPA agent-eval harness, `ClaudeCodeLM` subscription backend, `search_config.json.example` `default_k` 4→7 (MRR +0.093, Recall@7 +0.122; dataclass factory default remains 4), CVE remediation 53→5, Batch 3/4/5 perf+fixes, 2,853 tests
 - **v0.16.0** (2026-06-11): code-review hardening — 30 correctness/concurrency fixes (Batch 1/2A/2B); thread-safe MCP server, MultiDiGraph call graph, atomic writes, 2,533 tests
 - **v0.15.0** (2026-06-03): LSP resolver repair (0 → 938 edges), resolver precision tuning, `min_confidence`/`use_pyproject_toml` config knobs, `docs/CALL_GRAPH_TUNING.md`, 2,495 tests
 - **v0.14.0** (2026-06-03): Layered call-graph resolver pipeline (AST→pyan→LibCST→LSP), optional `[callgraph]`/`[lsp]` extras, `find_connections` bidirectional callees + `resolver_source`/`resolver_confidence` provenance
@@ -278,4 +279,4 @@ Detailed technical documentation.
 
 ---
 
-**Last Updated**: 2026-07-02 (v0.20.1 — Intent-classifier verification-term routing fix; 3,140 tests)
+**Last Updated**: 2026-07-27 (v0.22.0 — GLSL indexing parity, persistent chunk embedding cache, BM25 path-token augmentation; 3,359 unit tests)

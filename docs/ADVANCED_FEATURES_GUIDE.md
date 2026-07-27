@@ -352,13 +352,14 @@ set CLAUDE_DEFAULT_PROJECT=C:\Projects\MyProject
 
 ## Model Selection Guide
 
-### Available Models (5 total)
+### Available Models (6 total)
 
 | Model | Type | Dimensions | VRAM | Best For |
 |-------|------|------------|------|----------|
-| **EmbeddingGemma-300m** ⭐ | General | 768 | ~1.2 GB | **Default**, fast and efficient |
-| **BGE-M3** | General | 1024 | 1–1.5 GB | Hybrid search support, recommended upgrade |
+| **BGE-M3** ⭐ | General | 1024 | 1–1.5 GB | **Default**, hybrid search support |
+| **EmbeddingGemma-300m** | General | 768 | ~1.2 GB | Lightweight, low-VRAM systems |
 | **Qwen3-0.6B** | General | 1024 | 2.3 GB | Long-context (32k), MRL support |
+| **F2LLM-v2-0.6B** | General | 1024 | 2.2 GB | Best retrieval ordering (MTEB avg 66.47) |
 | **CodeRankEmbed** | Code | 768 | 0.5–0.6 GB | Code-specific retrieval (CSN: 77.9 MRR) |
 | **GTE-ModernBERT-base** | Code | 768 | 0.28 GB | Lightest option, code-optimized (CoIR: 79.31 NDCG@10) |
 
@@ -718,8 +719,8 @@ The VRAM Tier Management system automatically detects available GPU memory and r
 | Tier | VRAM Range | Default Models | Features Enabled |
 |------|------------|----------------|------------------|
 | **Minimal** | <6GB | EmbeddingGemma-300m (fallback) | Single-model only, no neural reranking |
-| **Laptop** | 6-10GB | EmbeddingGemma or BGE-M3 | Single-model; 5 models selectable |
-| **Desktop** | 10-18GB | BGE-M3 or Qwen3-0.6B | Single-model; 5 models selectable |
+| **Laptop** | 6-10GB | EmbeddingGemma or BGE-M3 | Single-model; 6 models selectable |
+| **Desktop** | 10-18GB | BGE-M3 (default) | Single-model; 6 models selectable |
 | **Workstation** | 18GB+ | Any model | Single-model; all features available |
 
 ### Automatic Configuration
@@ -746,13 +747,16 @@ The system automatically:
 
 # Output example:
 {
-  "vram_available": "10.5 GB",
-  "vram_tier": "laptop",
-  "recommended_models": ["BGE-M3", "Qwen3-0.6B"],
-  "multi_model_routing": "enabled",
-  "neural_reranking": "enabled"
+  "system_memory": {"total_gb": 31.9, "available_gb": 18.2, "used_gb": 13.7, "percent": 43.0},
+  "gpu_memory": {
+    "gpu_0": {"device_name": "NVIDIA RTX 4090", "total_vram_gb": 24.0, "used_gb": 3.1, "free_gb": 20.9, "utilization_percent": 12.9}
+  },
+  "index_memory": {"vectors": 2276, "dimension": 1024, "estimated_mb": 8.9}
 }
 ```
+
+There is no automatic tier-detection field in this response — use `total_vram_gb` /
+`free_gb` against the ranges in the table above to determine your tier manually.
 
 ### GPU Memory Lifecycle (v0.5.17+ Lazy Loading)
 
@@ -2371,19 +2375,19 @@ def process():
 
 **Core Files** (v0.5.16+):
 
-- `graph/call_graph_extractor.py`: Core AST traversal (~400 lines)
+- `chunking/relationships/call_graph_extractor.py`: Core AST traversal (~400 lines)
   - `_get_call_name()`: Resolution priority chain
   - Uses resolver instances for type/import/assignment resolution
 
-- `graph/resolvers/type_resolver.py`: Type annotation resolution
+- `chunking/relationships/resolvers/type_resolver.py`: Type annotation resolution
   - `extract_type_annotations()`: Scans function parameters (Phase 2)
   - `annotation_to_string()`: Converts AST annotations to strings
 
-- `graph/resolvers/assignment_tracker.py`: Variable tracking
+- `chunking/relationships/resolvers/assignment_tracker.py`: Variable tracking
   - `extract_local_assignments()`: Tracks variable assignments (Phase 3)
   - `infer_type_from_call()`: Infers type from Call nodes (Phase 3)
 
-- `graph/resolvers/import_resolver.py`: Import tracking
+- `chunking/relationships/resolvers/import_resolver.py`: Import tracking
   - `extract_imports()`: Extracts import mappings from AST (Phase 4)
   - `read_file_imports()`: Reads full file for module-level imports (Phase 4)
 
@@ -2496,7 +2500,7 @@ The `find_connections` tool now returns **Phase 1.4 entity tracking relationship
 /search_code "RelationshipType enum"
 
 # Get all enum members
-/find_connections --chunk_id "graph/relationship_types.py:49-138:class:RelationshipType"
+/find_connections --chunk_id "chunking/relationships/relationship_types.py:49-138:class:RelationshipType"
 ```
 
 **Output**:
@@ -2936,8 +2940,8 @@ from graph.storage import Bar  # → local (included if in project)
 
 **Implementation Files**:
 
-- `graph/relation_filter.py` - `RepositoryRelationFilter` class
-- `graph/relationship_extractors/import_extractor.py` - Import classification
+- `chunking/relationships/relation_filter.py` - `RepositoryRelationFilter` class
+- `chunking/relationships/relationship_extractors/import_extractor.py` - Import classification
 - `graph/graph_storage.py` - Edge filtering in `get_neighbors()`
 - `search/ego_graph_retriever.py` - Filter integration
 
