@@ -569,7 +569,10 @@ class RelationshipAnalyzer:
             resolver_source: str = entry.edge_data.get("resolver_source", "ast")
             resolver_confidence: float = entry.edge_data.get("resolver_confidence", 0.5)
 
-            result = self.searcher.get_by_chunk_id(callee_id)
+            # warn_on_miss=False: callee_id may be a bare symbol name rather than a
+            # real chunk_id (see the recovery cascade below) -- a miss here is
+            # expected control flow, not a defect, so it should not WARN.
+            result = self.searcher.get_by_chunk_id(callee_id, warn_on_miss=False)
             if result:
                 assigned_confidence = edge_confidence if edge_confidence else "exact"
                 d = self._result_to_dict(result, callee_id)

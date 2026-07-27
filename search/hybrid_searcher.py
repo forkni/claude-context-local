@@ -535,7 +535,9 @@ class HybridSearcher(BaseSearcher):
         dense_count = self.dense_index.index.ntotal if self.dense_index.index else 0
         return max(bm25_count, dense_count)  # Return the higher count
 
-    def get_by_chunk_id(self, chunk_id: str) -> SearchResult | None:
+    def get_by_chunk_id(
+        self, chunk_id: str, warn_on_miss: bool = True
+    ) -> SearchResult | None:
         """
         Direct lookup by chunk_id (unambiguous, no search needed).
 
@@ -544,6 +546,9 @@ class HybridSearcher(BaseSearcher):
 
         Args:
             chunk_id: Format "file.py:10-20:function:name"
+            warn_on_miss: Whether to log a WARNING when the lookup misses.
+                Pass False for speculative probes (e.g. edge-recovery ladders)
+                where a miss is expected control flow, not a defect.
 
         Returns:
             SearchResult if found, None otherwise
@@ -555,7 +560,7 @@ class HybridSearcher(BaseSearcher):
 
         # Slow path: Load from SQLite
         self._cache_misses += 1
-        metadata = self.dense_index.get_chunk_by_id(chunk_id)
+        metadata = self.dense_index.get_chunk_by_id(chunk_id, warn_on_miss=warn_on_miss)
         if not metadata:
             # Cache None results to avoid repeated failed lookups
             self._metadata_cache[chunk_id] = None

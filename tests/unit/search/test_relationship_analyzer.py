@@ -71,7 +71,7 @@ def _make_analyzer(
 
     mock_searcher = MagicMock()
     mock_searcher.get_by_chunk_id.side_effect = get_by_chunk_id_side_effect or (
-        lambda cid: None
+        lambda cid, **kwargs: None
     )
     mock_searcher.search.side_effect = search_side_effect or (lambda *a, **kw: [])
 
@@ -123,7 +123,9 @@ class TestResolveBySymbol(TestCase):
 
         analyzer, mock_searcher = _make_analyzer(
             graph_nodes_map={"normalize_chunk_id": [cid]},
-            get_by_chunk_id_side_effect=lambda c: fake_result if c == cid else None,
+            get_by_chunk_id_side_effect=lambda c, **kw: (
+                fake_result if c == cid else None
+            ),
         )
 
         resolved = analyzer._resolve_by_symbol("normalize_chunk_id", None)
@@ -229,7 +231,9 @@ class TestEnrichCallers(TestCase):
         entry = _make_entry(cid)
 
         analyzer, _ = _make_analyzer(
-            get_by_chunk_id_side_effect=lambda c: fake_result if c == cid else None
+            get_by_chunk_id_side_effect=lambda c, **kw: (
+                fake_result if c == cid else None
+            )
         )
 
         callers, stale, exact, recovered, ambiguous = analyzer._enrich_callers(
@@ -249,7 +253,9 @@ class TestEnrichCallers(TestCase):
         entry = _make_entry(cid, confidence="ambiguous")
 
         analyzer, _ = _make_analyzer(
-            get_by_chunk_id_side_effect=lambda c: fake_result if c == cid else None
+            get_by_chunk_id_side_effect=lambda c, **kw: (
+                fake_result if c == cid else None
+            )
         )
 
         callers, stale, exact, recovered, ambiguous = analyzer._enrich_callers(
@@ -361,7 +367,9 @@ class TestEnrichCallees(TestCase):
         entry = _make_entry(cid)
 
         analyzer, _ = _make_analyzer(
-            get_by_chunk_id_side_effect=lambda c: fake_result if c == cid else None
+            get_by_chunk_id_side_effect=lambda c, **kw: (
+                fake_result if c == cid else None
+            )
         )
 
         callees, stale, exact, recovered, ambiguous = analyzer._enrich_callees(
@@ -372,6 +380,26 @@ class TestEnrichCallees(TestCase):
         self.assertEqual(exact, 1)
         self.assertEqual(recovered, 0)
         self.assertEqual(stale, 0)
+
+    def test_initial_probe_passes_warn_on_miss_false(self):
+        """Log-hygiene item G: the initial get_by_chunk_id probe (callee_id may be
+        a bare symbol name, not a real chunk_id) must opt out of the miss WARNING
+        -- a miss here is expected control flow the recovery ladder handles, not
+        a defect. Uses an exact-hit scenario so there is exactly one call to
+        assert on, with no Tier 1/Tier 2 recovery cascade in play."""
+        cid = "src/a.py:function:a_fn"
+        fake_result = _FakeResult(chunk_id=cid)
+        entry = _make_entry(cid)
+
+        analyzer, mock_searcher = _make_analyzer(
+            get_by_chunk_id_side_effect=lambda c, **kw: (
+                fake_result if c == cid else None
+            )
+        )
+
+        analyzer._enrich_callees([entry], None)
+
+        mock_searcher.get_by_chunk_id.assert_called_once_with(cid, warn_on_miss=False)
 
     def test_builtin_callee_name_not_recovered(self):
         """A phantom callee node named 'len' (a Python builtin) must never be
@@ -438,7 +466,7 @@ class TestEnrichCallees(TestCase):
 
         analyzer, _ = _make_analyzer(
             graph_nodes_map={"frobnicate": [target_cid]},
-            get_by_chunk_id_side_effect=lambda c: (
+            get_by_chunk_id_side_effect=lambda c, **kw: (
                 fake_result if c == target_cid else None
             ),
         )

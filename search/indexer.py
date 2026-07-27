@@ -291,7 +291,9 @@ class CodeIndexManager:
         """
         return FilterEngine.from_dict(filters).matches(metadata)
 
-    def get_chunk_by_id(self, chunk_id: str) -> dict[str, Any] | None:
+    def get_chunk_by_id(
+        self, chunk_id: str, warn_on_miss: bool = True
+    ) -> dict[str, Any] | None:
         """Retrieve chunk metadata by ID with path normalization.
 
         Handles Windows backslash escaping issues in MCP transport by trying
@@ -299,6 +301,10 @@ class CodeIndexManager:
 
         Args:
             chunk_id: Chunk ID to lookup
+            warn_on_miss: Whether to log a WARNING when the lookup misses.
+                Callers that probe speculatively -- e.g. relationship_analyzer's
+                edge-recovery ladder, where a miss is expected control flow,
+                not a defect -- should pass False.
 
         Returns:
             Chunk metadata dict if found, None otherwise
@@ -309,7 +315,8 @@ class CodeIndexManager:
         if metadata_entry:
             return metadata_entry["metadata"]
 
-        self._logger.warning(f"Chunk not found for ID: {chunk_id}")
+        if warn_on_miss:
+            self._logger.warning(f"Chunk not found for ID: {chunk_id}")
         return None
 
     def get_similar_chunks(
