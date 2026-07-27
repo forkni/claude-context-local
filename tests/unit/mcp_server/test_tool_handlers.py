@@ -189,9 +189,8 @@ async def test_handle_get_index_status_with_job_id_reports_job_status():
     """P2-A: get_index_status(job_id=...) polls a background index_directory job
     instead of returning the regular index snapshot.
     """
-    from mcp_server.tools.job_registry import get_job_registry, reset_job_registry
+    from mcp_server.tools.job_registry import get_job_registry
 
-    reset_job_registry()
     registry = get_job_registry()
     job = await registry.create(kind="index_directory", target="/proj")
     await registry.mark_done(job.job_id, {"chunks_added": 5})
@@ -205,10 +204,6 @@ async def test_handle_get_index_status_with_job_id_reports_job_status():
 
 @pytest.mark.asyncio
 async def test_handle_get_index_status_unknown_job_id_returns_error():
-    from mcp_server.tools.job_registry import reset_job_registry
-
-    reset_job_registry()
-
     result = await tool_handlers.handle_get_index_status({"job_id": "does-not-exist"})
 
     assert "error" in result

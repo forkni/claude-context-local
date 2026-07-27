@@ -528,9 +528,6 @@ class TestIndexDirectoryAsyncJob:
     async def test_wait_true_default_still_returns_inline_result(self, tmp_path):
         """wait defaults to True: behavior is unchanged (no job_id, inline result)."""
         from mcp_server.tools import index_handlers
-        from mcp_server.tools.job_registry import reset_job_registry
-
-        reset_job_registry()
 
         async def _fake_run(_arguments):
             return {"success": True, "files_added": 1}
@@ -548,10 +545,8 @@ class TestIndexDirectoryAsyncJob:
         from mcp_server.tools.job_registry import (
             JobRegistry,
             get_job_registry,
-            reset_job_registry,
         )
 
-        reset_job_registry()
         captured_tasks = []
         original_track = JobRegistry.track_background_task
 
@@ -593,10 +588,8 @@ class TestIndexDirectoryAsyncJob:
         from mcp_server.tools.job_registry import (
             JobRegistry,
             get_job_registry,
-            reset_job_registry,
         )
 
-        reset_job_registry()
         captured_tasks = []
         original_track = JobRegistry.track_background_task
 
@@ -629,10 +622,8 @@ class TestIndexDirectoryAsyncJob:
         from mcp_server.tools.job_registry import (
             JobRegistry,
             get_job_registry,
-            reset_job_registry,
         )
 
-        reset_job_registry()
         captured_tasks = []
         original_track = JobRegistry.track_background_task
 

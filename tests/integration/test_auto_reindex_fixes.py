@@ -14,7 +14,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mcp_server.model_pool_manager import reset_pool_manager
 from mcp_server.services import get_state
 from merkle import SnapshotManager
 from search.config import get_search_config
@@ -77,7 +76,6 @@ def cleanup_state():
     """Cleanup state before and after tests."""
     state = get_state()
     state.clear_embedders()
-    reset_pool_manager()
     gc.collect()
     try:
         import torch
@@ -91,7 +89,6 @@ def cleanup_state():
 
     # Cleanup after test
     state.clear_embedders()
-    reset_pool_manager()
     gc.collect()
     try:
         import torch

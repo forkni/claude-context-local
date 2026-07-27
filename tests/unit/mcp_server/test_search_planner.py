@@ -355,16 +355,6 @@ class TestSearchPlannerRedirectHasFullPlan:
 class TestAnchorCacheByModelName:
     """_ANCHOR_EMBEDDINGS_CACHE is keyed by model_name, not id()."""
 
-    def setup_method(self):
-        import search.intent_classifier as _ic
-
-        _ic._ANCHOR_EMBEDDINGS_CACHE.clear()
-
-    def teardown_method(self):
-        import search.intent_classifier as _ic
-
-        _ic._ANCHOR_EMBEDDINGS_CACHE.clear()
-
     def test_same_model_name_hits_cache(self):
         import numpy as np
 

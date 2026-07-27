@@ -2880,8 +2880,13 @@ class TestEmbedChunksContentHashCache:
         test_file.write_text("import os\nimport sys\n\ndef func():\n    pass\n")
         # _read_source_cached is keyed by file_path + mtime; clear it so a
         # same-tick rewrite (mtime unchanged at the OS's clock resolution)
-        # cannot mask the change with a stale cached read.
+        # cannot mask the change with a stale cached read. _import_ctx_cache
+        # is a second, derived cache keyed by (file_path, mtime, max_imports)
+        # in _extract_import_context — it must be cleared too, or a same-tick
+        # mtime collision serves its own stale entry even after the file
+        # cache above is cleared.
         embedder._class_file_cache.clear()
+        embedder._import_ctx_cache.clear()
 
         content_after = embedder.create_embedding_content(chunk)
         key_after = ChunkEmbeddingCache.key_for(content_after)

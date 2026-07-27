@@ -122,14 +122,23 @@ def pytest_unconfigure(config: Any) -> None:
 def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
     """Automatically mark tests based on their location."""
     for item in items:
-        # Mark tests based on file path and location
-        path_str = str(item.fspath)
+        # Mark tests based on file path and location. normalize_path() converts
+        # backslashes to forward slashes first so this matches on Windows too.
+        path_str = normalize_path(str(item.fspath))
 
-        # First, determine if it's unit or integration
-        if "tests/unit/" in path_str or "test_system.py" in path_str:
+        # Structural tier marking - one marker per tier, by directory, so
+        # fast_integration/slow are no longer solely hand-decorated.
+        if "tests/unit/" in path_str:
             item.add_marker(pytest.mark.unit)
-        elif "tests/integration/" in path_str:
+        elif "tests/fast_integration/" in path_str or "tests/integration/" in path_str:
             item.add_marker(pytest.mark.integration)
+        elif "tests/slow_integration/" in path_str:
+            item.add_marker(pytest.mark.integration)
+            item.add_marker(pytest.mark.slow)
+
+        # test_system.py sits at tests/ root but exercises unit-level checks.
+        if "test_system.py" in path_str:
+            item.add_marker(pytest.mark.unit)
 
         # Then add specific markers based on test file name
         if "test_chunking" in path_str:
@@ -188,6 +197,51 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
                 print(f"\n[Cleanup] Warning: Orphaned project cleanup failed: {e}")
 
 
+def _reset_singleton_state() -> None:
+    """Reset the module-level singletons known to leak state across tests.
+
+    Phase 7 (test-suite hardening): these four survive ApplicationState.reset()
+    because they live outside it — ModelPoolManager and JobRegistry are their
+    own singletons, the intent-classifier anchor cache/config/rules are plain
+    module globals and lru_cache'd loaders, and the RAM-fallback override is a
+    module global by design (see its own docstring for why it must NOT be
+    cleared by ApplicationState.reset() itself).
+    """
+    try:
+        from mcp_server.model_pool_manager import reset_pool_manager
+
+        reset_pool_manager()
+    except ImportError:
+        pass  # Module might not be available in some tests
+
+    try:
+        from mcp_server.tools.job_registry import reset_job_registry
+
+        reset_job_registry()
+    except ImportError:
+        pass  # Module might not be available in some tests
+
+    try:
+        from search.intent_classifier import (
+            _ANCHOR_EMBEDDINGS_CACHE,
+            _load_anchor_config,
+            _load_intent_rules,
+        )
+
+        _ANCHOR_EMBEDDINGS_CACHE.clear()
+        _load_anchor_config.cache_clear()
+        _load_intent_rules.cache_clear()
+    except ImportError:
+        pass  # Module might not be available in some tests
+
+    try:
+        from search.config import set_indexing_ram_fallback_override
+
+        set_indexing_ram_fallback_override(None)
+    except ImportError:
+        pass  # Module might not be available in some tests
+
+
 @pytest.fixture(autouse=True)
 def reset_global_state() -> Generator[None, None, None]:
     """Reset global state before each test.
@@ -195,6 +249,9 @@ def reset_global_state() -> Generator[None, None, None]:
     Uses the centralized ApplicationState.reset() for clean state management.
     Also resets the module-level globals for backward compatibility during migration.
     Phase 4: Added ServiceLocator.reset() for DI pattern.
+    Phase 7: Added the singleton resets in _reset_singleton_state(), run both
+    before and after each test so a test that itself asserts on this state
+    (e.g. the anchor cache) still sees a clean slate at the start.
     """
     # Reset MCP server global state via ApplicationState
     try:
@@ -213,10 +270,12 @@ def reset_global_state() -> Generator[None, None, None]:
     except ImportError:
         pass  # Module might not be available in some tests
 
+    _reset_singleton_state()
+
     yield
 
     # Cleanup after test if needed
-    pass
+    _reset_singleton_state()
 
 
 @pytest.fixture(scope="session", autouse=True)
