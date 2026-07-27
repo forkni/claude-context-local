@@ -1,5 +1,6 @@
 """Tests for incremental indexing functionality."""
 
+import dataclasses
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -48,7 +49,11 @@ class TestIncrementalIndexResult:
 
         result_dict = result.to_dict()
 
-        expected = {
+        # Subset validation, not exact equality: to_dict() is asdict(self), so its
+        # keys track whatever fields IncrementalIndexResult currently declares (e.g.
+        # in-flight call-graph injection fields not yet present on every branch).
+        # See tests/TESTING_GUIDE.md "Use subset validation for metadata".
+        expected_subset = {
             "files_added": 5,
             "files_removed": 2,
             "files_modified": 3,
@@ -59,11 +64,14 @@ class TestIncrementalIndexResult:
             "error": "Test error",
             "bm25_resynced": True,
             "bm25_resync_count": 100,
-            "call_edges_injected": 0,
-            "call_edge_resolvers": (),
         }
+        for key, value in expected_subset.items():
+            assert result_dict[key] == value
 
-        assert result_dict == expected
+        # Completeness check: to_dict() must still surface every dataclass field
+        # (catches a field silently dropped from the asdict() conversion).
+        field_names = {f.name for f in dataclasses.fields(IncrementalIndexResult)}
+        assert result_dict.keys() == field_names
 
     def test_error_result(self):
         """Test creating error result."""

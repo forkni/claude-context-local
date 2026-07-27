@@ -24,6 +24,14 @@ test-suite hardening campaign):
   caches not reset between tests) and is tracked for a root-cause fix in the next hardening phase,
   validated against a 20-consecutive-green-run gate. It is **not** currently reproducible from a
   fixed seed — treat it as a known flake under active investigation, not a silenced failure.
+- **Correction (Phase 5.1):** `test_result_to_dict` in `tests/unit/search/test_incremental_indexer.py`
+  originally asserted `IncrementalIndexResult.to_dict()` by exact-equality, including the
+  `call_edges_injected` / `call_edge_resolvers` fields added by the in-flight call-graph-injection
+  feature. At the time that assertion was written, those fields existed only in an uncommitted
+  working tree — checking out that commit alone (e.g. for a `git bisect`) would fail the test. The
+  assertion now uses subset validation over the stable fields plus a separate dataclass-field
+  completeness check, per "Use subset validation for metadata" below — this passes regardless of
+  which in-flight dataclass fields have landed yet.
 
 **Note**: Run `uv run pytest tests/ --ignore=tests/slow_integration -q` for the fast CI subset
 (excludes GPU-dependent slow tests, ~2 min).
