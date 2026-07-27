@@ -1,17 +1,9 @@
 """Unit tests for ChunkEmbeddingCache (persistent content-hash embedding cache)."""
 
-import sys
-from pathlib import Path
-
 import numpy as np
 
-
-# Add project root to path to allow imports
-project_root = Path(__file__).parent.parent.parent.parent
-sys.path.insert(0, str(project_root))
-
-from embeddings import chunk_cache as chunk_cache_module  # noqa: E402
-from embeddings.chunk_cache import ChunkEmbeddingCache  # noqa: E402
+from embeddings import chunk_cache as chunk_cache_module
+from embeddings.chunk_cache import ChunkEmbeddingCache
 
 
 _PROV = "v1|device=cpu|dtype=fp32|backend=pytorch"

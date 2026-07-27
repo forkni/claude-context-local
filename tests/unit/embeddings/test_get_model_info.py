@@ -10,15 +10,9 @@ Uses plain classes rather than MagicMock so that `hasattr` behaves correctly
 (MagicMock auto-creates attributes for any name, masking the branch under test).
 """
 
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-
-project_root = Path(__file__).parent.parent.parent.parent
-sys.path.insert(0, str(project_root))
-
-from embeddings.embedder import CodeEmbedder  # noqa: E402
+from embeddings.embedder import CodeEmbedder
 
 
 # ---------------------------------------------------------------------------

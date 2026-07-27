@@ -3,23 +3,13 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+# tools/ is on pythonpath (pyproject.toml [tool.pytest.ini_options]), so the
+# standalone script is importable bare, same as when run directly.
+import convert_onnx
 import pytest
-
-
-# ---------------------------------------------------------------------------
-# Helper: importable convert_onnx module
-# ---------------------------------------------------------------------------
-
-# The script lives in tools/, which is not a package. Add it to sys.path once.
-_TOOLS_DIR = str(Path(__file__).parent.parent.parent.parent / "tools")
-if _TOOLS_DIR not in sys.path:
-    sys.path.insert(0, _TOOLS_DIR)
-
-import convert_onnx  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

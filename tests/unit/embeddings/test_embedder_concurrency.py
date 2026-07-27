@@ -5,20 +5,14 @@ racing across threads, and that state.clear_embedders() properly invalidates
 downstream references (searcher).
 """
 
-import sys
 import threading
 import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
-
-project_root = Path(__file__).parent.parent.parent.parent
-sys.path.insert(0, str(project_root))
-
-from embeddings.embedder import CodeEmbedder  # noqa: E402
+from embeddings.embedder import CodeEmbedder
 
 
 def _make_embedder_with_mock_loader() -> tuple[CodeEmbedder, MagicMock]:

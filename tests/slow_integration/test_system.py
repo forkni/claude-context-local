@@ -10,10 +10,6 @@ from pathlib import Path
 import pytest
 
 
-# Add the package to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-
 def test_critical_imports():
     """Test importing all critical modules (merged from test_imports.py)."""
     modules_to_test = [

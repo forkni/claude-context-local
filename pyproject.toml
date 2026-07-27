@@ -407,7 +407,7 @@ addopts = [
     "--durations=10",
     "--import-mode=importlib",  # pytest docs recommendation for new projects; avoids sys.path hacks
 ]
-pythonpath = ["."]  # project root; makes packages importable without sys.path.insert in conftest
+pythonpath = [".", "tools"]  # project root + tools/ (namespace package, scripts imported bare)
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",

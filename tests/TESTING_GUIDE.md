@@ -446,15 +446,20 @@ pytest tests/ --durations=10
 
 ## Fast vs Slow Test Organization
 
-### 3-Tier Test Organization
+### 4-Tier Test Organization
 
-The test suite uses a 3-tier system optimized for CI/CD performance:
+The test suite uses a 4-tier system optimized for CI/CD performance:
 
 | Tier | Location | Count | Execution Time | Purpose |
 |------|----------|-------|----------------|---------|
 | **Unit** | `tests/unit/` | 3,377 tests | < 1s per test (~126s total) | Component isolation testing |
 | **Fast Integration** | `tests/fast_integration/` | see full-suite total | < 5s per test | Quick workflow validation |
-| **Slow Integration** | `tests/slow_integration/` | see full-suite total | > 10s per test | Comprehensive end-to-end |
+| **Integration** | `tests/integration/` | 6 files | up to ~15s per test | Real-component E2E (no model downloads, so still fast enough for CI) |
+| **Slow Integration** | `tests/slow_integration/` | see full-suite total | > 10s per test | Comprehensive end-to-end (real model downloads) |
+
+Kept as a 4th tier rather than folded into `fast_integration/` (Phase 6 decision — see the >5s
+durations table below: every `tests/integration/` file has at least one test over the 5s tier
+budget).
 
 Measured 2026-07-26: `pytest tests/` (all tiers, one process) — 3,592 passed, 7 skipped, 0 failed,
 478.55s total. See Current Test Status above for the per-run coverage and known-flake note.
@@ -483,12 +488,15 @@ hygiene phase):
 | 6.05s | `test_observability_e2e.py::test_index_full_span_via_mcp_handler` | integration |
 | 5.89s | `test_phase_implementations.py::test_phase2_symbol_hash_cache` | integration |
 
-All 5 `tests/integration/` files have at least one sub-15s test — none are candidates for folding
-into `tests/fast_integration/` (< 5s) outright; Phase 6 should keep `tests/integration/` as a
-documented 4th tier rather than merging it. `tests/test_mmap_cleanup.py` (repo-root) did not appear
-in the >5s durations list, i.e. it runs fast — a reasonable Phase 6 relocation target is
-`tests/unit/search/` or `tests/fast_integration/`, whichever matches its actual mocking level once
-reviewed.
+All 6 `tests/integration/` files have at least one sub-15s test — none are candidates for folding
+into `tests/fast_integration/` (< 5s) outright; kept as a documented 4th tier per Phase 6 (table
+above), rather than merged. `tests/test_mmap_cleanup.py` (repo-root) did not appear in the >5s
+durations list, i.e. it runs fast, and exercises a real `FaissVectorIndex` (not a mock) — so
+Phase 6 relocated it to `tests/fast_integration/test_mmap_cleanup.py`. Note: this file is listed in
+`.gitignore` as a "local development test file" — it is not tracked in git and does not run in CI;
+it only appears in local full-suite runs on a machine where it happens to exist on disk. The
+relocation preserves that untracked status (the `.gitignore` entry was updated to the new path);
+un-ignoring it would be a separate decision.
 
 ### Slow Test Marker
 

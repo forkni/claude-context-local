@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
 """Test script to verify auto-reindex functionality."""
 
-import sys
 import time
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
-
-
-# Add parent directory to path to import our modules
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder

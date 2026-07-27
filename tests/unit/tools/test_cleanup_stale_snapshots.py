@@ -10,24 +10,12 @@ which tries drive-agnostic first then legacy, so v2 projects are recognised corr
 """
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-
-# Ensure project root is importable when running tests from any working directory.
-_project_root = Path(__file__).parent.parent.parent.parent
-if str(_project_root) not in sys.path:
-    sys.path.insert(0, str(_project_root))
-
-from search.filters import compute_drive_agnostic_hash  # noqa: E402
-
-# Import after path fixup
-from tools.cleanup_stale_snapshots import (  # noqa: E402
-    _get_full_project_id,
-    find_stale_snapshots,
-)
+from search.filters import compute_drive_agnostic_hash
+from tools.cleanup_stale_snapshots import _get_full_project_id, find_stale_snapshots
 
 
 # ---------------------------------------------------------------------------

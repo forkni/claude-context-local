@@ -3,12 +3,7 @@
 Test GLSL indexing without embedder to verify chunking works.
 """
 
-import sys
 from pathlib import Path
-
-
-# Add the project root to the path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 
 def test_glsl_indexing_without_embedder():

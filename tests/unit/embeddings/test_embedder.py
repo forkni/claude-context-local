@@ -1,20 +1,14 @@
 """Unit tests for the CodeEmbedder."""
 
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
-
-# Add project root to path to allow imports
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-
-from chunking.python_ast_chunker import CodeChunk  # noqa: E402
-from embeddings.embedder import CodeEmbedder, EmbeddingResult  # noqa: E402
-from search.config import MODEL_REGISTRY  # noqa: E402
+from chunking.python_ast_chunker import CodeChunk
+from embeddings.embedder import CodeEmbedder, EmbeddingResult
+from search.config import MODEL_REGISTRY
 
 
 # Get all configured models to test (exclude 8B model - not actively used)

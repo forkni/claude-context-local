@@ -20,10 +20,6 @@ logging.basicConfig(
 # Enable debug mode
 os.environ["MCP_DEBUG"] = "1"
 
-# Add project root to path
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-
 
 def test_bm25_population():
     """Test BM25 index population directly."""
