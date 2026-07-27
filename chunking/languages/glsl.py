@@ -373,6 +373,27 @@ class GLSLChunker(LanguageChunker):
         super().__init__("glsl", language)
 
     # ------------------------------------------------------------------
+    # Adaptive-sizing profiler support
+    # ------------------------------------------------------------------
+
+    @property
+    def function_node_types(self) -> frozenset[str]:
+        """Only `function_definition` counts as a function for profiling.
+
+        GLSL's `splittable_node_types` (the chunk-granularity set) is much
+        wider than "functions" -- it also includes top-level `declaration`
+        (every uniform/in/out/const), `struct_specifier`, and every
+        `preproc_*` directive, all of which are real, useful *chunks* but
+        not functions. The base class's default `function_node_types`
+        (splittable minus class-level types) only excludes
+        `struct_specifier`, so without this override the adaptive-sizing
+        profiler measured every uniform declaration and #define as if it
+        were a function -- skewing the P25/P50/P75 baseline it computes
+        function-size percentiles from.
+        """
+        return frozenset({"function_definition"})
+
+    # ------------------------------------------------------------------
     # Parse-error neutralization
     # ------------------------------------------------------------------
 

@@ -86,6 +86,7 @@ def profile_repository(
 
     files_scanned = 0
     files_skipped = 0
+    files_empty = 0
 
     for rel_path in supported_files:
         abs_path = str(Path(project_path) / rel_path)
@@ -105,16 +106,20 @@ def profile_repository(
         # source of truth for "which files parse" (binary/HTML detection,
         # timeout read) shared between the profile and chunk passes.
         try:
-            parsed_source = chunker_dispatcher.parse_file(abs_path, rel_path=rel_path)
+            parsed_source = chunker_dispatcher.parse_file(
+                abs_path, rel_path=rel_path, emit_parse_warnings=False
+            )
         except Exception as e:  # noqa: BLE001 - parse-recovery: tree-sitter parsing of one file failing shouldn't abort the profiling scan
             logger.debug(f"[PROFILER] Skipped {rel_path}: {e}")
             files_skipped += 1
             continue
 
         if parsed_source is None:
+            files_empty += 1
             continue
 
         if not parsed_source.content.strip():
+            files_empty += 1
             continue
 
         profile_parsed(parsed_source, sizes, complexities)
@@ -122,7 +127,7 @@ def profile_repository(
 
     logger.info(
         f"[PROFILER] Scanned {files_scanned} files "
-        f"({files_skipped} skipped), found {len(sizes)} functions"
+        f"({files_skipped} skipped, {files_empty} empty), found {len(sizes)} functions"
     )
 
     if len(sizes) < MIN_FUNCTIONS_FOR_PROFILE:
@@ -173,7 +178,7 @@ def profile_parsed(
     source_bytes = parsed_source.content.encode("utf-8")
     chunker = parsed_source.chunker
 
-    function_node_types = _get_function_node_types(chunker)
+    function_node_types = getattr(chunker, "function_node_types", frozenset())
     if not function_node_types:
         return
 
@@ -216,31 +221,17 @@ def profile_parsed(
     traverse(root_node)
 
 
-def _get_function_node_types(chunker: object) -> frozenset[str]:
-    """Get the set of AST node types that represent functions/methods.
-
-    Filters splittable_node_types to exclude class-level types, since we
-    want function sizes for the distribution analysis.
-    """
-    # Class-level node types to exclude from function measurement
-    class_types = _get_class_node_types(chunker)
-
-    splittable = getattr(chunker, "splittable_node_types", frozenset())
-    return frozenset(t for t in splittable if t not in class_types)
-
-
 def _get_class_node_types(chunker: object) -> frozenset[str]:
-    """Get node types that represent class definitions."""
-    # Common class node types across languages
-    return frozenset(
-        {
-            "class_definition",  # Python
-            "class_declaration",  # JavaScript, TypeScript, C#
-            "class_specifier",  # C++
-            "impl_item",  # Rust (impl block)
-            "struct_item",  # Rust
-            "interface_declaration",  # Go, TypeScript, C#
-            "struct_declaration",  # Go, C#
-            "struct_specifier",  # C, C++, GLSL
-        }
-    )
+    """Get node types that represent class definitions.
+
+    Delegates to LanguageChunker._CLASS_LEVEL_NODE_TYPES — the single source
+    of truth also used to derive the base class's default
+    `function_node_types` (see chunking/languages/base.py). Kept as a
+    module-level wrapper (rather than inlining the import at the one call
+    site) since it's the profiler's existing seam for "what counts as a
+    class" and callers here shouldn't need to know the attribute lives on
+    LanguageChunker.
+    """
+    from chunking.languages.base import LanguageChunker
+
+    return LanguageChunker._CLASS_LEVEL_NODE_TYPES

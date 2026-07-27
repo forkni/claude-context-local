@@ -13,13 +13,18 @@ parses each fixture with a plain PythonChunker — not via repo_profiler's
 internals — so it stays a valid oracle across that refactor.
 """
 
+import logging
+import re
 from pathlib import Path
+
+import pytest
 
 from chunking.languages.base import estimate_characters
 from chunking.languages.python import PythonChunker
 from chunking.repo_profiler import (
     MIN_FUNCTIONS_FOR_PROFILE,
     RepoProfile,
+    profile_parsed,
     profile_repository,
 )
 
@@ -141,3 +146,113 @@ class TestProfileRepositoryStatistics:
 
         assert profile is not None
         assert profile.function_count == len(_MIXED_BODIES)
+
+    def test_counters_sum_to_total_supported_files(self, tmp_path, monkeypatch, caplog):
+        """scanned + skipped + empty must equal len(supported_files) (item C).
+        Two `continue` paths in profile_repository -- parse_file returning
+        None, and empty/whitespace-only content -- previously incremented
+        neither counter, so `Scanned N files (M skipped)` silently
+        under-reported against the file count the indexer said it would
+        profile."""
+        import chunking.repo_profiler as repo_profiler_module
+
+        monkeypatch.setattr(repo_profiler_module, "MAX_FILE_SIZE_BYTES", 100)
+
+        oversized_rel = _write(
+            tmp_path, "oversized.py", _make_source(_MIXED_BODIES)
+        )  # well over 100 bytes -> skipped
+        empty_rel = _write(tmp_path, "empty.py", "")  # -> empty
+        normal_rel = _write(
+            tmp_path, "normal.py", "def f():\n    return 1\n"
+        )  # under 100 bytes -> scanned
+        supported_files = [oversized_rel, empty_rel, normal_rel]
+
+        with caplog.at_level(logging.INFO, logger="chunking.repo_profiler"):
+            profile_repository(str(tmp_path), supported_files)
+
+        scan_lines = [
+            r.message
+            for r in caplog.records
+            if r.message.startswith("[PROFILER] Scanned")
+        ]
+        assert len(scan_lines) == 1
+        match = re.search(
+            r"Scanned (\d+) files \((\d+) skipped, (\d+) empty\)", scan_lines[0]
+        )
+        assert match is not None, scan_lines[0]
+        scanned, skipped, empty = (int(g) for g in match.groups())
+        assert scanned + skipped + empty == len(supported_files)
+        assert scanned == 1  # normal.py
+        assert skipped == 1  # oversized.py
+        assert empty == 1  # empty.py
+
+
+# GLSL panel-shader fixture: 2 real functions plus a dozen non-function
+# splittable nodes (uniform declarations, a struct, a const array, macros,
+# a #version directive) — every one of which is in GLSLChunker's
+# splittable_node_types (chunk-granularity set) but none of which is a
+# function. Item E's regression target.
+_GLSL_PANEL_SHADER = """\
+#version 330 core
+
+#define PI 3.14159
+#define TAU (2.0 * PI)
+
+uniform mat4 uModel;
+uniform mat4 uView;
+uniform mat4 uProjection;
+uniform vec3 uLightPos;
+uniform vec3 uViewPos;
+uniform float uRoughness;
+uniform int uSampleCount;
+
+struct Material {
+    vec3 albedo;
+    float roughness;
+};
+
+const vec3 COLORS[3] = vec3[3](vec3(1.0), vec3(0.5), vec3(0.0));
+
+float roundedBoxSDF(vec3 p, vec3 b, float r) {
+    vec3 q = abs(p) - b;
+    return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - r;
+}
+
+void main() {
+    vec3 col = uLightPos + uViewPos;
+    gl_FragColor = vec4(col, 1.0);
+}
+"""
+
+
+class TestProfileParsedFunctionNodeTypes:
+    """profile_parsed() must measure only real functions for GLSL (item E).
+
+    Before item E, repo_profiler derived "function" node types as
+    splittable_node_types minus a fixed class-type blacklist — a derivation
+    duplicated ad hoc for every chunker. GLSL's splittable set (chunk
+    granularity) is deliberately much wider than "functions" (it also
+    includes top-level declarations, structs, and preprocessor directives,
+    each a meaningful standalone chunk), so that derivation measured every
+    uniform/macro/struct as if it were a function, polluting the P25/P50/P75
+    baseline the adaptive-sizing algorithm computes from function sizes.
+    """
+
+    def test_glsl_panel_shader_counts_only_the_two_functions(self, tmp_path):
+        import chunking.tree_sitter as tsf
+        from chunking.tree_sitter import TreeSitterChunker
+
+        if "glsl" not in tsf.AVAILABLE_LANGUAGES:
+            pytest.skip("tree-sitter-glsl not installed")
+
+        file_path = tmp_path / "panel.frag"
+        file_path.write_text(_GLSL_PANEL_SHADER, encoding="utf-8")
+
+        parsed_source = TreeSitterChunker().parse_file(str(file_path))
+        assert parsed_source is not None
+
+        sizes: list[int] = []
+        complexities: list[int] = []
+        profile_parsed(parsed_source, sizes, complexities)
+
+        assert len(sizes) == 2  # roundedBoxSDF + main only

@@ -213,6 +213,47 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
             )
         return set(spec.splittable_node_types)  # defensive copy
 
+    #: AST node types that represent class/struct-like containers, not
+    #: functions -- excluded from `function_node_types`'s default derivation
+    #: below. Single source of truth for chunking.repo_profiler's own
+    #: class-vs-function traversal split too (`_get_class_node_types`
+    #: delegates here) so the blacklist isn't maintained in two places.
+    _CLASS_LEVEL_NODE_TYPES: frozenset[str] = frozenset(
+        {
+            "class_definition",  # Python
+            "class_declaration",  # JavaScript, TypeScript, C#
+            "class_specifier",  # C++
+            "impl_item",  # Rust (impl block)
+            "struct_item",  # Rust
+            "interface_declaration",  # Go, TypeScript, C#
+            "struct_declaration",  # Go, C#
+            "struct_specifier",  # C, C++, GLSL
+        }
+    )
+
+    @property
+    def function_node_types(self) -> frozenset[str]:
+        """AST node types that represent a measurable function/method.
+
+        Consumed by the adaptive-sizing profiler
+        (``chunking/repo_profiler.py::profile_parsed``) to decide which
+        nodes to measure for the project's function-size distribution.
+
+        Defaults to :attr:`splittable_node_types` minus
+        :attr:`_CLASS_LEVEL_NODE_TYPES` -- the derivation the profiler used
+        to recompute ad hoc for every chunker. Override this in a leaf
+        whose *splittable* set (chunkable-unit granularity) is broader than
+        its *function* set (what should count as a "function" for sizing
+        purposes) -- e.g. GLSLChunker, whose splittable set also includes
+        top-level declarations and preprocessor directives that would
+        otherwise be measured as if they were functions.
+        """
+        return frozenset(
+            t
+            for t in self.splittable_node_types
+            if t not in self._CLASS_LEVEL_NODE_TYPES
+        )
+
     #: Tuple of tree-sitter node type strings used by the default
     #: :meth:`extract_metadata` template to identify the name child.
     #: Defaults to ``("identifier",)`` — suitable for JS, Go, C#.
