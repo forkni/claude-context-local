@@ -90,6 +90,10 @@ class MultiLanguageChunker:
         # under concurrent chunk_file() calls.  Each worker thread lazily builds
         # its own set of extractors on first use via _ensure_thread_extractors().
         self._local = threading.local()
+        # Guards `_extractor_init_logged` below -- worker threads can race into
+        # _ensure_thread_extractors() concurrently on their first chunk_file() call.
+        self._extractor_log_lock = threading.Lock()
+        self._extractor_init_logged = False
         # Pre-populate the main thread's slot so callers on the main thread never
         # trigger a lazy-init on the hot path.
         self._init_thread_extractors()
@@ -131,14 +135,27 @@ class MultiLanguageChunker:
         """Build and store per-thread extractor instances on ``self._local``.
 
         Called once per thread (main thread in ``__init__``; worker threads on
-        first ``chunk_file`` call via ``_ensure_thread_extractors``).
+        first ``chunk_file`` call via ``_ensure_thread_extractors``). Only the
+        first call across all threads logs at INFO — one extractor set per
+        worker thread is expected, not a per-file event, so repeating the same
+        line once per thread (8x on a typical 8-worker index run) just reads
+        as noise; later calls log the identical message at DEBUG instead.
         """
+        with self._extractor_log_lock:
+            first_init = not self._extractor_init_logged
+            self._extractor_init_logged = True
+        log = logger.info if first_init else logger.debug
+
         # Call graph extractor
         call_graph_extractor = None
         if CALL_GRAPH_AVAILABLE:
             try:
                 call_graph_extractor = CallGraphExtractorFactory.create("python")
-                logger.info("Call graph extraction enabled for Python (thread-local)")
+                log(
+                    "Call graph extraction enabled for Python (thread-local); "
+                    "GLSL calls are extracted inline via chunker metadata "
+                    "instead (no separate extractor instance to log here)"
+                )
             except Exception as e:  # noqa: BLE001 - resilience: call graph extraction is optional, degrade to None
                 logger.warning(
                     f"Failed to initialize call graph extractor: {e}", exc_info=True
@@ -153,12 +170,12 @@ class MultiLanguageChunker:
                 ctx, enable_entity_tracking=self.enable_entity_tracking
             )
             if self.enable_entity_tracking:
-                logger.info(
+                log(
                     f"Initialized {len(relationship_extractors)} relationship extractors "
                     f"(foundation + core + data models + entity tracking)"
                 )
             else:
-                logger.info(
+                log(
                     f"Initialized {len(relationship_extractors)} relationship extractors "
                     f"(foundation + core + data models; entity tracking disabled)"
                 )
@@ -264,7 +281,7 @@ class MultiLanguageChunker:
             relative_path: File path relative to project root
 
         Returns:
-            One of "src", "test", "doc", "config"
+            One of "src", "test", "doc", "config", "shader"
         """
         parts = Path(relative_path).parts
         name = Path(relative_path).name.lower()

@@ -772,6 +772,24 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
     include_dirs = arguments.get("include_dirs")
     exclude_dirs = arguments.get("exclude_dirs")
 
+    # Guarantee mcp_server.server's logging setup (_configure_logging(), which
+    # raises the root logger from Python's default WARNING to DEBUG and
+    # attaches the rotating file handler) has already run before this
+    # function logs anything. In a batch_index.py process, mcp_server.server
+    # is otherwise only imported later -- inside get_searcher(), deferred
+    # inside search_factory.py -- so every INFO record emitted before that
+    # point (this function's own [INDEX] line below, and
+    # MultiLanguageChunker.__init__'s one-time call-graph message) is
+    # silently dropped: logger.isEnabledFor(INFO) is False at the source
+    # while root.level is still WARNING, so the record never reaches a
+    # handler at all. Deferred (function-local) import, matching
+    # handle_clear_index's existing `from mcp_server.server import
+    # close_project_resources` -- evaluated at call time, long after the
+    # module import graph has settled, so it carries none of the
+    # module-level circular-import risk documented in
+    # test_mcp_server.py::TestMCPServerImport.
+    import mcp_server.server  # noqa: F401 - imported for its logging-setup side effect
+
     logger.info(f"[INDEX] directory={directory_path}, incremental={incremental}")
 
     # Step 1: Cleanup previous resources BEFORE starting indexing
