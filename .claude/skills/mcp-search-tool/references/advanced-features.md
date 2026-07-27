@@ -232,13 +232,13 @@ These are advanced tuning options. For most projects, defaults are correct.
     "resolvers": ["pyan", "libcst"],
     "lsp_enabled": false,
     "lsp_timeout_seconds": 30.0,
-    "min_confidence": 0.65,
+    "min_confidence": 0.0,
     "use_pyproject_toml": false
   }
 }
 ```
 
-`min_confidence` (default `0.65`): drops edges below this threshold before injection — trade recall for precision without reindexing. `use_pyproject_toml` (default `false`): pass to LibCST `FullRepoManager` for src-layout package discovery.
+`min_confidence` (default `0.0` — accepts all edges): raise it to drop edges below the threshold before injection — e.g. `0.65` discards pyan wildcard fan-out edges (tagged 0.60) while keeping direct pyan edges (0.75); trade recall for precision without reindexing. See `docs/CALL_GRAPH_TUNING.md` §6.1. `use_pyproject_toml` (default `false`): pass to LibCST `FullRepoManager` for src-layout package discovery.
 
 **How it works:**
 1. At full-index time, `_inject_call_edges()` (`search/index_write_stage.py`) reads `CallGraphConfig`, instantiates enabled + available resolvers.

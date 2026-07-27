@@ -368,7 +368,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Resolver precision tuning** — pyan3 callee-flavor filter (drops callee-side edges from pyan, which has no callee role, reducing false positives); wildcard-import down-weighting; LibCST self-call resolution for method-on-self patterns; namespace guard to prevent re-injection of already-resolved namespaces; `resolve_cache` for repeat-FQN lookup de-duplication across large codebases.
-- **`CallGraphConfig.min_confidence`** (`search/config.py`) — injection floor (float, default `0.65`); edges below this threshold are dropped before graph injection, allowing users to trade recall for precision without reindexing.
+- **`CallGraphConfig.min_confidence`** (`search/config.py`) — injection floor (float, default `0.0` — accepts all edges, no behaviour change); raising it (e.g. `0.65`) drops edges below the threshold before graph injection, allowing users to trade recall for precision without reindexing.
 - **`CallGraphConfig.use_pyproject_toml`** (`search/config.py`) — boolean flag (default `false`); passes LibCST's `use_pyproject_toml=True` for correct src-layout package discovery.
 - **`docs/CALL_GRAPH_TUNING.md`** — API reference, confidence tiers, tuning recipes, and §6.4 LSP diagnostics counters (`probes`, `null_prepares`, `items`, `outgoing_calls`, `dropped_uri`, `dropped_no_chunk`) with health-signal interpretation.
 - **2,495 unit tests** + 19 integration tests (net ~44 new tests from resolver tuning and LSP repair).

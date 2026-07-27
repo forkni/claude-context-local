@@ -174,7 +174,7 @@ Patch release completing the v0.14.0 call-graph resolver pipeline: fixes three L
 ### Added
 
 - **Resolver precision tuning** — pyan3 callee-flavor filter (drops callee-side pyan edges, which are low-precision); wildcard-import down-weighting; LibCST self-call resolution (`self.method()` patterns); namespace guard; `resolve_cache` for repeated FQN lookups.
-- **`CallGraphConfig.min_confidence`** (`search/config.py`, default `0.65`) — edges below this threshold are dropped before injection, trading recall for precision without reindexing.
+- **`CallGraphConfig.min_confidence`** (`search/config.py`, default `0.0` — accepts all edges, no behaviour change) — raising it (e.g. `0.65`) drops edges below the threshold before injection, trading recall for precision without reindexing.
 - **`CallGraphConfig.use_pyproject_toml`** (`search/config.py`, default `false`) — passes `use_pyproject_toml=True` to LibCST's `FullRepoManager` for correct src-layout package discovery.
 - **`docs/CALL_GRAPH_TUNING.md`** — API reference, confidence tiers, `min_confidence` / `use_pyproject_toml` / `lsp_enabled` tuning recipes, §6.4 LSP diagnostics counters (`probes`, `null_prepares`, `items`, `outgoing_calls`, `dropped_uri`, `dropped_no_chunk`) with health-signal interpretation.
 - **LSP session diagnostics** — every session logs `[LSP] probes=N ... dropped_uri=N dropped_no_chunk=N` at INFO; on 0 resolved edges, basedpyright stderr tail logged at WARNING.
