@@ -85,40 +85,42 @@ class CentralityRanker:
         self.alpha = alpha
         self.config = config
 
-        # Cache centrality scores to avoid recomputation
-        self._cache: dict[str, float] = {}
-        # Initial value overwritten on first call; any sentinel works.
-        self._cache_key = (0, 0)  # (node_count, edge_count)  # pragma: no mutate
-
     def get_centrality_scores(self) -> dict[str, float]:
         """Compute and cache centrality scores.
 
-        Uses node+edge count for cache invalidation (graph rebuild detection).
+        Memoization lives on the long-lived ``CodeGraphStorage`` behind
+        ``graph_query_engine.storage`` (P3-3, search-latency plan), keyed on a
+        graph-mutation version counter — not on this instance. A fresh
+        ``CentralityRanker`` is constructed per query
+        (``search/graph_scoring_stage.py``), so an instance-level cache was
+        born empty every time and never hit; the storage object persists
+        across queries, so its cache does.
+
         Normalizes scores to [0, 1] range.
 
         Returns:
-            dict mapping chunk_id -> normalized centrality score [0, 1]
+            dict mapping chunk_id -> normalized centrality score [0, 1]. Always
+            a fresh dict — never a reference shared with the storage-level
+            cache or a previous call's return value.
         """
-        current_key = (
-            self.graph_query_engine.storage.graph.number_of_nodes(),
-            self.graph_query_engine.storage.graph.number_of_edges(),
-        )
+        storage = self.graph_query_engine.storage
 
-        # Invalidate cache if node or edge count changed
-        # NotEq_Gt: code graphs only grow monotonically; Gt is equivalent to !=.
-        if current_key != self._cache_key:  # pragma: no mutate
-            self._cache.clear()
-            self._cache_key = current_key
-
-        # Return cached scores if available
-        if self._cache:
-            return self._cache
+        cached = storage.get_cached_centrality(self.method)
+        if cached is not None:
+            return cached
 
         # Handle empty graph
-        # Eq_LtE: node_count is always >= 0, so == 0 and <= 0 are equivalent.
-        if current_key[0] == 0:  # pragma: no mutate
+        if storage.graph.number_of_nodes() == 0:
             logger.debug("[CENTRALITY] Empty graph, returning empty scores")
             return {}
+
+        # Capture the version BEFORE computing (race safety): if a mutation
+        # lands on the graph mid-compute, storage.version will have already
+        # advanced past this captured value, so the entry we store below can
+        # never be the *current* version again — the next read misses and
+        # recomputes rather than serving a stale result. See
+        # CodeGraphStorage.set_cached_centrality.
+        version_at_start = storage.version
 
         # Compute centrality scores
         try:
@@ -143,21 +145,23 @@ class CentralityRanker:
             max_score = max(raw_scores.values())
             # Gt_NotEq: max() of non-negative scores is always ≥ 0; > and != are equivalent.
             if max_score > 0:  # pragma: no mutate
-                self._cache = {
+                scores = {
                     chunk_id: score / max_score
                     for chunk_id, score in raw_scores.items()
                 }
             else:
-                self._cache = dict.fromkeys(raw_scores, 0.0)
+                scores = dict.fromkeys(raw_scores, 0.0)
         else:
-            self._cache = {}
+            scores = {}
+
+        storage.set_cached_centrality(self.method, version_at_start, scores)
 
         logger.debug(
-            f"[CENTRALITY] Computed {len(self._cache)} scores "
+            f"[CENTRALITY] Computed {len(scores)} scores "
             f"(method={self.method}, max={max_score:.4f})"
         )
 
-        return self._cache
+        return dict(scores)
 
     def annotate(self, results: list[dict]) -> list[dict]:
         """Add centrality scores to results without reordering.

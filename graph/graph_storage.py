@@ -6,6 +6,7 @@ Provides NetworkX-based storage for code call graphs with JSON persistence.
 
 import contextlib
 import heapq
+import itertools
 import json
 import logging
 from collections import deque
@@ -162,9 +163,87 @@ class CodeGraphStorage:
         # Populated by add_node() and rebuilt by load() after graph restore.
         self._name_index: dict[str, list[str]] = {}
 
+        # Monotonic version counter + centrality memo (P3-3, search-latency plan).
+        # `_bump_version()` is called by every method that mutates `self.graph`
+        # (construction, add_node, add_call_edge, upgrade_call_edge,
+        # add_relationship_edge, load, clear, remove_file_nodes) — see
+        # `_bump_version` docstring for why `itertools.count()` rather than a
+        # plain counter. `_centrality_cache` maps method name -> (version at
+        # computation time, scores); see get_cached_centrality/set_cached_centrality.
+        self._version_seq = itertools.count()
+        self._version: int = -1
+        self._centrality_cache: dict[str, tuple[int, dict[str, float]]] = {}
+        self._bump_version()
+
         # Load existing graph if available
         if self.graph_path.exists():
             self.load()
+
+    def _bump_version(self) -> None:
+        """Advance the graph version counter, invalidating the centrality memo.
+
+        Must be called by every method that mutates ``self.graph`` — including
+        replacing it wholesale (``load``, ``clear``) or updating an edge's
+        attributes in place (``upgrade_call_edge``). Completeness is enforced by
+        an AST test (``tests/unit/graph/test_graph_storage_version.py``) that
+        scans this class for methods touching ``self.graph`` and asserts each
+        one also calls this method.
+
+        Uses ``itertools.count()`` rather than a plain ``+= 1``: ``next()`` on an
+        ``itertools.count()`` is atomic in CPython (single bytecode-level
+        operation), so two concurrent bumps cannot race and collide on the same
+        value. A plain increment could lose an update under concurrent callers,
+        letting two *distinct* graph states share a version number — the one way
+        this cache could serve stale centrality scores.
+        """
+        self._version = next(self._version_seq)
+
+    @property
+    def version(self) -> int:
+        """Monotonic counter bumped by :meth:`_bump_version` on every mutation.
+
+        Consumed by :class:`search.centrality_ranker.CentralityRanker` to key its
+        memoized centrality scores (see :meth:`get_cached_centrality`).
+        """
+        return self._version
+
+    def get_cached_centrality(self, method: str) -> dict[str, float] | None:
+        """Return a fresh copy of memoized centrality scores for *method*.
+
+        Returns ``None`` if there is no entry, or if the graph has mutated since
+        the entry was computed (version mismatch) — in which case the caller
+        should recompute and store the new result via
+        :meth:`set_cached_centrality`.
+
+        Always returns a shallow copy, never the cached dict itself: the caller
+        (``CentralityRanker.get_centrality_scores``) hands this dict onward to
+        shared, long-lived state (``ego_graph_retriever.set_centrality_scores``),
+        so every call must return a distinct object — required for the
+        per-query isolation the search-latency plan's byte-identical
+        equivalence tests depend on.
+        """
+        entry = self._centrality_cache.get(method)
+        if entry is None:
+            return None
+        cached_version, scores = entry
+        if cached_version != self._version:
+            return None
+        return dict(scores)
+
+    def set_cached_centrality(
+        self, method: str, version: int, scores: dict[str, float]
+    ) -> None:
+        """Store *scores* for *method*, tagged with the graph *version*.
+
+        *version* must be captured by the caller BEFORE computing *scores* (not
+        after) — see ``CentralityRanker.get_centrality_scores``. If a mutation
+        lands on the graph mid-computation, ``self._version`` will have already
+        advanced past the captured value by the time this is called, so the
+        entry is stored under a version that can never be the *current* one
+        again — the next read misses and recomputes. Worst case is one
+        duplicated computation; never a stale read.
+        """
+        self._centrality_cache[method] = (version, dict(scores))
 
     def add_node(
         self,
@@ -207,6 +286,7 @@ class CodeGraphStorage:
             self._name_index[name] = []
         if chunk_id not in self._name_index[name]:
             self._name_index[name].append(chunk_id)
+        self._bump_version()
 
     def add_call_edge(
         self,
@@ -263,6 +343,7 @@ class CodeGraphStorage:
             },
             **kwargs,
         )
+        self._bump_version()
 
     def upgrade_call_edge(
         self, caller_id: str, callee_id: str, **attrs: object
@@ -295,6 +376,7 @@ class CodeGraphStorage:
         self.graph.edges[
             normalize_path(caller_id), normalize_path(callee_id), "calls"
         ].update(attrs)
+        self._bump_version()
 
     def add_relationship_edge(self, edge: "RelationshipEdge") -> None:
         """
@@ -353,6 +435,7 @@ class CodeGraphStorage:
             },
             **edge.metadata,  # Include all additional metadata
         )
+        self._bump_version()
 
     def get_callers(self, chunk_id: str) -> list[str]:
         """
@@ -848,6 +931,7 @@ class CodeGraphStorage:
                 f"{self.graph.number_of_edges()} edges ← {self.graph_path}"
             )
 
+            self._bump_version()
             return True
 
         except (OSError, ValueError, KeyError, TypeError, nx.NetworkXError) as e:
@@ -855,6 +939,7 @@ class CodeGraphStorage:
             # Initialize empty graph on error
             # pyrefly: ignore [missing-attribute]
             self.graph = nx.MultiDiGraph()
+            self._bump_version()
             return False
 
     def clear(self) -> None:
@@ -870,6 +955,7 @@ class CodeGraphStorage:
         """
         self.graph.clear()
         self._name_index.clear()
+        self._bump_version()
         if self.graph_path.exists():
             self.graph_path.unlink()
             self.logger.info("Cleared call graph (on-disk file deleted)")
@@ -916,6 +1002,7 @@ class CodeGraphStorage:
             self.graph.remove_node(node_id)
 
         if to_remove:
+            self._bump_version()
             self.logger.debug(
                 f"[GRAPH_PRUNE] Removed {len(to_remove)} nodes for '{normalized}'"
             )

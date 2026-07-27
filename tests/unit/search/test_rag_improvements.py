@@ -224,6 +224,37 @@ _CID_B = "search/b.py:1-10:function:func_b"
 _CID_C = "search/c.py:1-10:function:func_c"
 
 
+class _FakeGraphStorage:
+    """Minimal test double for CodeGraphStorage's version-keyed centrality memo.
+
+    A bare MagicMock() cannot stand in for storage here: it auto-creates
+    get_cached_centrality()/version/set_cached_centrality as MagicMock
+    attributes that are always truthy, which makes `cached is not None` in
+    CentralityRanker.get_centrality_scores() always true and short-circuits
+    before compute_centrality ever runs — see graph/graph_storage.py's
+    CodeGraphStorage for the real interface this mirrors.
+    """
+
+    def __init__(self, graph: nx.DiGraph) -> None:
+        self.graph = graph
+        self.version = 0
+        self._centrality_cache: dict[str, tuple[int, dict[str, float]]] = {}
+
+    def get_cached_centrality(self, method: str) -> dict[str, float] | None:
+        entry = self._centrality_cache.get(method)
+        if entry is None:
+            return None
+        cached_version, scores = entry
+        if cached_version != self.version:
+            return None
+        return dict(scores)
+
+    def set_cached_centrality(
+        self, method: str, version: int, scores: dict[str, float]
+    ) -> None:
+        self._centrality_cache[method] = (version, dict(scores))
+
+
 @pytest.fixture
 def mock_engine():
     """Mock GraphQueryEngine with 3-node graph using real chunk_id keys."""
@@ -232,8 +263,7 @@ def mock_engine():
     graph.add_edge(_CID_A, _CID_C)
     graph.add_edge(_CID_B, _CID_C)
     engine = MagicMock()
-    engine.storage = MagicMock()
-    engine.storage.graph = graph
+    engine.storage = _FakeGraphStorage(graph)
     engine.compute_centrality = MagicMock(
         return_value={_CID_A: 0.1, _CID_B: 0.2, _CID_C: 0.8}
     )

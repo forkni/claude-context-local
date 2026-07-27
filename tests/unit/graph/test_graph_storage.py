@@ -846,3 +846,160 @@ class TestCodeGraphStorage:
             "Old DiGraph JSON must be coerced to MultiDiGraph on load"
         )
         assert reloaded.graph.number_of_nodes() >= 1
+
+    # ------------------------------------------------------------------
+    # P3-3 (search-latency plan): version counter + centrality memo
+    # ------------------------------------------------------------------
+
+    def test_init_bumps_version(self, graph_storage):
+        """A freshly-constructed storage already has a version (not the -1 sentinel)."""
+        assert graph_storage.version == 0
+
+    def test_add_node_bumps_version(self, graph_storage):
+        before = graph_storage.version
+        graph_storage.add_node("a.py:1-5:function:a", "a", "function", "a.py")
+        assert graph_storage.version > before
+
+    def test_add_call_edge_bumps_version(self, graph_storage):
+        before = graph_storage.version
+        graph_storage.add_call_edge("foo_id", "bar_id", line_number=1)
+        assert graph_storage.version > before
+
+    def test_upgrade_call_edge_bumps_version(self, graph_storage):
+        """upgrade_call_edge mutates edge attrs in place — no node/edge count change,
+        so a count-keyed cache (the design this replaces) would miss this entirely."""
+        graph_storage.add_call_edge("foo_id", "bar_id", line_number=1)
+        before = graph_storage.version
+        graph_storage.upgrade_call_edge("foo_id", "bar_id", resolver_source="pyan")
+        assert graph_storage.version > before
+
+    def test_add_relationship_edge_bumps_version(self, graph_storage):
+        from chunking.relationships.relationship_types import (
+            RelationshipEdge,
+            RelationshipType,
+        )
+
+        before = graph_storage.version
+        edge = RelationshipEdge(
+            source_id="child.py:1-10:class:Child",
+            target_name="Parent",
+            relationship_type=RelationshipType.INHERITS,
+            line_number=1,
+        )
+        graph_storage.add_relationship_edge(edge)
+        assert graph_storage.version > before
+
+    def test_load_bumps_version(self, graph_storage, temp_storage_dir):
+        graph_storage.add_node("a.py:1-5:function:a", "a", "function", "a.py")
+        graph_storage.save()
+
+        storage = CodeGraphStorage(
+            project_id="test_project", storage_dir=temp_storage_dir
+        )
+        before = storage.version
+        storage.load()
+        assert storage.version > before
+
+    def test_load_missing_file_returns_false_without_bumping(
+        self, graph_storage, temp_storage_dir
+    ):
+        """load()'s early return (file doesn't exist) takes no action on self.graph,
+        so — unlike the try/except branches below it — it must not bump the version."""
+        storage = CodeGraphStorage(
+            project_id="nonexistent_project", storage_dir=temp_storage_dir
+        )
+        before = storage.version
+        assert storage.load() is False
+        assert storage.version == before
+
+    def test_clear_bumps_version(self, graph_storage):
+        graph_storage.add_node("a.py:1-5:function:a", "a", "function", "a.py")
+        before = graph_storage.version
+        graph_storage.clear()
+        assert graph_storage.version > before
+
+    def test_remove_file_nodes_bumps_version_when_nodes_removed(self, graph_storage):
+        graph_storage.add_node("a.py:1-5:function:a", "a", "function", "a.py")
+        before = graph_storage.version
+        removed = graph_storage.remove_file_nodes("a.py")
+        assert removed == 1
+        assert graph_storage.version > before
+
+    def test_remove_file_nodes_does_not_bump_version_when_nothing_removed(
+        self, graph_storage
+    ):
+        """No matching nodes → no mutation → version must stay unchanged.
+
+        Guards against an over-eager bump that would invalidate the memo on every
+        no-op prune call (harmless for correctness, but would defeat the point of
+        the memo on a hot no-op path).
+        """
+        before = graph_storage.version
+        removed = graph_storage.remove_file_nodes("nonexistent.py")
+        assert removed == 0
+        assert graph_storage.version == before
+
+    def test_equal_count_churn_invalidates_cache(self, graph_storage):
+        """remove_file_nodes + re-add restores node/edge counts but must still miss.
+
+        This is exactly the gap the old CentralityRanker instance cache (keyed on
+        (node_count, edge_count)) could not see. The version-keyed memo below
+        must still invalidate even though the counts round-trip back to their
+        original values.
+        """
+        graph_storage.add_node("a.py:1-10:function:a", "a", "function", "a.py")
+        node_count_before = graph_storage.graph.number_of_nodes()
+
+        graph_storage.set_cached_centrality(
+            "pagerank", graph_storage.version, {"a.py:1-10:function:a": 1.0}
+        )
+        assert graph_storage.get_cached_centrality("pagerank") is not None
+
+        # Body-only edit: file's chunk removed and re-added under the same id.
+        graph_storage.remove_file_nodes("a.py")
+        graph_storage.add_node("a.py:1-10:function:a", "a", "function", "a.py")
+
+        assert graph_storage.graph.number_of_nodes() == node_count_before
+        assert graph_storage.get_cached_centrality("pagerank") is None, (
+            "Memo must invalidate on equal-count churn, not just count changes"
+        )
+
+    def test_get_cached_centrality_returns_none_when_absent(self, graph_storage):
+        assert graph_storage.get_cached_centrality("pagerank") is None
+
+    def test_set_then_get_cached_centrality_round_trips(self, graph_storage):
+        scores = {"a": 0.5, "b": 1.0}
+        graph_storage.set_cached_centrality("pagerank", graph_storage.version, scores)
+        assert graph_storage.get_cached_centrality("pagerank") == scores
+
+    def test_get_cached_centrality_returns_copy_not_alias(self, graph_storage):
+        """Two reads of the same memo entry must be equal but distinct objects.
+
+        Required for per-query isolation: the caller hands this dict onward to
+        shared, long-lived state (ego_graph_retriever.set_centrality_scores), so
+        every call must return a fresh object, never a shared reference.
+        """
+        scores = {"a": 0.5}
+        graph_storage.set_cached_centrality("pagerank", graph_storage.version, scores)
+
+        first = graph_storage.get_cached_centrality("pagerank")
+        second = graph_storage.get_cached_centrality("pagerank")
+
+        assert first == second
+        assert first is not second
+        assert first is not scores  # not the caller's original dict either
+
+    def test_get_cached_centrality_misses_after_mutation(self, graph_storage):
+        graph_storage.set_cached_centrality(
+            "pagerank", graph_storage.version, {"a": 1.0}
+        )
+        graph_storage.add_node("new.py:1-5:function:new", "new", "function", "new.py")
+
+        assert graph_storage.get_cached_centrality("pagerank") is None
+
+    def test_get_cached_centrality_is_scoped_per_method(self, graph_storage):
+        """A memo entry for one centrality method must not answer for another."""
+        graph_storage.set_cached_centrality(
+            "pagerank", graph_storage.version, {"a": 1.0}
+        )
+        assert graph_storage.get_cached_centrality("betweenness") is None

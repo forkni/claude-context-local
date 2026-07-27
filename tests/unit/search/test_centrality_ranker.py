@@ -10,6 +10,45 @@ import pytest
 from search.centrality_ranker import CentralityRanker
 
 
+class _FakeGraphStorage:
+    """Minimal test double for CodeGraphStorage's version-keyed centrality memo.
+
+    Mirrors the real interface (graph/graph_storage.py: .graph, .version,
+    .get_cached_centrality(), .set_cached_centrality()) without requiring disk
+    I/O or a real MultiDiGraph. A bare MagicMock() cannot stand in for
+    storage here: it auto-creates get_cached_centrality()/version/
+    set_cached_centrality as MagicMock attributes that are always truthy,
+    which would make `cached is not None` in get_centrality_scores() always
+    true and short-circuit every test before it exercises compute_centrality.
+
+    Tests call bump_version() to explicitly simulate a mutation invalidating
+    the memo; the real CodeGraphStorage calls the equivalent
+    ``_bump_version()`` internally from every graph-mutating method.
+    """
+
+    def __init__(self, graph: nx.DiGraph) -> None:
+        self.graph = graph
+        self.version = 0
+        self._centrality_cache: dict[str, tuple[int, dict[str, float]]] = {}
+
+    def bump_version(self) -> None:
+        self.version += 1
+
+    def get_cached_centrality(self, method: str) -> dict[str, float] | None:
+        entry = self._centrality_cache.get(method)
+        if entry is None:
+            return None
+        cached_version, scores = entry
+        if cached_version != self.version:
+            return None
+        return dict(scores)
+
+    def set_cached_centrality(
+        self, method: str, version: int, scores: dict[str, float]
+    ) -> None:
+        self._centrality_cache[method] = (version, dict(scores))
+
+
 @pytest.fixture
 def mock_graph_query_engine():
     """Mock GraphQueryEngine with a simple graph."""
@@ -19,8 +58,7 @@ def mock_graph_query_engine():
     graph.add_edge("B", "C")  # B calls C (C is most central)
 
     engine = MagicMock()
-    engine.storage = MagicMock()
-    engine.storage.graph = graph
+    engine.storage = _FakeGraphStorage(graph)
     engine.compute_centrality = MagicMock(return_value={"A": 0.3, "B": 0.2, "C": 0.5})
 
     return engine
@@ -139,8 +177,7 @@ def test_empty_graph_returns_unchanged(sample_results):
     """Test that empty graph returns results with 0.0 centrality."""
     # Empty graph
     engine = MagicMock()
-    engine.storage = MagicMock()
-    engine.storage.graph = nx.DiGraph()
+    engine.storage = _FakeGraphStorage(nx.DiGraph())
     engine.compute_centrality = MagicMock(return_value={})
 
     ranker = CentralityRanker(engine, method="pagerank", alpha=0.3)
@@ -151,35 +188,63 @@ def test_empty_graph_returns_unchanged(sample_results):
 
 
 def test_cache_invalidation_on_graph_change(mock_graph_query_engine, sample_results):
-    """Test that cache invalidates when graph node or edge count changes."""
+    """Test that the storage-level memo invalidates when the graph version bumps.
+
+    The memo (CodeGraphStorage.get_cached_centrality/set_cached_centrality, P3-3
+    search-latency plan) keys on a version counter the real storage bumps on every
+    mutation — not on node/edge counts, which miss equal-count churn. Here the fake
+    storage's bump_version() stands in for that real invalidation trigger.
+    """
     ranker = CentralityRanker(mock_graph_query_engine, method="pagerank", alpha=0.3)
 
-    # First call populates cache
+    # First call populates the memo
     ranker.annotate(sample_results)
-    assert ranker._cache_key == (3, 3)  # (node_count, edge_count)
-    assert len(ranker._cache) > 0
     call_count_1 = mock_graph_query_engine.compute_centrality.call_count
+    assert call_count_1 > 0
 
-    # Second call uses cache (no new compute)
+    # Second call hits the memo (no new compute)
     ranker.annotate(sample_results)
     call_count_2 = mock_graph_query_engine.compute_centrality.call_count
     assert call_count_2 == call_count_1  # No additional call
 
-    # Modify graph (add node) to change node count
+    # Modify graph and bump version (real storage would do this internally)
     mock_graph_query_engine.storage.graph.add_node("D")
+    mock_graph_query_engine.storage.bump_version()
 
-    # Third call should invalidate cache and recompute
+    # Third call should invalidate the memo and recompute
     ranker.annotate(sample_results)
     call_count_3 = mock_graph_query_engine.compute_centrality.call_count
     assert call_count_3 == call_count_1 + 1  # One additional call
-    assert ranker._cache_key == (4, 3)  # Node count increased
+
+
+def test_get_centrality_scores_memo_hit_returns_equal_but_distinct_dict(
+    mock_graph_query_engine,
+):
+    """Two successive get_centrality_scores() calls sharing a memo hit must return
+    equal but non-identical dicts.
+
+    Required for per-query isolation (P3-3, search-latency plan): the caller
+    (GraphScoringStage._apply_centrality) hands this dict onward to shared,
+    long-lived state (ego_graph_retriever.set_centrality_scores). If the memo
+    ever returned the same object twice, that shared state would alias the
+    storage-level cache entry across queries.
+    """
+    ranker = CentralityRanker(mock_graph_query_engine, method="pagerank", alpha=0.3)
+
+    first = ranker.get_centrality_scores()
+    call_count_after_first = mock_graph_query_engine.compute_centrality.call_count
+    second = ranker.get_centrality_scores()
+    call_count_after_second = mock_graph_query_engine.compute_centrality.call_count
+
+    assert call_count_after_second == call_count_after_first  # second call hit the memo
+    assert first == second
+    assert first is not second
 
 
 def test_convergence_failure_returns_empty_scores():
     """Test that PageRank convergence failure returns empty scores."""
     engine = MagicMock()
-    engine.storage = MagicMock()
-    engine.storage.graph = nx.DiGraph()
+    engine.storage = _FakeGraphStorage(nx.DiGraph())
     engine.compute_centrality = MagicMock(
         side_effect=nx.PowerIterationFailedConvergence(3)
     )
@@ -193,8 +258,7 @@ def test_convergence_failure_returns_empty_scores():
 def test_generic_exception_returns_empty_scores():
     """Test that generic exceptions return empty scores."""
     engine = MagicMock()
-    engine.storage = MagicMock()
-    engine.storage.graph = nx.DiGraph()
+    engine.storage = _FakeGraphStorage(nx.DiGraph())
     engine.compute_centrality = MagicMock(side_effect=RuntimeError("Test error"))
 
     ranker = CentralityRanker(engine, method="pagerank", alpha=0.3)
@@ -211,8 +275,7 @@ def test_split_block_type_boost():
     graph.add_node("B")
 
     engine = MagicMock()
-    engine.storage = MagicMock()
-    engine.storage.graph = graph
+    engine.storage = _FakeGraphStorage(graph)
     engine.compute_centrality = MagicMock(return_value={"A": 0.5, "B": 0.5})
 
     results = [
@@ -237,8 +300,7 @@ def test_split_block_entity_query_boost():
     graph.add_node("A")
 
     engine = MagicMock()
-    engine.storage = MagicMock()
-    engine.storage.graph = graph
+    engine.storage = _FakeGraphStorage(graph)
     engine.compute_centrality = MagicMock(return_value={"A": 0.5})
 
     results = [
@@ -261,8 +323,7 @@ def test_zero_centrality_synthetic_demotion():
     graph.add_node("func.py:10-20:function:foo")
 
     engine = MagicMock()
-    engine.storage = MagicMock()
-    engine.storage.graph = graph
+    engine.storage = _FakeGraphStorage(graph)
     engine.compute_centrality = MagicMock(
         return_value={"func.py:10-20:function:foo": 0.5}
     )
@@ -297,8 +358,7 @@ def test_zero_centrality_does_not_affect_real_code():
     graph = nx.DiGraph()
 
     engine = MagicMock()
-    engine.storage = MagicMock()
-    engine.storage.graph = graph
+    engine.storage = _FakeGraphStorage(graph)
     engine.compute_centrality = MagicMock(return_value={})
 
     results = [
