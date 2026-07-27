@@ -73,6 +73,22 @@ class TestFullSearchFlow:
         (storage_dir / "cache").mkdir()
         return storage_dir
 
+    @pytest.fixture(scope="class")
+    def session_embedder(self):
+        """Real, session-scoped embedder.
+
+        Only test_cross_file_search_patterns uses this -- semantic-content
+        assertions ("a query about exceptions should surface the exception
+        classes") are meaningless against the fake hash-seeded vectors the
+        other tests in this class use, since those vectors carry no real
+        semantic relationship to the query.
+        """
+        from embeddings.embedder import CodeEmbedder
+
+        embedder = CodeEmbedder()
+        yield embedder
+        embedder.cleanup()
+
     def test_real_project_chunking(self, test_project_path):
         """Test chunking the real Python test project."""
         chunker = MultiLanguageChunker(str(test_project_path))
@@ -257,16 +273,18 @@ class TestFullSearchFlow:
             f"Should find API-related code, found names: {api_chunk_names}"
         )
 
-    @pytest.mark.skip(
-        reason="Flaky test: fake embeddings have no semantic meaning. "
-        "Search results depend on random vector geometry, not code similarity. "
-        "Use real embeddings for semantic search validation (see test_real_search_scenarios)."
-    )
-    def test_cross_file_search_patterns(self, test_project_path, mock_storage_dir):
+    def test_cross_file_search_patterns(
+        self, test_project_path, mock_storage_dir, session_embedder
+    ):
         """Test search patterns that span multiple files.
 
-        Uses deterministic embeddings for consistent results.
-        Query vectors are created with the same deterministic approach as chunk embeddings.
+        Was previously @pytest.mark.skip'd as flaky: it used hash-seeded
+        random vectors for both chunks and queries, which have no semantic
+        relationship to each other, so "should find AuthenticationError"
+        assertions were checking random vector geometry, not code
+        similarity. The stated replacement (test_real_search_scenarios) was
+        never written, leaving cross-file search with zero real coverage.
+        Fixed here by indexing with the real embedder instead.
         """
         chunker = MultiLanguageChunker(str(test_project_path))
         all_chunks = []
@@ -275,18 +293,14 @@ class TestFullSearchFlow:
             chunks = chunker.chunk_file(str(py_file))
             all_chunks.extend(chunks)
 
-        embeddings = create_test_embeddings(all_chunks)
+        embedding_results = session_embedder.embed_chunks(all_chunks)
 
         index_manager = CodeIndexManager(str(mock_storage_dir))
-        index_manager.create_index(768, "flat")
-        index_manager.add_embeddings(embeddings)
+        index_manager.add_embeddings(embedding_results)
 
-        # Create deterministic query vector for "exception error class"
-        # Use same hash-based approach as create_test_embeddings()
-        exception_query_seed = abs(hash("exception error class")) % 10000
-        exception_query = (
-            np.random.RandomState(exception_query_seed).random(768).astype(np.float32)
-        )
+        # Real query embedding -- semantically related to exception classes,
+        # not a hash-seeded random vector unrelated to the chunk content.
+        exception_query = session_embedder.embed_query("exception error class")
 
         # Find all exception classes across files
         exception_results = index_manager.search(
@@ -308,16 +322,14 @@ class TestFullSearchFlow:
             "ValidationError",
         }
         found_exceptions = set(exception_names).intersection(expected_exceptions)
-        # With deterministic embeddings, we should consistently find at least 2 exception classes
+        # With real embeddings, a query for "exception error class" should
+        # reliably surface at least 2 of the 4 named exception classes.
         assert len(found_exceptions) >= 2, (
             f"Should find multiple exception classes, found: {found_exceptions}"
         )
 
-        # Create deterministic query vector for "validation check function"
-        validation_query_seed = abs(hash("validation check function")) % 10000
-        validation_query = (
-            np.random.RandomState(validation_query_seed).random(768).astype(np.float32)
-        )
+        # Real query embedding for the validation-function search.
+        validation_query = session_embedder.embed_query("validation check function")
 
         # Find all validation-related functions
         validation_results = index_manager.search(
@@ -340,7 +352,8 @@ class TestFullSearchFlow:
             "check_password",
         }
         found_validators = set(validation_functions).intersection(expected_validators)
-        # With deterministic embeddings, we should consistently find at least 1 validator
+        # With real embeddings, a query for "validation check function"
+        # should reliably surface at least 1 of the 4 named validators.
         assert len(found_validators) >= 1, (
             f"Should find at least one validation function, found: {found_validators}"
         )
@@ -420,11 +433,14 @@ class TestFullSearchFlow:
 
             # Modify a file to trigger incremental update
             auth_file = temp_project / "src" / "auth" / "authenticator.py"
-            if auth_file.exists():
-                content = auth_file.read_text()
-                # Add a new function
-                new_function = "\n\ndef new_auth_function():\n    '''New authentication function.'''\n    return True\n"
-                auth_file.write_text(content + new_function)
+            assert auth_file.exists(), (
+                "authenticator.py missing from copied test project — "
+                "test no longer exercises incremental change detection"
+            )
+            content = auth_file.read_text()
+            # Add a new function
+            new_function = "\n\ndef new_auth_function():\n    '''New authentication function.'''\n    return True\n"
+            auth_file.write_text(content + new_function)
 
             # Create new DAG for modified project
             new_dag = MerkleDAG(str(temp_project))
@@ -444,9 +460,12 @@ class TestFullSearchFlow:
             for file_path in changes.modified + changes.added:
                 # The file_path from MerkleDAG is relative, construct full path
                 full_path = temp_project / file_path
-                if full_path.exists():
-                    chunks = temp_chunker.chunk_file(str(full_path))
-                    changed_chunks.extend(chunks)
+                assert full_path.exists(), (
+                    f"MerkleDAG reported a changed file that doesn't exist on disk: "
+                    f"{full_path} — test no longer exercises incremental chunking"
+                )
+                chunks = temp_chunker.chunk_file(str(full_path))
+                changed_chunks.extend(chunks)
 
             # Should have found new chunks
             assert len(changed_chunks) > 0
@@ -470,28 +489,29 @@ class TestFullSearchFlow:
         np.ones(768, dtype=np.float32) * 0.5
 
         # Search for similar chunks to a specific chunk
-        if len(embeddings) > 0:
-            # Use first chunk's embedding as query
-            first_chunk_id = embeddings[0].chunk_id
-            first_embedding = embeddings[0].embedding
+        assert len(embeddings) > 0, (
+            "Precondition failed: indexed_project_data has no embeddings — "
+            "test no longer exercises contextual search"
+        )
+        # Use first chunk's embedding as query
+        first_chunk_id = embeddings[0].chunk_id
+        first_embedding = embeddings[0].embedding
 
-            # Search without the exclude_ids parameter (not supported)
-            similar_results = index_manager.search(
-                first_embedding,
-                k=6,  # Get one extra result to filter out the query chunk
-            )
+        # Search without the exclude_ids parameter (not supported)
+        similar_results = index_manager.search(
+            first_embedding,
+            k=6,  # Get one extra result to filter out the query chunk
+        )
 
-            # Filter out the query chunk from results
-            result_ids = [
-                chunk_id
-                for chunk_id, _, _ in similar_results
-                if chunk_id != first_chunk_id
-            ]
-            assert len(result_ids) >= 5  # Should find at least 5 other similar chunks
+        # Filter out the query chunk from results
+        result_ids = [
+            chunk_id for chunk_id, _, _ in similar_results if chunk_id != first_chunk_id
+        ]
+        assert len(result_ids) >= 5  # Should find at least 5 other similar chunks
 
-            # Results should be ranked by similarity
-            similarities = [sim for _, sim, _ in similar_results]
-            assert similarities == sorted(similarities, reverse=True)
+        # Results should be ranked by similarity
+        similarities = [sim for _, sim, _ in similar_results]
+        assert similarities == sorted(similarities, reverse=True)
 
     def test_performance_with_large_codebase(self, test_project_path, mock_storage_dir):
         """Test performance metrics with a larger codebase simulation."""
@@ -520,12 +540,25 @@ class TestFullSearchFlow:
         query_embedding = np.ones(768, dtype=np.float32) * 0.5
 
         start_time = time.time()
-        index_manager.search(query_embedding, k=10)
+        results = index_manager.search(query_embedding, k=10)
         search_time = time.time() - start_time
 
-        # Smoke test assertions (non-flaky)
-        assert indexing_time > 0, "Indexing should take measurable time"
-        assert search_time >= 0, "Search should complete successfully"
+        # Wall-clock duration can't be asserted on reliably (mocked/fast paths
+        # can legitimately complete in <1ms), so verify the invariants that
+        # actually catch a regression: every embedding got indexed, and the
+        # search against the populated index returns well-formed results.
+        assert len(embeddings) == len(large_chunks), (
+            "Every chunk should produce exactly one embedding"
+        )
+        assert index_manager.ntotal == len(embeddings), (
+            "Index should contain all added embeddings"
+        )
+        assert len(results) > 0, "Search over a populated index should return results"
+        assert len(results) <= 10, "Search should not exceed the requested k"
+        for chunk_id, similarity, metadata in results:
+            assert isinstance(chunk_id, str) and chunk_id
+            assert isinstance(similarity, float)
+            assert isinstance(metadata, dict)
 
         print(
             f"Performance stats: Indexed {len(embeddings)} chunks in {indexing_time:.2f}s, "
@@ -558,9 +591,12 @@ class TestFullSearchFlow:
 
         # Corrupt the index file (simulate corruption)
         index_file = mock_storage_dir / "code.index"
-        if index_file.exists():
-            # Write garbage data
-            index_file.write_bytes(b"corrupted data")
+        assert index_file.exists(), (
+            "code.index missing after save_index() — test no longer exercises "
+            "corruption recovery"
+        )
+        # Write garbage data
+        index_file.write_bytes(b"corrupted data")
 
         # Try to load corrupted index
         new_manager = CodeIndexManager(str(mock_storage_dir))

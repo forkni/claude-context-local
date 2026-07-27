@@ -4,7 +4,6 @@ Encoding Validation Test
 Tests all files for ASCII compatibility and emoji detection.
 """
 
-import sys
 from pathlib import Path
 
 
@@ -182,8 +181,3 @@ def _all_files_check():
     else:
         print(f"[ERROR] {failed} files have encoding issues or emojis")
         return False
-
-
-if __name__ == "__main__":
-    success = _all_files_check()
-    sys.exit(0 if success else 1)

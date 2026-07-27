@@ -394,7 +394,3 @@ class TestUserFilterPreservation:
             "MultiLanguageChunker must receive exclude_dirs containing stored user exclusions; "
             f"got args={args}, kwargs={kwargs}"
         )
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "-s"])

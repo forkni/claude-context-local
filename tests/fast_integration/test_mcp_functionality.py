@@ -6,7 +6,6 @@ Tests basic MCP server import and functionality without full workflow.
 # ruff: noqa: I001
 
 import asyncio
-import sys
 from pathlib import Path
 
 
@@ -142,8 +141,3 @@ def main():
     else:
         print(f"[WARNING] {total - passed} tests failed")
         return False
-
-
-if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)

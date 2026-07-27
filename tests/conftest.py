@@ -14,6 +14,7 @@ warnings.filterwarnings(
     category=DeprecationWarning,
 )
 
+import hashlib  # noqa: E402
 import shutil  # noqa: E402
 import sys  # noqa: E402
 import tempfile  # noqa: E402
@@ -21,7 +22,6 @@ from collections.abc import Generator  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Any  # noqa: E402
 
-import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
 from search.filters import normalize_path  # noqa: E402
@@ -51,11 +51,8 @@ if _venv_path.exists():
 
 try:
     from chunking.multi_language_chunker import MultiLanguageChunker
-    from embeddings.embedder import CodeEmbedder, EmbeddingResult
 except ImportError:
     MultiLanguageChunker = None
-    CodeEmbedder = None
-    EmbeddingResult = None
 
 try:
     from tests.fixtures.sample_code import (
@@ -464,81 +461,6 @@ def mock_storage_dir(tmp_path: Path) -> Path:
     return storage_dir
 
 
-@pytest.fixture(scope="session")
-def test_config() -> dict[str, Any]:
-    """Test configuration settings."""
-    return {
-        "embedding_model": "BAAI/bge-m3",
-        "test_batch_size": 2,  # Small batch size for tests
-        "test_timeout": 30,  # Timeout for tests
-        "mock_embeddings": False,  # Use real embeddings if available
-        "embedding_dimension": 1024,
-        "max_chunks_for_test": 10,  # Limit chunks in tests
-    }
-
-
-@pytest.fixture(scope="session")
-def ensure_model_downloaded(test_config: dict[str, Any]) -> bool:
-    """Ensure the embedding model is downloaded before running tests."""
-    import os
-    import subprocess
-    from pathlib import Path
-
-    # Check if we should use mocks instead
-    if os.environ.get("PYTEST_USE_MOCKS", "").lower() in ("1", "true", "yes"):
-        pytest.skip("Using mocks instead of real model")
-
-    # Try to download model
-    script_path = Path(__file__).parent / "scripts" / "download_model.py"
-    if script_path.exists():
-        try:
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(script_path),
-                    "--model",
-                    test_config["embedding_model"],
-                ],
-                capture_output=True,
-                text=True,
-                timeout=300,  # 5 minute timeout
-            )
-            if result.returncode != 0:
-                pytest.skip(f"Could not download model: {result.stderr}")
-        except subprocess.TimeoutExpired:
-            pytest.skip("Model download timed out")
-        except Exception as e:
-            pytest.skip(f"Error downloading model: {e}")
-    else:
-        pytest.skip("Download script not found")
-
-    return True
-
-
-@pytest.fixture
-def embedder_with_cleanup(mock_storage_dir: Path) -> Generator[Any, None, None]:
-    """Create a CodeEmbedder with proper GPU memory cleanup."""
-    if not CodeEmbedder:
-        pytest.skip("CodeEmbedder not available")
-
-    # Create embedder with CPU device to avoid GPU memory issues
-    embedder = CodeEmbedder(
-        cache_dir=str(mock_storage_dir / "models"),
-        device="cpu",  # Force CPU for tests to avoid VRAM issues
-    )
-
-    yield embedder
-
-    # Cleanup after test
-    try:
-        embedder.cleanup()
-    except Exception as e:
-        # Test cleanup - log but don't fail test
-        import warnings
-
-        warnings.warn(f"Embedder cleanup failed: {e}", stacklevel=2)
-
-
 @pytest.fixture
 def graph_storage(tmp_path: Path) -> Generator[Any, None, None]:
     """Create a CodeGraphStorage instance with isolated temporary directory.
@@ -611,8 +533,11 @@ def mock_snapshot_manager_for_unit_tests(
     mock_instance.delete_snapshot.return_value = None
     mock_instance.delete_all_snapshots.return_value = 0
     mock_instance.load_snapshot.return_value = None
+    # hash() is randomized per-process (PYTHONHASHSEED), so two workers -- or
+    # two runs of the same test -- would compute different IDs for the same
+    # path. Use hashlib.sha256 for a genuinely stable ID across processes.
     mock_instance.get_project_id.side_effect = lambda path: (
-        f"test_{hash(path) & 0xFFFFFFFF:08x}"
+        f"test_{hashlib.sha256(str(path).encode()).hexdigest()[:8]}"
     )
 
     # Patch at definition point (sufficient for all imports)
@@ -626,66 +551,3 @@ def mock_snapshot_manager_for_unit_tests(
 # ============================================================================
 # generate_chunk_id and create_test_embeddings live in tests.helpers.embeddings.
 # Import them directly in test files: from tests.helpers.embeddings import ...
-
-
-@pytest.fixture
-def mock_embedding_result_factory():
-    """Factory for creating mock EmbeddingResult objects.
-
-    Usage:
-        def test_something(mock_embedding_result_factory):
-            result = mock_embedding_result_factory(
-                chunk_id="file.py:1-10:function:my_func",
-                name="my_func",
-                calls=[{"callee_name": "other_func", "line_number": 5}]
-            )
-
-    Args:
-        chunk_id: Chunk identifier (default: "test.py:1-10:function:test_func")
-        name: Function/class name (default: "test_func")
-        chunk_type: Type of code chunk (default: "function")
-        content: Code content (default: "def test_func(): pass")
-        file_path: File path (extracted from chunk_id if not provided)
-        calls: List of call dictionaries (default: [])
-        relationships: List of relationship dictionaries (default: [])
-        embedding_dim: Embedding dimension (default: 768)
-
-    Returns:
-        Callable that creates EmbeddingResult objects
-    """
-
-    def create(
-        chunk_id: str = "test.py:1-10:function:test_func",
-        name: str = "test_func",
-        chunk_type: str = "function",
-        content: str = "def test_func(): pass",
-        file_path: str | None = None,
-        calls: list[dict] | None = None,
-        relationships: list[dict] | None = None,
-        embedding_dim: int = 768,
-    ):
-        if not EmbeddingResult:
-            pytest.skip("EmbeddingResult not available")
-
-        # Deterministic embedding from chunk_id
-        seed = hash(chunk_id) & 0xFFFFFFFF
-        embedding = np.random.RandomState(seed).random(embedding_dim).astype(np.float32)
-
-        # Extract file_path from chunk_id if not provided
-        if file_path is None:
-            file_path = chunk_id.split(":")[0]
-
-        return EmbeddingResult(
-            embedding=embedding,
-            chunk_id=chunk_id,
-            metadata={
-                "name": name,
-                "chunk_type": chunk_type,
-                "content": content,
-                "file_path": file_path,
-                "calls": calls or [],
-                "relationships": relationships or [],
-            },
-        )
-
-    return create

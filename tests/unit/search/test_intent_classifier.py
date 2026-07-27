@@ -168,52 +168,71 @@ class TestIntentClassifierBasicDetection:
         """Test default confidence threshold (0.3)."""
         # Very weak signal should fall back to HYBRID
         decision = classifier.classify("function")
-        if decision.confidence < 0.3:
-            assert decision.intent == QueryIntent.HYBRID
+        assert decision.confidence < 0.3, (
+            f"Precondition failed: confidence={decision.confidence} >= 0.3 — "
+            "test no longer exercises the weak-signal fallback path"
+        )
+        assert decision.intent == QueryIntent.HYBRID
 
     def test_confidence_threshold_custom(self):
         """Test custom confidence threshold."""
         classifier = IntentClassifier(confidence_threshold=0.5, enable_logging=False)
-        # Query that would be LOCAL with 0.3 threshold
-        decision = classifier.classify("show me User class")
+        # A single LOCAL keyword hit with no pattern match scores 0.35 — LOCAL at
+        # the 0.3 default threshold, HYBRID at this classifier's 0.5 threshold.
+        decision = classifier.classify("obtain UserRepository")
 
-        # If confidence is between 0.3 and 0.5, should fall back to HYBRID
-        if 0.3 <= decision.confidence < 0.5:
-            assert decision.intent == QueryIntent.HYBRID
+        # Confidence must land between 0.3 and 0.5 for this test to exercise the
+        # threshold-override path; otherwise the test is vacuous.
+        assert 0.3 <= decision.confidence < 0.5, (
+            f"Precondition failed: confidence={decision.confidence} not in "
+            "[0.3, 0.5) — test no longer exercises the custom-threshold path"
+        )
+        assert decision.intent == QueryIntent.HYBRID
 
     def test_confidence_threshold_override(self, classifier):
         """Test confidence threshold can be overridden per call."""
-        query = "find the implementation of User"
+        # A single LOCAL keyword hit with no pattern match scores 0.35 — below the
+        # 0.8 override, so the override must push this back to HYBRID.
+        query = "locate UserRepository"
         decision_default = classifier.classify(query)
         decision_high_threshold = classifier.classify(query, confidence_threshold=0.8)
 
         # Higher threshold should be more likely to return HYBRID
-        if decision_default.confidence < 0.8:
-            assert decision_high_threshold.intent == QueryIntent.HYBRID
+        assert decision_default.confidence < 0.8, (
+            f"Precondition failed: default confidence={decision_default.confidence} "
+            ">= 0.8 — test no longer exercises the override path"
+        )
+        assert decision_high_threshold.intent == QueryIntent.HYBRID
 
     # ===== Suggested Parameters Tests =====
 
     def test_suggested_params_global_k(self, classifier):
         """Test that GLOBAL queries suggest larger k."""
         decision = classifier.classify("how does hybrid search work")
-        if decision.intent == QueryIntent.GLOBAL:
-            assert decision.suggested_params.get("k") == 10
-            assert decision.suggested_params.get("search_mode") == "hybrid"
+        assert decision.intent == QueryIntent.GLOBAL, (
+            f"Precondition failed: intent={decision.intent}, expected GLOBAL"
+        )
+        assert decision.suggested_params.get("k") == 10
+        assert decision.suggested_params.get("search_mode") == "hybrid"
 
     def test_suggested_params_local_k(self, classifier):
         """Test that LOCAL queries suggest k=5 for symbol lookups."""
         decision = classifier.classify("where is QueryRouter")
-        if decision.intent == QueryIntent.LOCAL:
-            # k=5 per intent_classifier.py line 783 (wider pool for graph-isolated symbols)
-            assert decision.suggested_params.get("k") == 5
-            assert decision.suggested_params.get("search_mode") == "hybrid"
+        assert decision.intent == QueryIntent.LOCAL, (
+            f"Precondition failed: intent={decision.intent}, expected LOCAL"
+        )
+        # k=5 per intent_classifier.py line 783 (wider pool for graph-isolated symbols)
+        assert decision.suggested_params.get("k") == 5
+        assert decision.suggested_params.get("search_mode") == "hybrid"
 
     def test_suggested_params_navigational_symbol(self, classifier):
         """Test that NAVIGATIONAL queries extract symbol name."""
         decision = classifier.classify("what calls handle_search_code")
-        if decision.intent == QueryIntent.NAVIGATIONAL:
-            assert decision.suggested_params.get("symbol_name") == "handle_search_code"
-            assert decision.suggested_params.get("tool") == "find_connections"
+        assert decision.intent == QueryIntent.NAVIGATIONAL, (
+            f"Precondition failed: intent={decision.intent}, expected NAVIGATIONAL"
+        )
+        assert decision.suggested_params.get("symbol_name") == "handle_search_code"
+        assert decision.suggested_params.get("tool") == "find_connections"
 
     # ===== Symbol Extraction Tests =====
 

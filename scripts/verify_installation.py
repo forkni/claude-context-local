@@ -357,7 +357,6 @@ try:
     import tree_sitter_python
     import tree_sitter_javascript
     import tree_sitter_typescript
-    import tree_sitter_java
     import tree_sitter_go
     import tree_sitter_rust
     import tree_sitter_c
@@ -365,7 +364,7 @@ try:
     import tree_sitter_c_sharp
     import tree_sitter_glsl
     print('All tree-sitter parsers available')
-    print('Supported: Python, JS, TS, Java, Go, Rust, C, C++, C#, GLSL')
+    print('Supported: Python, JS, TS, Go, Rust, C, C++, C#, GLSL')
 except ImportError as e:
     print(f'Some parsers missing: {e}')
     raise

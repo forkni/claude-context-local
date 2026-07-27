@@ -400,9 +400,18 @@ class TestBM25Index:
         self.index.index_documents(self.documents, self.doc_ids)
 
         results = self.index.search("nonexistent_term_xyz123", k=5)
-        # Might return empty or very low scores
-        if results:
-            assert all(score >= 0 for _, score, _ in results)
+
+        # BM25Index.search has no true "no match" case for a non-empty index: an
+        # out-of-vocabulary query still falls back to the top-k documents by score,
+        # all scoring exactly 0.0. Assert that behavior directly rather than
+        # skipping the check whenever `results` happens to be empty.
+        assert len(results) == min(5, self.index.size), (
+            f"Expected top-{min(5, self.index.size)} fallback results for an "
+            f"out-of-vocabulary query; got {len(results)}"
+        )
+        assert all(score == 0.0 for _, score, _ in results), (
+            "Out-of-vocabulary query should score every document 0.0"
+        )
 
     def test_document_removal(self):
         """Test document removal."""
@@ -470,6 +479,14 @@ class TestBM25Index:
         # Search and check metadata
         results = self.index.search("function", k=5)
 
+        assert results, (
+            "Precondition failed: search returned no results — test is vacuous"
+        )
+        assert any(doc_id in metadata for doc_id, _score, _meta in results), (
+            "Precondition failed: none of the returned docs carry test metadata — "
+            "test no longer exercises the metadata-passthrough path"
+        )
+
         for doc_id, _score, meta in results:
             if doc_id in metadata:
                 expected = metadata[doc_id]
@@ -500,10 +517,13 @@ class TestBM25Index:
 
         results = self.index.search("function def", k=5)
 
-        if len(results) > 1:
-            scores = [score for _, score, _ in results]
-            # Scores should be in descending order
-            assert scores == sorted(scores, reverse=True)
+        assert len(results) > 1, (
+            f"Precondition failed: got {len(results)} results — "
+            "test no longer exercises score ordering"
+        )
+        scores = [score for _, score, _ in results]
+        # Scores should be in descending order
+        assert scores == sorted(scores, reverse=True)
 
     def test_minimum_score_threshold(self):
         """Test minimum score threshold filtering."""

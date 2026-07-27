@@ -39,7 +39,12 @@ def _server_is_up() -> bool:
 
         urllib.request.urlopen(_SERVER_URL, timeout=3)  # noqa: S310
         return True
-    except Exception:  # noqa: BLE001
+    except OSError:
+        # urllib.error.URLError/HTTPError and socket.timeout are all
+        # OSError subclasses -- this covers "server unreachable" without
+        # also swallowing a real bug in this helper (TypeError, NameError,
+        # etc.), which would otherwise report as "server down" and skip
+        # all three tests silently instead of failing loudly.
         return False
 
 

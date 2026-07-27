@@ -126,7 +126,7 @@ class User:
 '''
         )
 
-    @patch("embeddings.embedder.SentenceTransformer")
+    @patch("embeddings.model_loader.SentenceTransformer")
     def test_full_index(self, mock_sentence_transformer):
         """Test full indexing of a codebase."""
 
@@ -145,6 +145,14 @@ class User:
 
         mock_model = MagicMock()
         mock_model.encode.side_effect = mock_encode
+        mock_model._vram_gb = 0.0  # else MagicMock() > 0 comparison in _get_model_vram_gb raises TypeError
+        # else MagicMock auto-vivifies both `.ort_model` (making _is_onnx wrongly
+        # True) and `[0].auto_model.config` (a fake HF config with hasattr()==True
+        # on every attribute), so _extract_hf_config() "succeeds" with garbage and
+        # estimate_activation_gb_from_config() then compares MagicMock attributes
+        # with '>' and raises TypeError.
+        del mock_model.ort_model
+        mock_model.__getitem__.side_effect = IndexError
         mock_sentence_transformer.return_value = mock_model
 
         indexer = Indexer(storage_dir=str(self.index_dir))
@@ -172,7 +180,7 @@ class User:
         # Verify snapshot was created
         assert self.snapshot_manager.has_snapshot(str(self.test_path))
 
-    @patch("embeddings.embedder.SentenceTransformer")
+    @patch("embeddings.model_loader.SentenceTransformer")
     def test_no_changes(self, mock_sentence_transformer):
         """Test indexing when no changes occur."""
 
@@ -191,6 +199,14 @@ class User:
 
         mock_model = MagicMock()
         mock_model.encode.side_effect = mock_encode
+        mock_model._vram_gb = 0.0  # else MagicMock() > 0 comparison in _get_model_vram_gb raises TypeError
+        # else MagicMock auto-vivifies both `.ort_model` (making _is_onnx wrongly
+        # True) and `[0].auto_model.config` (a fake HF config with hasattr()==True
+        # on every attribute), so _extract_hf_config() "succeeds" with garbage and
+        # estimate_activation_gb_from_config() then compares MagicMock attributes
+        # with '>' and raises TypeError.
+        del mock_model.ort_model
+        mock_model.__getitem__.side_effect = IndexError
         mock_sentence_transformer.return_value = mock_model
 
         indexer = Indexer(storage_dir=str(self.index_dir))
@@ -221,7 +237,7 @@ class User:
         assert result2.files_removed == 0
         assert result2.files_modified == 0
 
-    @patch("embeddings.embedder.SentenceTransformer")
+    @patch("embeddings.model_loader.SentenceTransformer")
     def test_file_modification(self, mock_sentence_transformer):
         """Test incremental indexing when files are modified."""
 
@@ -240,6 +256,14 @@ class User:
 
         mock_model = MagicMock()
         mock_model.encode.side_effect = mock_encode
+        mock_model._vram_gb = 0.0  # else MagicMock() > 0 comparison in _get_model_vram_gb raises TypeError
+        # else MagicMock auto-vivifies both `.ort_model` (making _is_onnx wrongly
+        # True) and `[0].auto_model.config` (a fake HF config with hasattr()==True
+        # on every attribute), so _extract_hf_config() "succeeds" with garbage and
+        # estimate_activation_gb_from_config() then compares MagicMock attributes
+        # with '>' and raises TypeError.
+        del mock_model.ort_model
+        mock_model.__getitem__.side_effect = IndexError
         mock_sentence_transformer.return_value = mock_model
 
         indexer = Indexer(storage_dir=str(self.index_dir))
@@ -291,7 +315,7 @@ class Calculator:
         assert result2.chunks_removed > 0
         assert result2.chunks_added > 0
 
-    @patch("embeddings.embedder.SentenceTransformer")
+    @patch("embeddings.model_loader.SentenceTransformer")
     def test_file_addition(self, mock_sentence_transformer):
         """Test incremental indexing when files are added."""
 
@@ -310,6 +334,14 @@ class Calculator:
 
         mock_model = MagicMock()
         mock_model.encode.side_effect = mock_encode
+        mock_model._vram_gb = 0.0  # else MagicMock() > 0 comparison in _get_model_vram_gb raises TypeError
+        # else MagicMock auto-vivifies both `.ort_model` (making _is_onnx wrongly
+        # True) and `[0].auto_model.config` (a fake HF config with hasattr()==True
+        # on every attribute), so _extract_hf_config() "succeeds" with garbage and
+        # estimate_activation_gb_from_config() then compares MagicMock attributes
+        # with '>' and raises TypeError.
+        del mock_model.ort_model
+        mock_model.__getitem__.side_effect = IndexError
         mock_sentence_transformer.return_value = mock_model
 
         indexer = Indexer(storage_dir=str(self.index_dir))
@@ -350,7 +382,7 @@ class NewClass:
         assert result2.files_modified == 0
         assert result2.chunks_added > 0
 
-    @patch("embeddings.embedder.SentenceTransformer")
+    @patch("embeddings.model_loader.SentenceTransformer")
     def test_file_deletion(self, mock_sentence_transformer):
         """Test incremental indexing when files are deleted."""
 
@@ -369,6 +401,14 @@ class NewClass:
 
         mock_model = MagicMock()
         mock_model.encode.side_effect = mock_encode
+        mock_model._vram_gb = 0.0  # else MagicMock() > 0 comparison in _get_model_vram_gb raises TypeError
+        # else MagicMock auto-vivifies both `.ort_model` (making _is_onnx wrongly
+        # True) and `[0].auto_model.config` (a fake HF config with hasattr()==True
+        # on every attribute), so _extract_hf_config() "succeeds" with garbage and
+        # estimate_activation_gb_from_config() then compares MagicMock attributes
+        # with '>' and raises TypeError.
+        del mock_model.ort_model
+        mock_model.__getitem__.side_effect = IndexError
         mock_sentence_transformer.return_value = mock_model
 
         indexer = Indexer(storage_dir=str(self.index_dir))
@@ -424,7 +464,7 @@ class NewClass:
         assert changes.has_changes()
         assert "main.py" in changes.modified
 
-    @patch("embeddings.embedder.SentenceTransformer")
+    @patch("embeddings.model_loader.SentenceTransformer")
     def test_needs_reindex(self, mock_sentence_transformer):
         """Test checking if reindex is needed."""
 
@@ -443,6 +483,14 @@ class NewClass:
 
         mock_model = MagicMock()
         mock_model.encode.side_effect = mock_encode
+        mock_model._vram_gb = 0.0  # else MagicMock() > 0 comparison in _get_model_vram_gb raises TypeError
+        # else MagicMock auto-vivifies both `.ort_model` (making _is_onnx wrongly
+        # True) and `[0].auto_model.config` (a fake HF config with hasattr()==True
+        # on every attribute), so _extract_hf_config() "succeeds" with garbage and
+        # estimate_activation_gb_from_config() then compares MagicMock attributes
+        # with '>' and raises TypeError.
+        del mock_model.ort_model
+        mock_model.__getitem__.side_effect = IndexError
         mock_sentence_transformer.return_value = mock_model
 
         indexer = Indexer(storage_dir=str(self.index_dir))
@@ -473,7 +521,7 @@ class NewClass:
         # Should need reindex after change
         assert incremental_indexer.needs_reindex(str(self.test_path))
 
-    @patch("embeddings.embedder.SentenceTransformer")
+    @patch("embeddings.model_loader.SentenceTransformer")
     def test_indexing_stats(self, mock_sentence_transformer):
         """Test getting indexing statistics."""
 
@@ -492,6 +540,14 @@ class NewClass:
 
         mock_model = MagicMock()
         mock_model.encode.side_effect = mock_encode
+        mock_model._vram_gb = 0.0  # else MagicMock() > 0 comparison in _get_model_vram_gb raises TypeError
+        # else MagicMock auto-vivifies both `.ort_model` (making _is_onnx wrongly
+        # True) and `[0].auto_model.config` (a fake HF config with hasattr()==True
+        # on every attribute), so _extract_hf_config() "succeeds" with garbage and
+        # estimate_activation_gb_from_config() then compares MagicMock attributes
+        # with '>' and raises TypeError.
+        del mock_model.ort_model
+        mock_model.__getitem__.side_effect = IndexError
         mock_sentence_transformer.return_value = mock_model
 
         indexer = Indexer(storage_dir=str(self.index_dir))
@@ -520,7 +576,3 @@ class NewClass:
         assert stats["file_count"] > 0
         assert "last_snapshot" in stats
         assert "current_chunks" in stats
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

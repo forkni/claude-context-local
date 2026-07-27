@@ -14,6 +14,20 @@ from search.config import MODEL_REGISTRY
 # Get all configured models to test (exclude 8B model - not actively used)
 supported_models = [m for m in MODEL_REGISTRY if "8B" not in m]
 
+# SentenceTransformer is constructed in model_loader and merely imported (as a
+# type annotation, never called) in embedder -- most tests below patch both
+# targets so they're insulated from which module actually does the
+# constructing. `patch(...)` objects are reusable decorators (each
+# application creates a fresh Mock), so sharing these three across the ~50
+# call sites that repeat the same literal target strings verbatim removes
+# the duplication without changing patch target, order, or injected-arg
+# count at any site.
+_patch_embedder_st = patch("embeddings.embedder.SentenceTransformer")
+_patch_model_loader_st = patch("embeddings.model_loader.SentenceTransformer")
+_patch_no_onnx = patch(
+    "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
+)
+
 
 @pytest.fixture(autouse=True)
 def _no_warmup_measure(monkeypatch):
@@ -31,9 +45,9 @@ def _no_warmup_measure(monkeypatch):
 
 
 @pytest.mark.parametrize("model_name", supported_models)
-@patch("embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False)
-@patch("embeddings.model_loader.SentenceTransformer")
-@patch("embeddings.embedder.SentenceTransformer")
+@_patch_no_onnx
+@_patch_model_loader_st
+@_patch_embedder_st
 def test_model_loading_and_embedding(
     mock_sentence_transformer, mock_model_loader_st, model_name: str
 ):
@@ -109,14 +123,18 @@ def test_model_loading_and_embedding(
 
         print(f"Successfully tested model: {model_name}")
 
-    except ImportError as e:
-        pytest.skip(f"Skipping test for {model_name} due to missing dependency: {e}")
     except Exception as e:
+        # No ImportError-as-skip branch here: sentence-transformers is a hard
+        # dependency (already imported at module load, and mocked above via
+        # @patch), and ONNX loading is force-disabled for this test, so
+        # there is no legitimate "missing optional dependency" case left to
+        # skip on. An ImportError here means a real regression in the import
+        # chain, and should fail loudly like any other exception.
         pytest.fail(f"An unexpected error occurred while testing {model_name}: {e}")
 
 
-@patch("embeddings.model_loader.SentenceTransformer")
-@patch("embeddings.embedder.SentenceTransformer")
+@_patch_model_loader_st
+@_patch_embedder_st
 def test_prefixing_logic(mock_sentence_transformer, mock_model_loader_st):
     """
     Tests that the prefixing logic is correctly applied based on model config.
@@ -185,9 +203,9 @@ def test_prefixing_logic(mock_sentence_transformer, mock_model_loader_st):
     del MODEL_REGISTRY["test/query-prefix-model"]
 
 
-@patch("embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False)
-@patch("embeddings.model_loader.SentenceTransformer")
-@patch("embeddings.embedder.SentenceTransformer")
+@_patch_no_onnx
+@_patch_model_loader_st
+@_patch_embedder_st
 def test_query_cache_hits_and_misses(mock_sentence_transformer, mock_model_loader_st):
     """Test that query cache correctly tracks hits and misses."""
 
@@ -252,9 +270,9 @@ def test_query_cache_hits_and_misses(mock_sentence_transformer, mock_model_loade
     assert stats["cache_size"] == 2
 
 
-@patch("embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False)
-@patch("embeddings.model_loader.SentenceTransformer")
-@patch("embeddings.embedder.SentenceTransformer")
+@_patch_no_onnx
+@_patch_model_loader_st
+@_patch_embedder_st
 def test_query_cache_lru_eviction(mock_sentence_transformer, mock_model_loader_st):
     """Test that LRU eviction works when cache is full."""
     # Mock the model's encode method
@@ -324,8 +342,8 @@ def test_query_cache_lru_eviction(mock_sentence_transformer, mock_model_loader_s
     assert call_count[0] == 5  # No new encode call
 
 
-@patch("embeddings.model_loader.SentenceTransformer")
-@patch("embeddings.embedder.SentenceTransformer")
+@_patch_model_loader_st
+@_patch_embedder_st
 def test_query_cache_key_deterministic(mock_sentence_transformer, mock_model_loader_st):
     """Test that cache key generation is deterministic."""
 
@@ -385,8 +403,8 @@ def test_query_cache_key_deterministic(mock_sentence_transformer, mock_model_loa
     assert key1 != key4
 
 
-@patch("embeddings.model_loader.SentenceTransformer")
-@patch("embeddings.embedder.SentenceTransformer")
+@_patch_model_loader_st
+@_patch_embedder_st
 def test_query_cache_stats_accuracy(mock_sentence_transformer, mock_model_loader_st):
     """Test that cache statistics are accurate."""
 
@@ -433,8 +451,8 @@ def test_query_cache_stats_accuracy(mock_sentence_transformer, mock_model_loader
     assert stats["max_size"] == 128
 
 
-@patch("embeddings.model_loader.SentenceTransformer")
-@patch("embeddings.embedder.SentenceTransformer")
+@_patch_model_loader_st
+@_patch_embedder_st
 def test_query_cache_clear(mock_sentence_transformer, mock_model_loader_st):
     """Test that clear_query_cache properly resets cache state."""
 
@@ -486,8 +504,8 @@ def test_query_cache_clear(mock_sentence_transformer, mock_model_loader_st):
     assert stats["cache_size"] == 1
 
 
-@patch("embeddings.model_loader.SentenceTransformer")
-@patch("embeddings.embedder.SentenceTransformer")
+@_patch_model_loader_st
+@_patch_embedder_st
 def test_query_cache_different_models(mock_sentence_transformer, mock_model_loader_st):
     """Test that cache handles different model configurations correctly."""
 
@@ -547,8 +565,8 @@ def test_query_cache_different_models(mock_sentence_transformer, mock_model_load
     assert stats2["misses"] == 1
 
 
-@patch("embeddings.model_loader.SentenceTransformer")
-@patch("embeddings.embedder.SentenceTransformer")
+@_patch_model_loader_st
+@_patch_embedder_st
 def test_query_cache_with_task_instruction(
     mock_sentence_transformer, mock_model_loader_st
 ):
@@ -596,9 +614,9 @@ def test_query_cache_with_task_instruction(
     assert stats["misses"] == 1
 
 
-@patch("embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False)
-@patch("embeddings.model_loader.SentenceTransformer")
-@patch("embeddings.embedder.SentenceTransformer")
+@_patch_no_onnx
+@_patch_model_loader_st
+@_patch_embedder_st
 def test_mrl_truncate_dim_support(mock_sentence_transformer, mock_model_loader_st):
     """Test that Matryoshka Representation Learning (MRL) truncate_dim is passed correctly."""
     from search.config import MODEL_REGISTRY
@@ -644,9 +662,9 @@ def test_mrl_truncate_dim_support(mock_sentence_transformer, mock_model_loader_s
         )
 
 
-@patch("embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False)
-@patch("embeddings.model_loader.SentenceTransformer")
-@patch("embeddings.embedder.SentenceTransformer")
+@_patch_no_onnx
+@_patch_model_loader_st
+@_patch_embedder_st
 def test_instruction_mode_custom(mock_sentence_transformer, mock_model_loader_st):
     """Test custom instruction mode for Qwen3 models."""
     # Track encoded queries
@@ -688,9 +706,9 @@ def test_instruction_mode_custom(mock_sentence_transformer, mock_model_loader_st
     assert "prompt_name" not in encode_kwargs
 
 
-@patch("embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False)
-@patch("embeddings.model_loader.SentenceTransformer")
-@patch("embeddings.embedder.SentenceTransformer")
+@_patch_no_onnx
+@_patch_model_loader_st
+@_patch_embedder_st
 def test_instruction_mode_prompt_name(mock_sentence_transformer, mock_model_loader_st):
     """Test prompt_name instruction mode for Qwen3 models."""
     # Track encoded queries
@@ -734,9 +752,9 @@ def test_instruction_mode_prompt_name(mock_sentence_transformer, mock_model_load
     MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["instruction_mode"] = "custom"
 
 
-@patch("embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False)
-@patch("embeddings.model_loader.SentenceTransformer")
-@patch("embeddings.embedder.SentenceTransformer")
+@_patch_no_onnx
+@_patch_model_loader_st
+@_patch_embedder_st
 def test_instruction_mode_cache_keys(mock_sentence_transformer, mock_model_loader_st):
     """Test that different instruction modes produce different cache keys."""
     # Mock the model
@@ -1217,8 +1235,8 @@ class TestComputeEffectiveVramCap:
 class TestContextExtraction:
     """Test context extraction features (v0.8.0+) for import and class signatures."""
 
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_extract_import_context_basic(
         self, mock_sentence_transformer, mock_model_loader_st, tmp_path
     ):
@@ -1245,8 +1263,8 @@ class TestContextExtraction:
         assert "from pathlib import Path" in import_context
         assert "def func()" not in import_context  # Should stop at first non-import
 
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_extract_import_context_with_max_limit(
         self, mock_sentence_transformer, mock_model_loader_st, tmp_path
     ):
@@ -1268,8 +1286,8 @@ class TestContextExtraction:
         assert len(lines) == 5
         assert all("import module" in line for line in lines)
 
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_extract_import_context_no_imports(
         self, mock_sentence_transformer, mock_model_loader_st, tmp_path
     ):
@@ -1288,8 +1306,8 @@ class TestContextExtraction:
 
         assert import_context == ""  # Should return empty string
 
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_get_class_signature_for_method(
         self, mock_sentence_transformer, mock_model_loader_st, tmp_path
     ):
@@ -1330,8 +1348,8 @@ class TestContextExtraction:
         assert "class MyClass:" in class_signature
         assert "MyClass docstring" in class_signature
 
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_get_class_signature_non_method(
         self, mock_sentence_transformer, mock_model_loader_st
     ):
@@ -1365,8 +1383,8 @@ class TestContextExtraction:
 
         assert class_signature == ""  # Should return empty for non-methods
 
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_read_source_cached_shared_across_import_and_class_signature(
         self, mock_sentence_transformer, mock_model_loader_st, tmp_path
     ):
@@ -1425,8 +1443,8 @@ class TestContextExtraction:
         assert "class MyClass:" in sig_a
         assert "class MyClass:" in sig_b
 
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_extract_import_context_memoized_per_file(
         self, mock_sentence_transformer, mock_model_loader_st, tmp_path
     ):
@@ -1454,8 +1472,8 @@ class TestContextExtraction:
         assert first is second  # I2: cache hit, not a re-scan
         assert len(embedder._import_ctx_cache) == 1
 
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_get_class_signature_memoized_across_sibling_methods(
         self, mock_sentence_transformer, mock_model_loader_st, tmp_path
     ):
@@ -1511,8 +1529,8 @@ class TestContextExtraction:
         assert sig_a is sig_b  # I2b: method_b's call is a cache hit
         assert len(embedder._class_sig_cache) == 1
 
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     @patch("embeddings.embedder._get_config_via_service_locator")
     def test_create_embedding_content_with_context(
         self,
@@ -1578,8 +1596,8 @@ class TestContextExtraction:
         assert "Test class." in embedding_content
         assert "def method(self):" in embedding_content
 
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     @patch("embeddings.embedder._get_config_via_service_locator")
     def test_create_embedding_content_context_disabled(
         self,
@@ -2163,8 +2181,8 @@ class TestEmbedQueriesBatch:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_empty_input_returns_2d_zero_shape(self, mock_st, mock_loader_st):
         """embed_queries_batch([]) must return shape (0, dim), not (0,)."""
         dim = 1024
@@ -2181,8 +2199,8 @@ class TestEmbedQueriesBatch:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_single_query_shape(self, mock_st, mock_loader_st):
         """embed_queries_batch with one query returns shape (1, dim)."""
         dim = 1024
@@ -2199,8 +2217,8 @@ class TestEmbedQueriesBatch:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_multi_query_shape(self, mock_st, mock_loader_st):
         """embed_queries_batch with N queries returns shape (N, dim)."""
         dim = 1024
@@ -2258,8 +2276,8 @@ class TestCacheKeyInstructionMode:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_embed_query_and_batch_share_cache(self, mock_st, mock_loader_st):
         """embed_query then embed_queries_batch for same query hits the cache."""
         encode_count = [0]
@@ -2307,8 +2325,8 @@ class TestCacheKeyInstructionMode:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_prompt_name_mode_does_not_collide_with_custom(
         self, mock_st, mock_loader_st
     ):
@@ -2546,8 +2564,8 @@ class TestEmbedChunksOrderPreservation:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_results_match_input_order_across_batches(
         self, mock_sentence_transformer, mock_model_loader_st
     ):
@@ -2605,8 +2623,8 @@ class TestEmbedChunksOrderPreservation:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_empty_input_returns_empty_list(
         self, mock_sentence_transformer, mock_model_loader_st
     ):
@@ -2625,8 +2643,8 @@ class TestEmbedChunksOrderPreservation:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_largest_batch_encoded_first(
         self, mock_sentence_transformer, mock_model_loader_st
     ):
@@ -2695,8 +2713,8 @@ class TestEmbedChunksContentHashCache:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_partial_hit_encodes_only_misses_in_input_order(
         self, mock_sentence_transformer, mock_model_loader_st, tmp_path
     ):
@@ -2758,8 +2776,8 @@ class TestEmbedChunksContentHashCache:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_full_hit_skips_model_load_entirely(
         self, mock_sentence_transformer, mock_model_loader_st, tmp_path
     ):
@@ -2803,8 +2821,8 @@ class TestEmbedChunksContentHashCache:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_same_content_different_path_different_key(
         self, mock_sentence_transformer, mock_model_loader_st
     ):
@@ -2839,8 +2857,8 @@ class TestEmbedChunksContentHashCache:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_changed_import_block_changes_key_for_unchanged_chunk(
         self, mock_sentence_transformer, mock_model_loader_st, tmp_path
     ):
@@ -2897,8 +2915,8 @@ class TestEmbedChunksContentHashCache:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_cache_none_is_byte_identical_to_no_cache_arg(
         self, mock_sentence_transformer, mock_model_loader_st
     ):
@@ -2941,8 +2959,8 @@ class TestEmbedChunksContentHashCache:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_cache_get_raising_falls_back_to_normal_embed(
         self, mock_sentence_transformer, mock_model_loader_st
     ):
@@ -2993,8 +3011,8 @@ class TestEmbedChunksContentHashCache:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_cache_full_pass_flag_forwarded_to_save(
         self, mock_sentence_transformer, mock_model_loader_st
     ):
@@ -3051,8 +3069,8 @@ class TestEmbedChunksContentHashCache:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_full_hit_logs_stats(
         self, mock_sentence_transformer, mock_model_loader_st, tmp_path, caplog
     ):
@@ -3094,8 +3112,8 @@ class TestEmbedChunksContentHashCache:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_partial_hit_logs_stats_after_save(
         self, mock_sentence_transformer, mock_model_loader_st, tmp_path, caplog
     ):
@@ -3152,8 +3170,8 @@ class TestGetEmbeddingProvenance:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_stable_across_device_mutation(
         self, mock_sentence_transformer, mock_model_loader_st
     ):
@@ -3179,8 +3197,8 @@ class TestGetEmbeddingProvenance:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_format(self, mock_sentence_transformer, mock_model_loader_st):
         mock_model = MagicMock()
         mock_model.device = "cpu"
@@ -3197,8 +3215,8 @@ class TestGetEmbeddingProvenance:
     @patch(
         "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
     )
-    @patch("embeddings.model_loader.SentenceTransformer")
-    @patch("embeddings.embedder.SentenceTransformer")
+    @_patch_model_loader_st
+    @_patch_embedder_st
     def test_raises_after_cleanup(
         self, mock_sentence_transformer, mock_model_loader_st
     ):

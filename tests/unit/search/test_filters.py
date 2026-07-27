@@ -1,6 +1,7 @@
 """Unit tests for search/filters.py drive-agnostic path utilities."""
 
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -95,13 +96,22 @@ class TestDriveAgnosticPaths:
         assert result is None
 
     def test_find_project_at_different_drive_with_temp_dir(self, tmp_path):
-        """Test finding project that exists at a different location."""
-        # This test is platform-dependent and only demonstrates the concept
-        # In practice, this would require mocking or actual drive setup
+        """Test finding project when no other drive happens to mirror tmp_path."""
+        # pytest's tmp_path is unique per test session/run, so no other drive
+        # letter will ever coincidentally contain an identical directory
+        # structure — the scan is guaranteed to exhaust D-N and return None.
+        # The "found" branch is exercised deterministically by
+        # test_find_project_at_different_drive_found below.
         result = find_project_at_different_drive(str(tmp_path))
-        # On non-Windows systems, this should return None
-        # On Windows, it depends on actual drive availability
-        assert result is None or result == str(tmp_path.resolve())
+        assert result is None
+
+    def test_find_project_at_different_drive_found(self, monkeypatch):
+        """Test that the first existing drive-letter candidate is returned, resolved."""
+        monkeypatch.setattr(Path, "exists", lambda self: True)
+        result = find_project_at_different_drive("F:/Projects/MyApp")
+        assert result == str(Path("D:/Projects/MyApp").resolve()), (
+            "Should return the resolved path of the first matching drive letter (D)"
+        )
 
     def test_hash_consistency_across_separators(self):
         """Test that hash is consistent regardless of separator style."""

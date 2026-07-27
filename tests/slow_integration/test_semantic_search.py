@@ -147,8 +147,3 @@ class TestSemanticSearch:
             assert isinstance(file_path, str), "File path should be string"
             # Should be Python files
             assert file_path.endswith(".py"), "Results should be from .py files"
-
-
-if __name__ == "__main__":
-    # Run via pytest
-    pytest.main([__file__, "-v", "--tb=short"])

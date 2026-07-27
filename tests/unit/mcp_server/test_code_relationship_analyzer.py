@@ -690,7 +690,10 @@ class TestResolveTarget:
         analyzer = self._make_analyzer_with_caches(mock_searcher, graph_storage=mock_gs)
         result, cid = analyzer._resolve_target(None, "get_project_storage_dir", None)
 
-        assert "method" in cid or "method_result" not in cid
+        assert cid == method_result.chunk_id, (
+            f"Expected the method chunk id to win under inverted type "
+            f"priority, got {cid}"
+        )
         assert result.chunk_type == "method"
 
     def test_resolve_name_matching_handles_class_qualified_method(self, mock_searcher):

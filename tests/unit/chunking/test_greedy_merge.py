@@ -51,10 +51,11 @@ class TestCreateMergedChunk:
         """Create a concrete chunker for testing."""
         from chunking.languages.python import PythonChunker
 
-        try:
-            return PythonChunker()
-        except ValueError:
-            pytest.skip("tree-sitter-python not installed")
+        # tree-sitter-python is a hard dependency (pyproject.toml), not
+        # optional -- PythonChunker() never raises ValueError (its __init__
+        # is a plain attribute assignment; grammar loading is lazy and
+        # unrelated to construction), so the skip masked no real scenario.
+        return PythonChunker()
 
     def test_single_chunk_passthrough(self, chunker):
         """Single chunk returns unchanged."""
@@ -168,10 +169,10 @@ class TestGreedyMergeSmallChunks:
         """Create a concrete chunker for testing."""
         from chunking.languages.python import PythonChunker
 
-        try:
-            return PythonChunker()
-        except ValueError:
-            pytest.skip("tree-sitter-python not installed")
+        # tree-sitter-python is a hard dependency (pyproject.toml), not
+        # optional -- see TestCreateMergedChunk.chunker above for why the
+        # skip-on-ValueError was dead code.
+        return PythonChunker()
 
     def _make_chunk(
         self,
@@ -333,10 +334,10 @@ class TestChunkCodeWithMerging:
         """Create a concrete chunker for testing."""
         from chunking.languages.python import PythonChunker
 
-        try:
-            return PythonChunker()
-        except ValueError:
-            pytest.skip("tree-sitter-python not installed")
+        # tree-sitter-python is a hard dependency (pyproject.toml), not
+        # optional -- see TestCreateMergedChunk.chunker above for why the
+        # skip-on-ValueError was dead code.
+        return PythonChunker()
 
     def test_merge_disabled_by_config(self, chunker):
         """Merge is skipped when disabled in config."""
@@ -404,7 +405,3 @@ class TestChunkingConfig:
         assert config.max_merged_tokens == 500
         assert config.token_estimation == "tiktoken"
         assert config.size_method == "characters"
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

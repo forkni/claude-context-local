@@ -287,13 +287,18 @@ class TestONNXEmbeddingModelEncodeDevice:
         ort_model = _make_ort_model(batch_size=1, seq_len=4, dim=8)
         tokenizer = _make_tokenizer(batch_size=1, seq_len=4)
         model = ONNXEmbeddingModel(ort_model, tokenizer, "cpu", "cls")
-        # Should not raise TypeError for unrecognized kwargs
-        model.encode(
+        # Should not raise TypeError for unrecognized kwargs, and should still
+        # return a real embedding rather than short-circuiting.
+        import numpy as np
+
+        result = model.encode(
             ["test"],
             batch_size=64,
             show_progress_bar=True,
             normalize_embeddings=True,
         )
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (1, 8)
 
     def test_encode_prompt_name_ignored(self):
         ort_model = _make_ort_model(batch_size=1, seq_len=4, dim=8)

@@ -537,7 +537,3 @@ class TestSplitBlockRelationshipExtraction:
 
         chunker._extract_phase3_relationships(chunk, tchunk, chunk_id)
         assert isinstance(chunk.relationships, list)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

@@ -7,7 +7,6 @@ This script directly tests the HybridSearcher to see if BM25 indices are being p
 import logging
 import os
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 
@@ -39,15 +38,22 @@ def test_bm25_population():
         print("[TEST] Initializing HybridSearcher...")
         searcher = HybridSearcher(str(temp_dir))
 
-        # Create test embedding results
+        # Create test embedding results. Each doc gets a distinct topic word —
+        # sharing identical vocabulary across all 5 docs (as the original
+        # fixture did) makes every term appear in 100% of the corpus, which
+        # drives its BM25 IDF weight negative (classic Okapi IDF goes negative
+        # once a term appears in more than half the corpus) and silently zeroes
+        # out every search below. A unique-per-doc topic keeps IDF positive so
+        # the search below can actually discriminate between documents.
         print("[TEST] Creating test embedding results...")
+        topics = ["authentication", "database", "caching", "validation", "networking"]
         test_results = []
-        for i in range(5):
+        for i, topic in enumerate(topics):
             result = EmbeddingResult(
                 embedding=np.random.rand(768).astype(np.float32),
                 chunk_id=f"test_chunk_{i}",
                 metadata={
-                    "content": f"Test content {i} with some code function test_{i}() return True",
+                    "content": f"Test content {i} implementing {topic} logic with function test_{i}() return True",
                     "file_path": f"test_{i}.py",
                     "content_preview": f"function test_{i}() code sample",
                     "raw_content": f"def test_{i}():\n    return True\n",
@@ -65,6 +71,9 @@ def test_bm25_population():
         )
         print(f"[TEST] Initial searcher ready: {searcher.is_ready}")
 
+        assert searcher.bm25_index.is_empty, "BM25 index should start empty"
+        assert searcher.bm25_index.size == 0, "BM25 index should start with size 0"
+
         # Add embeddings
         print("[TEST] Adding embeddings to HybridSearcher...")
         searcher.add_embeddings(test_results)
@@ -77,6 +86,20 @@ def test_bm25_population():
         )
         print(f"[TEST] After adding - searcher ready: {searcher.is_ready}")
 
+        assert not searcher.bm25_index.is_empty, (
+            "BM25 index should be populated after add_embeddings"
+        )
+        assert searcher.bm25_index.size == len(test_results), (
+            f"BM25 index size should equal {len(test_results)} added embeddings, "
+            f"got {searcher.bm25_index.size}"
+        )
+        assert searcher.dense_index.index is not None
+        assert searcher.dense_index.index.ntotal == len(test_results), (
+            f"Dense index should hold {len(test_results)} embeddings, "
+            f"got {searcher.dense_index.index.ntotal}"
+        )
+        assert searcher.is_ready, "Searcher should be ready after add_embeddings"
+
         # Save indices
         print("[TEST] Saving indices...")
         searcher.save_indices()
@@ -84,33 +107,38 @@ def test_bm25_population():
         # Check if BM25 files exist
         bm25_dir = temp_dir / "bm25"
         print(f"[TEST] BM25 directory exists: {bm25_dir.exists()}")
-        if bm25_dir.exists():
-            bm25_files = list(bm25_dir.iterdir())
-            print(f"[TEST] BM25 files: {[f.name for f in bm25_files]}")
+        assert bm25_dir.exists(), "BM25 directory should exist after save_indices"
+        bm25_files = list(bm25_dir.iterdir())
+        print(f"[TEST] BM25 files: {[f.name for f in bm25_files]}")
+        assert bm25_files, "BM25 directory should contain saved index files"
 
-            # Check file sizes
-            for file in bm25_files:
-                size = file.stat().st_size
-                print(f"[TEST] {file.name}: {size} bytes")
+        # Check file sizes
+        for file in bm25_files:
+            size = file.stat().st_size
+            print(f"[TEST] {file.name}: {size} bytes")
+            assert size > 0, f"Saved BM25 file {file.name} should not be empty"
 
         # Check dense files
         dense_files = [f for f in temp_dir.iterdir() if f.is_file()]
         print(f"[TEST] Dense index files: {[f.name for f in dense_files]}")
+        assert dense_files, "Dense index directory should contain saved files"
 
-        # Test search functionality
+        # Test search functionality. Query for a topic word unique to
+        # test_chunk_2 ("caching") so BM25 has a discriminative term to match.
         print("[TEST] Testing search functionality...")
-        if searcher.is_ready:
-            try:
-                results = searcher.search("test function", k=3, search_mode="hybrid")
-                print(f"[TEST] Search returned {len(results)} results")
-                for i, result in enumerate(results):
-                    print(
-                        f"[TEST] Result {i + 1}: {result.chunk_id} (score: {result.score:.4f})"
-                    )
-            except Exception as e:
-                print(f"[TEST] Search failed: {e}")
-        else:
-            print("[TEST] Searcher not ready, skipping search test")
+        assert searcher.is_ready, "Searcher should be ready before searching"
+        results = searcher.search("caching", k=3, search_mode="hybrid")
+        print(f"[TEST] Search returned {len(results)} results")
+        for i, result in enumerate(results):
+            print(
+                f"[TEST] Result {i + 1}: {result.chunk_id} (score: {result.score:.4f})"
+            )
+        assert results, "Search for 'caching' should return results"
+        result_ids = {result.chunk_id for result in results}
+        assert "test_chunk_2" in result_ids, (
+            "Search for 'caching' should surface the chunk whose content "
+            f"actually discusses caching; got {result_ids}"
+        )
 
         # Create a new searcher to test loading
         print("[TEST] Testing index loading with new searcher...")
@@ -122,12 +150,19 @@ def test_bm25_population():
         )
         print(f"[TEST] New searcher ready: {searcher2.is_ready}")
 
+        assert not searcher2.bm25_index.is_empty, (
+            "Reloaded searcher should have a populated BM25 index"
+        )
+        assert searcher2.bm25_index.size == len(test_results), (
+            f"Reloaded BM25 index size should equal {len(test_results)}, "
+            f"got {searcher2.bm25_index.size}"
+        )
+        assert searcher2.is_ready, "Reloaded searcher should be ready"
+
         searcher.shutdown()
         searcher2.shutdown()
 
         print("[TEST] BM25 population test completed successfully!")
-        # Test passes
-        assert True
 
     except Exception as e:
         print(f"[TEST] Test failed with error: {e}")
@@ -142,8 +177,3 @@ def test_bm25_population():
             print(f"[TEST] Cleaned up temporary directory: {temp_dir}")
         except Exception as e:
             print(f"[TEST] Failed to cleanup {temp_dir}: {e}")
-
-
-if __name__ == "__main__":
-    success = test_bm25_population()
-    sys.exit(0 if success else 1)

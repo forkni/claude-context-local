@@ -120,52 +120,49 @@ class TestMultiLanguageChunker:
                 for name in ["Calculator", "CalculateSum", "NewCalculator"]
             )
             assert len(chunk_names) > 0
-            assert (
-                any(
-                    t in chunk_types
-                    for t in ["function", "method", "type", "interface"]
-                )
-                or len(chunks) > 0
-            )
+            # `or len(chunks) > 0` was already proven true by the assertion
+            # at the top of this test, making the whole expression an
+            # unconditional pass regardless of what chunk_types actually
+            # contains — dropped so this checks what it claims to check.
+            assert any(
+                t in chunk_types for t in ["function", "method", "type", "interface"]
+            ), f"Expected a Go-relevant chunk type, got {chunk_types}"
 
     def test_chunk_c_file(self, chunker, test_data_dir):
         """Test chunking C file."""
         file_path = test_data_dir / "calculator.c"
         chunks = chunker.chunk_file(str(file_path))
 
-        # C parser may not be available, so chunks might be empty
-        if len(chunks) > 0:
-            chunk_names = {chunk.name for chunk in chunks if chunk.name}
-            chunk_types = {chunk.chunk_type for chunk in chunks}
-
-            assert len(chunk_names) > 0 or len(chunk_types) > 0
-        # If no chunks, that's okay - parser not available
+        # tree-sitter-c is a hard dependency (pyproject.toml), not optional --
+        # the parser is always available, so this must produce real chunks.
+        assert len(chunks) > 0, "C parser produced no chunks"
+        chunk_names = {chunk.name for chunk in chunks if chunk.name}
+        assert any(
+            name in chunk_names
+            for name in ["calculate_sum", "get_result", "apply_operation"]
+        )
 
     def test_chunk_cpp_file(self, chunker, test_data_dir):
         """Test chunking C++ file."""
         file_path = test_data_dir / "Calculator.cpp"
         chunks = chunker.chunk_file(str(file_path))
 
-        # C++ parser may not be available, so chunks might be empty
-        if len(chunks) > 0:
-            chunk_names = {chunk.name for chunk in chunks if chunk.name}
-            chunk_types = {chunk.chunk_type for chunk in chunks}
-
-            assert len(chunk_names) > 0 or len(chunk_types) > 0
-        # If no chunks, that's okay - parser not available
+        # tree-sitter-cpp is a hard dependency (pyproject.toml), not optional --
+        # the parser is always available, so this must produce real chunks.
+        assert len(chunks) > 0, "C++ parser produced no chunks"
+        chunk_names = {chunk.name for chunk in chunks if chunk.name}
+        assert any(name in chunk_names for name in ["Point", "main"])
 
     def test_chunk_csharp_file(self, chunker, test_data_dir):
         """Test chunking C# file."""
         file_path = test_data_dir / "Calculator.cs"
         chunks = chunker.chunk_file(str(file_path))
 
-        # C# parser may not be available, so chunks might be empty
-        if len(chunks) > 0:
-            chunk_names = {chunk.name for chunk in chunks if chunk.name}
-            chunk_types = {chunk.chunk_type for chunk in chunks}
-
-            assert len(chunk_names) > 0 or len(chunk_types) > 0
-        # If no chunks, that's okay - parser not available
+        # tree-sitter-c-sharp is a hard dependency (pyproject.toml), not optional --
+        # the parser is always available, so this must produce real chunks.
+        assert len(chunks) > 0, "C# parser produced no chunks"
+        chunk_names = {chunk.name for chunk in chunks if chunk.name}
+        assert any(name in chunk_names for name in ["Math"])
 
     def test_chunk_rust_file(self, chunker, test_data_dir):
         """Test chunking Rust file."""

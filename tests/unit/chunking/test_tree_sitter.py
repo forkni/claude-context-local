@@ -432,7 +432,3 @@ class TestParseFileSingleRead(TestCase):
         assert len(matching_calls) == 1, (
             f"expected exactly 1 open() of {file_path}, got {len(matching_calls)}"
         )
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

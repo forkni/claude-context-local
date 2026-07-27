@@ -360,16 +360,16 @@ class TestPersonalizedPagerank:
         )
         assert ppr[A] == max(ppr.values())
 
-    def test_empty_graph_raises_or_empty(self, empty_gv):
-        # Empty graph: nx.pagerank typically returns {} or raises
-        try:
-            result = empty_gv.personalized_pagerank(
-                personalization={},
-                alpha=0.85,
-            )
-            assert result == {}
-        except Exception:
-            pass  # acceptable — caller guards with is_empty() first
+    def test_empty_graph_returns_empty_dict(self, empty_gv):
+        # Verified empirically: nx.pagerank on an empty graph with an empty
+        # personalization dict returns {} rather than raising -- the
+        # try/except swallowing "any exception" here was masking, not
+        # defensive, since a real regression would silently pass either way.
+        result = empty_gv.personalized_pagerank(
+            personalization={},
+            alpha=0.85,
+        )
+        assert result == {}
 
     def test_convergence_error_propagates(self):
         """PPRConvergenceError must bubble up for caller fallback logic."""

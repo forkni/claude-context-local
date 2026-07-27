@@ -239,9 +239,14 @@ class TestMerkleDAG(TestCase):
             f"Symlinked dir should be skipped, but found: "
             f"{[f for f in all_files if 'src_link' in f]}"
         )
-        # Files under the real dir ARE still indexed via the real path
-        assert "src/main.py" in all_files or any("src" in f for f in all_files), (
-            "Real src/ contents should still be indexed"
+        # Files under the real dir ARE still indexed via the real path.
+        # get_all_files() keys use str(Path.relative_to(...)), which is
+        # OS-native (backslash on Windows) — normalize before comparing so
+        # the check is exact rather than a loose "'src' shows up somewhere"
+        # substring match that would also pass if only utils.py were indexed.
+        normalized_files = {f.replace("\\", "/") for f in all_files}
+        assert "src/main.py" in normalized_files, (
+            f"Real src/ contents should still be indexed, got: {sorted(normalized_files)}"
         )
 
     def test_unreadable_child_does_not_drop_siblings(self):
@@ -762,7 +767,3 @@ class TestChangeDetectorSnapshotIgnore(TestCase):
             f"{[f for f in all_files if 'snap' in f]}"
         )
         assert "real_file.py" in all_files
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

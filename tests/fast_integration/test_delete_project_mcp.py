@@ -260,7 +260,3 @@ async def test_delete_project_cleanup_queue_integration(mock_embedder):
             assert len(delete_result.get("errors", [])) > 0
             assert delete_result.get("queued_for_retry") is not None
             print(f"  [OK] {delete_result['queued_for_retry']} items queued for retry")
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "-s"])

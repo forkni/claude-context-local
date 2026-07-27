@@ -131,22 +131,3 @@ def test_glsl_indexing_without_embedder():
         traceback.print_exc()
         # Convert to assertion failure for pytest compatibility
         raise AssertionError(f"GLSL indexing test failed: {e}") from e
-
-
-if __name__ == "__main__":
-    try:
-        test_glsl_indexing_without_embedder()
-        print(f"\n{'=' * 60}")
-        print("[OK] GLSL INDEXING TEST PASSED")
-        print("\nGLSL chunking works perfectly!")
-        print(f"{'=' * 60}")
-    except AssertionError as e:
-        print(f"\n{'=' * 60}")
-        print("[ERROR] GLSL INDEXING TEST FAILED")
-        print(f"  Error: {e}")
-        print(f"{'=' * 60}")
-    except Exception as e:
-        print(f"\n{'=' * 60}")
-        print("[ERROR] GLSL INDEXING TEST FAILED")
-        print(f"  Error: {e}")
-        print(f"{'=' * 60}")

@@ -378,10 +378,14 @@ class TestQueryEmbeddingCache:
         for t in threads:
             t.join()
 
-        # Verify stats are consistent (no corruption)
+        # Verify stats are consistent (no corruption): every get() increments
+        # either hits or misses exactly once, and 5 threads x 50 get() calls
+        # each means the counters must sum to exactly 250 with no lost updates.
         stats = cache.get_stats()
-        assert stats["hits"] >= 0
-        assert stats["misses"] >= 0
+        assert stats["hits"] + stats["misses"] == 250, (
+            f"hits ({stats['hits']}) + misses ({stats['misses']}) should equal "
+            "250 total get() calls — counter update was lost under concurrency"
+        )
         assert stats["cache_size"] <= 50
 
     def test_disabled_cache_with_zero_max_size(self):

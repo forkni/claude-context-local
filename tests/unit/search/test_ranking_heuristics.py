@@ -276,7 +276,3 @@ class TestIsEntityLikeQuery(unittest.TestCase):
     def test_short_noun_is_entity(self):
         tokens = self.h._normalize_to_tokens("searcher")
         self.assertTrue(self.h._is_entity_like_query("searcher", tokens))
-
-
-if __name__ == "__main__":
-    unittest.main()

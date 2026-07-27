@@ -10,8 +10,6 @@ Tests cover:
 import time
 from unittest.mock import Mock, patch
 
-import pytest
-
 
 class TestParallelChunkerTimeouts:
     """Test timeout handling in ParallelChunker."""
@@ -205,7 +203,3 @@ class TestChunkFilesPublicInterface:
             pc.chunk_files(str(tmp_path), ["a.py"])
 
         assert any("25.0% merged" in r.message for r in caplog.records)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

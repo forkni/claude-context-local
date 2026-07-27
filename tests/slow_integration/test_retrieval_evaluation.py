@@ -13,6 +13,7 @@ This validates that:
 5. Search mode comparison: hybrid is at least as good as BM25 alone
 """
 
+import hashlib
 import shutil
 from pathlib import Path
 
@@ -167,7 +168,9 @@ def _make_deterministic_embeddings(chunks, dim=768):
 
     results = []
     for chunk in chunks:
-        seed = abs(hash(chunk.content)) % 10000
+        # hash() is randomized per-process (PYTHONHASHSEED), so it cannot
+        # back a "reproducible across runs" claim -- hashlib.sha256 can.
+        seed = int(hashlib.sha256(chunk.content.encode()).hexdigest(), 16) % 10000
         rng = np.random.RandomState(seed)
         embedding = rng.random(dim).astype(np.float32)
         # L2 normalize for cosine similarity

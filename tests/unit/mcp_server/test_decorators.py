@@ -371,7 +371,3 @@ class TestWithMutationLockDecorator:
         result = await handler({})
 
         assert result == {"error": "mutation failed"}
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

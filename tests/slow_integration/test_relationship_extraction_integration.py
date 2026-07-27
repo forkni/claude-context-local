@@ -368,8 +368,13 @@ class TestPhase3RelationshipExtraction:
                 test_chunk = chunk
                 break
 
-        if not test_chunk:
-            pytest.skip("No chunks with Phase 3 relationships found")
+        # SAMPLE_CODE_WITH_ALL_RELATIONSHIPS is fixed, deterministic source
+        # guaranteed to produce CALLS/INHERITS/USES_TYPE/IMPORTS relationships
+        # -- finding none is a real extraction regression, not an environment
+        # gap, so it must fail rather than silently skip.
+        assert test_chunk is not None, (
+            "Expected at least one chunk with Phase 3 relationships"
+        )
 
         # Create CodeRelationshipAnalyzer with searcher
         from search.relationship_analyzer import (
@@ -442,8 +447,12 @@ class TestPhase3RelationshipExtraction:
             if test_chunk:
                 break
 
-        if not test_chunk:
-            pytest.skip("No chunks with USES_TYPE relationships found")
+        # SAMPLE_CODE_WITH_ALL_RELATIONSHIPS's Dict[str, User]/Optional[User]/
+        # List[User] annotations guarantee a USES_TYPE relationship -- finding
+        # none is a real extraction regression, not an environment gap.
+        assert test_chunk is not None, (
+            "Expected at least one chunk with USES_TYPE relationships"
+        )
 
         # Analyze the chunk
         from search.relationship_analyzer import (
@@ -727,8 +736,12 @@ class TestPriority2RelationshipExtraction:
             if test_chunk:
                 break
 
-        if not test_chunk:
-            pytest.skip("No chunks with Priority 2 relationships found")
+        # SAMPLE_CODE_WITH_PRIORITY2_RELATIONSHIPS deterministically contains
+        # a decorator, a raise, an except, and two instantiations -- finding
+        # none is a real extraction regression, not an environment gap.
+        assert test_chunk is not None, (
+            "Expected at least one chunk with a Priority 2 relationship"
+        )
 
         # Analyze the chunk
         from search.relationship_analyzer import (

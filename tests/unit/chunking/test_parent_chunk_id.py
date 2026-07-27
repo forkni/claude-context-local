@@ -105,17 +105,19 @@ class MyClass:
 
         assert class_chunk is not None, "Class chunk should exist"
 
-        # If method chunks exist (not merged), verify they have correct parent_chunk_id
-        if method_chunks:
-            for method in method_chunks:
-                assert method.parent_chunk_id == class_chunk.chunk_id, (
-                    f"Method {method.name} should point to class chunk_id"
-                )
-                assert method.parent_name == "MyClass", (
-                    f"Method {method.name} should have parent_name=MyClass"
-                )
-        # If no method chunks (all merged into class), that's also fine -
-        # this test is about parent_chunk_id generation, not chunking strategy
+        # With this method body length, greedy merge should NOT absorb the methods
+        # into the class chunk — verify the precondition before checking parent_chunk_id.
+        assert method_chunks, (
+            "No method chunks found — greedy merge absorbed both methods into "
+            "the class chunk; test no longer exercises parent_chunk_id generation"
+        )
+        for method in method_chunks:
+            assert method.parent_chunk_id == class_chunk.chunk_id, (
+                f"Method {method.name} should point to class chunk_id"
+            )
+            assert method.parent_name == "MyClass", (
+                f"Method {method.name} should have parent_name=MyClass"
+            )
 
     def test_nested_class_methods(self, chunker, tmp_path):
         """Test methods in nested classes have correct parent_chunk_id."""
@@ -158,13 +160,15 @@ class Outer:
             "Outer method should point to outer class"
         )
 
-        # Note: Nested classes might not be fully supported yet,
-        # but outer_method should definitely work
-        if inner_class and inner_method:
-            # If nested classes are supported, check inner method
-            assert inner_method.parent_chunk_id == inner_class.chunk_id, (
-                "Inner method should point to inner class"
-            )
+        # Nested classes are fully supported by the chunker — verify the
+        # precondition before checking the inner method's parent_chunk_id.
+        assert inner_class is not None and inner_method is not None, (
+            "Inner class or inner method chunk missing — test no longer "
+            "exercises the nested-class parent_chunk_id path"
+        )
+        assert inner_method.parent_chunk_id == inner_class.chunk_id, (
+            "Inner method should point to inner class"
+        )
 
     def test_class_with_no_methods(self, chunker, tmp_path):
         """Test that empty classes work correctly."""

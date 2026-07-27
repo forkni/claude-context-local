@@ -7,13 +7,13 @@ Covers:
 """
 
 import asyncio
-import threading
-from unittest.mock import MagicMock
+from contextlib import asynccontextmanager
+from unittest.mock import MagicMock, patch
 
 import dspy
 import pytest
 
-from evaluation.dspy_gepa_optimize import gepa_metric
+from evaluation.dspy_gepa_optimize import gepa_metric, gepa_tool_bridge
 
 
 # ---------------------------------------------------------------------------
@@ -202,121 +202,92 @@ class TestGepaMetricFeedback:
 
 
 class TestGepaBridge:
-    def test_sync_wrapper_returns_value(self):
-        """A trivial async function should be callable synchronously through the bridge."""
+    """Exercises the real gepa_tool_bridge() context manager end-to-end, with
+    only the network-dependent code_search_session() faked out.
 
-        loop = asyncio.new_event_loop()
-        ready = threading.Event()
-        cleanup = threading.Event()
+    Previously each test here hand-rolled its own ``_sync(**kwargs)`` closure
+    that reimplemented gepa_tool_bridge's internal ``_make_sync_func`` /
+    ``_sync_func`` logic (lock + run_coroutine_threadsafe + timeout/exception
+    -> observation string) from scratch -- a regression in the real bridge
+    code could never be caught, since production code never ran.
+    """
+
+    @staticmethod
+    def _fake_session_yielding(async_func, tool_name="test_tool"):
+        """Build a fake code_search_session() replacement that skips the
+        network entirely and yields a single dspy.Tool wrapping async_func,
+        matching the ``(session, dspy_tools)`` shape the real session yields.
+        """
+
+        @asynccontextmanager
+        async def _fake_session(
+            *, project_path, server_url, tool_names, tool_timeout_s
+        ):
+            tools = [
+                dspy.Tool(func=async_func, name=tool_name, desc="test tool", args={})
+            ]
+            yield (None, tools)
+
+        return _fake_session
+
+    def test_sync_wrapper_returns_value(self):
+        """A trivial async function should be callable synchronously through
+        the real bridge."""
 
         async def _trivial(**kwargs):  # noqa: ANN202
             return {"answer": 42, **kwargs}
 
-        # Manually exercise the bridge internals: start a loop, wrap an async func,
-        # call it synchronously via run_coroutine_threadsafe.
-        def _run():
-            loop.run_until_complete(_bg())
-            loop.close()
+        fake_session = self._fake_session_yielding(_trivial)
+        with (
+            patch("evaluation.dspy_gepa_optimize.code_search_session", fake_session),
+            gepa_tool_bridge(project_path="/fake/project") as sync_tools,
+        ):
+            val = sync_tools[0].func(x=1)
 
-        async def _bg():
-            ready.set()
-            while not cleanup.is_set():
-                await asyncio.sleep(0.05)
-
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
-        ready.wait()
-
-        # Simulate the bridge's sync wrapper pattern.
-        lock = threading.Lock()
-
-        def _sync(**kwargs):
-            with lock:
-                future = asyncio.run_coroutine_threadsafe(_trivial(**kwargs), loop)
-                return future.result(timeout=5)
-
-        val = _sync(x=1)
         assert val == {"answer": 42, "x": 1}
 
-        # Cleanup.
-        cleanup.set()
-        t.join(timeout=3)
-
+    @pytest.mark.slow
     def test_bridge_timeout_returns_observation_string(self):
-        """A very slow async func should yield an observation string, not raise."""
-        loop = asyncio.new_event_loop()
-        ready = threading.Event()
-        cleanup = threading.Event()
+        """A very slow async function should yield an observation string via
+        the real bridge's TimeoutError handling, not raise.
+
+        gepa_tool_bridge hardcodes its future.result() timeout as
+        ``tool_timeout_s + 5`` -- there is no seam to shorten it -- so this
+        test genuinely waits ~5s for that real timeout to fire. Marked slow
+        accordingly.
+        """
 
         async def _slow(**_kwargs):
             await asyncio.sleep(100)
             return "should not reach here"
 
-        def _run():
-            loop.run_until_complete(_bg())
-            loop.close()
-
-        async def _bg():
-            ready.set()
-            while not cleanup.is_set():
-                await asyncio.sleep(0.05)
-
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
-        ready.wait()
-
         tool_name = "test_tool"
-        timeout_s = 0.1  # very short
+        fake_session = self._fake_session_yielding(_slow, tool_name=tool_name)
+        with (
+            patch("evaluation.dspy_gepa_optimize.code_search_session", fake_session),
+            gepa_tool_bridge(
+                project_path="/fake/project", tool_timeout_s=0.1
+            ) as sync_tools,
+        ):
+            result = sync_tools[0].func()
 
-        def _sync(**kwargs):
-            future = asyncio.run_coroutine_threadsafe(_slow(**kwargs), loop)
-            try:
-                return future.result(timeout=timeout_s)
-            except Exception:  # noqa: BLE001
-                return f"Execution error in {tool_name}: timeout after {timeout_s:.0f}s"
-
-        result = _sync()
-        assert "Execution error in" in result
-
-        # Cleanup.
-        cleanup.set()
-        t.join(timeout=3)
+        assert f"Execution error in {tool_name}" in result
+        assert "timeout after" in result
 
     def test_bridge_exception_returns_observation_string(self):
-        """A failing async func should yield 'Execution error in …', not raise."""
-        loop = asyncio.new_event_loop()
-        ready = threading.Event()
-        cleanup = threading.Event()
+        """A failing async function should yield 'Execution error in …' via
+        the real bridge's exception handling, not raise."""
 
         async def _failing(**_kwargs):
             raise ValueError("deliberate failure")
 
-        def _run():
-            loop.run_until_complete(_bg())
-            loop.close()
-
-        async def _bg():
-            ready.set()
-            while not cleanup.is_set():
-                await asyncio.sleep(0.05)
-
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
-        ready.wait()
-
         tool_name = "test_tool"
+        fake_session = self._fake_session_yielding(_failing, tool_name=tool_name)
+        with (
+            patch("evaluation.dspy_gepa_optimize.code_search_session", fake_session),
+            gepa_tool_bridge(project_path="/fake/project") as sync_tools,
+        ):
+            result = sync_tools[0].func()
 
-        def _sync(**kwargs):
-            future = asyncio.run_coroutine_threadsafe(_failing(**kwargs), loop)
-            try:
-                return future.result(timeout=5)
-            except Exception as exc:  # noqa: BLE001
-                return f"Execution error in {tool_name}: {exc}"
-
-        result = _sync()
         assert result.startswith(f"Execution error in {tool_name}")
         assert "deliberate failure" in result
-
-        # Cleanup.
-        cleanup.set()
-        t.join(timeout=3)

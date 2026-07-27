@@ -38,8 +38,6 @@ _EXPORTER = InMemorySpanExporter()
 _PROVIDER = TracerProvider(resource=Resource({SERVICE_NAME: "test-e2e"}))
 _PROVIDER.add_span_processor(SimpleSpanProcessor(_EXPORTER))
 otel_trace.set_tracer_provider(_PROVIDER)
-_obs._tracer_provider = _PROVIDER
-_obs._enabled = True
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +51,27 @@ def _spans(name: str | None = None) -> list:
     if name is not None:
         spans = [s for s in spans if s.name == name]
     return spans
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _install_test_tracer_provider():
+    """Point utils.observability at the module-level OTel provider.
+
+    _PROVIDER itself is installed once, at import time (above), because
+    OTel >= 1.x forbids re-setting the global TracerProvider after the first
+    call — that part can't be undone. But _obs._enabled/_tracer_provider are
+    ordinary module globals read by every @timed/traced_block/error_handler
+    call; left mutated after this module's tests finish, they would silently
+    turn tracing on for every later test in the same pytest session. Restore
+    whatever was there before once this module's tests are done.
+    """
+    prev_enabled = _obs._enabled
+    prev_provider = _obs._tracer_provider
+    _obs._tracer_provider = _PROVIDER
+    _obs._enabled = True
+    yield
+    _obs._enabled = prev_enabled
+    _obs._tracer_provider = prev_provider
 
 
 @pytest.fixture(autouse=True)

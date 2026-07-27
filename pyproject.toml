@@ -38,7 +38,7 @@ dependencies = [
     "mcp>=1.28.1,<2",  # <2: mcp v2 (beta 2026-06-30) has breaking changes. Security: 1.28.1 fixes CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin validation)
     "msgpack>=1.2.1",  # Security: GHSA-6v7p-g79w-8964 (SEGV on repeated unpack after error)
     "networkx>=3.0",  # Required for graph storage and community detection
-    "nltk>=3.9.4",  # Security: Fixes CVE-2025-14009 (path traversal in downloader). CVE-2026-12243 (incomplete fix, path traversal) has no release yet -- see audit_reports/deferred-cves-2026-07-03.md
+    "nltk>=3.9.4",  # Security: Fixes CVE-2025-14009 (path traversal in downloader). CVE-2026-12243 (incomplete fix, path traversal) has no release yet -- see "Deferred (no upstream fix)" block below
     "psutil>=7.2.1",
     "pydantic-settings>=2.14.2",  # Security: GHSA-4xgf-cpjx-pc3j (symlink follow in secrets_dir)
     "pygments>=2.20.0",  # Security: CVE-2026-4539 (ReDoS in AdlLexer)
@@ -60,7 +60,6 @@ dependencies = [
     "tree-sitter-cpp>=0.23.4",
     "tree-sitter-glsl>=0.2.0",
     "tree-sitter-go>=0.25.0",
-    "tree-sitter-java>=0.23.5",
     "tree-sitter-javascript>=0.25.0",
     "tree-sitter-python>=0.25.0",
     "tree-sitter-rust>=0.24.2",
@@ -157,11 +156,13 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-07-25 (pip-audit — bumped gitpython (8 CVEs, transitive via cosmic-ray) and
-#             setuptools (1 CVE); the vulnerable setuptools 82.0.1 was also fully removed from
-#             .venv as a side effect of a venv rebuild (uv no longer seeds setuptools/wheel).
-#             Remaining: diskcache/sqlitedict/nltk, no upstream fix — see
-#             audit_reports/deferred-cves-2026-07-25.md.)
+# Last audit: 2026-07-26 (pip-audit — the 2026-07-25 gitpython>=3.1.55 bump was declared in
+#             pyproject.toml/uv.lock but never installed into .venv; GitPython 3.1.50 stayed
+#             live with all 8 CVEs until this audit re-synced it to 3.1.56. Also dropped
+#             tree-sitter-java: a declared runtime dependency with no LANGUAGE_SPECS/
+#             EXT_TO_LANGUAGE entry, kept alive only by scripts/verify_installation.py
+#             asserting its presence. Remaining: diskcache/sqlitedict/nltk, no upstream
+#             fix — see "Deferred (no upstream fix)" block below.)
 #
 # Direct dependency security updates:
 # mcp>=1.28.1,<2       # Fixes CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin); <2 guards against mcp v2 breaking changes (beta 2026-06-30)
@@ -196,18 +197,32 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # * transformers PYSEC-2026-2290 / CVE-2026-5241 (LightGlue model-load RCE) — no fix; not applicable (no LightGlue use)
 # * diskcache CVE-2025-69872, sqlitedict CVE-2024-35515 (pickle RCE) — no upstream fix; sqlitedict mitigated via JSON serialization (metadata.py)
 # * nltk CVE-2026-12243 (path traversal, incomplete fix of CVE-2025-14009) — no upstream fix as of nltk 3.10.0
-#   (checked 2026-07-25: no changelog/advisory confirms a fix; OSV still reports fix_versions=[]);
-#   no untrusted NLTK data paths in this project. Related: GHSA-p4gq-832x-fm9v / CVE-2026-54293
-#   (same nltk.data.load() path-traversal class) not yet seen in pip-audit's OSV feed — watch for it.
+#   (checked 2026-07-26: no changelog/advisory confirms a fix; OSV still reports fix_versions=[]);
+#   no untrusted NLTK data paths in this project — the only calls are nltk.data.find("corpora/stopwords")
+#   and nltk.download("stopwords", quiet=True) with hardcoded literals (search/bm25_index.py:33,35).
+#   Related: GHSA-p4gq-832x-fm9v / CVE-2026-54293 (same nltk.data.load() path-traversal class) not yet
+#   seen in pip-audit's OSV feed — watch for it.
 # * pyjwt PYSEC-2025-183 (disputed weak encryption) — no upstream fix
 #
 # Resolved 2026-07-25: gitpython CVE set (8 argument-injection advisories: GHSA-2f96-g7mh-g2hx,
 #   GHSA-v396-v7q4-x2qj, GHSA-956x-8gvw-wg5v, GHSA-3rp5-jjmw-4wv2, GHSA-fjr4-x663-mwxc,
-#   GHSA-6p8h-3wgx-97gf, GHSA-r9mr-m37c-5fr3, GHSA-94p4-4cq8-9g67) via gitpython>=3.1.55 (dev extra;
-#   transitive via cosmic-ray, unimported by project code). setuptools CVE-2026-59890 via
+#   GHSA-6p8h-3wgx-97gf, GHSA-r9mr-m37c-5fr3, GHSA-94p4-4cq8-9g67) declared via gitpython>=3.1.55
+#   (dev extra; transitive via cosmic-ray, unimported by project code) and resolved in uv.lock to
+#   3.1.56 — but NOT installed into .venv until 2026-07-26 (see below); GitPython 3.1.50 stayed
+#   live with all 8 CVEs in the interim. setuptools CVE-2026-59890 via
 #   [build-system].requires>=83.0.0 — moot for the runtime venv, which no longer contains
 #   setuptools at all post-rebuild. Tested: CUDA verified intact (torch 2.8.0+cu128), pip check
 #   clean.
+#
+# Resolved 2026-07-26: gitpython venv drift closed — synced installed GitPython 3.1.50 -> 3.1.56
+#   to match the 2026-07-25 declaration/lock (dev extra; transitive via cosmic-ray, unimported by
+#   project code). uv bumped 0.11.18 -> 0.11.32, reconciling the venv with the >=0.11.24 tracking
+#   comment below (0.11.18 had 0 live CVEs — GHSA-4gg8-gxpx-9rph was already fixed at 0.11.15 — so
+#   this closed a record/reality mismatch, not an exposure). Removed tree-sitter-java: a declared
+#   runtime dependency with no .java entry in EXT_TO_LANGUAGE, no "java" LanguageSpec, and no test
+#   coverage — kept alive only by scripts/verify_installation.py asserting its import and
+#   mis-advertising Java support. Tested: CUDA verified intact, pip check clean, install verifier
+#   passes without Java, full unit suite green.
 #
 # Resolved 2026-07-20: transformers CVE-2026-4372 (config.json RCE), CVE-2026-1839 (Trainer RCE)
 #   — venv re-synced to existing transformers>=5.3.0,<6 pin (was drifted at 4.57.6, installed 5.14.1).
@@ -402,7 +417,6 @@ addopts = [
     "-v",
     "--tb=short",
     "--strict-markers",
-    "--disable-warnings",
     "--color=yes",
     "--durations=10",
     "--import-mode=importlib",  # pytest docs recommendation for new projects; avoids sys.path hacks
@@ -424,7 +438,6 @@ filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",
     "ignore::UserWarning",
-    "ignore:.*unclosed.*:ResourceWarning",
     "ignore:.*builtin type.*:DeprecationWarning",
     "ignore:Not enough free disk space.*:UserWarning:huggingface_hub",
 ]

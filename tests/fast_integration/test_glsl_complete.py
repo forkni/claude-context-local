@@ -103,13 +103,3 @@ def test_complete_glsl_pipeline():
         traceback.print_exc()
         # Convert to assertion failure for pytest compatibility
         raise AssertionError(f"GLSL pipeline test failed: {e}") from e
-
-
-if __name__ == "__main__":
-    try:
-        test_complete_glsl_pipeline()
-        print("\nGLSL Pipeline Test PASSED")
-    except AssertionError as e:
-        print(f"\nGLSL Pipeline Test FAILED: {e}")
-    except Exception as e:
-        print(f"\nGLSL Pipeline Test FAILED: {e}")

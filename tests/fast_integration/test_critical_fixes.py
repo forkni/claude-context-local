@@ -188,7 +188,3 @@ async def test_concurrent_search_weight_isolation():
     # Instance state must remain untouched for all calls
     assert mock_searcher.bm25_weight == 0.35
     assert mock_searcher.dense_weight == 0.65
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])

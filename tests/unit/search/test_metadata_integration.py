@@ -138,7 +138,3 @@ class TestMetadataStoreHashCacheIntegration(unittest.TestCase):
             result = self.store.get(chunk_id)
             self.assertIsNotNone(result)
             self.assertEqual(result["index_id"], expected_idx)
-
-
-if __name__ == "__main__":
-    unittest.main()

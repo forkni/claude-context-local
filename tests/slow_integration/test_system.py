@@ -46,14 +46,11 @@ def test_critical_imports():
         f"Success: {success_count}/{len(modules_to_test)} modules imported successfully"
     )
 
-    if success_count == len(modules_to_test):
-        print("All dependencies installed correctly!")
-        assert True
-    else:
-        print("Some dependencies failed to import")
-        raise AssertionError(
-            f"Only {success_count}/{len(modules_to_test)} modules imported successfully"
-        )
+    assert success_count == len(modules_to_test), (
+        f"Only {success_count}/{len(modules_to_test)} modules imported successfully: "
+        f"{results}"
+    )
+    print("All dependencies installed correctly!")
 
 
 @pytest.mark.slow
@@ -167,7 +164,25 @@ def get_user_profile(user_id: int) -> Dict:
         print("\n[OK] Chunking test completed successfully!")
 
     os.unlink(f.name)
-    assert True, "Chunking test completed successfully"
+
+    # Verify the chunker actually found the real structure of the test file,
+    # rather than merely completing without raising.
+    assert len(chunks) > 0, "Chunker should produce at least one chunk"
+    chunk_names = {chunk.name for chunk in chunks if chunk.name}
+    assert "DatabaseManager" in chunk_names
+    assert "authenticate_user" in chunk_names
+    assert "get_user_profile" in chunk_names
+
+    db_chunk = next(c for c in chunks if c.name == "DatabaseManager")
+    assert db_chunk.chunk_type == "class"
+    assert db_chunk.docstring and "database" in db_chunk.docstring.lower()
+
+    method_names = {c.name for c in chunks if c.parent_name == "DatabaseManager"}
+    assert {"__init__", "connect", "execute_query"} <= method_names
+
+    profile_chunk = next(c for c in chunks if c.name == "get_user_profile")
+    assert profile_chunk.decorators, "Decorated function should capture its decorator"
+    assert any("login_required" in d for d in profile_chunk.decorators)
 
 
 @pytest.mark.slow
@@ -266,7 +281,30 @@ class UserAuthenticator:
     shutil.rmtree(test_dir)
 
     print("\n[OK] Metadata extraction test completed successfully!")
-    assert True, "Metadata extraction test completed successfully"
+
+    # Verify the extracted metadata actually reflects the nested project
+    # structure and the source file's real content.
+    assert len(chunks) > 0, "Chunker should produce at least one chunk"
+    class_names = {c.name for c in chunks if c.chunk_type == "class"}
+    assert "AuthenticationError" in class_names
+    assert "UserAuthenticator" in class_names
+
+    assert any(c.folder_structure == ["src", "auth"] for c in chunks), (
+        "Chunks should record the nested src/auth folder structure"
+    )
+
+    authenticate_chunk = next(c for c in chunks if c.name == "authenticate")
+    assert authenticate_chunk.parent_name == "UserAuthenticator"
+    assert authenticate_chunk.complexity_score > 1, (
+        "authenticate() has branching try/except/if-else and should score "
+        "above the trivial-method baseline"
+    )
+
+    max_attempts_chunk = next(c for c in chunks if c.name == "max_attempts")
+    assert max_attempts_chunk.parent_name == "UserAuthenticator"
+    assert any("property" in d for d in max_attempts_chunk.decorators), (
+        "max_attempts should retain its @property decorator"
+    )
 
 
 def main():
@@ -304,8 +342,3 @@ def main():
 
         traceback.print_exc()
         return False
-
-
-if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1)

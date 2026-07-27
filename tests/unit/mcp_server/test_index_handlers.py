@@ -649,7 +649,3 @@ class TestIndexDirectoryAsyncJob:
         job = await get_job_registry().get(result["job_id"])
         assert job.status == "error"
         assert job.error == "Directory does not exist: /nope"
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

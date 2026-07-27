@@ -205,6 +205,9 @@ class TestSafeRotatingFileHandler:
                 args=(),
                 exc_info=None,
             )
-            handler.emit(record)
+            handler.emit(record)  # must not raise
+
+        handler.close()
+        assert log_file.exists(), "Handler must keep writing after a failed rollover"
 
         handler.close()

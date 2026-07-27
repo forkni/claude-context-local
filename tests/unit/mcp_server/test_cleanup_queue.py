@@ -222,7 +222,3 @@ def test_cleanup_queue_refuses_path_outside_projects(mock_storage_dir):
         assert str(outside) in result["failed"]
         # The directory must NOT have been deleted
         assert outside.exists()
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

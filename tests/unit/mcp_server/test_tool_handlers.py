@@ -845,7 +845,10 @@ async def test_handle_search_code_hybrid_searcher_ready():
 
         # Should succeed without "No indexed project found" error
         assert "error" not in result
-        assert "results" in result or "chunks" in result or isinstance(result, list)
+        assert "results" in result, (
+            f"handle_search_code response should carry a 'results' key, got {result.keys()}"
+        )
+        assert isinstance(result["results"], list)
 
 
 @pytest.mark.asyncio
@@ -943,9 +946,12 @@ async def test_all_handlers_have_error_handling():
         for name, handler in handlers:
             all_handlers_checked.append(f"{module.__name__}.{name}")
             # Check if wrapped by error_handler decorator
-            # functools.wraps preserves __wrapped__ attribute
-            assert hasattr(handler, "__wrapped__") or callable(handler), (
-                f"{module.__name__}.{name} should use @error_handler decorator or be callable"
+            # functools.wraps preserves __wrapped__ attribute. `callable(handler)`
+            # is true for every function reachable via getattr and can never
+            # fail, so it was dropped as a disjunct — only the decorator check
+            # is a real assertion.
+            assert hasattr(handler, "__wrapped__"), (
+                f"{module.__name__}.{name} should use @error_handler decorator"
             )
 
     # Verify we checked at least 15 handlers (all our handlers)
@@ -1387,7 +1393,3 @@ def test_config_manager_exposes_config_only_via_load_config():
     assert hasattr(cfg.search_mode, "dense_weight")
     assert hasattr(cfg.performance, "enable_entity_tracking")
     assert hasattr(cfg.reranker, "enabled")
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

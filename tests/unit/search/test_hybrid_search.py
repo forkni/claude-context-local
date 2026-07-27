@@ -393,13 +393,15 @@ class TestHybridSearcher:
                 searcher.search_executor._search_stats["total_searches"]
                 == initial_searches + 2
             )
-            # In mocked environment, times might be 0, so just check they exist
-            assert "bm25_time" in searcher.search_executor._search_stats
-            assert "dense_time" in searcher.search_executor._search_stats
-            assert "rerank_time" in searcher.search_executor._search_stats
-            assert searcher.search_executor._search_stats["bm25_time"] >= 0
-            assert searcher.search_executor._search_stats["dense_time"] >= 0
-            assert searcher.search_executor._search_stats["rerank_time"] >= 0
+            # In mocked environment, times might be 0, so assert type + non-negative
+            # rather than a positivity threshold mocked I/O can't guarantee.
+            for key in ("bm25_time", "dense_time", "rerank_time"):
+                assert key in searcher.search_executor._search_stats
+                value = searcher.search_executor._search_stats[key]
+                assert isinstance(value, (int, float)), (
+                    f"{key} should be a numeric duration, got {type(value)}"
+                )
+                assert value >= 0
 
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")

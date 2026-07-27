@@ -97,13 +97,3 @@ def test_glsl_chunker():
         traceback.print_exc()
         # Convert to assertion failure for pytest compatibility
         raise AssertionError(f"GLSL chunker test failed: {e}") from e
-
-
-if __name__ == "__main__":
-    try:
-        test_glsl_chunker()
-        print("\nTest PASSED")
-    except AssertionError as e:
-        print(f"\nTest FAILED: {e}")
-    except Exception as e:
-        print(f"\nTest FAILED: {e}")

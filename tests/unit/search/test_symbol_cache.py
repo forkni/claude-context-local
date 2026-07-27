@@ -305,7 +305,3 @@ class TestEdgeCases(unittest.TestCase):
         repr_str = repr(cache)
         self.assertIn("SymbolHashCache", repr_str)
         self.assertIn("symbols=2", repr_str)
-
-
-if __name__ == "__main__":
-    unittest.main()

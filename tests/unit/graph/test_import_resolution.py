@@ -5,10 +5,28 @@ Tests the extraction and resolution of types from import statements.
 """
 
 import ast
+import contextlib
 import os
 import tempfile
 
 from chunking.relationships.call_graph_extractor import PythonCallGraphExtractor
+
+
+@contextlib.contextmanager
+def _temp_python_file(source: str):
+    """Write `source` to a temp .py file and yield its path.
+
+    Every test below that hands a file_path to extract_calls() repeated this
+    NamedTemporaryFile-write-then-unlink skeleton individually; collapsing it
+    here removes ~30 duplicate copies with no change in behavior.
+    """
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        f.write(source)
+        temp_path = f.name
+    try:
+        yield temp_path
+    finally:
+        os.unlink(temp_path)
 
 
 class TestSimpleImportResolution:
@@ -21,19 +39,15 @@ class TestSimpleImportResolution:
     def test_from_import_resolves(self):
         """Test from module import Class enables x = Class(); x.method()."""
         # Create a temporary file with imports
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from handlers import ErrorHandler
 
 def process():
     handler = ErrorHandler()
     handler.handle()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     handler = ErrorHandler()
@@ -51,25 +65,19 @@ def process():
             # Find the handle() call
             method_call = [c for c in calls if c.callee_name.endswith(".handle")][0]
             assert method_call.callee_name == "ErrorHandler.handle"
-        finally:
-            os.unlink(temp_path)
 
     def test_simple_import_resolves(self):
         """Test import module enables module.Class() resolution."""
         # Create a temporary file with imports
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 import handlers
 
 def process():
     handler = handlers.ErrorHandler()
     handler.handle()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     handler = handlers.ErrorHandler()
@@ -84,24 +92,18 @@ def process():
             # Find the handle() call
             method_call = [c for c in calls if c.callee_name.endswith(".handle")][0]
             assert method_call.callee_name == "ErrorHandler.handle"
-        finally:
-            os.unlink(temp_path)
 
     def test_import_class_method(self):
         """Test from module import Class; Class.class_method()."""
         # Create a temporary file with imports
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from handlers import ErrorHandler
 
 def process():
     ErrorHandler.class_method()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     ErrorHandler.class_method()
@@ -114,8 +116,6 @@ def process():
 
             assert len(calls) == 1
             assert calls[0].callee_name == "ErrorHandler.class_method"
-        finally:
-            os.unlink(temp_path)
 
 
 class TestAliasedImportResolution:
@@ -127,19 +127,15 @@ class TestAliasedImportResolution:
 
     def test_alias_resolves_to_original(self):
         """Test from x import Y as Z resolves Z to Y."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from handlers import ErrorHandler as EH
 
 def process():
     handler = EH()
     handler.handle()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     handler = EH()
@@ -154,24 +150,18 @@ def process():
             # Should resolve to original class name, not alias
             method_call = [c for c in calls if c.callee_name.endswith(".handle")][0]
             assert method_call.callee_name == "ErrorHandler.handle"
-        finally:
-            os.unlink(temp_path)
 
     def test_module_alias(self):
         """Test import module as alias."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 import handlers as h
 
 def process():
     handler = h.ErrorHandler()
     handler.handle()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     handler = h.ErrorHandler()
@@ -185,8 +175,6 @@ def process():
 
             method_call = [c for c in calls if c.callee_name.endswith(".handle")][0]
             assert method_call.callee_name == "ErrorHandler.handle"
-        finally:
-            os.unlink(temp_path)
 
     def test_aliased_bare_function_call_resolves(self):
         """Test from mod import func as g; g() resolves callee_name to "func".
@@ -197,18 +185,14 @@ def process():
         callee links back to the real definition instead of becoming a phantom
         graph node keyed by the alias.
         """
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from dedent_utils import smart_dedent as _smart_dedent
 
 def process(code):
     return _smart_dedent(code)
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process(code):
     return _smart_dedent(code)
@@ -222,23 +206,17 @@ def process(code):
             assert len(calls) == 1
             # Resolved to the real name, not the call-site alias
             assert calls[0].callee_name == "smart_dedent"
-        finally:
-            os.unlink(temp_path)
 
     def test_non_aliased_bare_function_call_unaffected(self):
         """Test from mod import func; func() still resolves to "func" (no-op case)."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from dedent_utils import smart_dedent
 
 def process(code):
     return smart_dedent(code)
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process(code):
     return smart_dedent(code)
@@ -251,8 +229,6 @@ def process(code):
 
             assert len(calls) == 1
             assert calls[0].callee_name == "smart_dedent"
-        finally:
-            os.unlink(temp_path)
 
 
 class TestRelativeImportResolution:
@@ -264,18 +240,14 @@ class TestRelativeImportResolution:
 
     def test_relative_import_single_dot(self):
         """Test from . import helper."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from . import helper
 
 def process():
     helper.do_stuff()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     helper.do_stuff()
@@ -290,24 +262,18 @@ def process():
             assert len(calls) == 1
             # Since helper is imported, it resolves to helper.do_stuff
             assert "do_stuff" in calls[0].callee_name
-        finally:
-            os.unlink(temp_path)
 
     def test_relative_import_from(self):
         """Test from .module import Class."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from .extractors import ExceptionExtractor
 
 def process():
     extractor = ExceptionExtractor()
     extractor.extract()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     extractor = ExceptionExtractor()
@@ -321,24 +287,18 @@ def process():
 
             method_call = [c for c in calls if c.callee_name.endswith(".extract")][0]
             assert method_call.callee_name == "ExceptionExtractor.extract"
-        finally:
-            os.unlink(temp_path)
 
     def test_relative_import_double_dot(self):
         """Test from ..utils import Parser."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from ..utils import Parser
 
 def process():
     parser = Parser()
     parser.parse()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     parser = Parser()
@@ -352,8 +312,6 @@ def process():
 
             method_call = [c for c in calls if c.callee_name.endswith(".parse")][0]
             assert method_call.callee_name == "Parser.parse"
-        finally:
-            os.unlink(temp_path)
 
 
 class TestDottedImportResolution:
@@ -365,18 +323,14 @@ class TestDottedImportResolution:
 
     def test_dotted_module_import(self):
         """Test import x.y.z."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 import os.path
 
 def process():
     result = os.path.join('a', 'b')
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     result = os.path.join('a', 'b')
@@ -390,8 +344,6 @@ def process():
             assert len(calls) == 1
             # The call is to join
             assert calls[0].callee_name == "join"
-        finally:
-            os.unlink(temp_path)
 
 
 class TestImportEdgeCases:
@@ -403,19 +355,15 @@ class TestImportEdgeCases:
 
     def test_star_import_falls_back(self):
         """Test from x import * cannot resolve."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from handlers import *
 
 def process():
     handler = ErrorHandler()
     handler.handle()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     handler = ErrorHandler()
@@ -431,14 +379,11 @@ def process():
             method_call = [c for c in calls if c.callee_name.endswith(".handle")][0]
             # Falls back to simple constructor inference
             assert method_call.callee_name == "ErrorHandler.handle"
-        finally:
-            os.unlink(temp_path)
 
     def test_shadowing_by_assignment(self):
         """Test local assignment shadows import."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from handlers import ErrorHandler
 
 def process():
@@ -446,10 +391,7 @@ def process():
     x = ErrorHandler()
     x.handle()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     ErrorHandler = CustomHandler
@@ -469,8 +411,6 @@ def process():
             method_call = [c for c in calls if c.callee_name.endswith(".handle")][0]
             # Still resolves based on constructor call name
             assert "handle" in method_call.callee_name
-        finally:
-            os.unlink(temp_path)
 
     def test_no_file_path_falls_back(self):
         """Test that missing file_path falls back to chunk imports."""
@@ -607,9 +547,8 @@ class TestInteractionWithPhases1Through3:
 
     def test_all_four_phases_together(self):
         """Test Phases 1-4 work together."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from extractors import ExceptionExtractor
 
 class Processor(BaseProcessor):
@@ -620,10 +559,7 @@ class Processor(BaseProcessor):
         handler.handle()
         extractor.extract()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 class Processor(BaseProcessor):
     def process(self, handler: Handler):
@@ -650,23 +586,17 @@ class Processor(BaseProcessor):
             assert "Handler.handle" in callee_names
             # Phase 3/4: assignment with import
             assert "ExceptionExtractor.extract" in callee_names
-        finally:
-            os.unlink(temp_path)
 
     def test_import_takes_precedence_for_class_methods(self):
         """Test imported class methods resolve correctly."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from extractors import ExceptionExtractor
 
 def process():
     ExceptionExtractor.configure()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     ExceptionExtractor.configure()
@@ -679,14 +609,11 @@ def process():
 
             assert len(calls) == 1
             assert calls[0].callee_name == "ExceptionExtractor.configure"
-        finally:
-            os.unlink(temp_path)
 
     def test_assignment_shadows_import_for_local_var(self):
         """Test local assignment takes precedence over import for same var name."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from extractors import ExceptionExtractor
 
 def process():
@@ -694,10 +621,7 @@ def process():
     handler = ErrorHandler()
     handler.handle()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     handler = ErrorHandler()
@@ -712,8 +636,6 @@ def process():
             method_call = [c for c in calls if c.callee_name.endswith(".handle")][0]
             # Assignment tracking resolves handler to ErrorHandler
             assert method_call.callee_name == "ErrorHandler.handle"
-        finally:
-            os.unlink(temp_path)
 
 
 class TestInferTypeFromCallWithImports:
@@ -762,18 +684,14 @@ class TestCacheAndPerformance:
 
     def test_file_imports_cached(self):
         """Test that file imports are cached for reuse."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from handlers import ErrorHandler
 
 def process():
     pass
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             # First call
             imports1 = self.extractor._import_resolver.read_file_imports(temp_path)
             assert "ErrorHandler" in imports1
@@ -784,14 +702,11 @@ def process():
             # Second call should use cache
             imports2 = self.extractor._import_resolver.read_file_imports(temp_path)
             assert imports1 == imports2
-        finally:
-            os.unlink(temp_path)
 
     def test_multiple_chunks_same_file(self):
         """Test multiple chunks from same file share cached imports."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from handlers import ErrorHandler, SuccessHandler
 
 def func1():
@@ -802,10 +717,7 @@ def func2():
     handler = SuccessHandler()
     handler.process()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             # First chunk
             chunk1_code = """
 def func1():
@@ -834,8 +746,6 @@ def func2():
 
             method_call2 = [c for c in calls2 if c.callee_name.endswith(".process")][0]
             assert method_call2.callee_name == "SuccessHandler.process"
-        finally:
-            os.unlink(temp_path)
 
 
 class TestCalleeQualifiedExtraction:
@@ -858,18 +768,14 @@ class TestCalleeQualifiedExtraction:
         """Regression seam for the _smart_dedent mis-binding: the alias
         '_smart_dedent' must resolve to the module-qualified original name,
         not just the bare dealiased name callee_name already carries."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from dedent_utils import smart_dedent as _smart_dedent
 
 def process(code):
     return _smart_dedent(code)
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process(code):
     return _smart_dedent(code)
@@ -883,25 +789,19 @@ def process(code):
             assert len(calls) == 1
             assert calls[0].callee_name == "smart_dedent"
             assert calls[0].callee_qualified == "dedent_utils.smart_dedent"
-        finally:
-            os.unlink(temp_path)
 
     def test_non_aliased_bare_call_records_qualified_name(self):
         """Even without an alias, the qualified module path is still worth
         recording -- it's what lets same-file/cross-module disambiguation
         work uniformly regardless of whether the import was aliased."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from dedent_utils import smart_dedent
 
 def process(code):
     return smart_dedent(code)
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process(code):
     return smart_dedent(code)
@@ -914,22 +814,16 @@ def process(code):
 
             assert len(calls) == 1
             assert calls[0].callee_qualified == "dedent_utils.smart_dedent"
-        finally:
-            os.unlink(temp_path)
 
     def test_relative_import_records_dotted_qualified_name(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from . import helper
 
 def process():
     helper()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     helper()
@@ -942,25 +836,19 @@ def process():
 
             assert len(calls) == 1
             assert calls[0].callee_qualified == ".helper"
-        finally:
-            os.unlink(temp_path)
 
     def test_non_imported_local_call_has_no_qualified_name(self):
         """A call to a name with no matching import entry (a genuinely local
         symbol) must not fabricate a qualified name."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 def local_helper():
     return 1
 
 def process():
     return local_helper()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     return local_helper()
@@ -973,27 +861,21 @@ def process():
 
             assert len(calls) == 1
             assert calls[0].callee_qualified is None
-        finally:
-            os.unlink(temp_path)
 
     def test_attribute_call_leaves_qualified_name_unset(self):
         """Method/attribute calls are already receiver-qualified in
         callee_name (e.g. 'ErrorHandler.handle') -- this pass only adds
         callee_qualified for directly-called ast.Name callees, so attribute
         calls keep callee_qualified=None."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            f.write(
-                """
+        with _temp_python_file(
+            """
 from handlers import ErrorHandler
 
 def process():
     handler = ErrorHandler()
     handler.handle()
 """
-            )
-            temp_path = f.name
-
-        try:
+        ) as temp_path:
             chunk_code = """
 def process():
     handler = ErrorHandler()
@@ -1013,8 +895,6 @@ def process():
             assert constructor_call.callee_qualified == "handlers.ErrorHandler"
             # Attribute call: left unchanged by this pass.
             assert method_call.callee_qualified is None
-        finally:
-            os.unlink(temp_path)
 
     def test_callee_qualified_roundtrips_through_to_dict_and_from_dict(self):
         """Part 1 schema: to_dict()/from_dict() must carry callee_qualified,
