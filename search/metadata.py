@@ -17,6 +17,12 @@ from search.chunk_id import normalize as _normalize_chunk_id
 from search.symbol_cache import SymbolHashCache
 
 
+# Sentinel distinguishing "key absent" from a stored value of None — lets
+# MetadataStore.get() do a single SqliteDict.get() round-trip instead of a
+# membership-test-then-fetch pair (P3-2a, search-latency plan).
+_MISSING = object()
+
+
 class MetadataStore:
     """Centralized metadata storage for code chunks.
 
@@ -62,6 +68,16 @@ class MetadataStore:
                 journal_mode="WAL",
                 encode=json.dumps,
                 decode=json.loads,
+                # Skip capturing traceback.extract_stack() on every queued op
+                # (P3-2b, search-latency plan). Measured cost: 27.8-64.0us per
+                # op depending on call-stack depth, paid on every get()/set().
+                # Only the enqueue-site stack is lost on a SQL error — the
+                # worker-thread stack, formatted exception, and re-raise all
+                # still surface, and sqlitedict logs an explicit hint naming
+                # this flag. A deferred error attributes to the next call
+                # instead of the originating one; accepted as a one-line,
+                # reversible cost that trades no accuracy for speed.
+                outer_stack=False,
             )
 
     # CRUD Operations
@@ -73,6 +89,14 @@ class MetadataStore:
         a single hash-cache lookup followed by a single direct DB lookup.  All
         stored keys are canonical (enforced by :meth:`set`), so no multi-variant
         fallback is needed.
+
+        Each DB lookup is a single ``SqliteDict.get(key, _MISSING)`` round-trip
+        (P3-2a, search-latency plan) rather than a membership-test-then-fetch
+        pair — halves the SqliteDict calls per lookup. The two-step symbol-cache
+        fallback itself is still load-bearing and kept: the cache can return a
+        ``chunk_id`` no longer present in the DB (e.g. after a delete), so the
+        cached-path miss must fall through to the direct lookup rather than
+        returning ``None`` early.
 
         Args:
             chunk_id: Chunk identifier in format "file:lines:type:name" —
@@ -91,17 +115,19 @@ class MetadataStore:
 
         # Fast path: O(1) hash-cache lookup (canonical key always hits if stored)
         cached_chunk_id = self._symbol_cache.get_by_chunk_id(canonical)
-        # pyrefly: ignore [not-iterable]
-        if cached_chunk_id and cached_chunk_id in self._db:
+        if cached_chunk_id:
             # pyrefly: ignore [unsupported-operation]
-            return self._db[cached_chunk_id]
+            value = self._db.get(cached_chunk_id, _MISSING)
+            if value is not _MISSING:
+                return value
 
-        # Direct DB lookup (handles the first access before cache is warm)
-        # pyrefly: ignore [not-iterable]
-        if canonical in self._db:
+        # Direct DB lookup (handles the first access before cache is warm, and
+        # the fallback when the cached chunk_id no longer exists in the DB)
+        # pyrefly: ignore [unsupported-operation]
+        value = self._db.get(canonical, _MISSING)
+        if value is not _MISSING:
             self._symbol_cache.add(canonical)
-            # pyrefly: ignore [unsupported-operation]
-            return self._db[canonical]
+            return value
 
         return None
 
