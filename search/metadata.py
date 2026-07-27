@@ -116,14 +116,14 @@ class MetadataStore:
         # Fast path: O(1) hash-cache lookup (canonical key always hits if stored)
         cached_chunk_id = self._symbol_cache.get_by_chunk_id(canonical)
         if cached_chunk_id:
-            # pyrefly: ignore [unsupported-operation]
+            # pyrefly: ignore [missing-attribute]
             value = self._db.get(cached_chunk_id, _MISSING)
             if value is not _MISSING:
                 return value
 
         # Direct DB lookup (handles the first access before cache is warm, and
         # the fallback when the cached chunk_id no longer exists in the DB)
-        # pyrefly: ignore [unsupported-operation]
+        # pyrefly: ignore [missing-attribute]
         value = self._db.get(canonical, _MISSING)
         if value is not _MISSING:
             self._symbol_cache.add(canonical)
