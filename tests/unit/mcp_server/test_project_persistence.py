@@ -37,8 +37,14 @@ def mock_storage_env(temp_storage_dir, monkeypatch):
 class TestGetSelectionFilePath:
     """Tests for get_selection_file_path()."""
 
-    def test_default_path(self):
-        """Test default path uses home directory."""
+    def test_default_path(self, monkeypatch):
+        """Test default path uses home directory when CODE_SEARCH_STORAGE is unset.
+
+        The session-wide _redirect_test_storage fixture (tests/conftest.py) sets
+        CODE_SEARCH_STORAGE for the whole test run, so this test must explicitly
+        clear it to observe get_selection_file_path()'s true fallback default.
+        """
+        monkeypatch.delenv("CODE_SEARCH_STORAGE", raising=False)
         path = get_selection_file_path()
         assert path.name == "project_selection.json"
         assert ".claude_code_search" in str(path)

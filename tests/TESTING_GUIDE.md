@@ -888,6 +888,26 @@ The following directories are production-only and MUST NOT be accessed by tests:
     └── project_name_*/     # Per-project storage
 ```
 
+### Automatic Safety Net (Phase 8)
+
+Two autouse fixtures in `tests/conftest.py` back up the manual practices below:
+
+- **`_redirect_test_storage`** (session-scoped) points `CODE_SEARCH_STORAGE` at an isolated
+  `tmp_path_factory` directory for the whole test session. `get_storage_dir()`
+  (`mcp_server/storage_manager.py`) reads that env var, so anything that goes through it —
+  including `SnapshotManager()`'s default `storage_dir` — never resolves to the real
+  `~/.claude_code_search` while tests are running.
+- **`_no_real_storage_pollution`** (autouse, every test) is the backstop for what the redirect
+  above cannot reach: `CodeGraphStorage`'s default `storage_dir` reads `Path.home()` directly
+  (`graph/graph_storage.py`), bypassing `get_storage_dir()` entirely, so it is **not** covered by
+  the redirect. This fixture snapshots `~/.claude_code_search/{projects,merkle,graphs}` before and
+  after each test and fails loudly if a new entry appears.
+
+These two fixtures make production-directory pollution fail the test suite instead of silently
+corrupting real data — but they are a safety net, not a substitute for the practices below.
+`storage_dir=` is still mandatory for `CodeGraphStorage` in particular, since it is the one
+component the redirect doesn't cover.
+
 ### Required Isolation Practices
 
 #### 1. Always Use `tmp_path` Fixture
@@ -1024,17 +1044,17 @@ ls -la ~/.claude_code_search/merkle/
   - `tests/unit/test_incremental_indexer.py` (line 119)
   - `tests/slow_integration/test_direct_indexing.py` (line 117)
 
-## Automatic Merkle Snapshot Cleanup
+## Automatic Cleanup of Orphaned Test Projects
 
 ### Overview
 
-After each pytest session, stale merkle snapshots are automatically cleaned up via the `pytest_sessionfinish` hook. This prevents orphaned test artifacts from accumulating in `~/.claude_code_search/merkle/`.
+After each pytest session, orphaned test projects — and their merkle trees — are automatically cleaned up via the `pytest_sessionfinish` hook. This prevents test artifacts from accumulating in `~/.claude_code_search/projects/` and `~/.claude_code_search/merkle/`.
 
 **Why This Matters:**
 
-- Tests create merkle snapshots for incremental indexing
-- Test cleanup removes project directories but not merkle files
-- Without automatic cleanup, orphaned snapshots accumulate over time
+- Tests create project indices and merkle snapshots for incremental indexing
+- Test projects point at pytest's temporary directories (`tmp_path`), which are deleted after the test run
+- Without automatic cleanup, the resulting orphaned project entries — and their merkle trees — accumulate over time
 - Manual cleanup is error-prone and easy to forget
 
 ### How It Works
@@ -1043,7 +1063,7 @@ The cleanup system runs automatically after every pytest session:
 
 1. **Automatic trigger**: Runs after every pytest session (unit, integration, or full suite)
 2. **Silent operation**: No output on success, only warnings on errors/timeouts
-3. **Safe cleanup**: Only removes snapshots without corresponding project indices
+3. **Safe cleanup**: Only removes projects whose `project_path` no longer exists on disk — real projects are left untouched
 4. **Timeout protection**: 30-second timeout to prevent blocking test completion
 
 ### Implementation Details
@@ -1051,20 +1071,34 @@ The cleanup system runs automatically after every pytest session:
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | **Hook** | `tests/conftest.py` → `pytest_sessionfinish()` | Triggers cleanup after tests |
-| **Script** | `tools/cleanup_stale_snapshots.py` | Identifies and removes stale snapshots |
+| **Script** | `tools/cleanup_orphaned_projects.py` | Removes projects whose `project_path` no longer exists, along with their merkle trees |
 | **Mode** | `--auto` flag | Silent non-interactive execution |
 | **Exit codes** | 0 (passed) or 1 (some failures) | Only runs on test completion |
 
-**Hook Implementation** (`tests/conftest.py` lines 71-103):
+**Hook Implementation** (`tests/conftest.py` lines 154-197):
 
 ```python
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    """Clean up stale Merkle snapshots after test session completes."""
+    """Clean up test-created project indices and merkle trees after test session.
+
+    Only runs cleanup_orphaned_projects.py which safely identifies test projects by
+    checking if their project_path still exists. Test projects point to temporary
+    directories (pytest's tmp_path) that are deleted after tests, so they can be
+    safely cleaned up along with their merkle trees.
+
+    NOTE: cleanup_stale_snapshots.py is NOT run automatically because it identifies
+    "stale" snapshots by checking for missing indices, not by checking if the original
+    project path exists. This could incorrectly delete merkle trees for real projects
+    if their indices were temporarily affected by tests.
+    """
     if exitstatus in (0, 1):
-        cleanup_script = Path(__file__).parent.parent / "tools" / "cleanup_stale_snapshots.py"
-        subprocess.run([sys.executable, str(cleanup_script), "--auto"],
-                      capture_output=True, timeout=30)
+        orphan_cleanup_script = Path(__file__).parent.parent / "tools" / "cleanup_orphaned_projects.py"
+        if orphan_cleanup_script.exists():
+            subprocess.run([sys.executable, str(orphan_cleanup_script), "--auto"],
+                          capture_output=True, text=True, timeout=30)
 ```
+
+`tools/cleanup_stale_snapshots.py` (below) is a separate, **manual-only** tool. It is deliberately not run automatically: it judges staleness by missing indices rather than by a missing project path, which could delete a real project's merkle trees if its index was temporarily affected by a test run.
 
 ### Manual Cleanup
 
@@ -1706,9 +1740,9 @@ done
 ```
 
 Any test that fails under randomisation is an ordering dependency — fix the root cause (typically
-global state not reset between tests). The autouse fixtures `reset_global_state` and
-`preserve_original_project_selection` protect the main globals, but new state mutations need
-function-scoped teardown.
+global state not reset between tests). The autouse fixtures `reset_global_state`,
+`_redirect_test_storage`, and `_no_real_storage_pollution` protect the main globals and the real
+`~/.claude_code_search` storage tree, but new state mutations need function-scoped teardown.
 
 ### Measuring and gating coverage
 

@@ -307,65 +307,72 @@ def detach_server_file_logging() -> Generator[None, None, None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def preserve_original_project_selection() -> Generator[None, None, None]:
-    """Preserve and restore original project selection across test session.
+def _redirect_test_storage(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Generator[Path, None, None]:
+    """Redirect CODE_SEARCH_STORAGE to an isolated session-scoped tmp dir.
 
-    Saves the user's original project selection before any tests run,
-    then restores it after all tests complete. This prevents tests from
-    leaving the MCP server in a different project state.
+    Phase 8 (test-suite hardening): get_storage_dir() (mcp_server/storage_manager.py)
+    and get_selection_file_path() (mcp_server/project_persistence.py) both read
+    CODE_SEARCH_STORAGE directly and fall back to the real ~/.claude_code_search
+    when it is unset. ApplicationState.reset() nulls storage_dir every test (see
+    reset_global_state below), so the env var is re-read on first access each
+    test — no extra plumbing needed beyond setting it once, here, for the whole
+    session.
 
-    Runs once at session start (save), yields to run all tests,
-    then runs once at session end (restore).
+    This subsumes the old preserve_original_project_selection fixture: with
+    CODE_SEARCH_STORAGE always redirected, save_project_selection/
+    load_project_selection/clear_project_selection never touch the real
+    project_selection.json in the first place, so there is nothing left to
+    preserve or restore.
+
+    Note: CodeGraphStorage's default storage_dir (graph/graph_storage.py) reads
+    Path.home() directly rather than going through get_storage_dir(), so it does
+    NOT honor this redirect — tests must still pass storage_dir= explicitly (see
+    the graph_storage fixture below and TESTING_GUIDE.md's pitfalls table).
+    _no_real_storage_pollution (below) is the backstop that catches that case.
+
+    Uses pytest.MonkeyPatch directly (not the function-scoped `monkeypatch`
+    fixture, which cannot be session-scoped) so the override is undone at
+    session end even on error.
     """
-    from mcp_server.project_persistence import (
-        clear_project_selection,
-        load_project_selection,
-        save_project_selection,
+    storage_dir = tmp_path_factory.mktemp("code_search_storage")
+    mp = pytest.MonkeyPatch()
+    mp.setenv("CODE_SEARCH_STORAGE", str(storage_dir))
+    yield storage_dir
+    mp.undo()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_storage_pollution() -> Generator[None, None, None]:
+    """Fail loudly if a test writes to real home storage.
+
+    Phase 8 (test-suite hardening): promoted from
+    tests/unit/mcp_server/conftest.py to apply to every test, not just
+    tests/unit/mcp_server/ — now that _redirect_test_storage (above) redirects
+    CODE_SEARCH_STORAGE for the whole session, this is the safety net for
+    anything that bypasses it (e.g. CodeGraphStorage's default storage_dir,
+    which reads Path.home() directly — see the note above).
+
+    Snapshots ~/.claude_code_search/{projects,merkle,graphs} before the test and
+    after; any new entry added during the test triggers an assertion failure.
+    Tests that legitimately need real storage should patch/monkeypatch it
+    explicitly rather than relying on an exemption here.
+    """
+    home_storage = Path.home() / ".claude_code_search"
+    watched = [home_storage / sub for sub in ("projects", "merkle", "graphs")]
+    before = {d: (set(d.iterdir()) if d.exists() else set()) for d in watched}
+    yield
+    after = {d: (set(d.iterdir()) if d.exists() else set()) for d in watched}
+    leaked = {
+        d.name: sorted(p.name for p in (after[d] - before[d]))
+        for d in watched
+        if after[d] - before[d]
+    }
+    assert not leaked, (
+        "test wrote to real home storage — patch the storage writers or use "
+        f"monkeypatch: {leaked}"
     )
-
-    # Save original state BEFORE any tests run
-    original_selection = load_project_selection()
-
-    try:
-        import mcp_server.server as server_module
-
-        # Note: Original project state is tracked via original_selection
-        _ = getattr(server_module, "_current_project", None)  # Check availability
-    except ImportError:
-        pass  # Module might not be available
-
-    yield  # Let all tests run
-
-    # Restore original state AFTER all tests complete
-    try:
-        if original_selection:
-            # Restore saved selection
-            save_project_selection(original_selection["last_project_path"])
-
-            # Also restore server module global (use setter for cross-module sync)
-            try:
-                import mcp_server.server as server_module
-
-                if hasattr(server_module, "set_current_project"):
-                    server_module.set_current_project(
-                        original_selection["last_project_path"]
-                    )
-            except ImportError:
-                pass
-        else:
-            # No original selection - clear to None (clean state)
-            clear_project_selection()
-
-            try:
-                import mcp_server.server as server_module
-
-                if hasattr(server_module, "set_current_project"):
-                    server_module.set_current_project(None)
-            except ImportError:
-                pass
-    except Exception as e:
-        # Don't fail tests if restoration fails, just log it
-        print(f"Warning: Failed to restore original project selection: {e}")
 
 
 # Test fixtures
