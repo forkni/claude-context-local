@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.22.0] - 2026-07-27
+
+### Migration
+
+- **Existing indices need one full, non-incremental reindex.** Three changes in this release each
+  bump the on-disk BM25/GLSL data format, and all three fail *silently*: an `INDEX_VERSION`
+  mismatch (now **4**, up from 2) and a BM25 tokenizer mismatch each only emit a `logger.warning`
+  on load — there is no automatic rebuild, no error, and the warning never reaches the MCP
+  response. The only auto-heal path (`IndexSynchronizer.resync_if_desynced`) triggers solely on a
+  >10% BM25-vs-dense *document-count* difference, which a version bump never produces. Left
+  un-migrated, you get a working but silently degraded index: divergent index/query tokenization,
+  missing BM25 path/symbol augmentation, and GLSL files still parsed by the old fictional-node
+  chunker. One force-full reindex (`index_directory(..., incremental=False)`) resolves all three
+  at once. Measured cost of skipping it: −0.05 to −0.11 Recall@5 and −0.09 to −0.11 MRR across the
+  two migrations that have dedicated A/B evidence (`evaluation/BM25_PATH_AUG_TRACK_D_20260726.md`,
+  BM25 tokenizer A/B).
+
 ### Added
 
 - **GLSL indexing parity with Python** — corrected 18 fictional tree-sitter node types across
@@ -19,21 +38,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (uncommented one-liners merge into `module_preamble` instead of exploding into near-empty
   chunks), and length-preserving parse-error neutralization for anonymous layout qualifiers.
   Adds a GLSL call-graph walk (`call_expression` → `metadata["calls"]`) with GLSL-builtin and
-  TouchDesigner `TD*`-prefix filtering, GLSL relationship edges
-  (`imports`/`uses_type`/`instantiates`/`defines_field`/`defines_constant`), a `"shader"` file
-  role (ranking-neutral), a `"struct"` entity type boost, `.glslinc` as the 8th GLSL extension
-  (20 extensions total), and a base-class fix that had left `complexity_score` at 0 for every
-  tree-sitter language overriding `get_node_complexity` (GLSL/C/C++/C#/Go/Rust).
-  **Existing indices need one full, non-incremental reindex**: Merkle change detection keys on
-  file content, so an incremental pass over unchanged shaders keeps serving the old degraded
-  chunks indefinitely.
+  TouchDesigner `TD*`-prefix filtering (`glsl_filter_td_prefix`, default on), GLSL relationship
+  edges (`imports`/`uses_type`/`instantiates`/`defines_field`/`defines_constant`), a `"shader"`
+  file role (ranking-neutral), a `"struct"` entity type boost, `.glslinc` as the 8th GLSL
+  extension (20 extensions total), and a base-class fix that had left `complexity_score` at 0 for
+  every tree-sitter language overriding `get_node_complexity` (GLSL/C/C++/C#/Go/Rust). One real
+  file measured: 4 chunks (2 unnamed blobs, 0 docstrings, 0 call edges, complexity 0) → 13 chunks
+  (11 named, 9 with docstrings, 1 resolved call edge, non-zero complexity).
 - **Persistent chunk embedding cache** (`embeddings/chunk_cache.py`) — content-hash-keyed cache of
   chunk embedding vectors persisted to `chunk_embeddings.bin`, cutting a full reindex's embedding
-  phase from 33.94s to 0.78s (43×) once the codebase is unchanged. On by default
+  phase from 33.94s to 0.75s (43×) once the codebase is unchanged. On by default
   (`enable_chunk_cache`, `search/config.py`).
+- **Widened retrieval funnel** — hybrid `search_k` raised from `k*2` to
+  `max(reranker_budget, k*5)`, and the fused pool is held at the reranker's `top_k_candidates`
+  before neural rerank, truncated to `k` after. The graph-enhanced cap changed from a hardcoded
+  `k*4` to a configurable `graph_enhanced.max_results_multiplier` (default 8). Adds
+  `recall@20`/`recall@50`/`pool_hit_rate`/`pool_size` benchmark metrics — the single largest
+  recall improvement in this release.
+- **Identifier-preserving BM25 tokenizer** (`bm25_tokenizer` config: `legacy`/`whole`/`additive`,
+  default now `whole`) — keeps identifiers intact instead of stemming them apart.
+- **BM25 path/symbol token augmentation** — BM25 documents are now augmented with path and symbol
+  tokens at build time. **Adopted** after A/B verification (`evaluation/BM25_PATH_AUG_TRACK_D_20260726.md`):
+  63-query set MRR 0.3207 → 0.4337 (+0.113), Recall@5 0.3180 → 0.3992 (+0.081), 13 queries
+  improved vs. 1 regressed. Drives the `INDEX_VERSION` 3 → 4 bump.
+- Real Okapi `bm25_k1`/`bm25_b` scoring parameters are now wired and query-time tunable (no
+  reindex required); a k1×b sweep confirmed the shipped defaults (1.5/0.75) are not beaten
+  decisively by any tested cell (`evaluation/BM25_K1B_SWEEP_20260726.md`).
+- `bm25_reserved_slots` — an RRF pool-reserve knob for BM25-only recall, default 0
+  (byte-identical behavior at default; retained for experimentation).
+- **Opt-in single-pass rerank mode** (`RerankerConfig.single_pass`, env
+  `CLAUDE_RERANKER_SINGLE_PASS`, default off) — roughly halves reranking latency at a measured
+  recall cost, so it ships as a documented latency knob rather than a new default.
+- **`codefuse-ai/F2LLM-v2-0.6B` embedding model registered** and available via the launcher's
+  Quick Model Switch (option 6). A/B evidence (`evaluation/EMBEDDER_F2LLM_AB_20260726.md`): MRR
+  +0.026/+0.027 mean over `Qwen3-Embedding-0.6B` across both golden sets, recall flat, latency and
+  VRAM footprint unchanged. **This is a new available model, not a changed default** — the
+  packaged default embedder remains `BAAI/bge-m3`.
+- `index_directory`'s response now includes a `call_edges_injected` count.
+- Search-latency and full-index phase profilers (`scripts/benchmark/profiling/`) for measuring
+  per-phase wall-clock cost of a search or reindex run.
+- 96-query expanded golden evaluation set (63 original + 33 hard queries) with a grading harness,
+  for benchmark runs that need more coverage than the original SSCG set.
 
 ### Changed
 
+- Reranker pool budget (`top_k_candidates`) reduced from 50 to 30 — quality-neutral within ±0.025
+  on both golden sets, −32% reranking latency. `configure_reranking`'s documented default updated
+  to match.
+- `search_code` results now **collapse `split_block` fragments by default**
+  (`RerankerConfig.dedupe_split_blocks = True`) — a query that previously returned multiple
+  fragments of one oversized chunk now returns one. Manual split_block dedupe on the client side
+  is no longer necessary.
+- `graph_enhanced.centrality_alpha` default lowered from 0.3 to 0.0 — centrality now only
+  reorders results via `CentralityRanker.rerank()` rather than blending into the ranking score
+  directly; the benchmark runner gained `--with-centrality`/`--centrality-alpha` flags to make
+  this tunable and measurable.
+- `call_graph.lsp_total_timeout_seconds` default raised from 120 to 180.
+- `auto_reindex` now honors `config.performance.enable_auto_reindex` instead of being silently
+  ignored; drift detection now counts distinct changed *files* rather than change *events* (a
+  2-file change could previously promote to a full rebuild while a 348-file change stayed
+  incremental).
+- `index_directory` now returns the *effective* `include_dirs`/`exclude_dirs` actually applied,
+  and hard-fails on a full reindex that adds 0 chunks instead of silently reporting success.
 - **Chunk embedding cache now records provenance** — the cache header stores a
   `device|dtype|backend` string (`ModelLoader.describe_numerics()`, computed without loading the
   model) alongside the existing model/dimension check, so flipping `enable_fp16`, `prefer_bf16`, or
@@ -46,9 +112,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Chunk cache hit rate is now logged (`[CHUNK_CACHE] ... hits=N misses=N hit_rate=X% size=N cap=N`)
   on both the all-cached-hit and normal save paths; previously silent even on a 0% hit-rate
   regression.
+- **`mcp-search-tool` skill reinstated** — the skill removed in v0.21.0 (superseded by
+  `auto-git-workflow` for git operations) has been restored and substantially expanded for MCP
+  search-tool guidance (`SKILL.md` plus `references/advanced-features.md`, `performance.md`,
+  `parameters.md`, `search-patterns.md`, `tool-index.md`), documenting the widened retrieval
+  funnel, core/advanced tool tiers, and the 2026-07-25/26 benchmark results.
 
 ### Fixed
 
+- **Every full reindex discarded 100% of resolver-derived call edges** — `HybridSearcher.clear_index()`'s
+  graph re-sync was guarded by `if ... and self.dense_index._graph:`, but `GraphIntegration`
+  defines `__len__` without `__bool__`, so a freshly-created 0-node graph was falsy and the
+  re-sync silently never ran. Verified impact before the fix: 4,720 nodes / 14,118 edges saved
+  with **0** pyan/libcst/LSP resolver-sourced edges. This is the highest-severity fix in this
+  release.
+- `handle_clear_index` deleted a filename that never existed (`chunks_metadata.db` instead of the
+  real `metadata.db`), silently leaving the metadata DB, its `-wal`/`-shm` sidecars (routinely
+  full-size, not crash-only debris), `chunk_ids.pkl`, and the call graph behind after a "clear
+  index." Consolidated the three divergent index-deletion lists (`index_handlers.py` ×2,
+  `search/indexer.py::clear_index`) onto one corrected file set, including cleanup of the legacy
+  `metadata_symbol_cache.json` orphan. An explicit clear-index now also drops the chunk embedding
+  cache itself — the escape hatch for suspect vectors — while the internal pre-reindex clear path
+  correctly preserves it.
+- `CodeGraphStorage.clear()` left an orphaned `communities.json` behind, read back live by
+  `CommunityRefreshStage`/`SubgraphExtractor`/`EgoGraphRetriever` — the same phantom-artifact
+  class as the fix above, applied to a file that fix missed.
 - **Non-semantic chunks lost relationship edges on the live indexing path** —
   `GraphIntegration._make_spec_from_embedding` (`search/graph_integration.py`) dropped every
   chunk outside `SEMANTIC_TYPES` unconditionally, while its `add_chunk` twin lets non-semantic
@@ -57,14 +145,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `include`/`macro`/`declaration` chunks silently lost their `imports`/`defines_constant` edges.
   The spec builder now mirrors `add_chunk`'s escape hatch; covered by a unit test and a
   persisted-roundtrip integration test (`tests/fast_integration/test_glsl_call_graph_resolution.py`).
-- **`handle_clear_index` deleted a filename that never existed** (`chunks_metadata.db` instead of
-  the real `metadata.db`), silently leaving the metadata DB, its `-wal`/`-shm` sidecars (routinely
-  full-size, not crash-only debris), `chunk_ids.pkl`, and the call graph behind after a "clear
-  index." Consolidated the three divergent index-deletion lists (`index_handlers.py` ×2,
-  `search/indexer.py::clear_index`) onto one corrected file set, including cleanup of the legacy
-  `metadata_symbol_cache.json` orphan. An explicit clear-index now also drops the chunk embedding
-  cache itself — the escape hatch for suspect vectors — while the internal pre-reindex clear path
-  correctly preserves it.
+- A caught `PermissionError` during a force-full pre-clear previously reported success with 0
+  chunks (a half-purged, unusable index); force-reindex now hard-fails instead.
+  `get_canonical_project_info` previously picked the alphabetically-first per-model
+  `project_info.json`, silently dropping stored `user_excluded_dirs` (9,211 chunks / 603 files
+  indexed instead of the intended ~2,182 / 200).
+- Drift-based reindex promotion counted change *events* rather than distinct changed *files* (a
+  2-file change could promote to a full rebuild while a 348-file change stayed incremental), and
+  a drift-promoted reindex reported the full-rebuild file count instead of the actual change set.
+  Repairing this uncovered the rotted `slow_integration` suite (14 failed / 92 passed / 3 errors)
+  and that `clear_index()` nulled `BatchOperations._metadata_store` without re-wiring it, crashing
+  every post-full-index `remove_files()`.
+- **Centrality memo never actually hit** — moved from the per-query `CentralityRanker` instance
+  (recreated every call, so the cache was always empty) to the long-lived `CodeGraphStorage`,
+  keyed on a monotonic version counter rather than node/edge counts (which equal-count churn and
+  in-place edge mutation could defeat). Eliminates ~53ms/query of redundant PageRank recompute.
+  See `docs/adr/0010-centrality-memo-invalidation.md`.
+- SSCG subgraph extraction is now skipped when `include_subgraph` is false — previously computed
+  unconditionally on every query and discarded under the production default.
+- Result assembly (centrality scoring + subgraph extraction) was running outside the reindex read
+  lock — a concurrent reindex could mutate the graph mid-scoring. `SearchOrchestrator._execute`
+  split into `_maybe_reindex` (write-lock scope) + `_search`, so `run()` now holds one read lock
+  across `_search` and `_assemble`. Closes the ADR-0008 gap.
+- Dropped `SymbolHashCache` disk persistence and a dead symbol-name lookup path.
+- Log hygiene: zero-chunk files are now named in warnings; the dropped-URI counter is split into
+  `n_dropped_non_file_uri`/`n_dropped_outside_root`; legitimately-empty files no longer warn;
+  scan counters now sum (`scanned + skipped + empty == supported`); a GLSL call-graph log line
+  that was discarded at source by a too-late logging configuration now reaches a handler; recovery-
+  ladder probe misses no longer warn; `[PARSE_ERROR]` downgrades to DEBUG when the surrounding
+  content survives chunking.
+- Minor: safer futures-dict typing, tmp-file cleanup no longer raises out of
+  `ChunkEmbeddingCache.save()`, and a corrected pyrefly suppression category.
+
+### Performance
+
+- Composite search-latency win from six independent fixes (parallelized call-edge resolvers,
+  `readline()`-based frame reads, length-sorted embedding batching, memoized BM25 tokenizer
+  fallback, process-isolated pyan/libcst resolvers, single round-trip `MetadataStore.get`):
+  measured **138ms/query (13.5%)** on an isolated before/after A/B on the same index, with the
+  untouched rerank phase (~80% of wall clock) differing by only 0.43% as a comparability check.
+- Full-index embedding phase: 33.94s → 0.75s warm-cache median (43×) via the persistent chunk
+  embedding cache above.
+
+### Security
+
+- `gitpython` bumped to ≥3.1.55 (8 argument-injection CVEs) and `setuptools` to ≥83.0.0
+  (CVE-2026-59890 MANIFEST.in path traversal) — 9 CVEs total.
+
+### Removed
+
+- `bm25_k_parameter` config field — dead code, never read by any scoring path, superseded by
+  real `bm25_k1`/`bm25_b`. Safe for existing configs: unknown keys are silently dropped.
+- `tree-sitter-java` dependency — was declared but had no corresponding language-registry entry.
 
 ---
 
