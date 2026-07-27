@@ -4,6 +4,7 @@
     "end_line": 5,
     "language": "c",
     "metadata": {
+      "complexity_score": 1,
       "name": "add",
       "node_type": "function_definition"
     },
@@ -30,5 +31,15 @@
     },
     "start_line": 12,
     "type": "type_definition"
+  },
+  {
+    "content": "/* Tiny C fixture: function, struct, typedef. */",
+    "end_line": 1,
+    "language": "c",
+    "metadata": {
+      "type": "module_preamble"
+    },
+    "start_line": 1,
+    "type": "module_preamble"
   }
 ]

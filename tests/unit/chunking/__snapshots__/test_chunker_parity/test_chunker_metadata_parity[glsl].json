@@ -1,21 +1,246 @@
 [
   {
-    "content": "void main() {\n    vec3 n = normalize(gl_Normal);\n    gl_Position = uModel * vec4(n, 1.0);\n    gl_FragColor = texture2D(uTexture, vec2(0.5));\n}",
-    "end_line": 10,
+    "content": "#include \"common.glslinc\"\n",
+    "end_line": 6,
     "language": "glsl",
     "metadata": {
-      "has_builtin_vars": true,
-      "has_math_ops": true,
-      "has_texture_ops": true,
-      "name": "main",
-      "node_type": "function_definition"
+      "include_path": "common.glslinc",
+      "name": "common.glslinc",
+      "node_type": "preproc_include",
+      "relationships": [
+        {
+          "line_number": 5,
+          "metadata": {
+            "is_system_include": false
+          },
+          "relationship_type": "imports",
+          "target_name": "common.glslinc"
+        }
+      ]
     },
-    "start_line": 6,
+    "start_line": 5,
+    "type": "preproc_include"
+  },
+  {
+    "content": "#define PI 3.14159265\n",
+    "end_line": 8,
+    "language": "glsl",
+    "metadata": {
+      "name": "PI",
+      "node_type": "preproc_def",
+      "relationships": [
+        {
+          "line_number": 7,
+          "metadata": {
+            "definition": true,
+            "macro": true
+          },
+          "relationship_type": "defines_constant",
+          "target_name": "PI"
+        }
+      ]
+    },
+    "start_line": 7,
+    "type": "preproc_def"
+  },
+  {
+    "content": "#define SQUARE(x) ((x) * (x))\n",
+    "end_line": 9,
+    "language": "glsl",
+    "metadata": {
+      "name": "SQUARE",
+      "node_type": "preproc_function_def",
+      "relationships": []
+    },
+    "start_line": 8,
+    "type": "preproc_function_def"
+  },
+  {
+    "content": "const int MAX_LIGHTS = 4;",
+    "end_line": 11,
+    "language": "glsl",
+    "metadata": {
+      "docstring": "Maximum number of lights this shader supports.",
+      "name": "MAX_LIGHTS",
+      "node_type": "declaration",
+      "relationships": [
+        {
+          "line_number": 11,
+          "metadata": {
+            "definition": true
+          },
+          "relationship_type": "defines_constant",
+          "target_name": "MAX_LIGHTS"
+        }
+      ],
+      "storage_qualifiers": [
+        "const"
+      ]
+    },
+    "start_line": 11,
+    "type": "declaration"
+  },
+  {
+    "content": "layout(binding = 0) uniform sampler2D uTexture;",
+    "end_line": 13,
+    "language": "glsl",
+    "metadata": {
+      "docstring": "Texture sampler",
+      "has_texture_ops": true,
+      "layout_qualifiers": [
+        "binding = 0"
+      ],
+      "name": "uTexture",
+      "node_type": "declaration",
+      "relationships": [],
+      "storage_qualifiers": [
+        "uniform"
+      ]
+    },
+    "start_line": 13,
+    "type": "declaration"
+  },
+  {
+    "content": "layout(std140) uniform Camera {\n    mat4 viewProj;\n    vec3 position;\n} cam;",
+    "end_line": 18,
+    "language": "glsl",
+    "metadata": {
+      "block_name": "Camera",
+      "fields": [
+        "viewProj",
+        "position"
+      ],
+      "instance_name": "cam",
+      "layout_qualifiers": [
+        "std140"
+      ],
+      "name": "cam",
+      "node_type": "declaration",
+      "relationships": [
+        {
+          "line_number": 16,
+          "metadata": {
+            "field_name": "viewProj",
+            "struct_name": "Camera"
+          },
+          "relationship_type": "defines_field",
+          "target_name": "Camera.viewProj"
+        },
+        {
+          "line_number": 17,
+          "metadata": {
+            "field_name": "position",
+            "struct_name": "Camera"
+          },
+          "relationship_type": "defines_field",
+          "target_name": "Camera.position"
+        }
+      ],
+      "storage_qualifiers": [
+        "uniform"
+      ]
+    },
+    "start_line": 15,
+    "type": "declaration"
+  },
+  {
+    "content": "struct Material {\n    vec3 albedo;\n    float roughness;\n}",
+    "end_line": 24,
+    "language": "glsl",
+    "metadata": {
+      "docstring": "Physically-based material properties.",
+      "fields": [
+        "albedo",
+        "roughness"
+      ],
+      "name": "Material",
+      "node_type": "struct_specifier",
+      "relationships": [
+        {
+          "line_number": 22,
+          "metadata": {
+            "field_name": "albedo",
+            "struct_name": "Material"
+          },
+          "relationship_type": "defines_field",
+          "target_name": "Material.albedo"
+        },
+        {
+          "line_number": 23,
+          "metadata": {
+            "field_name": "roughness",
+            "struct_name": "Material"
+          },
+          "relationship_type": "defines_field",
+          "target_name": "Material.roughness"
+        }
+      ]
+    },
+    "start_line": 21,
+    "type": "struct_specifier"
+  },
+  {
+    "content": "vec3 shade(Material mat, vec3 lightDir) {\n    return mat.albedo * max(dot(lightDir, vec3(0.0, 1.0, 0.0)), 0.0);\n}",
+    "end_line": 29,
+    "language": "glsl",
+    "metadata": {
+      "calls": [],
+      "complexity_score": 1,
+      "docstring": "Shade a point using the given material and light direction.",
+      "has_math_ops": true,
+      "name": "shade",
+      "node_type": "function_definition",
+      "relationships": [
+        {
+          "line_number": 27,
+          "metadata": {
+            "annotation_location": "parameter",
+            "parameter_name": "mat"
+          },
+          "relationship_type": "uses_type",
+          "target_name": "Material"
+        }
+      ]
+    },
+    "start_line": 27,
     "type": "function_definition"
   },
   {
-    "content": "// Tiny GLSL fixture: uniforms, main function with builtins + texture + math ops.\n\nuniform mat4 uModel;\nuniform sampler2D uTexture;",
-    "end_line": 4,
+    "content": "void main() {\n    Material mat = Material(vec3(1.0), 0.5);\n    vec3 color = shade(mat, vec3(0.0, 1.0, 0.0));\n    float falloff = SQUARE(1.0 / float(MAX_LIGHTS)) * PI;\n    gl_FragColor = vec4(color * falloff, 1.0);\n}",
+    "end_line": 36,
+    "language": "glsl",
+    "metadata": {
+      "calls": [
+        [
+          "shade",
+          33
+        ],
+        [
+          "SQUARE",
+          34
+        ]
+      ],
+      "complexity_score": 1,
+      "has_builtin_vars": true,
+      "name": "main",
+      "node_type": "function_definition",
+      "relationships": [
+        {
+          "line_number": 32,
+          "metadata": {
+            "struct_name": "Material"
+          },
+          "relationship_type": "instantiates",
+          "target_name": "Material"
+        }
+      ]
+    },
+    "start_line": 31,
+    "type": "function_definition"
+  },
+  {
+    "content": "// Tiny GLSL fixture: layout+binding uniforms, a UBO block, a struct, object-\n// and function-like macros, #include, comment-attached const, and two\n// functions where one calls the other.",
+    "end_line": 3,
     "language": "glsl",
     "metadata": {
       "type": "module_preamble"

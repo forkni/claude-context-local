@@ -46,5 +46,15 @@
     },
     "start_line": 14,
     "type": "method_definition"
+  },
+  {
+    "content": "// Tiny TS fixture: exported async function, generic class with methods.",
+    "end_line": 1,
+    "language": "typescript",
+    "metadata": {
+      "type": "module_preamble"
+    },
+    "start_line": 1,
+    "type": "module_preamble"
   }
 ]

@@ -1,0 +1,16 @@
+#version 430 core
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, rgba32f) uniform image2D outputImage;
+
+// Doubles every channel of the given color.
+vec4 brighten(vec4 color) {
+    return color * 2.0;
+}
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    vec4 color = imageLoad(outputImage, coord);
+    imageStore(outputImage, coord, brighten(color));
+}

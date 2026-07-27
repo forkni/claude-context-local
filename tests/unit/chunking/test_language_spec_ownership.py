@@ -129,6 +129,36 @@ class TestLanguageSpecTable:
                 f"LANGUAGE_SPECS[{lang!r}].load_grammar() returned {type(result).__name__}"
             )
 
+    def test_splittable_node_types_exist_in_grammar(self):
+        """Every splittable_node_types member must be a real named node kind.
+
+        Regression test for a bug class where LANGUAGE_SPECS entries named
+        node types that do not exist in the actual tree-sitter grammar (e.g.
+        GLSL's "uniform_block", JS/TS's "function", Go's
+        "interface_declaration"/"struct_declaration"). A fictional entry is
+        silent dead weight: should_chunk_node() never matches it, so the
+        intended chunk boundary is simply never produced — no error, no
+        warning, just degraded output.
+        """
+        for lang, spec in LANGUAGE_SPECS.items():
+            try:
+                grammar_language = spec.load_grammar()
+            except (ImportError, ValueError):
+                pytest.skip(
+                    f"{lang} grammar package not installed — skipping ownership test"
+                )
+                continue
+            kinds = {
+                grammar_language.node_kind_for_id(i)
+                for i in range(grammar_language.node_kind_count)
+                if grammar_language.node_kind_is_named(i)
+            }
+            fictional = spec.splittable_node_types - kinds
+            assert not fictional, (
+                f"LANGUAGE_SPECS[{lang!r}].splittable_node_types contains node "
+                f"types that do not exist in the grammar: {sorted(fictional)}"
+            )
+
 
 class TestLeafChunkerOwnership:
     """No leaf chunker defines _load_language or _get_splittable_node_types."""

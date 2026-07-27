@@ -57,5 +57,15 @@
     },
     "start_line": 17,
     "type": "method_definition"
+  },
+  {
+    "content": "// Tiny JS fixture: async function, generator, class with method.",
+    "end_line": 1,
+    "language": "javascript",
+    "metadata": {
+      "type": "module_preamble"
+    },
+    "start_line": 1,
+    "type": "module_preamble"
   }
 ]
