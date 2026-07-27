@@ -286,6 +286,62 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         """
         return 1
 
+    def _apply_complexity_score(self, node: Any, metadata: dict[str, Any]) -> None:
+        """Populate ``metadata["complexity_score"]`` for function-like nodes.
+
+        `get_node_complexity` is correct and already overridden by chunkers
+        that support it (Python, GLSL), but was previously consumed only by
+        adaptive sizing (`chunk_parsed` below, `repo_profiler.py`) — inert
+        under the default `sizing_mode="fixed"` — and never written into the
+        chunk's own metadata, so `CodeChunk.complexity_score`
+        (`multi_language_chunker.py`, read from
+        `tchunk.metadata["complexity_score"]`) silently stayed 0 for every
+        non-Python language. `PythonChunker.extract_metadata` sets the key
+        itself, so the ``"complexity_score" not in metadata`` guard is a
+        no-op there and this is purely additive for the rest.
+
+        Scoped to `function_definition`/`decorated_definition` — the same
+        node types the large-node-splitting gate uses (see `chunk_parsed`)
+        and the only ones Python's own extract_metadata scores — so struct/
+        declaration/preproc chunks stay unscored rather than getting a
+        misleading flat 1 from the base `get_node_complexity` default.
+
+        Args:
+            node: Tree-sitter node just passed to `extract_metadata`.
+            metadata: The metadata dict `extract_metadata` returned; mutated
+                in place.
+        """
+        if "complexity_score" in metadata:
+            return
+        if node.type in ("function_definition", "decorated_definition"):
+            metadata["complexity_score"] = self.get_node_complexity(node)
+
+    def preprocess_source_for_parse(self, source_bytes: bytes) -> bytes:
+        """Optional per-language rewrite applied only to the parser's input.
+
+        Default: identity (no rewrite). Override for grammars whose parser
+        hard-errors on a construct that can be neutralized without changing
+        total byte length or any newline position — see
+        `GLSLChunker.preprocess_source_for_parse` for the motivating case
+        (an anonymous layout qualifier that otherwise swallows every
+        function defined after it into one ERROR node).
+
+        The result is fed to `self.parser.parse(...)` only. The caller
+        (`TreeSitterChunker.parse_file`) keeps the original, un-rewritten
+        text as `ParsedSource.content` — the source chunk content is sliced
+        from — so a rewrite must preserve byte length and line positions
+        exactly, or downstream node byte offsets will point at the wrong
+        text.
+
+        Args:
+            source_bytes: UTF-8-encoded original source.
+
+        Returns:
+            Bytes to feed the parser. Identical in total length and
+            newline positions to `source_bytes` unless overridden.
+        """
+        return source_bytes
+
     def should_chunk_node(self, node: Any) -> bool:
         """Check if a node should be chunked.
 
@@ -340,6 +396,179 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
             if child.type in id_types:
                 return self.get_node_text(child, source)
         return None
+
+    # ------------------------------------------------------------------
+    # Sibling-comment attachment (opt-in helpers for non-Python leaves)
+    # ------------------------------------------------------------------
+    # Python attaches a docstring *inside* the node it documents (a leading
+    # string-literal statement — see PythonChunker._extract_docstring). Every
+    # other grammar in this repo has no such convention: an explanatory
+    # comment is an ordinary root-level *sibling* of the node it documents,
+    # either directly above it or trailing on the same line. These helpers
+    # are the reusable, language-agnostic answer to that gap. They are
+    # opt-in: the base extract_metadata template never calls them, so a leaf
+    # adopts sibling-comment docstrings by calling
+    # _extract_sibling_comment_docstring explicitly (GLSLChunker is the
+    # first; C/C++/Go/Rust can follow the same pattern later).
+
+    def _has_leading_comment_sibling(self, node: Any) -> bool:
+        """Cheap structural check: does node have a genuine leading comment?
+
+        A "genuine" leading comment is node's immediate `prev_sibling`, is
+        `comment`-typed, and is line-adjacent to node (no blank-line gap).
+        A comment that itself shares a line with an *earlier* sibling is
+        that sibling's trailing comment, not node's leading comment — this
+        excludes it so a single same-line comment never attaches to both
+        neighbours at once (mirrors the first-iteration accept condition of
+        `_leading_comment_sibling_run`, without walking the full run, since
+        this is called from `should_chunk_node` on every node visited).
+
+        Args:
+            node: Tree-sitter node to check.
+
+        Returns:
+            True if node has an attached leading comment.
+        """
+        prev = node.prev_sibling
+        if prev is None or prev.type != "comment":
+            return False
+        if prev.end_point[0] < node.start_point[0] - 1:
+            return False
+        earlier = prev.prev_sibling
+        return not (earlier is not None and earlier.end_point[0] == prev.start_point[0])
+
+    def _leading_comment_sibling_run(self, node: Any) -> list[Any]:
+        """Collect node's leading-comment sibling run, oldest first.
+
+        Walks `prev_sibling`, accepting `comment` nodes as long as each is
+        line-adjacent to the run accepted so far (no blank-line gap) and
+        isn't itself an earlier sibling's trailing comment (see
+        `_has_leading_comment_sibling`). Stops at the first non-comment
+        sibling, the first blank-line gap, or the first comment already
+        claimed as a trailing comment.
+
+        Args:
+            node: Tree-sitter node to look for a leading comment run above.
+
+        Returns:
+            Comment nodes in source order (topmost first); empty if node
+            has no adjacent leading comment.
+        """
+        run: list[Any] = []
+        boundary_line = node.start_point[0]
+        current = node.prev_sibling
+        while current is not None and current.type == "comment":
+            if current.end_point[0] < boundary_line - 1:
+                break  # blank-line gap - the run stops here
+            earlier = current.prev_sibling
+            if earlier is not None and earlier.end_point[0] == current.start_point[0]:
+                break  # claimed as `earlier`'s trailing comment instead
+            run.append(current)
+            boundary_line = current.start_point[0]
+            current = current.prev_sibling
+        run.reverse()
+        return run
+
+    def _trailing_comment_sibling(self, node: Any) -> Any | None:
+        """Return node's same-line trailing comment sibling, if any.
+
+        A trailing comment (`uniform vec4 x; // RGBA border color`) is
+        node's `next_sibling` whose `start_point[0]` equals node's own
+        `end_point[0]` — it starts on the same source line node ends on.
+
+        Args:
+            node: Tree-sitter node to look for a trailing comment after.
+
+        Returns:
+            The comment node, or None if the next sibling isn't a same-line
+            comment.
+        """
+        nxt = node.next_sibling
+        if (
+            nxt is not None
+            and nxt.type == "comment"
+            and nxt.start_point[0] == node.end_point[0]
+        ):
+            return nxt
+        return None
+
+    def _has_attached_comment_sibling(self, node: Any) -> bool:
+        """True if node has a leading and/or trailing comment sibling.
+
+        Purely structural (sibling type + line-position checks) — needs no
+        source bytes, so it is safe to call from `should_chunk_node`, which
+        receives only the node.
+
+        Args:
+            node: Tree-sitter node to check.
+
+        Returns:
+            True if a leading comment run or a trailing same-line comment
+            is attached to node.
+        """
+        return (
+            self._has_leading_comment_sibling(node)
+            or self._trailing_comment_sibling(node) is not None
+        )
+
+    def _clean_comment_text(self, comment_node: Any, source: bytes) -> str:
+        """Decode a comment node's text and strip its comment markers.
+
+        Strips `//`/`/* */` delimiters and CRLF artifacts — Windows-authored
+        sources (e.g. TouchDesigner's `.glsl` export) carry CRLF line
+        endings; `parse_file` normalizes the source handed to the parser,
+        but individual comment node text can still carry a trailing `\r`.
+
+        Args:
+            comment_node: A `comment`-typed tree-sitter node.
+            source: Source code bytes.
+
+        Returns:
+            Cleaned comment text with markers and CRLF noise removed.
+        """
+        text = self.get_node_text(comment_node, source)
+        text = text.replace("\r\n", "\n").replace("\r", "")
+        stripped = text.strip()
+        if stripped.startswith("//"):
+            return stripped[2:].strip()
+        if stripped.startswith("/*"):
+            inner = stripped[2:]
+            if inner.endswith("*/"):
+                inner = inner[:-2]
+            lines = [ln.strip().lstrip("*").strip() for ln in inner.splitlines()]
+            lines = [ln for ln in lines if ln]
+            return "\n".join(lines) if lines else inner.strip()
+        return stripped
+
+    def _extract_sibling_comment_docstring(
+        self, node: Any, source: bytes
+    ) -> str | None:
+        """Fold node's leading and/or trailing comment siblings into one docstring.
+
+        The reusable, opt-in analogue of `PythonChunker._extract_docstring`
+        for grammars where doc comments are root-level siblings rather than
+        a leading string-literal statement inside the node. Call this
+        explicitly from a leaf's `extract_metadata` to populate the same
+        `CodeChunk.docstring` channel Python uses.
+
+        Args:
+            node: Tree-sitter node to collect attached comments for.
+            source: Source code bytes.
+
+        Returns:
+            Combined, cleaned comment text (leading run, then trailing
+            line, newline-joined), or None if no attached comment exists.
+        """
+        parts = []
+        leading = self._leading_comment_sibling_run(node)
+        if leading:
+            parts.append(
+                "\n".join(self._clean_comment_text(c, source) for c in leading)
+            )
+        trailing = self._trailing_comment_sibling(node)
+        if trailing is not None:
+            parts.append(self._clean_comment_text(trailing, source))
+        return "\n".join(parts) if parts else None
 
     def get_line_numbers(self, node: Any) -> tuple[int, int]:
         """Get start and end line numbers for a node.
@@ -588,6 +817,17 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                 return self._find_body_node(child)
         return None
 
+    def _split_block_marker(self) -> str:
+        """Comment-syntax marker inserted between a split chunk's signature and body.
+
+        Default is Python's `#` line comment. Override for languages whose
+        comment syntax differs — see GLSLChunker._split_block_marker (`//`).
+
+        Returns:
+            A single marker line (no trailing newline).
+        """
+        return "    # ... (split block)"
+
     def _create_split_chunk(
         self,
         signature: str,
@@ -614,7 +854,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         body_content = source_bytes[start_byte:end_byte].decode("utf-8")
 
         # Prefix with signature and docstring marker
-        content = f"{signature}\n    # ... (split block)\n{body_content}"
+        content = f"{signature}\n{self._split_block_marker()}\n{body_content}"
 
         # Calculate lines
         start_line = nodes[0].start_point[0] + 1
@@ -622,6 +862,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
 
         # Build metadata
         metadata = self.extract_metadata(original_node, source_bytes)
+        self._apply_complexity_score(original_node, metadata)
         metadata["split_block"] = True
         if parent_info:
             metadata.update(parent_info)
@@ -888,6 +1129,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
 
                 content = self.get_node_text(node, source_bytes)
                 metadata = self.extract_metadata(node, source_bytes)
+                self._apply_complexity_score(node, metadata)
 
                 # Add parent information if available
                 if parent_info:
@@ -990,53 +1232,167 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         code nested inside e.g. an `if TYPE_CHECKING:` guard is out of scope;
         the reported gap was specifically top-of-file statements.
 
+        Two duplication/loss failure modes, both measured on a real GLSL
+        file and fixed here:
+
+        - A comment already folded into a *following* chunked sibling's own
+          leading-docstring walk (`_leading_comment_sibling_run`) must not
+          also survive as preamble content, or it is emitted twice — trimmed
+          by `_trim_claimed_trailing_comments` before a run is classified.
+        - A comment already folded into a *preceding* chunked sibling's
+          trailing-docstring (`_trailing_comment_sibling`) must not start
+          the next run either — filtered out via
+          `_is_trailing_comment_of_chunked_sibling` before it ever enters
+          `run_nodes`.
+
+        After trimming, only the file's very first run gets a further
+        rescue: an all-comment run that survives trimming there (e.g. a
+        file-header comment separated from the first chunk by a blank line)
+        has no chunk anywhere in the file to claim it, so it is emitted
+        rather than dropped as boilerplate. Every later comment-only run is
+        left boilerplate-skippable exactly as before — this only recovers
+        the one orphan case with no other owner, without changing chunk
+        counts for the many-comments-mid-file shape.
+
         Args:
             root_node: The tree-sitter root node (whole file).
             source_bytes: UTF-8-encoded source, for verbatim byte-range slicing.
 
         Returns:
             One chunk per contiguous run that contains more than
-            imports/comments/docstring text; empty list if every run is
-            boilerplate-only (e.g. an imports-only file).
+            imports/comments/docstring text (plus the rescued file-header
+            comment, if any); empty list if every run is boilerplate-only
+            (e.g. an imports-only file).
         """
         preamble_chunks: list[TreeSitterChunk] = []
         run_nodes: list[Any] = []
+        seen_chunk = False
 
-        def flush() -> None:
-            if not run_nodes or self._is_boilerplate_run(run_nodes):
-                run_nodes.clear()
+        def flush(next_node: Any | None) -> None:
+            if not run_nodes:
                 return
-            start_line = run_nodes[0].start_point[0] + 1
-            end_line = run_nodes[-1].end_point[0] + 1
-            content = source_bytes[
-                run_nodes[0].start_byte : run_nodes[-1].end_byte
-            ].decode("utf-8", errors="replace")
-            if not any(ch.isalnum() for ch in content):
-                # Punctuation-only leftover (e.g. an orphan trailing `;` after
-                # a struct/typedef declaration whose body was already chunked
-                # separately) — nothing worth indexing.
-                run_nodes.clear()
-                return
-            preamble_chunks.append(
-                TreeSitterChunk(
-                    content=content,
-                    start_line=start_line,
-                    end_line=end_line,
-                    node_type="module_preamble",
-                    language=self.language_name,
-                    metadata={"type": "module_preamble"},
-                )
-            )
+            trimmed = self._trim_claimed_trailing_comments(run_nodes, next_node)
+            if trimmed and (
+                (not seen_chunk and self._is_comment_only_run(trimmed))
+                or not self._is_boilerplate_run(trimmed)
+            ):
+                self._append_preamble_chunk(trimmed, source_bytes, preamble_chunks)
             run_nodes.clear()
 
         for child in root_node.children:
             if self._child_is_chunked(child):
-                flush()
+                flush(child)
+                seen_chunk = True
+                continue
+            if self._is_trailing_comment_of_chunked_sibling(child):
                 continue
             run_nodes.append(child)
-        flush()
+        flush(None)
 
         return preamble_chunks
+
+    def _append_preamble_chunk(
+        self,
+        nodes: list[Any],
+        source_bytes: bytes,
+        out: list[TreeSitterChunk],
+    ) -> None:
+        """Build one `module_preamble` chunk spanning `nodes` and append it to `out`.
+
+        No-op for a punctuation-only leftover (e.g. an orphan trailing `;`
+        after a struct/typedef declaration whose body was already chunked
+        separately) — nothing worth indexing.
+        """
+        start_line = nodes[0].start_point[0] + 1
+        end_line = nodes[-1].end_point[0] + 1
+        content = source_bytes[nodes[0].start_byte : nodes[-1].end_byte].decode(
+            "utf-8", errors="replace"
+        )
+        if not any(ch.isalnum() for ch in content):
+            return
+        out.append(
+            TreeSitterChunk(
+                content=content,
+                start_line=start_line,
+                end_line=end_line,
+                node_type="module_preamble",
+                language=self.language_name,
+                metadata={"type": "module_preamble"},
+            )
+        )
+
+    def _is_comment_only_run(self, nodes: list[Any]) -> bool:
+        """True if every node in `nodes` is `comment`-typed.
+
+        Distinguishes a pure comment run — whose orphaned instances are
+        rescued by `_collect_module_preamble_chunks` — from a mixed or
+        import-only boilerplate run, which stays unconditionally skippable:
+        imports carry no comment-docstring channel to fall back to and are
+        already surfaced via the file-summary chunk's import list.
+        """
+        return all(node.type == "comment" for node in nodes)
+
+    def _trim_claimed_trailing_comments(
+        self, nodes: list[Any], next_node: Any | None
+    ) -> list[Any]:
+        """Drop a trailing comment-only tail already claimed by `next_node`.
+
+        Mirrors `_leading_comment_sibling_run`'s own blank-line-gap stopping
+        rule so the two mechanisms agree on where a comment block "belongs":
+        a `comment` node line-adjacent to a following chunked node is that
+        node's own leading-docstring sibling and must not also survive here
+        as preamble content. Only the tail is trimmed — an earlier comment
+        in the same run, separated from it by a blank line, is unclaimed and
+        stays.
+
+        Args:
+            nodes: The run about to be flushed.
+            next_node: The chunked child that triggered this flush, or None
+                at end-of-file (nothing follows to claim anything).
+
+        Returns:
+            `nodes` with any claimed trailing comments removed (a new list;
+            `nodes` itself is left untouched).
+        """
+        if next_node is None:
+            return nodes
+        trimmed = list(nodes)
+        boundary_line = next_node.start_point[0]
+        while trimmed and trimmed[-1].type == "comment":
+            candidate = trimmed[-1]
+            if candidate.end_point[0] < boundary_line - 1:
+                break  # blank-line gap — not claimed by next_node
+            trimmed.pop()
+            boundary_line = candidate.start_point[0]
+        return trimmed
+
+    def _is_trailing_comment_of_chunked_sibling(self, node: Any) -> bool:
+        """True if `node` is the same-line trailing comment of the chunked
+        root sibling immediately before it.
+
+        `_collect_module_preamble_chunks` walks root children independently
+        of `_trailing_comment_sibling`; without this check, a trailing
+        comment already folded into the *previous* chunk's docstring is
+        re-collected as the first node of the *following* preamble run,
+        duplicating its text (measured: a `module_preamble` chunk whose
+        content began with the immediately preceding declaration's own
+        trailing comment).
+
+        Args:
+            node: Candidate root-level child.
+
+        Returns:
+            True if node is a comment already claimed as trailing docstring
+            content by the previous, already-chunked sibling.
+        """
+        if node.type != "comment":
+            return False
+        prev = node.prev_sibling
+        return (
+            prev is not None
+            and node.start_point[0] == prev.end_point[0]
+            and self._child_is_chunked(prev)
+        )
 
     def _child_is_chunked(self, node: Any) -> bool:
         """True if `traverse()` would emit a chunk for `node` or a descendant.

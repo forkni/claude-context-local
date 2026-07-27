@@ -85,6 +85,7 @@ TYPE_BOOSTS_ENTITY: dict[str, float] = {
     "method": 1.15,
     "module": 0.85,
     "community": 0.85,
+    "struct": 1.25,
 }
 """Applied when the query looks like an entity/type name (shared by both rankers)."""
 

@@ -241,5 +241,6 @@ def _get_class_node_types(chunker: object) -> frozenset[str]:
             "struct_item",  # Rust
             "interface_declaration",  # Go, TypeScript, C#
             "struct_declaration",  # Go, C#
+            "struct_specifier",  # C, C++, GLSL
         }
     )

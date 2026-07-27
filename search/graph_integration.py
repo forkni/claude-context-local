@@ -261,6 +261,18 @@ class GraphIntegration:
         source file** via line-range containment, then running the extractor on the
         full method source exactly once per (file, method) pair.
 
+        GLSL split_block chunks never need this fallback and correctly no-op
+        here: ``GLSLChunker.extract_metadata`` (chunking/languages/glsl.py)
+        populates ``metadata["calls"]`` by walking the *original*, unsplit
+        function_definition node — it never re-parses a (possibly invalid)
+        content fragment the way this method's ``ast.parse`` does — so a
+        GLSL split_block's ``calls`` is either genuinely non-empty already
+        (handled by ``MultiLanguageChunker._extract_glsl_call_relationships``)
+        or genuinely empty (a fragment with no calls in its body slice), never
+        empty-because-extraction-failed. The language guard below is what
+        makes that distinction irrelevant here: any GLSL split_block that
+        reaches this method with empty ``calls`` just returns ``[]`` again.
+
         Algorithm
         ---------
         1. Guard: non-Python languages are skipped (return []).

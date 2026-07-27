@@ -308,7 +308,7 @@ class OutputConfig:
 
 @dataclass
 class ChunkingConfig:
-    """Chunking algorithm settings (12 fields)."""
+    """Chunking algorithm settings (13 fields)."""
 
     # Token size constraints for chunks
     min_chunk_tokens: int = 50  # Minimum tokens before considering merge
@@ -377,6 +377,13 @@ class ChunkingConfig:
     max_complexity_cap: int = field(
         default=30, metadata={"range": (5, 100)}
     )  # Cv normalization ceiling (CC >= cap → Cv = 1.0)
+
+    # GLSL call-graph extraction (Phase 2b): filter TouchDesigner's TD-prefixed
+    # shader-include builtins (TDPanelSize, TDOutputSwizzle, ...) out of
+    # metadata["calls"] alongside the always-on GLSL builtin/type-constructor
+    # filter. Disable for non-TouchDesigner GLSL projects where a real
+    # user-defined symbol might start with "TD".
+    glsl_filter_td_prefix: bool = True
 
 
 @dataclass

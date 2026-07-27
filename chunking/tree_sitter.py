@@ -11,7 +11,7 @@ Supported languages (8 tree-sitter + 1 AST):
 - C (.c)
 - C++ (.cpp, .cc, .cxx, .c++)
 - C# (.cs)
-- GLSL (.glsl, .frag, .vert, .comp, .geom, .tesc, .tese)
+- GLSL (.glsl, .frag, .vert, .comp, .geom, .tesc, .tese, .glslinc)
 - Python (.py) - via separate AST-based chunker
 """
 
@@ -158,6 +158,36 @@ class ParsedSource:
     tree: Any  # tree_sitter.Tree
 
 
+def _count_error_nodes(root_node: Any) -> int:
+    """Count genuine ERROR-typed nodes in a parsed tree.
+
+    Deliberately stricter than `tree.root_node.has_error`, which also fires
+    on harmless isolated MISSING-node artifacts (a single zero-width
+    error-recovery node, e.g. GLSL's `precision highp float;`) with no real
+    content loss. A true `ERROR`-typed node means the parser gave up on a
+    span and its content (and everything nested under it) is unreliable for
+    chunking — that's the case worth surfacing.
+
+    Iterative (explicit stack), not recursive — tree-sitter trees can be
+    deep enough on generated/minified sources to risk Python's recursion
+    limit.
+
+    Args:
+        root_node: Root node of a parsed tree_sitter.Tree.
+
+    Returns:
+        Count of nodes where `node.type == "ERROR"`.
+    """
+    count = 0
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "ERROR":
+            count += 1
+        stack.extend(node.children)
+    return count
+
+
 class TreeSitterChunker:
     """Main tree-sitter chunker that delegates to language-specific implementations."""
 
@@ -190,6 +220,7 @@ class TreeSitterChunker:
         ".geom": (EXT_TO_LANGUAGE[".geom"], lambda lang: GLSLChunker(lang)),
         ".tesc": (EXT_TO_LANGUAGE[".tesc"], lambda lang: GLSLChunker(lang)),
         ".tese": (EXT_TO_LANGUAGE[".tese"], lambda lang: GLSLChunker(lang)),
+        ".glslinc": (EXT_TO_LANGUAGE[".glslinc"], lambda lang: GLSLChunker(lang)),
     }
 
     def __init__(self) -> None:
@@ -327,12 +358,29 @@ class TreeSitterChunker:
                 return None
 
         try:
-            tree = chunker.parser.parse(bytes(content, "utf-8"))
+            parse_bytes = chunker.preprocess_source_for_parse(bytes(content, "utf-8"))
+            tree = chunker.parser.parse(parse_bytes)
         except Exception as e:  # noqa: BLE001 - parse-recovery: tree-sitter parsing of one file failing shouldn't abort the whole run
             logger.warning(
                 f"Tree-sitter parsing failed for {file_path}: {e}", exc_info=True
             )
             return None
+
+        # tree.root_node.has_error also fires on harmless isolated
+        # MISSING-node artifacts (e.g. GLSL's `precision highp float;`
+        # recovers via a single zero-width MISSING identifier — no content
+        # lost, zero ERROR nodes). Only a genuine ERROR node means a
+        # cascading parse failure that can silently drop content from
+        # chunking, so gate the (tree-walk) count behind the cheap flag
+        # first and only warn when real ERROR nodes are found.
+        if tree.root_node.has_error:
+            error_count = _count_error_nodes(tree.root_node)
+            if error_count:
+                logger.warning(
+                    f"[PARSE_ERROR] {file_path}: {error_count} ERROR node(s) "
+                    f"after parsing — some content may be silently dropped "
+                    f"from chunking"
+                )
 
         return ParsedSource(
             abs_path=file_path,
