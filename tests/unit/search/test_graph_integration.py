@@ -374,6 +374,57 @@ class TestPopulateFromEmbeddings(TestCase):
             language="python",
         )
 
+    def test_non_semantic_chunk_with_relationships_kept(self):
+        """Escape-hatch parity with add_chunk: a non-semantic chunk that
+        carries relationship edges (e.g. a GLSL include chunk with an imports
+        edge) must get its node and edges instead of being dropped."""
+        graph, storage = self._make_graph()
+
+        include = _make_result(
+            "shader.glsl:5-5:include:common",
+            chunk_type="include",
+            name="common",
+            file_path="shaders/shader.glsl",
+            relationships=[
+                {
+                    "source_id": "shader.glsl:5-5:include:common",
+                    "target_name": "common.glslinc",
+                    "relationship_type": "imports",
+                    "line_number": 5,
+                    "confidence": 0.9,
+                }
+            ],
+        )
+
+        graph.populate_from_embeddings([include])
+
+        storage.add_node.assert_called_once()
+        self.assertEqual(
+            storage.add_node.call_args.kwargs["chunk_id"],
+            "shader.glsl:5-5:include:common",
+        )
+        storage.add_relationship_edge.assert_called_once()
+        edge = storage.add_relationship_edge.call_args.args[0]
+        self.assertEqual(edge.target_name, "common.glslinc")
+        self.assertEqual(edge.relationship_type.value, "imports")
+
+    def test_non_semantic_chunk_without_relationships_still_skipped(self):
+        """The hatch only opens for chunks with relationships — a bare
+        non-semantic chunk (empty relationships) stays skipped."""
+        graph, storage = self._make_graph()
+
+        bare = _make_result(
+            "shader.glsl:1-3:module_preamble:shader",
+            chunk_type="module_preamble",
+            name="shader",
+            relationships=[],
+        )
+
+        graph.populate_from_embeddings([bare])
+
+        storage.add_node.assert_not_called()
+        storage.add_relationship_edge.assert_not_called()
+
     def test_unique_call_target_resolved(self):
         """A callee whose name maps to exactly one chunk_id resolves with is_resolved=True."""
         graph, storage = self._make_graph()

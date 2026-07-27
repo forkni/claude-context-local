@@ -56,8 +56,19 @@
     "type": "preproc_function_def"
   },
   {
+    "content": "#ifdef USE_FOG\nuniform float uFogDensity;\n#endif",
+    "end_line": 12,
+    "language": "glsl",
+    "metadata": {
+      "node_type": "preproc_ifdef",
+      "relationships": []
+    },
+    "start_line": 10,
+    "type": "preproc_ifdef"
+  },
+  {
     "content": "const int MAX_LIGHTS = 4;",
-    "end_line": 11,
+    "end_line": 15,
     "language": "glsl",
     "metadata": {
       "docstring": "Maximum number of lights this shader supports.",
@@ -65,7 +76,7 @@
       "node_type": "declaration",
       "relationships": [
         {
-          "line_number": 11,
+          "line_number": 15,
           "metadata": {
             "definition": true
           },
@@ -77,12 +88,12 @@
         "const"
       ]
     },
-    "start_line": 11,
+    "start_line": 15,
     "type": "declaration"
   },
   {
     "content": "layout(binding = 0) uniform sampler2D uTexture;",
-    "end_line": 13,
+    "end_line": 17,
     "language": "glsl",
     "metadata": {
       "docstring": "Texture sampler",
@@ -97,12 +108,12 @@
         "uniform"
       ]
     },
-    "start_line": 13,
+    "start_line": 17,
     "type": "declaration"
   },
   {
     "content": "layout(std140) uniform Camera {\n    mat4 viewProj;\n    vec3 position;\n} cam;",
-    "end_line": 18,
+    "end_line": 22,
     "language": "glsl",
     "metadata": {
       "block_name": "Camera",
@@ -118,7 +129,7 @@
       "node_type": "declaration",
       "relationships": [
         {
-          "line_number": 16,
+          "line_number": 20,
           "metadata": {
             "field_name": "viewProj",
             "struct_name": "Camera"
@@ -127,7 +138,7 @@
           "target_name": "Camera.viewProj"
         },
         {
-          "line_number": 17,
+          "line_number": 21,
           "metadata": {
             "field_name": "position",
             "struct_name": "Camera"
@@ -140,12 +151,12 @@
         "uniform"
       ]
     },
-    "start_line": 15,
+    "start_line": 19,
     "type": "declaration"
   },
   {
     "content": "struct Material {\n    vec3 albedo;\n    float roughness;\n}",
-    "end_line": 24,
+    "end_line": 28,
     "language": "glsl",
     "metadata": {
       "docstring": "Physically-based material properties.",
@@ -157,7 +168,7 @@
       "node_type": "struct_specifier",
       "relationships": [
         {
-          "line_number": 22,
+          "line_number": 26,
           "metadata": {
             "field_name": "albedo",
             "struct_name": "Material"
@@ -166,7 +177,7 @@
           "target_name": "Material.albedo"
         },
         {
-          "line_number": 23,
+          "line_number": 27,
           "metadata": {
             "field_name": "roughness",
             "struct_name": "Material"
@@ -176,12 +187,12 @@
         }
       ]
     },
-    "start_line": 21,
+    "start_line": 25,
     "type": "struct_specifier"
   },
   {
     "content": "vec3 shade(Material mat, vec3 lightDir) {\n    return mat.albedo * max(dot(lightDir, vec3(0.0, 1.0, 0.0)), 0.0);\n}",
-    "end_line": 29,
+    "end_line": 33,
     "language": "glsl",
     "metadata": {
       "calls": [],
@@ -192,7 +203,7 @@
       "node_type": "function_definition",
       "relationships": [
         {
-          "line_number": 27,
+          "line_number": 31,
           "metadata": {
             "annotation_location": "parameter",
             "parameter_name": "mat"
@@ -202,31 +213,32 @@
         }
       ]
     },
-    "start_line": 27,
+    "start_line": 31,
     "type": "function_definition"
   },
   {
     "content": "void main() {\n    Material mat = Material(vec3(1.0), 0.5);\n    vec3 color = shade(mat, vec3(0.0, 1.0, 0.0));\n    float falloff = SQUARE(1.0 / float(MAX_LIGHTS)) * PI;\n    gl_FragColor = vec4(color * falloff, 1.0);\n}",
-    "end_line": 36,
+    "end_line": 41,
     "language": "glsl",
     "metadata": {
       "calls": [
         [
           "shade",
-          33
+          38
         ],
         [
           "SQUARE",
-          34
+          39
         ]
       ],
       "complexity_score": 1,
+      "docstring": "Entry point: shades a fixed light direction and applies macro falloff.",
       "has_builtin_vars": true,
       "name": "main",
       "node_type": "function_definition",
       "relationships": [
         {
-          "line_number": 32,
+          "line_number": 37,
           "metadata": {
             "struct_name": "Material"
           },
@@ -235,11 +247,11 @@
         }
       ]
     },
-    "start_line": 31,
+    "start_line": 36,
     "type": "function_definition"
   },
   {
-    "content": "// Tiny GLSL fixture: layout+binding uniforms, a UBO block, a struct, object-\n// and function-like macros, #include, comment-attached const, and two\n// functions where one calls the other.",
+    "content": "// Tiny GLSL fixture: layout+binding uniforms, a UBO block, a struct, object-\n// and function-like macros, #include, an #ifdef guard, comment-attached\n// const, and two functions where one calls the other.",
     "end_line": 3,
     "language": "glsl",
     "metadata": {

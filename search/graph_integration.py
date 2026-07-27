@@ -405,14 +405,22 @@ class GraphIntegration:
     def _make_spec_from_embedding(self, result: Any) -> "_BuildSpec | None":
         """Normalise an EmbeddingResult into a _BuildSpec.
 
-        Returns None if the result should be skipped (non-semantic chunk_type).
-        Converts call dicts and relationship dicts to the canonical forms used
-        by _two_pass_build so the builder is input-type-agnostic.
+        Returns None if the result should be skipped (non-semantic chunk_type
+        carrying no relationship edges — mirrors add_chunk's escape hatch, so
+        e.g. a GLSL include/macro chunk keeps its imports/defines_constant
+        edges on this path too). Converts call dicts and relationship dicts to
+        the canonical forms used by _two_pass_build so the builder is
+        input-type-agnostic.
         """
         meta = result.metadata
         chunk_type = meta.get("chunk_type")
         if chunk_type not in SEMANTIC_TYPES:
-            return None
+            if not meta.get("relationships"):
+                return None
+            self._logger.debug(
+                f"Processing non-semantic chunk with relationships: "
+                f"{result.chunk_id} (type={chunk_type})"
+            )
 
         chunk_id = result.chunk_id
         file_path = meta.get("file_path", "")

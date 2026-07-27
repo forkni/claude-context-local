@@ -175,6 +175,27 @@ class TestClassifyFileRole:
     def test_env_file(self):
         assert self._role(".env") == "config"
 
+    # --- shader role ---
+    def test_glsl_extension(self):
+        assert self._role("shaders/effect.glsl") == "shader"
+
+    def test_frag_extension(self):
+        assert self._role("render/blur.frag") == "shader"
+
+    def test_vert_extension(self):
+        assert self._role("render/quad.vert") == "shader"
+
+    def test_comp_extension(self):
+        assert self._role("compute/histogram.comp") == "shader"
+
+    def test_glslinc_extension(self):
+        assert self._role("lib/common.glslinc") == "shader"
+
+    # --- priority: test > shader ---
+    def test_tests_directory_glsl_file(self):
+        """tests/ prefix wins over shader extension."""
+        assert self._role("tests/fixtures/sample.glsl") == "test"
+
     # --- src role ---
     def test_regular_python(self):
         assert self._role("search/hybrid_searcher.py") == "src"

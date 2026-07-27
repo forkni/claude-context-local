@@ -37,7 +37,7 @@
 - **OTel Tracing** (opt-in): Zero-overhead `traced_block` / `@timed` spans across the search and index pipeline — export to Jaeger, Tempo, or any OTLP collector. See [Observability](docs/OBSERVABILITY.md).
 - **ONNX Runtime Backend** (opt-in): `performance.use_onnx` loads eligible models via `ORTModelForFeatureExtraction` with `CUDAExecutionProvider` + `gpu_mem_limit` arena cap — prevents WDDM shared-memory spillover on 8 GB laptop GPUs
 - **Persistent Chunk Embedding Cache**: content-hash-keyed cache of chunk embedding vectors cuts a full reindex's embedding phase from ~34s to well under 1s once the codebase is unchanged; invalidates automatically on model or precision/backend changes - [configuration](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md#chunk-embedding-cache-configuration)
-- **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
+- **20 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
 - **18 MCP Tools** (10 core + 8 advanced, gated behind `MCP_EXPOSE_ADVANCED_TOOLS`): Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 - **Source-Position Reranking**: Groups results by file, sorted by line number — LLMs read code in logical order (+5.3% accuracy, DOS RAG)
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
@@ -295,9 +295,9 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
 | C | `.c` | Tree-sitter |
 | C++ | `.cpp`, `.cc`, `.cxx`, `.c++` | Tree-sitter |
 | C# | `.cs` | Tree-sitter |
-| GLSL | `.glsl`, `.frag`, `.vert`, `.comp`, `.geom`, `.tesc`, `.tese` | Tree-sitter |
+| GLSL | `.glsl`, `.frag`, `.vert`, `.comp`, `.geom`, `.tesc`, `.tese`, `.glslinc` | Tree-sitter |
 
-**Total**: 19 file extensions across 9 programming languages
+**Total**: 20 file extensions across 9 programming languages
 
 ## Requirements
 

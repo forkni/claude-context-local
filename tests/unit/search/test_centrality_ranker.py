@@ -648,6 +648,19 @@ class TestApplyRoleDemotion:
         )
         assert result["blended_score"] == pytest.approx(0.88, abs=0.001)
 
+    def test_shader_role_is_neutral(self):
+        """role:shader is deliberately neutral — shader chunks are ordinary
+        source for ranking purposes, so no demotion or boost applies."""
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_role_demotion(
+            result,
+            "shaders/effect.glsl:1-20:function:main",
+            ["role:shader"],
+            "search logic",
+        )
+        assert result["blended_score"] == pytest.approx(1.0, abs=0.001)
+
     def test_nonstring_tag_kills_isinstance_or_mutant(self):
         """Non-string tag is skipped; subsequent string role tag still applies.
 

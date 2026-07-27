@@ -11,6 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **GLSL indexing parity with Python** — corrected 18 fictional tree-sitter node types across
+  GLSL/JS/TS/TSX/Go (`chunking/language_registry.py`) that made ~60% of
+  `GLSLChunker.extract_metadata` dead code, and rewrote `GLSLChunker`
+  (`chunking/languages/glsl.py`) around the real grammar shape: named uniforms/UBO blocks/structs/
+  macros/includes, leading- and trailing-comment docstring attachment, a chunk-granularity gate
+  (uncommented one-liners merge into `module_preamble` instead of exploding into near-empty
+  chunks), and length-preserving parse-error neutralization for anonymous layout qualifiers.
+  Adds a GLSL call-graph walk (`call_expression` → `metadata["calls"]`) with GLSL-builtin and
+  TouchDesigner `TD*`-prefix filtering, GLSL relationship edges
+  (`imports`/`uses_type`/`instantiates`/`defines_field`/`defines_constant`), a `"shader"` file
+  role (ranking-neutral), a `"struct"` entity type boost, `.glslinc` as the 8th GLSL extension
+  (20 extensions total), and a base-class fix that had left `complexity_score` at 0 for every
+  tree-sitter language overriding `get_node_complexity` (GLSL/C/C++/C#/Go/Rust).
+  **Existing indices need one full, non-incremental reindex**: Merkle change detection keys on
+  file content, so an incremental pass over unchanged shaders keeps serving the old degraded
+  chunks indefinitely.
 - **Persistent chunk embedding cache** (`embeddings/chunk_cache.py`) — content-hash-keyed cache of
   chunk embedding vectors persisted to `chunk_embeddings.bin`, cutting a full reindex's embedding
   phase from 33.94s to 0.78s (43×) once the codebase is unchanged. On by default
@@ -33,6 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Non-semantic chunks lost relationship edges on the live indexing path** —
+  `GraphIntegration._make_spec_from_embedding` (`search/graph_integration.py`) dropped every
+  chunk outside `SEMANTIC_TYPES` unconditionally, while its `add_chunk` twin lets non-semantic
+  chunks through when they carry relationship edges. Since `populate_from_embeddings` (the path
+  `HybridSearcher.add_embeddings` actually uses) builds specs via the former, GLSL
+  `include`/`macro`/`declaration` chunks silently lost their `imports`/`defines_constant` edges.
+  The spec builder now mirrors `add_chunk`'s escape hatch; covered by a unit test and a
+  persisted-roundtrip integration test (`tests/fast_integration/test_glsl_call_graph_resolution.py`).
 - **`handle_clear_index` deleted a filename that never existed** (`chunks_metadata.db` instead of
   the real `metadata.db`), silently leaving the metadata DB, its `-wal`/`-shm` sidecars (routinely
   full-size, not crash-only debris), `chunk_ids.pkl`, and the call graph behind after a "clear

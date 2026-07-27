@@ -230,3 +230,45 @@ class TestTDPrefixNegativeCases:
             )
         finally:
             h.teardown()
+
+
+class TestNonSemanticRelationshipCarriers:
+    """GLSL include/macro chunks are not SEMANTIC_TYPES, but they carry
+    imports/defines_constant relationship edges — those must survive the
+    persisted populate_from_embeddings path via _make_spec_from_embedding's
+    escape hatch (parity with add_chunk), not be dropped at spec-build time."""
+
+    def test_include_and_macro_edges_survive_roundtrip(self, tmp_path):
+        h = _make_harness(tmp_path)
+        try:
+            h.index_file("includes.glsl")
+            h.build_graph_from_persisted()
+
+            include_id = h.resolved_chunk_id("includes.glsl:2-3:include:common.glslinc")
+            macro_id = h.resolved_chunk_id("includes.glsl:5-6:macro:GAIN")
+
+            graph = h.graph_storage.graph
+            assert graph.has_edge(include_id, "common.glslinc"), (
+                "include chunk's imports edge missing after "
+                "populate_from_embeddings roundtrip"
+            )
+            assert graph.has_edge(macro_id, "GAIN"), (
+                "macro chunk's defines_constant edge missing after "
+                "populate_from_embeddings roundtrip"
+            )
+
+            edge_types = {
+                data.get("type")
+                for _, _, data in graph.out_edges(include_id, data=True)
+            }
+            assert "imports" in edge_types, (
+                f"expected an 'imports' edge from the include chunk, "
+                f"got edge types {edge_types}"
+            )
+
+            # Semantic chunks in the same file are unaffected by the hatch:
+            # main's call edge to boost still resolves.
+            boost_id = h.resolved_chunk_id("includes.glsl:7-9:function:boost")
+            assert boost_id in h.callees_of(":function:main")
+        finally:
+            h.teardown()
