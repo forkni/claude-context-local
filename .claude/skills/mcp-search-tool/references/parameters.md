@@ -1,10 +1,14 @@
 # Essential Tools — Detailed Parameter Reference
 
-Covers `code-search:search_code`, `code-search:find_connections`, and `code-search:find_path` in full depth. For all other tools, see [tool-index.md](tool-index.md).
+Covers `code-search:search_code`, `code-search:find_connections`, and `code-search:find_path` in full depth. For all other tools, see
+[tool-index.md](tool-index.md).
 
-> **Note on example style:** the fenced `text` blocks below are pseudocode that describe MCP tool calls. They are not executable Python. Booleans use JSON style (`true`/`false`), all arguments are named (no positional calls), and any `results[0]["chunk_id"]`-style indexing is a conceptual placeholder — your MCP client hands you the full result object, which you then pass back in as a parameter.
+> **Note on example style:** the fenced `text` blocks below are pseudocode that describe MCP tool calls. They are not executable Python. Booleans use
+> JSON style (`true`/`false`), all arguments are named (no positional calls), and any `results[0]["chunk_id"]`-style indexing is a conceptual
+> placeholder — your MCP client hands you the full result object, which you then pass back in as a parameter.
 
 ## Contents
+
 - search_code — all parameters + examples
 - find_connections — all parameters + examples
 - find_path — all parameters + examples
@@ -21,7 +25,7 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 |-----------|---------|-------------|
 | `query` | — | Natural language description. Optional if `chunk_id` given. |
 | `chunk_id` | — | Direct chunk ID for O(1) lookup. Format: `"file:lines:type:name"` |
-| `k` | 7 | Number of results to return. **Recommended: pass `k=7` explicitly** — targets may rank 6–7 on complex queries (SSCG benchmark: Hit@5=100% at k=7). Use `k=10` for architectural queries. |
+| `k` | schema **4**, effective **7** | Schema default is `4` (`mcp_server/tool_registry.py`); `search_orchestrator.py` falls back to `search_config.search_mode.default_k` when omitted, and both the shipped `search_config.json.example` and this machine's local config set `default_k: 7`. **Recommended: pass `k=7` explicitly** — targets may rank 6–7 on complex queries (SSCG benchmark: Hit@5=100% at k=7). Use `k=10` for architectural queries. |
 | `search_mode` | "auto" | "hybrid", "semantic", "bm25", "auto" |
 | `file_pattern` | — | Filter by filename/path substring (e.g., "auth", "models") |
 | `include_dirs` | — | Whitelist directories, e.g. `["src/"]` |
@@ -29,21 +33,24 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 | `chunk_type` | — | Filter by structure type (see below) |
 | `include_context` | true | Include similar chunks and relationships |
 | `auto_reindex` | true | Auto-reindex if index is stale |
-| `max_age_minutes` | 5 | Max age (minutes) before auto-reindex triggers |
+| `max_age_minutes` | schema **5**, effective varies | If omitted, the server falls back to `performance.max_index_age_minutes` (`search_orchestrator.py:233`), not the schema's 5 — dataclass factory default is 5.0, the shipped `search_config.json.example` sets 30.0, and this machine's local config sets 60.0. Pass the value explicitly if you need a specific staleness window. |
 | `ego_graph_enabled` | false | Enable k-hop graph expansion for neighbors |
 | `ego_graph_k_hops` | 2 | Graph traversal depth (range 1-5) |
 | `ego_graph_max_neighbors_per_hop` | 10 | Max neighbors per hop (range 1-50) |
 | `include_parent` | false | Also retrieve enclosing class when matching methods |
-| `output_format` | "compact" | "compact" (omit empty fields) / "verbose" / "ultra" (tabular) |
-| `max_context_tokens` | — | Token-budget cap to prevent context overflow |
+| `output_format` | schema `"compact"`, effective `"ultra"` | If omitted, the server uses `config.output.format` (`mcp_server/server.py:323-326`), which ships as **`"ultra"`** (`search/config.py:299-301`, for 45-55% token reduction). Pass `output_format="compact"` or `"verbose"` explicitly to override. |
+| `max_context_tokens` | 0 (no cap) | Token-budget cap to prevent context overflow |
 
-**chunk_type values:** "function", "class", "method", "module", "decorated_definition", "interface", "enum", "struct", "type", "merged", "split_block", "community"
+**chunk_type values (13):** "function", "class", "method", "module", "module_preamble", "decorated_definition", "interface", "enum", "struct", "type",
+"merged", "split_block", "community"
 
 **Result fields (always):** `chunk_id`, `kind`, `score`, `blended_score`, `centrality`, `source`
 
 **Result fields (optional):** `complexity_score`, `graph`, `reranker_score`, `summary`
 
-**Source values:** `"search"` (direct lexical/dense match), `"multi_hop"` (always-on semantic expansion of initial hits), `"graph_hop"` (always-on call/import graph expansion of initial hits), `"ego_graph"` (opt-in k-hop neighbors via `ego_graph_enabled=true`). See [advanced-features.md](advanced-features.md) for the full disambiguation.
+**Source values:** `"search"` (direct lexical/dense match), `"multi_hop"` (always-on semantic expansion of initial hits), `"graph_hop"` (always-on
+call/import graph expansion of initial hits), `"ego_graph"` (opt-in k-hop neighbors via `ego_graph_enabled=true`). See
+[advanced-features.md](advanced-features.md) for the full disambiguation.
 
 **Examples:**
 
@@ -86,16 +93,21 @@ code-search:search_code("how does the indexing pipeline work", k=10)
 
 **Valid relationship_types (21 total):**
 
-`calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
+`calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`,
+`defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`,
+`uses_context_manager`
 
 **Returns:** Direct callers (inbound) and direct callees (outbound), indirect callers, dependency graph (DOT format), similar code (when available).
 
 Per-entry provenance fields on every caller and callee entry (v0.14.0+):
-- `confidence`: string tag — `"exact"` (direct chunk_id resolution), `"recovered"` (stale ID re-resolved via `_resolve_by_symbol` Tier 1→3), `"ambiguous"` (multiple candidates)
+
+- `confidence`: string tag — `"exact"` (direct chunk_id resolution), `"recovered"` (stale ID re-resolved via `_resolve_by_symbol` Tier 1→3),
+  `"ambiguous"` (multiple candidates)
 - `resolver_source`: which resolver produced the edge — `"ast"`, `"pyan"`, `"libcst"`, or `"lsp"`
 - `resolver_confidence`: float 0.5–0.98 (higher = more trusted)
 
 Top-level breakdowns (when any counter is non-zero):
+
 - `caller_confidence: {exact, recovered, ambiguous}` — count of each tag in `direct_callers`
 - `callee_confidence: {exact, recovered, ambiguous}` — count of each tag in `direct_callees`
 
