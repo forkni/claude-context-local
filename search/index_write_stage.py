@@ -40,6 +40,8 @@ class IncrementalIndexResult:
     error: str | None = None
     bm25_resynced: bool = False
     bm25_resync_count: int = 0
+    call_edges_injected: int = 0
+    call_edge_resolvers: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary.
@@ -149,8 +151,9 @@ class IndexWriteStage:
         # Inject cross-module call edges from the resolver pipeline.
         # Must run after add_embeddings (graph populated) and before
         # save_indices (graph persisted).
+        injection_stats = InjectionStats()
         if project_path:
-            self._inject_call_edges(project_path)
+            injection_stats = self._inject_call_edges(project_path)
 
         # Save snapshot (reset cumulative_changed_files on full index pass)
         metadata = self._build_metadata(
@@ -184,6 +187,8 @@ class IndexWriteStage:
             success=True,
             bm25_resynced=bm25_resynced,
             bm25_resync_count=bm25_resync_count,
+            call_edges_injected=injection_stats.injected,
+            call_edge_resolvers=injection_stats.resolvers_run,
         )
 
     # ------------------------------------------------------------------

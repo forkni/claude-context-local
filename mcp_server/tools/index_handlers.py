@@ -171,6 +171,8 @@ def _run_indexing(
         # (see test_response_envelope_ownership.py's stray-literal gate).
         "indexing_succeeded": result.success,
         "indexing_error": result.error,
+        "call_edges_injected": result.call_edges_injected,
+        "call_edge_resolvers": result.call_edge_resolvers,
     }
 
 
@@ -235,6 +237,15 @@ def _build_index_response(
         # the response itself, not just inferred from the chunk count.
         include_dirs=include_dirs if include_dirs else None,
         exclude_dirs=exclude_dirs if exclude_dirs else None,
+        # Visible, not fatal: resolvers are optional (pyan/libcst require the
+        # [callgraph] extra), so call_edges_injected == 0 is a legitimate
+        # outcome for some installs and projects with no cross-module calls.
+        # Surfacing it here is what turns a silent zero into an inspectable
+        # one, the same guard `50ffead` applied one level up to chunk counts.
+        call_edges_injected=r.get("call_edges_injected", 0),
+        call_edge_resolvers=list(r["call_edge_resolvers"])
+        if r.get("call_edge_resolvers")
+        else None,
     )
     return response
 
