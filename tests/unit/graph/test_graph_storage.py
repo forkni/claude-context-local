@@ -370,6 +370,40 @@ class TestCodeGraphStorage:
         assert len(fresh) == 0, "Fresh instance after clear() must have 0 nodes"
         assert fresh.graph.number_of_edges() == 0
 
+    def test_clear_deletes_community_map(
+        self, graph_storage: CodeGraphStorage, temp_storage_dir: Path
+    ) -> None:
+        """clear() must also remove the sibling communities.json.
+
+        Regression test: clear() deleted call_graph.json but left
+        {project_id}_communities.json behind, so a force-full reindex whose
+        community detection degraded (it is wrapped in broad except Exception
+        handlers) would leave the previous index's pre-remerge chunk_ids on
+        disk to be read back by ego_graph_retriever/subgraph_extractor/
+        community_refresh_stage — the same phantom-node shape the
+        call_graph.json deletion above already guards against.
+        """
+        # Arrange: persist a community map alongside the graph
+        graph_storage.add_node(
+            chunk_id="test_file.py:1-10:function:my_func",
+            name="my_func",
+            chunk_type="function",
+            file_path="test_file.py",
+        )
+        graph_storage.save()
+        graph_storage.store_community_map({"test_file.py:1-10:function:my_func": 0})
+        community_path = temp_storage_dir / "test_project_communities.json"
+        assert community_path.exists(), "community map must exist after store"
+
+        # Act
+        graph_storage.clear()
+
+        # Assert: both artifacts are gone
+        assert not graph_storage.graph_path.exists()
+        assert not community_path.exists(), (
+            "clear() must delete the backing communities.json file"
+        )
+
     def test_get_stats(self, graph_storage):
         """Test getting graph statistics."""
         # Add some data

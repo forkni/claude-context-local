@@ -858,10 +858,15 @@ class CodeGraphStorage:
             return False
 
     def clear(self) -> None:
-        """Clear all nodes and edges from the graph and remove the backing JSON file.
+        """Clear all nodes and edges from the graph and remove the backing JSON files.
 
         Deletes the on-disk call_graph.json so that subsequent CodeGraphStorage
         re-initialization does not reload stale phantom nodes from a previous index.
+        Also deletes the sibling communities.json (written by store_community_map) —
+        left behind here, it would otherwise survive a force-full reindex and get
+        read back by ego_graph_retriever/subgraph_extractor/community_refresh_stage
+        with the previous index's pre-remerge chunk_ids, the same phantom-node shape
+        the call_graph.json deletion above already guards against.
         """
         self.graph.clear()
         self._name_index.clear()
@@ -870,6 +875,10 @@ class CodeGraphStorage:
             self.logger.info("Cleared call graph (on-disk file deleted)")
         else:
             self.logger.info("Cleared call graph")
+        community_path = self.storage_dir / f"{self.project_id}_communities.json"
+        if community_path.exists():
+            community_path.unlink()
+            self.logger.info("Cleared community map (on-disk file deleted)")
 
     def remove_file_nodes(self, file_path: str) -> int:
         """Remove all graph nodes (and their incident edges) belonging to a file.
