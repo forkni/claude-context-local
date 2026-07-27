@@ -251,6 +251,70 @@ class TestChunkFilesPublicInterface:
             "1 files produced no chunks" in m and "empty.py" in m for m in messages
         )
 
+    def test_empty_file_no_warning_sequential(self, tmp_path, caplog):
+        """A file that is genuinely empty on disk and chunks to [] produces
+        no warning -- only a legitimately-empty file gets this treatment
+        (log-hygiene item A). A non-empty file returning [] must still warn
+        -- see test_zero_chunk_file_named_sequential, which is unaffected."""
+        import logging
+
+        from search.parallel_chunker import ParallelChunker
+
+        empty_file = tmp_path / "empty.py"
+        empty_file.write_text("")
+
+        mock_chunker = Mock()
+        mock_chunker.chunk_file.return_value = []
+
+        pc = ParallelChunker(mock_chunker, enable_parallel=False)
+
+        with caplog.at_level(logging.WARNING, logger="search.parallel_chunker"):
+            pc.chunk_files(str(tmp_path), ["empty.py"])
+
+        assert not any("produced no chunks" in r.message for r in caplog.records)
+
+    def test_whitespace_only_file_no_warning_sequential(self, tmp_path, caplog):
+        """A whitespace-only file (blank lines, no real content) is treated
+        the same as a fully empty one -- the check strips before testing."""
+        import logging
+
+        from search.parallel_chunker import ParallelChunker
+
+        blank_file = tmp_path / "blank.py"
+        blank_file.write_text("\n\n   \n")
+
+        mock_chunker = Mock()
+        mock_chunker.chunk_file.return_value = []
+
+        pc = ParallelChunker(mock_chunker, enable_parallel=False)
+
+        with caplog.at_level(logging.WARNING, logger="search.parallel_chunker"):
+            pc.chunk_files(str(tmp_path), ["blank.py"])
+
+        assert not any("produced no chunks" in r.message for r in caplog.records)
+
+    def test_empty_file_no_warning_parallel(self, tmp_path, caplog):
+        """Parallel branch (>=2 files): same guarantee as the sequential branch."""
+        import logging
+
+        from search.parallel_chunker import ParallelChunker
+
+        empty_file = tmp_path / "empty.py"
+        empty_file.write_text("")
+        (tmp_path / "a.py").write_text("print(1)")
+
+        mock_chunker = Mock()
+        mock_chunker.chunk_file.side_effect = lambda path: (
+            [] if path.endswith("empty.py") else [Mock()]
+        )
+
+        pc = ParallelChunker(mock_chunker, enable_parallel=True, max_workers=2)
+
+        with caplog.at_level(logging.WARNING, logger="search.parallel_chunker"):
+            pc.chunk_files(str(tmp_path), ["a.py", "empty.py"])
+
+        assert not any("produced no chunks" in r.message for r in caplog.records)
+
     def test_merge_stats_propagation_in_summary_log(self, tmp_path, caplog):
         """Chunks with _merge_stats cause the summary to log a merge percentage."""
         import logging

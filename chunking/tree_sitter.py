@@ -284,6 +284,7 @@ class TreeSitterChunker:
         file_path: str,
         content: str | None = None,
         rel_path: str | None = None,
+        emit_parse_warnings: bool = True,
     ) -> ParsedSource | None:
         """Read and tree-sitter-parse a file, without chunking it.
 
@@ -298,6 +299,13 @@ class TreeSitterChunker:
             rel_path: Optional path to record on the result for callers that
                     track both absolute and relative paths. Defaults to
                     `file_path`.
+            emit_parse_warnings: Whether to log `[PARSE_ERROR]` when the parse
+                    tree contains real ERROR nodes. Defaults to True (today's
+                    behaviour). The repo-profiling pre-pass parses every file
+                    a second time before the chunking pass does and passes
+                    False here, so a malformed file is only ever warned about
+                    once per index run — by the chunking pass, which is the
+                    one whose dropped content actually matters to the user.
 
         Returns:
             ParsedSource, or None for unsupported/binary/unreadable files
@@ -373,7 +381,7 @@ class TreeSitterChunker:
         # cascading parse failure that can silently drop content from
         # chunking, so gate the (tree-walk) count behind the cheap flag
         # first and only warn when real ERROR nodes are found.
-        if tree.root_node.has_error:
+        if emit_parse_warnings and tree.root_node.has_error:
             error_count = _count_error_nodes(tree.root_node)
             if error_count:
                 logger.warning(

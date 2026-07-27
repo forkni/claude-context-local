@@ -432,3 +432,39 @@ class TestParseFileSingleRead(TestCase):
         assert len(matching_calls) == 1, (
             f"expected exactly 1 open() of {file_path}, got {len(matching_calls)}"
         )
+
+    def test_parse_error_warning_default_still_fires(self):
+        """Regression guard: the default call (as used by the chunking pass)
+        must keep warning on a genuinely malformed file -- only the
+        profiling pre-pass opts out (see next test)."""
+        import chunking.tree_sitter as tsf
+
+        if "python" not in tsf.AVAILABLE_LANGUAGES:
+            self.skipTest("tree-sitter-python not installed")
+
+        file_path = Path(self.temp_dir) / "broken.py"
+        file_path.write_text(")))) invalid python (((\n")
+
+        with self.assertLogs("chunking.tree_sitter", level="WARNING") as cm:
+            result = self.chunker.parse_file(str(file_path))
+
+        assert result is not None
+        assert any("PARSE_ERROR" in msg for msg in cm.output)
+
+    def test_parse_error_warning_suppressed_when_opted_out(self):
+        """`emit_parse_warnings=False` (used by the repo-profiling pre-pass)
+        parses the same malformed file silently -- the profiler and the
+        chunking pass share this seam, so without the opt-out a bad file
+        logged [PARSE_ERROR] twice per index run instead of once."""
+        import chunking.tree_sitter as tsf
+
+        if "python" not in tsf.AVAILABLE_LANGUAGES:
+            self.skipTest("tree-sitter-python not installed")
+
+        file_path = Path(self.temp_dir) / "broken.py"
+        file_path.write_text(")))) invalid python (((\n")
+
+        with self.assertNoLogs("chunking.tree_sitter", level="WARNING"):
+            result = self.chunker.parse_file(str(file_path), emit_parse_warnings=False)
+
+        assert result is not None

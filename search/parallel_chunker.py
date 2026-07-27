@@ -70,6 +70,25 @@ class ParallelChunker:
         return total_original + len(chunks), total_merged + len(chunks)
 
     @staticmethod
+    def _is_empty_file(full_path: Path) -> bool:
+        """Best-effort check: does `full_path` contain only whitespace (or nothing)?
+
+        Distinguishes a legitimately-empty file (e.g. a placeholder
+        `__init__.py`) -- chunking it to zero chunks is correct, expected
+        behaviour and not worth a WARNING -- from a file that produced no
+        chunks unexpectedly, which still is. Called only for the small
+        subset of files that already chunked to `[]` (a handful per real
+        run), so the extra read is negligible. Read failures (permissions,
+        races, undecodable content) are treated as "not empty" -- the
+        conservative choice that keeps today's warning rather than risk
+        silently swallowing a real failure.
+        """
+        try:
+            return not full_path.read_text(encoding="utf-8", errors="ignore").strip()
+        except OSError:
+            return False
+
+    @staticmethod
     def _log_chunking_summary(
         file_paths: list[str],
         all_chunks: list,
@@ -187,6 +206,10 @@ class ParallelChunker:
                                 logger.debug(
                                     f"Chunked {file_path}: {len(chunks)} chunks"
                                 )
+                            elif self._is_empty_file(Path(project_path) / file_path):
+                                logger.debug(
+                                    f"{file_path} is empty -- no chunks expected"
+                                )
                             else:
                                 zero_chunk_files.append(file_path)
                         except TimeoutError:
@@ -225,6 +248,8 @@ class ParallelChunker:
                             )
                             all_chunks.extend(chunks)
                             logger.debug(f"Chunked {file_path}: {len(chunks)} chunks")
+                        elif self._is_empty_file(full_path):
+                            logger.debug(f"{file_path} is empty -- no chunks expected")
                         else:
                             zero_chunk_files.append(file_path)
                     except Exception as e:  # noqa: BLE001 - resilience: per-file chunking failure skipped, batch continues
