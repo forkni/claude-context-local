@@ -327,9 +327,3 @@ class TestBatchOperations(TestCase):
             "target 'search/foo.py' against the absolute file_path 'D:/proj/search/foo.py'. "
             "Fix: also check relative_path in the match predicate.",
         )
-
-
-if __name__ == "__main__":
-    import pytest
-
-    pytest.main([__file__, "-v"])

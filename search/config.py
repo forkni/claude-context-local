@@ -79,6 +79,20 @@ MODEL_REGISTRY = {
         "model_type": "code-optimized",
         "onnx_pooling": "cls",  # GTE-ModernBERT uses CLS pooling
     },
+    "codefuse-ai/F2LLM-v2-0.6B": {
+        "dimension": 1024,
+        "max_context": 40960,
+        "description": "Qwen3-0.6B-based embedding (MTEB avg 66.47 vs Qwen3-0.6B 64.02)",
+        "vram_gb": "2.2GB",
+        "fallback_batch_size": 256,
+        "vram_tier": "minimal",  # Usable on all GPUs
+        "onnx_supported": False,  # Last-token (EOS) pooling not handled by onnx_wrapper
+        # Instruction tuning for code retrieval (same "Instruct: ...\nQuery: "
+        # template family as Qwen3-Embedding; documents are embedded raw)
+        "instruction_mode": "custom",  # "custom" or "prompt_name"
+        "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
+        "prompt_name": "query",  # Alternative: model's built-in generic passage prompt
+    },
 }
 
 
@@ -89,7 +103,7 @@ MODEL_REGISTRY = {
 
 @dataclass
 class EmbeddingConfig:
-    """Embedding model configuration (9 fields)."""
+    """Embedding model configuration (11 fields)."""
 
     model_name: str = "BAAI/bge-m3"
     dimension: int = 1024
@@ -104,6 +118,10 @@ class EmbeddingConfig:
     enable_structural_header: bool = (
         True  # Prepend file path + chunk type + qualified name
     )
+
+    # Persistent content-hash embedding cache (Round 3)
+    enable_chunk_cache: bool = True  # Skip GPU re-embedding for unchanged chunks
+    chunk_cache_max_entries: int = 0  # 0 = auto (max(2 * live_keys, 2_000), 32MB clamp)
 
 
 class SearchMode(StrEnum):
@@ -123,7 +141,7 @@ class SearchMode(StrEnum):
 
 @dataclass
 class SearchModeConfig:
-    """Search mode and BM25 settings (12 fields)."""
+    """Search mode and BM25 settings."""
 
     # Typed as ``str`` (not SearchMode) so values loaded from JSON — which are
     # always plain str — remain valid without extra coercion; SearchMode.HYBRID
@@ -139,9 +157,32 @@ class SearchModeConfig:
     dense_weight: float = 0.65
 
     # BM25 Configuration
-    bm25_k_parameter: int = 100
+    # Okapi BM25 scoring parameters (rank_bm25 defaults). k1 controls term-
+    # frequency saturation; b controls document-length normalization. Applied
+    # at query time — changing them takes effect on next load, no re-index
+    # needed. (Replaces the dead ``bm25_k_parameter`` field, which was never
+    # read by any scoring path.)
+    bm25_k1: float = 1.5
+    bm25_b: float = 0.75
     bm25_use_stopwords: bool = True
     bm25_use_stemming: bool = True  # Snowball stemmer for word normalization
+    # Tokenizer variant (arXiv 2605.18561): "legacy" = destructive camel/snake
+    # split + stemming; "whole" = identifiers kept intact, no stemming;
+    # "additive" = whole identifiers + camel/snake sub-tokens. Changing this
+    # requires a re-index (index/query tokenization must match).
+    # Default "whole": +0.05/+0.07 Recall@5, +0.09/+0.10 MRR vs legacy on the
+    # 96q/63q golden sets (BM25-standalone, bm25_tokenizer_ab.py 2026-07-26).
+    bm25_tokenizer: str = field(
+        default="whole",
+        metadata={"choices": ("legacy", "whole", "additive")},
+    )
+    # Reserved fused-pool slots for BM25-unique candidates. Under weighted RRF
+    # (bm25 0.35 / dense 0.65, rrf_k 100) the best BM25-unique candidate scores
+    # below the worst dense candidate, so the fused pool is 100% dense-sourced
+    # (see evaluation/POOL_MISS_DIAGNOSIS.md). N > 0 fills the last N pool
+    # slots with the top BM25-only candidates so the neural reranker can judge
+    # them. 0 = disabled (today's behavior).
+    bm25_reserved_slots: int = 0
     min_bm25_score: float = 0.1
 
     # Reranking Configuration
@@ -160,7 +201,7 @@ class SearchModeConfig:
 
 @dataclass
 class PerformanceConfig:
-    """GPU, parallelism, caching settings (14 fields)."""
+    """GPU, parallelism, caching settings (17 fields)."""
 
     use_parallel_search: bool = True
     max_parallel_workers: int = 2
@@ -231,15 +272,24 @@ class IntentConfig:
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (5 fields)."""
+    """Neural reranker settings (7 fields)."""
 
     enabled: bool = True  # Enabled by default (Quality First)
     model_name: str = (
         "Alibaba-NLP/gte-reranker-modernbert-base"  # Cross-encoder reranker model
     )
-    top_k_candidates: int = 50  # Rerank top 50 from RRF
+    top_k_candidates: int = 30  # Rerank top 30 from RRF (Q2 sweep 2026-07-26:
+    # 30 vs 50 quality-neutral within ±0.025 on both golden sets, -32% latency;
+    # listwise reranking saturates ≈30 candidates)
     min_vram_gb: float = 2.0  # Auto-disable below this threshold (reranker uses ~1.5GB)
     batch_size: int = 16  # Reranker inference batch size
+    dedupe_split_blocks: bool = (
+        True  # Collapse split_block fragments to one result before final truncation
+    )
+    single_pass: bool = False  # Q3: skip hop-1 and multi-hop-merge neural rerank
+    # passes; run ONE listwise pass over the final merged pool (hop-1 + multi-hop
+    # + ego expansion) at the tail of HybridSearcher.search(). Trade-off: multi-hop
+    # expansion seeds degrade from neural-reranked to RRF-fusion order.
 
 
 @dataclass
@@ -258,7 +308,7 @@ class OutputConfig:
 
 @dataclass
 class ChunkingConfig:
-    """Chunking algorithm settings (12 fields)."""
+    """Chunking algorithm settings (13 fields)."""
 
     # Token size constraints for chunks
     min_chunk_tokens: int = 50  # Minimum tokens before considering merge
@@ -328,6 +378,13 @@ class ChunkingConfig:
         default=30, metadata={"range": (5, 100)}
     )  # Cv normalization ceiling (CC >= cap → Cv = 1.0)
 
+    # GLSL call-graph extraction (Phase 2b): filter TouchDesigner's TD-prefixed
+    # shader-include builtins (TDPanelSize, TDOutputSwizzle, ...) out of
+    # metadata["calls"] alongside the always-on GLSL builtin/type-constructor
+    # filter. Disable for non-TouchDesigner GLSL projects where a real
+    # user-defined symbol might start with "TD".
+    glsl_filter_td_prefix: bool = True
+
 
 @dataclass
 class EgoGraphConfig:
@@ -374,7 +431,11 @@ class GraphEnhancedConfig:
     """Graph-enhanced search settings."""
 
     centrality_method: str = "pagerank"  # Centrality algorithm
-    centrality_alpha: float = 0.3  # Blending weight (0=semantic, 1=centrality)
+    # Blending weight (0=semantic, 1=centrality). 0.0 per 2026-07-26 SSCG sweep:
+    # recall falls monotonically with alpha on both golden sets (replicated
+    # R@5 -0.027 at 0.2, -0.038 at 0.3 vs 0.0) with no MRR gain; the
+    # query-aware boost suite in CentralityRanker.rerank() stays active.
+    centrality_alpha: float = 0.0
     centrality_annotation: bool = True  # Always annotate centrality when graph exists
     centrality_reranking: bool = True  # Always rerank by blended score
     # Chunk-size normalization (penalize oversized chunks)
@@ -392,6 +453,9 @@ class GraphEnhancedConfig:
     )
     centrality_boost_factor: float = 5.0  # Multiplier: boost = centrality * factor
     centrality_boost_cap: float = 0.15  # Maximum boost added to blended_score
+    # Post-centrality result cap: total results kept = k * this multiplier
+    # (k primary + (multiplier-1)*k graph/ego/parent context chunks)
+    max_results_multiplier: int = 8
 
 
 @dataclass
@@ -447,7 +511,7 @@ class CallGraphConfig:
     Increase for large codebases where basedpyright type-checking takes longer.
     """
 
-    lsp_total_timeout_seconds: float = 120.0
+    lsp_total_timeout_seconds: float = 180.0
     """Aggregate wall-clock budget for the *entire* LSP pass (seconds).
 
     Unlike ``lsp_timeout_seconds`` (per JSON-RPC request), this bounds the
@@ -665,9 +729,12 @@ class SearchConfig:
         "enable_hybrid_search": ("search_mode", "enable_hybrid"),
         "bm25_weight": ("search_mode", "bm25_weight"),
         "dense_weight": ("search_mode", "dense_weight"),
-        "bm25_k_parameter": ("search_mode", "bm25_k_parameter"),
+        "bm25_k1": ("search_mode", "bm25_k1"),
+        "bm25_b": ("search_mode", "bm25_b"),
         "bm25_use_stopwords": ("search_mode", "bm25_use_stopwords"),
         "bm25_use_stemming": ("search_mode", "bm25_use_stemming"),
+        "bm25_tokenizer": ("search_mode", "bm25_tokenizer"),
+        "bm25_reserved_slots": ("search_mode", "bm25_reserved_slots"),
         "min_bm25_score": ("search_mode", "min_bm25_score"),
         "rrf_k_parameter": ("search_mode", "rrf_k_parameter"),
         "enable_result_reranking": ("search_mode", "enable_result_reranking"),
@@ -709,6 +776,8 @@ class SearchConfig:
         "reranker_top_k_candidates": ("reranker", "top_k_candidates"),
         "reranker_min_vram_gb": ("reranker", "min_vram_gb"),
         "reranker_batch_size": ("reranker", "batch_size"),
+        "reranker_dedupe_split_blocks": ("reranker", "dedupe_split_blocks"),
+        "reranker_single_pass": ("reranker", "single_pass"),
         # OutputConfig
         "output_format": ("output", "format"),
         "source_order_output": ("output", "source_order_output"),
@@ -746,6 +815,7 @@ class SearchConfig:
         "centrality_boost_threshold": ("graph_enhanced", "centrality_boost_threshold"),
         "centrality_boost_factor": ("graph_enhanced", "centrality_boost_factor"),
         "centrality_boost_cap": ("graph_enhanced", "centrality_boost_cap"),
+        "max_results_multiplier": ("graph_enhanced", "max_results_multiplier"),
         # ObservabilityConfig
         "otel_enabled": ("observability", "enabled"),
         "otel_service_name": ("observability", "service_name"),
@@ -986,6 +1056,14 @@ class SearchConfigManager:
             "CLAUDE_RERANKER_TOP_K": ("reranker_top_k_candidates", int),
             "CLAUDE_RERANKER_MIN_VRAM_GB": ("reranker_min_vram_gb", float),
             "CLAUDE_RERANKER_BATCH_SIZE": ("reranker_batch_size", int),
+            "CLAUDE_RERANKER_DEDUPE_SPLIT_BLOCKS": (
+                "reranker_dedupe_split_blocks",
+                self._bool_from_env,
+            ),
+            "CLAUDE_RERANKER_SINGLE_PASS": (
+                "reranker_single_pass",
+                self._bool_from_env,
+            ),
             # Observability (OTel tracing) env vars
             "CLAUDE_OTEL_ENABLED": ("otel_enabled", self._bool_from_env),
             "CLAUDE_OTEL_EXPORTER": ("otel_exporter", str),

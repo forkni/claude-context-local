@@ -13,6 +13,7 @@ This validates that:
 5. Search mode comparison: hybrid is at least as good as BM25 alone
 """
 
+import hashlib
 import shutil
 from pathlib import Path
 
@@ -167,7 +168,9 @@ def _make_deterministic_embeddings(chunks, dim=768):
 
     results = []
     for chunk in chunks:
-        seed = abs(hash(chunk.content)) % 10000
+        # hash() is randomized per-process (PYTHONHASHSEED), so it cannot
+        # back a "reproducible across runs" claim -- hashlib.sha256 can.
+        seed = int(hashlib.sha256(chunk.content.encode()).hexdigest(), 16) % 10000
         rng = np.random.RandomState(seed)
         embedding = rng.random(dim).astype(np.float32)
         # L2 normalize for cosine similarity
@@ -384,7 +387,7 @@ class TestRetrievalEvaluation:
     # -------------------------------------------------------------------
 
     def test_metrics_pipeline_produces_all_keys(self, indexed_environment):
-        """calculate_metrics_from_results returns all 10 expected keys
+        """calculate_metrics_from_results returns all 14 expected keys
         when fed real search results."""
         searcher = indexed_environment["searcher"]
         q = GOLDEN_QUERIES[0]
@@ -403,7 +406,10 @@ class TestRetrievalEvaluation:
         expected_keys = {
             "recall@1",
             "recall@5",
+            "recall@7",
             "recall@10",
+            "recall@20",
+            "recall@50",
             "precision@1",
             "precision@5",
             "precision@10",
@@ -411,6 +417,7 @@ class TestRetrievalEvaluation:
             "ndcg@5",
             "ndcg@10",
             "hit",
+            "hit@7",
         }
         assert set(metrics.keys()) == expected_keys
 

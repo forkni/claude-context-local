@@ -14,6 +14,7 @@ warnings.filterwarnings(
     category=DeprecationWarning,
 )
 
+import hashlib  # noqa: E402
 import shutil  # noqa: E402
 import sys  # noqa: E402
 import tempfile  # noqa: E402
@@ -21,7 +22,6 @@ from collections.abc import Generator  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Any  # noqa: E402
 
-import numpy as np  # noqa: E402
 import pytest  # noqa: E402
 
 from search.filters import normalize_path  # noqa: E402
@@ -51,11 +51,8 @@ if _venv_path.exists():
 
 try:
     from chunking.multi_language_chunker import MultiLanguageChunker
-    from embeddings.embedder import CodeEmbedder, EmbeddingResult
 except ImportError:
     MultiLanguageChunker = None
-    CodeEmbedder = None
-    EmbeddingResult = None
 
 try:
     from tests.fixtures.sample_code import (
@@ -122,14 +119,23 @@ def pytest_unconfigure(config: Any) -> None:
 def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
     """Automatically mark tests based on their location."""
     for item in items:
-        # Mark tests based on file path and location
-        path_str = str(item.fspath)
+        # Mark tests based on file path and location. normalize_path() converts
+        # backslashes to forward slashes first so this matches on Windows too.
+        path_str = normalize_path(str(item.fspath))
 
-        # First, determine if it's unit or integration
-        if "tests/unit/" in path_str or "test_system.py" in path_str:
+        # Structural tier marking - one marker per tier, by directory, so
+        # fast_integration/slow are no longer solely hand-decorated.
+        if "tests/unit/" in path_str:
             item.add_marker(pytest.mark.unit)
-        elif "tests/integration/" in path_str:
+        elif "tests/fast_integration/" in path_str or "tests/integration/" in path_str:
             item.add_marker(pytest.mark.integration)
+        elif "tests/slow_integration/" in path_str:
+            item.add_marker(pytest.mark.integration)
+            item.add_marker(pytest.mark.slow)
+
+        # test_system.py sits at tests/ root but exercises unit-level checks.
+        if "test_system.py" in path_str:
+            item.add_marker(pytest.mark.unit)
 
         # Then add specific markers based on test file name
         if "test_chunking" in path_str:
@@ -188,6 +194,51 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
                 print(f"\n[Cleanup] Warning: Orphaned project cleanup failed: {e}")
 
 
+def _reset_singleton_state() -> None:
+    """Reset the module-level singletons known to leak state across tests.
+
+    Phase 7 (test-suite hardening): these four survive ApplicationState.reset()
+    because they live outside it — ModelPoolManager and JobRegistry are their
+    own singletons, the intent-classifier anchor cache/config/rules are plain
+    module globals and lru_cache'd loaders, and the RAM-fallback override is a
+    module global by design (see its own docstring for why it must NOT be
+    cleared by ApplicationState.reset() itself).
+    """
+    try:
+        from mcp_server.model_pool_manager import reset_pool_manager
+
+        reset_pool_manager()
+    except ImportError:
+        pass  # Module might not be available in some tests
+
+    try:
+        from mcp_server.tools.job_registry import reset_job_registry
+
+        reset_job_registry()
+    except ImportError:
+        pass  # Module might not be available in some tests
+
+    try:
+        from search.intent_classifier import (
+            _ANCHOR_EMBEDDINGS_CACHE,
+            _load_anchor_config,
+            _load_intent_rules,
+        )
+
+        _ANCHOR_EMBEDDINGS_CACHE.clear()
+        _load_anchor_config.cache_clear()
+        _load_intent_rules.cache_clear()
+    except ImportError:
+        pass  # Module might not be available in some tests
+
+    try:
+        from search.config import set_indexing_ram_fallback_override
+
+        set_indexing_ram_fallback_override(None)
+    except ImportError:
+        pass  # Module might not be available in some tests
+
+
 @pytest.fixture(autouse=True)
 def reset_global_state() -> Generator[None, None, None]:
     """Reset global state before each test.
@@ -195,6 +246,9 @@ def reset_global_state() -> Generator[None, None, None]:
     Uses the centralized ApplicationState.reset() for clean state management.
     Also resets the module-level globals for backward compatibility during migration.
     Phase 4: Added ServiceLocator.reset() for DI pattern.
+    Phase 7: Added the singleton resets in _reset_singleton_state(), run both
+    before and after each test so a test that itself asserts on this state
+    (e.g. the anchor cache) still sees a clean slate at the start.
     """
     # Reset MCP server global state via ApplicationState
     try:
@@ -213,10 +267,12 @@ def reset_global_state() -> Generator[None, None, None]:
     except ImportError:
         pass  # Module might not be available in some tests
 
+    _reset_singleton_state()
+
     yield
 
     # Cleanup after test if needed
-    pass
+    _reset_singleton_state()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -248,65 +304,72 @@ def detach_server_file_logging() -> Generator[None, None, None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def preserve_original_project_selection() -> Generator[None, None, None]:
-    """Preserve and restore original project selection across test session.
+def _redirect_test_storage(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Generator[Path, None, None]:
+    """Redirect CODE_SEARCH_STORAGE to an isolated session-scoped tmp dir.
 
-    Saves the user's original project selection before any tests run,
-    then restores it after all tests complete. This prevents tests from
-    leaving the MCP server in a different project state.
+    Phase 8 (test-suite hardening): get_storage_dir() (mcp_server/storage_manager.py)
+    and get_selection_file_path() (mcp_server/project_persistence.py) both read
+    CODE_SEARCH_STORAGE directly and fall back to the real ~/.claude_code_search
+    when it is unset. ApplicationState.reset() nulls storage_dir every test (see
+    reset_global_state below), so the env var is re-read on first access each
+    test — no extra plumbing needed beyond setting it once, here, for the whole
+    session.
 
-    Runs once at session start (save), yields to run all tests,
-    then runs once at session end (restore).
+    This subsumes the old preserve_original_project_selection fixture: with
+    CODE_SEARCH_STORAGE always redirected, save_project_selection/
+    load_project_selection/clear_project_selection never touch the real
+    project_selection.json in the first place, so there is nothing left to
+    preserve or restore.
+
+    Note: CodeGraphStorage's default storage_dir (graph/graph_storage.py) reads
+    Path.home() directly rather than going through get_storage_dir(), so it does
+    NOT honor this redirect — tests must still pass storage_dir= explicitly (see
+    the graph_storage fixture below and TESTING_GUIDE.md's pitfalls table).
+    _no_real_storage_pollution (below) is the backstop that catches that case.
+
+    Uses pytest.MonkeyPatch directly (not the function-scoped `monkeypatch`
+    fixture, which cannot be session-scoped) so the override is undone at
+    session end even on error.
     """
-    from mcp_server.project_persistence import (
-        clear_project_selection,
-        load_project_selection,
-        save_project_selection,
+    storage_dir = tmp_path_factory.mktemp("code_search_storage")
+    mp = pytest.MonkeyPatch()
+    mp.setenv("CODE_SEARCH_STORAGE", str(storage_dir))
+    yield storage_dir
+    mp.undo()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_storage_pollution() -> Generator[None, None, None]:
+    """Fail loudly if a test writes to real home storage.
+
+    Phase 8 (test-suite hardening): promoted from
+    tests/unit/mcp_server/conftest.py to apply to every test, not just
+    tests/unit/mcp_server/ — now that _redirect_test_storage (above) redirects
+    CODE_SEARCH_STORAGE for the whole session, this is the safety net for
+    anything that bypasses it (e.g. CodeGraphStorage's default storage_dir,
+    which reads Path.home() directly — see the note above).
+
+    Snapshots ~/.claude_code_search/{projects,merkle,graphs} before the test and
+    after; any new entry added during the test triggers an assertion failure.
+    Tests that legitimately need real storage should patch/monkeypatch it
+    explicitly rather than relying on an exemption here.
+    """
+    home_storage = Path.home() / ".claude_code_search"
+    watched = [home_storage / sub for sub in ("projects", "merkle", "graphs")]
+    before = {d: (set(d.iterdir()) if d.exists() else set()) for d in watched}
+    yield
+    after = {d: (set(d.iterdir()) if d.exists() else set()) for d in watched}
+    leaked = {
+        d.name: sorted(p.name for p in (after[d] - before[d]))
+        for d in watched
+        if after[d] - before[d]
+    }
+    assert not leaked, (
+        "test wrote to real home storage — patch the storage writers or use "
+        f"monkeypatch: {leaked}"
     )
-
-    # Save original state BEFORE any tests run
-    original_selection = load_project_selection()
-
-    try:
-        import mcp_server.server as server_module
-
-        # Note: Original project state is tracked via original_selection
-        _ = getattr(server_module, "_current_project", None)  # Check availability
-    except ImportError:
-        pass  # Module might not be available
-
-    yield  # Let all tests run
-
-    # Restore original state AFTER all tests complete
-    try:
-        if original_selection:
-            # Restore saved selection
-            save_project_selection(original_selection["last_project_path"])
-
-            # Also restore server module global (use setter for cross-module sync)
-            try:
-                import mcp_server.server as server_module
-
-                if hasattr(server_module, "set_current_project"):
-                    server_module.set_current_project(
-                        original_selection["last_project_path"]
-                    )
-            except ImportError:
-                pass
-        else:
-            # No original selection - clear to None (clean state)
-            clear_project_selection()
-
-            try:
-                import mcp_server.server as server_module
-
-                if hasattr(server_module, "set_current_project"):
-                    server_module.set_current_project(None)
-            except ImportError:
-                pass
-    except Exception as e:
-        # Don't fail tests if restoration fails, just log it
-        print(f"Warning: Failed to restore original project selection: {e}")
 
 
 # Test fixtures
@@ -398,81 +461,6 @@ def mock_storage_dir(tmp_path: Path) -> Path:
     return storage_dir
 
 
-@pytest.fixture(scope="session")
-def test_config() -> dict[str, Any]:
-    """Test configuration settings."""
-    return {
-        "embedding_model": "BAAI/bge-m3",
-        "test_batch_size": 2,  # Small batch size for tests
-        "test_timeout": 30,  # Timeout for tests
-        "mock_embeddings": False,  # Use real embeddings if available
-        "embedding_dimension": 1024,
-        "max_chunks_for_test": 10,  # Limit chunks in tests
-    }
-
-
-@pytest.fixture(scope="session")
-def ensure_model_downloaded(test_config: dict[str, Any]) -> bool:
-    """Ensure the embedding model is downloaded before running tests."""
-    import os
-    import subprocess
-    from pathlib import Path
-
-    # Check if we should use mocks instead
-    if os.environ.get("PYTEST_USE_MOCKS", "").lower() in ("1", "true", "yes"):
-        pytest.skip("Using mocks instead of real model")
-
-    # Try to download model
-    script_path = Path(__file__).parent / "scripts" / "download_model.py"
-    if script_path.exists():
-        try:
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(script_path),
-                    "--model",
-                    test_config["embedding_model"],
-                ],
-                capture_output=True,
-                text=True,
-                timeout=300,  # 5 minute timeout
-            )
-            if result.returncode != 0:
-                pytest.skip(f"Could not download model: {result.stderr}")
-        except subprocess.TimeoutExpired:
-            pytest.skip("Model download timed out")
-        except Exception as e:
-            pytest.skip(f"Error downloading model: {e}")
-    else:
-        pytest.skip("Download script not found")
-
-    return True
-
-
-@pytest.fixture
-def embedder_with_cleanup(mock_storage_dir: Path) -> Generator[Any, None, None]:
-    """Create a CodeEmbedder with proper GPU memory cleanup."""
-    if not CodeEmbedder:
-        pytest.skip("CodeEmbedder not available")
-
-    # Create embedder with CPU device to avoid GPU memory issues
-    embedder = CodeEmbedder(
-        cache_dir=str(mock_storage_dir / "models"),
-        device="cpu",  # Force CPU for tests to avoid VRAM issues
-    )
-
-    yield embedder
-
-    # Cleanup after test
-    try:
-        embedder.cleanup()
-    except Exception as e:
-        # Test cleanup - log but don't fail test
-        import warnings
-
-        warnings.warn(f"Embedder cleanup failed: {e}", stacklevel=2)
-
-
 @pytest.fixture
 def graph_storage(tmp_path: Path) -> Generator[Any, None, None]:
     """Create a CodeGraphStorage instance with isolated temporary directory.
@@ -545,8 +533,11 @@ def mock_snapshot_manager_for_unit_tests(
     mock_instance.delete_snapshot.return_value = None
     mock_instance.delete_all_snapshots.return_value = 0
     mock_instance.load_snapshot.return_value = None
+    # hash() is randomized per-process (PYTHONHASHSEED), so two workers -- or
+    # two runs of the same test -- would compute different IDs for the same
+    # path. Use hashlib.sha256 for a genuinely stable ID across processes.
     mock_instance.get_project_id.side_effect = lambda path: (
-        f"test_{hash(path) & 0xFFFFFFFF:08x}"
+        f"test_{hashlib.sha256(str(path).encode()).hexdigest()[:8]}"
     )
 
     # Patch at definition point (sufficient for all imports)
@@ -560,66 +551,3 @@ def mock_snapshot_manager_for_unit_tests(
 # ============================================================================
 # generate_chunk_id and create_test_embeddings live in tests.helpers.embeddings.
 # Import them directly in test files: from tests.helpers.embeddings import ...
-
-
-@pytest.fixture
-def mock_embedding_result_factory():
-    """Factory for creating mock EmbeddingResult objects.
-
-    Usage:
-        def test_something(mock_embedding_result_factory):
-            result = mock_embedding_result_factory(
-                chunk_id="file.py:1-10:function:my_func",
-                name="my_func",
-                calls=[{"callee_name": "other_func", "line_number": 5}]
-            )
-
-    Args:
-        chunk_id: Chunk identifier (default: "test.py:1-10:function:test_func")
-        name: Function/class name (default: "test_func")
-        chunk_type: Type of code chunk (default: "function")
-        content: Code content (default: "def test_func(): pass")
-        file_path: File path (extracted from chunk_id if not provided)
-        calls: List of call dictionaries (default: [])
-        relationships: List of relationship dictionaries (default: [])
-        embedding_dim: Embedding dimension (default: 768)
-
-    Returns:
-        Callable that creates EmbeddingResult objects
-    """
-
-    def create(
-        chunk_id: str = "test.py:1-10:function:test_func",
-        name: str = "test_func",
-        chunk_type: str = "function",
-        content: str = "def test_func(): pass",
-        file_path: str | None = None,
-        calls: list[dict] | None = None,
-        relationships: list[dict] | None = None,
-        embedding_dim: int = 768,
-    ):
-        if not EmbeddingResult:
-            pytest.skip("EmbeddingResult not available")
-
-        # Deterministic embedding from chunk_id
-        seed = hash(chunk_id) & 0xFFFFFFFF
-        embedding = np.random.RandomState(seed).random(embedding_dim).astype(np.float32)
-
-        # Extract file_path from chunk_id if not provided
-        if file_path is None:
-            file_path = chunk_id.split(":")[0]
-
-        return EmbeddingResult(
-            embedding=embedding,
-            chunk_id=chunk_id,
-            metadata={
-                "name": name,
-                "chunk_type": chunk_type,
-                "content": content,
-                "file_path": file_path,
-                "calls": calls or [],
-                "relationships": relationships or [],
-            },
-        )
-
-    return create

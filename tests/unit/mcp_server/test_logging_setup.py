@@ -13,6 +13,9 @@ import contextlib
 import logging
 import logging.handlers
 import os
+import subprocess
+import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -88,6 +91,143 @@ class TestConfigureLoggingIdempotent:
                         h.close()
             for h in existing_file_hdlrs:
                 root.addHandler(h)
+
+
+class TestIndexHandlersConfiguresLoggingEagerly:
+    """Log-hygiene item F: a real force-reindex (tools/batch_index.py ->
+    mcp_server.tool_handlers.handle_index_directory) showed zero INFO-level
+    "Call graph extraction enabled..." lines from chunking.multi_language_chunker,
+    though exactly one is expected per index run (MultiLanguageChunker.__init__
+    logs it once, at INFO; worker threads log the same message at DEBUG).
+
+    Root cause: mcp_server.tools.index_handlers.handle_index_directory (:879)
+    constructs the chunker (which logs at INFO in __init__) *before* anything
+    in that function imports mcp_server.server -- the module whose import-time
+    _configure_logging() call raises the root logger from Python's default
+    level (WARNING) to DEBUG and attaches the file handler. That import is
+    deferred: it only happens later in the same call, inside
+    search_factory.get_searcher() (called from _setup_and_run(), after the
+    chunker already exists). batch_index.py's own import graph
+    (mcp_server.tool_handlers -> mcp_server.tools.index_handlers) never
+    imports mcp_server.server directly, so in a fresh process the chunker's
+    one INFO record is emitted while root.level is still WARNING --
+    logger.isEnabledFor(INFO) is False at the source, so the record never
+    reaches a handler at all, file or otherwise. The later per-worker DEBUG
+    records survive because by the time ParallelChunker's ThreadPoolExecutor
+    workers run, get_searcher() has already forced mcp_server.server's
+    import.
+
+    Fix: _run_index_directory (the body handle_index_directory delegates to,
+    both for wait=True and the background-job path) now does a deferred,
+    function-local `import mcp_server.server` as its very first statement --
+    before its own first logger.info call and well before
+    MultiLanguageChunker.for_project() further down the same function --
+    guaranteeing _configure_logging() has already run. Deferred rather than
+    a module-level import: mcp_server/server.py itself (module level)
+    imports mcp_server.tools (line ~53, before _configure_logging() at line
+    ~192), so an eager top-level import here -- reached while
+    mcp_server.tools.__init__ is still mid-execution importing this very
+    module -- would re-enter mcp_server.server while it's only partially
+    initialised. A call-time import carries none of that risk, and matches
+    the existing deferred `from mcp_server.server import
+    close_project_resources` already used elsewhere in this file (see
+    handle_clear_index).
+
+    Runs in a subprocess for the same reason as
+    TestMCPServerImport.test_mcp_server_can_import_as_first_module in
+    test_mcp_server.py: conftest.py's session-scoped
+    detach_server_file_logging fixture force-imports mcp_server.server before
+    any test runs, so within the shared pytest process
+    'mcp_server.server' in sys.modules is always True and root.level is
+    already DEBUG -- the exact ordering this test exists to pin down is
+    unobservable there. A fresh interpreter, importing only
+    mcp_server.tools.index_handlers the way batch_index.py's import graph
+    does, reproduces the true starting state.
+    """
+
+    def test_importing_index_handlers_alone_does_not_configure_logging(self) -> None:
+        """Merely importing the module must NOT be what carries the fix --
+        the fix is call-time (function-local import), not import-time.
+        Pinning this documents that choice and would catch a well-intentioned
+        but circular-import-risky "just import mcp_server.server at module
+        level" regression from silently changing this precondition."""
+        repo_root = Path(__file__).resolve().parents[3]
+        script = (
+            "import logging\n"
+            "import mcp_server.tools.index_handlers\n"
+            "root = logging.getLogger()\n"
+            "print('LEVEL', root.level)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert "LEVEL 30" in result.stdout, (
+            "root logger changed level on bare import alone -- if this is "
+            "now DEBUG (10), the fix moved to a module-level import; verify "
+            "that's not reintroducing the mcp_server.server <-> "
+            f"mcp_server.tools circular-import risk.\nstdout={result.stdout}"
+        )
+
+    def test_run_index_directory_configures_logging_before_first_log(self) -> None:
+        """Calling _run_index_directory -- with a directory_path that does
+        not exist, so it returns the "Directory does not exist" error right
+        after the existence check, before touching a real project, embedder,
+        or model -- must leave the root logger configured. A nonexistent
+        path keeps this fast and deterministic while still exercising the
+        exact function whose prologue previously left
+        MultiLanguageChunker.__init__'s one-time INFO message unloggable."""
+        repo_root = Path(__file__).resolve().parents[3]
+        script = (
+            "import asyncio\n"
+            "import logging\n"
+            "import mcp_server.tools.index_handlers as ih\n"
+            "root = logging.getLogger()\n"
+            "print('LEVEL_BEFORE', root.level)\n"
+            "result = asyncio.run(\n"
+            "    ih._run_index_directory(\n"
+            "        {'directory_path': 'Z:/__nonexistent_claude_context_test__'}\n"
+            "    )\n"
+            ")\n"
+            "print('ERROR_KEY', 'error' in result)\n"
+            "print('LEVEL_AFTER', root.level)\n"
+            "print('HANDLERS_AFTER', len(root.handlers))\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "LEVEL_BEFORE 30" in result.stdout, (
+            "sanity check: root logger must start unconfigured (WARNING=30) "
+            f"in a fresh process -- otherwise this test proves nothing.\n"
+            f"stdout={result.stdout}"
+        )
+        assert "ERROR_KEY True" in result.stdout, (
+            "expected _run_index_directory to short-circuit on the "
+            f"nonexistent path.\nstdout={result.stdout}\nstderr={result.stderr}"
+        )
+        assert "LEVEL_AFTER 10" in result.stdout, (
+            "root logger must be at DEBUG (10) once _run_index_directory has "
+            "run, or any INFO log emitted before search_factory."
+            "get_searcher()'s deferred mcp_server.server import -- including "
+            "MultiLanguageChunker.__init__'s one-time call-graph message -- "
+            f"is silently filtered before it reaches a handler.\n"
+            f"stdout={result.stdout}\nstderr={result.stderr}"
+        )
+        assert "HANDLERS_AFTER 0" not in result.stdout, (
+            "root logger has no handlers after _run_index_directory -- the "
+            "file handler that would carry that log to logs/mcp_server.log "
+            f"has not been attached yet.\nstdout={result.stdout}"
+        )
 
 
 class TestNoFileLogBleedDuringTests:
@@ -205,6 +345,9 @@ class TestSafeRotatingFileHandler:
                 args=(),
                 exc_info=None,
             )
-            handler.emit(record)
+            handler.emit(record)  # must not raise
+
+        handler.close()
+        assert log_file.exists(), "Handler must keep writing after a failed rollover"
 
         handler.close()

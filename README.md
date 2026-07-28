@@ -29,30 +29,32 @@
 
 ## Highlights
 
-- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-06-08, 13 queries, k=7): **Hit@5 100%, MRR 0.797, Recall@7 0.736 (recommended k=7)** - [benchmarks](docs/BENCHMARKS.md)
-- **Neural Reranking**: Cross-encoder models (default: `jinaai/jina-reranker-v3`; alternatives: gte-reranker-modernbert-base, Qwen3-Reranker-0.6B) improve ranking quality by 15-25% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
-- **SSCG Integration**: Structural-Semantic Code Graph — on the [SSCG benchmark](#benchmark-results) (2026-06-08, 13 queries, k=10): **13/13 Hit@5 across all three modes (hybrid, BM25, semantic); neural reranker active (all modes MRR 0.797); Hybrid best at deep recall (R@7 0.736, R@10 0.770)**
+- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-07-27, 63 queries, hybrid k=7): **Hit@5 100%, MRR 0.787-0.796, Recall@7 0.719-0.734, Recall@20 0.80-0.81** - [benchmarks](docs/BENCHMARKS.md)
+- **Neural Reranking**: Cross-encoder models (default: `Alibaba-NLP/gte-reranker-modernbert-base`; alternatives: jinaai/jina-reranker-v3, Qwen3-Reranker-0.6B) improve ranking quality by 15-25% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
+- **SSCG Integration**: Structural-Semantic Code Graph — 21 relationship types, PageRank centrality reranking, community detection; see [benchmarks](docs/BENCHMARKS.md) for mode-comparison history
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Layered Call-Graph Resolver Pipeline**: `find_connections` returns callers **and** callees with per-entry provenance (`resolver_source`, `resolver_confidence`). Confidence ladder: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98. Install `pip install -e ".[callgraph]"` for pyan3 + LibCST; core is Apache-2.0-clean — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
 - **OTel Tracing** (opt-in): Zero-overhead `traced_block` / `@timed` spans across the search and index pipeline — export to Jaeger, Tempo, or any OTLP collector. See [Observability](docs/OBSERVABILITY.md).
 - **ONNX Runtime Backend** (opt-in): `performance.use_onnx` loads eligible models via `ORTModelForFeatureExtraction` with `CUDAExecutionProvider` + `gpu_mem_limit` arena cap — prevents WDDM shared-memory spillover on 8 GB laptop GPUs
-- **19 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
+- **Persistent Chunk Embedding Cache**: content-hash-keyed cache of chunk embedding vectors cuts a full reindex's embedding phase from ~34s to well under 1s once the codebase is unchanged; invalidates automatically on model or precision/backend changes - [configuration](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md#chunk-embedding-cache-configuration)
+- **20 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
 - **18 MCP Tools** (10 core + 8 advanced, gated behind `MCP_EXPOSE_ADVANCED_TOOLS`): Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
-- **Source-Position Reranking**: Groups results by file, sorted by line number — LLMs read code in logical order (+5.3% accuracy, DOS RAG)
+- **Source-Position Reranking** (opt-in, `source_order_output=true`): Groups results by file, sorted by line number instead of relevance — LLMs read code in logical order (+5.3% accuracy, DOS RAG); relevance order is the default since v0.18.0
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 3,165 passing tests | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
+**Status**: ✅ Production-ready | 3,359 unit tests passing | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
 
-*Last reviewed: 2026-07-23*
+*Last reviewed: 2026-07-27*
 
-## What's New in v0.21.0
+## What's New in v0.22.0
 
-- **MCP-server hardening**: core/advanced tool tiers (`MCP_EXPOSE_ADVANCED_TOOLS`), async index jobs, dispatch telemetry, mutation lock — per the architecture-patterns paper on tool-count budgets
-- **Default embedding model** switched to `BAAI/bge-m3` across all config readers
-- **LSP call-graph resolver deadlock** eliminated via a persistent reader thread
-- **Security**: 21 dependency CVEs resolved; upgraded to `transformers` 5.x (CVE-2026-4372)
-- Performance sweep across chunking, reranking, and relationship extraction (shared AST walk, memoized import/class context, read-file-once, dedent-once)
+- **GLSL indexing parity with Python**: rewrote `GLSLChunker` around the real tree-sitter grammar — named uniforms/UBO blocks/structs/macros, GLSL call-graph edges, `.glslinc` as an 8th GLSL extension (20 extensions total)
+- **Persistent chunk embedding cache**: cuts a full reindex's embedding phase from ~34s to well under 1s (43×) once the codebase is unchanged
+- **BM25 path/symbol token augmentation**: adopted after A/B verification — MRR +0.113 on the 63-query benchmark; drives `INDEX_VERSION` 3→4
+- **Fixed the highest-severity bug this cycle**: every full reindex was silently discarding 100% of resolver-derived call-graph edges (`HybridSearcher.clear_index()` truthiness bug)
+- **Widened retrieval funnel**: hybrid `search_k` raised to `max(reranker_budget, k*5)` — the largest recall improvement this release
+- ⚠️ **Migration**: existing indices need one full, non-incremental reindex (`INDEX_VERSION` 4, BM25 tokenizer switch, GLSL parity) — see [CHANGELOG.md](CHANGELOG.md)
 
 Previous release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -294,18 +296,19 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
 | C | `.c` | Tree-sitter |
 | C++ | `.cpp`, `.cc`, `.cxx`, `.c++` | Tree-sitter |
 | C# | `.cs` | Tree-sitter |
-| GLSL | `.glsl`, `.frag`, `.vert`, `.comp`, `.geom`, `.tesc`, `.tese` | Tree-sitter |
+| GLSL | `.glsl`, `.frag`, `.vert`, `.comp`, `.geom`, `.tesc`, `.tese`, `.glslinc` | Tree-sitter |
 
-**Total**: 19 file extensions across 9 programming languages
+**Total**: 20 file extensions across 9 programming languages
 
 ## Requirements
 
 - **Python**: 3.11+ (tested with 3.11 and 3.12)
 - **RAM**: 4GB minimum (8GB+ recommended for large codebases)
 - **Disk**: 2-4GB free space (model cache + embeddings)
-  - EmbeddingGemma: ~1.2GB (default)
-  - BGE-M3: 1–1.5 GB
+  - EmbeddingGemma: ~1.2GB
+  - BGE-M3: 1–1.5 GB (default)
   - Qwen3-0.6B: ~2.3GB
+  - F2LLM-v2-0.6B: ~2.2GB
 - **Windows**: Windows 10/11 with PowerShell
 - **PyTorch**: 2.6.0+ (auto-installed with CUDA 11.8/12.4/12.6 support)
 - **GPU** (optional): NVIDIA GPU with CUDA for 8.6x faster indexing
@@ -355,9 +358,10 @@ Weights should sum to 1.0.
 
 | Model | VRAM | Best For |
 |-------|------|----------|
-| **EmbeddingGemma-300m** | ~1.2GB | Default — lightweight, low-VRAM systems |
-| **BGE-M3** | 1-1.5GB | Hybrid search, balanced quality/VRAM |
+| **BGE-M3** | 1-1.5GB | Default — hybrid search, balanced quality/VRAM |
+| **EmbeddingGemma-300m** | ~1.2GB | Lightweight, low-VRAM systems |
 | **Qwen3-0.6B** | 2.3GB | High efficiency, excellent value |
+| **F2LLM-v2-0.6B** | 2.2GB | Best retrieval ordering (MTEB avg 66.47) |
 | **CodeRankEmbed** | 0.5-0.6GB | Code-specific retrieval |
 | **GTE-ModernBERT** | ~0.28GB | Lightest option |
 
@@ -375,7 +379,7 @@ Enable/disable parallel execution of BM25 and semantic search:
 Cross-encoder model that re-scores results for 15-25% quality improvement:
 
 - **Enable/Disable**: Requires GPU with ≥2GB VRAM
-- **Top-K Candidates**: Number of results to rerank (default: 50, range: 5-100)
+- **Top-K Candidates**: Number of results to rerank (default: 30, range: 5-100)
 
 #### 7. Configure Entity Tracking
 
@@ -403,9 +407,10 @@ For automation and CI/CD, settings can be overridden via environment variables. 
 
 | Model | Dimensions | VRAM | Best For |
 |-------|------------|------|----------|
-| **EmbeddingGemma-300m** | 768 | ~1.2GB | Default — lightweight, low-VRAM systems |
-| **BGE-M3** | 1024 | 1-1.5GB | Hybrid search, balanced quality/VRAM |
+| **BGE-M3** | 1024 | 1-1.5GB | Default — hybrid search, balanced quality/VRAM |
+| **EmbeddingGemma-300m** | 768 | ~1.2GB | Lightweight, low-VRAM systems |
 | **Qwen3-0.6B** | 1024 | 2.3GB | High efficiency, excellent value |
+| **F2LLM-v2-0.6B** | 1024 | 2.2GB | Best retrieval ordering (MTEB avg 66.47) |
 | **CodeRankEmbed** | 768 | 0.5-0.6GB | Code-specific retrieval |
 | **GTE-ModernBERT** | 768 | ~0.28GB | Lightest option |
 
@@ -427,7 +432,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 3,140 tests (3,127 pass / 13 skip)
+└── tests/             # 3,359 unit tests (+103 fast_integration, 22 integration, 93 slow_integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -461,6 +466,8 @@ All three modes evaluated against 13 queries with neural reranker active. The cr
 | **Semantic** | 0.797 | 0.676 | 0.723 | 0.758 | 13/13 (100%) | 0.705 | Concept/intent queries |
 
 **Key findings**: Reranker normalises MRR across modes. Hybrid leads on R@7 (0.736); BM25 highest raw R@10 (0.777). All modes Hit@5 = 100% (13/13). See `evaluation/golden_dataset.json` and `scripts/benchmark/run_sscg_benchmark.py` for details.
+
+A newer A/B run (2026-07-26, 63-query original golden set, `F2LLM-v2-0.6B` vs `Qwen3-Embedding-0.6B`) showed a consistent MRR gain for F2LLM (+0.026/+0.027 mean, 4/4 runs); recall and latency were flat. F2LLM is available as an opt-in embedding model — see `evaluation/EMBEDDER_F2LLM_AB_20260726.md` for the full protocol and results.
 
 See [benchmarks](docs/BENCHMARKS.md) for full SSCG retrieval metrics and token efficiency results (63% reduction).
 
@@ -533,7 +540,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (3,140 tests, 100% pass rate)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (3,359 unit tests, 100% pass rate)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 

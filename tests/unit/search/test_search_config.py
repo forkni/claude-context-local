@@ -5,7 +5,12 @@ import os
 import tempfile
 from unittest.mock import patch
 
-from search.config import SearchConfig, SearchConfigManager, get_search_config
+from search.config import (
+    RerankerConfig,
+    SearchConfig,
+    SearchConfigManager,
+    get_search_config,
+)
 
 
 class TestSearchConfig:
@@ -434,3 +439,25 @@ def test_env_override_applies_over_nested_file(tmp_path):
 
     # Env must have overridden the file value
     assert config.search_mode.default_mode == "bm25"
+
+
+def test_reranker_dedupe_split_blocks_default_and_flat_alias():
+    """Q1 toggle: defaults to True; legacy flat key maps into the nested schema."""
+    assert RerankerConfig().dedupe_split_blocks is True
+
+    config = SearchConfig.from_dict({"reranker_dedupe_split_blocks": False})
+    assert config.reranker.dedupe_split_blocks is False
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.reranker.dedupe_split_blocks is False
+
+
+def test_reranker_single_pass_default_and_flat_alias():
+    """Q3 toggle: defaults to False; flat key maps into the nested schema."""
+    assert RerankerConfig().single_pass is False
+
+    config = SearchConfig.from_dict({"reranker_single_pass": True})
+    assert config.reranker.single_pass is True
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.reranker.single_pass is True

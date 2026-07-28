@@ -157,9 +157,18 @@ def _run_single(
     # satisfied (expected_callees: [] means "we know there are none").
     if not expected:
         recall = 1.0
+        recall_at_n = 1.0
         precision = 1.0 if not retrieved_k else 0.0
     else:
-        recall = calculate_recall_at_k(retrieved_k, expected, k=len(expected))
+        # Coverage recall: agrees with found/missed below by construction — both
+        # are set-membership over the full retrieved_k (harness's own k), not a
+        # rank-strict cutoff at len(expected). This is the field the OK/PARTIAL/
+        # MISS status and the aggregate gate are based on.
+        recall = calculate_recall_at_k(retrieved_k, expected, k=len(retrieved_k))
+        # Rank-strict recall@len(expected) — meaningful now that direct_callees/
+        # direct_callers are confidence-sorted (relationship_analyzer.py Step 1.1).
+        # Kept as a separate diagnostic field, not the gate.
+        recall_at_n = calculate_recall_at_k(retrieved_k, expected, k=len(expected))
         precision = calculate_precision_at_k(
             retrieved_k, expected, k=max(len(retrieved_k), 1)
         )
@@ -175,6 +184,7 @@ def _run_single(
         "id": qid,
         "target": target,
         "recall": round(recall, 4),
+        "recall_at_n": round(recall_at_n, 4),
         "precision": round(precision, 4),
         "retrieved_count": len(retrieved),
         "expected_count": len(expected),
@@ -189,8 +199,9 @@ def _run_single(
         status = "OK" if recall == 1.0 else ("PARTIAL" if recall > 0 else "MISS")
         src_str = " sources=" + json.dumps(resolver_sources) if resolver_sources else ""
         print(
-            f"    recall={recall:.2f} precision={precision:.2f} "
-            f"retrieved={len(retrieved)} expected={len(expected)} [{status}]{src_str}"
+            f"    recall={recall:.2f} recall_at_n={recall_at_n:.2f} "
+            f"precision={precision:.2f} retrieved={len(retrieved)} "
+            f"expected={len(expected)} [{status}]{src_str}"
         )
         if missed:
             print(f"    missed: {missed}")
@@ -377,6 +388,7 @@ def main() -> None:
 
     # Aggregate
     recalls = [r["recall"] for r in results]
+    recalls_at_n = [r["recall_at_n"] for r in results]
     precisions = [r["precision"] for r in results]
     total_expected = sum(r["expected_count"] for r in results)
     total_found = sum(len(r["found"]) for r in results)
@@ -388,8 +400,16 @@ def main() -> None:
     for r in results:
         agg_sources.update(r.get("resolver_sources", {}))
 
+    # micro_recall = total_found / total_expected (pools edges across queries —
+    # this is what the old "mean_recall" field actually computed).
+    # mean_recall = true macro-average of the per-query (now coverage-consistent)
+    # "recall" field — one query, one vote, regardless of its expected_count.
+    micro_recall = round(total_found / total_expected, 4) if total_expected else 0.0
+
     agg: dict[str, Any] = {
+        "micro_recall": micro_recall,
         "mean_recall": round(mean(recalls), 4) if recalls else 0.0,
+        "mean_recall_at_n": round(mean(recalls_at_n), 4) if recalls_at_n else 0.0,
         "mean_precision": round(mean(precisions), 4) if precisions else 0.0,
         "perfect_recall_count": perfect,
         "total_queries": len(results),
@@ -404,6 +424,8 @@ def main() -> None:
     print("=" * 60)
     print(f"  Queries:              {len(results)}")
     print(f"  Mean Recall:          {agg['mean_recall']:.4f}")
+    print(f"  Micro Recall:         {agg['micro_recall']:.4f}")
+    print(f"  Mean Recall@n:        {agg['mean_recall_at_n']:.4f}")
     print(f"  Mean Precision:       {agg['mean_precision']:.4f}")
     print(f"  Perfect recall (1.0): {perfect}/{len(results)}")
     print(f"  Edges found:          {total_found}/{total_expected}")

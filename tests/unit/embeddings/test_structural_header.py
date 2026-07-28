@@ -129,8 +129,11 @@ class TestStructuralHeaderContextInjection:
 
         result = embedder.create_embedding_content(chunk)
 
-        # Should not crash; should include chunk type if available
-        assert "# module_level" in result or result.strip().startswith("x = 42")
+        # With relative_path/name missing but chunk_type present, the header
+        # falls back to just the chunk type — this is the only branch that
+        # can actually be reached with these inputs (empty relative_path is
+        # falsy, so it's never added; chunk_type is always truthy here).
+        assert "# module_level" in result
 
     def test_structural_header_partial_fields(self, embedder):
         """Verify header with only some fields available."""

@@ -31,5 +31,15 @@
     },
     "start_line": 14,
     "type": "namespace_definition"
+  },
+  {
+    "content": "// Tiny C++ fixture: template function, class, namespace.",
+    "end_line": 1,
+    "language": "cpp",
+    "metadata": {
+      "type": "module_preamble"
+    },
+    "start_line": 1,
+    "type": "module_preamble"
   }
 ]

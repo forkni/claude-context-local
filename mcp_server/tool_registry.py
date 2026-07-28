@@ -140,7 +140,9 @@ RETURNS:
                 "auto_reindex": {
                     "type": "boolean",
                     "default": True,
-                    "description": "Automatically reindex if index is stale (default: True)",
+                    "description": "Automatically reindex if index is stale (schema default: True; "
+                    "the running server may be configured with a different effective default — "
+                    "check get_search_config_status.auto_reindex_enabled)",
                 },
                 "max_age_minutes": {
                     "type": "number",
@@ -768,7 +770,7 @@ RETURNS:
 Args:
     enabled: Enable/disable neural reranking (default: True)
     model_name: Cross-encoder model to use (default: BAAI/bge-reranker-v2-m3)
-    top_k_candidates: Number of candidates to rerank (default: 50)
+    top_k_candidates: Number of candidates to rerank (default: 30)
 
 NOTE: this changes global server config (one active setting at a time). On the
 HTTP transport this affects all connected clients — verify with
@@ -814,10 +816,11 @@ WHEN TO USE:
   indexing on very large repos
 
 Each field's factory default and valid range are documented on its own schema
-property below (see this tool's input schema). Two fixed, non-configurable
-constants: min_chunk_tokens=50 and max_merged_tokens=400. Live values
-currently in effect may differ from factory defaults — check
-get_search_config_status.
+property below (see this tool's input schema). min_chunk_tokens (factory
+default 50) and max_merged_tokens (factory default 400) are not exposed as
+parameters of this tool, but both remain configurable via search_config.json
+(the shipped example sets max_merged_tokens=1000). Live values currently in
+effect may differ from factory defaults — check get_search_config_status.
 
 NOTE: this changes global server config (one active setting at a time). On the
 HTTP transport this affects all connected clients.

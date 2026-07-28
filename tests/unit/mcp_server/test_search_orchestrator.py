@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
@@ -130,6 +131,12 @@ def _patch_execute(real_sc=None, project="/test"):
             mock_state.return_value = st
             mock_cm.return_value.get_search_mode_for_query.return_value = "hybrid"
             mock_cfg.return_value.performance.use_parallel_search = False
+            # run() plans via SearchPlanner.plan(), which checks config.intent.enabled
+            # before running IntentClassifier. None of the current _run_execute-based
+            # callers reach plan() (they call _maybe_reindex/_search directly), so this
+            # is a no-op for them; composition tests that call orchestrator.run()
+            # directly need it to skip intent classification against a bare MagicMock.
+            mock_cfg.return_value.intent.enabled = False
             yield mock_state, mock_get_searcher
 
     return _ctx()
@@ -154,8 +161,24 @@ def _make_ready_searcher():
     return s
 
 
+async def _run_execute(orchestrator: SearchOrchestrator, plan):
+    """Mirror the deleted ``_execute`` for these Block-level tests: run
+    ``_maybe_reindex`` (Block A) then ``_search`` (Blocks B-D), short-circuiting
+    on a dict (error) from either stage — exactly what ``run()`` does, minus
+    the read lock ``run()`` now holds across ``_search`` *and* ``_assemble``
+    (ADR-0008 amendment). Omitting the lock here changes no assertion: every
+    test below stubs ``get_reindex_rwlock()`` via ``_patch_execute()`` /
+    ``_make_rwlock_mock()`` with no-op async context managers.
+    """
+    early = await orchestrator._maybe_reindex(plan)
+    if isinstance(early, dict):
+        return early
+    reindexed, _lock_project = early
+    return await orchestrator._search(plan, reindexed)
+
+
 # ---------------------------------------------------------------------------
-# Phase B: _execute
+# Phase B: _maybe_reindex + _search
 # ---------------------------------------------------------------------------
 
 
@@ -171,7 +194,7 @@ class TestExecuteDimensionMismatch:
                 side_effect=err,
             ),
         ):
-            result = await SearchOrchestrator()._execute(plan)
+            result = await _run_execute(SearchOrchestrator(), plan)
         assert isinstance(result, dict)
         assert result["error"] == "Dimension mismatch"
         assert "force_reindex" in result["recovery_suggestion"]
@@ -182,7 +205,7 @@ class TestExecuteDimensionMismatch:
         err = _dim_mismatch_error()
         with _patch_execute() as (_, mock_gs):
             mock_gs.side_effect = err
-            result = await SearchOrchestrator()._execute(plan)
+            result = await _run_execute(SearchOrchestrator(), plan)
         assert isinstance(result, dict)
         assert result["error"] == "Dimension mismatch"
 
@@ -200,7 +223,7 @@ class TestExecuteReadinessCheck:
         s.dense_index = dense
         with _patch_execute() as (_, mock_gs):
             mock_gs.return_value = s
-            result = await SearchOrchestrator()._execute(plan)
+            result = await _run_execute(SearchOrchestrator(), plan)
         assert isinstance(result, dict)
         assert "No indexed project" in result["error"]
 
@@ -211,7 +234,7 @@ class TestExecuteReadinessCheck:
         s.index_manager.get_stats.return_value = {"total_chunks": 0}
         with _patch_execute() as (_, mock_gs):
             mock_gs.return_value = s
-            result = await SearchOrchestrator()._execute(plan)
+            result = await _run_execute(SearchOrchestrator(), plan)
         assert isinstance(result, dict)
         assert "No indexed project" in result["error"]
 
@@ -223,7 +246,7 @@ class TestExecuteHappyPath:
         searcher = _make_ready_searcher()
         with _patch_execute() as (_, mock_gs):
             mock_gs.return_value = searcher
-            result = await SearchOrchestrator()._execute(plan)
+            result = await _run_execute(SearchOrchestrator(), plan)
         assert isinstance(result, ExecutionOutcome)
         assert result.searcher is searcher
         assert isinstance(result.effective_config, SearchConfig)
@@ -234,7 +257,7 @@ class TestExecuteHappyPath:
         searcher = _make_ready_searcher()
         with _patch_execute() as (_, mock_gs):
             mock_gs.return_value = searcher
-            await SearchOrchestrator()._execute(plan)
+            await _run_execute(SearchOrchestrator(), plan)
         call_kwargs = searcher.search.call_args.kwargs
         assert call_kwargs["query"] == "find embedder"
         assert call_kwargs["k"] == 7
@@ -253,7 +276,7 @@ class TestExecuteHappyPath:
 
         with _patch_execute() as (_, mock_gs):
             mock_gs.return_value = searcher
-            await SearchOrchestrator()._execute(plan)
+            await _run_execute(SearchOrchestrator(), plan)
 
         call_kwargs = searcher.search.call_args.kwargs
         f = call_kwargs.get("filters", {}) or {}
@@ -273,7 +296,7 @@ class TestExecuteHappyPath:
             ) as mock_reindex,
         ):
             mock_gs.return_value = searcher
-            await SearchOrchestrator()._execute(plan)
+            await _run_execute(SearchOrchestrator(), plan)
         mock_reindex.assert_not_called()
 
 
@@ -288,7 +311,7 @@ class TestExecuteConfigIsolation:
         searcher = _make_ready_searcher()
         with _patch_execute(real_sc=sc) as (_, mock_gs):
             mock_gs.return_value = searcher
-            await SearchOrchestrator()._execute(plan)
+            await _run_execute(SearchOrchestrator(), plan)
         assert sc.ego_graph.enabled == original_ego_enabled
 
 
@@ -296,11 +319,14 @@ class TestExecuteConcurrencyIntegration:
     """End-to-end concurrency proof (the plan's 'primary red signal' repro).
 
     Uses a REAL ApplicationState (real _AsyncRWLock via get_reindex_rwlock)
-    so a reindex-triggering _execute() call and several plain-search
-    _execute() calls exercise the actual Block A / Block B-D lock wiring —
-    not a mocked lock. Reproduces (in miniature) the concurrent shape from
-    _archive/ERROR_LOG.md: a stale-index search triggers a reindex while
-    sibling searches are in flight. Proves:
+    so a reindex-triggering run() call and several plain-search run() calls
+    exercise the actual _maybe_reindex (Block A) / read-locked _search+_assemble
+    (Blocks B-I) lock wiring — not a mocked lock. Targets run() rather than the
+    old _execute() so the covered lock span matches the ADR-0008 amendment: the
+    read lock now extends through _assemble, not just Blocks B-D. Reproduces
+    (in miniature) the concurrent shape from _archive/ERROR_LOG.md: a
+    stale-index search triggers a reindex while sibling searches are in
+    flight. Proves:
 
     1. A search's model-inference region (``searcher.search``, standing in
        for the real embed_query / reranker calls) never overlaps a
@@ -336,7 +362,7 @@ class TestExecuteConcurrencyIntegration:
                 if reader_active > 0:
                     overlap_detected = True
             writer_entered.set()
-            # Margin, not just realism: dispatching 5 concurrent _execute() calls
+            # Margin, not just realism: dispatching 5 concurrent run() calls
             # each through several asyncio.to_thread hops (_is_index_stale ->
             # read-lock -> get_searcher -> search) costs tens-to-a-few-hundred ms
             # of pure scheduling overhead on this machine — verified by neutering
@@ -390,14 +416,36 @@ class TestExecuteConcurrencyIntegration:
         ):
             mock_cm.return_value.get_search_mode_for_query.return_value = "hybrid"
             mock_cfg.return_value.performance.use_parallel_search = False
+            # run() plans via SearchPlanner.plan(), which checks config.intent.enabled
+            # before running IntentClassifier — disable it so this test exercises only
+            # the lock wiring, not semantic intent classification (mock_cfg is a bare
+            # MagicMock; leaving other config.* attributes as auto-Mocks is fine since
+            # the intent branch that would touch them never runs).
+            mock_cfg.return_value.intent.enabled = False
 
             orchestrator = SearchOrchestrator()
-            reindex_plan = _make_plan(auto_reindex=True, max_age_minutes=0.001)
-            search_plans = [
-                _make_plan(auto_reindex=True, max_age_minutes=5.0) for _ in range(5)
+            # Raw MCP arguments, not SearchPlan objects — run() builds the plan itself
+            # via SearchPlanner.plan(). max_context_tokens is set explicitly because
+            # SearchPlanner.plan() computes int(arguments.get("max_context_tokens",
+            # config.search_mode.default_max_context_tokens)); leaving the key out would
+            # evaluate the MagicMock default and crash the int() conversion.
+            reindex_args = {
+                "query": "test query",
+                "auto_reindex": True,
+                "max_age_minutes": 0.001,
+                "max_context_tokens": 0,
+            }
+            search_args_list = [
+                {
+                    "query": "test query",
+                    "auto_reindex": True,
+                    "max_age_minutes": 5.0,
+                    "max_context_tokens": 0,
+                }
+                for _ in range(5)
             ]
 
-            reindex_task = asyncio.create_task(orchestrator._execute(reindex_plan))
+            reindex_task = asyncio.create_task(orchestrator.run(reindex_args))
             # Block until the reindex task is confirmed inside the write-locked
             # critical section before firing the concurrent searches. This
             # removes sleep-based guessing from "did they actually race" and
@@ -405,7 +453,7 @@ class TestExecuteConcurrencyIntegration:
             await asyncio.to_thread(writer_entered.wait, 5)
 
             search_results = await asyncio.gather(
-                *[orchestrator._execute(p) for p in search_plans]
+                *[orchestrator.run(a) for a in search_args_list]
             )
             reindex_result = await reindex_task
 
@@ -418,10 +466,14 @@ class TestExecuteConcurrencyIntegration:
             "searches never ran concurrently with each other — this looks like "
             "an accidental full mutex, not a reader-writer lock"
         )
-        assert isinstance(reindex_result, ExecutionOutcome)
-        assert reindex_result.reindexed is True
+        # run() returns the full response dict (Blocks A-I) rather than an
+        # ExecutionOutcome — _assemble now runs inside the same read-locked
+        # scope this test is proving, so the return value reflects that.
+        assert isinstance(reindex_result, dict)
+        assert reindex_result.get("index_refreshed") is True
         for r in search_results:
-            assert isinstance(r, ExecutionOutcome)
+            assert isinstance(r, dict)
+            assert "results" in r
 
 
 # ---------------------------------------------------------------------------
@@ -597,3 +649,160 @@ class TestApplySourceOrderAndBudget:
             plan, outcome, list(results)
         )
         assert len(out) == 10
+
+
+# ---------------------------------------------------------------------------
+# Composition (end-to-end, deterministic) — search-latency plan Verification
+# ---------------------------------------------------------------------------
+
+
+def _build_composition_graph_storage(tmp_path):
+    """A real, tiny CodeGraphStorage — a→b→c call chain — used in place of a
+    mock so Fix 3's storage-level centrality memo (version-keyed cache on
+    CodeGraphStorage) is genuinely exercised: cold on the first run() call,
+    warm on the second, against the *same* instance across both calls.
+    """
+    from graph.graph_storage import CodeGraphStorage
+
+    storage = CodeGraphStorage(project_id="composition-test", storage_dir=tmp_path)
+    storage.add_node("a.py:1-10:function:alpha", "alpha", "function", "a.py")
+    storage.add_node("b.py:1-10:function:beta", "beta", "function", "b.py")
+    storage.add_node("c.py:1-10:function:gamma", "gamma", "function", "c.py")
+    # Full chunk_ids as callee_name (not bare names) so the edges land directly
+    # between the tracked nodes instead of spawning separate symbol-name stubs.
+    storage.add_call_edge(
+        "a.py:1-10:function:alpha",
+        "b.py:1-10:function:beta",
+        line_number=5,
+        is_resolved=True,
+    )
+    storage.add_call_edge(
+        "b.py:1-10:function:beta",
+        "c.py:1-10:function:gamma",
+        line_number=7,
+        is_resolved=True,
+    )
+    return storage
+
+
+def _make_composition_results():
+    """Fresh SearchResult-like objects each call — chunk_ids match the graph
+    nodes above so centrality annotation has something real to attach to.
+    """
+    specs = [
+        ("a.py:1-10:function:alpha", 0.9, "a.py", "alpha"),
+        ("b.py:1-10:function:beta", 0.8, "b.py", "beta"),
+        ("c.py:1-10:function:gamma", 0.7, "c.py", "gamma"),
+    ]
+    return [
+        SimpleNamespace(
+            chunk_id=chunk_id,
+            score=score,
+            metadata={
+                "relative_path": path,
+                "start_line": 1,
+                "end_line": 10,
+                "chunk_type": "function",
+                "name": name,
+            },
+        )
+        for chunk_id, score, path, name in specs
+    ]
+
+
+def _make_composition_searcher(graph_storage):
+    """A non-HybridSearcher mock (isinstance checks in _search/_assemble stay
+    False, matching _make_ready_searcher's style) whose dense_index carries
+    the real graph_storage, so GraphScoringStage reads it via
+    SearcherView(searcher).index_manager -> dense_index.graph_storage.
+    """
+    searcher = Mock()
+    searcher.is_ready = True
+    searcher.index_manager = None  # HybridSearcher-shaped: manager is at .dense_index
+    dense = Mock()
+    dense.index = Mock()
+    dense.index.ntotal = 1000
+    dense.graph_storage = graph_storage
+    searcher.dense_index = dense
+    searcher.search = Mock(side_effect=lambda **kwargs: _make_composition_results())
+    return searcher
+
+
+class TestSearchLatencyComposition:
+    """End-to-end composition proof for the search-latency plan (Fixes 3-5).
+
+    The per-fix equivalence tests (test_centrality_ranker.py, test_graph_storage.py,
+    test_graph_scoring_stage.py) each prove one fix preserves its own output in
+    isolation. This class proves the fixes compose: a full SearchOrchestrator.run()
+    round-trip through a REAL CodeGraphStorage — so Fix 3's memo is genuinely cold
+    on the first call and genuinely warm on the second, both under the read lock
+    Fix 5 now extends through _assemble — must not change the response between
+    calls. HybridSearcher's own retrieval (BM25/FAISS/RRF) stays mocked with a
+    fixed, deterministic return, as elsewhere in this file; the composition risk
+    under test lives in SearchOrchestrator/GraphScoringStage/CentralityRanker/
+    CodeGraphStorage, not in the mocked searcher.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cold_and_warm_centrality_memo_produce_identical_response(
+        self, tmp_path
+    ):
+        """First run() populates the storage-level centrality memo (cold);
+        second run() hits it (warm, Fix 3). Both skip discarded subgraph
+        extraction by default (Fix 4 — output.include_subgraph=False). The
+        two responses must be byte-identical.
+        """
+        graph_storage = _build_composition_graph_storage(tmp_path)
+        searcher = _make_composition_searcher(graph_storage)
+        sc = SearchConfig()
+        sc.reranker.enabled = False
+
+        args = {
+            "query": "alpha",
+            "k": 3,
+            "auto_reindex": False,
+            "max_age_minutes": 5.0,
+            "max_context_tokens": 0,
+        }
+
+        with _patch_execute(real_sc=sc) as (_, mock_gs):
+            mock_gs.return_value = searcher
+            orchestrator = SearchOrchestrator()
+            first = await orchestrator.run(dict(args))
+            second = await orchestrator.run(dict(args))
+
+        assert first == second
+        # Sanity: prove centrality actually ran and annotated real scores — a
+        # vacuous pass (e.g. an empty-graph short-circuit) would make the
+        # equivalence assertion above meaningless.
+        assert any(r.get("centrality", 0) > 0 for r in first["results"])
+
+    @pytest.mark.asyncio
+    async def test_reranker_enabled_does_not_crash(self, tmp_path):
+        """Smoke check only, per the plan's explicit non-determinism carve-out:
+        with reranker.enabled=True the composed pipeline must not crash. Not
+        asserting output equality here — the real neural reranker is
+        nondeterministic run-to-run (no torch.manual_seed anywhere in the
+        stack); this test keeps the searcher mocked/deterministic and only
+        flips the config flag, proving the reranker-on branches (source-order
+        warning check, response assembly) compose without raising.
+        """
+        graph_storage = _build_composition_graph_storage(tmp_path)
+        searcher = _make_composition_searcher(graph_storage)
+        sc = SearchConfig()
+        sc.reranker.enabled = True
+
+        args = {
+            "query": "alpha",
+            "k": 3,
+            "auto_reindex": False,
+            "max_age_minutes": 5.0,
+            "max_context_tokens": 0,
+        }
+
+        with _patch_execute(real_sc=sc) as (_, mock_gs):
+            mock_gs.return_value = searcher
+            result = await SearchOrchestrator().run(args)
+
+        assert isinstance(result, dict)
+        assert "results" in result

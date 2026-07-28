@@ -4,8 +4,6 @@ Unit tests for token estimation functionality.
 Tests both whitespace and tiktoken estimation methods.
 """
 
-import pytest
-
 from chunking.languages.base import estimate_tokens
 
 
@@ -166,7 +164,3 @@ def calculate_metrics(data: List[Dict[str, Any]]) -> Dict[str, float]:
 
             assert whitespace == 4  # Always 4 words
             assert tiktoken == 4  # Also 4 tokens for simple text
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

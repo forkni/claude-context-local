@@ -37,6 +37,8 @@ class RRFReranker:
         results_lists: list[list[SearchResult]],
         weights: list[float] | None = None,
         max_results: int = 10,  # pragma: no mutate
+        reserved_slots: int = 0,  # pragma: no mutate
+        reserve_list_idx: int = 0,  # pragma: no mutate
     ) -> list[SearchResult]:
         """
         Rerank multiple result lists using RRF.
@@ -45,6 +47,12 @@ class RRFReranker:
             results_lists: List of result lists to combine
             weights: Optional weights for each list (default: equal weights)
             max_results: Maximum number of results to return
+            reserved_slots: Reserve up to this many of the max_results slots for
+                candidates unique to results_lists[reserve_list_idx] (present
+                there but not selected by RRF score). Fills in that list's rank
+                order; unused reserve capacity falls back to RRF order, so 0 —
+                or no unique candidates — reproduces plain RRF truncation.
+            reserve_list_idx: Which list the reserved slots draw from
 
         Returns:
             Combined and reranked results
@@ -118,15 +126,17 @@ class RRFReranker:
         # Sort by RRF score (descending)
         sorted_docs = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
 
+        selected_ids = self._select_with_reserve(
+            sorted_docs, results_lists, max_results, reserved_slots, reserve_list_idx
+        )
+
         # Create final results with RRF scores
         final_results = []
-        for rank, (chunk_id, rrf_score) in enumerate(
-            sorted_docs[:max_results], 1
-        ):  # pragma: no mutate
+        for rank, chunk_id in enumerate(selected_ids, 1):  # pragma: no mutate
             result = doc_results[chunk_id]
 
             # Update metadata with RRF information
-            result.metadata["rrf_score"] = rrf_score
+            result.metadata["rrf_score"] = rrf_scores[chunk_id]
             result.metadata["appears_in_lists"] = len(list_appearances[chunk_id])
             result.metadata["final_rank"] = rank
 
@@ -139,6 +149,57 @@ class RRFReranker:
 
         return final_results
 
+    def _select_with_reserve(
+        self,
+        sorted_docs: list[tuple[str, float]],
+        results_lists: list[list[SearchResult]],
+        max_results: int,
+        reserved_slots: int,
+        reserve_list_idx: int,
+    ) -> list[str]:
+        """Pick the fused pool: RRF top-N plus reserved slots for one leg.
+
+        Reserved candidates are appended after the RRF-ordered head so that
+        with neural reranking disabled a ``[:k]`` cut (k <= head size) is
+        unaffected; the neural reranker rescores the whole pool regardless of
+        this ordering.
+        """
+        if (
+            reserved_slots <= 0
+            or not 0 <= reserve_list_idx < len(results_lists)
+            or len(sorted_docs) <= max_results  # pragma: no mutate
+        ):
+            return [chunk_id for chunk_id, _ in sorted_docs[:max_results]]
+
+        reserve = min(reserved_slots, max_results)
+        head = [chunk_id for chunk_id, _ in sorted_docs[: max_results - reserve]]
+        selected = set(head)
+
+        # Highest-ranked candidates unique to the reserve list, in list order
+        fill: list[str] = []
+        for result in results_lists[reserve_list_idx]:
+            if len(fill) >= reserve:
+                break
+            if result.chunk_id not in selected:
+                fill.append(result.chunk_id)
+                selected.add(result.chunk_id)
+
+        # Unused reserve capacity falls back to RRF order past the head
+        if len(head) + len(fill) < max_results:
+            for chunk_id, _ in sorted_docs[max_results - reserve :]:
+                if len(head) + len(fill) >= max_results:
+                    break
+                if chunk_id not in selected:
+                    fill.append(chunk_id)
+                    selected.add(chunk_id)
+
+        if fill:
+            self._logger.debug(
+                f"[RRF] Reserved {len(fill)} pool slots for list "
+                f"{reserve_list_idx} candidates"
+            )
+        return head + fill
+
     def rerank_simple(
         self,
         bm25_results: list[tuple[str, float, dict]],
@@ -146,6 +207,7 @@ class RRFReranker:
         max_results: int = 10,  # pragma: no mutate
         bm25_weight: float = 0.35,  # pragma: no mutate
         dense_weight: float = 0.65,  # pragma: no mutate
+        reserved_slots: int = 0,  # pragma: no mutate
     ) -> list[SearchResult]:
         """
         Simple reranking for BM25 + dense vector results.
@@ -156,6 +218,8 @@ class RRFReranker:
             max_results: Maximum results to return
             bm25_weight: Weight for BM25 results (0.0 to 1.0)
             dense_weight: Weight for dense results (0.0 to 1.0)
+            reserved_slots: Pool slots reserved for BM25-unique candidates
+                (see rerank)
 
         Returns:
             Combined and reranked results
@@ -180,6 +244,8 @@ class RRFReranker:
             results_lists=[bm25_search_results, dense_search_results],
             weights=[bm25_weight, dense_weight],
             max_results=max_results,
+            reserved_slots=reserved_slots,
+            reserve_list_idx=0,
         )
 
     def analyze_fusion_quality(

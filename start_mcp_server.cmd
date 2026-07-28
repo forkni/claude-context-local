@@ -1778,10 +1778,13 @@ echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+, RTX 4090^)
 echo   5. Qwen3-Embedding-0.6B ^(1024d, 2.3GB^)
 echo      MRR 0.94 SSCG baseline
 echo.
+echo   6. F2LLM-v2-0.6B ^(1024d, 2.2GB^)
+echo      Qwen3-0.6B-based, MTEB avg 66.47
+echo.
 echo   0. Back to Main Menu
 echo.
 set "model_choice="
-set /p model_choice="Select model (0-5): "
+set /p model_choice="Select model (0-6): "
 
 REM Handle empty input or back
 if not defined model_choice goto menu_restart
@@ -1795,6 +1798,7 @@ if "!model_choice!"=="2" set "SELECTED_MODEL=google/embeddinggemma-300m"
 if "!model_choice!"=="3" set "SELECTED_MODEL=nomic-ai/CodeRankEmbed"
 if "!model_choice!"=="4" set "SELECTED_MODEL=Alibaba-NLP/gte-modernbert-base"
 if "!model_choice!"=="5" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
+if "!model_choice!"=="6" set "SELECTED_MODEL=codefuse-ai/F2LLM-v2-0.6B"
 
 REM Perform model switch
 if defined SELECTED_MODEL (
@@ -2667,7 +2671,7 @@ echo.
 echo Key Features:
 echo   - 18 MCP Tools: Index, search, configure, manage projects
 echo   - Low-Level MCP SDK: Official Anthropic implementation
-echo   - Single-Model: selectable from 5 models ^(BGE-M3, EmbeddingGemma, CodeRankEmbed, GTE-ModernBERT, Qwen3-0.6B^)
+echo   - Single-Model: selectable from 6 models ^(BGE-M3, EmbeddingGemma, CodeRankEmbed, GTE-ModernBERT, Qwen3-0.6B, F2LLM-v2-0.6B^)
 echo   - Neural Reranking: Cross-encoder model ^(15-25%% quality boost^)
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
 echo   - 85-95%% Token Reduction: Validated benchmark results

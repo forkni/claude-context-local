@@ -3,14 +3,9 @@
 Direct test of the incremental indexer process to debug the issue.
 """
 
-import sys
 from pathlib import Path
 
 import pytest
-
-
-# Add the project root to the path
-sys.path.insert(0, str(Path(__file__).parent))
 
 
 @pytest.fixture
@@ -94,20 +89,18 @@ def test_direct_indexing(tmp_path, test_glsl_dir):
         all_chunks = []
         for file_path in supported_files:
             full_path = Path(project_path) / file_path
-            try:
-                chunks = chunker.chunk_file(str(full_path))
-                if chunks:
-                    all_chunks.extend(chunks)
-                    print(f"   {file_path}: {len(chunks)} chunks")
-                    for chunk in chunks:
-                        print(f"     - {chunk.chunk_type}: {chunk.name or 'unnamed'}")
-                else:
-                    print(f"   {file_path}: No chunks generated")
-            except Exception as e:
-                print(f"   {file_path}: ERROR - {e}")
-                import traceback
-
-                traceback.print_exc()
+            # No per-file try/except here: a chunker crash on one file must
+            # fail the test (via the outer except below), not be swallowed
+            # and silently skipped while the other file's success carries
+            # the len(all_chunks) > 0 assertion at the bottom.
+            chunks = chunker.chunk_file(str(full_path))
+            if chunks:
+                all_chunks.extend(chunks)
+                print(f"   {file_path}: {len(chunks)} chunks")
+                for chunk in chunks:
+                    print(f"     - {chunk.chunk_type}: {chunk.name or 'unnamed'}")
+            else:
+                print(f"   {file_path}: No chunks generated")
 
         print(f"\n   Total chunks: {len(all_chunks)}")
 
@@ -142,42 +135,33 @@ def test_incremental_indexer_class(tmp_path, test_glsl_dir):
     print("\n\nTESTING INCREMENTAL INDEXER CLASS")
     print("=" * 60)
 
-    try:
-        from merkle.snapshot_manager import SnapshotManager
-        from search.incremental_indexer import IncrementalIndexer
+    from merkle.snapshot_manager import SnapshotManager
+    from search.incremental_indexer import IncrementalIndexer
 
-        # Create SnapshotManager with temp directory to avoid production pollution
-        snapshot_manager = SnapshotManager(storage_dir=str(tmp_path / "merkle"))
+    # Create SnapshotManager with temp directory to avoid production pollution
+    snapshot_manager = SnapshotManager(storage_dir=str(tmp_path / "merkle"))
 
-        # Create with explicit snapshot_manager to avoid dependency issues
-        indexer = IncrementalIndexer(snapshot_manager=snapshot_manager)
+    # Create with explicit snapshot_manager to avoid dependency issues
+    indexer = IncrementalIndexer(snapshot_manager=snapshot_manager)
 
-        project_path = str(test_glsl_dir)
+    project_path = str(test_glsl_dir)
 
-        # Force a full index
-        print("Calling incremental_index with force_full=True")
-        result = indexer.incremental_index(project_path, "TestDirect", force_full=True)
+    # Force a full index
+    print("Calling incremental_index with force_full=True")
+    result = indexer.incremental_index(project_path, "TestDirect", force_full=True)
 
-        print(f"Result: {result}")
-        print(f"  Success: {result.success}")
-        print(f"  Files added: {result.files_added}")
-        print(f"  Chunks added: {result.chunks_added}")
-        print(f"  Time taken: {result.time_taken}")
-        print(f"  Error: {result.error}")
+    print(f"Result: {result}")
+    print(f"  Success: {result.success}")
+    print(f"  Files added: {result.files_added}")
+    print(f"  Chunks added: {result.chunks_added}")
+    print(f"  Time taken: {result.time_taken}")
+    print(f"  Error: {result.error}")
 
-        return result
-
-    except Exception as e:
-        print(f"ERROR in incremental indexer test: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return None
-
-
-if __name__ == "__main__":
-    # These tests now use pytest fixtures (tmp_path)
-    # Run via: pytest tests/integration/test_direct_indexing.py -v
-    print("Please run these tests via pytest:")
-    print("  pytest tests/integration/test_direct_indexing.py -v")
-    print("\nDirect execution is not supported for tests using pytest fixtures.")
+    # Previously: `except Exception: return None` with no assertions
+    # anywhere in the function body -- this test could never fail no
+    # matter what incremental_index() did. Let a real exception propagate
+    # (pytest reports it as an error) and assert on the result the print
+    # statements above already imply should be checked.
+    assert result.success, f"Incremental index failed: {result.error}"
+    assert result.files_added > 0, "Should have indexed at least one file"
+    assert result.chunks_added > 0, "Should have generated at least one chunk"

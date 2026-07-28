@@ -154,6 +154,7 @@ class TestSmartDedentEdgeCases:
         # Tab followed by spaces (a common mistake)
         code = "\tdef foo():\n\t    return 42\n"
         result = _smart_dedent(code)
+        assert "def foo():" in result
         ast.parse(result)
 
     def test_blank_lines_without_indentation(self):
@@ -176,6 +177,7 @@ class TestSmartDedentEdgeCases:
 
 """
         result = _smart_dedent(code)
+        assert result.startswith("def foo():")
         ast.parse(result)
 
     def test_leading_blank_lines(self):
@@ -186,6 +188,7 @@ class TestSmartDedentEdgeCases:
         return 42
 """
         result = _smart_dedent(code)
+        assert "def foo():" in result
         ast.parse(result)
 
     def test_deeply_nested_code(self):
@@ -208,6 +211,7 @@ class TestSmartDedentEdgeCases:
         return x + y
 """
         result = _smart_dedent(code)
+        assert result.startswith("def foo():")
         ast.parse(result)
 
 
@@ -223,6 +227,7 @@ World!
 \"\"\"
 """
         result = _smart_dedent(code)
+        assert result.startswith("def template():")
         ast.parse(result)
 
     def test_f_string_multiline(self):
@@ -234,6 +239,7 @@ Welcome.
 \"\"\"
 """
         result = _smart_dedent(code)
+        assert result.startswith("def greet(name):")
         ast.parse(result)
 
     def test_docstring_with_code_examples(self):
@@ -248,6 +254,7 @@ Welcome.
         return 42
 """
         result = _smart_dedent(code)
+        assert result.startswith("def example():")
         ast.parse(result)
 
 
@@ -373,12 +380,14 @@ class TestSmartDedentCRLF:
         """Test code with mixed LF and CRLF."""
         code = "    def foo():\n        x = 1\r\n        return x\n"
         result = _smart_dedent(code)
+        assert result.startswith("def foo():")
         ast.parse(result)
 
     def test_cr_only_line_endings(self):
         """Test code with old Mac CR-only endings."""
         code = "    def foo():\r        return 42\r"
         result = _smart_dedent(code)
+        assert result.startswith("def foo():")
         ast.parse(result)
 
     def test_decorated_with_crlf(self):
@@ -461,18 +470,24 @@ class TestSmartDedentDecoratorAtColumn0:
         """Test @property with def indented (tree-sitter pattern)."""
         code = "@property\n    def value(self):\n        return self._value\n"
         result = _smart_dedent(code)
+        assert result.startswith("@property")
+        assert "def value(self):" in result
         ast.parse(result)
 
     def test_classmethod_at_column0_with_docstring(self):
         """Test @classmethod with indented def and docstring."""
         code = '@classmethod\n    def instance(cls) -> "ServiceLocator":\n        """Get the singleton."""\n        return cls._instance\n'
         result = _smart_dedent(code)
+        assert result.startswith("@classmethod")
+        assert "def instance" in result
         ast.parse(result)
 
     def test_multiple_decorators_at_column0(self):
         """Test stacked decorators all at column 0 with indented def."""
         code = "@decorator1\n@decorator2\n    def method(self):\n        pass\n"
         result = _smart_dedent(code)
+        assert result.startswith("@decorator1")
+        assert "def method(self):" in result
         ast.parse(result)
 
 
@@ -497,6 +512,10 @@ class TestSmartDedentIntegration:
         return True
 """
             result = _smart_dedent(code)
+            assert result.startswith(decorator), (
+                f"{decorator} was not preserved at the start of the result"
+            )
+            assert "def method(self):" in result
             # Should not raise SyntaxError
             ast.parse(result)
 
@@ -510,6 +529,8 @@ class TestSmartDedentIntegration:
         return await process_search(request)
 """
         result = _smart_dedent(code)
+        assert result.startswith('@app.route("/api/search"')
+        assert "async def search_endpoint(request):" in result
         ast.parse(result)
 
     def test_class_with_decorated_methods(self):
@@ -533,6 +554,13 @@ class TestSmartDedentIntegration:
 
         for method in methods:
             result = _smart_dedent(method)
+            # The def line (stripped of its original indentation) must
+            # survive dedenting — this fails if smart_dedent regresses to
+            # returning an empty/wrapped string that only happens to parse.
+            def_line = next(
+                line.strip() for line in method.splitlines() if "def " in line
+            )
+            assert def_line in result
             ast.parse(result)
 
     def test_split_block_no_validation(self):

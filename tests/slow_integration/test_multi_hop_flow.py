@@ -91,11 +91,15 @@ class TestMultiHopSearchFlow:
         assert len(single_hop_results) > 0, "Single-hop should return results"
         assert len(multi_hop_results) > 0, "Multi-hop should return results"
 
-        # Multi-hop should potentially find more related code
-        # (or at least same amount as single-hop)
-        assert len(multi_hop_results) >= len(single_hop_results) or True, (
-            "Multi-hop should discover related code"
-        )
+        # Multi-hop expansion re-ranks and truncates to k the same as single-hop
+        # — it is not guaranteed to return >= as many results as single-hop
+        # (expansion can surface fewer relevant chunks than requested), so
+        # verify the invariant that actually holds: results stay within k and
+        # are well-formed, rather than a comparison that doesn't reliably hold.
+        assert len(multi_hop_results) <= 3, "Multi-hop should not exceed k results"
+        for result in multi_hop_results:
+            assert hasattr(result, "chunk_id")
+            assert hasattr(result, "score")
 
     def test_multi_hop_expansion_factor(self, indexed_hybrid_searcher):
         """Test that expansion factor affects number of discovered chunks."""

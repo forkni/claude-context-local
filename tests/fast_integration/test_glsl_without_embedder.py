@@ -1,157 +1,128 @@
-#!/usr/bin/env python3
-"""
-Test GLSL indexing without embedder to verify chunking works.
+"""GLSL chunking works end-to-end without embedder dependencies.
+
+Asserts the *content* of the chunker's output for every fixture in
+``tests/test_data/glsl_project`` — named function chunks, builtin-filtered
+call edges, and comment-docstring attachment — not just that some chunks
+exist. The old ``total_chunks > 0`` assertion passed even under the
+pre-parity chunker that produced unnamed blobs with no calls and no
+docstrings.
 """
 
-import sys
 from pathlib import Path
 
-
-# Add the project root to the path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from chunking.multi_language_chunker import MultiLanguageChunker
 
 
-def test_glsl_indexing_without_embedder():
-    """Test GLSL indexing without embedder dependencies."""
-    print("TESTING GLSL INDEXING WITHOUT EMBEDDER")
-    print("=" * 60)
+PROJECT_PATH = Path(__file__).parent.parent / "test_data" / "glsl_project"
 
-    try:
-        # Test 1: Direct chunker functionality
-        print("\n1. TESTING MULTI-LANGUAGE CHUNKER")
-        from chunking.multi_language_chunker import MultiLanguageChunker
+# Per-fixture expected function names (the parity-level contract: every
+# function_definition becomes a named "function" chunk).
+EXPECTED_FUNCTIONS = {
+    "compute_shader.comp": {"brighten", "main"},
+    "fragment_shader.frag": {"main"},
+    "geometry_shader.geom": {"emitVerts", "tail", "main"},
+    "simple_shader.glsl": {"hsv2rgb", "main"},
+    "vertex_shader.vert": {"main"},
+}
 
-        project_path = str(Path(__file__).parent.parent / "test_data" / "glsl_project")
-        chunker = MultiLanguageChunker(project_path)
+# User-function call edges expected per fixture, after GLSL builtin filtering
+# (texture/imageLoad/imageStore/EmitVertex/EndPrimitive and vecN/ivecN type
+# constructors must NOT survive as callees).
+EXPECTED_CALLS = {
+    "compute_shader.comp": {"main": ["brighten"]},
+    "geometry_shader.geom": {"tail": ["emitVerts"], "main": ["tail"]},
+    "simple_shader.glsl": {"main": ["hsv2rgb"]},
+}
 
-        glsl_files = list(Path(project_path).glob("*"))
-        supported_files = [f for f in glsl_files if chunker.is_supported(str(f))]
+GLSL_BUILTIN_SAMPLES = {
+    "texture",
+    "imageLoad",
+    "imageStore",
+    "EmitVertex",
+    "EndPrimitive",
+    "vec3",
+    "vec4",
+    "ivec2",
+    "mix",
+    "clamp",
+}
 
-        print(f"   Total files in directory: {len(glsl_files)}")
-        print(f"   Supported GLSL files: {len(supported_files)}")
 
-        total_chunks = 0
-        for file_path in supported_files:
-            chunks = chunker.chunk_file(str(file_path))
-            total_chunks += len(chunks)
-            print(f"     {file_path.name}: {len(chunks)} chunks")
+def _chunk_project() -> dict[str, list]:
+    chunker = MultiLanguageChunker(root_path=str(PROJECT_PATH))
+    by_file: dict[str, list] = {}
+    for path in sorted(PROJECT_PATH.iterdir()):
+        assert chunker.is_supported(str(path)), f"{path.name} should be supported"
+        by_file[path.name] = chunker.chunk_file(str(path))
+    return by_file
 
-            for chunk in chunks:
-                print(
-                    f"       - {chunk.chunk_type}: {chunk.name or 'unnamed'} (lines {chunk.start_line}-{chunk.end_line})"
+
+def test_all_fixture_extensions_supported():
+    """All five shader-stage extensions (.comp/.frag/.geom/.glsl/.vert) index."""
+    by_file = _chunk_project()
+    assert set(by_file) == set(EXPECTED_FUNCTIONS)
+
+
+def test_every_function_chunk_is_named():
+    """Each function_definition yields a named "function" chunk (the old
+    chunker emitted unnamed blobs)."""
+    for filename, chunks in _chunk_project().items():
+        functions = {c.name for c in chunks if c.chunk_type == "function"}
+        assert None not in functions, f"{filename}: unnamed function chunk"
+        assert functions == EXPECTED_FUNCTIONS[filename], (
+            f"{filename}: expected functions {EXPECTED_FUNCTIONS[filename]}, "
+            f"got {functions}"
+        )
+
+
+def test_call_edges_extracted_and_builtins_filtered():
+    """User-function calls survive as CallEdge metadata; GLSL builtins and
+    type constructors are filtered out before edges are built."""
+    for filename, chunks in _chunk_project().items():
+        for chunk in chunks:
+            callees = [c.callee_name for c in (chunk.calls or [])]
+            leaked = set(callees) & GLSL_BUILTIN_SAMPLES
+            assert not leaked, (
+                f"{filename}:{chunk.name}: builtin callees leaked: {leaked}"
+            )
+            expected = EXPECTED_CALLS.get(filename, {}).get(chunk.name)
+            if expected is not None:
+                assert callees == expected, (
+                    f"{filename}:{chunk.name}: expected calls {expected}, got {callees}"
                 )
 
-        print(f"   Total chunks generated: {total_chunks}")
 
-        # Test 2: Test incremental indexer components without embedder
-        print("\n2. TESTING INCREMENTAL INDEXER COMPONENTS")
+def test_comment_docstring_attached():
+    """A comment directly above a function becomes its docstring."""
+    chunks = _chunk_project()["compute_shader.comp"]
+    brighten = next(c for c in chunks if c.name == "brighten")
+    assert brighten.docstring is not None
+    assert "Doubles every channel" in brighten.docstring
 
-        from merkle.merkle_dag import MerkleDAG
 
-        dag = MerkleDAG(project_path)
-        dag.build()
-        all_files = dag.get_all_files()
-        print(f"   MerkleDAG found {len(all_files)} files: {all_files}")
-
-        # Test filtering logic
-        supported_from_dag = [
-            f for f in all_files if chunker.is_supported(str(Path(project_path) / f))
-        ]
-        print(f"   Supported files from DAG: {len(supported_from_dag)}")
-        for f in supported_from_dag:
-            print(f"     - {f}")
-
-        # Test 3: Create mock indexer that skips embedder
-        print("\n3. TESTING MOCK INDEXER WITHOUT EMBEDDER")
-
-        class MockIndexer:
-            def __init__(self):
-                self.indexed_chunks = []
-
-            def add_chunks_without_embedding(self, chunks):
-                """Add chunks without creating embeddings."""
-                for chunk in chunks:
-                    self.indexed_chunks.append(
-                        {
-                            "file_path": chunk.file_path,
-                            "chunk_type": chunk.chunk_type,
-                            "name": chunk.name,
-                            "content_preview": (
-                                chunk.content[:100] + "..."
-                                if len(chunk.content) > 100
-                                else chunk.content
-                            ),
-                            "start_line": chunk.start_line,
-                            "end_line": chunk.end_line,
-                        }
-                    )
-                return len(chunks)
-
-            def get_stats(self):
-                return {
-                    "total_chunks": len(self.indexed_chunks),
-                    "chunk_types": list({c["chunk_type"] for c in self.indexed_chunks}),
-                    "files": list({c["file_path"] for c in self.indexed_chunks}),
-                }
-
-        mock_indexer = MockIndexer()
-
-        # Index all GLSL files
-        all_chunks = []
-        for file_path in supported_files:
-            chunks = chunker.chunk_file(str(file_path))
-            all_chunks.extend(chunks)
-
-        chunks_added = mock_indexer.add_chunks_without_embedding(all_chunks)
-        stats = mock_indexer.get_stats()
-
-        print(f"   Mock indexer processed {chunks_added} chunks")
-        print(f"   Chunk types found: {stats['chunk_types']}")
-        print(f"   Files indexed: {len(stats['files'])}")
-
-        # Test 4: Verify specific GLSL content
-        print("\n4. TESTING GLSL CONTENT RECOGNITION")
-
-        for chunk_info in mock_indexer.indexed_chunks:
-            print(f"   {Path(chunk_info['file_path']).name}:")
-            print(f"     Type: {chunk_info['chunk_type']}")
-            print(f"     Name: {chunk_info['name']}")
-            print(f"     Lines: {chunk_info['start_line']}-{chunk_info['end_line']}")
-            print(f"     Preview: {chunk_info['content_preview']}")
-            print()
-
-        # Convert to assertion for pytest compatibility
-        assert total_chunks > 0, f"Expected GLSL chunks but got {total_chunks}"
-        assert len(supported_files) > 0, (
-            f"Expected supported GLSL files but got {len(supported_files)}"
-        )
-        print(
-            f"\n[OK] SUCCESS: Found {len(supported_files)} supported files and {total_chunks} chunks"
+def test_uniform_declarations_kept_as_preamble():
+    """Uncommented top-level uniforms/in/out merge into a module_preamble
+    chunk rather than being dropped or exploded into per-line chunks."""
+    for filename in ("simple_shader.glsl", "fragment_shader.frag"):
+        chunks = _chunk_project()[filename]
+        preambles = [c for c in chunks if c.chunk_type == "module_preamble"]
+        assert preambles, f"{filename}: no module_preamble chunk"
+        assert any("uniform" in c.content for c in preambles), (
+            f"{filename}: uniforms missing from preamble chunks"
         )
 
-    except Exception as e:
-        print(f"ERROR: {e}")
-        import traceback
 
-        traceback.print_exc()
-        # Convert to assertion failure for pytest compatibility
-        raise AssertionError(f"GLSL indexing test failed: {e}") from e
+def test_merkle_dag_discovers_all_shaders():
+    """MerkleDAG file discovery sees the same five shader files the chunker
+    supports (indexer-side discovery parity)."""
+    from merkle.merkle_dag import MerkleDAG
 
-
-if __name__ == "__main__":
-    try:
-        test_glsl_indexing_without_embedder()
-        print(f"\n{'=' * 60}")
-        print("[OK] GLSL INDEXING TEST PASSED")
-        print("\nGLSL chunking works perfectly!")
-        print(f"{'=' * 60}")
-    except AssertionError as e:
-        print(f"\n{'=' * 60}")
-        print("[ERROR] GLSL INDEXING TEST FAILED")
-        print(f"  Error: {e}")
-        print(f"{'=' * 60}")
-    except Exception as e:
-        print(f"\n{'=' * 60}")
-        print("[ERROR] GLSL INDEXING TEST FAILED")
-        print(f"  Error: {e}")
-        print(f"{'=' * 60}")
+    chunker = MultiLanguageChunker(root_path=str(PROJECT_PATH))
+    dag = MerkleDAG(str(PROJECT_PATH))
+    dag.build()
+    supported = {
+        Path(f).name
+        for f in dag.get_all_files()
+        if chunker.is_supported(str(PROJECT_PATH / f))
+    }
+    assert supported == set(EXPECTED_FUNCTIONS)

@@ -364,7 +364,3 @@ class TestMmapVectorStorage(unittest.TestCase):
         repr_str = repr(storage)
         self.assertIn("loaded", repr_str)
         self.assertIn(str(5), repr_str)
-
-
-if __name__ == "__main__":
-    unittest.main()

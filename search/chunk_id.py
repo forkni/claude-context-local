@@ -213,6 +213,78 @@ def strip_line_range(raw: str) -> str:
     return f"{parts[0]}:{parts[2]}:{parts[3]}"
 
 
+# Kinds that are structural artifacts of chunking rather than real symbol
+# kinds.  ``split_block`` fragments of one oversized method/function must
+# share a dedup key with each other (and with golden labels, which use the
+# parent kind).  Extend this mapping if new synthetic kinds appear.
+_KIND_COLLAPSE = {"split_block": "method"}
+
+
+def _is_line_range(component: str) -> bool:
+    """Return True when *component* looks like a 'start-end' line range."""
+    start, sep, end = component.partition("-")
+    return bool(sep) and start.isdigit() and end.isdigit()
+
+
+def dedup_key(raw: str) -> str:
+    """Canonical identity key for split_block-aware deduplication.
+
+    Strips the line-range component, normalizes path separators, and
+    collapses ``split_block`` to its parent kind (``method``) so fragments
+    of one oversized function share a single key.  Line numbers shift as
+    code evolves and split points are a structural detail — identity is the
+    stable ``file_path:kind:name`` portion.
+
+    Unlike :func:`strip_line_range`, this also handles 3-part module ids
+    ("file.py:1-8:module" → "file.py:module") and file paths containing a
+    drive-letter colon.  Strings without a recognizable line-range component
+    are returned with only path separators normalized.
+
+    This is the **single owner** of dedup-key semantics.  Both the live
+    search path and evaluation metrics must route here so that "one logical
+    hit" means the same thing in production and in benchmarks.
+
+    Examples:
+        >>> dedup_key("search/filters.py:22-31:function:normalize_path")
+        'search/filters.py:function:normalize_path'
+        >>> dedup_key("graph/g.py:276-310:split_block:GraphIntegration.populate")
+        'graph/g.py:method:GraphIntegration.populate'
+        >>> dedup_key("merkle/__init__.py:1-8:module")
+        'merkle/__init__.py:module'
+    """
+    parts = raw.split(":")
+    # Locate the line-range component: normally parts[1], but later when the
+    # file path itself contains a drive-letter colon ("F:/x/y.py:10-20:...").
+    for i in range(1, len(parts) - 1):
+        if _is_line_range(parts[i]):
+            file_path = _canonical_path_sep(":".join(parts[:i]))
+            kind = _KIND_COLLAPSE.get(parts[i + 1], parts[i + 1])
+            rest = parts[i + 2 :]
+            return ":".join([file_path, kind, *rest])
+    return normalize(raw)
+
+
+def dedupe_results(results: list) -> list:
+    """Collapse results sharing a :func:`dedup_key` to the first occurrence.
+
+    *results* is any sequence of objects with a ``chunk_id`` attribute, already
+    ordered by relevance (best first) — the surviving entry per key is therefore
+    the best-ranked fragment.  Order of survivors is preserved.
+
+    Used to keep split_block fragments of one oversized function from occupying
+    multiple top-k slots; must run *before* truncation so freed slots backfill
+    with distinct chunks.
+    """
+    seen: set[str] = set()
+    survivors = []
+    for result in results:
+        key = dedup_key(result.chunk_id)
+        if key not in seen:
+            seen.add(key)
+            survivors.append(result)
+    return survivors
+
+
 def build(
     file_path: str,
     line_start: int,

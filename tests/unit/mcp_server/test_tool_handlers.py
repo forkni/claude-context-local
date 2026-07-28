@@ -189,9 +189,8 @@ async def test_handle_get_index_status_with_job_id_reports_job_status():
     """P2-A: get_index_status(job_id=...) polls a background index_directory job
     instead of returning the regular index snapshot.
     """
-    from mcp_server.tools.job_registry import get_job_registry, reset_job_registry
+    from mcp_server.tools.job_registry import get_job_registry
 
-    reset_job_registry()
     registry = get_job_registry()
     job = await registry.create(kind="index_directory", target="/proj")
     await registry.mark_done(job.job_id, {"chunks_added": 5})
@@ -205,10 +204,6 @@ async def test_handle_get_index_status_with_job_id_reports_job_status():
 
 @pytest.mark.asyncio
 async def test_handle_get_index_status_unknown_job_id_returns_error():
-    from mcp_server.tools.job_registry import reset_job_registry
-
-    reset_job_registry()
-
     result = await tool_handlers.handle_get_index_status({"job_id": "does-not-exist"})
 
     assert "error" in result
@@ -551,7 +546,11 @@ async def test_handle_clear_index():
             bm25_dir = index_dir / "bm25"
             bm25_dir.mkdir()
             (index_dir / "code.index").touch()
-            (index_dir / "chunks_metadata.db").touch()
+            (index_dir / "metadata.db").touch()
+            (index_dir / "metadata.db-wal").touch()
+            (index_dir / "metadata.db-shm").touch()
+            (index_dir / "stats.json").touch()
+            (index_dir / "chunk_embeddings.bin").touch()
 
         with (
             patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state),
@@ -572,6 +571,20 @@ async def test_handle_clear_index():
             # Verify dense index files deleted
             assert not (model1_dir / "index" / "code.index").exists()
             assert not (model2_dir / "index" / "code.index").exists()
+
+            # Verify metadata.db and its WAL/SHM sidecars are deleted too —
+            # these were the actual bug: the old code deleted a filename
+            # ("chunks_metadata.db") that never existed, leaving the real
+            # metadata.db and its (often full-size) WAL/SHM behind.
+            for model_dir in [model1_dir, model2_dir]:
+                index_dir = model_dir / "index"
+                assert not (index_dir / "metadata.db").exists()
+                assert not (index_dir / "metadata.db-wal").exists()
+                assert not (index_dir / "metadata.db-shm").exists()
+                assert not (index_dir / "stats.json").exists()
+                # An explicit clear_index must also drop the chunk cache —
+                # it's the escape hatch for suspect vectors.
+                assert not (index_dir / "chunk_embeddings.bin").exists()
 
 
 @pytest.mark.asyncio
@@ -832,7 +845,10 @@ async def test_handle_search_code_hybrid_searcher_ready():
 
         # Should succeed without "No indexed project found" error
         assert "error" not in result
-        assert "results" in result or "chunks" in result or isinstance(result, list)
+        assert "results" in result, (
+            f"handle_search_code response should carry a 'results' key, got {result.keys()}"
+        )
+        assert isinstance(result["results"], list)
 
 
 @pytest.mark.asyncio
@@ -930,9 +946,12 @@ async def test_all_handlers_have_error_handling():
         for name, handler in handlers:
             all_handlers_checked.append(f"{module.__name__}.{name}")
             # Check if wrapped by error_handler decorator
-            # functools.wraps preserves __wrapped__ attribute
-            assert hasattr(handler, "__wrapped__") or callable(handler), (
-                f"{module.__name__}.{name} should use @error_handler decorator or be callable"
+            # functools.wraps preserves __wrapped__ attribute. `callable(handler)`
+            # is true for every function reachable via getattr and can never
+            # fail, so it was dropped as a disjunct — only the decorator check
+            # is a real assertion.
+            assert hasattr(handler, "__wrapped__"), (
+                f"{module.__name__}.{name} should use @error_handler decorator"
             )
 
     # Verify we checked at least 15 handlers (all our handlers)
@@ -1374,7 +1393,3 @@ def test_config_manager_exposes_config_only_via_load_config():
     assert hasattr(cfg.search_mode, "dense_weight")
     assert hasattr(cfg.performance, "enable_entity_tracking")
     assert hasattr(cfg.reranker, "enabled")
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

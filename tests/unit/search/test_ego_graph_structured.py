@@ -310,7 +310,3 @@ class TestEgoGraphStructured(unittest.TestCase):
         self.assertEqual(len(query_to_session), 1)
         self.assertFalse(query_to_session[0].is_boundary)
         self.assertEqual(query_to_session[0].rel_type, "calls")
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -152,7 +152,7 @@ class TestCodeEmbedderModelSupport:
     @pytest.fixture(autouse=True)
     def mock_sentence_transformer(self):
         """Mock SentenceTransformer to avoid downloading models."""
-        with patch("embeddings.embedder.SentenceTransformer") as mock_st:
+        with patch("embeddings.model_loader.SentenceTransformer") as mock_st:
             # Create a mock that returns proper embeddings
             mock_model = MagicMock()
             mock_model.encode.return_value = np.ones(768, dtype=np.float32) * 0.5
@@ -258,7 +258,3 @@ class TestBackwardCompatibility:
         # Should use defaults for missing fields
         assert config.embedding.model_name == "BAAI/bge-m3"
         assert config.embedding.dimension == 1024
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

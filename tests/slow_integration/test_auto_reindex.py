@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
 """Test script to verify auto-reindex functionality."""
 
-import sys
-import time
+import datetime as dt_module
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
-
-
-# Add parent directory to path to import our modules
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
@@ -21,17 +16,57 @@ from search.indexer import CodeIndexManager
 from search.searcher import IntelligentSearcher
 
 
-@patch("embeddings.embedder.SentenceTransformer")
+_real_datetime = dt_module.datetime
+
+
+class _ShiftedDateTime(_real_datetime):
+    """datetime subclass whose .now() reports a fixed offset into the future.
+
+    merkle.snapshot_manager.get_snapshot_age() computes elapsed time via
+    ``datetime.now().timestamp()``, not ``time.time()`` -- patching
+    ``time.time`` (as this test previously did) is therefore a no-op against
+    it. Patching the ``datetime`` name imported into that module is the
+    correct seam for deterministically simulating snapshot age.
+    """
+
+    @classmethod
+    def now(cls, tz=None):
+        return _real_datetime.now(tz) + dt_module.timedelta(seconds=7)
+
+
+@patch("embeddings.model_loader.SentenceTransformer")
 @pytest.mark.slow
 def test_auto_reindex(mock_sentence_transformer, tmp_path):
     """Test the auto-reindex feature."""
 
     # Mock the SentenceTransformer to avoid downloading models
-    mock_model = Mock()
-    mock_model.encode.return_value = (
-        np.ones(768, dtype=np.float32) * 0.5
-    )  # Deterministic embedding
+    def mock_encode(
+        sentences,
+        show_progress_bar=False,
+        convert_to_tensor=False,
+        device=None,
+        **kwargs,
+    ):
+        # Must match the shape of the real encode(): one 768-dim row per
+        # input sentence, not a single fixed-size vector -- embed_chunks()
+        # zips per-chunk sentences against per-chunk embedding rows.
+        if isinstance(sentences, str):
+            return np.ones(768, dtype=np.float32) * 0.5
+        return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
+
+    mock_model = MagicMock()
+    mock_model.encode.side_effect = mock_encode
     mock_model.get_sentence_embedding_dimension.return_value = 768
+    mock_model._vram_gb = (
+        0.0  # else MagicMock() > 0 comparison in _get_model_vram_gb raises TypeError
+    )
+    # else MagicMock auto-vivifies both `.ort_model` (making _is_onnx wrongly
+    # True) and `[0].auto_model.config` (a fake HF config with hasattr()==True
+    # on every attribute), so _extract_hf_config() "succeeds" with garbage and
+    # estimate_activation_gb_from_config() then multiplies MagicMock attributes
+    # with '*' and raises TypeError.
+    del mock_model.ort_model
+    mock_model.__getitem__.side_effect = IndexError
     mock_sentence_transformer.return_value = mock_model
 
     # Use the test project
@@ -74,47 +109,65 @@ def test_auto_reindex(mock_sentence_transformer, tmp_path):
     print(f"   - Chunks created: {result1.chunks_added}")
     print(f"   - Time taken: {result1.time_taken:.2f}s")
 
+    assert result1.success, "Initial index must succeed"
+    assert result1.files_added > 0, (
+        "Initial index must add files from the fixture project"
+    )
+    assert result1.chunks_added > 0, "Initial index must produce chunks"
+    assert result1.time_taken >= 0
+
     # Create searcher
     searcher = IntelligentSearcher(index_manager, embedder)
 
     # Test immediate search (should not reindex)
     print("\n3. Testing immediate search (should not trigger reindex)...")
-    start = time.time()
     reindex_result = indexer.auto_reindex_if_needed(
         str(test_project), project_name, max_age_minutes=5
     )
-    elapsed = time.time() - start
 
     print(
         f"   - Reindex triggered: {'Yes' if reindex_result.files_modified > 0 else 'No'}"
     )
-    print(f"   - Time taken: {elapsed:.3f}s")
+
+    # Snapshot was just written and nothing on disk has changed — the index
+    # is fresh, so auto_reindex_if_needed must skip and return a zero result.
+    assert reindex_result.files_added == 0
+    assert reindex_result.files_modified == 0
 
     # Check snapshot age
     stats = indexer.get_indexing_stats(str(test_project))
-    if stats:
-        age_seconds = stats.get("snapshot_age", 0)
-        print(f"   - Index age: {age_seconds:.1f} seconds")
+    assert stats, "get_indexing_stats must return stats once a snapshot exists"
+    age_seconds = stats.get("snapshot_age", 0)
+    print(f"   - Index age: {age_seconds:.1f} seconds")
+    assert age_seconds >= 0
 
-    # Simulate waiting by mocking time to avoid actual 7-second delay
+    # Simulate 7 seconds passing without an actual sleep. get_snapshot_age()
+    # reads datetime.now(), not time.time(), so the datetime seam (not
+    # time.time) must be patched for this to take effect.
     print("\n4. Testing with 0.1 minute (6 second) max age...")
     print("   Simulating 7 seconds passing...")
 
-    # Mock time.time() to simulate 7 seconds passing
-    original_time = time.time()
-    with patch("time.time", return_value=original_time + 7):
-        start = time.time()
+    with patch("merkle.snapshot_manager.datetime", _ShiftedDateTime):
+        assert indexer.needs_reindex(str(test_project), max_age_minutes=0.1), (
+            "A 7s-old snapshot must be considered stale against a 6s max age"
+        )
+
         reindex_result = indexer.auto_reindex_if_needed(
             str(test_project),
             project_name,
             max_age_minutes=0.1,  # 6 seconds
         )
-        elapsed = time.time() - start
 
     print(
         f"   - Reindex triggered: {'Yes' if reindex_result.files_modified > 0 or reindex_result.files_added > 0 else 'No'}"
     )
-    print(f"   - Time taken: {elapsed:.3f}s")
+
+    # The stale check triggered a real incremental_index() re-run. No files
+    # actually changed on disk, so the re-run reports zero changes too — but
+    # it must still succeed rather than error out.
+    assert reindex_result.success
+    assert reindex_result.files_added == 0
+    assert reindex_result.files_modified == 0
 
     # Check new snapshot age
     stats = indexer.get_indexing_stats(str(test_project))
@@ -126,27 +179,30 @@ def test_auto_reindex(mock_sentence_transformer, tmp_path):
     print("\n5. Testing search after auto-reindex...")
     results = searcher.search("database connection", k=3)
     print(f"   - Search returned {len(results)} results")
+    assert isinstance(results, list)
     if results:
-        print(f"   - Top result: {results[0].name} in {results[0].file_path}")
+        # SearchResult carries name/file_path in .metadata, not as top-level
+        # attributes — see search/reranker.py.
+        top_metadata = results[0].metadata
+        print(
+            f"   - Top result: {top_metadata.get('name')} in {top_metadata.get('file_path')}"
+        )
 
     # Test needs_reindex function
     print("\n6. Testing needs_reindex function...")
     needs_now = indexer.needs_reindex(str(test_project), max_age_minutes=5)
     print(f"   - Needs reindex (5 min threshold): {needs_now}")
+    assert needs_now is False, (
+        "Snapshot is fresh and unchanged; 5 min threshold must not trip"
+    )
 
-    needs_short = indexer.needs_reindex(
-        str(test_project), max_age_minutes=0.01
-    )  # 0.6 seconds
+    with patch("merkle.snapshot_manager.datetime", _ShiftedDateTime):
+        needs_short = indexer.needs_reindex(
+            str(test_project), max_age_minutes=0.01
+        )  # 0.6 seconds
     print(f"   - Needs reindex (0.01 min threshold): {needs_short}")
+    assert needs_short is True, "A 7s-old snapshot must trip a 0.6s max age threshold"
 
     print(f"\n{'=' * 60}")
     print("[OK] Auto-reindex test completed!")
     print(f"{'=' * 60}\n")
-
-
-if __name__ == "__main__":
-    # This test now uses pytest fixtures (tmp_path)
-    # Run via: pytest tests/integration/test_auto_reindex.py -v
-    print("Please run this test via pytest:")
-    print("  pytest tests/integration/test_auto_reindex.py -v")
-    print("\nDirect execution is not supported for tests using pytest fixtures.")

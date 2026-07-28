@@ -1,9 +1,15 @@
 """LibCST-based call-graph resolver for the resolver pipeline.
 
-Uses LibCST's ``FullyQualifiedNameProvider`` (FQN) and ``PositionProvider``
-to resolve call-sites to fully-qualified callee names, then maps both
-endpoints to graph chunk_ids via the shared helpers in
-``evaluation/chunk_mapping.py``.
+Uses LibCST's ``FullyQualifiedNameProvider`` (FQN) to resolve call-sites to
+fully-qualified callee names, then maps both endpoints to graph chunk_ids via
+the shared helpers in ``evaluation/chunk_mapping.py``.
+
+``PositionProvider`` is intentionally *not* requested: it drives its own
+whole-tree ``visit_batched`` pass per file (measured ~10% marginal cost on
+top of FQN resolution) and is only used to populate ``ResolvedEdge.line``,
+which the injection seam treats as optional (a falsy/zero line is simply
+omitted from the output payload — see ``subgraph_extractor.py``). Call-site
+lines for libcst-only edges are therefore always ``0``.
 
 Why LibCST?
 -----------
@@ -50,7 +56,6 @@ try:
         FullRepoManager,
         FullyQualifiedNameProvider,
         MetadataWrapper,
-        PositionProvider,
     )
 
     _LIBCST_AVAILABLE = True
@@ -81,7 +86,6 @@ if _LIBCST_AVAILABLE:
 
         METADATA_DEPENDENCIES = (
             FullyQualifiedNameProvider,  # type: ignore[name-defined]
-            PositionProvider,  # type: ignore[name-defined]
         )
 
         def __init__(self) -> None:
@@ -184,10 +188,10 @@ if _LIBCST_AVAILABLE:
             if callee_fqn is None:
                 return
 
-            # Line number from position metadata
-            # pyrefly: ignore [bad-argument-type]  # libcst stub: default typed as CodeRange, not Optional
-            pos = self.get_metadata(PositionProvider, node, None)
-            line = pos.start.line if pos is not None else 0
+            # Line number: PositionProvider is not requested (see module
+            # docstring) — libcst-only edges always report line=0, which the
+            # injection seam treats as "unknown" and omits from the payload.
+            line = 0
 
             self.edges.append((caller_fqn, callee_fqn, line))
 
@@ -235,6 +239,7 @@ class LibCSTResolver:
         project_root: Path,
         raw_line_map: dict[str, list[tuple[int, int, str]]],
         logger: logging.Logger,
+        py_files: list[str] | None = None,
     ) -> list[ResolvedEdge]:
         """Run LibCST on the project and return :class:`ResolvedEdge` instances.
 
@@ -243,6 +248,9 @@ class LibCSTResolver:
             raw_line_map: Per-file sorted ``(start, end, raw_chunk_id)`` list,
                 built with ``normalize=False`` so ids match graph node keys.
             logger: Logger for progress and warning messages.
+            py_files: Pre-gathered/scoped/validated absolute ``.py`` paths.
+                When ``None`` (direct callers), this resolver computes its own
+                scope as before.
 
         Returns:
             Deduplicated list of :class:`ResolvedEdge` for edges where both
@@ -255,8 +263,12 @@ class LibCSTResolver:
             )
             return []
 
-        # Gather, scope to indexed files, and validate — single preamble owner.
-        py_files = prepare_scoped_files(project_root, raw_line_map, logger, "LIBCST")
+        # Gather, scope to indexed files, and validate — single preamble owner
+        # (skipped when the caller already hoisted this via run_resolvers()).
+        if py_files is None:
+            py_files = prepare_scoped_files(
+                project_root, raw_line_map, logger, "LIBCST"
+            )
         if py_files is None:
             return []
 
@@ -293,12 +305,13 @@ class LibCSTResolver:
             manager = FullRepoManager(
                 repo_root_str,
                 abs_keys,
-                {FullyQualifiedNameProvider, PositionProvider},
+                {FullyQualifiedNameProvider},
                 use_pyproject_toml=self._use_pyproject_toml,
             )
-            # Front-load the entire batch cache in one pass.
-            # This resolves all cross-file FQN tables up-front so each
-            # MetadataWrapper construction below hits an already-warm cache.
+            # Warm the shared FullRepoManager cache once up-front so each
+            # MetadataWrapper construction below reuses it instead of
+            # recomputing per-file (resolve_cache() itself is cheap/near-free;
+            # the real cost is the per-file metadata resolution below).
             manager.resolve_cache()
         except Exception as exc:  # noqa: BLE001 - resilience: libcst resolver is an optional recall booster, skip it on init failure
             logger.warning(

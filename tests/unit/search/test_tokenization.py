@@ -17,6 +17,8 @@ from pathlib import Path
 
 from search.tokenization import (
     CODE_TERM_BLOCKLIST,
+    augment_bm25_document,
+    build_path_symbol_text,
     is_camelcase,
     is_dotted_symbol,
     is_snake_or_dunder,
@@ -373,3 +375,74 @@ class TestTokenizationOwnership:
         assert Path(self._OWNER).exists(), (
             f"{self._OWNER} was deleted — P8 single tokenization owner is gone."
         )
+
+
+class TestBuildPathSymbolText:
+    """Track D: BM25 path/symbol augmentation text builder."""
+
+    def test_basic_path_and_symbol(self):
+        out = build_path_symbol_text(
+            "search/hybrid_searcher.py", "HybridSearcher.add_embeddings"
+        )
+        assert out == (
+            "search hybrid_searcher hybrid searcher "
+            "HybridSearcher add_embeddings add embeddings"
+        )
+
+    def test_extension_stripped(self):
+        out = build_path_symbol_text("embeddings/query_cache.py", "get_stats")
+        tokens = out.split()
+        assert "py" not in tokens
+        assert {"embeddings", "query_cache", "query", "cache", "get_stats"} <= set(
+            tokens
+        )
+
+    def test_backslash_path_normalized(self):
+        forward = build_path_symbol_text("search/bm25_index.py", "BM25Index")
+        backward = build_path_symbol_text(r"search\bm25_index.py", "BM25Index")
+        assert forward == backward
+
+    def test_case_insensitive_dedupe_keeps_first_form(self):
+        # "Embedder" segment collides with the "embedder" filename token.
+        out = build_path_symbol_text("embeddings/embedder.py", "Embedder")
+        assert out == "embeddings embedder"
+
+    def test_single_char_tokens_dropped(self):
+        assert build_path_symbol_text("a/b.py", "x") == ""
+
+    def test_empty_inputs(self):
+        assert build_path_symbol_text("", "") == ""
+
+
+class TestAugmentBM25Document:
+    """Track D: path/symbol augmentation of BM25 documents at build time."""
+
+    def test_appends_augmentation_after_content(self):
+        out = augment_bm25_document(
+            "search/hybrid_searcher.py:10-20:method:HybridSearcher.add_embeddings",
+            "def add_embeddings(self):\n    pass",
+        )
+        body, _, augmentation = out.rpartition("\n")
+        assert body == "def add_embeddings(self):\n    pass"
+        assert "hybrid_searcher" in augmentation.split()
+        assert "embeddings" in augmentation.split()
+
+    def test_malformed_chunk_id_returns_content_unchanged(self):
+        content = "def foo():\n    pass"
+        assert augment_bm25_document("test_chunk_0", content) == content
+
+    def test_empty_content_returns_augmentation_only(self):
+        out = augment_bm25_document(
+            "embeddings/query_cache.py:5-9:method:QueryEmbeddingCache.get_stats", ""
+        )
+        assert not out.startswith("\n")
+        assert {"query_cache", "query", "cache", "get_stats", "stats"} <= set(
+            out.split()
+        )
+
+    def test_name_containing_colons_is_preserved(self):
+        # Chunk IDs join everything past the third colon back into the name.
+        out = augment_bm25_document(
+            "search/config.py:1-2:class:Outer.Inner", "class Inner: pass"
+        )
+        assert {"Outer", "Inner"} <= set(out.split())

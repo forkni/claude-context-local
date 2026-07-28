@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from search.config import GraphEnhancedConfig
 from search.hybrid_searcher import HybridSearcher
 from search.intent_classifier import IntentDecision, QueryIntent
 
 
 if TYPE_CHECKING:
-    from search.config import GraphEnhancedConfig
     from search.indexer import CodeIndexManager
 
 logger = logging.getLogger(__name__)
@@ -29,8 +29,8 @@ class GraphScoringStage:
 
     - **Block F** (centrality) fires only when
       ``graph_config.centrality_annotation`` is ``True``.
-    - **Block G** (subgraph) fires whenever ``index_manager.graph_storage`` exists,
-      regardless of whether Block F ran.
+    - **Block G** (subgraph) fires whenever ``index_manager.graph_storage`` exists
+      AND ``include_subgraph`` is ``True``, regardless of whether Block F ran.
     """
 
     def run(
@@ -42,6 +42,7 @@ class GraphScoringStage:
         index_manager: CodeIndexManager | None,
         searcher: Any,
         graph_config: GraphEnhancedConfig | None,
+        include_subgraph: bool = True,
     ) -> tuple[list[dict], dict | None]:
         """Apply graph-enhanced scoring and extract the SSCG subgraph.
 
@@ -49,7 +50,8 @@ class GraphScoringStage:
             query: The search query string.
             intent_decision: Classified query intent (``None`` → no intent-aware
                 synthetic-chunk ordering).
-            k: Primary result count; used for the ``k*4`` cap and the primary /
+            k: Primary result count; used for the ``k*8`` cap (via
+                ``graph_config.max_results_multiplier``) and the primary /
                 ego-graph chunk split inside subgraph extraction.
             results: Formatted search result dicts (mutated and reordered here).
             index_manager: Active ``CodeIndexManager``; ``None`` → both blocks skip.
@@ -57,18 +59,27 @@ class GraphScoringStage:
                 centrality-score injection before subgraph extraction.
             graph_config: ``GraphEnhancedConfig`` controlling centrality behaviour;
                 ``None`` → Block F skips.
+            include_subgraph: Whether the caller will actually use Block G's
+                output. Defaults to ``True`` (unconditional extraction, the
+                historical behaviour) so existing callers are unaffected;
+                ``search_orchestrator.py`` passes the request's
+                ``output.include_subgraph`` flag so Block G is skipped
+                entirely when the response would discard it anyway.
 
         Returns:
             ``(results, subgraph_data)`` where ``subgraph_data`` is the SSCG
             subgraph dict (``{"nodes": [...], "edges": [...], ...}``) or ``None``
-            when no graph nodes are found.
+            when no graph nodes are found, or when ``include_subgraph`` is
+            ``False``.
         """
         results, centrality_scores = self._apply_centrality(
             query, intent_decision, results, index_manager, searcher, graph_config
         )
-        results = self._cap_results(results, k)
-        subgraph_data = self._extract_subgraph(
-            results, k, index_manager, centrality_scores
+        results = self._cap_results(results, k, graph_config)
+        subgraph_data = (
+            self._extract_subgraph(results, k, index_manager, centrality_scores)
+            if include_subgraph
+            else None
         )
         return results, subgraph_data
 
@@ -226,9 +237,23 @@ class GraphScoringStage:
     # Cap
     # ------------------------------------------------------------------
 
-    def _cap_results(self, results: list[dict], k: int) -> list[dict]:
-        """Cap total results to prevent token bloat (k primary + up to 3k context)."""
-        max_total = k * 4
+    def _cap_results(
+        self,
+        results: list[dict],
+        k: int,
+        graph_config: GraphEnhancedConfig | None = None,
+    ) -> list[dict]:
+        """Cap total results to prevent token bloat (k primary + context chunks).
+
+        The multiplier comes from ``graph_config.max_results_multiplier``
+        (default 8); ``None`` graph_config falls back to the dataclass default.
+        """
+        multiplier = (
+            graph_config.max_results_multiplier
+            if graph_config is not None
+            else GraphEnhancedConfig().max_results_multiplier
+        )
+        max_total = k * multiplier
         if len(results) > max_total:
             logger.info(f"Capping total results: {len(results)} -> {max_total}")
             results = results[:max_total]

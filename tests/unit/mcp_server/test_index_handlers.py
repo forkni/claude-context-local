@@ -1,7 +1,7 @@
 """Unit tests for index_handlers — file accessibility + pre-clear path guard."""
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -113,6 +113,186 @@ class TestClearIndexFilesBeforeCreate:
             pytest.raises(ValueError, match="_clear_index_files_before_create refused"),
         ):
             _clear_index_files_before_create(bogus)
+
+
+class TestRunIndexingSuccessPropagation:
+    """A caught indexing exception (or a zero-chunk full reindex) must surface
+    as a hard failure instead of being reported as success — the exact
+    "half-purged index, reported OK" defect this guards against.
+    """
+
+    @staticmethod
+    def _fake_result(**overrides):
+        result = MagicMock()
+        result.files_added = 0
+        result.files_modified = 0
+        result.files_removed = 0
+        result.chunks_added = 0
+        result.success = True
+        result.error = None
+        for key, value in overrides.items():
+            setattr(result, key, value)
+        return result
+
+    def test_run_indexing_propagates_success_and_error_fields(self, tmp_path):
+        """_run_indexing must carry result.success/result.error into its dict
+        (as indexing_succeeded/indexing_error — see the note at the call site
+        on why these aren't literally named success/error), not just the
+        counts (the original defect: they were dropped on the floor).
+        """
+        from mcp_server.tools.index_handlers import _run_indexing
+
+        fake_indexer = MagicMock()
+        fake_indexer.incremental_index.return_value = self._fake_result(
+            success=False, error="PermissionError: [WinError 32]"
+        )
+
+        with patch(
+            "mcp_server.tools.index_handlers.IncrementalIndexer",
+            return_value=fake_indexer,
+        ):
+            result = _run_indexing(
+                indexer=MagicMock(),
+                embedder=MagicMock(),
+                chunker=MagicMock(),
+                directory_path=str(tmp_path),
+                incremental=False,
+            )
+
+        assert result["indexing_succeeded"] is False
+        assert result["indexing_error"] == "PermissionError: [WinError 32]"
+
+    def test_build_index_response_reports_failure_on_caught_exception(self):
+        """_build_index_response turns a caught-exception result into a hard
+        failure response instead of the previous unconditional success=True."""
+        from mcp_server.tools.index_handlers import _build_index_response
+
+        r = {
+            "files_added": 0,
+            "files_modified": 0,
+            "files_removed": 0,
+            "chunks_added": 0,
+            "time_taken": 0.52,
+            "indexing_succeeded": False,
+            "indexing_error": "PermissionError: [WinError 32]",
+        }
+
+        response = _build_index_response([r], "/some/project", incremental=False)
+
+        assert "error" in response
+        assert "PermissionError" in response["error"]
+        assert response.get("success") is not True
+
+    def test_build_index_response_reports_failure_on_zero_chunk_full_reindex(self):
+        """A full (non-incremental) reindex that added 0 chunks is never a
+        legitimate outcome and must be reported as a hard failure even when
+        no exception was raised (success=True but chunks_added=0)."""
+        from mcp_server.tools.index_handlers import _build_index_response
+
+        r = {
+            "files_added": 0,
+            "files_modified": 0,
+            "files_removed": 0,
+            "chunks_added": 0,
+            "time_taken": 0.52,
+            "indexing_succeeded": True,
+            "indexing_error": None,
+        }
+
+        response = _build_index_response([r], "/some/project", incremental=False)
+
+        assert "error" in response
+        assert response.get("success") is not True
+
+    def test_build_index_response_incremental_zero_chunks_stays_success(self):
+        """An incremental run legitimately adds 0 chunks when nothing changed —
+        that must stay a success (only a *full* reindex with 0 chunks is
+        suspicious)."""
+        from mcp_server.tools.index_handlers import _build_index_response
+
+        r = {
+            "files_added": 0,
+            "files_modified": 0,
+            "files_removed": 0,
+            "chunks_added": 0,
+            "time_taken": 0.05,
+            "indexing_succeeded": True,
+            "indexing_error": None,
+        }
+
+        response = _build_index_response([r], "/some/project", incremental=True)
+
+        assert response.get("success") is True
+        assert "error" not in response
+
+    def test_build_index_response_surfaces_effective_filters(self):
+        """include_dirs/exclude_dirs passed through are surfaced in the
+        response so an unexpected corpus size is visible without re-deriving
+        which filter was actually used."""
+        from mcp_server.tools.index_handlers import _build_index_response
+
+        r = {
+            "files_added": 5,
+            "files_modified": 0,
+            "files_removed": 0,
+            "chunks_added": 42,
+            "time_taken": 1.0,
+            "indexing_succeeded": True,
+            "indexing_error": None,
+        }
+
+        response = _build_index_response(
+            [r],
+            "/some/project",
+            incremental=False,
+            include_dirs=None,
+            exclude_dirs=["_archive", "tests"],
+        )
+
+        assert response.get("success") is True
+        assert response.get("exclude_dirs") == ["_archive", "tests"]
+        assert response.get("include_dirs") is None
+
+
+class TestPurgeIndexDirFailureReporting:
+    """_purge_index_dir must report undeletable files via its return value,
+    not only a log warning — callers (handle_clear_index) need this to be
+    able to turn a partial purge into a hard failure response.
+    """
+
+    def test_undeletable_file_reported_in_failed(self, tmp_path):
+        from mcp_server.tools.index_handlers import _purge_index_dir
+
+        index_dir = tmp_path / "index"
+        index_dir.mkdir()
+        (index_dir / "code.index").write_text("data")
+        (index_dir / "chunk_ids.pkl").write_text("data")
+
+        original_unlink = Path.unlink
+
+        def _flaky_unlink(self, *args, **kwargs):
+            if self.name == "code.index":
+                raise OSError("file in use by another process")
+            return original_unlink(self, *args, **kwargs)
+
+        with patch.object(Path, "unlink", _flaky_unlink):
+            deleted, failed = _purge_index_dir(index_dir, keep_chunk_cache=True)
+
+        assert "code.index" in failed
+        assert "chunk_ids.pkl" in deleted
+        assert "code.index" not in deleted
+
+    def test_all_files_deletable_reports_empty_failed(self, tmp_path):
+        from mcp_server.tools.index_handlers import _purge_index_dir
+
+        index_dir = tmp_path / "index"
+        index_dir.mkdir()
+        (index_dir / "code.index").write_text("data")
+
+        deleted, failed = _purge_index_dir(index_dir, keep_chunk_cache=True)
+
+        assert failed == []
+        assert "code.index" in deleted
 
 
 class TestReleaseGpuMemory:
@@ -348,9 +528,6 @@ class TestIndexDirectoryAsyncJob:
     async def test_wait_true_default_still_returns_inline_result(self, tmp_path):
         """wait defaults to True: behavior is unchanged (no job_id, inline result)."""
         from mcp_server.tools import index_handlers
-        from mcp_server.tools.job_registry import reset_job_registry
-
-        reset_job_registry()
 
         async def _fake_run(_arguments):
             return {"success": True, "files_added": 1}
@@ -368,10 +545,8 @@ class TestIndexDirectoryAsyncJob:
         from mcp_server.tools.job_registry import (
             JobRegistry,
             get_job_registry,
-            reset_job_registry,
         )
 
-        reset_job_registry()
         captured_tasks = []
         original_track = JobRegistry.track_background_task
 
@@ -413,10 +588,8 @@ class TestIndexDirectoryAsyncJob:
         from mcp_server.tools.job_registry import (
             JobRegistry,
             get_job_registry,
-            reset_job_registry,
         )
 
-        reset_job_registry()
         captured_tasks = []
         original_track = JobRegistry.track_background_task
 
@@ -449,10 +622,8 @@ class TestIndexDirectoryAsyncJob:
         from mcp_server.tools.job_registry import (
             JobRegistry,
             get_job_registry,
-            reset_job_registry,
         )
 
-        reset_job_registry()
         captured_tasks = []
         original_track = JobRegistry.track_background_task
 
@@ -478,7 +649,3 @@ class TestIndexDirectoryAsyncJob:
         job = await get_job_registry().get(result["job_id"])
         assert job.status == "error"
         assert job.error == "Directory does not exist: /nope"
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

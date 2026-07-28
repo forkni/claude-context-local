@@ -6,6 +6,8 @@ from search.chunk_id import (
     MIN_CHUNK_ID_COLONS,
     ChunkId,
     build,
+    dedup_key,
+    dedupe_results,
     extract_line_count,
     extract_name,
     is_chunk_id,
@@ -350,3 +352,130 @@ class TestBuild:
         result = build("src/a.py", 5, 40, "merged", None)
         assert "merged" in result
         assert result == "src/a.py:5-40:merged"
+
+
+# ---------------------------------------------------------------------------
+# dedup_key
+# ---------------------------------------------------------------------------
+
+
+class TestDedupKey:
+    def test_strips_line_range(self):
+        assert (
+            dedup_key("search/filters.py:22-31:function:normalize_path")
+            == "search/filters.py:function:normalize_path"
+        )
+
+    def test_split_block_collapses_to_method(self):
+        assert (
+            dedup_key(
+                "graph/graph_integration.py:276-310:split_block:GraphIntegration.populate_from_embeddings"
+            )
+            == "graph/graph_integration.py:method:GraphIntegration.populate_from_embeddings"
+        )
+
+    def test_split_block_fragments_share_key(self):
+        a = dedup_key("src/big.py:10-40:split_block:Cls.long_method")
+        b = dedup_key("src/big.py:41-80:split_block:Cls.long_method")
+        parent = dedup_key("src/big.py:10-80:method:Cls.long_method")
+        assert a == b == parent
+
+    def test_module_id_three_parts(self):
+        assert dedup_key("merkle/__init__.py:1-8:module") == "merkle/__init__.py:module"
+
+    def test_windows_backslash_normalized(self):
+        assert (
+            dedup_key("search\\reranker.py:36-137:method:rerank")
+            == "search/reranker.py:method:rerank"
+        )
+
+    def test_drive_letter_path(self):
+        assert (
+            dedup_key("F:/proj/src/a.py:10-20:function:fn")
+            == "F:/proj/src/a.py:function:fn"
+        )
+
+    def test_bare_symbol_passthrough(self):
+        assert dedup_key("login") == "login"
+
+    def test_no_kind_after_range_passthrough(self):
+        # ":10-20" with nothing after it is not a strippable chunk_id
+        assert dedup_key("file.py:10-20") == "file.py:10-20"
+
+    def test_non_numeric_range_passthrough(self):
+        assert dedup_key("file.py:a-b:function:fn") == "file.py:a-b:function:fn"
+
+    def test_idempotent(self):
+        raw = "src/big.py:10-40:split_block:Cls.long_method"
+        assert dedup_key(dedup_key(raw)) == dedup_key(raw)
+
+    def test_other_kinds_not_collapsed(self):
+        assert (
+            dedup_key("search/config.py:148-161:decorated_definition:EmbeddingConfig")
+            == "search/config.py:decorated_definition:EmbeddingConfig"
+        )
+
+
+class _Result:
+    """Minimal stand-in for SearchResult (only .chunk_id is read)."""
+
+    def __init__(self, chunk_id: str) -> None:
+        self.chunk_id = chunk_id
+
+
+class TestDedupeResults:
+    """dedupe_results(): split_block-aware result-list deduplication."""
+
+    def test_split_block_fragments_collapse_to_first(self):
+        results = [
+            _Result("src/big.py:10-40:split_block:Cls.long_method"),
+            _Result("src/big.py:41-80:split_block:Cls.long_method"),
+            _Result("src/other.py:5-15:function:helper"),
+        ]
+        survivors = dedupe_results(results)
+        assert [r.chunk_id for r in survivors] == [
+            "src/big.py:10-40:split_block:Cls.long_method",
+            "src/other.py:5-15:function:helper",
+        ]
+
+    def test_fragment_and_parent_method_share_slot(self):
+        # A split_block fragment and the parent method chunk are one logical hit.
+        results = [
+            _Result("src/big.py:10-80:method:Cls.long_method"),
+            _Result("src/big.py:41-80:split_block:Cls.long_method"),
+        ]
+        survivors = dedupe_results(results)
+        assert [r.chunk_id for r in survivors] == [
+            "src/big.py:10-80:method:Cls.long_method"
+        ]
+
+    def test_order_preserved_and_first_kept(self):
+        # First occurrence (best-ranked) survives; survivor order unchanged.
+        results = [
+            _Result("a.py:1-5:split_block:Cls.f"),
+            _Result("b.py:1-5:function:g"),
+            _Result("a.py:6-9:split_block:Cls.f"),
+        ]
+        survivors = dedupe_results(results)
+        assert [r.chunk_id for r in survivors] == [
+            "a.py:1-5:split_block:Cls.f",
+            "b.py:1-5:function:g",
+        ]
+
+    def test_distinct_results_untouched(self):
+        results = [
+            _Result("a.py:1-5:function:f"),
+            _Result("b.py:1-5:function:g"),
+        ]
+        assert dedupe_results(results) == results
+
+    def test_empty_list(self):
+        assert dedupe_results([]) == []
+
+    def test_windows_backslash_variants_are_one_hit(self):
+        results = [
+            _Result("search\\reranker.py:36-137:method:rerank"),
+            _Result("search/reranker.py:36-137:method:rerank"),
+        ]
+        survivors = dedupe_results(results)
+        assert len(survivors) == 1

@@ -38,6 +38,7 @@ from utils.otel_attributes import (
 
 from .base_searcher import BaseSearcher
 from .bm25_index import BM25Index
+from .chunk_id import dedupe_results
 from .ego_graph_retriever import EgoGraphRetriever
 from .gpu_monitor import GPUMemoryMonitor
 from .index_sync import IndexSynchronizer
@@ -48,6 +49,7 @@ from .reranker import RRFReranker, SearchResult
 from .reranking_engine import RerankingEngine
 from .result_factory import ResultFactory
 from .search_executor import SearchExecutor
+from .tokenization import augment_bm25_document
 from .weight_optimizer import WeightOptimizer
 
 
@@ -64,6 +66,9 @@ class HybridSearcher(BaseSearcher):
         max_workers: int = 2,
         bm25_use_stopwords: bool = True,
         bm25_use_stemming: bool = True,
+        bm25_tokenizer: str = "legacy",
+        bm25_k1: float = 1.5,
+        bm25_b: float = 0.75,
         project_id: str | None = None,
         config: Optional["SearchConfig"] = None,
     ):
@@ -79,6 +84,9 @@ class HybridSearcher(BaseSearcher):
             max_workers: Maximum thread pool workers for parallel execution
             bm25_use_stopwords: Whether BM25 should filter stopwords
             bm25_use_stemming: Whether BM25 should use Snowball stemming
+            bm25_tokenizer: BM25 tokenizer variant (legacy/whole/additive)
+            bm25_k1: Okapi BM25 term-frequency saturation parameter
+            bm25_b: Okapi BM25 document-length normalization parameter
             project_id: Project identifier for graph storage
             config: SearchConfig instance for mmap storage and other settings
         """
@@ -104,6 +112,9 @@ class HybridSearcher(BaseSearcher):
         # BM25 configuration
         self.bm25_use_stopwords = bm25_use_stopwords
         self.bm25_use_stemming = bm25_use_stemming
+        self.bm25_tokenizer = bm25_tokenizer
+        self.bm25_k1 = bm25_k1
+        self.bm25_b = bm25_b
 
         # Override logger with module-specific logger (set by BaseSearcher)
         self._logger = logging.getLogger(__name__)
@@ -111,13 +122,17 @@ class HybridSearcher(BaseSearcher):
         # BM25 index gets its own subdirectory
         self._logger.info(
             f"[INIT] Creating BM25Index at: {self.storage_dir / 'bm25'} "
-            f"(stopwords={bm25_use_stopwords}, stemming={bm25_use_stemming})"
+            f"(stopwords={bm25_use_stopwords}, stemming={bm25_use_stemming}, "
+            f"tokenizer={bm25_tokenizer})"
         )
         try:
             self.bm25_index = BM25Index(
                 str(self.storage_dir / "bm25"),
                 use_stopwords=bm25_use_stopwords,
                 use_stemming=bm25_use_stemming,
+                tokenizer=bm25_tokenizer,
+                k1=bm25_k1,
+                b=bm25_b,
             )
             self._logger.info("[INIT] BM25Index created successfully")
         except Exception as e:
@@ -165,6 +180,9 @@ class HybridSearcher(BaseSearcher):
             max_workers=max_workers,
             bm25_use_stopwords=bm25_use_stopwords,
             bm25_use_stemming=bm25_use_stemming,
+            bm25_tokenizer=bm25_tokenizer,
+            bm25_k1=bm25_k1,
+            bm25_b=bm25_b,
             project_id=project_id,
         )
 
@@ -192,6 +210,9 @@ class HybridSearcher(BaseSearcher):
         max_workers: int,
         bm25_use_stopwords: bool,
         bm25_use_stemming: bool,
+        bm25_tokenizer: str,
+        bm25_k1: float,
+        bm25_b: float,
         project_id: str | None,
     ) -> None:
         """Initialize search execution components.
@@ -207,6 +228,9 @@ class HybridSearcher(BaseSearcher):
             max_workers: Maximum thread pool workers
             bm25_use_stopwords: Whether BM25 uses stopwords
             bm25_use_stemming: Whether BM25 uses stemming
+            bm25_tokenizer: BM25 tokenizer variant (legacy/whole/additive)
+            bm25_k1: Okapi BM25 term-frequency saturation parameter
+            bm25_b: Okapi BM25 document-length normalization parameter
             project_id: Project identifier
         """
         # Reranker and GPU monitor
@@ -225,6 +249,9 @@ class HybridSearcher(BaseSearcher):
             dense_index=self.dense_index,
             bm25_use_stopwords=bm25_use_stopwords,
             bm25_use_stemming=bm25_use_stemming,
+            bm25_tokenizer=bm25_tokenizer,
+            bm25_k1=bm25_k1,
+            bm25_b=bm25_b,
             project_id=project_id,
             config=self.config,
             embedder=embedder,
@@ -508,7 +535,9 @@ class HybridSearcher(BaseSearcher):
         dense_count = self.dense_index.index.ntotal if self.dense_index.index else 0
         return max(bm25_count, dense_count)  # Return the higher count
 
-    def get_by_chunk_id(self, chunk_id: str) -> SearchResult | None:
+    def get_by_chunk_id(
+        self, chunk_id: str, warn_on_miss: bool = True
+    ) -> SearchResult | None:
         """
         Direct lookup by chunk_id (unambiguous, no search needed).
 
@@ -517,6 +546,9 @@ class HybridSearcher(BaseSearcher):
 
         Args:
             chunk_id: Format "file.py:10-20:function:name"
+            warn_on_miss: Whether to log a WARNING when the lookup misses.
+                Pass False for speculative probes (e.g. edge-recovery ladders)
+                where a miss is expected control flow, not a defect.
 
         Returns:
             SearchResult if found, None otherwise
@@ -528,7 +560,7 @@ class HybridSearcher(BaseSearcher):
 
         # Slow path: Load from SQLite
         self._cache_misses += 1
-        metadata = self.dense_index.get_chunk_by_id(chunk_id)
+        metadata = self.dense_index.get_chunk_by_id(chunk_id, warn_on_miss=warn_on_miss)
         if not metadata:
             # Cache None results to avoid repeated failed lookups
             self._metadata_cache[chunk_id] = None
@@ -724,18 +756,41 @@ class HybridSearcher(BaseSearcher):
                 )
 
             # Post-expansion neural reranking: unify scoring across primary + ego results
-            # Only runs when ego-graph added results, putting all on same cross-encoder scale
             if (
+                effective_config.reranker.single_pass
+                and self.reranking_engine
+                and results
+            ):
+                # Q3 single-pass: THE one listwise pass over the final merged
+                # pool (hop-1 + multi-hop + ego expansion). Earlier per-stage
+                # passes were skipped; truncate to k here (rerank_by_query
+                # dedups split_block fragments before the cut).
+                results = self.reranking_engine.rerank_by_query(
+                    query=query,
+                    results=results,
+                    k=k,
+                    search_mode=search_mode,
+                )
+            elif (
                 effective_config.ego_graph.enabled
                 and self.reranking_engine
                 and len(results) > k
             ):
+                # Default path: only runs when ego-graph added results, putting
+                # all on the same cross-encoder scale
                 results = self.reranking_engine.rerank_by_query(
                     query=query,
                     results=results,
                     k=len(results),  # Keep all results, just re-score and re-sort
                     search_mode=search_mode,
                 )
+
+            # Safety-net dedup for paths that bypass rerank_by_query (e.g.
+            # single-hop with no ego growth): split_block fragments of one
+            # function must not occupy multiple final slots. Idempotent when
+            # rerank_by_query already deduped upstream.
+            if effective_config.reranker.dedupe_split_blocks and results:
+                results = dedupe_results(results)
 
             span.set_attribute(ATTR_RESULT_COUNT, len(results))
             return results
@@ -1049,20 +1104,15 @@ class HybridSearcher(BaseSearcher):
         return optimizer.optimize(test_queries, ground_truth=ground_truth)
 
     def save_indices(self) -> None:
-        """Save BM25, dense indices, and call graph. Delegates to IndexSynchronizer."""
-        self.index_sync.save_indices()
+        """Save BM25, dense indices, and call graph. Delegates to IndexSynchronizer.
 
-        # Save call graph if populated
-        if self._graph_storage is not None and len(self._graph_storage) > 0:
-            try:
-                self._logger.info(
-                    f"[SAVE_INDICES] Saving call graph with {len(self._graph_storage)} nodes, "
-                    f"{self._graph_storage.graph.number_of_edges()} edges"
-                )
-                self._graph_storage.save()
-                self._logger.info("[SAVE_INDICES] Call graph saved successfully")
-            except (OSError, RuntimeError) as e:
-                self._logger.warning(f"[SAVE_INDICES] Failed to save call graph: {e}")
+        The call graph save happens inside index_sync.save_indices() (via
+        CodeIndexManager.save_index() -> GraphIntegration.save()) on the same
+        CodeGraphStorage object as self._graph_storage (aliased at __init__ -
+        see the "Reuse the CodeGraphStorage" comment above). A second explicit
+        save here would just re-serialize the identical graph a moment later.
+        """
+        self.index_sync.save_indices()
 
     def validate_index_sync(self) -> bool:
         """Validate BM25 and Dense indices are synchronized. Delegates to IndexSynchronizer."""
@@ -1126,7 +1176,11 @@ class HybridSearcher(BaseSearcher):
                     or result.metadata.get("raw_content")
                     or ""
                 )
-            documents.append(content)
+            # BM25 documents get path/symbol augmentation at build time while
+            # bm25_text below stays raw — resync_bm25_from_dense re-augments
+            # from the raw text, so augmentation is applied exactly once no
+            # matter how often the BM25 index is rebuilt.
+            documents.append(augment_bm25_document(chunk_id, content))
 
             # Embeddings for dense index
             if hasattr(result.embedding, "tolist"):
@@ -1215,8 +1269,12 @@ class HybridSearcher(BaseSearcher):
         # Update MultiHopSearcher reference to new dense index
         self.multi_hop_searcher.dense_index = self.dense_index
 
-        # Update graph_storage reference to match new dense_index (prevents stale references)
-        if hasattr(self.dense_index, "_graph") and self.dense_index._graph:
+        # Update graph_storage reference to match new dense_index (prevents stale references).
+        # NOTE: must be an explicit `is not None` check, not truthiness — GraphIntegration
+        # defines __len__ (node count) but not __bool__, so a freshly-cleared, still-empty
+        # graph is falsy and would silently skip this re-sync, leaving self._graph/_graph_storage
+        # pointed at the orphaned pre-clear storage object for the rest of the reindex.
+        if hasattr(self.dense_index, "_graph") and self.dense_index._graph is not None:
             self._graph_storage = self.dense_index._graph.storage
             self._graph = GraphIntegration.from_storage(self._graph_storage)
             self._logger.debug(

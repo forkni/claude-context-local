@@ -373,6 +373,84 @@ class TestMetadataStoreUtilities:
             store.close()
 
 
+class TestMetadataStoreOneOpGet:
+    """Equivalence tests for the sentinel-based one-op get() (P3-2a).
+
+    get() now does a single ``SqliteDict.get(key, _MISSING)`` round-trip per
+    branch instead of a membership-test-then-fetch pair. These tests pin the
+    observable behavior so the round-trip collapse cannot silently change
+    what callers see.
+    """
+
+    def test_get_bulk_equivalence_across_many_keys(self):
+        """get() returns exactly what was stored for a large, varied key set.
+
+        Includes edge-case metadata values (empty dict, dict containing an
+        explicit None) to confirm the _MISSING sentinel never mistakes a
+        legitimately falsy/None-bearing stored value for an absent key.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MetadataStore(Path(tmpdir) / "test.db")
+
+            entries = {}
+            for i in range(50):
+                chunk_id = f"file{i}.py:1-10:function:foo{i}"
+                metadata = {
+                    "relative_path": f"file{i}.py",
+                    "chunk_type": "function",
+                    "extra": None if i % 5 == 0 else {"nested": i},
+                }
+                if i % 7 == 0:
+                    metadata = {}  # empty-dict edge case
+                entries[chunk_id] = metadata
+                store.set(chunk_id, i, metadata)
+
+            for chunk_id, metadata in entries.items():
+                result = store.get(chunk_id)
+                assert result is not None
+                assert result["metadata"] == metadata
+
+            store.close()
+
+    def test_get_falls_back_when_cache_stale_after_external_deletion(self):
+        """Cached-path miss falls through to the direct lookup, per the
+        load-bearing two-step fallback (cache can outlive a deleted DB row).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MetadataStore(Path(tmpdir) / "test.db")
+            chunk_id = "file.py:1-10:function:foo"
+            store.set(chunk_id, 0, {"relative_path": "file.py"})
+
+            # Simulate an external mutation that bypasses MetadataStore.delete()
+            # (and therefore never calls _symbol_cache.remove()), leaving the
+            # in-memory cache pointing at a chunk_id no longer in the DB.
+            del store._db[chunk_id]
+            store.commit()
+
+            # Cache still holds the stale entry ...
+            assert store._symbol_cache.get_by_chunk_id(chunk_id) == chunk_id
+            # ... but get() must not crash and must correctly report absence.
+            assert store.get(chunk_id) is None
+
+            store.close()
+
+    def test_get_cache_hit_path_returns_same_value_as_direct_lookup(self):
+        """First get() warms the cache; second get() takes the cache fast
+        path — both must return an equal value."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MetadataStore(Path(tmpdir) / "test.db")
+            chunk_id = "file.py:1-10:function:foo"
+            metadata = {"relative_path": "file.py"}
+            store.set(chunk_id, 0, metadata)
+
+            first = store.get(chunk_id)
+            assert store._symbol_cache.get_by_chunk_id(chunk_id) == chunk_id
+            second = store.get(chunk_id)
+            assert first == second == {"index_id": 0, "metadata": metadata}
+
+            store.close()
+
+
 class TestMetadataStoreContextManager:
     """Tests for context manager support."""
 

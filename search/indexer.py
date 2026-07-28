@@ -11,7 +11,6 @@ import numpy as np
 
 if TYPE_CHECKING:
     from embeddings.embedder import CodeEmbedder
-    from search.symbol_cache import SymbolHashCache
 
 
 try:
@@ -118,16 +117,6 @@ class CodeIndexManager:
         """
         return self._metadata_store
 
-    @property
-    def symbol_cache(self) -> "SymbolHashCache":
-        """Expose symbol cache for direct symbol lookup.
-
-        Returns the SymbolHashCache instance from metadata_store,
-        enabling O(1) symbol name → chunk_id lookups for find_path
-        and other tools without relying on semantic search.
-        """
-        return self._metadata_store._symbol_cache
-
     def create_index(self, embedding_dimension: int, index_type: str = "flat") -> None:
         """Create a new FAISS index.
 
@@ -225,26 +214,13 @@ class CodeIndexManager:
         with contextlib.suppress(sqlite3.Error):
             self.metadata_store.commit()
 
-        # Save call graph if populated
-        graph_status = "not None" if self.graph_storage is not None else "None"
-        graph_nodes = len(self.graph_storage) if self.graph_storage else 0
-        self._logger.info(
-            f"Graph storage check before save: graph_storage={graph_status}, nodes={graph_nodes}"
-        )
-        if self.graph_storage is not None and len(self.graph_storage) > 0:
-            try:
-                self._logger.info(
-                    f"Saving call graph with {len(self.graph_storage)} nodes to {self.graph_storage.graph_path}"
-                )
-                self.graph_storage.save()
-                self._logger.info(
-                    f"Successfully saved call graph with {len(self.graph_storage)} nodes"
-                )
-            except Exception as e:  # noqa: BLE001 - resilience: optional call graph save, indexing continues without it
-                self._logger.warning(f"Failed to save call graph: {e}")
-        else:
-            skip_reason = "None" if self.graph_storage is None else "empty (0 nodes)"
-            self._logger.warning(f"Skipping graph save: graph_storage is {skip_reason}")
+        # NOTE: the call graph is intentionally *not* saved here. At this point
+        # in the pipeline it's missing both populate_from_embeddings' call
+        # edges and phase-9's resolver-injected edges, so a save here would
+        # just be overwritten moments later. The graph is persisted once the
+        # full pipeline is done, via save_indices() (see index_write_stage.py /
+        # incremental_indexer.py, both of which call save_indices() after every
+        # add_embeddings() path).
 
         # Update statistics
         self._update_stats()
@@ -315,7 +291,9 @@ class CodeIndexManager:
         """
         return FilterEngine.from_dict(filters).matches(metadata)
 
-    def get_chunk_by_id(self, chunk_id: str) -> dict[str, Any] | None:
+    def get_chunk_by_id(
+        self, chunk_id: str, warn_on_miss: bool = True
+    ) -> dict[str, Any] | None:
         """Retrieve chunk metadata by ID with path normalization.
 
         Handles Windows backslash escaping issues in MCP transport by trying
@@ -323,6 +301,10 @@ class CodeIndexManager:
 
         Args:
             chunk_id: Chunk ID to lookup
+            warn_on_miss: Whether to log a WARNING when the lookup misses.
+                Callers that probe speculatively -- e.g. relationship_analyzer's
+                edge-recovery ladder, where a miss is expected control flow,
+                not a defect -- should pass False.
 
         Returns:
             Chunk metadata dict if found, None otherwise
@@ -333,7 +315,8 @@ class CodeIndexManager:
         if metadata_entry:
             return metadata_entry["metadata"]
 
-        self._logger.warning(f"Chunk not found for ID: {chunk_id}")
+        if warn_on_miss:
+            self._logger.warning(f"Chunk not found for ID: {chunk_id}")
         return None
 
     def get_similar_chunks(
@@ -750,8 +733,29 @@ class CodeIndexManager:
 
         gc.collect()
 
-        # Remove additional files - NOW safe because store is closed
-        for file_path in [self.metadata_path, self.stats_path]:
+        # Remove additional files - NOW safe because store is closed.
+        # metadata.db-wal/-shm are not a defensive nicety: SQLite routinely
+        # leaves a full-size WAL sidecar (13MB+ observed, larger than the DB
+        # itself) even outside a crash, and deleting metadata.db while it
+        # survives risks an unopenable DB on Windows. metadata_symbol_cache.json
+        # is legacy debris — its only writer was removed in dff893d7.
+        #
+        # chunk_embeddings.bin is deliberately NOT deleted here: this method is
+        # the mechanics behind every force-full reindex (IncrementalIndexer.
+        # incremental_index(force_full=True) -> HybridSearcher.clear_index() ->
+        # IndexSynchronizer.clear_index() -> CodeIndexManager.clear_index()),
+        # not just the explicit admin "clear index" action — deleting the cache
+        # here would cold-start the embedding phase on every force-full run,
+        # defeating the whole point of the cache. The explicit admin clear
+        # (handle_clear_index) drops the cache itself, independently, via its
+        # own file purge — it never calls this method.
+        for file_path in [
+            self.metadata_path,
+            Path(str(self.metadata_path) + "-wal"),
+            Path(str(self.metadata_path) + "-shm"),
+            self.stats_path,
+            self.storage_dir / "metadata_symbol_cache.json",
+        ]:
             if file_path.exists():
                 file_path.unlink()
 
@@ -760,6 +764,17 @@ class CodeIndexManager:
 
         # Reinitialize metadata store AFTER deletion
         self._metadata_store = MetadataStore(self.metadata_path)
+
+        # Re-wire BatchOperations to the new store — it was nulled out above
+        # to release the Windows file handle, but remove_files() (the
+        # true-incremental deletion/modification path) reads
+        # self._batch_ops._metadata_store directly. Leaving it None here
+        # means the *next* incremental call after any clear_index() crashes
+        # with "'NoneType' object has no attribute 'get'", which gets caught
+        # by incremental_index()'s blanket except and silently falls back to
+        # a full reindex, masking true incremental behavior entirely.
+        if hasattr(self, "_batch_ops") and self._batch_ops is not None:
+            self._batch_ops._metadata_store = self._metadata_store
 
         self._logger.info("Index cleared")
 

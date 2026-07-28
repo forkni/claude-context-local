@@ -354,7 +354,7 @@ Based on Claude Sonnet 4.5 pricing ($3/1M input, $15/1M output):
 
 ## Multi-Model Routing Performance *(removed in v0.19.0)*
 
-> **Note**: Multi-model query routing was removed in v0.19.0. The data below is from the December 2025 mixed-approach study when multi-model routing was active. The current system uses a single configurable embedding model (default: `google/embeddinggemma-300m`; active config: `BAAI/bge-m3`).
+> **Note**: Multi-model query routing was removed in v0.19.0. The data below is from the December 2025 mixed-approach study when multi-model routing was active. The current system uses a single configurable embedding model (default: `BAAI/bge-m3`; `F2LLM-v2-0.6B` available as an opt-in — see the SSCG Retrieval Benchmark section below).
 
 The Mixed approach leveraged multi-model query routing:
 

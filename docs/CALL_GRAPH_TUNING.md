@@ -199,7 +199,7 @@ projects):
 manager = FullRepoManager(
     repo_root_str,
     abs_keys,
-    {FullyQualifiedNameProvider, PositionProvider},
+    {FullyQualifiedNameProvider},
     use_pyproject_toml=use_pyproject_toml,
 )
 manager.resolve_cache()  # front-load batch cache
@@ -215,7 +215,12 @@ manager.resolve_cache()  # front-load batch cache
 | `PositionProvider` | AST | Line/column offsets | — |
 | `TypeInferenceProvider` | pyre + watchman | Type-aware, most precise | ❌ Windows-incompatible (see §3.6) |
 
-We use **`FullyQualifiedNameProvider` + `PositionProvider`** only.
+We use **`FullyQualifiedNameProvider`** only. `PositionProvider` was dropped
+(profiling measured it as ~10% marginal cost on top of FQN resolution — its
+own whole-tree `visit_batched` pass per file, just to populate the edge's
+call-site `line`). Every libcst-sourced edge now reports `line=0`, which the
+injection seam treats as "unknown" and omits from the output payload rather
+than an error (see `search/index_write_stage.py` / `subgraph_extractor.py`).
 
 `FullyQualifiedNameProvider` produces **import-site names** — the name that
 `import x.y.z` would resolve to.  It does **not** chase re-exports
@@ -377,13 +382,22 @@ its name from the list.
 ```json
 "call_graph": {
   "lsp_enabled": true,
-  "lsp_timeout_seconds": 30.0
+  "lsp_timeout_seconds": 30.0,
+  "lsp_total_timeout_seconds": 180.0
 }
 ```
 
 basedpyright must be installed (`pip install basedpyright`) and the LSP server
 must be startable.  On Windows, `lsp_call_graph.py` falls back to the venv
 `basedpyright` binary if the system-level one is absent.
+
+`lsp_timeout_seconds` bounds each individual JSON-RPC request; increase it for
+large codebases where a single `callHierarchy/outgoingCalls` type-check pass
+takes longer than 30s. `lsp_total_timeout_seconds` is the separate aggregate
+budget for the *whole* LSP resolver pass across all files — if exceeded, the
+basedpyright subprocess is force-killed and whatever edges were collected so
+far are kept (safe, since LSP only upgrades confidence on edges pyan/libcst
+already found).
 
 **Requires v0.14.0+** — earlier builds silently resolved 0 edges due to three
 protocol bugs (probe at column 0 instead of the symbol-name position, missing

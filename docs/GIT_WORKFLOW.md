@@ -4,7 +4,7 @@
 
 This repository uses a **Local-First Privacy Model** where certain development files remain strictly on your local machine and are never committed to any git branch. This ensures your development context stays private while maintaining a clean, professional public repository.
 
-**🤖 For Automated Claude Workflows**: See **[AUTOMATED_GIT_WORKFLOW.md](./AUTOMATED_GIT_WORKFLOW.md)** for step-by-step orchestration instructions with comprehensive logging.
+**🤖 For Automated Claude Workflows**: See **[auto-git-workflow SKILL.md](../.claude/skills/auto-git-workflow/SKILL.md)** for step-by-step orchestration instructions with comprehensive logging.
 
 ## 🔒 Local-Only Files (NEVER Committed)
 
@@ -75,7 +75,7 @@ Automatically blocks commits containing local-only files:
 - **CI Enforcement**: GitHub Actions validates this policy on every push to main
 - **Automated Checks**: Unauthorized docs will fail CI/CD automatically
 - **Prevention**: Development-only docs are listed in `.gitattributes` with `merge=ours` strategy
-- **Validation**: Both `validate_branches.bat` and `merge_with_validation.bat` check this policy
+- **Validation**: Both `validate_branches.sh` and `merge_with_validation.sh` check this policy
 
 ### Development-Only Documentation
 
@@ -98,24 +98,18 @@ These are automatically excluded from main branch via `.gitattributes` merge str
 
 **Directory Structure**:
 
-- **Shell scripts (.sh)**: `scripts/git/` - **PRIMARY for automated workflows**
-- **Batch scripts (.bat)**: `scripts/git/batch/` - Manual Windows CMD execution
+- **Shell scripts (.sh)**: `scripts/git/` - the only supported workflow scripts
 
-**Environment Compatibility**: Scripts are available in two formats:
+**Environment Compatibility**: All scripts are Bash (`.sh`). This project's shell is Git Bash
+(see the repo's `CLAUDE.md`), which runs `.sh` files natively on Windows, Linux, and macOS —
+there is no separate Windows `.bat` fallback.
 
-- **Git Bash / Linux / macOS**: Use `.sh` files in `scripts/git/` (PRIMARY - 10 scripts)
-- **Windows cmd.exe**: Use `.bat` files in `scripts/git/batch/` (manual - 10 scripts)
-
-### Core Workflow Scripts (20 total: 10 .sh + 10 .bat)
+### Core Workflow Scripts (10 total)
 
 #### commit_enhanced - Enhanced Commit Workflow
 
 ```bash
-# Shell (PRIMARY for automation)
 ./scripts/git/commit_enhanced.sh "Your commit message"
-
-# Batch (manual Windows CMD)
-scripts\git\batch\commit_enhanced.bat "Your commit message"
 ```
 
 **Features:**
@@ -130,11 +124,7 @@ scripts\git\batch\commit_enhanced.bat "Your commit message"
 #### check_lint - Code Quality Validation
 
 ```bash
-# Shell (PRIMARY for automation)
 ./scripts/git/check_lint.sh
-
-# Batch (manual Windows CMD)
-scripts\git\batch\check_lint.bat
 ```
 
 **Checks:**
@@ -150,11 +140,7 @@ scripts\git\batch\check_lint.bat
 #### fix_lint - Auto-fix Linting Issues
 
 ```bash
-# Shell (PRIMARY for automation)
 ./scripts/git/fix_lint.sh
-
-# Batch (manual Windows CMD)
-scripts\git\batch\fix_lint.bat
 ```
 
 **Fixes:**
@@ -167,16 +153,12 @@ scripts\git\batch\fix_lint.bat
 #### merge_with_validation - Safe Merge Workflow
 
 ```bash
-# Shell (PRIMARY for automation)
 ./scripts/git/merge_with_validation.sh
-
-# Batch (manual Windows CMD)
-scripts\git\batch\merge_with_validation.bat
 ```
 
 **Features:**
 
-- Pre-merge validation (via validate_branches.bat)
+- Pre-merge validation (via validate_branches.sh)
 - Creates backup tags before merge
 - Automatic conflict resolution for modify/delete conflicts
 - Handles development-only file exclusion
@@ -185,11 +167,7 @@ scripts\git\batch\merge_with_validation.bat
 #### validate_branches - Pre-merge Validation
 
 ```bash
-# Shell (PRIMARY for automation)
 ./scripts/git/validate_branches.sh
-
-# Batch (manual Windows CMD)
-scripts\git\batch\validate_branches.bat
 ```
 
 **Checks:**
@@ -200,10 +178,10 @@ scripts\git\batch\validate_branches.bat
 - Branch relationship (development ahead of main by X commits)
 - Provides warnings if branches are out of sync
 
-#### install_hooks.bat - Hook Installation
+#### install_hooks.sh - Hook Installation
 
-```batch
-scripts\git\install_hooks.bat
+```bash
+./scripts/git/install_hooks.sh
 ```
 
 **Installs:**
@@ -214,10 +192,10 @@ scripts\git\install_hooks.bat
 
 ### Advanced/Safety Scripts (3)
 
-#### rollback_merge.bat - Emergency Merge Rollback
+#### rollback_merge.sh - Emergency Merge Rollback
 
-```batch
-scripts\git\rollback_merge.bat
+```bash
+./scripts/git/rollback_merge.sh
 ```
 
 **Options:**
@@ -227,10 +205,10 @@ scripts\git\rollback_merge.bat
 - Rollback to specific commit hash
 - Interactive confirmation required
 
-#### cherry_pick_commits.bat - Hotfix Workflow
+#### cherry_pick_commits.sh - Hotfix Workflow
 
-```batch
-scripts\git\cherry_pick_commits.bat
+```bash
+./scripts/git/cherry_pick_commits.sh
 ```
 
 **Features:**
@@ -240,10 +218,10 @@ scripts\git\cherry_pick_commits.bat
 - Creates backup tags
 - Interactive commit selection
 
-#### merge_docs.bat - Documentation-Only Merge
+#### merge_docs.sh - Documentation-Only Merge
 
-```batch
-scripts\git\merge_docs.bat
+```bash
+./scripts/git/merge_docs.sh
 ```
 
 **Features:**
@@ -324,20 +302,20 @@ git add <files>
 ```bash
 # Full merge workflow
 /run-merge full
-# Runs: scripts\git\merge_with_validation.bat
+# Runs: ./scripts/git/merge_with_validation.sh
 
 # Documentation-only merge
 /run-merge docs
-# Runs: scripts\git\merge_docs.bat
+# Runs: ./scripts/git/merge_docs.sh
 ```
 
 **Safety Features**:
 
-- Pre-merge validation via `validate_branches.bat`
+- Pre-merge validation via `validate_branches.sh`
 - Automatic backup tags created
 - Conflict resolution handling
 - Post-merge verification
-- Rollback script available (`rollback_merge.bat`)
+- Rollback script available (`rollback_merge.sh`)
 
 #### 3. `/validate-changes` - Pre-Commit Validation
 
@@ -459,7 +437,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ### Overview
 
-**For complete automated workflow orchestration by Claude**: See **[AUTOMATED_GIT_WORKFLOW.md](./AUTOMATED_GIT_WORKFLOW.md)** for comprehensive step-by-step instructions with detailed logging format.
+**For complete automated workflow orchestration by Claude**: See **[auto-git-workflow SKILL.md](../.claude/skills/auto-git-workflow/SKILL.md)** for comprehensive step-by-step instructions with detailed logging format.
 
 All workflow scripts support `--non-interactive` mode for individual script automation. These flags enable non-interactive execution with sensible defaults.
 
@@ -467,12 +445,12 @@ All workflow scripts support `--non-interactive` mode for individual script auto
 
 **Command Format**:
 
-```batch
+```bash
 # Commit workflow
-scripts\git\commit_enhanced.bat --non-interactive "commit message"
+./scripts/git/commit_enhanced.sh --non-interactive "commit message"
 
 # Merge workflow
-scripts\git\merge_with_validation.bat --non-interactive
+./scripts/git/merge_with_validation.sh --non-interactive
 ```
 
 ### Complete Automated Workflow
@@ -481,18 +459,18 @@ scripts\git\merge_with_validation.bat --non-interactive
 
 **Claude Code Execution**:
 
-```batch
+```bash
 # 1. Ensure on development branch
 git checkout development
 
 # 2. Commit with automatic logging
-scripts\git\commit_enhanced.bat --non-interactive "feat: Your message here"
+./scripts/git/commit_enhanced.sh --non-interactive "feat: Your message here"
 
 # 3. Push to development remote
 git push origin development
 
 # 4. Merge to main with automatic logging
-scripts\git\merge_with_validation.bat --non-interactive
+./scripts/git/merge_with_validation.sh --non-interactive
 
 # 5. Push to main remote
 git push origin main
@@ -500,7 +478,7 @@ git push origin main
 
 ### Non-Interactive Behavior
 
-**commit_enhanced.bat --non-interactive**:
+**commit_enhanced.sh --non-interactive**:
 
 - Auto-stages all changes (no "Stage all changes?" prompt)
 - Auto-fixes lint issues (no "Auto-fix?" prompt)
@@ -509,7 +487,7 @@ git push origin main
 - Skips final confirmation prompt
 - Creates log: `logs/commit_enhanced_TIMESTAMP.log`
 
-**merge_with_validation.bat --non-interactive**:
+**merge_with_validation.sh --non-interactive**:
 
 - Executes full merge workflow automatically
 - Auto-resolves modify/delete conflicts
@@ -551,10 +529,10 @@ STATUS: SUCCESS
 
 After workflow completion, user can verify:
 
-```batch
+```bash
 # View log file
-type logs\commit_enhanced_TIMESTAMP.log
-type logs\merge_with_validation_TIMESTAMP.log
+cat logs/commit_enhanced_TIMESTAMP.log
+cat logs/merge_with_validation_TIMESTAMP.log
 
 # Verify git history
 git log --oneline -5
@@ -565,7 +543,7 @@ git log --graph --oneline -10
 
 ### 1. Normal Development
 
-```batch
+```bash
 # Work with full context (CLAUDE.md, MEMORY.md, _archive/)
 # Edit code, run tests, develop features
 
@@ -573,12 +551,12 @@ git log --graph --oneline -10
 /validate-changes
 
 # When ready to commit:
-scripts\git\commit_enhanced.bat "feat: Add new search functionality"
+./scripts/git/commit_enhanced.sh "feat: Add new search functionality"
 ```
 
 ### 2. Creating Pull Requests
 
-```batch
+```bash
 # Stage your changes
 git add <files>
 
@@ -591,11 +569,11 @@ gh pr create --title "feat: ..." --body "..."
 
 ### 3. Public Release
 
-```batch
+```bash
 # Use guided merge workflow
 /run-merge full
 # Or run directly:
-scripts\git\merge_with_validation.bat
+./scripts/git/merge_with_validation.sh
 
 # Both branches now have identical public content
 # Local files remain private
@@ -603,7 +581,7 @@ scripts\git\merge_with_validation.bat
 
 ### 4. Fresh Clone Setup
 
-```batch
+```bash
 # After cloning repository:
 git clone <repo-url>
 cd claude-context-local
@@ -632,16 +610,16 @@ cd claude-context-local
 
 | Task | Command | Result |
 |------|---------|---------|
-| **Safe commit** | `scripts\git\commit_enhanced.bat "message"` | Commits with lint checks and validations |
-| **Automated commit** | `scripts\git\commit_enhanced.bat --non-interactive "message"` | Non-interactive commit with auto-staging and auto-fix |
-| **Check code quality** | `scripts\git\check_lint.bat` | Validates code with ruff check/ruff format/markdownlint |
-| **Fix linting** | `scripts\git\fix_lint.bat` | Auto-fixes linting issues (Python + markdown) |
-| **Merge to main** | `scripts\git\merge_with_validation.bat` | Safe merge: development → main (auto-resolves test file conflicts) |
-| **Automated merge** | `scripts\git\merge_with_validation.bat --non-interactive` | Non-interactive merge for automation |
-| **Docs-only merge** | `scripts\git\merge_docs.bat` | Merge only documentation changes |
-| **Emergency rollback** | `scripts\git\rollback_merge.bat` | Rollback last merge |
+| **Safe commit** | `./scripts/git/commit_enhanced.sh "message"` | Commits with lint checks and validations |
+| **Automated commit** | `./scripts/git/commit_enhanced.sh --non-interactive "message"` | Non-interactive commit with auto-staging and auto-fix |
+| **Check code quality** | `./scripts/git/check_lint.sh` | Validates code with ruff check/ruff format/markdownlint |
+| **Fix linting** | `./scripts/git/fix_lint.sh` | Auto-fixes linting issues (Python + markdown) |
+| **Merge to main** | `./scripts/git/merge_with_validation.sh` | Safe merge: development → main (auto-resolves test file conflicts) |
+| **Automated merge** | `./scripts/git/merge_with_validation.sh --non-interactive` | Non-interactive merge for automation |
+| **Docs-only merge** | `./scripts/git/merge_docs.sh` | Merge only documentation changes |
+| **Emergency rollback** | `./scripts/git/rollback_merge.sh` | Rollback last merge |
 
-**Note on merges**: `merge_with_validation.bat` automatically handles expected modify/delete conflicts for test files. Manual merges (`git merge development`) will require running `git rm tests/**` to resolve conflicts. See [Understanding Modify/Delete Conflicts](#-understanding-modifydelete-conflicts-expected-behavior) for details.
+**Note on merges**: `merge_with_validation.sh` automatically handles expected modify/delete conflicts for test files. Manual merges (`git merge development`) will require running `git rm tests/**` to resolve conflicts. See [Understanding Modify/Delete Conflicts](#expected-conflicts-manual-merge) for details.
 
 ### Git Bash / Linux / macOS
 
@@ -653,17 +631,15 @@ cd claude-context-local
 | **Check status** | `git status` | Shows staged changes |
 | **View branches** | `git branch -a` | Lists all branches |
 
-**Note**: commit_enhanced.bat, merge_with_validation.bat, and other advanced scripts (.bat only) can be called from Git Bash using: `cmd.exe /c "scripts\git\script_name.bat"`
-
 ## 🚨 Critical Rules
 
 ### ✅ DO
 
-- Use `commit_enhanced.bat` for all commits (includes lint checks)
+- Use `commit_enhanced.sh` for all commits (includes lint checks)
 - Keep CLAUDE.md and MEMORY.md updated locally
-- Use `merge_with_validation.bat` for releases
+- Use `merge_with_validation.sh` for releases
 - Backup local files before major changes
-- Run `check_lint.bat` before committing
+- Run `check_lint.sh` before committing
 
 ### ❌ NEVER
 
@@ -722,7 +698,7 @@ Local Machine:
 ├── _archive/ (764 historical files)
 └── Public code files
 
-           ↓ commit_enhanced.bat (with lint checks)
+           ↓ commit_enhanced.sh (with lint checks)
 
 Development Branch:
 ├── Core application code
@@ -732,7 +708,7 @@ Development Branch:
 ├── pytest.ini
 └── Configuration files
 
-           ↓ merge_with_validation.bat (merges to main)
+           ↓ merge_with_validation.sh (merges to main)
 
 Main Branch:
 ├── Core application code
@@ -912,22 +888,21 @@ echo "End Time: $(date)" >> "$LOGFILE"
 echo "Status: SUCCESS" >> "$LOGFILE"
 ```
 
-**Batch Script Logging** (merge_with_validation.bat):
+**Bash Script Logging** (merge_with_validation.sh example):
 
-```batch
-REM Initialize log
-set TIMESTAMP=%date:~10,4%%date:~4,2%%date:~7,2%_%time:~0,2%%time:~3,2%%time:~6,2%
-set LOGFILE=logs\merge_workflow_%TIMESTAMP%.log
+```bash
+# At start of workflow
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+LOGFILE="logs/merge_workflow_${TIMESTAMP}.log"
 
-echo === Merge Workflow Log === > "%LOGFILE%"
-echo Start Time: %date% %time% >> "%LOGFILE%"
+echo "=== Merge Workflow Log ===" > "$LOGFILE"
+echo "Start Time: $(date)" >> "$LOGFILE"
 
-REM Execute with logging
-[workflow steps] >> "%LOGFILE%" 2>&1
+# Execute with logging
+./scripts/git/merge_with_validation.sh >> "$LOGFILE" 2>&1
 
-REM Generate analysis report
-set REPORTFILE=logs\merge_analysis_%TIMESTAMP%.md
-[create markdown report]
+# Generate analysis report
+REPORTFILE="logs/merge_analysis_${TIMESTAMP}.md"
 ```
 
 ### Previous Examples
@@ -957,46 +932,35 @@ All follow the same structure and format.
 
 ## ⚠️ Common Errors and Solutions
 
-### Error: Batch Scripts Not Working in Git Bash
+### Error: Backslash-Style Script Paths Not Working in Git Bash
 
-**Symptom**: Windows .bat files fail to execute in Git Bash with "command not found" errors
+**Symptom**: Running a script with a Windows-style backslash path fails with "command not found"
 
 **Example Error**:
 
 ```bash
-$ scripts\git\check_lint.bat
-bash: scripts\git\check_lint.bat: command not found
+$ scripts\git\check_lint.sh
+bash: scripts\git\check_lint.sh: command not found
 ```
 
 **Root Cause**:
 
-- Git Bash (MINGW64) cannot execute Windows batch files directly
-- Batch files require cmd.exe interpreter
-- cmd.exe wrapper (`cmd.exe /c`) doesn't capture output properly in bash
+- Git Bash (MINGW64) treats `\` as an escape character, not a path separator
+- All workflow scripts in this repo are Bash (`.sh`) — there is no Windows `.bat` fallback
 
-**Solution**: Use bash-compatible .sh scripts (v0.4.1+)
+**Solution**: Use forward-slash paths
 
 ```bash
-# Instead of .bat files, use .sh equivalents:
-./scripts/git/check_lint.sh      # Lint validation
-./scripts/git/fix_lint.sh         # Auto-fix lint issues
-./scripts/git/validate_branches.sh  # Branch validation
+./scripts/git/check_lint.sh         # Lint validation
+./scripts/git/fix_lint.sh            # Auto-fix lint issues
+./scripts/git/validate_branches.sh   # Branch validation
 
-# All 3 scripts:
+# All scripts:
 # ✅ Execute natively in Git Bash
 # ✅ Use forward-slash paths (compatible with Windows executables)
 # ✅ Respect pyproject.toml configuration
 # ✅ Proper exit codes for automation
 ```
-
-**Key Differences**:
-
-| Aspect | .bat Files | .sh Files |
-|--------|-----------|-----------|
-| **Environment** | Windows cmd.exe only | Git Bash, Linux, macOS |
-| **Path Style** | Backslashes (\\) | Forward slashes (/) |
-| **Execution** | `scripts\git\script.bat` | `./scripts/git/script.sh` |
-| **Output Capture** | ✅ Works in cmd.exe | ✅ Works in bash |
 
 **Configuration Notes**:
 
@@ -1023,54 +987,6 @@ exclude = [".venv", "_archive", "build", "dist", "__pycache__", "tests/test_data
 
 ---
 
-### 📅 Recent Fixes Chronology
-
-This section tracks major workflow improvements and fixes in reverse chronological order.
-
-#### 2025-10-04: v4 Workflow Improvements
-
-**Git Workflow Automation Fixes** (commits a5170b8, 4529d1a, bfeae9b, 464dbd1):
-
-1. **ERROR #7: Merge Completion Detection** ✅ RESOLVED
-   - Implemented 3-layer validation system
-   - Prevents false "automatically completed" messages
-   - Validates unmerged files, staged changes, and MERGE_HEAD state
-   - Commit: a5170b8
-
-2. **ERROR #8: Batch Parsing Errors** ✅ FULLY RESOLVED
-   - Fixed multi-line commit message parsing (commit bfeae9b)
-   - Fixed for loop file processing with `delims=` and `2^>nul` (commit 464dbd1)
-   - Enhanced conflict resolution with better error handling (commit a5170b8)
-   - All parsing errors eliminated
-
-3. **Verification Testing** ✅ PASSED
-   - Comprehensive test of both fixes (commit e9d60c8)
-   - Verified with real-world merge scenario
-   - No false messages, no parsing errors
-   - Workflow confirmed production-ready
-
-**Linting Improvements** (commit 46dac62):
-
-4. **Ruff B007: Unused Loop Variables** ✅ RESOLVED
-   - Fixed 4 errors in test_full_flow.py
-   - Renamed unused variables to `_chunk_id`, `_similarity`
-   - Follows Python convention for intentionally unused variables
-
-5. **Ruff B904: Exception Chaining** ✅ RESOLVED
-   - Fixed 9 errors across 6 test files + 1 in production code
-   - Added proper `from e` exception chaining
-   - Improves debugging and follows PEP 3134
-   - Files: test_glsl_*.py, test_hf_access.py, test_bm25_population.py, bm25_index.py
-
-**Final Status**:
-
-- ✅ 13 Ruff linting errors resolved
-- ✅ 2 critical workflow errors resolved
-- ✅ All changes merged to both development and main branches
-- ✅ CI/CD passing cleanly
-
----
-
 ### Error: Invalid pyproject.toml Configuration
 
 **Symptom**: Ruff fails to parse pyproject.toml with error about unknown field
@@ -1090,33 +1006,6 @@ unknown field `unsafe-fixes`, expected one of [allowed fields list]
 3. Or enable in VSCode settings: `"ruff.codeAction.fixViolation.enable": true`
 
 **Prevention**: Validate config fields against [Ruff documentation](https://docs.astral.sh/ruff/configuration/) before adding
-
----
-
-### Error: wmic Command Not Found
-
-**Symptom**: merge_with_validation.bat fails at backup tag creation
-
-**Example Error**:
-
-```
-'wmic' is not recognized as an internal or external command
-fatal: 'pre-merge-backup-~0,8datetime:~8,6' is not a valid tag name
-```
-
-**Root Cause**:
-
-- wmic deprecated in Windows 11
-- Not available in Git Bash environment
-
-**Solution**: Script has been updated to use PowerShell instead
-
-```batch
-REM NEW (FIXED):
-for /f "usebackq" %%i in (`powershell -Command "Get-Date -Format 'yyyyMMdd_HHmmss'"`) do set datetime=%%i
-```
-
-**Prevention**: Use PowerShell for cross-platform Windows compatibility
 
 ---
 
@@ -1154,8 +1043,8 @@ Only these 8 docs are allowed in main branch: [list]
 
 **Prevention**:
 
-- validate_branches.bat now checks CI policy pre-merge ([9/9] check)
-- merge_with_validation.bat validates docs before completing merge ([6/7] check)
+- validate_branches.sh now checks CI policy pre-merge ([9/9] check)
+- merge_with_validation.sh validates docs before completing merge ([6/7] check)
 
 ---
 
@@ -1184,11 +1073,11 @@ git commit --no-edit
 
 **Better Approach**: Use automated script to avoid manual resolution:
 
-```batch
-scripts\git\merge_with_validation.bat  # Auto-resolves these conflicts
+```bash
+./scripts/git/merge_with_validation.sh  # Auto-resolves these conflicts
 ```
 
-**Full explanation**: See [Understanding Modify/Delete Conflicts](#-understanding-modifydelete-conflicts-expected-behavior)
+**Full explanation**: See [Understanding Modify/Delete Conflicts](#expected-conflicts-manual-merge)
 
 ---
 
@@ -1204,7 +1093,7 @@ If you ran a **manual merge** (e.g., `git merge development --no-ff`), modify/de
 CONFLICT (modify/delete): tests/integration/test_example.py deleted in HEAD and modified in development
 ```
 
-**This is NORMAL** - See [Understanding Modify/Delete Conflicts](#-understanding-modifydelete-conflicts-expected-behavior) for full explanation.
+**This is NORMAL** - See [Understanding Modify/Delete Conflicts](#expected-conflicts-manual-merge) for full explanation.
 
 **Standard resolution** (not an error):
 
@@ -1216,11 +1105,11 @@ git rm tests/integration/*.py tests/unit/*.py
 git commit --no-edit
 ```
 
-**Prevention**: Use `merge_with_validation.bat` for automated conflict resolution.
+**Prevention**: Use `merge_with_validation.sh` for automated conflict resolution.
 
 #### Script Error (Automated Merge Failed)
 
-If you used `merge_with_validation.bat` and it **fails to auto-resolve**:
+If you used `merge_with_validation.sh` and it **fails to auto-resolve**:
 
 **Symptom**: Script reports conflicts but doesn't resolve them automatically
 
@@ -1264,7 +1153,7 @@ Found modify/delete conflicts for excluded files
 
 **Symptom**:
 
-- Lint errors remain after running fix_lint.bat
+- Lint errors remain after running fix_lint.sh
 - Ruff reports "hidden fixes can be enabled with --unsafe-fixes"
 
 **Example**:
@@ -1273,13 +1162,12 @@ Found modify/delete conflicts for excluded files
 144 hidden fixes can be enabled with the `--unsafe-fixes` option
 ```
 
-**Root Cause**: fix_lint.bat missing --unsafe-fixes flag
+**Root Cause**: fix_lint.sh missing --unsafe-fixes flag
 
 **Solution**: Script has been updated:
 
-```batch
-REM NEW (FIXED):
-call .venv\Scripts\ruff.exe check . --fix --unsafe-fixes
+```bash
+.venv/Scripts/ruff.exe check . --fix --unsafe-fixes
 ```
 
 **Prevention**: Script now includes --unsafe-fixes by default (91% auto-fix success rate)
@@ -1314,7 +1202,7 @@ call .venv\Scripts\ruff.exe check . --fix --unsafe-fixes
    git config --global merge.ours.driver true
    ```
 
-**Prevention**: validate_branches.bat checks merge.ours driver configuration ([6/9] check)
+**Prevention**: validate_branches.sh checks merge.ours driver configuration ([6/9] check)
 
 ---
 
@@ -1366,7 +1254,7 @@ main
    git push origin development
    ```
 
-**Prevention**: commit_enhanced.bat now includes branch verification:
+**Prevention**: commit_enhanced.sh now includes branch verification:
 
 - Shows current branch before commit
 - Requires user confirmation: "Is this the correct branch?"
@@ -1405,13 +1293,11 @@ Merge development into main
 
 **Solution**: Script has been fixed with merge completion detection:
 
-```batch
-REM After auto-resolution, check if merge already complete
-git rev-parse -q --verify MERGE_HEAD >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo ✓ Merge commit automatically completed during auto-resolution
-    goto :merge_success
-)
+```bash
+# After auto-resolution, check if merge is already complete
+if ! git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+    echo "✓ Merge commit automatically completed during auto-resolution"
+fi
 ```
 
 **Prevention**:
@@ -1423,310 +1309,19 @@ if %ERRORLEVEL% NEQ 0 (
 
 ---
 
-### ERROR #7: Premature Merge Completion Detection (v4 FIX)
-
-**Symptom**: Script reports "Merge commit automatically completed" but merge is NOT actually complete
-
-**Example**:
-
-```
-✓ Auto-resolved modify/delete conflicts
-✓ Merge commit automatically completed during auto-resolution
-
-# But checking git status shows:
-$ git status
-You have unmerged paths.
-  (fix conflicts and run "git commit")
-```
-
-**Root Cause** (v3 implementation):
-
-- Single-layer check: only verified if MERGE_HEAD exists
-- Didn't validate that conflicts were actually resolved
-- Didn't check if changes were properly staged
-- Could trigger prematurely during auto-resolution
-
-**Impact**: Manual intervention required even though script reported success
-
-**Solution** (v4 fix - lines 107-133 in merge_with_validation.bat):
-
-Implemented **3-layer validation**:
-
-```batch
-REM FIX ERROR #7: Check if all conflicts are actually resolved
-REM Layer 1: Check for unmerged files
-git diff --name-only --diff-filter=U >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    REM Unmerged files still exist
-    echo ⚠ Some conflicts remain unresolved
-    echo   Continuing to validation and manual commit...
-) else (
-    REM Layer 2: Verify changes are staged
-    git diff --cached --quiet >nul 2>&1
-    if %ERRORLEVEL% EQU 0 (
-        echo ⚠ No changes staged after auto-resolution
-        echo   Continuing to validation...
-    ) else (
-        REM Layer 3: Verify MERGE_HEAD is gone
-        git rev-parse -q --verify MERGE_HEAD >nul 2>&1
-        if %ERRORLEVEL% NEQ 0 (
-            REM All conditions met - truly complete
-            echo ✓ Merge commit automatically completed
-            goto :merge_success
-        )
-    )
-)
-```
-
-**Validation Layers**:
-
-1. **Unmerged files**: Check index for conflicts (`git diff --name-only --diff-filter=U`)
-2. **Staged changes**: Verify work was actually done (`git diff --cached --quiet`)
-3. **MERGE_HEAD state**: Confirm merge ref is gone (`git rev-parse MERGE_HEAD`)
-
-**Prevention**:
-
-- Only reports completion when ALL three conditions pass
-- Provides specific status messages for each validation layer
-- Continues to manual commit phase if any layer fails
-- Prevents false success messages
-
-**Status**: ✅ RESOLVED in v4 (commit a5170b8)
-
----
-
-### ERROR #8: Batch Script Command Parsing Errors (v4 FIX)
-
-**Symptom**: "'-' is not recognized as an internal or external command"
-
-**Example Error Messages**:
-
-```
-Merge made by the 'ort' strategy.
-'-' is not recognized as an internal or external command,
-operable program or batch file.
-'-' is not recognized as an internal or external command,
-operable program or batch file.
-'tch' is not recognized as an internal or external command,
-operable program or batch file.
-'message' is not recognized as an internal or external command,
-operable program or batch file.
-```
-
-**Root Causes Discovered**:
-
-1. **Multi-line git merge command** - Literal newlines in batch file
-2. **Multiple -m flags on long lines** - Batch parsing limits exceeded
-3. **For loop file processing** - Missing error suppression and delimiters
-
-#### Error Evolution & Fix Attempts
-
-**Attempt 1: Enhanced Conflict Resolution Loop** (commit a5170b8)
-
-- Improved error handling in conflict resolution
-- Better file processing with temp files
-- **Result**: Still valuable but didn't fix parsing errors
-
-**Attempt 2: Multiple -m Flags** (commit 4529d1a)
-
-- Replaced multi-line message with multiple -m flags
-- **Result**: Caused 'message' parsing errors, abandoned
-
-**Attempt 3: Single-Line Commit Message** (commit bfeae9b)
-
-- Simplified to one-line commit message
-- **Result**: Fixed commit message source, but 'tch' errors remained
-
-**Attempt 4: For Loop Parsing Fixes** (commit 464dbd1)
-
-- Added `delims=` to for loops
-- Added `2^>nul` error suppression
-- **Result**: ✅ Complete resolution
-
-#### Original Problematic Code
-
-**Multi-line commit message** (lines 52-57):
-
-```batch
-git merge development --no-ff -m "Merge development into main
-
-- Applied .gitattributes merge strategies
-- Excluded development-only docs
-- Combined CHANGELOG.md changes
-- Used diff3 for better conflict resolution"
-```
-
-**Why it failed**:
-
-- Batch files cannot have literal newlines in command arguments
-- Each newline creates a new line that batch tries to parse
-- The '-' characters at line start are interpreted as command names
-
-**For loop file processing** (line 164, 223 - original):
-
-```batch
-for /f %%f in ('git diff --cached --name-only --diff-filter=A ^| findstr /C:"docs/"') do (
-    REM Process files...
-)
-```
-
-**Why it failed**:
-
-- Missing `delims=` caused word splitting on spaces in filenames
-- No error suppression caused 'tch' when piping empty results
-- Result: "tch" from "batch" parsed as command when no files found
-
-#### Complete Solution
-
-**Fix 1: Simple Commit Message** (lines 52-53):
-
-```batch
-REM FIX ERROR #8: Simple single-line commit message to avoid batch parsing issues
-git merge development --no-ff -m "Merge development into main"
-```
-
-**Fix 2: For Loop Parsing** (lines 164, 223):
-
-```batch
-REM Before (caused 'tch' errors):
-for /f %%f in ('git diff --cached --name-only --diff-filter=A ^| findstr /C:"docs/"') do (
-
-REM After (FIX ERROR #8: proper delimiters and error suppression):
-for /f "delims=" %%f in ('git diff --cached --name-only --diff-filter=A 2^>nul ^| findstr /C:"docs/" 2^>nul') do (
-```
-
-**Key improvements**:
-
-- `delims=""` prevents word splitting on spaces
-- `2^>nul` suppresses stderr from both git and findstr
-- Handles empty results gracefully without parsing errors
-
-**Fix 3: Enhanced Conflict Resolution** (lines 77-90):
-
-```batch
-REM Process each conflict with error checking (FIX ERROR #8)
-set RESOLUTION_FAILED=0
-for /f "usebackq tokens=2*" %%a in ("%TEMP%\merge_conflicts.txt") do (
-    set "CONFLICT_FILE=%%a %%b"
-    echo   Resolving: !CONFLICT_FILE!
-    git rm "!CONFLICT_FILE!" >nul 2>&1
-    if !ERRORLEVEL! NEQ 0 (
-        echo   ✗ ERROR: Failed to remove !CONFLICT_FILE!
-        set RESOLUTION_FAILED=1
-    ) else (
-        echo   ✓ Removed: !CONFLICT_FILE!
-    )
-)
-```
-
-**Prevention Best Practices**:
-
-- ✅ Always use single-line commit messages in batch files
-- ✅ Avoid literal newlines in any batch command
-- ✅ Use `delims=""` in for loops processing filenames
-- ✅ Add `2^>nul` to suppress stderr in for loop commands
-- ✅ Use proper quoting with delayed expansion (`!VAR!`)
-- ✅ Test batch scripts with edge cases (empty results, spaces in names)
-
-**Verification**:
-
-- Tested with merge commit e9d60c8 (2025-10-04)
-- All parsing errors eliminated
-- Merge completed successfully
-- No cosmetic warnings remain
-
-**Status**: ✅ FULLY RESOLVED in v4 (commits a5170b8, 4529d1a, bfeae9b, 464dbd1)
-
-- All parsing errors eliminated
-- Merge functionality verified working
-- Final verification commit: e9d60c8
-
----
-
-### ✅ v4 Workflow Verification Results (2025-10-04)
-
-After implementing ERROR #7 and ERROR #8 fixes, comprehensive verification testing was performed to confirm the workflow operates correctly.
-
-#### Verification Test Execution
-
-**Date**: 2025-10-04
-**Commit**: e9d60c8
-**Purpose**: Verify both ERROR #7 and ERROR #8 are fully resolved
-
-**Test Steps**:
-
-1. Created minor documentation change (added timestamp to GIT_WORKFLOW.md)
-2. Committed to development branch
-3. Executed `merge_with_validation.bat` from main branch
-4. Monitored for parsing errors and false completion messages
-
-**Results**:
-
-```
-[1/7] Running pre-merge validation checks...
-✓ All validation checks passed
-
-[2/7] Creating backup tag...
-✓ Created backup tag: pre-merge-backup-20251004_143522
-
-[3/7] Checking git configuration...
-✓ merge.ours driver configured
-
-[4/7] Initiating merge...
-Merge made by the 'ort' strategy.
-✓ Merge initiated successfully
-
-[5/7] Checking for merge conflicts...
-✓ No conflicts detected
-
-[6/7] Validating documentation files against CI policy...
-✓ Documentation validation passed
-
-[7/7] Completing merge commit...
-✓ Merge completed successfully
-
-=== MERGE SUMMARY ===
-✓ Merge from development to main completed
-✓ Documentation validation: PASSED
-✓ Backup tag: pre-merge-backup-20251004_143522
-```
-
-#### Verification Confirmation
-
-**ERROR #7 Validation** (Merge Completion Detection):
-
-- ✅ No false "automatically completed" messages
-- ✅ All 3 validation layers working correctly
-- ✅ Proper flow through all 7 steps
-- ✅ Accurate status reporting
-
-**ERROR #8 Validation** (Batch Parsing):
-
-- ✅ No "'-' is not recognized" errors
-- ✅ No 'tch' parsing errors
-- ✅ No 'message' parsing errors
-- ✅ Clean execution with no warnings
-- ✅ For loops processed files correctly
-
-**Additional Validations**:
-
-- ✅ Pre-merge validation (9/9 checks passed)
-- ✅ Backup tag creation successful
-- ✅ Documentation CI policy validation
-- ✅ Merge completed in 7 steps as expected
-- ✅ Final git status shows clean main branch
-
-#### Post-Verification Actions
-
-**Merged to main**: 2025-10-04 (commit 30bdc70)
-**Status**: v4 workflow fully operational
-**Confidence**: High - verified with real-world merge scenario
-
-**Conclusion**: Both ERROR #7 and ERROR #8 are comprehensively resolved. The git workflow automation is production-ready and operates reliably without manual intervention.
-
----
-
-**Prevention**: validate_branches.bat checks merge.ours driver configuration ([6/9] check)
+### 📅 Historical Note: Windows Batch Era (2025-10-04)
+
+The workflow scripts (`merge_with_validation`, `commit_enhanced`, etc.) were originally
+implemented as Windows batch (`.bat`) files. During 2025-10-04, a v4 iteration of that batch
+implementation fixed two significant bugs: premature "merge completed" false positives (the
+completion check didn't validate that conflicts were actually resolved and staged) and batch
+command-parsing errors caused by multi-line commit messages and unescaped `for /f` loops. Both
+were resolved and verified (commit `e9d60c8`), and 13 related Ruff lint errors (`B007`, `B904`)
+were fixed in the same pass (commit `46dac62`).
+
+The batch implementation has since been fully replaced by the Bash (`.sh`) scripts documented
+throughout this guide — none of the `.bat`-specific parsing bugs above apply to the current
+scripts. This note is retained only as a historical record of the migration.
 
 ---
 
@@ -1866,7 +1461,7 @@ All checks passed!
 
 - ✅ Use underscore prefix for unused variables
 - ✅ Always add `from e` when re-raising exceptions
-- ✅ Run `fix_lint.bat` before committing
+- ✅ Run `fix_lint.sh` before committing
 - ✅ Use `from None` only when suppression is intentional
 - ✅ Review Ruff suggestions during development
 
@@ -1876,16 +1471,16 @@ All checks passed!
 
 ## 🔍 Lint Workflow Best Practices
 
-### When to Run check_lint.bat vs fix_lint.bat
+### When to Run check_lint.sh vs fix_lint.sh
 
-**check_lint.bat** (Read-only validation):
+**check_lint.sh** (Read-only validation):
 
 - Before committing changes
 - During code review
 - To check current code quality
 - **Does NOT modify files**
 
-**fix_lint.bat** (Auto-fix issues):
+**fix_lint.sh** (Auto-fix issues):
 
 - After making changes
 - When you want to clean up code
@@ -1894,19 +1489,19 @@ All checks passed!
 
 **Recommended workflow**:
 
-```batch
+```bash
 # 1. Make your changes
 # 2. Auto-fix issues
-scripts\git\fix_lint.bat
+./scripts/git/fix_lint.sh
 
 # 3. Review what was fixed
 git diff
 
 # 4. Final validation
-scripts\git\check_lint.bat
+./scripts/git/check_lint.sh
 
 # 5. Commit if all checks pass
-scripts\git\commit_enhanced.bat "fix: Your commit message"
+./scripts/git/commit_enhanced.sh "fix: Your commit message"
 ```
 
 ### Understanding --unsafe-fixes
@@ -2029,12 +1624,12 @@ markdownlint-cli2 --version
 
 **Local validation** (before commit):
 
-```batch
+```bash
 # Check markdown quality
-scripts\git\check_lint.bat    # Includes markdownlint
+./scripts/git/check_lint.sh    # Includes markdownlint
 
 # Auto-fix markdown issues
-scripts\git\fix_lint.bat      # Includes markdownlint --fix
+./scripts/git/fix_lint.sh      # Includes markdownlint --fix
 ```
 
 **Common markdown fixes**:
@@ -2116,10 +1711,10 @@ result=$(command)
 
 **When new warnings appear**:
 
-1. Run `fix_lint.bat` first (auto-fixes ~90%)
+1. Run `fix_lint.sh` first (auto-fixes ~90%)
 2. Review changes with `git diff`
 3. Manually fix remaining issues
-4. Verify with `check_lint.bat`
+4. Verify with `check_lint.sh`
 
 ### Error Code Categories
 
@@ -2136,34 +1731,38 @@ result=$(command)
 
 **Problem**: "Ruff not found"
 
-```batch
-Solution: Activate virtual environment first
-call .venv\Scripts\activate.bat
+Solution: Activate the virtual environment first, or call the venv's ruff directly
+
+```bash
+source .venv/Scripts/activate
+# or, without activating:
+.venv/Scripts/ruff.exe --version
 ```
 
 **Problem**: "Ruff would reformat X files"
 
-```batch
 Solution: Let ruff format them
-.venv\Scripts\ruff.exe format .
+
+```bash
+.venv/Scripts/ruff.exe format .
 ```
 
 **Problem**: "Ruff would fix X import order issues"
 
-```batch
 Solution: Let ruff fix them
-.venv\Scripts\ruff.exe check --fix .
+
+```bash
+.venv/Scripts/ruff.exe check --fix .
 ```
 
 **Problem**: Lint passes locally but fails in CI
 
-```batch
 Possible causes:
+
 1. Different Python versions (CI uses 3.11)
 2. Different tool versions (CI uses latest)
 3. Files not committed (check git status)
 
-Solution: Check .github/workflows/branch-protection.yml for CI config
-```
+Solution: Check `.github/workflows/branch-protection.yml` for CI config
 
 This workflow ensures your development context remains completely private while maintaining a clean, professional public repository suitable for users and collaborators.

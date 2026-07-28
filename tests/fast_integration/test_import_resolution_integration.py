@@ -26,10 +26,16 @@ class TestImportResolutionEndToEnd:
             "search.config.get_search_config", return_value=mock_config
         )
         self._config_patch.start()
-
-        self.extractor = PythonCallGraphExtractor()
-        self.chunker = MultiLanguageChunker()
-        self.temp_dir = tempfile.mkdtemp()
+        try:
+            self.extractor = PythonCallGraphExtractor()
+            self.chunker = MultiLanguageChunker()
+            self.temp_dir = tempfile.mkdtemp()
+        except Exception:
+            # Setup raised after the patch was applied — teardown_method is never
+            # called by pytest when setup_method fails, so the patch must be
+            # unwound here or it leaks a MagicMock get_search_config session-wide.
+            self._config_patch.stop()
+            raise
 
     def teardown_method(self):
         """Clean up test fixtures."""

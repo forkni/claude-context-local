@@ -1,10 +1,7 @@
 """Unit tests for SymbolHashCache with FNV-1a hashing."""
 
-import json
-import tempfile
 import time
 import unittest
-from pathlib import Path
 
 from search.symbol_cache import SymbolHashCache
 
@@ -43,10 +40,8 @@ class TestSymbolHashCacheBasics(unittest.TestCase):
     """Test basic SymbolHashCache operations."""
 
     def setUp(self):
-        """Create temporary cache for each test."""
-        self.temp_dir = tempfile.mkdtemp()
-        self.cache_path = Path(self.temp_dir) / "test_cache.json"
-        self.cache = SymbolHashCache(self.cache_path)
+        """Create an empty in-memory cache for each test."""
+        self.cache = SymbolHashCache()
 
     def test_initialization_empty(self):
         """Test cache initializes empty."""
@@ -60,7 +55,6 @@ class TestSymbolHashCacheBasics(unittest.TestCase):
 
         self.assertIsInstance(hash_val, int)
         self.assertEqual(len(self.cache), 1)
-        self.assertTrue(self.cache._dirty)
 
     def test_get_by_hash(self):
         """Test retrieving chunk_id by hash."""
@@ -117,94 +111,6 @@ class TestSymbolHashCacheBasics(unittest.TestCase):
         self.assertIsNone(result)
 
 
-class TestSymbolHashCachePersistence(unittest.TestCase):
-    """Test save/load persistence."""
-
-    def setUp(self):
-        """Create temporary cache for each test."""
-        self.temp_dir = tempfile.mkdtemp()
-        self.cache_path = Path(self.temp_dir) / "test_cache.json"
-
-    def test_save_and_load(self):
-        """Test saving and loading cache."""
-        # Create and populate cache
-        cache1 = SymbolHashCache(self.cache_path)
-        chunks = [
-            "search/indexer.py:10-20:function:func1",
-            "search/metadata.py:30-40:class:MetadataStore",
-            "chunking/base.py:50-60:method:ChunkBase.process",
-        ]
-
-        for chunk in chunks:
-            cache1.add(chunk)
-
-        cache1.save()
-
-        # Load into new cache instance
-        cache2 = SymbolHashCache(self.cache_path)
-
-        # Verify all chunks loaded
-        self.assertEqual(len(cache2), len(chunks))
-        for chunk in chunks:
-            self.assertTrue(chunk in cache2)
-
-    def test_save_creates_directory(self):
-        """Test that save creates parent directories."""
-        deep_path = Path(self.temp_dir) / "deep" / "nested" / "cache.json"
-        cache = SymbolHashCache(deep_path)
-
-        cache.add("test_chunk")
-        cache.save()
-
-        self.assertTrue(deep_path.exists())
-
-    def test_save_json_format(self):
-        """Test saved JSON format."""
-        cache = SymbolHashCache(self.cache_path)
-        cache.add("test_chunk")
-        cache.save()
-
-        with open(self.cache_path) as f:
-            data = json.load(f)
-
-        self.assertIn("version", data)
-        self.assertEqual(data["version"], 2)  # Version 2 includes symbol_buckets
-        self.assertIn("bucket_count", data)
-        self.assertEqual(data["bucket_count"], 256)
-        self.assertIn("total_symbols", data)
-        self.assertEqual(data["total_symbols"], 1)
-        self.assertIn("buckets", data)
-        self.assertIn("symbol_buckets", data)  # New in version 2
-        self.assertIn("total_symbol_mappings", data)  # New in version 2
-
-    def test_load_nonexistent_file(self):
-        """Test loading from non-existent file."""
-        nonexistent_path = Path(self.temp_dir) / "nonexistent.json"
-        cache = SymbolHashCache(nonexistent_path)
-
-        # Should initialize empty (warning logged but no exception)
-        self.assertEqual(len(cache), 0)
-
-    def test_dirty_flag(self):
-        """Test dirty flag behavior."""
-        cache = SymbolHashCache(self.cache_path)
-
-        # Not dirty initially
-        self.assertFalse(cache._dirty)
-
-        # Dirty after add
-        cache.add("chunk1")
-        self.assertTrue(cache._dirty)
-
-        # Not dirty after save
-        cache.save()
-        self.assertFalse(cache._dirty)
-
-        # Dirty after modification
-        cache.remove("chunk1")
-        self.assertTrue(cache._dirty)
-
-
 class TestBucketDistribution(unittest.TestCase):
     """Test hash bucket distribution."""
 
@@ -219,9 +125,7 @@ class TestBucketDistribution(unittest.TestCase):
 
     def test_distribution_fairness(self):
         """Test that hashes distribute fairly across buckets."""
-        temp_dir = tempfile.mkdtemp()
-        cache_path = Path(temp_dir) / "test.json"
-        cache = SymbolHashCache(cache_path)
+        cache = SymbolHashCache()
 
         # Add 1000 diverse chunk_ids
         for i in range(1000):
@@ -245,9 +149,7 @@ class TestPerformance(unittest.TestCase):
 
     def setUp(self):
         """Create cache with test data."""
-        self.temp_dir = tempfile.mkdtemp()
-        self.cache_path = Path(self.temp_dir) / "perf_cache.json"
-        self.cache = SymbolHashCache(self.cache_path)
+        self.cache = SymbolHashCache()
 
         # Populate with realistic data
         self.chunk_ids = []
@@ -294,7 +196,7 @@ class TestPerformance(unittest.TestCase):
 
     def test_add_performance(self):
         """Test that adding symbols is fast."""
-        temp_cache = SymbolHashCache(Path(self.temp_dir) / "add_perf.json")
+        temp_cache = SymbolHashCache()
         iterations = 1000
 
         start = time.perf_counter()
@@ -313,8 +215,7 @@ class TestCacheStatistics(unittest.TestCase):
 
     def test_get_stats_empty(self):
         """Test stats for empty cache."""
-        temp_dir = tempfile.mkdtemp()
-        cache = SymbolHashCache(Path(temp_dir) / "stats.json")
+        cache = SymbolHashCache()
 
         stats = cache.get_stats()
 
@@ -326,8 +227,7 @@ class TestCacheStatistics(unittest.TestCase):
 
     def test_get_stats_populated(self):
         """Test stats for populated cache."""
-        temp_dir = tempfile.mkdtemp()
-        cache = SymbolHashCache(Path(temp_dir) / "stats.json")
+        cache = SymbolHashCache()
 
         # Add 100 symbols
         for i in range(100):
@@ -344,8 +244,7 @@ class TestCacheStatistics(unittest.TestCase):
 
     def test_memory_estimate(self):
         """Test memory usage estimation."""
-        temp_dir = tempfile.mkdtemp()
-        cache = SymbolHashCache(Path(temp_dir) / "memory.json")
+        cache = SymbolHashCache()
 
         # Add 1000 symbols
         for i in range(1000):
@@ -365,8 +264,7 @@ class TestEdgeCases(unittest.TestCase):
 
     def test_empty_string_chunk_id(self):
         """Test handling empty string."""
-        temp_dir = tempfile.mkdtemp()
-        cache = SymbolHashCache(Path(temp_dir) / "edge.json")
+        cache = SymbolHashCache()
 
         hash_val = cache.add("")
         self.assertIsNotNone(hash_val)
@@ -374,8 +272,7 @@ class TestEdgeCases(unittest.TestCase):
 
     def test_very_long_chunk_id(self):
         """Test handling very long chunk_id."""
-        temp_dir = tempfile.mkdtemp()
-        cache = SymbolHashCache(Path(temp_dir) / "edge.json")
+        cache = SymbolHashCache()
 
         long_id = "a" * 10000
         hash_val = cache.add(long_id)
@@ -383,8 +280,7 @@ class TestEdgeCases(unittest.TestCase):
 
     def test_special_characters(self):
         """Test chunk_ids with special characters."""
-        temp_dir = tempfile.mkdtemp()
-        cache = SymbolHashCache(Path(temp_dir) / "edge.json")
+        cache = SymbolHashCache()
 
         special_ids = [
             "file:with:colons.py:10-20:function:test",
@@ -401,8 +297,7 @@ class TestEdgeCases(unittest.TestCase):
 
     def test_repr(self):
         """Test string representation."""
-        temp_dir = tempfile.mkdtemp()
-        cache = SymbolHashCache(Path(temp_dir) / "repr.json")
+        cache = SymbolHashCache()
 
         cache.add("chunk1")
         cache.add("chunk2")
@@ -410,7 +305,3 @@ class TestEdgeCases(unittest.TestCase):
         repr_str = repr(cache)
         self.assertIn("SymbolHashCache", repr_str)
         self.assertIn("symbols=2", repr_str)
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -34,15 +34,21 @@ class TestCallGraphResolutionIntegration:
             "search.config.get_search_config", return_value=mock_config
         )
         self._config_patch.start()
+        try:
+            # Create test files
+            self._create_test_files()
 
-        # Create test files
-        self._create_test_files()
-
-        # Initialize components
-        self.chunker = MultiLanguageChunker(root_path=str(self.project_path))
-        self.graph = CodeGraphStorage(
-            project_id="test_resolution", storage_dir=self.project_path / ".graph"
-        )
+            # Initialize components
+            self.chunker = MultiLanguageChunker(root_path=str(self.project_path))
+            self.graph = CodeGraphStorage(
+                project_id="test_resolution", storage_dir=self.project_path / ".graph"
+            )
+        except Exception:
+            # Setup raised after the patch was applied — teardown_method is never
+            # called by pytest when setup_method fails, so the patch must be
+            # unwound here or it leaks a MagicMock get_search_config session-wide.
+            self._config_patch.stop()
+            raise
 
     def teardown_method(self):
         """Stop config patch."""
@@ -167,20 +173,22 @@ class DataExtractor:
 
         process_chunk = process_chunks[0]
 
-        # Check that self.extract() was resolved to DataExtractor.extract
-        if hasattr(process_chunk, "calls") and process_chunk.calls:
-            extract_calls = [
-                c for c in process_chunk.calls if "extract" in c.callee_name
-            ]
-            assert len(extract_calls) >= 1
+        # self.extract() must be resolved on process_chunk before the qualified-name
+        # check below means anything.
+        assert hasattr(process_chunk, "calls") and process_chunk.calls, (
+            "process_chunk has no resolved calls — test no longer exercises "
+            "self-call resolution"
+        )
+        extract_calls = [c for c in process_chunk.calls if "extract" in c.callee_name]
+        assert len(extract_calls) >= 1
 
-            # Should be qualified
-            qualified_calls = [
-                c for c in extract_calls if c.callee_name == "DataExtractor.extract"
-            ]
-            assert len(qualified_calls) >= 1, (
-                f"Expected DataExtractor.extract, got {[c.callee_name for c in extract_calls]}"
-            )
+        # Should be qualified
+        qualified_calls = [
+            c for c in extract_calls if c.callee_name == "DataExtractor.extract"
+        ]
+        assert len(qualified_calls) >= 1, (
+            f"Expected DataExtractor.extract, got {[c.callee_name for c in extract_calls]}"
+        )
 
     def test_different_classes_same_method_name_distinct(self):
         """Test that extract methods in different classes have distinct chunk_ids."""
@@ -214,20 +222,23 @@ class DataExtractor:
         process_chunk = process_chunks[0]
 
         # Add to graph
-        if hasattr(process_chunk, "calls") and process_chunk.calls:
-            for call in process_chunk.calls:
-                self.graph.add_call_edge(
-                    caller_id="data_extractor.py:5-7:method:DataExtractor.process",
-                    callee_name=call.callee_name,
-                    line_number=call.line_number,
-                    is_method_call=call.is_method_call,
-                )
+        assert hasattr(process_chunk, "calls") and process_chunk.calls, (
+            "process_chunk has no resolved calls — test no longer exercises "
+            "call-graph storage of qualified names"
+        )
+        for call in process_chunk.calls:
+            self.graph.add_call_edge(
+                caller_id="data_extractor.py:5-7:method:DataExtractor.process",
+                callee_name=call.callee_name,
+                line_number=call.line_number,
+                is_method_call=call.is_method_call,
+            )
 
-            # Query the graph for DataExtractor.extract
-            callers = self.graph.get_callers("DataExtractor.extract")
+        # Query the graph for DataExtractor.extract
+        callers = self.graph.get_callers("DataExtractor.extract")
 
-            # Should find the process method as a caller
-            assert len(callers) >= 1
+        # Should find the process method as a caller
+        assert len(callers) >= 1
 
     def test_no_false_positives_across_classes(self):
         """Test that querying one class's extract doesn't return callers of another's."""
@@ -275,6 +286,10 @@ class DataExtractor:
         # Should only have DataExtractor.process as caller (not test files)
         # Note: Test files call extractor.extract() which isn't resolved yet
         # but DataExtractor.process calls self.extract() which IS resolved
+        assert data_extract_callers, (
+            "No callers found for DataExtractor.extract — test no longer "
+            "exercises the false-positive check it exists for"
+        )
 
         # At minimum, verify no OTHER class's callers appear
         for caller in data_extract_callers:

@@ -164,8 +164,15 @@ class OuterClass:
         outer_methods = [c for c in method_chunks if c.parent_class == "OuterClass"]
         inner_methods = [c for c in method_chunks if c.parent_class == "InnerClass"]
 
-        # Note: Tree-sitter traversal tracks immediate parent class
-        assert len(outer_methods) >= 1 or len(inner_methods) >= 1
+        # Tree-sitter traversal tracks immediate parent class: outer_method
+        # should resolve to OuterClass and inner_method to InnerClass, each
+        # exactly once — not just "one of the two happened to work".
+        assert len(outer_methods) == 1, (
+            f"Expected exactly 1 method with parent_class=='OuterClass', got {len(outer_methods)}"
+        )
+        assert len(inner_methods) == 1, (
+            f"Expected exactly 1 method with parent_class=='InnerClass', got {len(inner_methods)}"
+        )
 
     def test_class_method_cls_parameter(self):
         """Test classmethod with cls parameter gets qualified."""

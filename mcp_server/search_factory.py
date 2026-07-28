@@ -34,6 +34,7 @@ def get_index_manager(
     from mcp_server.state import get_state
     from mcp_server.storage_manager import get_project_storage_dir
     from search.indexer import CodeIndexManager
+    from search.storage_layout import project_id_from_model_dir_name
 
     state = get_state()
 
@@ -62,11 +63,7 @@ def get_index_manager(
                 index_dir = project_dir / "index"
                 index_dir.mkdir(exist_ok=True)
 
-                # Extract project_id from storage directory name
-                # Format: projectname_hash_modelslug_dimension (e.g., claude-context-local_caf2e75a_qwen3_1024d)
-                project_id = project_dir.name.rsplit("_", 1)[
-                    0
-                ]  # Remove dimension suffix
+                project_id = project_id_from_model_dir_name(project_dir.name)
 
                 state.index_manager = CodeIndexManager(
                     str(index_dir), project_id=project_id
@@ -100,6 +97,7 @@ def get_searcher(
     from search.exceptions import DimensionMismatchError
     from search.hybrid_searcher import HybridSearcher
     from search.searcher import IntelligentSearcher
+    from search.storage_layout import project_id_from_model_dir_name
 
     state = get_state()
 
@@ -148,11 +146,7 @@ def get_searcher(
                         state.searcher = None  # force re-init on next call
                         raise  # Let caller handle recovery
 
-                    # Extract project_id from storage directory name
-                    # Format: projectname_hash_dimension (e.g., claude-context-local_caf2e75a_1024d)
-                    project_id = project_storage.name.rsplit("_", 1)[
-                        0
-                    ]  # Remove dimension suffix
+                    project_id = project_id_from_model_dir_name(project_storage.name)
 
                     new_searcher = HybridSearcher(
                         storage_dir=str(storage_dir),
@@ -161,6 +155,11 @@ def get_searcher(
                         dense_weight=config.search_mode.dense_weight,
                         rrf_k=config.search_mode.rrf_k_parameter,
                         max_workers=2,
+                        bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
+                        bm25_use_stemming=config.search_mode.bm25_use_stemming,
+                        bm25_tokenizer=config.search_mode.bm25_tokenizer,
+                        bm25_k1=config.search_mode.bm25_k1,
+                        bm25_b=config.search_mode.bm25_b,
                         project_id=project_id,
                         config=config,
                     )

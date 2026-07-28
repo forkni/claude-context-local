@@ -8,16 +8,21 @@
     "enable_class_context": true,
     "max_import_lines": 25,
     "max_class_signature_lines": 20,
-    "enable_structural_header": true
+    "enable_structural_header": true,
+    "enable_chunk_cache": true,
+    "chunk_cache_max_entries": 0
   },
   "search_mode": {
     "default_mode": "hybrid",
     "enable_hybrid": true,
     "bm25_weight": 0.35,
     "dense_weight": 0.65,
-    "bm25_k_parameter": 100,
+    "bm25_k1": 1.5,
+    "bm25_b": 0.75,
     "bm25_use_stopwords": true,
     "bm25_use_stemming": true,
+    "bm25_tokenizer": "whole",
+    "bm25_reserved_slots": 0,
     "min_bm25_score": 0.1,
     "rrf_k_parameter": 100,
     "enable_result_reranking": true,
@@ -63,9 +68,11 @@
   "reranker": {
     "enabled": true,
     "model_name": "Alibaba-NLP/gte-reranker-modernbert-base",
-    "top_k_candidates": 50,
+    "top_k_candidates": 30,
     "min_vram_gb": 2.0,
-    "batch_size": 16
+    "batch_size": 16,
+    "dedupe_split_blocks": true,
+    "single_pass": false
   },
   "output": {
     "format": "ultra",
@@ -93,7 +100,8 @@
     "sizing_mode": "adaptive",
     "adaptive_multiplier_max": 1.3,
     "adaptive_multiplier_min": 0.5,
-    "max_complexity_cap": 30
+    "max_complexity_cap": 30,
+    "glsl_filter_td_prefix": true
   },
   "ego_graph": {
     "enabled": true,
@@ -140,7 +148,7 @@
   },
   "graph_enhanced": {
     "centrality_method": "pagerank",
-    "centrality_alpha": 0.2,
+    "centrality_alpha": 0.0,
     "centrality_annotation": true,
     "centrality_reranking": true,
     "enable_size_normalization": true,
@@ -149,7 +157,8 @@
     "centrality_bm25_boost": true,
     "centrality_boost_threshold": 0.02,
     "centrality_boost_factor": 5.0,
-    "centrality_boost_cap": 0.15
+    "centrality_boost_cap": 0.15,
+    "max_results_multiplier": 8
   },
   "observability": {
     "enabled": false,
@@ -166,7 +175,7 @@
     ],
     "lsp_enabled": true,
     "lsp_timeout_seconds": 30.0,
-    "lsp_total_timeout_seconds": 120.0,
+    "lsp_total_timeout_seconds": 180.0,
     "use_pyproject_toml": false,
     "min_confidence": 0.65
   }

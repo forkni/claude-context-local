@@ -439,3 +439,125 @@ class TestRerankingEngine:
             self.engine.apply_neural_reranking("query text", results, k=1)
 
             assert mock_config.call_count == 1
+
+    # ------------------------------------------------------------------
+    # Q1: split_block dedup before final truncation
+    # ------------------------------------------------------------------
+
+    def test_rerank_by_query_dedupes_split_blocks_and_backfills(self):
+        """Duplicate fragments collapse to one slot; freed slot backfills.
+
+        Dedup must run BEFORE the [:k] truncation: with k=2, the second
+        fragment's slot goes to the next distinct chunk instead of being
+        wasted on a duplicate.
+        """
+        results = [
+            SearchResult(
+                chunk_id="src/big.py:10-40:split_block:Cls.long_method",
+                score=0.9,
+                metadata={},
+            ),
+            SearchResult(
+                chunk_id="src/big.py:41-80:split_block:Cls.long_method",
+                score=0.8,
+                metadata={},
+            ),
+            SearchResult(
+                chunk_id="src/other.py:5-15:function:helper",
+                score=0.7,
+                metadata={},
+            ),
+        ]
+        self.engine._session_oom_detected = True  # bypass neural path
+
+        with patch("search.reranking_engine.get_search_config") as mock_config:
+            mock_config.return_value = SearchConfig(
+                reranker=RerankerConfig(dedupe_split_blocks=True)
+            )
+            reranked = self.engine.rerank_by_query("query", results, k=2)
+
+        assert [r.chunk_id for r in reranked] == [
+            "src/big.py:10-40:split_block:Cls.long_method",
+            "src/other.py:5-15:function:helper",
+        ]
+
+    def test_rerank_by_query_dedup_disabled_keeps_fragments(self):
+        """With dedupe_split_blocks=False, duplicate fragments keep their slots."""
+        results = [
+            SearchResult(
+                chunk_id="src/big.py:10-40:split_block:Cls.long_method",
+                score=0.9,
+                metadata={},
+            ),
+            SearchResult(
+                chunk_id="src/big.py:41-80:split_block:Cls.long_method",
+                score=0.8,
+                metadata={},
+            ),
+            SearchResult(
+                chunk_id="src/other.py:5-15:function:helper",
+                score=0.7,
+                metadata={},
+            ),
+        ]
+        self.engine._session_oom_detected = True
+
+        with patch("search.reranking_engine.get_search_config") as mock_config:
+            mock_config.return_value = SearchConfig(
+                reranker=RerankerConfig(dedupe_split_blocks=False)
+            )
+            reranked = self.engine.rerank_by_query("query", results, k=2)
+
+        assert [r.chunk_id for r in reranked] == [
+            "src/big.py:10-40:split_block:Cls.long_method",
+            "src/big.py:41-80:split_block:Cls.long_method",
+        ]
+
+    @patch("search.reranking_engine.torch")
+    @patch("search.neural_reranker.NeuralReranker")
+    def test_apply_neural_reranking_never_dedupes(
+        self, mock_neural_reranker_class, mock_torch
+    ):
+        """Hop-1 path (apply_neural_reranking) must NOT dedup.
+
+        Deduping the hop-1 output would shrink the multi-hop/ego
+        expansion-seed pool; fragments are collapsed only at the final
+        rerank_by_query sites (multi-hop merge, post-ego) and the
+        HybridSearcher.search() tail.
+        """
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.mem_get_info.return_value = (
+            5 * 1024**3,
+            8 * 1024**3,
+        )
+        duplicates = [
+            SearchResult(
+                chunk_id="src/big.py:10-40:split_block:Cls.long_method",
+                score=0.9,
+                metadata={},
+            ),
+            SearchResult(
+                chunk_id="src/big.py:41-80:split_block:Cls.long_method",
+                score=0.8,
+                metadata={},
+            ),
+        ]
+        mock_reranker_instance = MagicMock()
+        mock_reranker_instance.rerank.return_value = duplicates
+        mock_neural_reranker_class.return_value = mock_reranker_instance
+
+        with patch("search.reranking_engine.get_search_config") as mock_config:
+            mock_config.return_value = SearchConfig(
+                reranker=RerankerConfig(
+                    enabled=True,
+                    model_name="BAAI/bge-reranker-v2-m3",
+                    min_vram_gb=4.0,
+                    dedupe_split_blocks=True,
+                )
+            )
+            out = self.engine.apply_neural_reranking("query", duplicates, k=2)
+
+        assert [r.chunk_id for r in out] == [
+            "src/big.py:10-40:split_block:Cls.long_method",
+            "src/big.py:41-80:split_block:Cls.long_method",
+        ]

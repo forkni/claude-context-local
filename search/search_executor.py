@@ -12,7 +12,7 @@ from typing import Any
 
 import numpy as np
 
-from search.config import SearchMode
+from search.config import SearchMode, get_search_config
 from utils.observability import wrap_in_context
 from utils.timing import timed
 
@@ -131,7 +131,12 @@ class SearchExecutor:
             rerank_time = 0.0  # No reranking for single mode
 
         else:  # hybrid mode
-            search_k = k * 2  # Get more results for better reranking
+            # Widened funnel (R1a): retrieve enough per leg that the fused pool
+            # can actually fill the neural reranker's candidate budget
+            # (reranker.top_k_candidates, deployed 30) instead of starving it at
+            # k*2. Exact FlatIP dense search makes the wider sweep ~free.
+            reranker_budget = get_search_config().reranker.top_k_candidates
+            search_k = max(reranker_budget, k * 5)
 
             if use_parallel and not self._is_shutdown:
                 # Parallel execution
@@ -152,23 +157,33 @@ class SearchExecutor:
                 f"[RERANK] Using weights: BM25={eff_bm25}, Dense={eff_dense}, "
                 f"BM25_results={len(bm25_results)}, Dense_results={len(dense_results)}"
             )
+            # Keep the fused pool at the reranker budget rather than k: RRF
+            # ordering decides *membership* of the neural-rerank pool, the
+            # neural reranker decides the final top-k. When reranking is
+            # disabled/unavailable, apply_neural_reranking returns the pool
+            # unchanged and the [:k] below reproduces the old RRF top-k.
+            fusion_k = max(k, reranker_budget)
             final_results = self.reranker.rerank_simple(
                 bm25_results=bm25_results,
                 dense_results=dense_results,
-                max_results=k,
+                max_results=fusion_k,
                 bm25_weight=eff_bm25,
                 dense_weight=eff_dense,
+                reserved_slots=get_search_config().search_mode.bm25_reserved_slots,
             )
             rerank_time = time.time() - rerank_start
             self._logger.debug(
                 f"[RERANK] Produced {len(final_results)} results in {rerank_time:.3f}s"
             )
 
-            # Neural reranking (Quality First mode) - delegate to reranking_engine
-            if len(final_results) > 0:
+            # Neural reranking (Quality First mode) - delegate to reranking_engine.
+            # Skipped under reranker.single_pass: the one listwise pass runs at
+            # the tail of HybridSearcher.search(); hop-1 seeds keep RRF order.
+            if len(final_results) > 0 and not get_search_config().reranker.single_pass:
                 final_results = self.reranking_engine.apply_neural_reranking(
                     query, final_results, k, context="search"
                 )
+            final_results = final_results[:k]
 
         # Update statistics and log completion
         total_time = time.time() - start_time

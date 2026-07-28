@@ -261,6 +261,18 @@ class GraphIntegration:
         source file** via line-range containment, then running the extractor on the
         full method source exactly once per (file, method) pair.
 
+        GLSL split_block chunks never need this fallback and correctly no-op
+        here: ``GLSLChunker.extract_metadata`` (chunking/languages/glsl.py)
+        populates ``metadata["calls"]`` by walking the *original*, unsplit
+        function_definition node — it never re-parses a (possibly invalid)
+        content fragment the way this method's ``ast.parse`` does — so a
+        GLSL split_block's ``calls`` is either genuinely non-empty already
+        (handled by ``MultiLanguageChunker._extract_glsl_call_relationships``)
+        or genuinely empty (a fragment with no calls in its body slice), never
+        empty-because-extraction-failed. The language guard below is what
+        makes that distinction irrelevant here: any GLSL split_block that
+        reaches this method with empty ``calls`` just returns ``[]`` again.
+
         Algorithm
         ---------
         1. Guard: non-Python languages are skipped (return []).
@@ -393,14 +405,22 @@ class GraphIntegration:
     def _make_spec_from_embedding(self, result: Any) -> "_BuildSpec | None":
         """Normalise an EmbeddingResult into a _BuildSpec.
 
-        Returns None if the result should be skipped (non-semantic chunk_type).
-        Converts call dicts and relationship dicts to the canonical forms used
-        by _two_pass_build so the builder is input-type-agnostic.
+        Returns None if the result should be skipped (non-semantic chunk_type
+        carrying no relationship edges — mirrors add_chunk's escape hatch, so
+        e.g. a GLSL include/macro chunk keeps its imports/defines_constant
+        edges on this path too). Converts call dicts and relationship dicts to
+        the canonical forms used by _two_pass_build so the builder is
+        input-type-agnostic.
         """
         meta = result.metadata
         chunk_type = meta.get("chunk_type")
         if chunk_type not in SEMANTIC_TYPES:
-            return None
+            if not meta.get("relationships"):
+                return None
+            self._logger.debug(
+                f"Processing non-semantic chunk with relationships: "
+                f"{result.chunk_id} (type={chunk_type})"
+            )
 
         chunk_id = result.chunk_id
         file_path = meta.get("file_path", "")
@@ -998,5 +1018,13 @@ class GraphIntegration:
         return len(self.storage) if self.storage else 0
 
     def __len__(self) -> int:
-        """Return node count for len() support."""
+        """Return node count for len() support.
+
+        WARNING: this class defines __len__ but not __bool__, so Python falls
+        back to `len(obj) != 0` for `bool(obj)`. A freshly-created or just-cleared
+        instance has 0 nodes and is therefore falsy despite being a perfectly
+        valid, usable object. Callers checking for *existence* (as opposed to
+        "does this have anything in it") must use `is not None`, not truthiness —
+        see the clear_index() re-sync bug this caused in hybrid_searcher.py.
+        """
         return self.node_count

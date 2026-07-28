@@ -27,6 +27,8 @@ from chunking.relationships.lsp_call_graph import (
     LSPResolver,
     _encode,
     _find_def_position,
+    _FrameParseError,
+    _read_frame,
     _read_response,
     _uri_to_path,
     lsp_available,
@@ -165,6 +167,90 @@ class TestEncodeDecodeHelpers:
         stream = io.BytesIO(header + body)
         result = _read_response(stream)
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _read_frame header parsing (readline()-based, replacing byte-at-a-time read)
+# ---------------------------------------------------------------------------
+
+
+class TestReadFrameHeaderParsing:
+    """Covers the A1 fix: _read_frame's header loop moved from stdout.read(1)
+    to stdout.readline(). io.BytesIO supports readline(), so no fixture
+    changes were needed — these tests exercise the exact semantics the
+    docstring promises: real EOF -> None, malformed header -> _FrameParseError,
+    with the full header bytes preserved in the error message.
+    """
+
+    def test_single_header_line_round_trip(self) -> None:
+        payload = {"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}
+        stream = io.BytesIO(_encode(payload))
+        decoded = _read_frame(stream)
+        assert decoded is not None
+        assert decoded["result"]["ok"] is True
+
+    def test_multi_line_header_parsed_correctly(self) -> None:
+        """A header with an extra (non-Content-Length) line before the blank
+        line terminator must still parse — readline() accumulates line by
+        line, same as the byte-at-a-time loop accumulated byte by byte."""
+        body = b'{"jsonrpc":"2.0","id":2,"result":null}'
+        header = (
+            f"X-Custom-Header: ignored\r\nContent-Length: {len(body)}\r\n\r\n".encode()
+        )
+        stream = io.BytesIO(header + body)
+        decoded = _read_frame(stream)
+        assert decoded == {"jsonrpc": "2.0", "id": 2, "result": None}
+
+    def test_real_eof_before_any_bytes_returns_none(self) -> None:
+        stream = io.BytesIO(b"")
+        assert _read_frame(stream) is None
+
+    def test_truncated_header_no_blank_line_returns_none(self) -> None:
+        """A header that ends (stream EOF) before the blank-line terminator
+        ever appears must be treated as EOF, not raise — matches the
+        byte-at-a-time loop's implicit handling of a truncated header."""
+        stream = io.BytesIO(b"Content-Length: 123")  # no trailing \r\n\r\n, no body
+        assert _read_frame(stream) is None
+
+    def test_truncated_header_no_trailing_newline_returns_none(self) -> None:
+        """A final header line with no trailing newline at all (the exact
+        case called out in the A1 plan) must still resolve to EOF via the
+        next readline() call returning b""."""
+        stream = io.BytesIO(b"Content-Length: 123\r\nX-Partial")
+        assert _read_frame(stream) is None
+
+    def test_malformed_content_length_raises_frame_parse_error_with_header(
+        self,
+    ) -> None:
+        header = b"Content-Length: not-a-number\r\n\r\n"
+        stream = io.BytesIO(header)
+        with pytest.raises(_FrameParseError) as exc_info:
+            _read_frame(stream)
+        assert "not-a-number" in str(exc_info.value)
+
+    def test_missing_content_length_raises_frame_parse_error(self) -> None:
+        header = b"X-No-Length-Header: true\r\n\r\n"
+        stream = io.BytesIO(header)
+        with pytest.raises(_FrameParseError):
+            _read_frame(stream)
+
+    def test_zero_content_length_returns_none(self) -> None:
+        header = b"Content-Length: 0\r\n\r\n"
+        stream = io.BytesIO(header)
+        assert _read_frame(stream) is None
+
+    def test_truncated_body_returns_none(self) -> None:
+        """Header declares more bytes than the stream actually has left."""
+        header = b"Content-Length: 100\r\n\r\n"
+        stream = io.BytesIO(header + b"short")
+        assert _read_frame(stream) is None
+
+    def test_invalid_json_body_raises_frame_parse_error(self) -> None:
+        body = b"{not valid json"
+        header = f"Content-Length: {len(body)}\r\n\r\n".encode()
+        stream = io.BytesIO(header + body)
+        with pytest.raises(_FrameParseError):
+            _read_frame(stream)
 
 
 # ---------------------------------------------------------------------------

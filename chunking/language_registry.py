@@ -39,6 +39,7 @@ EXT_TO_LANGUAGE: dict[str, str] = {
     ".geom": "glsl",
     ".tesc": "glsl",
     ".tese": "glsl",
+    ".glslinc": "glsl",
 }
 
 # Supported file extensions for code chunking — derived from EXT_TO_LANGUAGE.
@@ -135,11 +136,10 @@ NODE_TYPE_MAP: dict[str, str] = {
     "annotation_type_declaration": "annotation",  # Java
     "script_element": "script",  # Svelte
     "style_element": "style",  # Svelte
-    "variable_declaration": "variable",  # GLSL uniforms, varying, attributes
-    "preprocessor_define": "define",  # GLSL preprocessor defines
-    "preprocessor_function_def": "define",  # GLSL preprocessor function defines
-    "block_statement": "block",  # GLSL code blocks
-    "compound_statement": "block",  # GLSL compound statements
+    "preproc_def": "macro",  # GLSL/C #define
+    "preproc_function_def": "macro",  # GLSL/C function-like #define
+    "preproc_include": "include",  # GLSL/C #include
+    "preproc_ifdef": "preproc_conditional",  # GLSL/C #ifdef and #ifndef
 }
 
 
@@ -260,7 +260,7 @@ LANGUAGE_SPECS: dict[str, LanguageSpec] = {
         grammar_module="tree_sitter_javascript",
         splittable_node_types={
             "function_declaration",
-            "function",
+            "function_expression",
             "arrow_function",
             "class_declaration",
             "method_definition",
@@ -273,7 +273,7 @@ LANGUAGE_SPECS: dict[str, LanguageSpec] = {
         grammar_module="tree_sitter_typescript",
         splittable_node_types={
             "function_declaration",
-            "function",
+            "function_expression",
             "arrow_function",
             "class_declaration",
             "method_definition",
@@ -290,7 +290,7 @@ LANGUAGE_SPECS: dict[str, LanguageSpec] = {
         grammar_module="tree_sitter_typescript",
         splittable_node_types={
             "function_declaration",
-            "function",
+            "function_expression",
             "arrow_function",
             "class_declaration",
             "method_definition",
@@ -309,8 +309,6 @@ LANGUAGE_SPECS: dict[str, LanguageSpec] = {
             "function_declaration",
             "method_declaration",
             "type_declaration",
-            "interface_declaration",
-            "struct_declaration",
         },
         install_hint="pip install tree-sitter-go",
     ),
@@ -372,20 +370,18 @@ LANGUAGE_SPECS: dict[str, LanguageSpec] = {
         grammar_module="tree_sitter_glsl",
         splittable_node_types={
             "function_definition",
-            "struct_declaration",
-            "variable_declaration",
-            "preprocessor_define",
-            "preprocessor_function_def",
-            "preprocessor_include",
-            "preprocessor_ifdef",
-            "preprocessor_ifndef",
-            "layout_qualifier_statement",
-            "uniform_block",
-            "interface_block",
-            "block_statement",
-            "compound_statement",
-            "subroutine_definition",
-            "precision_statement",
+            "struct_specifier",
+            "union_specifier",
+            "enum_specifier",
+            "type_definition",
+            "declaration",
+            "preproc_def",
+            "preproc_function_def",
+            "preproc_include",
+            "preproc_ifdef",
+            "preproc_if",
+            "preproc_call",
+            "preproc_extension",
         },
         load_warning_filter=("ignore", "int argument support is deprecated"),
         install_hint="pip install tree-sitter-glsl",

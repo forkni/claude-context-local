@@ -179,6 +179,11 @@ class MultiHopSearcher:
         """
         expansion_timings = {}
 
+        # Truthiness, not `is not None`: a valid-but-empty graph_storage (0 nodes)
+        # also short-circuits here and gets the same "is None" log message, since
+        # CodeGraphStorage is falsy when empty (see its __len__ docstring). Left
+        # as-is intentionally — empty and absent both mean "nothing to expand"
+        # for this caller — but the message is imprecise about which it was.
         if not self.graph_storage:
             self._logger.warning(
                 "[MULTI_HOP] Graph expansion requested but graph_storage is None"
@@ -470,12 +475,20 @@ class MultiHopSearcher:
         )
 
         rerank_start = time.time()
-        final_results = self.reranking_engine.rerank_by_query(
-            query=query,
-            results=list(all_results.values()),
-            k=k,
-            search_mode=search_mode,
-        )
+        merged_results = list(all_results.values())
+        if _get_config_via_service_locator().reranker.single_pass:
+            # Q3 single-pass: defer neural reranking to the one listwise pass
+            # at the tail of HybridSearcher.search(); keep fusion/expansion
+            # score order so ego expansion still seeds from this top-k.
+            merged_results.sort(key=lambda r: r.score, reverse=True)
+            final_results = merged_results[:k]
+        else:
+            final_results = self.reranking_engine.rerank_by_query(
+                query=query,
+                results=merged_results,
+                k=k,
+                search_mode=search_mode,
+            )
 
         timings["rerank"] = time.time() - rerank_start
 

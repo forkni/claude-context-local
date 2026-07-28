@@ -233,46 +233,49 @@ class TestGraphIntegration(TestCase):
         self.assertEqual(len(graph), 0)
 
     def test_split_block_disambiguation_logic(self):
-        """Test that split_block disambiguation resolves to first block by start_line."""
-        # Create test candidates that simulate split_blocks
-        candidates = [
-            "test.py:201-250:split_block:process_data",
-            "test.py:100-150:split_block:process_data",
-            "test.py:151-200:split_block:process_data",
-        ]
+        """_resolve_call_target should resolve split_block candidates to the
+        first block by start_line.
 
-        # Filter split_blocks (all candidates are split_blocks)
-        split_blocks = [c for c in candidates if ":split_block:" in c]
-        assert len(split_blocks) == len(candidates)  # All are split_blocks
+        Previously this reimplemented the filter/sort logic inline and
+        asserted on its own reimplementation -- the disambiguation branch in
+        GraphIntegration._resolve_call_target (search/graph_integration.py)
+        was never actually exercised, so a regression there could pass
+        indefinitely. Calling the real method closes that gap.
+        """
+        graph = GraphIntegration(None, self.storage_dir)
+        name_to_chunk_ids = {
+            "process_data": [
+                "test.py:201-250:split_block:process_data",
+                "test.py:100-150:split_block:process_data",
+                "test.py:151-200:split_block:process_data",
+            ]
+        }
 
-        # Sort by start_line
-        def _start_line(chunk_id: str) -> int:
-            parts = chunk_id.split(":")
-            if len(parts) >= 2:
-                line_range = parts[1]
-                try:
-                    return int(line_range.split("-")[0])
-                except (ValueError, IndexError):
-                    pass
-            return 2**31  # Sentinel for sort ordering
-
-        split_blocks.sort(key=_start_line)
+        resolved = graph._resolve_call_target(
+            "process_data", name_to_chunk_ids, caller_file="test.py"
+        )
 
         # Should resolve to the one with lowest start_line (100)
-        assert split_blocks[0] == "test.py:100-150:split_block:process_data"
+        assert resolved == "test.py:100-150:split_block:process_data"
 
     def test_mixed_candidates_not_all_split_blocks(self):
-        """Test that mixed candidates don't trigger split_block disambiguation."""
-        candidates = [
-            "test.py:10-50:function:helper",
-            "test.py:100-150:split_block:helper",
-        ]
+        """Split_block disambiguation should NOT activate when candidates are
+        a mix of split_blocks and non-split_blocks -- _resolve_call_target
+        should fall through to None (still-ambiguous) rather than picking one.
+        """
+        graph = GraphIntegration(None, self.storage_dir)
+        name_to_chunk_ids = {
+            "helper": [
+                "test.py:10-50:function:helper",
+                "test.py:100-150:split_block:helper",
+            ]
+        }
 
-        # Only one is a split_block
-        split_blocks = [c for c in candidates if ":split_block:" in c]
-        assert len(split_blocks) != len(candidates)  # Not all are split_blocks
+        resolved = graph._resolve_call_target(
+            "helper", name_to_chunk_ids, caller_file="test.py"
+        )
 
-        # Disambiguation should NOT activate (would return None in real code)
+        assert resolved is None
 
 
 class TestFromStorage(TestCase):
@@ -370,6 +373,57 @@ class TestPopulateFromEmbeddings(TestCase):
             file_path="src/module.py",
             language="python",
         )
+
+    def test_non_semantic_chunk_with_relationships_kept(self):
+        """Escape-hatch parity with add_chunk: a non-semantic chunk that
+        carries relationship edges (e.g. a GLSL include chunk with an imports
+        edge) must get its node and edges instead of being dropped."""
+        graph, storage = self._make_graph()
+
+        include = _make_result(
+            "shader.glsl:5-5:include:common",
+            chunk_type="include",
+            name="common",
+            file_path="shaders/shader.glsl",
+            relationships=[
+                {
+                    "source_id": "shader.glsl:5-5:include:common",
+                    "target_name": "common.glslinc",
+                    "relationship_type": "imports",
+                    "line_number": 5,
+                    "confidence": 0.9,
+                }
+            ],
+        )
+
+        graph.populate_from_embeddings([include])
+
+        storage.add_node.assert_called_once()
+        self.assertEqual(
+            storage.add_node.call_args.kwargs["chunk_id"],
+            "shader.glsl:5-5:include:common",
+        )
+        storage.add_relationship_edge.assert_called_once()
+        edge = storage.add_relationship_edge.call_args.args[0]
+        self.assertEqual(edge.target_name, "common.glslinc")
+        self.assertEqual(edge.relationship_type.value, "imports")
+
+    def test_non_semantic_chunk_without_relationships_still_skipped(self):
+        """The hatch only opens for chunks with relationships — a bare
+        non-semantic chunk (empty relationships) stays skipped."""
+        graph, storage = self._make_graph()
+
+        bare = _make_result(
+            "shader.glsl:1-3:module_preamble:shader",
+            chunk_type="module_preamble",
+            name="shader",
+            relationships=[],
+        )
+
+        graph.populate_from_embeddings([bare])
+
+        storage.add_node.assert_not_called()
+        storage.add_relationship_edge.assert_not_called()
 
     def test_unique_call_target_resolved(self):
         """A callee whose name maps to exactly one chunk_id resolves with is_resolved=True."""
@@ -1078,9 +1132,3 @@ class TestResolveCallTargetScopeAware(TestCase):
             callee_qualified=None,
         )
         self.assertEqual(resolved, "oauth.py:1-2:function:helper")
-
-
-if __name__ == "__main__":
-    import pytest
-
-    pytest.main([__file__, "-v"])

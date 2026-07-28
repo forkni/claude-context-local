@@ -2,7 +2,11 @@
 Call graph extraction for code analysis.
 
 Extracts function call relationships from source code using AST parsing.
-Supports Python with planned support for C++/GLSL.
+Supports Python directly (``PythonCallGraphExtractor`` below). GLSL call-graph
+extraction has also landed, but via a separate tree-sitter-native path
+(``chunking/multi_language_chunker.py``'s ``metadata["calls"]`` conversion,
+not a subclass of ``CallGraphExtractor`` here) — GLSL has no re-parse step to
+piggyback on, unlike Python's ``ast``-based walk. C++ support remains planned.
 """
 
 import ast

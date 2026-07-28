@@ -53,7 +53,12 @@ but has zero call sites; it was not used.
 `bm25_search` and `dense_search` run in parallel worker threads
 (`search/search_executor.py:_parallel_search`). `wrap_in_context(fn)` is
 called on the two `submit()` arguments so child spans nest correctly under
-`search.hybrid`. No other ThreadPoolExecutor sites need this.
+`search.hybrid`.
+
+A second site was added later: `run_resolvers()`
+(`chunking/relationships/call_edge_resolver.py`) dispatches the pyan/LibCST/LSP
+call-edge resolvers on a per-call `ThreadPoolExecutor`, wrapping each
+`resolver.resolve` in `wrap_in_context` the same way, for the same reason.
 
 ### 6. Auto-detect from standard OTEL_* env vars
 

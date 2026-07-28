@@ -246,7 +246,9 @@ class IntelligentSearcher(BaseSearcher):
 
         return results
 
-    def get_by_chunk_id(self, chunk_id: str) -> SearchResult | None:
+    def get_by_chunk_id(
+        self, chunk_id: str, warn_on_miss: bool = True
+    ) -> SearchResult | None:
         """
         Direct lookup by chunk_id (unambiguous, no search needed).
 
@@ -255,6 +257,9 @@ class IntelligentSearcher(BaseSearcher):
 
         Args:
             chunk_id: Format "file.py:10-20:function:name"
+            warn_on_miss: Whether to log a WARNING when the lookup misses.
+                Pass False for speculative probes (e.g. edge-recovery ladders)
+                where a miss is expected control flow, not a defect.
 
         Returns:
             SearchResult if found, None otherwise
@@ -267,7 +272,9 @@ class IntelligentSearcher(BaseSearcher):
 
         # Slow path: Load from SQLite
         self._cache_misses += 1
-        metadata = self.index_manager.get_chunk_by_id(chunk_id)
+        metadata = self.index_manager.get_chunk_by_id(
+            chunk_id, warn_on_miss=warn_on_miss
+        )
         if not metadata:
             # Cache None results to avoid repeated failed lookups
             self._metadata_cache[chunk_id] = None

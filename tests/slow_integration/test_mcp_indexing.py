@@ -12,6 +12,7 @@ from huggingface_hub import get_token
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
+from merkle.snapshot_manager import SnapshotManager
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
 
@@ -41,9 +42,17 @@ class TestMCPIndexing:
             else:
                 return np.ones((len(sentences), 768), dtype=np.float32) * 0.5
 
-        with patch("embeddings.embedder.SentenceTransformer") as mock_st:
+        with patch("embeddings.model_loader.SentenceTransformer") as mock_st:
             mock_model = MagicMock()
             mock_model.encode.side_effect = mock_encode
+            mock_model._vram_gb = 0.0  # else MagicMock() > 0 comparison in _get_model_vram_gb raises TypeError
+            # else MagicMock auto-vivifies both `.ort_model` (making _is_onnx wrongly
+            # True) and `[0].auto_model.config` (a fake HF config with hasattr()==True
+            # on every attribute), so _extract_hf_config() "succeeds" with garbage and
+            # estimate_activation_gb_from_config() then compares MagicMock attributes
+            # with '>' and raises TypeError.
+            del mock_model.ort_model
+            mock_model.__getitem__.side_effect = IndexError
             mock_st.return_value = mock_model
             yield mock_st
 
@@ -54,11 +63,19 @@ class TestMCPIndexing:
 
     @pytest.fixture
     def mock_storage_dir(self):
-        """Create a temporary storage directory."""
-        with tempfile.TemporaryDirectory() as temp_dir:
+        """Create a temporary storage directory.
+
+        ignore_cleanup_errors: on Windows, rmtree can otherwise race an
+        open SqliteDict WAL handle (search/metadata.py) held by a
+        CodeIndexManager that a test forgot to .close(), raising
+        PermissionError: [WinError 32] during fixture teardown.
+        """
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             yield Path(temp_dir) / "test_storage"
 
-    def test_mcp_index_directory_path(self, test_project_path, mock_storage_dir):
+    def test_mcp_index_directory_path(
+        self, test_project_path, mock_storage_dir, tmp_path
+    ):
         """Test indexing following the exact MCP tool implementation path."""
 
         # This follows the exact implementation in mcp_server/server.py index_directory()
@@ -74,7 +91,13 @@ class TestMCPIndexing:
         )  # Initialize with project root
 
         incremental_indexer = IncrementalIndexer(
-            indexer=index_manager, embedder=embedder, chunker=chunker
+            indexer=index_manager,
+            embedder=embedder,
+            chunker=chunker,
+            # Without this, IncrementalIndexer defaults to the production
+            # snapshot dir (~/.claude_code_search/merkle) — see
+            # merkle/snapshot_manager.py.
+            snapshot_manager=SnapshotManager(tmp_path / "snapshots"),
         )
 
         # Perform indexing - this is the exact call from the MCP tool
@@ -114,19 +137,23 @@ class TestMCPIndexing:
         assert response["files_added"] > 0
         assert response["chunks_added"] > 0
 
-        # Cleanup embedder to free GPU memory
+        # Cleanup embedder to free GPU memory, and close the index manager's
+        # sqlite/WAL handle so mock_storage_dir's rmtree doesn't race it.
         embedder.cleanup()
+        index_manager.close()
 
         print(f"MCP Response: {json.dumps(response, indent=2)}")
 
-    def test_incremental_indexing_mcp_path(self, test_project_path, mock_storage_dir):
+    def test_incremental_indexing_mcp_path(
+        self, test_project_path, mock_storage_dir, tmp_path
+    ):
         """Test incremental indexing following MCP implementation."""
 
         directory_path = Path(test_project_path).resolve()
         project_name = directory_path.name
 
         # Create a copy of the project for modification
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             temp_project = Path(temp_dir) / "test_project_copy"
             shutil.copytree(test_project_path, temp_project)
 
@@ -135,8 +162,15 @@ class TestMCPIndexing:
             embedder = CodeEmbedder()
             chunker = MultiLanguageChunker(str(temp_project))
 
+            # snapshot_manager must be injected — without it, IncrementalIndexer
+            # defaults to the production snapshot dir (merkle/snapshot_manager.py).
+            snapshot_manager = SnapshotManager(tmp_path / "snapshots")
+
             incremental_indexer = IncrementalIndexer(
-                indexer=index_manager, embedder=embedder, chunker=chunker
+                indexer=index_manager,
+                embedder=embedder,
+                chunker=chunker,
+                snapshot_manager=snapshot_manager,
             )
 
             # Initial full index
@@ -162,7 +196,10 @@ class TestMCPIndexing:
             # Need to create new chunker for modified project
             chunker2 = MultiLanguageChunker(str(temp_project))
             incremental_indexer2 = IncrementalIndexer(
-                indexer=index_manager, embedder=embedder, chunker=chunker2
+                indexer=index_manager,
+                embedder=embedder,
+                chunker=chunker2,
+                snapshot_manager=snapshot_manager,
             )
 
             result2 = incremental_indexer2.incremental_index(
@@ -186,10 +223,15 @@ class TestMCPIndexing:
                 f"{result2.chunks_added} chunks added, {result2.chunks_removed} removed"
             )
 
-            # Cleanup embedder to free GPU memory
+            # Cleanup embedder to free GPU memory, and close the index
+            # manager's sqlite/WAL handle so mock_storage_dir's rmtree
+            # doesn't race it.
             embedder.cleanup()
+            index_manager.close()
 
-    def test_catches_chunk_file_bug(self, test_project_path, mock_storage_dir):
+    def test_catches_chunk_file_bug(
+        self, test_project_path, mock_storage_dir, tmp_path
+    ):
         """Test that would catch the chunk_file(path, content) bug."""
 
         directory_path = Path(test_project_path).resolve()
@@ -206,7 +248,10 @@ class TestMCPIndexing:
         chunker = StrictChunker(str(directory_path))
 
         incremental_indexer = IncrementalIndexer(
-            indexer=index_manager, embedder=embedder, chunker=chunker
+            indexer=index_manager,
+            embedder=embedder,
+            chunker=chunker,
+            snapshot_manager=SnapshotManager(tmp_path / "snapshots"),
         )
 
         # This should work with the fix, would fail with the bug
@@ -217,5 +262,7 @@ class TestMCPIndexing:
         assert result.success, f"Failed with error: {result.error}"
         assert result.chunks_added > 0, "Should have created chunks"
 
-        # Cleanup embedder to free GPU memory
+        # Cleanup embedder to free GPU memory, and close the index manager's
+        # sqlite/WAL handle so mock_storage_dir's rmtree doesn't race it.
         embedder.cleanup()
+        index_manager.close()

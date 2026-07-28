@@ -43,6 +43,10 @@ tests/
 │   ├── __init__.py
 │   ├── installation_mocks.py # Installation testing mocks
 │   └── sample_code.py        # Sample code for testing
+├── helpers/                  # Shared test helper utilities
+│   ├── __init__.py
+│   ├── check_auth.py         # Authentication validation
+│   └── embeddings.py         # Shared embedding helper functions
 ├── test_data/                # Test datasets and sample projects
 │   ├── glsl_project/         # GLSL shader samples
 │   ├── multi_language/       # Multi-language test files
@@ -103,10 +107,6 @@ tests/
 │   ├── test_token_efficiency_workflow.py # Token efficiency workflow
 │   └── test_tree_sitter_*.py # Tree-sitter parsing tests
 ├── slow_integration/         # Slow integration tests (10 files, 67 tests, > 10s each)
-│   ├── helpers/              # Test helper utilities
-│   │   ├── __init__.py
-│   │   ├── check_auth.py     # Authentication validation
-│   │   └── run_hybrid_tests.py # Hybrid search test runner
 │   ├── test_auto_reindex.py  # Auto-reindexing functionality
 │   ├── test_direct_indexing.py # Direct indexing tests
 │   ├── test_full_flow.py     # Complete search workflow

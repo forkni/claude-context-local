@@ -62,36 +62,71 @@ def test_phase2_symbol_hash_cache():
     print(f"  Average lookup time: {avg_time_us:.2f} us")
     print(f"  Total time for {iterations * 10:,} lookups: {(end - start):.3f}s")
 
-    # Verify cache file persistence
+    # The benchmark above measures an absolute time but never checks the
+    # actual claim in the test's name: that lookups are O(1) rather than
+    # O(n). Verify that by re-running the same benchmark against a store
+    # with 20x the symbols and asserting per-lookup time does not scale
+    # with n -- an O(n) implementation would grow ~20x here; a generous
+    # 8x ceiling tolerates timing noise while still catching that regression.
+    temp_dir_large = tempfile.mkdtemp()
+    db_path_large = Path(temp_dir_large) / "metadata_large.db"
+    store_large = MetadataStore(db_path_large)
+
+    large_chunk_count = len(test_chunks) * 20
+    large_chunks = []
+    for i in range(large_chunk_count):
+        chunk_id = f"search/module_{i % 10}.py:{i * 10}-{i * 10 + 10}:function:func_{i}"
+        store_large.set(
+            chunk_id,
+            i,
+            {"relative_path": f"search/module_{i % 10}.py", "chunk_type": "function"},
+        )
+        large_chunks.append(chunk_id)
+    store_large.commit()
+
+    start = time.perf_counter()
+    for _ in range(iterations):
+        for chunk_id in large_chunks[:10]:
+            result = store_large.get(chunk_id)
+            assert result is not None
+    end = time.perf_counter()
+    avg_time_us_large = ((end - start) / (iterations * 10)) * 1_000_000
+    store_large.close()
+
+    print(
+        f"  Average lookup time at {large_chunk_count} symbols: "
+        f"{avg_time_us_large:.2f} us (vs {avg_time_us:.2f} us at "
+        f"{len(test_chunks)} symbols)"
+    )
+    # Use a floor so noise on very fast (sub-microsecond) baselines can't
+    # make the ratio spuriously huge.
+    growth_ratio = avg_time_us_large / max(avg_time_us, 0.5)
+    assert growth_ratio < 8, (
+        f"Lookup time grew {growth_ratio:.1f}x for a 20x increase in symbol "
+        f"count ({avg_time_us:.2f}us -> {avg_time_us_large:.2f}us) -- "
+        f"looks O(n), not O(1)"
+    )
+
+    # The hash cache is in-memory only (PYTHONHASHSEED randomizes hash() per
+    # process, so a persisted cache would carry no working entries in a fresh
+    # process anyway) — no cache file is ever written.
     cache_path = db_path.parent / f"{db_path.stem}_symbol_cache.json"
-    assert cache_path.exists(), "Symbol cache file should exist"
+    assert not cache_path.exists(), "Symbol cache should never be persisted to disk"
 
-    print(f"  Cache file: {cache_path.name}")
-
-    # Test cache reload
+    # A fresh MetadataStore starts with an empty in-memory cache, but the
+    # underlying SQLite data is still there and reachable via get().
     store.close()
     store2 = MetadataStore(db_path)
 
-    # Verify symbols reloaded
     for chunk_id in test_chunks[:5]:
-        assert chunk_id in store2._symbol_cache, (
-            f"Symbol {chunk_id} should be in reloaded cache"
+        assert chunk_id not in store2._symbol_cache, (
+            f"Fresh store's in-memory cache should not contain {chunk_id}"
+        )
+        assert store2.get(chunk_id) is not None, (
+            f"Symbol {chunk_id} should still be retrievable from SQLite"
         )
 
     print("\n[OK] Phase 2 tests passed!")
     print(f"[OK] Symbol cache O(1) lookups: {avg_time_us:.2f} us average")
 
     store2.close()
-
-
-if __name__ == "__main__":
-    print("\n" + "=" * 60)
-    print("Testing Phase 2 Implementation")
-    print("=" * 60)
-
-    # Test Phase 2
-    test_phase2_symbol_hash_cache()
-
-    print("\n" + "=" * 60)
-    print("[OK] Phase 2 integration test passed!")
-    print("=" * 60 + "\n")

@@ -259,7 +259,9 @@ class SearchPlanner:
             exclude_dirs=arguments.get("exclude_dirs"),
             chunk_type=arguments.get("chunk_type"),
             include_context=bool(arguments.get("include_context", True)),
-            auto_reindex=bool(arguments.get("auto_reindex", True)),
+            auto_reindex=bool(
+                arguments.get("auto_reindex", config.performance.enable_auto_reindex)
+            ),
             max_age_minutes=max_age_minutes,
             max_context_tokens=max_context_tokens,
             suggested_bm25=suggested_bm25,
@@ -269,7 +271,7 @@ class SearchPlanner:
 
 
 # ---------------------------------------------------------------------------
-# Phase B: Execute stage
+# Phase B: Execute stage (_maybe_reindex + _search)
 # ---------------------------------------------------------------------------
 
 
@@ -291,24 +293,33 @@ class ExecutionOutcome:
 class SearchOrchestrator:
     """Orchestrates search execution and result assembly.
 
-    Phase B adds _execute. Phases C and D add _assemble and run.
+    Phase B adds _maybe_reindex and _search. Phases C and D add _assemble
+    and run.
     """
 
     def __init__(self) -> None:
         self._graph_scoring_stage = GraphScoringStage()
 
-    async def _execute(self, plan: SearchPlan) -> ExecutionOutcome | dict:
-        """Blocks A–D: auto-reindex, searcher acquisition, config assembly, search.
+    async def _maybe_reindex(self, plan: SearchPlan) -> tuple[bool, str] | dict:
+        """Block A: run an inline auto-reindex under an exclusive write lock,
+        if the index is stale.
 
-        Returns ExecutionOutcome on success; returns a dict (error response) when
-        a DimensionMismatchError is raised or the index is not ready.
+        Split out from the former ``_execute`` so ``run()`` can hold a single
+        read lock across ``_search`` *and* ``_assemble`` (ADR-0008 amendment) —
+        ``_AsyncRWLock`` is non-reentrant, so the write lock taken here must be
+        fully released before that read lock opens.
+
+        Returns ``(reindexed, lock_project)`` on success: ``reindexed`` is
+        forwarded to ``_search`` for the ``ExecutionOutcome``, and
+        ``lock_project`` is the read-lock key ``run()`` uses for the search
+        that follows. Returns a dict (error response) when a
+        DimensionMismatchError is raised.
         """
         from mcp_server.tools.search_handlers import (
             _check_auto_reindex,
             _is_index_stale,
         )
 
-        # ===== Block A: Auto-reindex =====
         current_project = get_state().current_project
         reindexed_flag = False
         if plan.auto_reindex and current_project:
@@ -321,9 +332,10 @@ class SearchOrchestrator:
                     _is_index_stale, current_project, plan.max_age_minutes
                 )
                 if stale:
-                    # Exclusive write lock: drains readers already in Blocks B-D
-                    # (below) before reindexing runs, and blocks new readers from
-                    # starting until the index-file rewrite completes.
+                    # Exclusive write lock: drains readers already in _search
+                    # (run under the read lock in run()) before reindexing runs,
+                    # and blocks new readers from starting until the index-file
+                    # rewrite completes.
                     # _check_auto_reindex is blocking (can run a full incremental
                     # reindex + HybridSearcher construction), so offload to a thread.
                     # It re-checks staleness internally (needs_reindex), so two
@@ -346,170 +358,178 @@ class SearchOrchestrator:
 
         # get_searcher() falls back to the server's own directory when no project
         # is active (mcp_server/search_factory.py) — mirror that resolution here
-        # so the read lock's project key always matches what Block B below
+        # so the read lock's project key always matches what _search below
         # actually searches.
         from mcp_server.server import PROJECT_ROOT
 
         lock_project = current_project or str(PROJECT_ROOT)
+        return reindexed_flag, lock_project
 
-        # ===== Blocks B-D: shared read lock over searcher acquisition + search =====
-        # A concurrent reindex (writer, Block A above or a manual index_directory
-        # call) rewrites index files and previously could tear down the shared
-        # embedder/reranker mid-search; the read lock ensures this request's
-        # Block B-D window never straddles that rewrite.
-        async with get_state().get_reindex_rwlock(lock_project).read():
-            # ===== Block B: Searcher acquisition + readiness check =====
-            try:
-                # get_searcher can construct a HybridSearcher on cache-miss — offload
-                # to avoid blocking the event loop during model/index init.
-                searcher = await asyncio.to_thread(get_searcher)
-            except DimensionMismatchError as e:
-                return responses.dimension_mismatch(e)
+    async def _search(
+        self, plan: SearchPlan, reindexed: bool
+    ) -> ExecutionOutcome | dict:
+        """Blocks B-D: searcher acquisition, config assembly, search execution.
 
-            _view = SearcherView(searcher)
-            is_ready = _view.is_ready
-            # Only compute total_chunks when the index is ready — avoids accessing
-            # a partially-initialised index and simplifies mock setup in tests.
-            total_chunks = _view.total_chunks if is_ready else 0
+        Must be called with the caller already holding the reindex read lock
+        (see ``run()``) — unlike the former ``_execute``, this method does not
+        acquire the lock itself, since that scope now extends over
+        ``_assemble`` too.
 
-            if not is_ready or total_chunks == 0:
-                return responses.error(
-                    "No indexed project found",
-                    message="You must index a project before searching",
-                    current_project=current_project or "None",
-                )
+        Returns ExecutionOutcome on success; returns a dict (error response)
+        when a DimensionMismatchError is raised or the index is not ready.
+        """
+        current_project = get_state().current_project
 
-            # ===== Block C: Filter build + config assembly =====
-            filters: dict = {}
-            if plan.file_pattern:
-                filters["file_pattern"] = [plan.file_pattern]
-            if plan.include_dirs:
-                filters["include_dirs"] = plan.include_dirs
-            if plan.exclude_dirs:
-                filters["exclude_dirs"] = plan.exclude_dirs
-            if plan.chunk_type:
-                filters["chunk_type"] = plan.chunk_type
+        # ===== Block B: Searcher acquisition + readiness check =====
+        try:
+            # get_searcher can construct a HybridSearcher on cache-miss — offload
+            # to avoid blocking the event loop during model/index init.
+            searcher = await asyncio.to_thread(get_searcher)
+        except DimensionMismatchError as e:
+            return responses.dimension_mismatch(e)
 
-            config_manager = get_config_manager()
-            actual_search_mode = config_manager.get_search_mode_for_query(
-                plan.query, plan.search_mode
+        _view = SearcherView(searcher)
+        is_ready = _view.is_ready
+        # Only compute total_chunks when the index is ready — avoids accessing
+        # a partially-initialised index and simplifies mock setup in tests.
+        total_chunks = _view.total_chunks if is_ready else 0
+
+        if not is_ready or total_chunks == 0:
+            return responses.error(
+                "No indexed project found",
+                message="You must index a project before searching",
+                current_project=current_project or "None",
             )
 
-            # get_search_config() returns a process-wide cached singleton. Requests that
-            # don't apply ego-graph / parent-retrieval / intent-edge overrides can pass the
-            # singleton straight through. Requests that do mutate lazily deep-copy once,
-            # so the singleton is never written and concurrent requests don't race.
-            config_singleton = get_search_config()
-            config_copy: SearchConfig | None = None
+        # ===== Block C: Filter build + config assembly =====
+        filters: dict = {}
+        if plan.file_pattern:
+            filters["file_pattern"] = [plan.file_pattern]
+        if plan.include_dirs:
+            filters["include_dirs"] = plan.include_dirs
+        if plan.exclude_dirs:
+            filters["exclude_dirs"] = plan.exclude_dirs
+        if plan.chunk_type:
+            filters["chunk_type"] = plan.chunk_type
 
-            def mutable_config() -> SearchConfig:
-                """Deep-copy the singleton on first call; return the same copy thereafter."""
-                nonlocal config_copy
-                if config_copy is None:
-                    config_copy = copy.deepcopy(config_singleton)
-                assert config_copy is not None  # set immediately above when None
-                return config_copy
+        config_manager = get_config_manager()
+        actual_search_mode = config_manager.get_search_mode_for_query(
+            plan.query, plan.search_mode
+        )
 
-            if isinstance(searcher, HybridSearcher) and plan.ego_graph_enabled:
-                mutable_config().ego_graph = EgoGraphConfig(
-                    enabled=plan.ego_graph_enabled,
-                    k_hops=plan.ego_graph_k_hops,
-                    max_neighbors_per_hop=plan.ego_graph_max_neighbors,
-                )
-                logger.info(
-                    f"[EGO_GRAPH] Enabled with k_hops={plan.ego_graph_k_hops}, "
-                    f"max_neighbors_per_hop={plan.ego_graph_max_neighbors}"
-                )
+        # get_search_config() returns a process-wide cached singleton. Requests that
+        # don't apply ego-graph / parent-retrieval / intent-edge overrides can pass the
+        # singleton straight through. Requests that do mutate lazily deep-copy once,
+        # so the singleton is never written and concurrent requests don't race.
+        config_singleton = get_search_config()
+        config_copy: SearchConfig | None = None
 
-            # QW5: apply intent-adaptive similarity threshold to ego-graph expansion
-            if (
-                isinstance(searcher, HybridSearcher)
-                and plan.ego_graph_enabled
-                and plan.intent_decision
-            ):
-                _intent_ego_thresholds = {
-                    "local": 0.25,
-                    "global": 0.10,
-                    "contextual": 0.12,
-                    "navigational": 0.20,
-                    "path_tracing": 0.15,
-                    "similarity": 0.10,
-                    "hybrid": 0.15,
-                }
-                intent_threshold = _intent_ego_thresholds.get(
-                    plan.intent_decision.intent.value, 0.15
-                )
-                if intent_threshold != 0.15:
-                    logger.info(
-                        f"[EGO_GRAPH] Intent-adaptive threshold: "
-                        f"{plan.intent_decision.intent.value} -> {intent_threshold}"
-                    )
-                mutable_config().ego_graph.min_similarity_threshold = intent_threshold
+        def mutable_config() -> SearchConfig:
+            """Deep-copy the singleton on first call; return the same copy thereafter."""
+            nonlocal config_copy
+            if config_copy is None:
+                config_copy = copy.deepcopy(config_singleton)
+            assert config_copy is not None  # set immediately above when None
+            return config_copy
 
-            if isinstance(searcher, HybridSearcher) and plan.include_parent:
-                mutable_config().parent_retrieval = ParentRetrievalConfig(
-                    enabled=plan.include_parent
-                )
-                logger.info("[PARENT_RETRIEVAL] Enabled")
-
-            # Apply intent-driven weight overrides (per-request kwargs — no shared-state mutation)
-            # Use plan.suggested_bm25/dense — already computed by SearchPlanner (no re-derivation needed)
-            if (
-                isinstance(searcher, HybridSearcher)
-                and plan.suggested_bm25 is not None
-                and plan.suggested_dense is not None
-                and plan.intent_decision is not None
-            ):
-                logger.info(
-                    f"[INTENT] Weight override for {plan.intent_decision.intent.value}: "
-                    f"BM25={searcher.bm25_weight:.2f}→{plan.suggested_bm25:.2f}, "
-                    f"Dense={searcher.dense_weight:.2f}→{plan.suggested_dense:.2f}"
-                )
-
-            # Apply intent-driven edge weights for graph traversal (A1)
-            if isinstance(searcher, HybridSearcher) and plan.intent_decision:
-                from graph.graph_storage import INTENT_EDGE_WEIGHT_PROFILES
-
-                intent_key = plan.intent_decision.intent.value
-                edge_profile = INTENT_EDGE_WEIGHT_PROFILES.get(intent_key)
-                if edge_profile:
-                    cfg = mutable_config()
-                    cfg.multi_hop.edge_weights = edge_profile
-                    if cfg.ego_graph:
-                        cfg.ego_graph.edge_weights = edge_profile
-                    logger.info(
-                        f"[INTENT] Edge weight profile set for {intent_key}: "
-                        f"calls={edge_profile.get('calls', 'N/A')}, imports={edge_profile.get('imports', 'N/A')}"
-                    )
-
-            effective_config = (
-                config_copy if config_copy is not None else config_singleton
+        if isinstance(searcher, HybridSearcher) and plan.ego_graph_enabled:
+            mutable_config().ego_graph = EgoGraphConfig(
+                enabled=plan.ego_graph_enabled,
+                k_hops=plan.ego_graph_k_hops,
+                max_neighbors_per_hop=plan.ego_graph_max_neighbors,
+            )
+            logger.info(
+                f"[EGO_GRAPH] Enabled with k_hops={plan.ego_graph_k_hops}, "
+                f"max_neighbors_per_hop={plan.ego_graph_max_neighbors}"
             )
 
-            # ===== Block D: Search execution =====
-            if isinstance(searcher, HybridSearcher):
-                results = await asyncio.to_thread(
-                    searcher.search,
-                    query=plan.query,
-                    k=plan.k,
-                    search_mode=actual_search_mode,
-                    min_bm25_score=0.1,
-                    use_parallel=get_config().performance.use_parallel_search,
-                    filters=filters if filters else None,
-                    config=effective_config,
-                    bm25_weight=plan.suggested_bm25,
-                    dense_weight=plan.suggested_dense,
+        # QW5: apply intent-adaptive similarity threshold to ego-graph expansion
+        if (
+            isinstance(searcher, HybridSearcher)
+            and plan.ego_graph_enabled
+            and plan.intent_decision
+        ):
+            _intent_ego_thresholds = {
+                "local": 0.25,
+                "global": 0.10,
+                "contextual": 0.12,
+                "navigational": 0.20,
+                "path_tracing": 0.15,
+                "similarity": 0.10,
+                "hybrid": 0.15,
+            }
+            intent_threshold = _intent_ego_thresholds.get(
+                plan.intent_decision.intent.value, 0.15
+            )
+            if intent_threshold != 0.15:
+                logger.info(
+                    f"[EGO_GRAPH] Intent-adaptive threshold: "
+                    f"{plan.intent_decision.intent.value} -> {intent_threshold}"
                 )
-            else:
-                context_depth = 1 if plan.include_context else 0
-                results = await asyncio.to_thread(
-                    searcher.search,
-                    query=plan.query,
-                    k=plan.k,
-                    search_mode=actual_search_mode,
-                    context_depth=context_depth,
-                    filters=filters if filters else None,
+            mutable_config().ego_graph.min_similarity_threshold = intent_threshold
+
+        if isinstance(searcher, HybridSearcher) and plan.include_parent:
+            mutable_config().parent_retrieval = ParentRetrievalConfig(
+                enabled=plan.include_parent
+            )
+            logger.info("[PARENT_RETRIEVAL] Enabled")
+
+        # Apply intent-driven weight overrides (per-request kwargs — no shared-state mutation)
+        # Use plan.suggested_bm25/dense — already computed by SearchPlanner (no re-derivation needed)
+        if (
+            isinstance(searcher, HybridSearcher)
+            and plan.suggested_bm25 is not None
+            and plan.suggested_dense is not None
+            and plan.intent_decision is not None
+        ):
+            logger.info(
+                f"[INTENT] Weight override for {plan.intent_decision.intent.value}: "
+                f"BM25={searcher.bm25_weight:.2f}→{plan.suggested_bm25:.2f}, "
+                f"Dense={searcher.dense_weight:.2f}→{plan.suggested_dense:.2f}"
+            )
+
+        # Apply intent-driven edge weights for graph traversal (A1)
+        if isinstance(searcher, HybridSearcher) and plan.intent_decision:
+            from graph.graph_storage import INTENT_EDGE_WEIGHT_PROFILES
+
+            intent_key = plan.intent_decision.intent.value
+            edge_profile = INTENT_EDGE_WEIGHT_PROFILES.get(intent_key)
+            if edge_profile:
+                cfg = mutable_config()
+                cfg.multi_hop.edge_weights = edge_profile
+                if cfg.ego_graph:
+                    cfg.ego_graph.edge_weights = edge_profile
+                logger.info(
+                    f"[INTENT] Edge weight profile set for {intent_key}: "
+                    f"calls={edge_profile.get('calls', 'N/A')}, imports={edge_profile.get('imports', 'N/A')}"
                 )
+
+        effective_config = config_copy if config_copy is not None else config_singleton
+
+        # ===== Block D: Search execution =====
+        if isinstance(searcher, HybridSearcher):
+            results = await asyncio.to_thread(
+                searcher.search,
+                query=plan.query,
+                k=plan.k,
+                search_mode=actual_search_mode,
+                min_bm25_score=0.1,
+                use_parallel=get_config().performance.use_parallel_search,
+                filters=filters if filters else None,
+                config=effective_config,
+                bm25_weight=plan.suggested_bm25,
+                dense_weight=plan.suggested_dense,
+            )
+        else:
+            context_depth = 1 if plan.include_context else 0
+            results = await asyncio.to_thread(
+                searcher.search,
+                query=plan.query,
+                k=plan.k,
+                search_mode=actual_search_mode,
+                context_depth=context_depth,
+                filters=filters if filters else None,
+            )
 
         index_manager = SearcherView(searcher).index_manager
         return ExecutionOutcome(
@@ -517,7 +537,7 @@ class SearchOrchestrator:
             searcher=searcher,
             index_manager=index_manager,
             effective_config=effective_config,
-            reindexed=reindexed_flag,
+            reindexed=reindexed,
         )
 
     # ---------------------------------------------------------------------------
@@ -603,7 +623,7 @@ class SearchOrchestrator:
         # §V-C (de-silence auto-reindex): Block A ran an inline incremental
         # reindex before this search because the index was stale. Surface that
         # here instead of leaving the caller to wonder why the call took
-        # longer than expected — see SearchOrchestrator._execute Block A.
+        # longer than expected — see SearchOrchestrator._maybe_reindex.
         if reindexed:
             response["index_refreshed"] = True
             note = (
@@ -631,7 +651,8 @@ class SearchOrchestrator:
             )
 
         # Blocks F–G: centrality scoring, cap, SSCG subgraph extraction
-        # subgraph_data is always computed (ego_graph drives ranking), only serialization is gated
+        # Block G (subgraph extraction) is itself skipped when include_subgraph
+        # is false, since _build_response would discard its output anyway.
         formatted_results, subgraph_data = self._graph_scoring_stage.run(
             plan.query,
             plan.intent_decision,
@@ -640,6 +661,7 @@ class SearchOrchestrator:
             index_manager,
             outcome.searcher,
             getattr(outcome.effective_config, "graph_enhanced", None),
+            include_subgraph=output_cfg.include_subgraph,
         )
 
         # Block H: source-position reorder + context-budget truncation
@@ -647,10 +669,10 @@ class SearchOrchestrator:
             plan, outcome, formatted_results
         )
 
-        # Block I: response assembly (subgraph serialization gated by include_subgraph)
-        subgraph_for_response = subgraph_data if output_cfg.include_subgraph else None
+        # Block I: response assembly (subgraph_data is already None here when
+        # include_subgraph is false — Block G above skipped extraction)
         return self._build_response(
-            plan, formatted_results, subgraph_for_response, outcome.reindexed
+            plan, formatted_results, subgraph_data, outcome.reindexed
         )
 
     # ---------------------------------------------------------------------------
@@ -780,7 +802,21 @@ class SearchOrchestrator:
             f"[SEARCH] query='{plan.query}', k={plan.k}, mode='{plan.search_mode}'"
         )
 
-        outcome = await self._execute(plan)
-        if isinstance(outcome, dict):
-            return outcome
-        return self._assemble(plan, outcome)
+        # Block A: own write-lock scope (see _maybe_reindex) — must fully release
+        # before the read lock below opens, since _AsyncRWLock is non-reentrant.
+        early = await self._maybe_reindex(plan)
+        if isinstance(early, dict):
+            return early
+        reindexed_flag, lock_project = early
+
+        # Blocks B-D + I: shared read lock now extends through _assemble (ADR-0008
+        # amendment) — a concurrent reindex (writer, _maybe_reindex above or a
+        # manual index_directory call) rewrites index files and could otherwise
+        # mutate the graph mid-scoring (Blocks F-G read index_manager.graph_storage);
+        # the read lock ensures this request's _search-through-_assemble window
+        # never straddles that rewrite.
+        async with get_state().get_reindex_rwlock(lock_project).read():
+            outcome = await self._search(plan, reindexed_flag)
+            if isinstance(outcome, dict):
+                return outcome
+            return self._assemble(plan, outcome)

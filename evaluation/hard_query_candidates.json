@@ -1,0 +1,251 @@
+{
+  "_meta": {
+    "purpose": "Candidate hard queries for golden-dataset expansion (Track 1.2). Graded via scripts/benchmark/grade_candidate_queries.py before promotion into golden_dataset.json.",
+    "authored_date": "2026-07-26",
+    "design": "Distractor-heavy (same-named methods across classes), cross-file siblings, and behavioral paraphrases with low lexical overlap. Queries avoid the target's distinctive tokens so BM25's lexically-nearest match is a distractor.",
+    "id_range": "Q100-Q133 (Q130 dropped: gold tests/conftest.py not indexed)",
+    "round1": "2026-07-26: 34 graded; 16 rank-1 easy -> 14 rephrased harder; Q123/Q127 intendeds corrected; Q130 dropped"
+  },
+  "candidates": [
+    {
+      "id": "Q100",
+      "query": "persist raw embedding vectors so they can be read back later without loading them all into RAM",
+      "category": "A",
+      "intended": ["search/mmap_vectors.py:method:MmapVectorStorage.save"],
+      "notes": "round1: MEDIUM rank=4 behind chunk_cache distractors"
+    },
+    {
+      "id": "Q101",
+      "query": "write the analyzed relationships between code entities out so they survive a restart",
+      "category": "A",
+      "intended": ["graph/graph_storage.py:method:CodeGraphStorage.save"],
+      "notes": "round1 EASY rank=1; rephrased away from 'graph/persist/JSON'"
+    },
+    {
+      "id": "Q102",
+      "query": "prevent phantom entries from an earlier analysis from reappearing after a from-scratch rebuild",
+      "category": "A",
+      "intended": ["graph/graph_storage.py:method:CodeGraphStorage.clear"],
+      "notes": "round1 EASY rank=1; rephrased away from 'delete/clear/backing file'"
+    },
+    {
+      "id": "Q103",
+      "query": "how often repeated questions were answered from memory instead of recomputed",
+      "category": "A",
+      "intended": ["embeddings/query_cache.py:method:QueryEmbeddingCache.get_stats"],
+      "notes": "round1 EASY rank=1; rephrased away from 'hit/miss/counters/cached'"
+    },
+    {
+      "id": "Q104",
+      "query": "make room by discarding the stalest entries when the store grows past its limit",
+      "category": "A",
+      "intended": ["embeddings/chunk_cache.py:method:ChunkEmbeddingCache._evict"],
+      "notes": "round1 EASY rank=1; rephrased away from 'evict/cache'; base_searcher._evict_cache_if_needed distractor"
+    },
+    {
+      "id": "Q105",
+      "query": "constant time symbol lookup keyed by a hash of the chunk id",
+      "category": "A",
+      "intended": ["search/symbol_cache.py:method:SymbolHashCache.get_by_chunk_id"],
+      "notes": "round1: MEDIUM rank=4 behind class/get/module_preamble"
+    },
+    {
+      "id": "Q106",
+      "query": "return the ids and distances of the closest stored vectors for a query vector",
+      "category": "A",
+      "intended": ["search/faiss_index.py:method:FaissVectorIndex.search"],
+      "notes": "round1 EASY rank=1 (thin margin); rephrased away from 'nearest neighbor/index'"
+    },
+    {
+      "id": "Q107",
+      "query": "combine sparse and dense rankings with reciprocal rank fusion",
+      "category": "A",
+      "intended": ["search/reranker.py:method:RRFReranker.rerank"],
+      "notes": "round1: MEDIUM rank=4 behind class/rerank_simple/__init__"
+    },
+    {
+      "id": "Q108",
+      "query": "reorder results using PageRank centrality of code graph nodes",
+      "category": "A",
+      "intended": ["search/centrality_ranker.py:method:CentralityRanker.rerank"],
+      "notes": "round1: MEDIUM rank=3 behind module_preamble/annotate"
+    },
+    {
+      "id": "Q109",
+      "query": "choose the accelerated inference backend when the current platform and model support it",
+      "category": "A",
+      "intended": ["embeddings/model_loader.py:method:ModelLoader._should_use_onnx"],
+      "notes": "round1 EASY rank=1; rephrased away from 'ONNX runtime/PyTorch'"
+    },
+    {
+      "id": "Q110",
+      "query": "export the model to the accelerated runtime format the first time it is requested",
+      "category": "A",
+      "intended": ["embeddings/onnx_loader.py:method:ONNXModelLoader.convert_if_needed"],
+      "notes": "round1 EASY rank=1; rephrased away from 'convert/ONNX'"
+    },
+    {
+      "id": "Q111",
+      "query": "bring the sparse and dense sides back into agreement when one holds fewer documents",
+      "category": "A",
+      "intended": ["search/index_sync.py:method:IndexSynchronizer.resync_bm25_from_dense"],
+      "notes": "round1 EASY rank=1; rephrased away from 'rebuild keyword index'; hybrid_searcher delegate distractor"
+    },
+    {
+      "id": "Q112",
+      "query": "purge every trace of files that no longer exist from all retrieval structures",
+      "category": "B",
+      "intended": ["search/index_sync.py:method:IndexSynchronizer.remove_files"],
+      "notes": "round1 EASY rank=1; rephrased; remove_files x5 collision"
+    },
+    {
+      "id": "Q113",
+      "query": "compare the current file tree against the previous snapshot to find added, modified and removed files",
+      "category": "A",
+      "intended": ["merkle/change_detector.py:method:ChangeDetector.detect_changes"],
+      "notes": "round1: MEDIUM rank=5 behind FileChanges/detect_changes_from_snapshot"
+    },
+    {
+      "id": "Q114",
+      "query": "split identifiers into search tokens handling camelCase and snake_case",
+      "category": "A",
+      "intended": ["search/tokenization.py:function:normalize_to_tokens"],
+      "notes": "round1: MEDIUM rank=6 behind preprocess_code/_tokenize_for_matching"
+    },
+    {
+      "id": "Q115",
+      "query": "queue paths for deferred deletion and process them later once files unlock",
+      "category": "A",
+      "intended": ["mcp_server/cleanup_queue.py:method:CleanupQueue.process"],
+      "notes": "round1: MEDIUM rank=3 behind module_preamble/class"
+    },
+    {
+      "id": "Q116",
+      "query": "predict whether a batch of texts will fit on the graphics card before encoding them",
+      "category": "A",
+      "intended": ["search/gpu_monitor.py:method:GPUMemoryMonitor.estimate_batch_memory"],
+      "notes": "round1 EASY rank=1 (huge margin); rephrased away from 'estimate/GPU memory'"
+    },
+    {
+      "id": "Q117",
+      "query": "percent encode the drive colon when converting a Windows path to a file URI for the language server",
+      "category": "A",
+      "intended": ["chunking/relationships/lsp_call_graph.py:function:_path_to_uri"],
+      "notes": "round1: rank=2 behind _uri_to_path (inverse-direction distractor); keep"
+    },
+    {
+      "id": "Q118",
+      "query": "check whether a result path passes the include and exclude directory filters",
+      "category": "A",
+      "intended": ["search/filters.py:method:DirectoryFilter.matches"],
+      "notes": "round1: rank=2 behind matches_directory_filter free function; keep"
+    },
+    {
+      "id": "Q119",
+      "query": "keep the project's stored identity stable when the repository moves to a different location",
+      "category": "A",
+      "intended": ["search/filters.py:function:compute_drive_agnostic_hash"],
+      "notes": "round1 EASY rank=1; rephrased away from 'hash/drive'"
+    },
+    {
+      "id": "Q120",
+      "query": "write every index to disk in one step and verify the keyword side actually wrote its files",
+      "category": "B",
+      "intended": [
+        "search/index_sync.py:method:IndexSynchronizer.save_indices",
+        "search/index_sync.py:method:IndexSynchronizer._verify_bm25_files"
+      ],
+      "notes": "round1: _verify rank=1 but save_indices rank=11 -> genuinely hard multi-gold; keep"
+    },
+    {
+      "id": "Q121",
+      "query": "the component responsible for the whole lifecycle of the similarity index, from creation to device placement",
+      "category": "C",
+      "intended": ["search/faiss_index.py:class:FaissVectorIndex"],
+      "notes": "round1 EASY rank=1; rephrased away from 'dense vector index/GPU'"
+    },
+    {
+      "id": "Q122",
+      "query": "hold several loaded encoders at once and drop the least valuable when memory gets tight",
+      "category": "C",
+      "intended": ["mcp_server/model_pool_manager.py:class:ModelPoolManager"],
+      "notes": "round1 EASY rank=1; rephrased away from 'pool/embedding models'"
+    },
+    {
+      "id": "Q123",
+      "query": "cache embeddings for code chunks keyed by content hash so unchanged chunks skip re-encoding",
+      "category": "B",
+      "intended": [
+        "embeddings/chunk_cache.py:decorated_definition:ChunkEmbeddingCache.key_for",
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.get"
+      ],
+      "notes": "round1: POOL MISS for .get (pool_size=14); key_for kind fixed to decorated_definition (rank 3)"
+    },
+    {
+      "id": "Q124",
+      "query": "load and save of the memory mapped vector storage",
+      "category": "B",
+      "intended": [
+        "search/mmap_vectors.py:method:MmapVectorStorage.load",
+        "search/mmap_vectors.py:method:MmapVectorStorage.save"
+      ],
+      "notes": "round1: ranks 1+3, both golds top-3; keep as B sibling-pair anchor"
+    },
+    {
+      "id": "Q125",
+      "query": "free GPU memory after an embedding failure",
+      "category": "A",
+      "intended": ["search/gpu_monitor.py:function:release_gpu_memory"],
+      "notes": "round1: MEDIUM rank=4 behind cleanup methods"
+    },
+    {
+      "id": "Q126",
+      "query": "decide what kind of answer the user wants before dispatching the retrieval strategy",
+      "category": "A",
+      "intended": ["search/intent_classifier.py:method:IntentClassifier.classify"],
+      "notes": "round1 EASY rank=1; rephrased away from 'classify/intent/search mode'"
+    },
+    {
+      "id": "Q127",
+      "query": "cap how many ego graph neighbors get added to the result pool",
+      "category": "A",
+      "intended": ["search/hybrid_searcher.py:method:HybridSearcher._apply_ego_graph_expansion"],
+      "notes": "round1 intended fixed: method is _apply_ego_graph_expansion (was rank 3 in round1 results)"
+    },
+    {
+      "id": "Q128",
+      "query": "retry symbol resolution when the exact chunk id lookup fails because line numbers shifted",
+      "category": "A",
+      "intended": ["search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol"],
+      "notes": "round1: POOL MISS (gold valid, not in 30-candidate pool); keep verbatim"
+    },
+    {
+      "id": "Q129",
+      "query": "reuse the cached embedding for a query string instead of encoding it again",
+      "category": "A",
+      "intended": ["embeddings/query_cache.py:method:QueryEmbeddingCache.get"],
+      "notes": "round1: MEDIUM rank=7 behind embed_query/class/put"
+    },
+    {
+      "id": "Q131",
+      "query": "skip a file that cannot be parsed instead of aborting call edge injection for the whole project",
+      "category": "A",
+      "intended": ["chunking/relationships/call_edge_resolver.py:function:validate_py_files"],
+      "notes": "round1 intended fixed: validate_py_files (rank 2 behind _inject_call_edges)"
+    },
+    {
+      "id": "Q132",
+      "query": "class that speaks JSON-RPC to the language server over stdio pipes",
+      "category": "C",
+      "intended": ["chunking/relationships/lsp_call_graph.py:class:_LspClient"],
+      "notes": "round1: rank=1 but thin margin (0.25); keep as C anchor"
+    },
+    {
+      "id": "Q133",
+      "query": "match each JSON-RPC response to its pending request by id",
+      "category": "A",
+      "intended": ["chunking/relationships/lsp_call_graph.py:method:_LspClient._dispatch"],
+      "notes": "round1: POOL MISS (gold valid, not in 33-candidate pool); keep verbatim"
+    }
+  ]
+}

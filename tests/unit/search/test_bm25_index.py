@@ -118,6 +118,95 @@ class TestTextPreprocessor:
                 f"Expected {expected_unique_stems} unique stem(s) for {word_list}, got {unique_stems}"
             )
 
+    def test_invalid_tokenizer_rejected(self):
+        """Unknown tokenizer names must fail fast at construction."""
+        with pytest.raises(ValueError, match="Unknown tokenizer"):
+            TextPreprocessor(tokenizer="bogus")
+
+    def test_process_legacy_matches_manual_pipeline(self):
+        """process() on the legacy variant must equal preprocess_code+tokenize."""
+        preprocessor = TextPreprocessor(use_stopwords=True, use_stemming=True)
+
+        code = "def getUserName(user_id): return user.name  # fetches the name"
+        manual = preprocessor.tokenize(preprocessor.preprocess_code(code))
+        assert preprocessor.process(code) == manual
+
+    def test_whole_preserves_identifiers(self):
+        """ "whole" keeps camelCase and snake_case identifiers intact."""
+        preprocessor = TextPreprocessor(
+            use_stopwords=False, use_stemming=False, tokenizer="whole"
+        )
+
+        tokens = preprocessor.process("def getUserName(user_id): pass")
+
+        assert "getusername" in tokens
+        assert "user_id" in tokens
+        # Destructive parts must NOT appear on their own
+        assert "user" not in tokens
+        assert "name" not in tokens
+
+    def test_whole_never_stems(self):
+        """ "whole" ignores use_stemming — identifiers are never stemmed."""
+        preprocessor = TextPreprocessor(
+            use_stopwords=False, use_stemming=True, tokenizer="whole"
+        )
+
+        tokens = preprocessor.process("indexing documents")
+
+        assert "indexing" in tokens
+        assert "documents" in tokens
+
+    def test_additive_emits_whole_and_parts(self):
+        """ "additive" emits the whole identifier AND its sub-tokens."""
+        preprocessor = TextPreprocessor(
+            use_stopwords=False, use_stemming=False, tokenizer="additive"
+        )
+
+        tokens = preprocessor.process("def getUserName(user_id): pass")
+
+        # Whole identifiers preserved
+        assert "getusername" in tokens
+        assert "user_id" in tokens
+        # Sub-tokens additionally emitted
+        assert "get" in tokens
+        assert "user" in tokens
+        assert "name" in tokens
+        assert "id" in tokens
+
+    def test_additive_acronym_splitting(self):
+        """ "additive" splits uppercase acronym runs (HTMLParser → html, parser)."""
+        preprocessor = TextPreprocessor(
+            use_stopwords=False, use_stemming=False, tokenizer="additive"
+        )
+
+        tokens = preprocessor.process("class HTMLParser: pass")
+
+        assert "htmlparser" in tokens
+        assert "html" in tokens
+        assert "parser" in tokens
+
+    def test_code_variant_stopword_filtering(self):
+        """Stopwords are filtered from whole tokens and sub-tokens alike."""
+        preprocessor = TextPreprocessor(
+            use_stopwords=True, use_stemming=False, tokenizer="additive"
+        )
+
+        tokens = preprocessor.process("this is the get_or_else helper")
+
+        assert "this" not in tokens
+        assert "is" not in tokens
+        assert "the" not in tokens
+        assert "or" not in tokens  # sub-token of get_or_else is a stopword
+        assert "get_or_else" in tokens
+        assert "helper" in tokens
+
+    def test_code_variant_empty_input(self):
+        """Code variants handle empty/None input like the legacy path."""
+        preprocessor = TextPreprocessor(tokenizer="whole")
+
+        assert preprocessor.process("") == []
+        assert preprocessor.process(None) == []
+
     def test_code_stemming(self):
         """Test stemming on code-specific terms."""
         preprocessor = TextPreprocessor(use_stopwords=False, use_stemming=True)
@@ -133,6 +222,120 @@ class TestTextPreprocessor:
         # "getting" and "get" should stem to similar form
         get_tokens = [t for t in tokens if t.startswith("get")]
         assert len(get_tokens) > 0, "Should find 'get' related tokens"
+
+
+class TestTextPreprocessorRound5aEquivalence:
+    """Round 5a: hoisting the tokenizer probe to __init__ and memoizing the
+    stemmer must not change tokenize()'s output versus the original
+    per-document try/except + unmemoized stem() behavior."""
+
+    @staticmethod
+    def _naive_tokenize(preprocessor: TextPreprocessor, text: str) -> list[str]:
+        """Reference reimplementation of tokenize() before Round 5a: probes
+        word_tokenize with a try/except on every call and re-stems every
+        token with no cache."""
+        import search.bm25_index as bm25_module
+
+        if not text or not isinstance(text, str):
+            return []
+
+        if bm25_module.word_tokenize:
+            try:
+                tokens = bm25_module.word_tokenize(text.lower())
+            except (LookupError, RuntimeError):
+                tokens = text.lower().split()
+        else:
+            tokens = text.lower().split()
+
+        tokens = [preprocessor._clean_token(t) for t in tokens if t and not t.isspace()]
+        tokens = [
+            t
+            for t in tokens
+            if t
+            and (not preprocessor.use_stopwords or t not in preprocessor._stop_words)
+        ]
+
+        if preprocessor.use_stemming and preprocessor._stemmer:
+            tokens = [preprocessor._stemmer.stem(t) for t in tokens]
+
+        return tokens
+
+    def test_matches_naive_per_call_tokenization(self):
+        """tokenize() output must be byte-identical to the naive reference
+        across a variety of inputs (code, prose, punctuation, empty/blank)."""
+        preprocessor = TextPreprocessor(use_stopwords=True, use_stemming=True)
+
+        documents = [
+            "def calculate_sum(a, b): return a + b",
+            "class UserManager: def __init__(self): pass",
+            "function processData(data) { return data.map(x => x * 2); }",
+            "SELECT * FROM users WHERE age > 18",
+            "def find_user(user_id): return database.get(user_id)",
+            "indexing indexed indexes index managed managing manages",
+            "test@example.com -> func() { return value; }",
+            "",
+            "   ",
+            "!@#$%^&*()",
+            "123 456 789",
+        ]
+
+        for doc in documents:
+            preprocessed = preprocessor.preprocess_code(doc)
+            expected = self._naive_tokenize(preprocessor, preprocessed)
+            actual = preprocessor.tokenize(preprocessed)
+            assert actual == expected, f"Mismatch for {doc!r}: {actual} != {expected}"
+
+    def test_tokenizer_probe_falls_back_and_does_not_reprobe(self):
+        """When word_tokenize can't run, the fallback decision is made once
+        at construction — later tokenize() calls must not retry it."""
+        import search.bm25_index as bm25_module
+
+        call_log = []
+
+        def always_raises(text, *_args, **_kwargs):
+            call_log.append(text)
+            raise LookupError("punkt_tab not found")
+
+        with patch.object(bm25_module, "word_tokenize", always_raises):
+            preprocessor = TextPreprocessor(use_stopwords=False, use_stemming=False)
+            assert call_log == ["probe"]
+            assert preprocessor._tokenize_words is str.split
+
+            for doc in ["hello world", "foo bar", "alpha beta gamma"]:
+                preprocessor.tokenize(doc)
+
+            assert call_log == ["probe"], (
+                "word_tokenize must not be retried per document once the "
+                "fallback has been resolved at init"
+            )
+
+    def test_stem_cache_is_bounded(self):
+        """The stemmer memo must evict the least-recently-used entry once
+        past its cap, not grow unbounded."""
+        preprocessor = TextPreprocessor(use_stopwords=False, use_stemming=True)
+        preprocessor._STEM_CACHE_MAX_SIZE = 3
+
+        for token in ["alpha", "beta", "gamma", "delta"]:
+            preprocessor._stem_token(token)
+
+        assert len(preprocessor._stem_cache) <= 3
+        assert "alpha" not in preprocessor._stem_cache
+        assert "delta" in preprocessor._stem_cache
+
+    def test_stem_cache_lru_touch_order(self):
+        """Re-accessing a cached token must count as a use, protecting it
+        from eviction ahead of entries that haven't been touched since."""
+        preprocessor = TextPreprocessor(use_stopwords=False, use_stemming=True)
+        preprocessor._STEM_CACHE_MAX_SIZE = 2
+
+        preprocessor._stem_token("alpha")
+        preprocessor._stem_token("beta")
+        preprocessor._stem_token("alpha")  # touch -> now most-recently-used
+        preprocessor._stem_token("gamma")  # must evict "beta", not "alpha"
+
+        assert "alpha" in preprocessor._stem_cache
+        assert "beta" not in preprocessor._stem_cache
+        assert "gamma" in preprocessor._stem_cache
 
 
 class TestBM25Index:
@@ -197,9 +400,18 @@ class TestBM25Index:
         self.index.index_documents(self.documents, self.doc_ids)
 
         results = self.index.search("nonexistent_term_xyz123", k=5)
-        # Might return empty or very low scores
-        if results:
-            assert all(score >= 0 for _, score, _ in results)
+
+        # BM25Index.search has no true "no match" case for a non-empty index: an
+        # out-of-vocabulary query still falls back to the top-k documents by score,
+        # all scoring exactly 0.0. Assert that behavior directly rather than
+        # skipping the check whenever `results` happens to be empty.
+        assert len(results) == min(5, self.index.size), (
+            f"Expected top-{min(5, self.index.size)} fallback results for an "
+            f"out-of-vocabulary query; got {len(results)}"
+        )
+        assert all(score == 0.0 for _, score, _ in results), (
+            "Out-of-vocabulary query should score every document 0.0"
+        )
 
     def test_document_removal(self):
         """Test document removal."""
@@ -267,6 +479,14 @@ class TestBM25Index:
         # Search and check metadata
         results = self.index.search("function", k=5)
 
+        assert results, (
+            "Precondition failed: search returned no results — test is vacuous"
+        )
+        assert any(doc_id in metadata for doc_id, _score, _meta in results), (
+            "Precondition failed: none of the returned docs carry test metadata — "
+            "test no longer exercises the metadata-passthrough path"
+        )
+
         for doc_id, _score, meta in results:
             if doc_id in metadata:
                 expected = metadata[doc_id]
@@ -297,10 +517,13 @@ class TestBM25Index:
 
         results = self.index.search("function def", k=5)
 
-        if len(results) > 1:
-            scores = [score for _, score, _ in results]
-            # Scores should be in descending order
-            assert scores == sorted(scores, reverse=True)
+        assert len(results) > 1, (
+            f"Precondition failed: got {len(results)} results — "
+            "test no longer exercises score ordering"
+        )
+        scores = [score for _, score, _ in results]
+        # Scores should be in descending order
+        assert scores == sorted(scores, reverse=True)
 
     def test_minimum_score_threshold(self):
         """Test minimum score threshold filtering."""
@@ -348,7 +571,16 @@ class TestBM25Index:
         import sys
 
         # Temporarily hide rank_bm25 to simulate missing dependency
-        original = sys.modules.pop("rank_bm25", None)
+        original_rank_bm25 = sys.modules.pop("rank_bm25", None)
+        # Save the *original* bm25_index module object (not just re-import a fresh
+        # one afterwards) — a fresh import_module() call creates a brand-new module
+        # object with its own TextPreprocessor/BM25Index classes, distinct from the
+        # ones this test file (and every other test module) already imported at
+        # collection time via `from search.bm25_index import ...`. Swapping in a new
+        # object left those bindings stale, so patches applied through a freshly
+        # re-imported `bm25_module` alias (e.g. in the tokenizer-probe test below)
+        # silently missed the class actually in use.
+        original_bm25_index = sys.modules.get("search.bm25_index")
         sys.modules["rank_bm25"] = None  # type: ignore[assignment]
         try:
             # Force re-import of bm25_index module (removing cached version)
@@ -357,12 +589,15 @@ class TestBM25Index:
                 importlib.import_module("search.bm25_index")
         finally:
             # Restore original state
-            if original is not None:
-                sys.modules["rank_bm25"] = original
+            if original_rank_bm25 is not None:
+                sys.modules["rank_bm25"] = original_rank_bm25
             else:
                 sys.modules.pop("rank_bm25", None)
-            sys.modules.pop("search.bm25_index", None)
-            importlib.import_module("search.bm25_index")  # Re-cache with real module
+            if original_bm25_index is not None:
+                sys.modules["search.bm25_index"] = original_bm25_index
+            else:
+                sys.modules.pop("search.bm25_index", None)
+                importlib.import_module("search.bm25_index")
 
     def test_large_document_handling(self):
         """Test handling of large documents."""
@@ -456,6 +691,9 @@ class TestBM25Index:
         assert metadata["index_version"] == BM25Index.INDEX_VERSION
         assert "use_stemming" in metadata, "Metadata should contain use_stemming flag"
         assert "use_stopwords" in metadata, "Metadata should contain use_stopwords flag"
+        assert metadata.get("tokenizer") == "legacy", (
+            "Metadata should record the tokenizer variant"
+        )
 
     def test_config_mismatch_detection(self):
         """Test detection of stemming configuration mismatches."""
@@ -482,8 +720,158 @@ class TestBM25Index:
                 "Warning should mention configuration mismatch"
             )
 
+    def test_tokenizer_mismatch_detection(self):
+        """Loading an index built with a different tokenizer variant warns."""
+        self.index = BM25Index(self.temp_dir, tokenizer="legacy")
+        self.index.index_documents(self.documents, self.doc_ids)
+        self.index.save()
+
+        new_index = BM25Index(self.temp_dir, tokenizer="whole")
+
+        with patch("logging.Logger.warning") as mock_warning:
+            success = new_index.load()
+
+            assert success, "Index should load despite tokenizer mismatch"
+            assert mock_warning.called, "Should warn about tokenizer mismatch"
+            all_warnings = " ".join(str(c) for c in mock_warning.call_args_list)
+            assert "tokenizer mismatch" in all_warnings.lower(), (
+                "Warning should mention tokenizer mismatch"
+            )
+
+    def test_whole_tokenizer_end_to_end_search(self):
+        """A "whole"-tokenizer index matches exact identifiers."""
+        whole_index = BM25Index(
+            self.temp_dir, use_stopwords=False, use_stemming=False, tokenizer="whole"
+        )
+        # Three docs so a df=1 term has positive IDF (with N=2, df=1 the
+        # BM25 IDF is ln((2-1+0.5)/(1+0.5)) = 0 and every score ties at 0).
+        docs = [
+            "def get_user_name(user_id): return name",
+            "class PaymentProcessor: pass",
+            "def send_email(recipient): pass",
+        ]
+        ids = ["doc1", "doc2", "doc3"]
+        whole_index.index_documents(docs, ids)
+
+        results = whole_index.search("get_user_name", k=2)
+        assert results, "Whole-identifier query should match"
+        assert results[0][0] == "doc1"
+
     def teardown_method(self):
         """Clean up test fixtures."""
         import shutil
 
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+
+class TestBM25ScoringParams:
+    """Okapi k1/b scoring parameters: construction, persistence, load-override."""
+
+    def setup_method(self):
+        import tempfile
+
+        self.temp_dir = tempfile.mkdtemp()
+        self.documents = [
+            "def authenticate_user(username, password): pass",
+            "class DatabaseConnection: pass",
+            "def send_notification(recipient, message): pass",
+        ]
+        self.doc_ids = ["doc1", "doc2", "doc3"]
+
+    def teardown_method(self):
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_defaults_match_rank_bm25(self):
+        """Default k1/b equal the rank_bm25 library defaults (behavior-neutral)."""
+        index = BM25Index(self.temp_dir)
+        assert index.k1 == 1.5
+        assert index.b == 0.75
+        index.index_documents(self.documents, self.doc_ids)
+        assert index._bm25.k1 == 1.5
+        assert index._bm25.b == 0.75
+
+    def test_custom_params_reach_bm25okapi(self):
+        """Custom k1/b propagate to the underlying BM25Okapi object."""
+        index = BM25Index(self.temp_dir, k1=2.0, b=0.4)
+        index.index_documents(self.documents, self.doc_ids)
+        assert index._bm25.k1 == 2.0
+        assert index._bm25.b == 0.4
+
+    def test_params_persisted_in_metadata(self):
+        """save() records k1/b in bm25_metadata.json."""
+        import json
+
+        index = BM25Index(self.temp_dir, k1=1.2, b=1.0)
+        index.index_documents(self.documents, self.doc_ids)
+        index.save()
+
+        with open(index.metadata_path, encoding="utf-8") as f:
+            metadata = json.load(f)
+        assert metadata["k1"] == 1.2
+        assert metadata["b"] == 1.0
+
+    def test_load_applies_configured_params(self):
+        """Configured k1/b override the pickled values on load (no re-index)."""
+        index = BM25Index(self.temp_dir)  # defaults 1.5/0.75
+        index.index_documents(self.documents, self.doc_ids)
+        index.save()
+
+        reloaded = BM25Index(self.temp_dir, k1=1.2, b=1.0)
+        assert reloaded.load()
+        assert reloaded._bm25.k1 == 1.2
+        assert reloaded._bm25.b == 1.0
+
+    def test_load_old_metadata_without_params(self):
+        """Pre-k1/b metadata (no keys) loads fine and applies configured values."""
+        import json
+
+        index = BM25Index(self.temp_dir)
+        index.index_documents(self.documents, self.doc_ids)
+        index.save()
+
+        with open(index.metadata_path, encoding="utf-8") as f:
+            metadata = json.load(f)
+        del metadata["k1"]
+        del metadata["b"]
+        with open(index.metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f)
+
+        reloaded = BM25Index(self.temp_dir, k1=2.0, b=0.4)
+        assert reloaded.load()
+        assert reloaded._bm25.k1 == 2.0
+        assert reloaded._bm25.b == 0.4
+
+    def test_b_changes_length_normalization(self):
+        """b=0 vs b=1 produce different scores for docs of different lengths."""
+        # The query term must appear in a strict subset of the corpus:
+        # with df == N the Okapi IDF goes negative and every score falls
+        # below the min_score cut, leaving both result sets empty.
+        short_long_docs = [
+            "def search_index(): pass",
+            "def search_index_with_filters(query, filters, limits): "
+            + "return filtered_results " * 20,
+            "def unrelated_helper(value): return value",
+        ]
+        ids = ["short", "long", "other"]
+
+        import tempfile
+
+        dir_b0 = tempfile.mkdtemp()
+        dir_b1 = tempfile.mkdtemp()
+        try:
+            idx_b0 = BM25Index(dir_b0, use_stopwords=False, b=0.0)
+            idx_b0.index_documents(short_long_docs, ids)
+            idx_b1 = BM25Index(dir_b1, use_stopwords=False, b=1.0)
+            idx_b1.index_documents(short_long_docs, ids)
+
+            scores_b0 = {r[0]: r[1] for r in idx_b0.search("search", k=3)}
+            scores_b1 = {r[0]: r[1] for r in idx_b1.search("search", k=3)}
+            assert scores_b0 and scores_b1, "expected non-empty BM25 results"
+            assert scores_b0 != scores_b1, "b should change length-normalized scoring"
+        finally:
+            import shutil
+
+            shutil.rmtree(dir_b0, ignore_errors=True)
+            shutil.rmtree(dir_b1, ignore_errors=True)

@@ -47,5 +47,15 @@
     },
     "start_line": 8,
     "type": "method_declaration"
+  },
+  {
+    "content": "// Tiny C# fixture: class with async method and generic method.",
+    "end_line": 1,
+    "language": "csharp",
+    "metadata": {
+      "type": "module_preamble"
+    },
+    "start_line": 1,
+    "type": "module_preamble"
   }
 ]

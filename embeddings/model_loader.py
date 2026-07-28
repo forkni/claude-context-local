@@ -239,8 +239,13 @@ class ModelLoader:
             return 0.0
 
     # pyrefly: ignore [missing-attribute]
-    def get_torch_dtype(self) -> Optional["torch.dtype"]:
-        """Get torch dtype based on config and GPU capability.
+    def _resolve_dtype(self, *, log: bool) -> Optional["torch.dtype"]:
+        """Resolve torch dtype based on config and GPU capability.
+
+        Args:
+            log: Emit the ``[PRECISION]`` INFO lines. ``describe_numerics()``
+                passes False to avoid double-logging (and logging for a model
+                that, on a 100%-hit cache run, is never actually loaded).
 
         Returns:
             torch dtype (fp16/bf16) for GPU, or None for fp32 default.
@@ -263,18 +268,51 @@ class ModelLoader:
         if config.performance.prefer_bf16:
             try:
                 if torch.cuda.is_bf16_supported():
-                    self._logger.info(
-                        "[PRECISION] Using bfloat16 (bf16) for model inference (Ampere+ GPU detected)"
-                    )
+                    if log:
+                        self._logger.info(
+                            "[PRECISION] Using bfloat16 (bf16) for model inference (Ampere+ GPU detected)"
+                        )
                     return torch.bfloat16
             except Exception as e:  # noqa: BLE001 - resilience: bf16 capability check optional, fall back to fp16
                 self._logger.debug(f"bf16 check failed: {e}, falling back to fp16")
 
         # Fallback to fp16 for all CUDA GPUs
-        self._logger.info(
-            "[PRECISION] Using float16 (fp16) for model inference (30-50% faster)"
-        )
+        if log:
+            self._logger.info(
+                "[PRECISION] Using float16 (fp16) for model inference (30-50% faster)"
+            )
         return torch.float16
+
+    # pyrefly: ignore [missing-attribute]
+    def get_torch_dtype(self) -> Optional["torch.dtype"]:
+        """Get torch dtype based on config and GPU capability.
+
+        Returns:
+            torch dtype (fp16/bf16) for GPU, or None for fp32 default.
+        """
+        return self._resolve_dtype(log=True)
+
+    def describe_numerics(self) -> str:
+        """Stable description of what numerics this loader will produce.
+
+        Computed without loading the model — the 100%-hit chunk-embedding-cache
+        path depends on that. Uses ``self.device`` (the *requested* value,
+        never written back by ``load()``), NOT the caller's resolved device,
+        so the string is identical before and after a model load in the same
+        process (see ``ModelLoader.device`` vs. the ``resolved_device`` local
+        in ``load()``).
+
+        Known limitation: this records ONNX *intent*, not the effective
+        backend — ``load()`` silently falls back to PyTorch on ImportError
+        or RuntimeError. That fallback is stable (so it carries no cache
+        hit-rate risk), but installing ``optimum`` later changes the produced
+        numerics without changing this string.
+        """
+        device = self.resolve_device(self.device)
+        dtype = self._resolve_dtype(log=False)
+        dtype_name = "fp32" if dtype is None else str(dtype).removeprefix("torch.")
+        backend = "onnx" if self._should_use_onnx() else "pytorch"
+        return f"v1|device={device}|dtype={dtype_name}|backend={backend}"
 
     def resolve_device(self, requested: str | None) -> str:
         """Resolve target device string.

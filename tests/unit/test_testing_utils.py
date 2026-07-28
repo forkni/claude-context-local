@@ -209,7 +209,3 @@ class TestRequireDecorators(unittest.TestCase):
 
             with self.assertRaises(unittest.SkipTest):
                 test_func()
-
-
-if __name__ == "__main__":
-    unittest.main()

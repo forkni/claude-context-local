@@ -12,7 +12,7 @@ Supported languages (9 total):
 - C (.c)
 - C++ (.cpp, .cc, .cxx, .c++)
 - C# (.cs)
-- GLSL (.glsl, .frag, .vert, .comp, .geom, .tesc, .tese)
+- GLSL (.glsl, .frag, .vert, .comp, .geom, .tesc, .tese, .glslinc)
 
 Note: Python also has a separate AST-based chunker (chunking/python_ast_chunker.py)
 """

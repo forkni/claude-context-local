@@ -22,6 +22,7 @@ from search.filters import (
     compute_legacy_hash,
     extract_drive_agnostic_path,
 )
+from search.storage_layout import build_model_dir_name
 
 
 logger = logging.getLogger(__name__)
@@ -149,13 +150,15 @@ def _find_existing_project_dir(
         Path to existing directory or None if not found
     """
     # Try drive-agnostic hash first
-    new_dir = projects_dir / f"{project_name}_{new_hash}_{model_slug}_{dimension}d"
+    new_dir = projects_dir / build_model_dir_name(
+        project_name, new_hash, model_slug, dimension
+    )
     if new_dir.exists():
         return new_dir
 
     # Try legacy hash (backward compatibility)
-    legacy_dir = (
-        projects_dir / f"{project_name}_{legacy_hash}_{model_slug}_{dimension}d"
+    legacy_dir = projects_dir / build_model_dir_name(
+        project_name, legacy_hash, model_slug, dimension
     )
     if legacy_dir.exists():
         logger.info(f"Found project with legacy hash: {legacy_dir.name}")
@@ -265,7 +268,7 @@ def get_project_storage_dir(
     project_dir = (
         base_dir
         / "projects"
-        / f"{project_name}_{project_hash}_{model_slug}_{dimension}d"
+        / build_model_dir_name(project_name, project_hash, model_slug, dimension)
     )
     project_dir.mkdir(parents=True, exist_ok=True)
     logger.info(
@@ -296,11 +299,19 @@ def get_project_storage_dir(
 
 
 def get_canonical_project_info(project_path: str) -> Path | None:
-    """Find the first existing project_info.json across all model dirs for this project.
+    """Find the project_info.json that reflects the currently configured model.
 
-    Searches all model-specific storage dirs for this project hash and returns the
-    first project_info.json found. Use this instead of get_project_storage_dir() when
-    reading stored filters, so the result is independent of the current config model.
+    Prefers the current model's own storage dir — the configured embedding model's
+    ``project_info.json`` is the authoritative source for that model's stored
+    filters. Only falls back to the alphabetically-first ``project_info.json``
+    across *other* model dirs when the current model has none yet (H1: a project
+    reindexed under a new model before that model's dir has been created).
+
+    Previously this always took the first hit from ``sorted(glob(...))`` regardless
+    of which model was configured. With multiple per-model dirs present, sort order
+    is arbitrary relative to which one is "current" — e.g. a dir created for a model
+    that was never indexed with the user's real filters would win over the dir that
+    actually holds them, silently reading back ``user_excluded_dirs: null``.
 
     Args:
         project_path: Path to the project
@@ -315,6 +326,24 @@ def get_canonical_project_info(project_path: str) -> Path | None:
     new_hash = compute_drive_agnostic_hash(str(resolved))
     legacy_hash = compute_legacy_hash(str(resolved))
 
+    # Prefer the current model's own dir, when it exists (side-effect-free lookup —
+    # unlike get_project_storage_dir, this never creates a directory).
+    config = get_search_config()
+    model_config = MODEL_REGISTRY.get(config.embedding.model_name)
+    if model_config is not None:
+        dimension = cast(
+            int, model_config.get("truncate_dim") or model_config["dimension"]
+        )
+        model_slug = get_model_slug(config.embedding.model_name)
+        current_dir = _find_existing_project_dir(
+            projects_dir, project_name, new_hash, legacy_hash, model_slug, dimension
+        )
+        if current_dir is not None:
+            info = current_dir / "project_info.json"
+            if info.exists():
+                return info
+
+    # Fallback: first existing project_info.json across any other model dir.
     for hash_val in (new_hash, legacy_hash):
         for model_dir in sorted(projects_dir.glob(f"{project_name}_{hash_val}_*")):
             info = model_dir / "project_info.json"

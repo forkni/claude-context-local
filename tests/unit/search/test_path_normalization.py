@@ -55,36 +55,37 @@ class TestChunkIdNormalization:
         assert result == "file.py:10-20:function:my_func"
 
 
+@pytest.fixture
+def mock_index_manager(tmp_path):
+    """Create a mock CodeIndexManager with a test metadata database."""
+    storage_dir = tmp_path / "test_index"
+    storage_dir.mkdir()
+
+    # Create index manager
+    manager = CodeIndexManager(storage_dir=str(storage_dir))
+
+    # Mock the metadata with test data
+    test_metadata = {
+        "chunk_id": r"search\reranker.py:36-137:method:rerank",
+        "file_path": r"search\reranker.py",
+        "start_line": 36,
+        "end_line": 137,
+        "chunk_type": "method",
+        "name": "rerank",
+    }
+
+    # Store with Windows backslash (as it would be indexed on Windows)
+    manager.metadata_store.set(
+        r"search\reranker.py:36-137:method:rerank",
+        index_id=0,
+        metadata=test_metadata,
+    )
+
+    return manager
+
+
 class TestChunkIdLookup:
     """Test get_chunk_by_id() multi-variant lookup."""
-
-    @pytest.fixture
-    def mock_index_manager(self, tmp_path):
-        """Create a mock CodeIndexManager with a test metadata database."""
-        storage_dir = tmp_path / "test_index"
-        storage_dir.mkdir()
-
-        # Create index manager
-        manager = CodeIndexManager(storage_dir=str(storage_dir))
-
-        # Mock the metadata with test data
-        test_metadata = {
-            "chunk_id": r"search\reranker.py:36-137:method:rerank",
-            "file_path": r"search\reranker.py",
-            "start_line": 36,
-            "end_line": 137,
-            "chunk_type": "method",
-            "name": "rerank",
-        }
-
-        # Store with Windows backslash (as it would be indexed on Windows)
-        manager.metadata_store.set(
-            r"search\reranker.py:36-137:method:rerank",
-            index_id=0,
-            metadata=test_metadata,
-        )
-
-        return manager
 
     def test_lookup_with_exact_match(self, mock_index_manager):
         """Exact match should work (original behavior)."""
@@ -132,6 +133,36 @@ class TestChunkIdLookup:
         # All should return same name
         names = [r["name"] for r in results]
         assert all(n == "rerank" for n in names)
+
+
+class TestGetChunkByIdWarnOnMiss:
+    """get_chunk_by_id's WARNING on a miss must be opt-out (log-hygiene item G).
+
+    relationship_analyzer._enrich_callees passes callee_ids it *knows* may be
+    bare symbol names rather than chunk IDs (its own comment says so) and a
+    miss falls straight into a designed recovery ladder
+    (_resolve_by_symbol) -- so the miss is expected control flow, not a
+    defect, and should not WARN. A direct/unguarded caller with no such
+    recovery still should.
+    """
+
+    def test_miss_warns_by_default(self, mock_index_manager, caplog):
+        with caplog.at_level("WARNING", logger="search.indexer"):
+            result = mock_index_manager.get_chunk_by_id(
+                "nonexistent.py:1-10:function:foo"
+            )
+
+        assert result is None
+        assert any("Chunk not found" in r.message for r in caplog.records)
+
+    def test_miss_with_warn_on_miss_false_is_silent(self, mock_index_manager, caplog):
+        with caplog.at_level("WARNING", logger="search.indexer"):
+            result = mock_index_manager.get_chunk_by_id(
+                "nonexistent.py:1-10:function:foo", warn_on_miss=False
+            )
+
+        assert result is None
+        assert not any("Chunk not found" in r.message for r in caplog.records)
 
 
 class TestCrossPlatformPaths:

@@ -25,7 +25,7 @@ Enable via ``search_config.json``::
     "call_graph": {
         "lsp_enabled": true,
         "lsp_timeout_seconds": 30.0,
-        "lsp_total_timeout_seconds": 120.0
+        "lsp_total_timeout_seconds": 180.0
     }
 
 When disabled or unavailable, :class:`LSPResolver` returns ``[]`` immediately.
@@ -150,10 +150,10 @@ def _read_frame(stdout: Any) -> dict[str, Any] | None:
     """
     header = b""
     while b"\r\n\r\n" not in header:
-        ch = stdout.read(1)
-        if not ch:
+        line = stdout.readline()
+        if not line:
             return None  # EOF
-        header += ch
+        header += line
 
     length = 0
     found_length = False
@@ -573,6 +573,7 @@ class LSPResolver:
         project_root: Path,
         raw_line_map: dict[str, list[tuple[int, int, str]]],
         logger: logging.Logger,
+        py_files: list[str] | None = None,
     ) -> list[ResolvedEdge]:
         """Spawn basedpyright-langserver, query callHierarchy, return edges.
 
@@ -580,6 +581,9 @@ class LSPResolver:
             project_root: Absolute path to the project root.
             raw_line_map: Per-file sorted ``(start, end, raw_chunk_id)`` list.
             logger: Logger for progress and warning messages.
+            py_files: Pre-gathered/scoped/validated absolute ``.py`` paths.
+                When ``None`` (direct callers), this resolver computes its own
+                scope as before.
 
         Returns:
             Deduplicated list of :class:`ResolvedEdge` with ``source="lsp"``
@@ -592,8 +596,10 @@ class LSPResolver:
             )
             return []
 
-        # Gather, scope to indexed files, and validate — single preamble owner.
-        py_files = prepare_scoped_files(project_root, raw_line_map, logger, "LSP")
+        # Gather, scope to indexed files, and validate — single preamble owner
+        # (skipped when the caller already hoisted this via run_resolvers()).
+        if py_files is None:
+            py_files = prepare_scoped_files(project_root, raw_line_map, logger, "LSP")
         if py_files is None:
             return []
 
@@ -688,7 +694,14 @@ class LSPResolver:
         n_null_prepares = 0
         n_items = 0
         n_outgoing_calls = 0
-        n_dropped_uri = 0
+        # Split from one shared "dropped_uri" counter: the two causes are not
+        # the same failure mode. A non-file URI (virtual doc, untitled buffer)
+        # would be a real defect worth investigating; a callee outside the
+        # project root (stdlib/site-packages) is expected and correct — see
+        # the summary log below, which now reports them separately instead of
+        # conflating a 79%-of-total "expected" count with a real one.
+        n_dropped_non_file_uri = 0
+        n_dropped_outside_root = 0
         n_dropped_no_chunk = 0
         max_uri_debug = 10
 
@@ -793,8 +806,8 @@ class LSPResolver:
                         # Path.resolve() to produce garbage.
                         callee_path = _uri_to_path(callee_uri)
                         if callee_path is None:
-                            n_dropped_uri += 1
-                            if n_dropped_uri <= max_uri_debug:
+                            n_dropped_non_file_uri += 1
+                            if n_dropped_non_file_uri <= max_uri_debug:
                                 logger.debug(
                                     "[LSP] Dropped callee — non-file URI: %s",
                                     callee_uri,
@@ -805,8 +818,8 @@ class LSPResolver:
                                 callee_path.resolve().relative_to(project_root)
                             ).replace("\\", "/")
                         except (ValueError, OSError):
-                            n_dropped_uri += 1
-                            if n_dropped_uri <= max_uri_debug:
+                            n_dropped_outside_root += 1
+                            if n_dropped_outside_root <= max_uri_debug:
                                 logger.debug(
                                     "[LSP] Dropped callee — outside project root: %s",
                                     callee_path,
@@ -845,12 +858,15 @@ class LSPResolver:
         )
         logger.info(
             "[LSP] probes=%d null_prepares=%d items=%d outgoing_calls=%d "
-            "dropped_uri=%d dropped_no_chunk=%d",
+            "dropped_non_file_uri=%d (real-defect signal) "
+            "dropped_outside_root=%d (expected: stdlib/site-packages) "
+            "dropped_no_chunk=%d",
             n_probes,
             n_null_prepares,
             n_items,
             n_outgoing_calls,
-            n_dropped_uri,
+            n_dropped_non_file_uri,
+            n_dropped_outside_root,
             n_dropped_no_chunk,
         )
         return result

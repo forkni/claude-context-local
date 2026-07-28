@@ -12,12 +12,15 @@ Performance characteristics:
 
 Originally based on codanna's FNV-1a implementation, optimized to use Python's
 built-in hash() for 460x faster hash computation (SipHash24 at C level).
+
+In-memory only, for the lifetime of one process. An earlier version persisted
+every bucket to a JSON file, but PYTHONHASHSEED randomizes hash() per process,
+so a reloaded cache carried no working entries — only unbounded generational
+disk growth, since nothing ever pruned stale buckets across reindex runs.
 """
 
-import json
 import logging
 from collections import defaultdict
-from pathlib import Path
 from typing import Any
 
 
@@ -25,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class SymbolHashCache:
-    """Fast O(1) symbol lookup via hash buckets.
+    """Fast O(1) chunk_id lookup via hash buckets, in-memory for one process.
 
     Uses Python's built-in hash() (SipHash24 at C level) with 256 buckets for
     distributed storage and fast lookups. Optimized from FNV-1a for 460x faster
@@ -37,27 +40,10 @@ class SymbolHashCache:
 
     BUCKET_COUNT = 256  # Power of 2 for fast modulo via bitwise AND
 
-    def __init__(self, cache_path: Path) -> None:
-        """Initialize symbol hash cache.
-
-        Args:
-            cache_path: Path to cache file for persistence
-        """
-        self._cache_path = Path(cache_path)
+    def __init__(self) -> None:
+        """Initialize an empty, in-memory symbol hash cache."""
         self._buckets: dict[int, dict[int, str]] = defaultdict(dict)
-        self._symbol_buckets: dict[int, dict[int, str]] = defaultdict(
-            dict
-        )  # NEW: symbol name → chunk_id
-        self._dirty = False
         self._total_symbols = 0
-        self._total_symbol_mappings = 0  # NEW: Count of symbol name mappings
-
-        # Load existing cache if available
-        if self._cache_path.exists():
-            try:
-                self.load()
-            except Exception as e:  # noqa: BLE001 - parse-recovery: malformed cache file, start with empty cache
-                logger.warning(f"Failed to load symbol cache: {e}. Starting fresh.")
 
     @staticmethod
     def fnv1a_hash(data: str) -> int:
@@ -66,14 +52,6 @@ class SymbolHashCache:
         NOTE: Changed from FNV-1a to built-in hash() for 460x speedup
         (4.6μs → 0.01μs). Built-in hash() uses SipHash24 (C-level),
         significantly faster than pure Python FNV-1a implementation.
-
-        Performance improvement: Critical for in-memory lookups where hash
-        computation was a bottleneck.
-
-        IMPORTANT: Cache files from previous sessions using FNV-1a will be
-        invalidated and rebuilt automatically. Python's hash() may produce
-        different values across sessions (PYTHONHASHSEED), but this is
-        acceptable as cache is rebuilt from index metadata on load.
 
         Args:
             data: String to hash
@@ -99,7 +77,6 @@ class SymbolHashCache:
 
         # Store in bucket: hash -> chunk_id
         self._buckets[bucket_idx][hash_val] = chunk_id
-        self._dirty = True
         self._total_symbols += 1
 
         return hash_val
@@ -131,43 +108,6 @@ class SymbolHashCache:
         hash_val = self.fnv1a_hash(chunk_id)
         return self.get(hash_val)
 
-    def add_symbol_mapping(self, symbol_name: str, chunk_id: str) -> None:
-        """Add symbol name to chunk_id mapping for direct lookup.
-
-        This enables O(1) symbol resolution for merged chunks where multiple
-        symbols exist in a single chunk but only the first symbol appears in
-        the chunk_id.
-
-        Args:
-            symbol_name: Symbol name to map (e.g., "get_neighbors", "MyClass")
-            chunk_id: Target chunk identifier
-        """
-        hash_val = self.fnv1a_hash(symbol_name)
-        bucket_idx = hash_val % self.BUCKET_COUNT
-
-        self._symbol_buckets[bucket_idx][hash_val] = chunk_id
-        self._dirty = True
-        self._total_symbol_mappings += 1
-
-    def get_by_symbol_name(self, symbol_name: str) -> str | None:
-        """Get chunk_id by symbol name (O(1) amortized).
-
-        This method enables direct symbol lookup for find_path and other
-        tools that need to resolve symbol names to chunk_ids without
-        relying on semantic search.
-
-        Args:
-            symbol_name: Symbol name to look up
-
-        Returns:
-            Chunk_id if symbol mapping found, None otherwise
-        """
-        hash_val = self.fnv1a_hash(symbol_name)
-        bucket_idx = hash_val % self.BUCKET_COUNT
-        result = self._symbol_buckets[bucket_idx].get(hash_val)
-
-        return result
-
     def contains(self, chunk_id: str) -> bool:
         """Check if chunk_id exists in cache.
 
@@ -193,141 +133,15 @@ class SymbolHashCache:
 
         if hash_val in self._buckets[bucket_idx]:
             del self._buckets[bucket_idx][hash_val]
-            self._dirty = True
             self._total_symbols -= 1
             return True
 
         return False
 
     def clear(self) -> None:
-        """Clear all cached symbols and symbol mappings."""
+        """Clear all cached symbols."""
         self._buckets.clear()
-        self._symbol_buckets.clear()
-        self._dirty = True
         self._total_symbols = 0
-        self._total_symbol_mappings = 0
-
-    def save(self) -> None:
-        """Persist cache to disk.
-
-        Format:
-            {
-                "version": 2,
-                "bucket_count": 256,
-                "total_symbols": N,
-                "total_symbol_mappings": M,
-                "buckets": {
-                    "0": {"hash1": "chunk_id1", ...},
-                    "1": {"hash2": "chunk_id2", ...},
-                    ...
-                },
-                "symbol_buckets": {
-                    "0": {"hash1": "chunk_id1", ...},
-                    ...
-                }
-            }
-        """
-        if not self._dirty:
-            return  # No changes to save
-
-        # Prepare data structure
-        cache_data: dict[str, Any] = {
-            "version": 2,  # Version 2 includes symbol_buckets
-            "bucket_count": self.BUCKET_COUNT,
-            "total_symbols": self._total_symbols,
-            "total_symbol_mappings": self._total_symbol_mappings,
-            "buckets": {},
-            "symbol_buckets": {},
-        }
-
-        # Convert bucket data (convert int keys to strings for JSON)
-        for bucket_idx, bucket in self._buckets.items():
-            if bucket:  # Only save non-empty buckets
-                # Convert hash values to strings for JSON compatibility
-                cache_data["buckets"][str(bucket_idx)] = {
-                    str(hash_val): chunk_id for hash_val, chunk_id in bucket.items()
-                }
-
-        # Convert symbol bucket data
-        for bucket_idx, bucket in self._symbol_buckets.items():
-            if bucket:
-                cache_data["symbol_buckets"][str(bucket_idx)] = {
-                    str(hash_val): chunk_id for hash_val, chunk_id in bucket.items()
-                }
-
-        # Write to disk
-        self._cache_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(self._cache_path, "w", encoding="utf-8") as f:
-            json.dump(cache_data, f, indent=2)
-
-        self._dirty = False
-        logger.info(
-            f"Symbol cache saved: {self._total_symbols} symbols, "
-            f"{self._total_symbol_mappings} symbol mappings in "
-            f"{len(self._buckets)} buckets -> {self._cache_path}"
-        )
-
-    def load(self) -> None:
-        """Load cache from disk.
-
-        Supports both version 1 (legacy) and version 2 (with symbol buckets).
-
-        Raises:
-            FileNotFoundError: If cache file doesn't exist
-            ValueError: If cache format is invalid
-        """
-        if not self._cache_path.exists():
-            raise FileNotFoundError(f"Cache file not found: {self._cache_path}")
-
-        with open(self._cache_path, encoding="utf-8") as f:
-            cache_data = json.load(f)
-
-        # Validate version
-        version = cache_data.get("version", 1)
-        if version not in (1, 2):
-            raise ValueError(f"Unsupported cache version: {version}")
-
-        # Validate bucket count
-        bucket_count = cache_data.get("bucket_count", self.BUCKET_COUNT)
-        if bucket_count != self.BUCKET_COUNT:
-            logger.warning(
-                f"Cache bucket count mismatch: {bucket_count} != {self.BUCKET_COUNT}. "
-                f"Rebuilding cache recommended."
-            )
-
-        # Load buckets
-        self._buckets.clear()
-        buckets_data = cache_data.get("buckets", {})
-
-        for bucket_idx_str, bucket in buckets_data.items():
-            bucket_idx = int(bucket_idx_str)
-            # Convert string keys back to integers
-            self._buckets[bucket_idx] = {
-                int(hash_str): chunk_id for hash_str, chunk_id in bucket.items()
-            }
-
-        # Load symbol buckets (version 2 only)
-        self._symbol_buckets.clear()
-        if version >= 2:
-            symbol_buckets_data = cache_data.get("symbol_buckets", {})
-            for bucket_idx_str, bucket in symbol_buckets_data.items():
-                bucket_idx = int(bucket_idx_str)
-                self._symbol_buckets[bucket_idx] = {
-                    int(hash_str): chunk_id for hash_str, chunk_id in bucket.items()
-                }
-            self._total_symbol_mappings = cache_data.get("total_symbol_mappings", 0)
-        else:
-            self._total_symbol_mappings = 0
-
-        self._total_symbols = cache_data.get("total_symbols", 0)
-        self._dirty = False
-
-        log_msg = f"Symbol cache loaded (v{version}): {self._total_symbols} symbols"
-        if version >= 2:
-            log_msg += f", {self._total_symbol_mappings} symbol mappings"
-        log_msg += f" in {len(self._buckets)} buckets from {self._cache_path}"
-        logger.info(log_msg)
 
     def get_stats(self) -> dict[str, Any]:
         """Get cache statistics.
@@ -367,7 +181,12 @@ class SymbolHashCache:
         }
 
     def __len__(self) -> int:
-        """Return total number of symbols in cache."""
+        """Return total number of symbols in cache.
+
+        WARNING: no __bool__ is defined, so `bool(obj)` falls back to
+        `len(obj) != 0` — a valid, empty cache is falsy. Use `is not None`
+        for existence checks, not truthiness.
+        """
         return self._total_symbols
 
     def __contains__(self, chunk_id: str) -> bool:

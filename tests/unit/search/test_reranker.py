@@ -411,3 +411,105 @@ class TestRRFReranker:
         assert end_time - start_time < 1.0
         assert len(results) == 50
         assert all("rrf_score" in r.metadata for r in results)
+
+
+class TestReservedSlots:
+    """Test reserved fused-pool slots for BM25-unique candidates (Track I)."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.reranker = RRFReranker(k=100)
+
+    def _dense(self, n=6):
+        return [
+            SearchResult(f"d{i}", 1.0 - i * 0.1, {}, "dense", i)
+            for i in range(1, n + 1)
+        ]
+
+    def _bm25(self, ids):
+        return [
+            SearchResult(cid, 1.0 - i * 0.1, {}, "bm25", i + 1)
+            for i, cid in enumerate(ids)
+        ]
+
+    def test_reserve_zero_identity(self):
+        """reserved_slots=0 must reproduce plain RRF truncation exactly."""
+        plain = self.reranker.rerank(
+            [self._bm25(["b1", "b2", "d1"]), self._dense()],
+            weights=[0.35, 0.65],
+            max_results=4,
+        )
+        reserved = self.reranker.rerank(
+            [self._bm25(["b1", "b2", "d1"]), self._dense()],
+            weights=[0.35, 0.65],
+            max_results=4,
+            reserved_slots=0,
+        )
+        assert [r.chunk_id for r in plain] == [r.chunk_id for r in reserved]
+
+    def test_reserve_noop_when_pool_fits(self):
+        """No reservation needed when every candidate fits in max_results."""
+        results = self.reranker.rerank(
+            [self._bm25(["b1"]), self._dense(3)],
+            weights=[0.35, 0.65],
+            max_results=10,
+            reserved_slots=2,
+        )
+        assert {r.chunk_id for r in results} == {"b1", "d1", "d2", "d3"}
+
+    def test_reserve_injects_bm25_unique(self):
+        """Reserved slots pull in BM25-unique candidates RRF would exclude."""
+        # Weighted RRF (0.35/0.65, k=100): every dense doc outscores every
+        # BM25-unique doc, so plain truncation at 4 selects d1-d4 only.
+        plain = self.reranker.rerank(
+            [self._bm25(["b1", "b2", "d1"]), self._dense()],
+            weights=[0.35, 0.65],
+            max_results=4,
+        )
+        assert [r.chunk_id for r in plain] == ["d1", "d2", "d3", "d4"]
+
+        reserved = self.reranker.rerank(
+            [self._bm25(["b1", "b2", "d1"]), self._dense()],
+            weights=[0.35, 0.65],
+            max_results=4,
+            reserved_slots=2,
+        )
+        # Head keeps RRF order; reserved tail follows BM25 rank order.
+        assert [r.chunk_id for r in reserved] == ["d1", "d2", "b1", "b2"]
+        assert all("rrf_score" in r.metadata for r in reserved)
+        assert [r.metadata["final_rank"] for r in reserved] == [1, 2, 3, 4]
+
+    def test_reserve_exceeds_unique_count_falls_back(self):
+        """Unused reserve capacity falls back to RRF-ordered candidates."""
+        results = self.reranker.rerank(
+            [self._bm25(["b1", "d1"]), self._dense()],
+            weights=[0.35, 0.65],
+            max_results=4,
+            reserved_slots=3,
+        )
+        # Only b1 is injectable; remaining slots refill in RRF order.
+        assert [r.chunk_id for r in results] == ["d1", "b1", "d2", "d3"]
+
+    def test_reserve_with_empty_bm25_list(self):
+        """Empty reserve list degrades to plain RRF truncation."""
+        results = self.reranker.rerank(
+            [[], self._dense()],
+            weights=[0.35, 0.65],
+            max_results=4,
+            reserved_slots=2,
+        )
+        assert [r.chunk_id for r in results] == ["d1", "d2", "d3", "d4"]
+
+    def test_rerank_simple_threads_reserved_slots(self):
+        """rerank_simple passes reserved_slots through to rerank."""
+        bm25 = [("b1", 0.9, {}), ("b2", 0.8, {}), ("d1", 0.7, {})]
+        dense = [(f"d{i}", 1.0 - i * 0.1, {}) for i in range(1, 7)]
+        results = self.reranker.rerank_simple(
+            bm25_results=bm25,
+            dense_results=dense,
+            max_results=4,
+            bm25_weight=0.35,
+            dense_weight=0.65,
+            reserved_slots=2,
+        )
+        assert [r.chunk_id for r in results] == ["d1", "d2", "b1", "b2"]

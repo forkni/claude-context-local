@@ -17,7 +17,7 @@ Three concrete payoffs for this codebase:
    dtype/shape contracts. `np.float32`/`np.float64` drift or a FAISS signature change surfaces only
    at index-build or query time without a checker; Pyrefly catches it at edit time.
 
-2. **MCP tool signature drift.** `mcp_server/server.py` wires 19 tools through
+2. **MCP tool signature drift.** `mcp_server/server.py` wires 18 tools through
    `mcp_server/tool_registry.py` to handlers in `mcp_server/tools/*.py`. Handler signatures, tool
    registration schemas, and `mcp.types` must agree — drift breaks tool calls at the protocol layer
    for external clients. A checker against `mcp.server.lowlevel` + `mcp.types` flags mismatches

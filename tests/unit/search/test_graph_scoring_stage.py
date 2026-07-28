@@ -365,41 +365,110 @@ class TestPrivateHelpers:
     # _cap_results ---------------------------------------------------------
 
     def test_cap_results_under_limit_unchanged(self):
-        """Fewer than k*4 results → unchanged."""
+        """Fewer than k*8 (default multiplier) results → unchanged."""
         stage = GraphScoringStage()
-        results = [{"chunk_id": str(i)} for i in range(15)]
+        results = [{"chunk_id": str(i)} for i in range(31)]
         out = stage._cap_results(results, k=4)
-        assert len(out) == 15  # 15 < 16
+        assert len(out) == 31  # 31 < 32
 
     def test_cap_results_exactly_at_limit_unchanged(self):
-        """Exactly k*4 results → unchanged."""
+        """Exactly k*8 results → unchanged."""
         stage = GraphScoringStage()
-        results = [{"chunk_id": str(i)} for i in range(16)]
+        results = [{"chunk_id": str(i)} for i in range(32)]
         out = stage._cap_results(results, k=4)
-        assert len(out) == 16
+        assert len(out) == 32
 
     def test_cap_results_over_limit_truncated(self):
-        """More than k*4 results → truncated to k*4."""
+        """More than k*8 results → truncated to k*8."""
         stage = GraphScoringStage()
-        results = [{"chunk_id": str(i)} for i in range(20)]
+        results = [{"chunk_id": str(i)} for i in range(40)]
         out = stage._cap_results(results, k=4)
+        assert len(out) == 32
+
+    def test_cap_results_respects_config_multiplier(self):
+        """graph_config.max_results_multiplier overrides the default cap."""
+        from search.config import GraphEnhancedConfig
+
+        stage = GraphScoringStage()
+        config = GraphEnhancedConfig(max_results_multiplier=4)
+        results = [{"chunk_id": str(i)} for i in range(20)]
+        out = stage._cap_results(results, k=4, graph_config=config)
         assert len(out) == 16
+
+
+class TestIncludeSubgraphGate:
+    """Fix 4 (search-latency plan): include_subgraph=False skips Block G
+    (SubgraphExtractor construction) entirely, instead of computing it and
+    discarding the result at response-assembly time (the old behavior in
+    search_orchestrator.py's _assemble).
+    """
+
+    def test_include_subgraph_false_skips_extraction_entirely(self):
+        """SubgraphExtractor must never even be constructed when the caller
+        has already said it won't use the subgraph."""
+        stage = GraphScoringStage()
+        im = Mock()
+        im.graph_storage = Mock()
+        formatted = [{"chunk_id": "a.py:1-5:function:foo"}]
+
+        with patch("search.subgraph_extractor.SubgraphExtractor") as mock_se:
+            results, subgraph_data = stage.run(
+                "q", None, 4, list(formatted), im, None, None, include_subgraph=False
+            )
+
+        assert subgraph_data is None
+        mock_se.assert_not_called()
+        assert results == formatted
+
+    def test_include_subgraph_false_response_equals_old_discard_behavior(self):
+        """Equivalence proof: the response-relevant output (subgraph_data) is
+        identical whether Block G is skipped outright (new) or run and then
+        discarded by the caller (old) — even when Block G would have found a
+        non-empty subgraph, proving this is a pure no-op skip, not a filter
+        that happens to agree only on the empty case.
+        """
+        stage = GraphScoringStage()
+        im = Mock()
+        im.graph_storage = Mock()
+        formatted = [{"chunk_id": "a.py:1-5:function:foo"}]
+
+        fake_subgraph = Mock()
+        fake_subgraph.nodes = [Mock()]
+        fake_subgraph.edges = []
+        fake_subgraph.to_dict.return_value = {"nodes": [{}], "edges": []}
+
+        # Old behavior: Block G always ran; caller discarded the result
+        # (search_orchestrator.py's old `subgraph_data if include_subgraph else None`).
+        with patch("search.subgraph_extractor.SubgraphExtractor") as mock_se:
+            mock_se.return_value.extract_subgraph.return_value = fake_subgraph
+            old_results, _ = stage.run("q", None, 4, list(formatted), im, None, None)
+        old_subgraph_for_response = None  # simulates the caller-side discard
+
+        # New behavior: Block G is skipped outright via include_subgraph=False.
+        with patch("search.subgraph_extractor.SubgraphExtractor") as mock_se:
+            new_results, new_subgraph_data = stage.run(
+                "q", None, 4, list(formatted), im, None, None, include_subgraph=False
+            )
+
+        assert new_results == old_results
+        assert new_subgraph_data == old_subgraph_for_response  # both None
+        mock_se.assert_not_called()
 
 
 class TestGraphScoringStageIntegration:
     """End-to-end tests across Block F, the k*4 cap, and Block G."""
 
     def test_cap_applied_between_centrality_and_subgraph(self):
-        """k*4 cap fires; Block G sees the capped list."""
+        """k*8 default cap fires; Block G sees the capped list."""
         stage = GraphScoringStage()
         im = Mock()
         im.graph_storage = None  # skip subgraph
         results = [
             _make_formatted(chunk_id=f"f.py:{i}-{i + 1}:function:fn{i}")
-            for i in range(20)
+            for i in range(40)
         ]
         out_results, subgraph_data = stage.run("q", None, 4, results, im, None, None)
-        assert len(out_results) == 16  # k*4 = 4*4
+        assert len(out_results) == 32  # k*8 = 4*8
         assert subgraph_data is None
 
     def test_subgraph_runs_when_centrality_annotation_off(self):

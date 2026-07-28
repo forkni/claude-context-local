@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from utils.timing import timed
 
+from .chunk_id import dedupe_results
 from .config import SearchMode, get_search_config
 
 
@@ -53,6 +54,13 @@ class RerankingEngine:
         ) = None
         self._neural_reranking_enabled: bool | None = None
         self._session_oom_detected: bool = False
+        # Pool-hit-rate instrumentation (R0): chunk IDs of the fused candidate
+        # pool that entered the most recent rerank pass, recorded regardless of
+        # whether neural reranking actually ran. Benchmarks read this to
+        # distinguish retrieval misses (gold absent from pool) from ranking
+        # misses (gold in pool but ranked below the cutoff). Not thread-safe —
+        # meaningful only for single-threaded benchmark/diagnostic use.
+        self.last_candidate_ids: list[str] | None = None
         self._logger = logging.getLogger(__name__)
 
     def should_enable_neural_reranking(
@@ -252,6 +260,7 @@ class RerankingEngine:
 
         # Sort by score (descending)
         sorted_results = sorted(results, key=lambda r: r.score, reverse=True)
+        self.last_candidate_ids = [r.chunk_id for r in sorted_results]
 
         # Neural reranking (Quality First mode) — always re-check config for runtime
         # changes. Fetch once per pass (R1) and thread through both helpers instead
@@ -261,6 +270,13 @@ class RerankingEngine:
             sorted_results = self._run_rerank(
                 query, sorted_results, k, "[NEURAL_RERANK]", config=config
             )
+
+        # Collapse split_block fragments before truncation so freed slots
+        # backfill with distinct chunks. Not applied at hop-1
+        # (apply_neural_reranking) — deduping there would shrink the
+        # multi-hop/ego expansion-seed pool.
+        if config.reranker.dedupe_split_blocks:
+            sorted_results = dedupe_results(sorted_results)
 
         return sorted_results[:k]
 
@@ -291,6 +307,7 @@ class RerankingEngine:
         # not/double-not mutations on guard and _ensure_reranker are boundary orchestration.
         if not results:  # pragma: no mutate
             return []
+        self.last_candidate_ids = [r.chunk_id for r in results]
         # Fetch config once per pass (R1) and thread through both helpers.
         config = get_search_config()
         if not self._ensure_reranker(  # pragma: no mutate

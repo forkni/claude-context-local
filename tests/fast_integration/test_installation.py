@@ -288,10 +288,19 @@ class TestDependencyInstallation:
         with tempfile.TemporaryDirectory() as temp_dir:
             venv_path = Path(temp_dir) / ".venv"
 
-            # Simulate venv creation
-            result = self._create_virtual_environment(venv_path)
-            assert result["success"] is True
-            assert result["python_executable"] is not None
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value.returncode = 0
+
+                result = self._create_virtual_environment(venv_path)
+                assert result["success"] is True
+                assert result["python_executable"] is not None
+                mock_run.assert_called_once()
+
+                mock_run.return_value.returncode = 1
+                mock_run.return_value.stderr = "venv creation failed"
+                result = self._create_virtual_environment(venv_path)
+                assert result["success"] is False
+                assert result["error"] == "venv creation failed"
 
     def test_uv_installation(self):
         """Test UV package manager installation."""
@@ -300,9 +309,13 @@ class TestDependencyInstallation:
 
             result = self._install_uv()
             assert result["success"] is True
-            # _install_uv is a simulation, not calling subprocess.run
-            # So we don't expect mock_run to be called
             assert result["version"] == "0.1.0"
+            mock_run.assert_called_once()
+
+            mock_run.return_value.returncode = 1
+            mock_run.return_value.stderr = "pip install failed"
+            result = self._install_uv()
+            assert result["success"] is False
 
     def test_pytorch_installation_cuda(self):
         """Test PyTorch installation with CUDA."""
@@ -314,6 +327,14 @@ class TestDependencyInstallation:
             )
             assert result["success"] is True
             assert "cu121" in result["index_url"]
+            mock_run.assert_called_once()
+
+            mock_run.return_value.returncode = 1
+            mock_run.return_value.stderr = "pip install failed"
+            result = self._install_pytorch_cuda(
+                "https://download.pytorch.org/whl/cu121"
+            )
+            assert result["success"] is False
 
     def test_pytorch_installation_cpu(self):
         """Test PyTorch installation CPU-only."""
@@ -323,6 +344,12 @@ class TestDependencyInstallation:
             result = self._install_pytorch_cpu()
             assert result["success"] is True
             assert result["cuda_support"] is False
+            mock_run.assert_called_once()
+
+            mock_run.return_value.returncode = 1
+            mock_run.return_value.stderr = "pip install failed"
+            result = self._install_pytorch_cpu()
+            assert result["success"] is False
 
     def test_hybrid_search_dependencies(self):
         """Test installation of hybrid search dependencies."""
@@ -333,6 +360,12 @@ class TestDependencyInstallation:
             assert result["success"] is True
             assert "rank-bm25" in result["packages_installed"]
             assert "nltk" in result["packages_installed"]
+            mock_run.assert_called_once()
+
+            mock_run.return_value.returncode = 1
+            mock_run.return_value.stderr = "pip install failed"
+            result = self._install_hybrid_search_deps()
+            assert result["success"] is False
 
     def test_nltk_data_download(self):
         """Test NLTK data download."""
@@ -343,24 +376,59 @@ class TestDependencyInstallation:
             assert result["success"] is True
             assert "stopwords" in result["data_downloaded"]
             assert "punkt" in result["data_downloaded"]
+            mock_run.assert_called_once()
+
+            mock_run.return_value.returncode = 1
+            mock_run.return_value.stderr = "download failed"
+            result = self._download_nltk_data()
+            assert result["success"] is False
 
     def _create_virtual_environment(self, venv_path):
-        """Simulate virtual environment creation."""
+        """Create a virtual environment via `python -m venv`."""
         try:
-            # In real scenario, this would create actual venv
-            return {
-                "success": True,
-                "python_executable": str(venv_path / "Scripts" / "python.exe"),
-            }
-        except Exception as e:
+            result = subprocess.run(
+                ["python", "-m", "venv", str(venv_path)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
             return {"success": False, "error": str(e)}
+        if result.returncode != 0:
+            return {"success": False, "error": result.stderr}
+        return {
+            "success": True,
+            "python_executable": str(venv_path / "Scripts" / "python.exe"),
+        }
 
     def _install_uv(self):
-        """Simulate UV installation."""
+        """Install the uv package manager via pip."""
+        try:
+            result = subprocess.run(
+                ["pip", "install", "uv"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+            return {"success": False, "error": str(e)}
+        if result.returncode != 0:
+            return {"success": False, "error": result.stderr}
         return {"success": True, "version": "0.1.0"}
 
     def _install_pytorch_cuda(self, index_url):
-        """Simulate PyTorch CUDA installation."""
+        """Install PyTorch with CUDA support from the given index URL."""
+        try:
+            result = subprocess.run(
+                ["pip", "install", "torch", "--index-url", index_url],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+            return {"success": False, "error": str(e)}
+        if result.returncode != 0:
+            return {"success": False, "error": result.stderr}
         return {
             "success": True,
             "index_url": index_url,
@@ -369,15 +437,52 @@ class TestDependencyInstallation:
         }
 
     def _install_pytorch_cpu(self):
-        """Simulate PyTorch CPU installation."""
+        """Install the CPU-only PyTorch build via pip."""
+        try:
+            result = subprocess.run(
+                ["pip", "install", "torch"],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+            return {"success": False, "error": str(e)}
+        if result.returncode != 0:
+            return {"success": False, "error": result.stderr}
         return {"success": True, "cuda_support": False, "version": "2.5.1+cpu"}
 
     def _install_hybrid_search_deps(self):
-        """Simulate hybrid search dependencies installation."""
+        """Install hybrid-search dependencies (rank-bm25, nltk) via pip."""
+        try:
+            result = subprocess.run(
+                ["pip", "install", "rank-bm25", "nltk"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+            return {"success": False, "error": str(e)}
+        if result.returncode != 0:
+            return {"success": False, "error": result.stderr}
         return {"success": True, "packages_installed": ["rank-bm25", "nltk"]}
 
     def _download_nltk_data(self):
-        """Simulate NLTK data download."""
+        """Download required NLTK corpora via a subprocess call to nltk.download."""
+        try:
+            result = subprocess.run(
+                [
+                    "python",
+                    "-c",
+                    "import nltk; nltk.download('punkt'); nltk.download('stopwords')",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+            return {"success": False, "error": str(e)}
+        if result.returncode != 0:
+            return {"success": False, "error": result.stderr}
         return {"success": True, "data_downloaded": ["stopwords", "punkt"]}
 
 
@@ -527,15 +632,29 @@ class TestErrorHandling:
         assert "driver" in result["issue"].lower()
 
     def _handle_missing_python(self):
-        """Handle missing Python scenario."""
-        return {
-            "error_message": "Python not found in PATH",
-            "recommendation": "install_python",
-        }
+        """Detect a missing Python interpreter by attempting to invoke it."""
+        try:
+            subprocess.run(
+                ["python", "--version"], capture_output=True, text=True, timeout=5
+            )
+            return {"error_message": "", "recommendation": None}
+        except FileNotFoundError:
+            return {
+                "error_message": "Python not found in PATH",
+                "recommendation": "install_python",
+            }
 
     def _handle_download_failure(self):
-        """Handle download failure."""
-        return {"retry_suggested": True, "error_type": "network"}
+        """Classify a failed package download as a retryable network error."""
+        try:
+            result = subprocess.run(
+                ["pip", "download", "torch"], capture_output=True, text=True
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return {"retry_suggested": True, "error_type": "network"}
+        if result.returncode != 0:
+            return {"retry_suggested": True, "error_type": "network"}
+        return {"retry_suggested": False, "error_type": None}
 
     def _check_disk_space_requirements(self):
         """Check disk space requirements."""
@@ -613,8 +732,3 @@ class TestInstallationUnit:
     def _validate_path(self, path):
         """Validate path."""
         return len(path.strip()) > 0
-
-
-if __name__ == "__main__":
-    # Run tests when executed directly
-    pytest.main([__file__, "-v"])

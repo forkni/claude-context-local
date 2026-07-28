@@ -183,19 +183,32 @@ class CommunityDetector:
             for node in nodes:
                 community_map[node] = community_id
 
-        # Calculate and log modularity score (quality metric)
-        try:
-            mod_score = modularity(undirected, communities_list, resolution=resolution)
+        # Calculate and log modularity score (quality metric).
+        # networkx's modularity() divides by the graph's total edge weight
+        # (deg_sum**2); a collapsed graph with zero edges (small/sparse
+        # projects) makes that a ZeroDivisionError, not a meaningful score.
+        if undirected.number_of_edges() == 0:
             self.logger.info(
                 f"Detected {len(communities_list)} communities from {len(community_map)} nodes "
-                f"(resolution={resolution}, modularity={mod_score:.3f})"
+                f"(resolution={resolution}, modularity=n/a — no edges)"
             )
-        except Exception as e:  # noqa: BLE001 - resilience: modularity score is a non-critical quality metric
-            self.logger.warning(f"Failed to calculate modularity: {e}", exc_info=True)
-            self.logger.info(
-                f"Detected {len(communities_list)} communities from {len(community_map)} nodes "
-                f"(resolution={resolution})"
-            )
+        else:
+            try:
+                mod_score = modularity(
+                    undirected, communities_list, resolution=resolution
+                )
+                self.logger.info(
+                    f"Detected {len(communities_list)} communities from {len(community_map)} nodes "
+                    f"(resolution={resolution}, modularity={mod_score:.3f})"
+                )
+            except Exception as e:  # noqa: BLE001 - resilience: modularity score is a non-critical quality metric
+                self.logger.warning(
+                    f"Failed to calculate modularity: {e}", exc_info=True
+                )
+                self.logger.info(
+                    f"Detected {len(communities_list)} communities from {len(community_map)} nodes "
+                    f"(resolution={resolution})"
+                )
 
         return community_map
 

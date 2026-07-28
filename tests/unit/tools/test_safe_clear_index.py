@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
-
-_TOOLS_DIR = str(Path(__file__).parent.parent.parent.parent / "tools")
-if _TOOLS_DIR not in sys.path:
-    sys.path.insert(0, _TOOLS_DIR)
-
-import safe_clear_index  # noqa: E402
+# tools/ is on pythonpath (pyproject.toml [tool.pytest.ini_options]), so the
+# standalone script is importable bare, same as when run directly.
+import safe_clear_index
 
 
 # Sentinel filename used by safe_rmtree_all() to verify storage legitimacy

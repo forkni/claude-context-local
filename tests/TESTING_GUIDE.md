@@ -6,22 +6,47 @@ This comprehensive guide covers the testing infrastructure for the Claude Contex
 
 ### Current Test Status
 
-✅ **All tests passing** (as of 2026-07-02, v0.20.1):
+✅ **Full suite green in one process** (re-measured 2026-07-26, honest baseline — Phase 5 of the
+test-suite hardening campaign):
 
-- **Unit Tests**: ~3,066 tests (`tests/unit/`)
+- **Unit Tests**: 3,377 tests (`tests/unit/`)
   - Chunking (incl. relationships): includes `test_call_edge_resolver.py`, `test_call_graph_config.py`, `test_libcst_call_graph.py`, `test_lsp_call_graph.py` (1 POSIX skip)
   - Embeddings, Graph, Merkle, Search, MCP Server, Evaluation, Benchmark, Utils, Tools
-- **Integration Tests**: ~22 tests (`tests/integration/`)
-- **Fast Integration Tests**: ~38 tests (`tests/fast_integration/`)
-- **Total**: 3,127 passed, 13 skipped (measured 2026-07-02)
+- **Fast Integration + Integration Tests**: included in the full-suite total below
+- **Slow Integration Tests**: included in the full-suite total below
+- **Total**: `pytest tests/` (single process, no `--ignore`) — **3,592 passed, 7 skipped, 0 failed**
+  in 478.55s, deterministic (`-p no:randomly`) and randomized order both clean. Branch coverage on
+  this run: **82.02%** (vs. the `fail_under = 77` gate — see Coverage Requirements below).
+- **Known issue**: one intermittent, low-frequency failure has been observed in
+  `tests/unit/search/test_index_write_stage.py::TestInjectCallEdgesResolverSelection::test_none_resolvers_falls_back_to_default_pair`
+  (~1 in 3–4 full `tests/unit/` runs under `-p no:randomly`; passes in isolation every time). It
+  matches the known global-singleton-reset gap (`ModelPoolManager` / `JobRegistry` / intent-classifier
+  caches not reset between tests) and is tracked for a root-cause fix in the next hardening phase,
+  validated against a 20-consecutive-green-run gate. It is **not** currently reproducible from a
+  fixed seed — treat it as a known flake under active investigation, not a silenced failure.
+- **Correction (Phase 5.1):** `test_result_to_dict` in `tests/unit/search/test_incremental_indexer.py`
+  originally asserted `IncrementalIndexResult.to_dict()` by exact-equality, including the
+  `call_edges_injected` / `call_edge_resolvers` fields added by the in-flight call-graph-injection
+  feature. At the time that assertion was written, those fields existed only in an uncommitted
+  working tree — checking out that commit alone (e.g. for a `git bisect`) would fail the test. The
+  assertion now uses subset validation over the stable fields plus a separate dataclass-field
+  completeness check, per "Use subset validation for metadata" below — this passes regardless of
+  which in-flight dataclass fields have landed yet.
 
-**Note**: Run `uv run pytest tests/ --ignore=tests/slow_integration -q` for the full suite (excluding GPU-dependent slow tests).
+**Note**: Run `uv run pytest tests/ --ignore=tests/slow_integration -q` for the fast CI subset
+(excludes GPU-dependent slow tests, ~2 min).
 
 ## Recommended Testing Approach
 
-### Why Run Tests by Module?
+### Why Run Tests by Module? (legacy workaround — being phased out)
 
-The test suite has been optimized for module-by-module execution. Running all tests together in one process (e.g. plain `./scripts/test/run_tests.sh` with no args) can hit cross-module resource-cleanup contamination — observed 2026-07-02: 11 failures (dimension mismatches, stale model state) that vanish when run via the excluded-slow-integration command below. **All 3,127 tests pass when run via `uv run pytest tests/ --ignore=tests/slow_integration -q`**, or module-by-module per the commands below.
+Earlier measurements (2026-07-02) documented 11 cross-module contamination failures when running
+the full suite in one process, and recommended module-by-module execution as a workaround. The
+2026-07-26 re-measurement above shows the full suite now passes cleanly in one process in the
+overwhelming majority of runs — the three test-drift bugs behind the originally-documented failures
+have been identified and fixed, and only the one intermittent flake noted above remains open. The
+module-by-module commands below still work as a mitigation if you hit that flake, but are no longer
+required for a clean run.
 
 ### Quick Start: Run Tests by Module
 
@@ -169,6 +194,10 @@ tests/
 │   ├── __init__.py
 │   ├── installation_mocks.py # Installation testing mocks
 │   └── sample_code.py        # Sample code for testing
+├── helpers/                  # Shared test helper utilities
+│   ├── __init__.py
+│   ├── check_auth.py         # Authentication validation
+│   └── embeddings.py         # Shared embedding helper functions
 ├── test_data/                # Test datasets and sample projects
 │   ├── glsl_project/         # GLSL shader samples
 │   ├── multi_language/       # Multi-language test files
@@ -203,10 +232,6 @@ tests/
 │   ├── test_token_efficiency_workflow.py # Token efficiency workflow
 │   └── test_tree_sitter_*.py # Tree-sitter parsing tests
 ├── slow_integration/         # Slow integration tests (> 10s each; excluded from main CI run)
-│   ├── helpers/              # Test helper utilities
-│   │   ├── __init__.py
-│   │   ├── check_auth.py     # Authentication validation
-│   │   └── run_hybrid_tests.py # Hybrid search test runner
 │   ├── test_auto_reindex.py  # Auto-reindexing functionality
 │   ├── test_direct_indexing.py # Direct indexing tests
 │   ├── test_full_flow.py     # Complete search workflow
@@ -421,15 +446,57 @@ pytest tests/ --durations=10
 
 ## Fast vs Slow Test Organization
 
-### 3-Tier Test Organization
+### 4-Tier Test Organization
 
-The test suite uses a 3-tier system optimized for CI/CD performance:
+The test suite uses a 4-tier system optimized for CI/CD performance:
 
 | Tier | Location | Count | Execution Time | Purpose |
 |------|----------|-------|----------------|---------|
-| **Unit** | `tests/unit/` | 82 tests | < 1s per test | Component isolation testing |
-| **Fast Integration** | `tests/fast_integration/` | 77 tests | < 5s per test | Quick workflow validation |
-| **Slow Integration** | `tests/slow_integration/` | 67 tests | > 10s per test | Comprehensive end-to-end |
+| **Unit** | `tests/unit/` | 3,377 tests | < 1s per test (~126s total) | Component isolation testing |
+| **Fast Integration** | `tests/fast_integration/` | see full-suite total | < 5s per test | Quick workflow validation |
+| **Integration** | `tests/integration/` | 6 files | up to ~15s per test | Real-component E2E (no model downloads, so still fast enough for CI) |
+| **Slow Integration** | `tests/slow_integration/` | see full-suite total | > 10s per test | Comprehensive end-to-end (real model downloads) |
+
+Kept as a 4th tier rather than folded into `fast_integration/` (Phase 6 decision — see the >5s
+durations table below: every `tests/integration/` file has at least one test over the 5s tier
+budget).
+
+Measured 2026-07-26: `pytest tests/` (all tiers, one process) — 3,592 passed, 7 skipped, 0 failed,
+478.55s total. See Current Test Status above for the per-run coverage and known-flake note.
+
+**Tests over 5s** (`--durations=0`, 2026-07-26 — tier-placement input for the collection-surface
+hygiene phase):
+
+| Duration | Test | Current tier |
+|----------|------|---------------|
+| 66.81s | `test_auto_reindex.py::test_auto_reindex` | slow_integration |
+| 60.22s | `test_semantic_search.py::...test_semantic_search_basic` (setup) | slow_integration |
+| 14.80s | `test_observability_e2e.py::test_search_span_hierarchy_via_mcp_handlers` | integration |
+| 13.26s | `test_hybrid_search_integration.py::...test_hybrid_search_returns_results` | slow_integration |
+| 10.32s | `test_hybrid_search_integration.py::...test_index_persistence` | slow_integration |
+| 9.26s | `test_multi_hop_flow.py::...test_multi_hop_basic_functionality` | slow_integration |
+| 8.83s | `test_mcp_server.py::...test_mcp_server_can_import_as_first_module` | unit |
+| 7.19s | `test_hybrid_search.py::...test_weight_optimization` | unit |
+| 6.87s | `test_mcp_indexing.py::...test_incremental_indexing_mcp_path` | slow_integration |
+| 6.84s | `test_hybrid_search.py::...test_performance_tracking` | unit |
+| 6.82s | `test_hybrid_search.py::...test_sequential_search` | unit |
+| 6.62s | `test_auto_reindex_fixes.py::...test_uses_config_default_when_not_specified` | integration |
+| 6.60s | `test_hybrid_search.py::...test_search_with_filters` | unit |
+| 6.54s | `test_retrieval_evaluation.py::...test_bm25_file_hit[RQ01]` | slow_integration |
+| 6.45s | `test_hybrid_search.py::...test_parallel_search` | unit |
+| 6.31s | `test_hybrid_search.py::...test_multi_hop_uses_batched_search` | unit |
+| 6.05s | `test_observability_e2e.py::test_index_full_span_via_mcp_handler` | integration |
+| 5.89s | `test_phase_implementations.py::test_phase2_symbol_hash_cache` | integration |
+
+All 6 `tests/integration/` files have at least one sub-15s test — none are candidates for folding
+into `tests/fast_integration/` (< 5s) outright; kept as a documented 4th tier per Phase 6 (table
+above), rather than merged. `tests/test_mmap_cleanup.py` (repo-root) did not appear in the >5s
+durations list, i.e. it runs fast, and exercises a real `FaissVectorIndex` (not a mock) — so
+Phase 6 relocated it to `tests/fast_integration/test_mmap_cleanup.py`. Note: this file is listed in
+`.gitignore` as a "local development test file" — it is not tracked in git and does not run in CI;
+it only appears in local full-suite runs on a machine where it happens to exist on disk. The
+relocation preserves that untracked status (the `.gitignore` entry was updated to the new path);
+un-ignoring it would be a separate decision.
 
 ### Slow Test Marker
 
@@ -706,6 +773,22 @@ class TestNewWorkflow:
 6. **Test both success and failure paths**
 7. **Include edge cases and boundary conditions**
 8. **Use temporary directories** for file system operations
+9. **Assert on counts produced, not on calls made** — when a test's job is to
+   catch a regression in an object's *value* (a count, a result, a persisted
+   field), assert on that value from a real run, not on whether a mocked
+   dependency was called. A `Mock().method.call_args_list` assertion proves
+   the call happened; it says nothing about whether the return value was
+   ever used. This is exactly the shape that let a call-edge injection bug
+   ship silently (`3adc724`): `tests/unit/search/test_index_write_stage.py`
+   asserted only `storage.add_call_edge.call_args_list` against a `Mock`
+   graph, so the call always looked correct even after the real return value
+   started being discarded. Pair fast Mock-based unit tests (for branch
+   coverage) with at least one real integration test that drives production
+   objects end-to-end and asserts on the resulting count or persisted state
+   — see `tests/integration/test_call_edge_injection_integration.py`, which
+   indexes `tests/fixtures/mini_repo/` for real and asserts
+   `result.call_edges_injected > 0` plus `resolver_source` in the saved
+   graph JSON.
 
 ### Best Practices from Recent Fixes (2025-01-10)
 
@@ -804,6 +887,39 @@ The following directories are production-only and MUST NOT be accessed by tests:
 └── projects/               # Project-specific indices
     └── project_name_*/     # Per-project storage
 ```
+
+### Automatic Safety Net (Phase 8)
+
+Two autouse fixtures in `tests/conftest.py` back up the manual practices below:
+
+- **`_redirect_test_storage`** (session-scoped) points `CODE_SEARCH_STORAGE` at an isolated
+  `tmp_path_factory` directory for the whole test session. `get_storage_dir()`
+  (`mcp_server/storage_manager.py`) reads that env var, so anything that goes through it —
+  including `SnapshotManager()`'s default `storage_dir` — never resolves to the real
+  `~/.claude_code_search` while tests are running.
+- **`_no_real_storage_pollution`** (autouse, every test) is the backstop for what the redirect
+  above cannot reach: `CodeGraphStorage`'s default `storage_dir` reads `Path.home()` directly
+  (`graph/graph_storage.py`), bypassing `get_storage_dir()` entirely, so it is **not** covered by
+  the redirect. This fixture snapshots `~/.claude_code_search/{projects,merkle,graphs}` before and
+  after each test and fails loudly if a new entry appears.
+
+These two fixtures make production-directory pollution fail the test suite instead of silently
+corrupting real data — but they are a safety net, not a substitute for the practices below.
+`storage_dir=` is still mandatory for `CodeGraphStorage` in particular, since it is the one
+component the redirect doesn't cover.
+
+**Known false-positive source: a concurrent live MCP client.** If this repo's `code-search` MCP
+server (port 8765) is also being used interactively — e.g. from another Claude Code window working
+on a different project — while the test suite runs, that server writes to the *real*
+`~/.claude_code_search` independently of pytest, on its own schedule. `_no_real_storage_pollution`
+cannot distinguish that from genuine test leakage, since both look like "a new top-level entry
+appeared." Observed once during Phase 9 measurement: a teardown error reported a new
+`agentic-perf-loop_<hash>_f2llm-v2-0.6b_1024d` project entry, but `~/.claude_code_search/project_selection.json`
+showed `last_project_path` pointing at that same unrelated real project, updated minutes after the
+directory appeared — confirming a different concurrent session, not this repo's test suite, wrote
+it. If this fires, check whether the leaked project name matches something in `tests/` fixtures
+(e.g. `test_project`, a `tmp_path` name) before assuming a real regression; if it's an unrelated
+real project path, it's this exception, not a bug in the code under test.
 
 ### Required Isolation Practices
 
@@ -941,17 +1057,17 @@ ls -la ~/.claude_code_search/merkle/
   - `tests/unit/test_incremental_indexer.py` (line 119)
   - `tests/slow_integration/test_direct_indexing.py` (line 117)
 
-## Automatic Merkle Snapshot Cleanup
+## Automatic Cleanup of Orphaned Test Projects
 
 ### Overview
 
-After each pytest session, stale merkle snapshots are automatically cleaned up via the `pytest_sessionfinish` hook. This prevents orphaned test artifacts from accumulating in `~/.claude_code_search/merkle/`.
+After each pytest session, orphaned test projects — and their merkle trees — are automatically cleaned up via the `pytest_sessionfinish` hook. This prevents test artifacts from accumulating in `~/.claude_code_search/projects/` and `~/.claude_code_search/merkle/`.
 
 **Why This Matters:**
 
-- Tests create merkle snapshots for incremental indexing
-- Test cleanup removes project directories but not merkle files
-- Without automatic cleanup, orphaned snapshots accumulate over time
+- Tests create project indices and merkle snapshots for incremental indexing
+- Test projects point at pytest's temporary directories (`tmp_path`), which are deleted after the test run
+- Without automatic cleanup, the resulting orphaned project entries — and their merkle trees — accumulate over time
 - Manual cleanup is error-prone and easy to forget
 
 ### How It Works
@@ -960,7 +1076,7 @@ The cleanup system runs automatically after every pytest session:
 
 1. **Automatic trigger**: Runs after every pytest session (unit, integration, or full suite)
 2. **Silent operation**: No output on success, only warnings on errors/timeouts
-3. **Safe cleanup**: Only removes snapshots without corresponding project indices
+3. **Safe cleanup**: Only removes projects whose `project_path` no longer exists on disk — real projects are left untouched
 4. **Timeout protection**: 30-second timeout to prevent blocking test completion
 
 ### Implementation Details
@@ -968,20 +1084,34 @@ The cleanup system runs automatically after every pytest session:
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | **Hook** | `tests/conftest.py` → `pytest_sessionfinish()` | Triggers cleanup after tests |
-| **Script** | `tools/cleanup_stale_snapshots.py` | Identifies and removes stale snapshots |
+| **Script** | `tools/cleanup_orphaned_projects.py` | Removes projects whose `project_path` no longer exists, along with their merkle trees |
 | **Mode** | `--auto` flag | Silent non-interactive execution |
 | **Exit codes** | 0 (passed) or 1 (some failures) | Only runs on test completion |
 
-**Hook Implementation** (`tests/conftest.py` lines 71-103):
+**Hook Implementation** (`tests/conftest.py` lines 154-197):
 
 ```python
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
-    """Clean up stale Merkle snapshots after test session completes."""
+    """Clean up test-created project indices and merkle trees after test session.
+
+    Only runs cleanup_orphaned_projects.py which safely identifies test projects by
+    checking if their project_path still exists. Test projects point to temporary
+    directories (pytest's tmp_path) that are deleted after tests, so they can be
+    safely cleaned up along with their merkle trees.
+
+    NOTE: cleanup_stale_snapshots.py is NOT run automatically because it identifies
+    "stale" snapshots by checking for missing indices, not by checking if the original
+    project path exists. This could incorrectly delete merkle trees for real projects
+    if their indices were temporarily affected by tests.
+    """
     if exitstatus in (0, 1):
-        cleanup_script = Path(__file__).parent.parent / "tools" / "cleanup_stale_snapshots.py"
-        subprocess.run([sys.executable, str(cleanup_script), "--auto"],
-                      capture_output=True, timeout=30)
+        orphan_cleanup_script = Path(__file__).parent.parent / "tools" / "cleanup_orphaned_projects.py"
+        if orphan_cleanup_script.exists():
+            subprocess.run([sys.executable, str(orphan_cleanup_script), "--auto"],
+                          capture_output=True, text=True, timeout=30)
 ```
+
+`tools/cleanup_stale_snapshots.py` (below) is a separate, **manual-only** tool. It is deliberately not run automatically: it judges staleness by missing indices rather than by a missing project path, which could delete a real project's merkle trees if its index was temporarily affected by a test run.
 
 ### Manual Cleanup
 
@@ -1390,7 +1520,7 @@ pytest tests/ -n auto --dist=loadfile
 
 - Unit tests (~5s)
 - Fast integration tests (~2 min)
-- Coverage check with `fail_under=77` threshold (active in CI)
+- Coverage check with `--cov-fail-under=80` threshold (active in CI)
 - **Total time**: ~3 minutes
 - **Purpose**: Quick feedback for developers
 
@@ -1399,7 +1529,7 @@ pytest tests/ -n auto --dist=loadfile
 - All unit tests
 - All fast integration tests
 - All slow integration tests
-- Coverage check with `fail_under=77` threshold
+- Coverage check with `fail_under=81` threshold (full suite, `pyproject.toml`)
 - **Total time**: ~15 minutes
 - **Purpose**: Complete validation before merge
 
@@ -1623,26 +1753,55 @@ done
 ```
 
 Any test that fails under randomisation is an ordering dependency — fix the root cause (typically
-global state not reset between tests). The autouse fixtures `reset_global_state` and
-`preserve_original_project_selection` protect the main globals, but new state mutations need
-function-scoped teardown.
+global state not reset between tests). The autouse fixtures `reset_global_state`,
+`_redirect_test_storage`, and `_no_real_storage_pollution` protect the main globals and the real
+`~/.claude_code_search` storage tree, but new state mutations need function-scoped teardown.
 
 ### Measuring and gating coverage
 
 Coverage config lives in `pyproject.toml` `[tool.coverage.*]`. Branch coverage is on.
 
-**Baseline (measured 2026-06-30):** 78.53% branch+statement combined (3104 tests passing, 15 565 stmts).
-`fail_under = 77` is set in `[tool.coverage.report]` and `--cov-fail-under=77` is active in CI.
-(Previous baseline 2026-06-27: 76.94% at 2840 tests; ratcheted after adding ~276 tests.)
+**The two gates measure different runs — they are not the same number.** `[tool.coverage.report]
+fail_under` (`pyproject.toml`) gates whatever `pytest tests/` covers by default, which includes
+`tests/slow_integration/`. CI's `--cov-fail-under` (`branch-protection.yml`) gates the
+`--ignore=tests/slow_integration/` run only, since CI never runs that tier. The CI number is always
+the lower of the two — ratchet both, from the run that actually produces each number, never from
+one run's total applied to both gates.
+
+**Baseline (measured 2026-07-26, post-Phase-8 storage isolation, Phase 9 of the hardening
+campaign):**
+
+- Full suite incl. `slow_integration/`: **82.59%** (3594 passed, 7 skipped) → `fail_under = 81` in
+  `[tool.coverage.report]`.
+- CI-equivalent, `--ignore=tests/slow_integration/`: **81.69%** (3516 passed, 5 skipped; two new test
+  files added to close the two lowest-covered `mcp_server/` modules — see below) → `--cov-fail-under=80`
+  in CI.
+
+(Previous baseline 2026-06-30: 78.53% combined at 3104 tests, gated both at 77 — see git history for
+that measurement's methodology; it predates the two-gates-differ correction above.)
 
 ```bash
-# Re-measure (with gate enforced):
+# Re-measure the CI-gating number (excludes slow_integration/):
 bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration/ \
-  --cov --cov-branch --cov-report=term-missing --cov-fail-under=77
+  --cov --cov-branch --cov-report=term-missing --cov-fail-under=80
+
+# Re-measure the full-suite number that pyproject.toml's fail_under actually gates:
+bash scripts/test/run_tests.sh tests/ --cov --cov-branch --cov-report=term-missing --cov-fail-under=81
 ```
 
-Ratchet upward: when coverage improves, bump `fail_under` in `pyproject.toml` and
-`--cov-fail-under` in `.github/workflows/branch-protection.yml`.
+Ratchet upward: when coverage improves, bump `fail_under` in `pyproject.toml` **and**
+`--cov-fail-under` in `.github/workflows/branch-protection.yml` — from their respective runs, not
+the same number copied to both. Both files ship a comment recording the date, the measured
+percentage, and the passing-test count the measurement was taken at.
+
+**Phase 9 coverage additions:** `tests/unit/mcp_server/test_metrics.py` (`SessionMetrics` was at 0%
+coverage — a small, zero-mock, deterministic class with no prior tests at all) and
+`tests/unit/mcp_server/test_tool_registry.py` (`build_tool_list()` / `_advanced_tools_enabled()` were
+at 35%, exercised only incidentally through integration tests). Both are pure in-memory logic with no
+I/O beyond `monkeypatch.setenv`, so no mocking was needed. Remaining low-coverage modules
+(`mcp_server/guidance.py` 34%, `mcp_server/server.py` 62%, `mcp_server/resource_manager.py` 54%,
+`search/searcher.py` 54%, `search/bm25_index.py` 64%) were left untouched — they need async/process-
+boundary mocking to test properly, which is a larger, separate effort than this ratchet pass.
 
 ### Snapshot / golden-file regression testing (Phase 4 — Syrupy)
 
@@ -1849,7 +2008,7 @@ failures, so regressions remain visible on Codecov. The README badge tracks the 
 
 **Notes:**
 - `fail_ci_if_error: false` — Codecov outages or missing token never fail the CI gate.
-- Authoritative gate remains `--cov-fail-under=77` in CI; Codecov is reporting/visualization only.
+- Authoritative gate remains `--cov-fail-under=80` in CI; Codecov is reporting/visualization only.
 - No `codecov.yml` — relying on Codecov defaults.
 - `pyrefly` is now a **blocking gate** (2026-06-30) — `continue-on-error` removed after verified green.
 - `pre-commit` remains `continue-on-error: true`; flip to blocking when it exits 0 consistently on CI.

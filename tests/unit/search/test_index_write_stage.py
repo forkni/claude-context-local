@@ -295,10 +295,14 @@ class TestInjectCallEdgesMinConfidence:
         mock_cfg.call_graph = cg_cfg
 
         with (
-            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
-            patch("search.config.get_search_config", return_value=mock_cfg),
-            patch("search.index_write_stage.run_resolvers", return_value=merged_edges),
-            patch("search.index_write_stage.PyanResolver", return_value=Mock()),
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.call_edge_injection.run_resolvers", return_value=merged_edges
+            ),
+            patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
             stage._inject_call_edges("/fake/project")
 
@@ -325,16 +329,118 @@ class TestInjectCallEdgesMinConfidence:
         mock_cfg.call_graph = cg_cfg
 
         with (
-            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
-            patch("search.config.get_search_config", return_value=mock_cfg),
-            patch("search.index_write_stage.run_resolvers", return_value=merged_edges),
-            patch("search.index_write_stage.PyanResolver", return_value=Mock()),
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.call_edge_injection.run_resolvers", return_value=merged_edges
+            ),
+            patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
             stage._inject_call_edges("/fake/project")
 
         calls = [str(c) for c in storage.add_call_edge.call_args_list]
         assert any("caller_a" in c and "callee_a" in c for c in calls), (
             f"Expected pyan (0.75) edge injected with min_confidence=0.0; calls: {calls}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# resolvers=[] vs resolvers=None (config-driven resolver selection)
+# ---------------------------------------------------------------------------
+
+
+class TestInjectCallEdgesResolverSelection:
+    """CallGraphConfig.resolvers=[] must skip pyan/libcst entirely (per its own
+    docstring: "Set to [] to skip entirely"), distinct from resolvers=None
+    (unset, falls back to the ["pyan", "libcst"] default). Regression test for
+    a bug where `cg_cfg.resolvers or ["pyan", "libcst"]` treated an explicit
+    empty list the same as unset, because `[]` is falsy in Python.
+    """
+
+    @staticmethod
+    def _make_stage_for_injection() -> tuple[IndexWriteStage, Mock]:
+        """Graph must be non-empty — an empty graph now short-circuits via the
+        loud empty-graph guard (G0) before resolver selection is even reached,
+        which is exactly what these tests exercise."""
+        import networkx as nx
+
+        g = nx.MultiDiGraph()
+        g.add_node("caller_a")
+        g.add_node("callee_a")
+
+        storage = Mock()
+        storage.graph = g
+
+        graph_integration = Mock()
+        graph_integration.storage = storage
+
+        meta_store = Mock()
+        dense_index = Mock()
+        dense_index.metadata_store = meta_store
+
+        indexer = Mock()
+        indexer._graph = graph_integration
+        indexer.dense_index = dense_index
+
+        stage = IndexWriteStage(
+            embedder=Mock(),
+            indexer=indexer,
+            snapshot_manager=Mock(),
+            build_metadata_fn=Mock(return_value={}),
+            clear_gpu_fn=Mock(),
+        )
+        return stage, storage
+
+    def test_empty_resolvers_list_skips_injection_entirely(self) -> None:
+        """resolvers=[] with lsp_enabled=False must leave zero resolvers -- no
+        call to run_resolvers, no edges injected."""
+        from search.config import CallGraphConfig
+
+        stage, storage = self._make_stage_for_injection()
+
+        cg_cfg = CallGraphConfig(resolvers=[], lsp_enabled=False)
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch("search.call_edge_injection.run_resolvers") as mock_run_resolvers,
+        ):
+            stage._inject_call_edges("/fake/project")
+
+        mock_run_resolvers.assert_not_called()
+        storage.add_call_edge.assert_not_called()
+
+    def test_none_resolvers_falls_back_to_default_pair(self) -> None:
+        """resolvers=None (unset) must still default to pyan+libcst."""
+        from search.config import CallGraphConfig
+
+        stage, storage = self._make_stage_for_injection()
+
+        cg_cfg = CallGraphConfig(resolvers=None, lsp_enabled=False)
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.call_edge_injection.run_resolvers", return_value={}
+            ) as mock_run_resolvers,
+        ):
+            stage._inject_call_edges("/fake/project")
+
+        mock_run_resolvers.assert_called_once()
+        resolver_instances = mock_run_resolvers.call_args.args[0]
+        assert len(resolver_instances) == 2, (
+            f"Expected pyan+libcst (2 resolvers) with resolvers=None; got {resolver_instances}"
         )
 
 
@@ -431,10 +537,12 @@ class TestInjectCallEdgesMultiGraph:
         mock_cfg.call_graph = cg_cfg
 
         with (
-            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
-            patch("search.config.get_search_config", return_value=mock_cfg),
-            patch("search.index_write_stage.run_resolvers", return_value=merged),
-            patch("search.index_write_stage.PyanResolver", return_value=Mock()),
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch("search.call_edge_injection.run_resolvers", return_value=merged),
+            patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
             # Must not raise ValueError (was the crash)
             stage._inject_call_edges("/fake/project")
@@ -465,10 +573,12 @@ class TestInjectCallEdgesMultiGraph:
         mock_cfg.call_graph = cg_cfg
 
         with (
-            patch("search.index_write_stage.build_line_to_chunk_map", return_value={}),
-            patch("search.config.get_search_config", return_value=mock_cfg),
-            patch("search.index_write_stage.run_resolvers", return_value=merged),
-            patch("search.index_write_stage.PyanResolver", return_value=Mock()),
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch("search.call_edge_injection.run_resolvers", return_value=merged),
+            patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
             stage._inject_call_edges("/fake/project")
 
@@ -529,6 +639,168 @@ class TestIndexWriteStageEmbeddingFailure:
         embedder.embed_chunks.assert_not_called()
         indexer.add_embeddings.assert_not_called()
         assert result.chunks_added == 0
+
+
+# ---------------------------------------------------------------------------
+# Round 3 — persistent content-hash embedding cache wiring
+# ---------------------------------------------------------------------------
+
+
+class TestResolveChunkCache:
+    """_resolve_chunk_cache: lazy per-run resolution, fail-soft on Mock storage_dir."""
+
+    def test_mock_storage_dir_yields_no_cache_and_run_still_succeeds(self):
+        """All five pre-existing Mock()-based cases above already exercise this
+        path unmodified (indexer=Mock() ⇒ indexer.storage_dir is a Mock, so
+        Path(...) on it fails inside the try/except and _resolve_chunk_cache
+        returns None). This test pins that behaviour explicitly: embed_chunks
+        must be called with cache=None and the run must still succeed."""
+        chunk = _make_chunk()
+        embed_result = Mock()
+        embed_result.metadata = {}
+        stage, embedder, _, _, _, _, dag = _make_stage(embed_results=[embed_result])
+
+        result = stage.run(
+            all_chunks=[chunk],
+            project_name="p",
+            dag=dag,
+            all_files=[],
+            supported_files=[],
+            start_time=time.time(),
+            repo_profile=None,
+        )
+
+        assert result.success is True
+        call_kwargs = embedder.embed_chunks.call_args.kwargs
+        assert call_kwargs.get("cache") is None
+
+    def test_real_storage_dir_passes_cache_with_expected_path(self, tmp_path):
+        """A real tmp_path storage_dir ⇒ embed_chunks receives a non-None
+        cache whose on-disk path is storage_dir / "chunk_embeddings.bin"."""
+        from search.config import EmbeddingConfig
+
+        chunk = _make_chunk()
+        embed_result = Mock()
+        embed_result.metadata = {}
+        embedder = Mock()
+        embedder.embed_chunks.return_value = [embed_result]
+
+        indexer = Mock()
+        indexer.storage_dir = tmp_path
+        indexer.resync_if_desynced.return_value = (False, 0)
+
+        stage = IndexWriteStage(
+            embedder=embedder,
+            indexer=indexer,
+            snapshot_manager=Mock(),
+            build_metadata_fn=Mock(return_value={"project_name": "test"}),
+            clear_gpu_fn=Mock(),
+        )
+
+        mock_cfg = Mock()
+        mock_cfg.embedding = EmbeddingConfig(enable_chunk_cache=True)
+
+        with patch("search.config.get_search_config", return_value=mock_cfg):
+            result = stage.run(
+                all_chunks=[chunk],
+                project_name="p",
+                dag=Mock(),
+                all_files=[],
+                supported_files=[],
+                start_time=time.time(),
+                repo_profile=None,
+            )
+
+        assert result.success is True
+        call_kwargs = embedder.embed_chunks.call_args.kwargs
+        cache = call_kwargs.get("cache")
+        assert cache is not None
+        assert cache._path == tmp_path / "chunk_embeddings.bin"
+
+    def test_provenance_unavailable_sentinel_for_mock_embedder(self, tmp_path):
+        """embedder=Mock() auto-generates get_embedding_provenance() as a
+        callable returning a Mock, not a str. The isinstance guard in
+        _resolve_embedding_provenance must catch this and fall back to the
+        "unavailable" sentinel rather than handing a Mock to
+        ChunkEmbeddingCache, which would fail .encode() in save()."""
+        from search.config import EmbeddingConfig
+
+        chunk = _make_chunk()
+        embed_result = Mock()
+        embed_result.metadata = {}
+        embedder = Mock()
+        embedder.embed_chunks.return_value = [embed_result]
+
+        indexer = Mock()
+        indexer.storage_dir = tmp_path
+        indexer.resync_if_desynced.return_value = (False, 0)
+
+        stage = IndexWriteStage(
+            embedder=embedder,
+            indexer=indexer,
+            snapshot_manager=Mock(),
+            build_metadata_fn=Mock(return_value={"project_name": "test"}),
+            clear_gpu_fn=Mock(),
+        )
+
+        mock_cfg = Mock()
+        mock_cfg.embedding = EmbeddingConfig(enable_chunk_cache=True)
+
+        with patch("search.config.get_search_config", return_value=mock_cfg):
+            result = stage.run(
+                all_chunks=[chunk],
+                project_name="p",
+                dag=Mock(),
+                all_files=[],
+                supported_files=[],
+                start_time=time.time(),
+                repo_profile=None,
+            )
+
+        assert result.success is True
+        cache = embedder.embed_chunks.call_args.kwargs.get("cache")
+        assert cache is not None
+        assert cache._provenance == "unavailable"
+
+    def test_disabled_by_config_yields_no_cache(self, tmp_path):
+        """enable_chunk_cache=False ⇒ embed_chunks receives cache=None even
+        with a real, writable storage_dir."""
+        from search.config import EmbeddingConfig
+
+        chunk = _make_chunk()
+        embed_result = Mock()
+        embed_result.metadata = {}
+        embedder = Mock()
+        embedder.embed_chunks.return_value = [embed_result]
+
+        indexer = Mock()
+        indexer.storage_dir = tmp_path
+        indexer.resync_if_desynced.return_value = (False, 0)
+
+        stage = IndexWriteStage(
+            embedder=embedder,
+            indexer=indexer,
+            snapshot_manager=Mock(),
+            build_metadata_fn=Mock(return_value={"project_name": "test"}),
+            clear_gpu_fn=Mock(),
+        )
+
+        mock_cfg = Mock()
+        mock_cfg.embedding = EmbeddingConfig(enable_chunk_cache=False)
+
+        with patch("search.config.get_search_config", return_value=mock_cfg):
+            stage.run(
+                all_chunks=[chunk],
+                project_name="p",
+                dag=Mock(),
+                all_files=[],
+                supported_files=[],
+                start_time=time.time(),
+                repo_profile=None,
+            )
+
+        call_kwargs = embedder.embed_chunks.call_args.kwargs
+        assert call_kwargs.get("cache") is None
 
 
 class TestIncrementalIndexResultDataclass:

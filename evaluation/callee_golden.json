@@ -14,11 +14,11 @@
     {
       "id": "OB01",
       "category": "E",
-      "description": "run_resolvers calls sorted(), resolver.available(), resolver.resolve(), dict.get()",
-      "target_chunk_id": "chunking/relationships/call_edge_resolver.py:function:run_resolvers",
+      "description": "run_resolvers calls prepare_scoped_files and wrap_in_context directly; resolver.available()/.resolve() are Protocol-dispatched (never chunked as separate targets) and dict.get() fans out ambiguously via AST bare-name matching -- both excluded from expected_callees as known AST fan-out, not genuine misses",
+      "target_chunk_id": "chunking/relationships/call_edge_resolver.py:method:run_resolvers",
       "expected_callees": [
-        "chunking/relationships/call_edge_resolver.py:method:CallEdgeResolver.available",
-        "chunking/relationships/call_edge_resolver.py:method:CallEdgeResolver.resolve"
+        "chunking/relationships/call_edge_resolver.py:function:prepare_scoped_files",
+        "utils/observability.py:function:wrap_in_context"
       ]
     },
     {
@@ -36,7 +36,7 @@
       "description": "_inject_call_edges calls run_resolvers and storage.upgrade_call_edge",
       "target_chunk_id": "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges",
       "expected_callees": [
-        "chunking/relationships/call_edge_resolver.py:function:run_resolvers",
+        "chunking/relationships/call_edge_resolver.py:method:run_resolvers",
         "graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge"
       ]
     },
@@ -59,9 +59,23 @@
     {
       "id": "OB06",
       "category": "E",
-      "description": "scope_to_indexed_files calls Path(fn).resolve().relative_to(project_root)",
+      "description": "scope_to_indexed_files calls Path(fn).resolve().relative_to(project_root); .resolve() is not in graph_integration.py's _COMMON_METHODS denylist, so the AST resolver fans it out ambiguously to every *.resolve chunk in the project. These are known false positives, not scored against expected_callees (which stays [] -- there are no genuine project-internal callees here).",
       "target_chunk_id": "chunking/relationships/call_edge_resolver.py:function:scope_to_indexed_files",
-      "expected_callees": []
+      "expected_callees": [],
+      "known_false_positives": [
+        {
+          "chunk_id": "chunking/relationships/external_call_graph.py:method:PyanResolver.resolve",
+          "reason": "AST bare-name fan-out on Path(fn).resolve() -- resolve() is absent from _COMMON_METHODS"
+        },
+        {
+          "chunk_id": "chunking/relationships/libcst_call_graph.py:method:LibCSTResolver.resolve",
+          "reason": "AST bare-name fan-out on Path(fn).resolve() -- resolve() is absent from _COMMON_METHODS"
+        },
+        {
+          "chunk_id": "chunking/relationships/lsp_call_graph.py:method:LSPResolver.resolve",
+          "reason": "AST bare-name fan-out on Path(fn).resolve() -- resolve() is absent from _COMMON_METHODS"
+        }
+      ]
     },
     {
       "id": "OB07",

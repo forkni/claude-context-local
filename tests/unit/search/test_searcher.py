@@ -107,7 +107,3 @@ class TestDeferredEnrichment(unittest.TestCase):
         self.searcher._semantic_search("test query", k=3, context_depth=0)
 
         self.mock_index_manager.get_similar_chunks.assert_not_called()
-
-
-if __name__ == "__main__":
-    unittest.main()

@@ -24,7 +24,7 @@ that do not apply to this project.
 ## Why not turbovec
 
 - **No Windows wheels.** Release CI ships Linux x86_64, Linux aarch64, macOS aarch64. This
-  repo is Windows-first (`install-windows.bat`, PowerShell, `.cmd` launchers). Users would
+  repo is Windows-first (`install-windows.cmd`, PowerShell, `.cmd` launchers). Users would
   have to build from Rust source on every fresh install.
 - **Alpha quality, single maintainer.** v0.3.0, "Development Status :: 3 – Alpha", 2
   contributors (Ryan Codrai: 121/122 commits), 110 commits, last commit 2026-05-02.

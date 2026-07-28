@@ -124,6 +124,26 @@ class TestSearchPlannerFieldExtraction:
             plan = SearchPlanner().plan({"query": "test", "auto_reindex": False})
         assert plan.auto_reindex is False
 
+    def test_auto_reindex_uses_config_default_when_disabled(self):
+        """Fix 2 regression guard: enable_auto_reindex=False in config must
+        actually gate plan.auto_reindex — previously this config field was
+        read only by a status-report handler, never by the plan builder, so
+        disabling it in search_config.json had no effect on real searches."""
+        app_cfg = _make_app_config()
+        app_cfg.performance.enable_auto_reindex = False
+        with _patch_planner_deps(app_cfg=app_cfg):
+            plan = SearchPlanner().plan({"query": "test"})
+        assert plan.auto_reindex is False
+
+    def test_auto_reindex_explicit_argument_overrides_config_default(self):
+        """An explicit per-call auto_reindex argument must still win over a
+        disabled config default."""
+        app_cfg = _make_app_config()
+        app_cfg.performance.enable_auto_reindex = False
+        with _patch_planner_deps(app_cfg=app_cfg):
+            plan = SearchPlanner().plan({"query": "test", "auto_reindex": True})
+        assert plan.auto_reindex is True
+
     def test_include_parent_defaults_false(self):
         with _patch_planner_deps():
             plan = SearchPlanner().plan({"query": "test"})
@@ -334,16 +354,6 @@ class TestSearchPlannerRedirectHasFullPlan:
 
 class TestAnchorCacheByModelName:
     """_ANCHOR_EMBEDDINGS_CACHE is keyed by model_name, not id()."""
-
-    def setup_method(self):
-        import search.intent_classifier as _ic
-
-        _ic._ANCHOR_EMBEDDINGS_CACHE.clear()
-
-    def teardown_method(self):
-        import search.intent_classifier as _ic
-
-        _ic._ANCHOR_EMBEDDINGS_CACHE.clear()
 
     def test_same_model_name_hits_cache(self):
         import numpy as np
