@@ -141,6 +141,11 @@ not repeat it.
   argparse help text already read "Default: use config value (1000)" before
   this revert; it was stale relative to the shipped 4000 default and now
   matches the code again without further edits.
+- The paper's own Table 5 (arXiv 2509.25085v4) independently supports this
+  sweep's conclusion: it lists an "Effective Sequence Length" of 8,192,
+  distinct from the 131,072 "Context Length" the original cap4000 rationale
+  reasoned against — the ~8.8K-token estimate for cap4000 already crossed
+  that tighter figure. See ADR-0011 for the full framing.
 
 ## Follow-ups
 

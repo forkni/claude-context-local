@@ -45,6 +45,16 @@ that conclusion:
 The two runs were verified identical apart from the cap (same golden set,
 same other config), so the cap is the only plausible explanatory variable.
 
+The paper itself (arXiv 2509.25085v4, Table 5) independently corroborates this
+after the fact: it lists an "Effective Sequence Length" of **8,192**, a row
+distinct from the "Context Length" of 131,072 the original 4000-char rationale
+reasoned against. That rationale's own token estimate for cap4000 (~8.8K tokens
+in the shared 30-candidate context) already exceeds the paper's stated
+effective sequence length while sitting at 7% of the full context window —
+"no cliff at this scale" held for the wrong budget. This is corroborating
+evidence for the decision below, not new data driving it; the sweep above is
+still the basis for the decision itself.
+
 ## Decision
 
 Revert `listwise_doc_max_chars` to **1000**, in `RerankerConfig`
@@ -111,7 +121,11 @@ Reconsider raising this cap if any of the following hold:
 2. The reference hardware changes to a card with meaningfully more
    dedicated VRAM than 24GB.
 3. `top_k_candidates` (currently 30) or the model's `block_size` changes,
-   altering the packed-sequence length this cap multiplies against.
+   altering the packed-sequence length this cap multiplies against. Note
+   jina's shipped `modeling.py` hardcodes `block_size = 125`; raising
+   `top_k_candidates` above that silently switches to a different, untested
+   multi-block query-reconciliation regime rather than just growing the
+   single-pass context.
 
 Absent one of these, re-testing this exact configuration is unlikely to
 produce a different result.

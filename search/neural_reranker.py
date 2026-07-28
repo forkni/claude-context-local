@@ -86,6 +86,12 @@ def _build_rerank_document(candidate, max_chars: int) -> str:
 
     Returns:
         ``"ID: {chunk_id}\\n{body}"``, body truncated to ``max_chars``
+
+    Note: the ``ID:`` header is prepended *after* truncation, so it is never
+    counted against ``max_chars`` — the real per-document payload handed to
+    the reranker is ``max_chars`` plus header length. Harmless at today's
+    values, but any future packed-sequence budget arithmetic (see
+    ``JinaRerankerV3.__init__`` and ADR-0011) should account for it.
     """
     body = candidate.metadata.get("bm25_text") or candidate.metadata.get(
         "content_preview", ""
@@ -824,7 +830,12 @@ class JinaRerankerV3(BaseReranker):
                 the 131K window, and 0% of docs hit the model's own
                 2048-token per-doc ceiling at either cap — but that is not
                 the binding resource: attention activation memory scales
-                O(n^2) in the packed sequence length. A 4-run SSCG sweep at
+                O(n^2) in the packed sequence length, and the paper's own
+                Table 5 lists an "Effective Sequence Length" of 8,192 as a
+                figure distinct from the 131K Context Length — the ~8.8K
+                estimate at 4000 already crosses that tighter, governing
+                budget while looking safe against the window alone. A
+                4-run SSCG sweep at
                 4000 measured peak_vram_reserved_gb 27.66 on a 24GB card (a
                 WDDM shared-memory spill to host RAM — no OOM raised) with
                 42-45/96 queries stalling past 8s (max 354.9s) and every
