@@ -143,7 +143,7 @@ def main() -> int:
         print(f"ERROR: metadata.db not found (looked via {project_root})")
         return 2
 
-    store = MetadataStore(str(db_path))
+    store = MetadataStore(db_path)
     raw_ids = [chunk_id for chunk_id, _ in store.items()]
     index_ids = {normalize_chunk_id(chunk_id) for chunk_id in raw_ids}
     print(f"Live index: {db_path}")
