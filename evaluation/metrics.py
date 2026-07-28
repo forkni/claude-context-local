@@ -59,14 +59,38 @@ def normalize_chunk_ids(chunk_ids: list[str]) -> list[str]:
 
 # ---------------------------------------------------------------------------
 # Core metric functions (deterministic, zero external dependencies)
+#
+# Each retrieved position is either a plain normalized chunk ID (str) or a
+# set of IDs the chunk at that rank can be credited as — the containment-
+# credit representation for merged chunks (own ID plus every golden ID whose
+# symbol the merged chunk absorbed).  A str entry behaves exactly like a
+# one-element set, so plain-ID callers see identical scores as before.
 # ---------------------------------------------------------------------------
 
+RetrievedEntry = str | set[str]
 
-def calculate_recall_at_k(retrieved: list[str], relevant: list[str], k: int) -> float:
-    """Recall@k = |retrieved[:k] ∩ relevant| / |relevant|.
+
+def _entry_ids(entry: RetrievedEntry) -> set[str]:
+    """Return the set of IDs a retrieved position can match as."""
+    return entry if isinstance(entry, set) else {entry}
+
+
+def flatten_entries(entries: list[RetrievedEntry]) -> set[str]:
+    """Union all IDs across retrieved entries (for pool-membership checks)."""
+    ids: set[str] = set()
+    for entry in entries:
+        ids |= _entry_ids(entry)
+    return ids
+
+
+def calculate_recall_at_k(
+    retrieved: list[RetrievedEntry], relevant: list[str], k: int
+) -> float:
+    """Recall@k = |matched relevant IDs in retrieved[:k]| / |relevant|.
 
     Args:
-        retrieved: Ordered list of retrieved chunk IDs (normalized).
+        retrieved: Ordered list of retrieved entries (normalized chunk IDs,
+            or per-rank ID sets for containment credit).
         relevant: Set of relevant chunk IDs (normalized, label ≥ 2).
         k: Cut-off rank.
 
@@ -75,18 +99,21 @@ def calculate_recall_at_k(retrieved: list[str], relevant: list[str], k: int) -> 
     """
     if not relevant:
         return 0.0
-    retrieved_k = set(retrieved[:k])
     relevant_set = set(relevant)
-    return len(retrieved_k & relevant_set) / len(relevant_set)
+    matched: set[str] = set()
+    for entry in retrieved[:k]:
+        matched |= _entry_ids(entry) & relevant_set
+    return len(matched) / len(relevant_set)
 
 
 def calculate_precision_at_k(
-    retrieved: list[str], relevant: list[str], k: int
+    retrieved: list[RetrievedEntry], relevant: list[str], k: int
 ) -> float:
-    """Precision@k = |retrieved[:k] ∩ relevant| / k.
+    """Precision@k = |matched relevant IDs in retrieved[:k]| / k.
 
     Args:
-        retrieved: Ordered list of retrieved chunk IDs (normalized).
+        retrieved: Ordered list of retrieved entries (normalized chunk IDs,
+            or per-rank ID sets for containment credit).
         relevant: Set of relevant chunk IDs (normalized, label ≥ 2).
         k: Cut-off rank.
 
@@ -95,33 +122,39 @@ def calculate_precision_at_k(
     """
     if k == 0:  # pragma: no mutate
         return 0.0
-    retrieved_k = set(retrieved[:k])
     relevant_set = set(relevant)
-    return len(retrieved_k & relevant_set) / k
+    matched: set[str] = set()
+    for entry in retrieved[:k]:
+        matched |= _entry_ids(entry) & relevant_set
+    return len(matched) / k
 
 
-def calculate_mrr(retrieved: list[str], relevant: list[str]) -> float:
+def calculate_mrr(retrieved: list[RetrievedEntry], relevant: list[str]) -> float:
     """Mean Reciprocal Rank of the first highly-relevant (label=3) result.
 
     Args:
-        retrieved: Ordered list of retrieved chunk IDs (normalized).
+        retrieved: Ordered list of retrieved entries (normalized chunk IDs,
+            or per-rank ID sets for containment credit).
         relevant: Set of primary/highly-relevant chunk IDs (normalized, label=3).
 
     Returns:
         Reciprocal rank (1/rank) of first hit, or 0.0 if none found.
     """
     relevant_set = set(relevant)
-    for i, chunk_id in enumerate(retrieved, 1):
-        if chunk_id in relevant_set:
+    for i, entry in enumerate(retrieved, 1):
+        if _entry_ids(entry) & relevant_set:
             return 1.0 / i
     return 0.0
 
 
-def calculate_ndcg_at_k(retrieved: list[str], relevant: list[str], k: int) -> float:
+def calculate_ndcg_at_k(
+    retrieved: list[RetrievedEntry], relevant: list[str], k: int
+) -> float:
     """NDCG@k with binary relevance (label ≥ 2 = 1, otherwise 0).
 
     Args:
-        retrieved: Ordered list of retrieved chunk IDs (normalized).
+        retrieved: Ordered list of retrieved entries (normalized chunk IDs,
+            or per-rank ID sets for containment credit).
         relevant: Set of relevant chunk IDs (normalized, label ≥ 2).
         k: Cut-off rank.
 
@@ -131,22 +164,23 @@ def calculate_ndcg_at_k(retrieved: list[str], relevant: list[str], k: int) -> fl
     relevant_set = set(relevant)
     dcg = sum(
         1.0 / math.log2(i + 1)
-        for i, cid in enumerate(retrieved[:k], 1)
-        if cid in relevant_set
+        for i, entry in enumerate(retrieved[:k], 1)
+        if _entry_ids(entry) & relevant_set
     )
     idcg = sum(1.0 / math.log2(i + 1) for i in range(1, min(len(relevant_set), k) + 1))
     return dcg / idcg if idcg > 0 else 0.0  # pragma: no mutate
 
 
 def calculate_metrics_from_results(
-    retrieved: list[str],
+    retrieved: list[RetrievedEntry],
     expected: list[str],
     expected_primary: list[str] | None = None,
 ) -> dict[str, float | bool]:
     """Calculate all retrieval metrics for a single query.
 
     Args:
-        retrieved: Ordered list of retrieved chunk IDs (normalized).
+        retrieved: Ordered list of retrieved entries (normalized chunk IDs,
+            or per-rank ID sets for containment credit).
         expected: Relevant chunk IDs with label ≥ 2.
         expected_primary: Highly-relevant chunk IDs with label = 3.
             Falls back to ``expected`` if not provided (for MRR calculation).
@@ -542,3 +576,103 @@ def resolve_chunk_ids_to_ranges(
             path, start, end = lookup[normalized]
             result.setdefault(path, []).append((start, end))
     return result
+
+
+# ---------------------------------------------------------------------------
+# Containment credit for merged chunks
+#
+# Merged chunks carry chunk_type="merged" and the name of one representative
+# member, so their dedup key can never equal a golden expectation — even when
+# the chunk contains the target symbol's exact lines at rank 1 (see
+# evaluation/CHUNKING_MERGE_AB_20260728.md, Q40).  Fair scoring credits a
+# merged chunk for every golden ID whose symbol it absorbed, via the
+# ``merged_from`` member list persisted in chunk metadata.
+# ---------------------------------------------------------------------------
+
+
+def build_merged_membership(
+    metadata_store: Any,
+) -> dict[str, tuple[str, frozenset[str]]]:
+    """Build a lookup of merged chunks to their absorbed member symbols.
+
+    Scans the MetadataStore once; only entries whose metadata carries a
+    non-empty ``merged_from`` list (i.e. merged chunks) are included.  On a
+    merge-free index this returns an empty dict, making containment-credit
+    scoring an exact no-op.
+
+    Args:
+        metadata_store: An open ``MetadataStore`` instance.
+
+    Returns:
+        Dict mapping the **raw** chunk ID (line range intact — merged IDs are
+        only unique with it) to ``(relative_path, member_names)``, where
+        ``member_names`` are qualified symbol names (``Class.method`` /
+        ``function``) and the path is forward-slash normalized.
+    """
+    membership: dict[str, tuple[str, frozenset[str]]] = {}
+    for raw_id, entry in metadata_store.items():
+        meta = entry.get("metadata", {})
+        members = meta.get("merged_from")
+        if not members:
+            continue
+        path = normalize_path(meta.get("relative_path", "") or "")
+        if path:
+            membership[raw_id] = (path, frozenset(members))
+    return membership
+
+
+def _golden_id_matches_member(
+    golden_id: str, path: str, members: frozenset[str]
+) -> bool:
+    """True when a normalized golden ID names a symbol absorbed by a merged chunk.
+
+    Golden IDs use the normalized ``file:type:name`` form; the type component
+    is ignored because merged members lose their original kind and the
+    (path, qualified name) pair is already unambiguous within one file.
+    """
+    parts = golden_id.split(":")
+    if len(parts) < 3:
+        return False  # nameless IDs (e.g. "file.py:module") cannot be members
+    return normalize_path(parts[0]) == path and parts[-1] in members
+
+
+def expand_retrieved_with_containment(
+    raw_chunk_ids: list[str],
+    expected: list[str],
+    membership: dict[str, tuple[str, frozenset[str]]],
+) -> list[RetrievedEntry]:
+    """Normalize retrieved IDs, crediting merged chunks for absorbed golds.
+
+    Drop-in replacement for ``normalize_chunk_ids`` on the scoring path: each
+    output position is the normalized chunk ID, widened to a set that also
+    contains every golden ID from ``expected`` whose symbol the chunk absorbed
+    (per ``membership``).  Deduplication matches ``normalize_chunk_ids`` —
+    positions whose normalized own-ID was already seen are dropped.
+
+    With an empty ``membership`` (merge-free index) the output equals
+    ``normalize_chunk_ids(raw_chunk_ids)`` exactly.
+
+    Args:
+        raw_chunk_ids: Raw retrieved chunk IDs (line ranges intact).
+        expected: Normalized golden IDs for the query (label ≥ 2; primaries
+            are a subset, so one expansion serves recall and MRR alike).
+        membership: Lookup from ``build_merged_membership``.
+
+    Returns:
+        Ordered list of entries for the ``calculate_*`` metric functions.
+    """
+    seen: set[str] = set()
+    entries: list[RetrievedEntry] = []
+    for raw in raw_chunk_ids:
+        normalized = normalize_chunk_id(raw)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        merged = membership.get(raw)
+        if merged is None:
+            entries.append(normalized)
+            continue
+        path, members = merged
+        contained = {g for g in expected if _golden_id_matches_member(g, path, members)}
+        entries.append({normalized} | contained if contained else normalized)
+    return entries

@@ -89,6 +89,11 @@ class ChunkMetadata(TypedDict):
     """Injected by ``CodeIndexManager.add_embeddings`` / ``IncrementalIndexer``
     at index time.  Absent at build time and in freshly loaded metadata."""
 
+    merged_from: NotRequired[list[str]]
+    """Qualified member symbol names (``Class.method`` / ``function``) absorbed
+    into a merged chunk.  Present only when ``chunk_type == "merged"``; consumed
+    by evaluation containment-credit scoring (``evaluation/metrics.py``)."""
+
 
 def resolve_chunk_path(meta: "ChunkMetadata") -> str | None:
     """Return the best available file path from a ``ChunkMetadata`` dict.

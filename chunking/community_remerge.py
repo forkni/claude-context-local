@@ -335,6 +335,7 @@ def remerge_chunks_with_communities(
     max_merged_tokens: int = 1000,
     token_method: str = "whitespace",
     size_method: str = "tokens",
+    use_community_boundary: bool = True,
 ) -> list[CodeChunk]:
     """Re-merge chunks using community boundaries (community-based remerging).
 
@@ -365,6 +366,11 @@ def remerge_chunks_with_communities(
             ``"tiktoken"``).
         size_method: Size calculation method — ``"tokens"`` (default) or
             ``"characters"`` (cAST paper).
+        use_community_boundary: Merge boundary passed to the merger.  ``True``
+            (default) groups by ``community_id``; ``False`` groups by
+            ``parent_class`` (sibling merge — ``merge_boundary: "sibling"``
+            in ``ChunkingConfig``), still running post-community-detection so
+            community assignments and summaries are unaffected.
 
     Returns:
         List of CodeChunk re-merged with community boundaries.
@@ -387,7 +393,8 @@ def remerge_chunks_with_communities(
 
         merger = PythonChunker()._greedy_merge_small_chunks
 
-    logger.info(f"[REMERGE] Re-merging {len(chunks)} chunks with community boundaries")
+    boundary = "community" if use_community_boundary else "sibling"
+    logger.info(f"[REMERGE] Re-merging {len(chunks)} chunks with {boundary} boundaries")
 
     # Step 1: Assign community_id to chunks from map
     chunks_with_community = assign_community_ids(chunks, community_map)
@@ -395,18 +402,18 @@ def remerge_chunks_with_communities(
     # Step 2: Convert CodeChunk → TreeSitterChunk for merge algorithm
     ts_chunks = to_treesitter_chunks(chunks_with_community)
 
-    # Step 3: Re-run merge with use_community_boundary=True
+    # Step 3: Re-run merge with the configured boundary
     merged_ts_chunks, orig_count, merged_count = merger(
         ts_chunks,
         min_tokens=min_tokens,
         max_merged_tokens=max_merged_tokens,
         token_method=token_method,
-        use_community_boundary=True,
+        use_community_boundary=use_community_boundary,
         size_method=size_method,
     )
 
     logger.info(
-        f"[REMERGE] Community-based merge: {orig_count} → {merged_count} chunks "
+        f"[REMERGE] {boundary.capitalize()}-based merge: {orig_count} → {merged_count} chunks "
         f"({100 * (orig_count - merged_count) / orig_count:.1f}% reduction)"
     )
 

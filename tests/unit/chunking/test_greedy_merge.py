@@ -100,8 +100,40 @@ class TestCreateMergedChunk:
         assert "def foo" in result.content
         assert "def bar" in result.content
         assert result.metadata["merged_count"] == 2
-        assert result.metadata["merged_from"] == ["foo", "bar"]
+        assert result.metadata["merged_from"] == ["MyClass.foo", "MyClass.bar"]
         assert result.parent_class == "MyClass"
+
+    def test_merge_sorts_members_by_source_position(self, chunker):
+        """Out-of-emission-order members (module_preamble last) sort by line.
+
+        Regression: the chunker emits module_preamble after symbol chunks;
+        trusting emission order produced inverted line ranges (e.g. 79-11).
+        """
+        chunks = [
+            TreeSitterChunk(
+                content="def tail(): pass",
+                start_line=79,
+                end_line=80,
+                node_type="function_definition",
+                language="python",
+                metadata={"name": "tail"},
+            ),
+            TreeSitterChunk(
+                content="import os",
+                start_line=1,
+                end_line=11,
+                node_type="module_preamble",
+                language="python",
+                metadata={"name": "module_preamble"},
+            ),
+        ]
+        result = chunker._create_merged_chunk(chunks)
+
+        assert result.start_line == 1
+        assert result.end_line == 80
+        assert result.metadata["merged_from"] == ["module_preamble", "tail"]
+        # Content must be in source order too
+        assert result.content.index("import os") < result.content.index("def tail")
 
     def test_merge_preserves_language(self, chunker):
         """Merged chunk preserves language."""

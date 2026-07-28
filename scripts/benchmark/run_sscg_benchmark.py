@@ -52,10 +52,13 @@ from evaluation.metrics import (  # noqa: E402
     THRESHOLDS,
     aggregate_metrics,
     build_chunk_line_lookup,
+    build_merged_membership,
     calculate_line_iou,
     calculate_line_precision,
     calculate_line_recall,
     calculate_metrics_from_results,
+    expand_retrieved_with_containment,
+    flatten_entries,
     normalize_chunk_ids,
     resolve_chunk_ids_to_ranges,
 )
@@ -429,6 +432,35 @@ def _build_line_lookup(searcher: Any) -> dict[str, tuple[str, int, int]]:
         return {}
 
 
+def _build_merged_membership_lookup(
+    searcher: Any,
+) -> dict[str, tuple[str, frozenset[str]]]:
+    """Build the merged-chunk membership lookup for containment-credit scoring.
+
+    Empty on a merge-free index (scoring is then byte-identical to the strict
+    scorer).  Prints the merged-chunk count so runs are self-documenting about
+    whether containment credit was in play.
+
+    Args:
+        searcher: Initialized HybridSearcher instance.
+
+    Returns:
+        Lookup for ``expand_retrieved_with_containment``.
+    """
+    try:
+        metadata_store = searcher.dense_index.metadata_store
+        membership = build_merged_membership(metadata_store)
+        if membership:
+            print(
+                f"  Containment credit active: {len(membership)} merged chunks",
+                flush=True,
+            )
+        return membership
+    except AttributeError as exc:
+        print(f"  [WARN] Could not build merged membership: {exc}", file=sys.stderr)
+        return {}
+
+
 # ---------------------------------------------------------------------------
 # Per-query benchmark execution
 # ---------------------------------------------------------------------------
@@ -445,6 +477,7 @@ def run_benchmark(
     search_mode: str | None = None,
     with_centrality: bool = False,
     centrality_alpha: float | None = None,
+    merged_membership: dict[str, tuple[str, frozenset[str]]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[float]]:
     """Run all queries and return (per_query_results, latencies).
 
@@ -469,6 +502,10 @@ def run_benchmark(
             Blocker A for this run. Stage time is included in latency.
         centrality_alpha: ``centrality_alpha`` override (implies
             ``with_centrality``). None = config value.
+        merged_membership: Pre-built merged-chunk membership lookup from
+            ``_build_merged_membership_lookup``. When non-empty, merged chunks
+            are credited for golden symbols they absorbed (containment
+            credit); empty/None is an exact no-op vs strict scoring.
 
     Returns:
         Tuple of (per_query_results, latencies).
@@ -519,22 +556,41 @@ def run_benchmark(
                 latency_ms += (time.perf_counter() - stage_start) * 1000.0
             latencies.append(latency_ms)
 
-            # Normalize chunk IDs for chunk-level metrics
-            retrieved = normalize_chunk_ids([r.chunk_id for r in raw_results])
+            # Normalize chunk IDs for chunk-level metrics.  With a non-empty
+            # merged_membership, merged chunks widen to per-rank ID sets that
+            # include absorbed golden symbols (containment credit); on a
+            # merge-free index the entries are plain normalized IDs.
+            raw_ids = [r.chunk_id for r in raw_results]
+            retrieved = normalize_chunk_ids(raw_ids)
+            retrieved_entries = expand_retrieved_with_containment(
+                raw_ids, expected, merged_membership or {}
+            )
 
             metrics = calculate_metrics_from_results(
-                retrieved=retrieved,
+                retrieved=retrieved_entries,
                 expected=expected,
                 expected_primary=expected_primary,
             )
 
+            # Containment credits actually applied (JSON-serializable record)
+            containment: dict[str, list[str]] = {}
+            for entry, norm_id in zip(retrieved_entries, retrieved, strict=True):
+                if isinstance(entry, set) and len(entry) > 1:
+                    containment[norm_id] = sorted(entry - {norm_id})
+
             # Pool-hit-rate (R0): was any gold chunk in the fused candidate
-            # pool that entered the final rerank pass?
+            # pool that entered the final rerank pass?  Same containment
+            # credit as ranked scoring, so pool_hit stays consistent.
             pool_metrics: dict[str, Any] = {}
             if rerank_engine is not None and rerank_engine.last_candidate_ids:
-                pool_ids = set(normalize_chunk_ids(rerank_engine.last_candidate_ids))
+                pool_entries = expand_retrieved_with_containment(
+                    rerank_engine.last_candidate_ids,
+                    expected,
+                    merged_membership or {},
+                )
+                pool_ids = flatten_entries(pool_entries)
                 pool_metrics = {
-                    "pool_size": len(pool_ids),
+                    "pool_size": len(pool_entries),
                     "pool_hit": any(e in pool_ids for e in expected),
                 }
 
@@ -586,6 +642,7 @@ def run_benchmark(
                     "expected": expected,
                     "expected_primary": expected_primary,
                     "latency_ms": round(latency_ms, 1),
+                    **({"containment_credits": containment} if containment else {}),
                     **metrics,
                     **line_metrics,
                     **pool_metrics,
@@ -1066,6 +1123,8 @@ def run_single(
 
     # Build line-range lookup for line-overlap metrics (one-time scan of MetadataStore)
     line_lookup = _build_line_lookup(searcher)
+    # Merged-chunk membership for containment-credit scoring (empty = no-op)
+    merged_membership = _build_merged_membership_lookup(searcher)
 
     per_query, latencies = run_benchmark(
         searcher=searcher,
@@ -1077,6 +1136,7 @@ def run_single(
         search_mode=search_mode,
         with_centrality=with_centrality,
         centrality_alpha=centrality_alpha,
+        merged_membership=merged_membership,
     )
 
     dataset_thresholds = dataset.get("thresholds") or {}

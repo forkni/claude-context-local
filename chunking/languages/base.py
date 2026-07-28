@@ -633,20 +633,29 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
             Single TreeSitterChunk combining all content
 
         Note:
-            Preserves start_line from first chunk, end_line from last.
+            Members are sorted by source position first — emission order is
+            not source order (e.g. module_preamble is emitted after symbol
+            chunks), and trusting it inverts the merged line range.
             Sets node_type to "merged" to indicate merged origin.
             Only should be called with chunks that have the same parent_class.
         """
         if len(chunks) == 1:
             return chunks[0]
 
+        chunks = sorted(chunks, key=lambda c: (c.start_line, c.end_line))
+
         # Combine content with double newline separator for readability
         merged_content = "\n\n".join(c.content for c in chunks)
 
-        # Collect names from all chunks for metadata
-        merged_names = [
-            c.metadata.get("name") for c in chunks if c.metadata.get("name")
-        ]
+        # Qualified member names (Class.method when a parent exists) so that
+        # merged_from entries align with golden/benchmark chunk-ID naming.
+        merged_names = []
+        for c in chunks:
+            name = c.metadata.get("name")
+            if name:
+                merged_names.append(
+                    f"{c.parent_class}.{name}" if c.parent_class else name
+                )
 
         # Create merged metadata
         merged_metadata = {

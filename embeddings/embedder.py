@@ -1173,7 +1173,7 @@ class CodeEmbedder:
     @staticmethod
     def _build_chunk_metadata(chunk: CodeChunk) -> ChunkMetadata:
         """Build the metadata dict for an EmbeddingResult from a CodeChunk."""
-        return {
+        metadata: ChunkMetadata = {
             "file_path": chunk.file_path,
             "relative_path": chunk.relative_path,
             "folder_structure": chunk.folder_structure,
@@ -1206,6 +1206,10 @@ class CodeEmbedder:
             ),
             "language": getattr(chunk, "language", "python"),
         }
+        # Only merged chunks carry member provenance; keep ordinary records lean.
+        if chunk.merged_from:
+            metadata["merged_from"] = chunk.merged_from
+        return metadata
 
     def embed_chunk(self, chunk: CodeChunk) -> EmbeddingResult:
         """Generate embedding for a single code chunk."""

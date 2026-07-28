@@ -341,6 +341,11 @@ class ChunkingConfig:
     enable_community_merge: bool = (
         True  # Enable community-based remerge (full index only)
     )
+    merge_boundary: str = field(
+        default="community", metadata={"choices": ("community", "sibling")}
+    )  # Greedy-merge boundary when enable_community_merge is on: "community"
+    # (Louvain community_id) or "sibling" (parent_class — merges small
+    # same-class siblings regardless of community assignment)
     community_resolution: float = field(
         default=1.0, metadata={"range": (0.1, 2.0)}
     )  # Resolution parameter (higher = more/smaller communities)

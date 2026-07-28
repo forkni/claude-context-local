@@ -333,3 +333,55 @@ class TestCommunityMerge:
         # Default values should be True
         assert config.enable_community_merge is True
         assert config.enable_community_detection is True
+
+    def test_merge_boundary_config_default(self):
+        """merge_boundary defaults to "community" (pre-gate behavior)."""
+        config = ChunkingConfig()
+        assert config.merge_boundary == "community"
+
+
+class TestRemergeBoundarySelection:
+    """remerge_chunks_with_communities honors use_community_boundary."""
+
+    @staticmethod
+    def _make_code_chunk():
+        from chunking.python_ast_chunker import CodeChunk
+
+        return CodeChunk(
+            file_path="/proj/a.py",
+            relative_path="a.py",
+            folder_structure=[],
+            chunk_type="function",
+            content="def foo(): pass",
+            start_line=1,
+            end_line=2,
+            name="foo",
+            chunk_id="a.py:1-2:function:foo",
+        )
+
+    def _run_with_boundary(self, **remerge_kwargs):
+        """Run remerge with a spy merger; return the kwargs the merger saw."""
+        from chunking.community_remerge import remerge_chunks_with_communities
+
+        seen: dict = {}
+
+        def spy_merger(ts_chunks, **kwargs):
+            seen.update(kwargs)
+            return ts_chunks, len(ts_chunks), len(ts_chunks)
+
+        chunk = self._make_code_chunk()
+        remerge_chunks_with_communities(
+            chunks=[chunk],
+            community_map={chunk.chunk_id: 0},
+            merger=spy_merger,
+            **remerge_kwargs,
+        )
+        return seen
+
+    def test_default_is_community_boundary(self):
+        seen = self._run_with_boundary()
+        assert seen["use_community_boundary"] is True
+
+    def test_sibling_boundary_passed_through(self):
+        seen = self._run_with_boundary(use_community_boundary=False)
+        assert seen["use_community_boundary"] is False

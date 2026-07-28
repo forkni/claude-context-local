@@ -110,6 +110,9 @@ class CommunityStage:
                     max_merged_tokens=config.chunking.max_merged_tokens,
                     token_method=config.chunking.token_estimation,
                     size_method=config.chunking.size_method,
+                    use_community_boundary=(
+                        config.chunking.merge_boundary != "sibling"
+                    ),
                 )
                 logger.info(
                     f"[COMMUNITY_MERGE] Community remerge complete: {len(all_chunks)} chunks"
