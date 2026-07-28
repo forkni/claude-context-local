@@ -224,6 +224,22 @@ def _apply_reserved_slots_override(reserved_slots: int | None) -> None:
         print(f"[WARN] Could not apply reserved-slots override: {e}", file=sys.stderr)
 
 
+def _apply_query_expansion_override(enabled: bool) -> None:
+    """Enable curated-vocabulary query expansion in the in-memory config.
+
+    In-memory only. Read live from config on every search
+    (``search_executor.py``), so no searcher reset is needed between runs.
+    """
+    if not enabled:
+        return
+    try:
+        from search.config import get_search_config
+
+        get_search_config().query_expansion.enabled = True
+    except Exception as e:
+        print(f"[WARN] Could not apply query-expansion override: {e}", file=sys.stderr)
+
+
 def _apply_rrf_k_override(rrf_k: int | None) -> None:
     """Override the RRF fusion constant in the in-memory config singleton.
 
@@ -1029,6 +1045,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--query-expansion",
+        action="store_true",
+        help=(
+            "Enable curated-vocabulary query expansion "
+            "(query_expansion.enabled=True) for this run. Matched concepts add "
+            "discounted BM25 variant legs to the hybrid fusion. Default: use "
+            "config value (disabled)."
+        ),
+    )
+    parser.add_argument(
         "--f-via-similar",
         action="store_true",
         help=(
@@ -1112,6 +1138,7 @@ def run_single(
     reranker_doc_max_chars: int | None = None,
     reranker_listwise_doc_max_chars: int | None = None,
     f_via_similar: bool = False,
+    query_expansion: bool = False,
 ) -> dict[str, Any]:
     """Execute one benchmark run and return the result dict."""
     _apply_weight_overrides(bm25_weight, dense_weight, search_mode)
@@ -1122,6 +1149,7 @@ def run_single(
     )
     _apply_rrf_k_override(rrf_k)
     _apply_reserved_slots_override(bm25_reserved_slots)
+    _apply_query_expansion_override(query_expansion)
     _maybe_reset_for_construction_overrides(
         bm25_weight,
         dense_weight,
@@ -1169,6 +1197,11 @@ def run_single(
         print(
             "  F-via-similar: ON (anchored F queries scored via "
             "find_similar_to_chunk; secondary view, not the official aggregate)"
+        )
+    if query_expansion:
+        print(
+            "  Query expansion: ON (curated-vocabulary variant legs, "
+            "config/query_expansion_variants.yaml)"
         )
 
     # Reset peak VRAM stats and issue a warm-up search so a reranker model swap's
@@ -1236,6 +1269,8 @@ def run_single(
         config_metadata["bm25_reserved_slots"] = bm25_reserved_slots
     if f_via_similar:
         config_metadata["f_via_similar"] = True
+    if query_expansion:
+        config_metadata["query_expansion"] = True
     if with_centrality or centrality_alpha is not None:
         config_metadata["with_centrality"] = True
         config_metadata["centrality_alpha"] = (
@@ -1314,6 +1349,7 @@ def main() -> None:
                 with_centrality=args.with_centrality,
                 centrality_alpha=args.centrality_alpha,
                 f_via_similar=args.f_via_similar,
+                query_expansion=args.query_expansion,
             )
             reranker_results.append(result)
 
@@ -1360,6 +1396,7 @@ def main() -> None:
                 with_centrality=args.with_centrality,
                 centrality_alpha=args.centrality_alpha,
                 f_via_similar=args.f_via_similar,
+                query_expansion=args.query_expansion,
             )
             sweep_results.append(result)
 
@@ -1400,6 +1437,7 @@ def main() -> None:
         with_centrality=args.with_centrality,
         centrality_alpha=args.centrality_alpha,
         f_via_similar=args.f_via_similar,
+        query_expansion=args.query_expansion,
     )
 
     # Print leaderboard (single row)

@@ -566,6 +566,48 @@ def test_reranker_listwise_doc_max_chars_default_and_flat_alias():
     assert restored.reranker.listwise_doc_max_chars == 500
 
 
+def test_query_expansion_defaults():
+    """QueryExpansionConfig defaults: opt-in, BM25-only, 2 concepts, 0.5 discount."""
+    from search.config import QueryExpansionConfig
+
+    cfg = QueryExpansionConfig()
+    assert cfg.enabled is False
+    assert cfg.variants_path == ""
+    assert cfg.max_variants == 2
+    assert cfg.variant_weight_discount == 0.5
+    assert cfg.apply_to_bm25 is True
+    assert cfg.apply_to_dense is False
+
+
+def test_query_expansion_flat_aliases_and_roundtrip():
+    """Flat keys map into the nested query_expansion sub-config and round-trip."""
+    config = SearchConfig.from_dict(
+        {
+            "query_expansion_enabled": True,
+            "query_expansion_max_variants": 3,
+            "query_expansion_weight_discount": 0.25,
+            "query_expansion_apply_to_dense": True,
+        }
+    )
+    assert config.query_expansion.enabled is True
+    assert config.query_expansion.max_variants == 3
+    assert config.query_expansion.variant_weight_discount == 0.25
+    assert config.query_expansion.apply_to_dense is True
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.query_expansion.enabled is True
+    assert restored.query_expansion.max_variants == 3
+    assert restored.query_expansion.variant_weight_discount == 0.25
+    assert restored.query_expansion.apply_to_dense is True
+
+
+def test_query_expansion_in_to_dict():
+    """to_dict() serializes the query_expansion sub-config automatically."""
+    config_dict = SearchConfig().to_dict()
+    assert "query_expansion" in config_dict
+    assert config_dict["query_expansion"]["enabled"] is False
+
+
 def test_reranker_doc_max_chars_env_override(tmp_path):
     """CLAUDE_RERANKER_DOC_MAX_CHARS must override the nested config value."""
     from search.config import SearchConfigManager

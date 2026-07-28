@@ -149,10 +149,28 @@ class SearchExecutor:
                     query, search_k, min_bm25_score, filters, query_embedding
                 )
 
-            # Rerank results
-            rerank_start = time.time()
             eff_bm25 = bm25_weight if bm25_weight is not None else self.bm25_weight
             eff_dense = dense_weight if dense_weight is not None else self.dense_weight
+
+            # Curated-vocabulary query expansion (opt-in): matched concepts add
+            # discounted variant legs to the fusion below. Disabled or unmatched
+            # queries skip this entirely and take the exact rerank_simple path.
+            variant_legs: list[list[SearchResult]] = []
+            variant_weights: list[float] = []
+            qe_cfg = get_search_config().query_expansion
+            if qe_cfg.enabled:
+                variant_legs, variant_weights = self._build_variant_legs(
+                    query,
+                    search_k,
+                    min_bm25_score,
+                    filters,
+                    qe_cfg,
+                    eff_bm25,
+                    eff_dense,
+                )
+
+            # Rerank results
+            rerank_start = time.time()
             self._logger.debug(
                 f"[RERANK] Using weights: BM25={eff_bm25}, Dense={eff_dense}, "
                 f"BM25_results={len(bm25_results)}, Dense_results={len(dense_results)}"
@@ -163,14 +181,36 @@ class SearchExecutor:
             # disabled/unavailable, apply_neural_reranking returns the pool
             # unchanged and the [:k] below reproduces the old RRF top-k.
             fusion_k = max(k, reranker_budget)
-            final_results = self.reranker.rerank_simple(
-                bm25_results=bm25_results,
-                dense_results=dense_results,
-                max_results=fusion_k,
-                bm25_weight=eff_bm25,
-                dense_weight=eff_dense,
-                reserved_slots=get_search_config().search_mode.bm25_reserved_slots,
-            )
+            if variant_legs:
+                # Generic N-list fusion: primary legs keep their weights,
+                # variant legs enter discounted; reserved slots stay pointed
+                # at the primary BM25 leg (index 0) — the bm25_reserved_slots
+                # interaction is unchanged, not extended to variant legs.
+                # Same tuple->SearchResult conversion rerank_simple performs
+                primary_bm25 = [
+                    SearchResult(chunk_id=c, score=s, metadata=m, source="bm25")
+                    for c, s, m in bm25_results
+                ]
+                primary_dense = [
+                    SearchResult(chunk_id=c, score=s, metadata=m, source="dense")
+                    for c, s, m in dense_results
+                ]
+                final_results = self.reranker.rerank(
+                    results_lists=[primary_bm25, primary_dense, *variant_legs],
+                    weights=[eff_bm25, eff_dense, *variant_weights],
+                    max_results=fusion_k,
+                    reserved_slots=get_search_config().search_mode.bm25_reserved_slots,
+                    reserve_list_idx=0,
+                )
+            else:
+                final_results = self.reranker.rerank_simple(
+                    bm25_results=bm25_results,
+                    dense_results=dense_results,
+                    max_results=fusion_k,
+                    bm25_weight=eff_bm25,
+                    dense_weight=eff_dense,
+                    reserved_slots=get_search_config().search_mode.bm25_reserved_slots,
+                )
             rerank_time = time.time() - rerank_start
             self._logger.debug(
                 f"[RERANK] Produced {len(final_results)} results in {rerank_time:.3f}s"
@@ -198,6 +238,63 @@ class SearchExecutor:
         )
 
         return final_results
+
+    def _build_variant_legs(
+        self,
+        query: str,
+        search_k: int,
+        min_bm25_score: float,
+        filters: dict[str, Any] | None,
+        qe_cfg,  # QueryExpansionConfig
+        bm25_weight: float,
+        dense_weight: float,
+    ) -> tuple[list[list[SearchResult]], list[float]]:
+        """Build discounted fusion legs for concepts matched by query expansion.
+
+        One leg per matched concept per enabled backend (BM25 and/or dense),
+        each searched with the original query plus the concept's terms and
+        weighted at ``base_leg_weight * variant_weight_discount``. Returns
+        ``([], [])`` when no concept matches, keeping the caller on the
+        unexpanded fusion path.
+        """
+        from search.query_expansion import build_variant_query, match_concepts
+
+        matches = match_concepts(query, qe_cfg.variants_path, qe_cfg.max_variants)
+        if not matches:
+            return [], []
+
+        legs: list[list[SearchResult]] = []
+        weights: list[float] = []
+        for concept, terms in matches:
+            variant_query = build_variant_query(query, terms)
+            self._logger.debug(
+                f"[QUERY-EXPANSION] concept={concept} variant_query={variant_query!r}"
+            )
+            if qe_cfg.apply_to_bm25:
+                tuples = self.search_bm25(
+                    variant_query, search_k, min_bm25_score, filters
+                )
+                legs.append(
+                    [
+                        SearchResult(
+                            chunk_id=c, score=s, metadata=m, source="bm25_variant"
+                        )
+                        for c, s, m in tuples
+                    ]
+                )
+                weights.append(bm25_weight * qe_cfg.variant_weight_discount)
+            if qe_cfg.apply_to_dense:
+                tuples = self.search_dense(variant_query, search_k, filters)
+                legs.append(
+                    [
+                        SearchResult(
+                            chunk_id=c, score=s, metadata=m, source="dense_variant"
+                        )
+                        for c, s, m in tuples
+                    ]
+                )
+                weights.append(dense_weight * qe_cfg.variant_weight_discount)
+        return legs, weights
 
     def _parallel_search(
         self,

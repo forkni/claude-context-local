@@ -91,6 +91,7 @@ def _cfg(top_k_candidates=30, single_pass=False, bm25_reserved_slots=0):
     cfg.reranker.top_k_candidates = top_k_candidates
     cfg.reranker.single_pass = single_pass
     cfg.search_mode.bm25_reserved_slots = bm25_reserved_slots
+    cfg.query_expansion.enabled = False  # Mock attrs are truthy by default
     return cfg
 
 

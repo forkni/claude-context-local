@@ -1,0 +1,249 @@
+# Curated Query-Expansion Vocabulary
+#
+# Maps general software-engineering concepts to code-domain expansion terms.
+# When a query's lowercased text contains one of a concept's triggers, the
+# concept's terms are appended to an extra (discounted) BM25 fusion leg —
+# bridging plain-English paraphrases ("survive a restart") to the identifiers
+# code actually uses ("save", "persist", "disk").
+#
+# Curation policy (enforced at review time, not runtime):
+# - GENERALITY TEST: every concept must plausibly serve queries outside any
+#   benchmark set. Concepts and triggers describe universal software ideas
+#   (persistence, eviction, pooling, ...), never a specific query's wording.
+# - NEVER QUERY-KEYED: no entry may be named after, or triggered solely by,
+#   a golden-dataset query. Triggers are common colloquialisms for the concept.
+# - CAP: ~15 concepts maximum. Growth pressure means the approach is wrong
+#   (switch to embedding-based matching instead of adding entries).
+# - Matching is deterministic lowercase substring containment (see
+#   search/query_expansion.py). Multi-word triggers must therefore appear
+#   verbatim in the query; prefer 1-2 word triggers unless a phrase is
+#   needed to avoid over-firing (e.g. "memory gets tight", not "memory").
+#
+# Schema: concepts.<name>.triggers = list[str] (lowercase, substring-matched)
+#         concepts.<name>.terms    = list[str] (appended to the variant leg)
+#
+# Last updated: 2026-07-28 (initial table, 12 concepts)
+
+concepts:
+  persistence:
+    triggers:
+      - "persist"
+      - "survive a restart"
+      - "survives restart"
+      - "across restarts"
+      - "durable"
+      - "save to disk"
+      - "saved to disk"
+      - "write to disk"
+      - "written to disk"
+    terms:
+      - save
+      - persist
+      - disk
+      - json
+      - serialize
+      - write
+      - storage
+      - load
+
+  eviction:
+    triggers:
+      - "evict"
+      - "discard"
+      - "stalest"
+      - "least recently used"
+      - "lru"
+      - "make room"
+      - "cache full"
+      - "oldest entries"
+      - "past its limit"
+    terms:
+      - evict
+      - lru
+      - cache
+      - capacity
+      - max_size
+      - remove
+      - oldest
+      - prune
+
+  caching:
+    triggers:
+      - "cache"
+      - "cached"
+      - "memoize"
+      - "from memory instead"
+      - "recomputed"
+      - "recompute"
+    terms:
+      - cache
+      - hit
+      - miss
+      - ttl
+      - lookup
+      - get
+      - put
+      - stats
+
+  pooling:
+    triggers:
+      - "pool"
+      - "pooling"
+      - "keep loaded"
+      - "several loaded"
+      - "multiple loaded"
+      - "reuse instances"
+    terms:
+      - pool
+      - manager
+      - slot
+      - loaded
+      - acquire
+      - release
+      - registry
+      - model
+
+  memory_pressure:
+    triggers:
+      - "memory gets tight"
+      - "memory pressure"
+      - "out of memory"
+      - "low memory"
+      - "vram"
+      - "gpu memory"
+      - "memory budget"
+    terms:
+      - vram
+      - memory
+      - unload
+      - evict
+      - budget
+      - free
+      - limit
+      - gpu
+
+  lazy_loading:
+    triggers:
+      - "lazy"
+      - "on demand"
+      - "on-demand"
+      - "first use"
+      - "deferred load"
+      - "only when needed"
+    terms:
+      - lazy
+      - defer
+      - initialize
+      - load
+      - singleton
+      - startup
+      - first
+
+  serialization:
+    triggers:
+      - "serialize"
+      - "deserialize"
+      - "to json"
+      - "from json"
+      - "marshal"
+      - "round-trip"
+      - "round trip"
+    terms:
+      - serialize
+      - json
+      - dict
+      - encode
+      - decode
+      - dump
+      - parse
+
+  teardown:
+    triggers:
+      - "teardown"
+      - "tear down"
+      - "clean up"
+      - "cleanup"
+      - "shut down"
+      - "shutdown"
+      - "release resources"
+      - "dispose"
+    terms:
+      - cleanup
+      - close
+      - release
+      - shutdown
+      - teardown
+      - free
+      - dispose
+
+  retry:
+    triggers:
+      - "retry"
+      - "retries"
+      - "back off"
+      - "backoff"
+      - "transient failure"
+      - "try again"
+      - "give up after"
+    terms:
+      - retry
+      - backoff
+      - attempt
+      - exponential
+      - timeout
+      - fail
+      - max_retries
+
+  concurrency:
+    triggers:
+      - "thread-safe"
+      - "thread safe"
+      - "race condition"
+      - "in parallel"
+      - "simultaneously"
+      - "concurrent"
+      - "at the same time"
+    terms:
+      - lock
+      - thread
+      - mutex
+      - concurrent
+      - parallel
+      - async
+      - atomic
+
+  validation:
+    triggers:
+      - "validate"
+      - "sanity check"
+      - "well-formed"
+      - "malformed"
+      - "reject invalid"
+      - "check that"
+    terms:
+      - validate
+      - check
+      - verify
+      - raise
+      - error
+      - invalid
+      - schema
+
+  incremental_update:
+    triggers:
+      - "incremental"
+      - "only changed"
+      - "changed files"
+      - "out of date"
+      - "stale index"
+      - "delta"
+      - "since last"
+    terms:
+      - incremental
+      - delta
+      - changed
+      - refresh
+      - update
+      - detect
+      - hash
+      - mtime

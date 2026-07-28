@@ -494,6 +494,29 @@ class ObservabilityConfig:
 
 
 @dataclass
+class QueryExpansionConfig:
+    """Curated-vocabulary query expansion settings (6 fields).
+
+    When enabled, queries whose lowercased text contains a concept trigger
+    from ``config/query_expansion_variants.yaml`` gain extra discounted
+    fusion legs built from that concept's code-domain terms (see
+    ``search/query_expansion.py``). Bridges zero-identifier English
+    paraphrases ("survive a restart") to the identifiers code actually
+    uses ("save", "persist", "disk"). Unmatched or disabled queries take
+    exactly the unexpanded two-leg fusion path.
+    """
+
+    enabled: bool = False  # Opt-in pending A/B (flip on pass, BM25-only)
+    variants_path: str = (
+        ""  # Empty = package default config/query_expansion_variants.yaml
+    )
+    max_variants: int = 2  # Max matched concepts per query (deterministic order)
+    variant_weight_discount: float = 0.5  # Variant-leg weight = base leg weight * this
+    apply_to_bm25: bool = True  # Add expanded-query BM25 leg(s)
+    apply_to_dense: bool = False  # Add expanded-query dense leg(s) — needs its own A/B
+
+
+@dataclass
 class CallGraphConfig:
     """Call-graph resolver pipeline settings (6 fields).
 
@@ -646,6 +669,7 @@ class SearchConfig:
         graph_enhanced: GraphEnhancedConfig | None = None,
         observability: ObservabilityConfig | None = None,
         call_graph: CallGraphConfig | None = None,
+        query_expansion: QueryExpansionConfig | None = None,
     ):
         """Initialize SearchConfig with nested sub-configs.
 
@@ -663,6 +687,7 @@ class SearchConfig:
             graph_enhanced: GraphEnhancedConfig instance (optional, defaults to GraphEnhancedConfig())
             observability: ObservabilityConfig instance (optional, defaults to ObservabilityConfig())
             call_graph: CallGraphConfig instance (optional, defaults to CallGraphConfig())
+            query_expansion: QueryExpansionConfig instance (optional, defaults to QueryExpansionConfig())
         """
         # Initialize nested configs with defaults
         self.embedding = embedding if embedding is not None else EmbeddingConfig()
@@ -690,6 +715,9 @@ class SearchConfig:
             observability if observability is not None else ObservabilityConfig()
         )
         self.call_graph = call_graph if call_graph is not None else CallGraphConfig()
+        self.query_expansion = (
+            query_expansion if query_expansion is not None else QueryExpansionConfig()
+        )
 
     # ------------------------------------------------------------------
     # Serialization schema — single source of truth
@@ -711,6 +739,7 @@ class SearchConfig:
         "graph_enhanced",
         "observability",
         "call_graph",
+        "query_expansion",
     )
 
     # frozenset for O(1) membership tests in _flat_to_nested / is_nested checks
@@ -730,6 +759,7 @@ class SearchConfig:
         "graph_enhanced": GraphEnhancedConfig,
         "observability": ObservabilityConfig,
         "call_graph": CallGraphConfig,
+        "query_expansion": QueryExpansionConfig,
     }
 
     # Maps legacy flat config keys (and env-var flat keys) to
@@ -850,6 +880,16 @@ class SearchConfig:
         "otel_endpoint": ("observability", "otlp_endpoint"),
         "otel_sample_ratio": ("observability", "sample_ratio"),
         "otel_capture_query_text": ("observability", "capture_query_text"),
+        # QueryExpansionConfig
+        "query_expansion_enabled": ("query_expansion", "enabled"),
+        "query_expansion_variants_path": ("query_expansion", "variants_path"),
+        "query_expansion_max_variants": ("query_expansion", "max_variants"),
+        "query_expansion_weight_discount": (
+            "query_expansion",
+            "variant_weight_discount",
+        ),
+        "query_expansion_apply_to_bm25": ("query_expansion", "apply_to_bm25"),
+        "query_expansion_apply_to_dense": ("query_expansion", "apply_to_dense"),
     }
 
     def to_dict(self) -> dict[str, Any]:

@@ -77,6 +77,7 @@ def test_hybrid_single_pass_skips_hop1_neural_rerank(executor):
     cfg = Mock()
     cfg.reranker.top_k_candidates = 30
     cfg.reranker.single_pass = True
+    cfg.query_expansion.enabled = False  # Mock attrs are truthy by default
     with patch("search.search_executor.get_search_config", return_value=cfg):
         results = executor.execute_single_hop("test query", k=5, search_mode="hybrid")
 
@@ -160,6 +161,66 @@ def test_stats_increment_after_each_search(executor):
     executor.execute_single_hop("q2", k=3, search_mode="semantic")
 
     assert executor.stats["total_searches"] == 2
+
+
+def test_hybrid_disabled_expansion_takes_exact_rerank_simple_path(executor):
+    """query_expansion.enabled=False (the default) → today's rerank_simple call,
+    never the generic rerank(); regression guard for the unexpanded path."""
+    executor.execute_single_hop("survive a restart", k=5, search_mode="hybrid")
+
+    executor.reranker.rerank_simple.assert_called_once()
+    executor.reranker.rerank.assert_not_called()
+
+
+def test_hybrid_enabled_but_unmatched_query_takes_rerank_simple_path(executor):
+    """Enabled expansion with no concept match must still take rerank_simple."""
+    cfg = Mock()
+    cfg.reranker.top_k_candidates = 30
+    cfg.reranker.single_pass = False
+    cfg.search_mode.bm25_reserved_slots = 0
+    cfg.query_expansion.enabled = True
+    cfg.query_expansion.variants_path = ""
+    cfg.query_expansion.max_variants = 2
+    cfg.query_expansion.variant_weight_discount = 0.5
+    cfg.query_expansion.apply_to_bm25 = True
+    cfg.query_expansion.apply_to_dense = False
+    with patch("search.search_executor.get_search_config", return_value=cfg):
+        executor.execute_single_hop(
+            "where is QueryRouter defined", k=5, search_mode="hybrid"
+        )
+
+    executor.reranker.rerank_simple.assert_called_once()
+    executor.reranker.rerank.assert_not_called()
+
+
+def test_hybrid_enabled_matched_query_fuses_variant_legs(executor):
+    """Enabled + matched concept → generic rerank() with >2 lists and the
+    variant leg weighted at bm25_weight * variant_weight_discount."""
+    executor.reranker.rerank.return_value = []
+    cfg = Mock()
+    cfg.reranker.top_k_candidates = 30
+    cfg.reranker.single_pass = False
+    cfg.search_mode.bm25_reserved_slots = 0
+    cfg.query_expansion.enabled = True
+    cfg.query_expansion.variants_path = ""
+    cfg.query_expansion.max_variants = 2
+    cfg.query_expansion.variant_weight_discount = 0.5
+    cfg.query_expansion.apply_to_bm25 = True
+    cfg.query_expansion.apply_to_dense = False
+    with patch("search.search_executor.get_search_config", return_value=cfg):
+        executor.execute_single_hop(
+            "how does state survive a restart", k=5, search_mode="hybrid"
+        )
+
+    executor.reranker.rerank_simple.assert_not_called()
+    kwargs = executor.reranker.rerank.call_args.kwargs
+    assert len(kwargs["results_lists"]) == 3  # bm25 + dense + 1 variant leg
+    assert kwargs["weights"] == [0.35, 0.65, 0.35 * 0.5]
+    assert kwargs["reserve_list_idx"] == 0
+    # Variant leg searched BM25 with the expanded query text
+    variant_call = executor.bm25_index.search.call_args_list[-1]
+    assert "survive a restart" in variant_call.args[0]
+    assert "persist" in variant_call.args[0]
 
 
 def test_shutdown_sets_flag_and_is_idempotent(executor):
