@@ -37,6 +37,7 @@ import math
 import os
 import sys
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 from pathlib import Path
 
 
@@ -69,7 +70,7 @@ def percentile(sorted_vals: list[float], q: float) -> float:
     return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (idx - lo)
 
 
-def dist(values: list[float | int]) -> dict:
+def dist(values: Sequence[float]) -> dict:
     """Summary distribution: count, mean, p10..p90, max."""
     if not values:
         return {"count": 0}
@@ -153,6 +154,7 @@ class TokenCounter:
                 encoded = self._hf(batch, add_special_tokens=False)["input_ids"]
                 counts.extend(len(ids) for ids in encoded)
         else:
+            assert self._tk is not None  # constructor guarantees one backend
             counts.extend(len(self._tk.encode(t)) for t in texts)
         return counts
 
