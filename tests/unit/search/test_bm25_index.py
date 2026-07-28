@@ -285,6 +285,18 @@ class TestTextPreprocessorRound5aEquivalence:
             actual = preprocessor.tokenize(preprocessed)
             assert actual == expected, f"Mismatch for {doc!r}: {actual} != {expected}"
 
+    @pytest.mark.skip(
+        reason="Quarantined: flaky in CI (failed once on 2026-07-25, run "
+        "30170215754, commit 9c956a1a58 — assert [] == ['probe'], i.e. the "
+        "patched word_tokenize was never invoked). Not reproduced locally "
+        "across 9 randomized full-suite reruns (~29k test executions, "
+        "including one run matching CI's exact --cov-branch invocation) or "
+        "by static review of _resolve_tokenizer's patch.object usage, which "
+        "reads as correct. See weekly flaky-test report (2026-07-28) for "
+        "the full investigation. Re-enable once the root cause is found, "
+        "or if it recurs, capture more diagnostic context (worker/process "
+        "info, full -p no:randomly repro seed) before re-quarantining."
+    )
     def test_tokenizer_probe_falls_back_and_does_not_reprobe(self):
         """When word_tokenize can't run, the fallback decision is made once
         at construction — later tokenize() calls must not retry it."""
