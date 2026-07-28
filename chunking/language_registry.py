@@ -96,6 +96,9 @@ DEFAULT_IGNORED_DIRS: set[str] = {
     "target",
     "bin",
     "obj",
+    # Scratch/temp dirs — not build output, but shouldn't be indexed either
+    "tmp",
+    "temp",
 }
 
 

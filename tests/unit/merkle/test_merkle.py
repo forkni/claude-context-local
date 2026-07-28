@@ -192,6 +192,37 @@ class TestMerkleDAG(TestCase):
             f"{[f for f in all_files if 'logs' in f]}"
         )
 
+    def test_tmp_directory_is_ignored(self):
+        """tmp/ (and temp/) hold scratch files, not source — they must be excluded so
+        a force reindex doesn't sweep them into the index (issue: gitignored tmp/
+        chunks polluting retrieval pools)."""
+        self.create_test_files()
+
+        (self.test_path / "tmp").mkdir()
+        (self.test_path / "tmp" / "scratch.py").write_text("scratch = 1")
+        (self.test_path / "temp").mkdir()
+        (self.test_path / "temp" / "scratch2.py").write_text("scratch2 = 2")
+
+        dag = MerkleDAG(self.temp_dir)
+        dag.build()
+
+        all_files = dag.get_all_files()
+
+        tmp_prefixes = ("tmp/", "tmp\\")
+        temp_prefixes = ("temp/", "temp\\")
+        leaked_tmp = [f for f in all_files if f.startswith(tmp_prefixes)]
+        leaked_temp = [f for f in all_files if f.startswith(temp_prefixes)]
+
+        assert not leaked_tmp, (
+            f"tmp/ should be excluded from DAG, but found: {leaked_tmp}"
+        )
+        assert not leaked_temp, (
+            f"temp/ should be excluded from DAG, but found: {leaked_temp}"
+        )
+
+        # Regular files are unaffected
+        assert "README.md" in all_files
+
     def test_dag_serialization(self):
         """Test DAG to/from dict conversion."""
         self.create_test_files()

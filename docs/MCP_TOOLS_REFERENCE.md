@@ -22,7 +22,7 @@ set. This keeps the advertised tool count small without removing the capability.
 | **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=4 (schema default; `search_config.json.example` sets the effective default to 7), search_mode="hybrid", file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0 |
 | **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types |
 | **find_path** | 🟡 **IMPACT** | Trace shortest path between code entities in relationship graph | source OR source_chunk_id, target OR target_chunk_id, edge_types, max_hops=10 |
-| **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), project_name, incremental=True |
+| **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), project_name, incremental=True, wait=True, include_dirs, exclude_dirs |
 | **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=4 |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.35, dense_weight=0.65, enable_parallel=True |
 | configure_reranking | Config | Configure neural reranker settings (BGE OR Jina v3, runtime configurable) | enabled, model_name, top_k_candidates=30 |
@@ -46,6 +46,15 @@ clients) these calls are serialized on a global lock so two concurrent clients c
 interleave a mutation with each other's reads — but the state itself is still global:
 switching the project/model from one client switches it for every client. Avoid running
 these calls concurrently against unrelated projects from multiple clients.
+
+**`index_directory`'s `include_dirs`/`exclude_dirs` replace, not merge.** Omitting either
+parameter reuses the list stored from project creation. Passing a new list **replaces the
+stored list wholesale** — it does not merge with it — so always re-pass every directory you
+still want filtered, or the omitted ones become indexable again. Passing `[]` clears the
+filter explicitly. Any change to the effective filters (including the implicit "add one more
+excluded dir") is detected against the stored snapshot and **forces a full, non-incremental
+reindex** even if `incremental=True` was requested — `batch_index.py` prints the effective
+filters before indexing starts so you can confirm the full list took effect.
 
 ---
 

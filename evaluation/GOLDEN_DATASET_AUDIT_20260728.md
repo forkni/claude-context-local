@@ -134,10 +134,22 @@ Pre-repair baseline (3 runs, 2026-07-28, merge-off): MRR 0.7236 / 0.7300 / 0.737
 |---|---|---|---|---|---|---|---|
 | qfix_rebaseline_r1 | 0.7673 | 0.6144 | 0.6941 | 0.7632 | 0.9683 | 0.6351 | 0.9841 |
 | qfix_rebaseline_r2 | 0.7686 | 0.5958 | 0.7095 | 0.7491 | 0.9841 | 0.6253 | 0.9841 |
+| purge_tmp_rebaseline_r1 | 0.7825 | 0.6249 | 0.7099 | 0.7751 | 0.9683 | 0.6451 | 0.9841 |
+| purge_tmp_rebaseline_r2 | 0.7774 | 0.5998 | 0.7011 | 0.7539 | 0.9683 | 0.6264 | 0.9841 |
 
 New baseline: **MRR ≈ 0.768** (was 0.7302 pre-repair mean) — the two runs agree within
 0.002, well inside the ±0.02 noise band. Q99 is stable at MRR 0.333 in both runs; Q12's
 miss reproduces in both (fusion-cut, §4).
+
+**2026-07-28 index-hygiene purge** (follow-up #2 below, resolved): full non-incremental
+reindex excluding `tmp/` and `code-search-extension/` (2,316 → 2,293 chunks, −23 net after
+203 files re-chunked). `purge_tmp_rebaseline_r1/r2` MRR 0.7825/0.7774 sits inside the noise
+band above the `qfix_rebaseline` baseline — no regression. Verified zero `tmp/` or
+`code-search-extension/` entries in any query's `retrieved` list across both runs (63
+queries × 2 runs). **Q12 remained MISS in both runs** (MRR 0.0), confirming the audit's
+diagnosis in §4 that Q12's failure is a fusion-cut ranking boundary, not tmp pollution —
+tmp was only ever "contributing", never causal. `bm25_reserved_slots` (follow-up #1) is
+still the open lever for Q12.
 
 Expanded dataset (`qfix_expanded_r1`, 96 scored of 110): MRR 0.6545, R@5 0.6223,
 R@7 0.7019, HR@5 0.9583, pool_hit_rate 0.9583 — PASS. Remaining misses are the known
@@ -163,8 +175,13 @@ Verification checks:
 ## 7. Follow-ups (out of scope for this repair)
 
 1. **`bm25_reserved_slots` A/B** for fusion-cut misses (Q12 is the test case).
-2. **Index hygiene**: full reindex currently sweeps in gitignored `tmp/` and
-   `code-search-extension/` files; purge and prevent (task filed).
+2. ~~**Index hygiene**: full reindex currently sweeps in gitignored `tmp/` and
+   `code-search-extension/` files; purge and prevent (task filed).~~ **RESOLVED
+   2026-07-28**: `tmp`/`temp` added to `DEFAULT_IGNORED_DIRS`
+   (`chunking/language_registry.py`), `code-search-extension` added to this project's
+   `user_excluded_dirs`, live index purged (see re-baseline row above). Full `.gitignore`
+   parsing remains a separate, deliberately out-of-scope follow-up (would change the
+   corpus for every indexed project — needs its own ADR).
 3. **Query expansion / multi-query retrieval** — the only identified lever for
    Q103/Q122-class expanded-set misses.
 4. Scoring category F through `find_similar_code` instead of `search_code`

@@ -237,12 +237,12 @@ RETURNS:
                 "include_dirs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": 'Only index files in these directories (e.g., ["src/", "lib/"]). Uses path prefix matching. Immutable after project creation.',
+                    "description": 'Only index files in these directories (e.g., ["src/", "lib/"]). Uses path prefix matching. Omit to reuse the stored value from project creation; pass a new list to replace it wholesale (not merged), or [] to clear it. Changing this on an existing project forces a full (non-incremental) reindex.',
                 },
                 "exclude_dirs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": 'Exclude these directories from indexing (e.g., ["tests/", "vendor/"]). Uses path prefix matching. Immutable after project creation.',
+                    "description": 'Exclude these directories from indexing (e.g., ["tests/", "vendor/"]). Uses path prefix matching. Omit to reuse the stored value from project creation; pass a new list to replace it wholesale (not merged) — always include every directory you still want excluded — or [] to clear it. Changing this on an existing project forces a full (non-incremental) reindex.',
                 },
                 "output_format": {
                     "type": "string",
