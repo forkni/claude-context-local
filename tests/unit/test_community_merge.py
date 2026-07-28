@@ -71,7 +71,13 @@ class TestCommunityMerge:
         assert len(merged) == 3
 
     def test_community_merge_respects_token_limit(self):
-        """Even same community splits at max_tokens."""
+        """Even same community splits at max_tokens.
+
+        Note: both chunks here are >= min_tokens, so each takes the Case-3
+        solo-passthrough path with an EMPTY current_group. This does not
+        exercise the budget check against an already-open group — see
+        test_community_merge_respects_token_limit_with_open_group for that.
+        """
         chunker = PythonChunker()
 
         # Two chunks in same community, but large content
@@ -140,7 +146,12 @@ class TestCommunityMerge:
         assert len(merged) == 3
 
     def test_community_merge_large_chunk_not_merged(self):
-        """Large chunks don't merge even if same community."""
+        """Large chunks don't merge even if same community.
+
+        Note: the large chunk is first, so current_group is still EMPTY when
+        it hits Case 3 — this does not exercise passthrough once a group is
+        already open. See test_community_merge_large_chunk_passthrough_with_open_group.
+        """
         chunker = PythonChunker()
 
         # Two chunks: one large (100 tokens), one small (10 tokens), same community
@@ -161,6 +172,93 @@ class TestCommunityMerge:
         # Large chunk stays separate, small chunk added directly
         # Result: [large_chunk, small_chunk] (no merge because first is large)
         assert final == 2
+
+    def test_community_merge_respects_token_limit_with_open_group(self):
+        """Budget check must fire even when the community hasn't changed.
+
+        Regression test: four 30-token chunks, all in the same community, with
+        max_merged_tokens=70. The first two chunks (60 tokens) fill the budget;
+        the third would push it to 90 > 70, so it must start a new group. Before
+        the fix, the community-boundary elif arm consumed the chain on every
+        chunk (matching whether or not the community changed), so Case 2 (the
+        budget check) was unreachable once a group was open — all four chunks
+        collapsed into a single oversized group.
+        """
+        chunker = PythonChunker()
+
+        def make_chunk(n_words: int, start: int) -> TreeSitterChunk:
+            content = " ".join(f"word{i}" for i in range(n_words))
+            return self.create_test_chunk(content, start, start + 1, community_id=0)
+
+        chunks = [make_chunk(30, i * 2 + 1) for i in range(4)]
+
+        merged, orig, final = chunker._greedy_merge_small_chunks(
+            chunks, min_tokens=50, max_merged_tokens=70, use_community_boundary=True
+        )
+
+        assert orig == 4
+        assert final == 2
+        assert len(merged) == 2
+
+    def test_community_merge_large_chunk_passthrough_with_open_group(self):
+        """A large chunk mid-stream must pass through solo, not get absorbed.
+
+        Regression test: small (10) -> large (100) -> small (10) tokens, all
+        same community, min_tokens=50. The large chunk arrives while a group
+        is already open from the first small chunk. Before the fix, Case 3
+        (the large-chunk passthrough) was unreachable once a group was open in
+        community mode, so the large chunk got silently absorbed and all three
+        chunks collapsed into a single merged blob (final == 1). After the
+        fix, the large chunk flushes and passes through solo, and the
+        trailing small chunk has nothing left to merge with, so all three
+        chunks stay distinct (final == 3).
+        """
+        chunker = PythonChunker()
+
+        def make_chunk(n_words: int, start: int) -> TreeSitterChunk:
+            content = " ".join(f"word{i}" for i in range(n_words))
+            return self.create_test_chunk(content, start, start + 1, community_id=0)
+
+        small_1 = make_chunk(10, 1)
+        large = make_chunk(100, 3)
+        small_2 = make_chunk(10, 5)
+        chunks = [small_1, large, small_2]
+
+        merged, orig, final = chunker._greedy_merge_small_chunks(
+            chunks, min_tokens=50, use_community_boundary=True
+        )
+
+        assert orig == 3
+        assert final == 3
+        # The large chunk must pass through unchanged (identity, not a copy).
+        assert large in merged
+
+    def test_community_merge_none_community_id_respects_token_limit(self):
+        """None community_id is a valid boundary key, not a bypass.
+
+        Regression test: production-dominant case. community_id is only
+        populated by assign_community_ids and is None whenever the Louvain
+        lookup misses a chunk; all None-community chunks compare equal, so a
+        file whose chunks miss the map all fall into one bucket. Four
+        30-token chunks with community_id=None and max_merged_tokens=70 must
+        still split at the budget, exactly like test
+        test_community_merge_respects_token_limit_with_open_group.
+        """
+        chunker = PythonChunker()
+
+        def make_chunk(n_words: int, start: int) -> TreeSitterChunk:
+            content = " ".join(f"word{i}" for i in range(n_words))
+            return self.create_test_chunk(content, start, start + 1, community_id=None)
+
+        chunks = [make_chunk(30, i * 2 + 1) for i in range(4)]
+
+        merged, orig, final = chunker._greedy_merge_small_chunks(
+            chunks, min_tokens=50, max_merged_tokens=70, use_community_boundary=True
+        )
+
+        assert orig == 4
+        assert final == 2
+        assert len(merged) == 2
 
     def test_community_merge_none_community_id(self):
         """Chunks with None community_id handled gracefully."""

@@ -752,16 +752,17 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
 
             start_new_group = False
 
+            # Boundary key depends on mode: community_id (community mode) else parent_class.
+            if use_community_boundary:
+                boundary_changed = chunk_community != current_community
+            else:
+                boundary_changed = chunk_parent != current_parent
+
             # Case 0: File boundary changed (NEVER merge across files)
-            if current_group and chunk_file != current_file:
+            if current_group and chunk_file != current_file:  # noqa: SIM114
                 start_new_group = True
             # Case 1: Boundary changed (community or parent class)
-            elif use_community_boundary and current_group:
-                # Use community_id as merge boundary
-                if chunk_community != current_community:
-                    start_new_group = True
-            elif current_group and chunk_parent != current_parent:
-                # Original: Use parent_class as merge boundary
+            elif current_group and boundary_changed:  # noqa: SIM114
                 start_new_group = True
             # Case 2: Adding this chunk would exceed max size
             elif current_group and current_size + chunk_size > max_size:
