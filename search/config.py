@@ -272,7 +272,7 @@ class IntentConfig:
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (7 fields)."""
+    """Neural reranker settings (11 fields)."""
 
     enabled: bool = True  # Enabled by default (Quality First)
     model_name: str = (
@@ -290,6 +290,24 @@ class RerankerConfig:
     # passes; run ONE listwise pass over the final merged pool (hop-1 + multi-hop
     # + ego expansion) at the tail of HybridSearcher.search(). Trade-off: multi-hop
     # expansion seeds degrade from neural-reranked to RRF-fusion order.
+    quantization: str = field(
+        default="none",
+        metadata={"choices": ("none", "fp8", "8bit", "4bit", "mxfp8")},
+    )  # GenerativeReranker only (Qwen3-Reranker family). "fp8"/"8bit"/"4bit" need the
+    # optional [quant] extra (bitsandbytes/accelerate); "mxfp8" additionally needs
+    # torchao and is experimental — emulated (no speed win) below Blackwell (sm_100+).
+    instruction: str = ""  # GenerativeReranker only. Empty means "use the
+    # model's built-in code-retrieval default" (see GenerativeReranker docstring).
+    doc_max_chars: int = 4000  # GenerativeReranker only (pointwise — cost scales
+    # with batch_size, so it can afford a larger per-document budget).
+    listwise_doc_max_chars: int = 1000  # JinaRerankerV3 only (listwise — ALL
+    # candidates share one context window, so cost is O(n^2) in the packed
+    # sequence length via attention activation memory — not context-window
+    # occupancy). A 4-run SSCG sweep at 4000 measured peak_vram_reserved_gb
+    # 27.66 on a 24GB card (WDDM shared-memory spill, no OOM raised — see
+    # allow_ram_fallback), 42-45/96 queries stalling past 8s (max 354.9s),
+    # and every quality metric flat-to-negative within the +/-0.02 MRR noise
+    # floor vs this default. See docs/adr/0011-listwise-reranker-doc-cap.md.
 
 
 @dataclass
@@ -778,6 +796,10 @@ class SearchConfig:
         "reranker_batch_size": ("reranker", "batch_size"),
         "reranker_dedupe_split_blocks": ("reranker", "dedupe_split_blocks"),
         "reranker_single_pass": ("reranker", "single_pass"),
+        "reranker_quantization": ("reranker", "quantization"),
+        "reranker_instruction": ("reranker", "instruction"),
+        "reranker_doc_max_chars": ("reranker", "doc_max_chars"),
+        "reranker_listwise_doc_max_chars": ("reranker", "listwise_doc_max_chars"),
         # OutputConfig
         "output_format": ("output", "format"),
         "source_order_output": ("output", "source_order_output"),
@@ -1063,6 +1085,13 @@ class SearchConfigManager:
             "CLAUDE_RERANKER_SINGLE_PASS": (
                 "reranker_single_pass",
                 self._bool_from_env,
+            ),
+            "CLAUDE_RERANKER_QUANTIZATION": ("reranker_quantization", str),
+            "CLAUDE_RERANKER_INSTRUCTION": ("reranker_instruction", str),
+            "CLAUDE_RERANKER_DOC_MAX_CHARS": ("reranker_doc_max_chars", int),
+            "CLAUDE_RERANKER_LISTWISE_DOC_MAX_CHARS": (
+                "reranker_listwise_doc_max_chars",
+                int,
             ),
             # Observability (OTel tracing) env vars
             "CLAUDE_OTEL_ENABLED": ("otel_enabled", self._bool_from_env),

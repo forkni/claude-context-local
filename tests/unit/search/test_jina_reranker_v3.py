@@ -84,6 +84,52 @@ class TestJinaRerankerV3:
         assert call_args[0][0] == "test query"  # Query
         assert call_args[0][1] == ["ID: a\ncode a"]  # Documents with ID prefix
 
+    def test_rerank_prefers_bm25_text_over_content_preview(self):
+        """Reranking should use the full bm25_text when present, not the ≤200-char preview."""
+        mock_model = MagicMock()
+        mock_model.rerank.return_value = [
+            {"index": 0, "relevance_score": 0.9, "document": "full source"}
+        ]
+
+        reranker = JinaRerankerV3()
+        reranker._model = mock_model
+
+        candidates = [
+            SearchResult(
+                chunk_id="a",
+                score=1.0,
+                metadata={"bm25_text": "full source", "content_preview": "code a"},
+            )
+        ]
+
+        reranker.rerank("test query", candidates, top_k=1)
+
+        call_args = mock_model.rerank.call_args
+        assert call_args[0][1] == ["ID: a\nfull source"]
+
+    def test_rerank_truncates_document_to_doc_max_chars(self):
+        """Body must be capped to doc_max_chars — listwise cost scales with total context."""
+        mock_model = MagicMock()
+        mock_model.rerank.return_value = [
+            {"index": 0, "relevance_score": 0.9, "document": "x" * 50}
+        ]
+
+        reranker = JinaRerankerV3(doc_max_chars=50)
+        reranker._model = mock_model
+
+        candidates = [
+            SearchResult(chunk_id="a", score=1.0, metadata={"bm25_text": "x" * 5000})
+        ]
+
+        reranker.rerank("test query", candidates, top_k=1)
+
+        call_args = mock_model.rerank.call_args
+        assert call_args[0][1] == [f"ID: a\n{'x' * 50}"]
+
+    def test_doc_max_chars_defaults_to_1000(self):
+        reranker = JinaRerankerV3()
+        assert reranker.doc_max_chars == 1000
+
     def test_rerank_fallback_to_chunk_id(self):
         """Should use chunk_id when content_preview is missing."""
         mock_model = MagicMock()
@@ -246,6 +292,84 @@ class TestJinaRerankerV3:
 
         # Critical: _model should be None so next access retries
         assert reranker._model is None
+
+    def test_rerank_returns_full_ranked_list_not_truncated_to_top_k(self):
+        """Regression: must not truncate to top_k before returning.
+
+        rerank_by_query's dedupe_split_blocks backfills collapsed split_block
+        fragments from the tail of the ranked list — truncating to top_k here
+        first (top_n=top_k) starves that backfill, silently returning fewer
+        than k results with no replacement. Scoring is already computed for
+        every candidate in the same listwise forward pass, so returning all
+        of them costs nothing extra.
+        """
+        mock_model = MagicMock()
+        mock_model.rerank.return_value = [
+            {"index": 2, "relevance_score": 0.9, "document": "c"},
+            {"index": 1, "relevance_score": 0.8, "document": "b"},
+            {"index": 0, "relevance_score": 0.7, "document": "a"},
+        ]
+        reranker = JinaRerankerV3()
+        reranker._model = mock_model
+
+        candidates = [
+            SearchResult(chunk_id=cid, score=1.0, metadata={"content_preview": cid})
+            for cid in ("a", "b", "c")
+        ]
+
+        results = reranker.rerank("test query", candidates, top_k=1)
+
+        assert len(results) == 3
+        call_kwargs = mock_model.rerank.call_args.kwargs
+        assert call_kwargs["top_n"] is None
+
+    def test_rerank_passes_explicit_length_limits_to_model(self):
+        """max_doc_length/max_query_length must be explicit, not left to jina's
+        internal defaults — our doc_max_chars (chars) is the intended binding
+        truncation and must be reconciled with jina's token-level truncation."""
+        mock_model = MagicMock()
+        mock_model.rerank.return_value = [
+            {"index": 0, "relevance_score": 0.9, "document": "code a"}
+        ]
+        reranker = JinaRerankerV3()
+        reranker._model = mock_model
+
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            )
+        ]
+        reranker.rerank("test query", candidates, top_k=1)
+
+        call_kwargs = mock_model.rerank.call_args.kwargs
+        assert call_kwargs["max_doc_length"] == 2048
+        assert call_kwargs["max_query_length"] == 512
+
+    def test_never_hand_builds_the_sandwich_prompt(self):
+        """Lock-in for the paper's sandwich template (arXiv 2509.25085v4 sec 3.2):
+        query-at-start -> passages-in-middle -> query-at-end, with the
+        <|embed_token|>/<|rerank_token|> position markers. This module must keep
+        delegating prompt construction to the model's own
+        ``format_docs_prompts_func`` (via ``model.rerank()``) and never assemble
+        the prompt string itself — hand-rolling it here would silently drift
+        from the model's trained template on the next refactor.
+        """
+        import inspect
+
+        import search.neural_reranker as neural_reranker_module
+
+        source = inspect.getsource(neural_reranker_module)
+        for marker in (
+            "<passage id=",
+            "<|embed_token|>",
+            "<|rerank_token|>",
+            "<query>",
+        ):
+            assert marker not in source, (
+                f"Found sandwich-template literal {marker!r} in neural_reranker.py — "
+                "prompt construction must stay delegated to the model's own "
+                "format_docs_prompts_func, not hand-rolled here."
+            )
 
 
 class TestCreateRerankerFactoryJina:

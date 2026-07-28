@@ -81,6 +81,7 @@ RERANKER_SWEEP: list[dict[str, Any]] = [
     },
     {"config_name": "jina_v3", "reranker_model": "jinaai/jina-reranker-v3"},
     {"config_name": "qwen_0.6b", "reranker_model": "Qwen/Qwen3-Reranker-0.6B"},
+    {"config_name": "qwen_4b", "reranker_model": "Qwen/Qwen3-Reranker-4B"},
     {"config_name": "bge_v2_m3", "reranker_model": "BAAI/bge-reranker-v2-m3"},
     {"config_name": "none", "reranker_enabled": False},
 ]
@@ -174,6 +175,35 @@ def _apply_reranker_budget_override(top_k_candidates: int | None) -> None:
         print(f"[WARN] Could not apply reranker budget override: {e}", file=sys.stderr)
 
 
+def _apply_reranker_doc_max_chars_override(
+    doc_max_chars: int | None,
+    listwise_doc_max_chars: int | None,
+) -> None:
+    """Override the per-reranker document budgets in the in-memory config singleton.
+
+    Unlike ``top_k_candidates``, these are baked into the reranker instance at
+    construction (``create_reranker(...)`` in ``RerankingEngine._ensure_reranker``)
+    and only reloaded there when ``model_name`` changes — so, like ``rrf_k``,
+    callers must reset the cached searcher afterwards for a same-model override
+    to take effect (see ``_maybe_reset_for_construction_overrides``).
+    """
+    if doc_max_chars is None and listwise_doc_max_chars is None:
+        return
+    try:
+        from search.config import get_search_config
+
+        cfg = get_search_config()
+        if doc_max_chars is not None:
+            cfg.reranker.doc_max_chars = doc_max_chars
+        if listwise_doc_max_chars is not None:
+            cfg.reranker.listwise_doc_max_chars = listwise_doc_max_chars
+    except Exception as e:
+        print(
+            f"[WARN] Could not apply reranker doc-max-chars override: {e}",
+            file=sys.stderr,
+        )
+
+
 def _apply_reserved_slots_override(reserved_slots: int | None) -> None:
     """Override the BM25 reserved fused-pool slots in the in-memory config.
 
@@ -211,15 +241,23 @@ def _maybe_reset_for_construction_overrides(
     bm25_weight: float | None,
     dense_weight: float | None,
     rrf_k: int | None,
+    doc_max_chars: int | None = None,
+    listwise_doc_max_chars: int | None = None,
 ) -> None:
     """Drop the cached HybridSearcher when construction-baked params are overridden.
 
     ``search_factory.get_searcher()`` caches the searcher in server state, and
-    bm25/dense weights plus rrf_k are baked in at construction — without this
-    reset, a ``--sweep`` silently reuses the first iteration's fusion params
-    for every subsequent config (Blocker B).
+    bm25/dense weights, rrf_k, and the reranker document budgets are all baked
+    in at construction — without this reset, a ``--sweep`` silently reuses the
+    first iteration's params for every subsequent config (Blocker B).
     """
-    if bm25_weight is None and dense_weight is None and rrf_k is None:
+    if (
+        bm25_weight is None
+        and dense_weight is None
+        and rrf_k is None
+        and doc_max_chars is None
+        and listwise_doc_max_chars is None
+    ):
         return
     try:
         from mcp_server.services import get_state
@@ -853,6 +891,26 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--reranker-doc-max-chars",
+        type=int,
+        help=(
+            "Override reranker.doc_max_chars (GenerativeReranker pointwise "
+            "per-document budget) for this run. Resets the cached searcher so "
+            "the value takes effect. Default: use config value (4000)."
+        ),
+    )
+    parser.add_argument(
+        "--reranker-listwise-doc-max-chars",
+        type=int,
+        help=(
+            "Override reranker.listwise_doc_max_chars (JinaRerankerV3 shared-"
+            "context per-document budget) for this run. Resets the cached "
+            "searcher so the value takes effect. Default: use config value (1000)."
+        ),
+        # 1000 is the RerankerConfig default (search/config.py) — kept aligned
+        # since docs/adr/0011-listwise-reranker-doc-cap.md reverted it there.
+    )
+    parser.add_argument(
         "--bm25-reserved-slots",
         type=int,
         help=(
@@ -932,14 +990,25 @@ def run_single(
     bm25_reserved_slots: int | None = None,
     with_centrality: bool = False,
     centrality_alpha: float | None = None,
+    reranker_doc_max_chars: int | None = None,
+    reranker_listwise_doc_max_chars: int | None = None,
 ) -> dict[str, Any]:
     """Execute one benchmark run and return the result dict."""
     _apply_weight_overrides(bm25_weight, dense_weight, search_mode)
     _apply_reranker_override(reranker_model, reranker_enabled)
     _apply_reranker_budget_override(top_k_candidates)
+    _apply_reranker_doc_max_chars_override(
+        reranker_doc_max_chars, reranker_listwise_doc_max_chars
+    )
     _apply_rrf_k_override(rrf_k)
     _apply_reserved_slots_override(bm25_reserved_slots)
-    _maybe_reset_for_construction_overrides(bm25_weight, dense_weight, rrf_k)
+    _maybe_reset_for_construction_overrides(
+        bm25_weight,
+        dense_weight,
+        rrf_k,
+        reranker_doc_max_chars,
+        reranker_listwise_doc_max_chars,
+    )
 
     try:
         searcher = _get_searcher(project_path)
@@ -961,6 +1030,14 @@ def run_single(
         )
     if top_k_candidates is not None:
         print(f"  Reranker pool budget: top_k_candidates={top_k_candidates}")
+    if (
+        reranker_doc_max_chars is not None
+        or reranker_listwise_doc_max_chars is not None
+    ):
+        print(
+            f"  Reranker doc budget: doc_max_chars={reranker_doc_max_chars or 'default'}  "
+            f"listwise_doc_max_chars={reranker_listwise_doc_max_chars or 'default'}"
+        )
     if rrf_k is not None:
         print(f"  RRF fusion constant: rrf_k={rrf_k}")
     if bm25_reserved_slots is not None:
@@ -1099,6 +1176,8 @@ def main() -> None:
                 reranker_model=sweep_cfg.get("reranker_model"),
                 reranker_enabled=sweep_cfg.get("reranker_enabled"),
                 top_k_candidates=args.top_k_candidates,
+                reranker_doc_max_chars=args.reranker_doc_max_chars,
+                reranker_listwise_doc_max_chars=args.reranker_listwise_doc_max_chars,
                 rrf_k=args.rrf_k,
                 bm25_reserved_slots=args.bm25_reserved_slots,
                 with_centrality=args.with_centrality,
@@ -1142,6 +1221,8 @@ def main() -> None:
                 reranker_model=args.reranker_model,
                 reranker_enabled=reranker_enabled,
                 top_k_candidates=args.top_k_candidates,
+                reranker_doc_max_chars=args.reranker_doc_max_chars,
+                reranker_listwise_doc_max_chars=args.reranker_listwise_doc_max_chars,
                 rrf_k=args.rrf_k,
                 bm25_reserved_slots=args.bm25_reserved_slots,
                 with_centrality=args.with_centrality,
@@ -1179,6 +1260,8 @@ def main() -> None:
         reranker_model=args.reranker_model,
         reranker_enabled=reranker_enabled,
         top_k_candidates=args.top_k_candidates,
+        reranker_doc_max_chars=args.reranker_doc_max_chars,
+        reranker_listwise_doc_max_chars=args.reranker_listwise_doc_max_chars,
         rrf_k=args.rrf_k,
         bm25_reserved_slots=args.bm25_reserved_slots,
         with_centrality=args.with_centrality,

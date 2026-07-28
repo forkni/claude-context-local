@@ -461,3 +461,134 @@ def test_reranker_single_pass_default_and_flat_alias():
 
     restored = SearchConfig.from_dict(config.to_dict())
     assert restored.reranker.single_pass is True
+
+
+def test_reranker_quantization_default_and_flat_alias():
+    """Defaults to 'none'; flat key maps into the nested schema and round-trips.
+
+    Only GenerativeReranker (Qwen3 family) reads this field; NeuralReranker and
+    JinaRerankerV3 ignore it. See search/neural_reranker.py GenerativeReranker.
+    """
+    assert RerankerConfig().quantization == "none"
+
+    config = SearchConfig.from_dict({"reranker_quantization": "fp8"})
+    assert config.reranker.quantization == "fp8"
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.reranker.quantization == "fp8"
+
+
+def test_reranker_quantization_env_override(tmp_path):
+    """CLAUDE_RERANKER_QUANTIZATION must override the nested config value.
+
+    Uses an isolated tmp_path config file (matching
+    test_env_override_applies_over_nested_file above) rather than a bare
+    SearchConfigManager() so this doesn't depend on, or race, the real repo's
+    search_config.json.
+    """
+    from search.config import SearchConfigManager
+
+    config_file = tmp_path / "search_config.json"
+    config_file.write_text(json.dumps({"reranker": {"quantization": "none"}}))
+
+    with patch.dict(os.environ, {"CLAUDE_RERANKER_QUANTIZATION": "8bit"}):
+        manager = SearchConfigManager(config_file=str(config_file))
+        config = manager.load_config()
+
+    assert config.reranker.quantization == "8bit"
+
+
+def test_reranker_quantization_choices_metadata_rejects_invalid_value():
+    """The choices metadata must flag an unrecognized quantization value.
+
+    from_dict() itself does not validate (dataclass defaults are the single source
+    of truth there — see SearchConfig.from_dict's docstring); validation happens via
+    validate_field_value(), which the MCP configure_reranker handler calls. This
+    confirms the RerankerConfig.quantization field's {"choices": (...)} metadata is
+    wired correctly so that machinery picks up the new field for free.
+    """
+    from search.config import validate_field_value
+
+    error = validate_field_value(RerankerConfig, "quantization", "not-a-real-mode")
+    assert error is not None
+    assert "quantization" in error
+
+    assert validate_field_value(RerankerConfig, "quantization", "mxfp8") is None
+
+
+def test_reranker_instruction_default_and_flat_alias():
+    """Defaults to ''; flat key maps into the nested schema and round-trips.
+
+    Only GenerativeReranker reads this field — see search/neural_reranker.py.
+    """
+    assert RerankerConfig().instruction == ""
+
+    config = SearchConfig.from_dict({"reranker_instruction": "custom instruction"})
+    assert config.reranker.instruction == "custom instruction"
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.reranker.instruction == "custom instruction"
+
+
+def test_reranker_instruction_env_override(tmp_path):
+    """CLAUDE_RERANKER_INSTRUCTION must override the nested config value."""
+    from search.config import SearchConfigManager
+
+    config_file = tmp_path / "search_config.json"
+    config_file.write_text(json.dumps({"reranker": {"instruction": ""}}))
+
+    with patch.dict(os.environ, {"CLAUDE_RERANKER_INSTRUCTION": "env instruction"}):
+        manager = SearchConfigManager(config_file=str(config_file))
+        config = manager.load_config()
+
+    assert config.reranker.instruction == "env instruction"
+
+
+def test_reranker_doc_max_chars_default_and_flat_alias():
+    """Defaults to 4000 (GenerativeReranker's pointwise budget); flat key round-trips."""
+    assert RerankerConfig().doc_max_chars == 4000
+
+    config = SearchConfig.from_dict({"reranker_doc_max_chars": 2500})
+    assert config.reranker.doc_max_chars == 2500
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.reranker.doc_max_chars == 2500
+
+
+def test_reranker_listwise_doc_max_chars_default_and_flat_alias():
+    """Defaults to 1000 (JinaRerankerV3's shared-context budget); flat key round-trips."""
+    assert RerankerConfig().listwise_doc_max_chars == 1000
+
+    config = SearchConfig.from_dict({"reranker_listwise_doc_max_chars": 500})
+    assert config.reranker.listwise_doc_max_chars == 500
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.reranker.listwise_doc_max_chars == 500
+
+
+def test_reranker_doc_max_chars_env_override(tmp_path):
+    """CLAUDE_RERANKER_DOC_MAX_CHARS must override the nested config value."""
+    from search.config import SearchConfigManager
+
+    config_file = tmp_path / "search_config.json"
+    config_file.write_text(json.dumps({"reranker": {"doc_max_chars": 4000}}))
+
+    with patch.dict(os.environ, {"CLAUDE_RERANKER_DOC_MAX_CHARS": "3000"}):
+        manager = SearchConfigManager(config_file=str(config_file))
+        config = manager.load_config()
+
+    assert config.reranker.doc_max_chars == 3000
+
+
+def test_reranker_listwise_doc_max_chars_env_override(tmp_path):
+    """CLAUDE_RERANKER_LISTWISE_DOC_MAX_CHARS must override the nested config value."""
+    from search.config import SearchConfigManager
+
+    config_file = tmp_path / "search_config.json"
+    config_file.write_text(json.dumps({"reranker": {"listwise_doc_max_chars": 1000}}))
+
+    with patch.dict(os.environ, {"CLAUDE_RERANKER_LISTWISE_DOC_MAX_CHARS": "750"}):
+        manager = SearchConfigManager(config_file=str(config_file))
+        config = manager.load_config()
+
+    assert config.reranker.listwise_doc_max_chars == 750
