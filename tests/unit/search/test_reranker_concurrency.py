@@ -119,7 +119,9 @@ class TestJinaRerankerV3Concurrency:
     def test_concurrent_rerank_serializes_model_rerank(self):
         probe = _ConcurrencyProbe()
 
-        def fake_rerank(query, documents, top_n=10):
+        def fake_rerank(
+            query, documents, top_n=10, max_doc_length=2048, max_query_length=512
+        ):
             probe.enter()
             try:
                 time.sleep(0.02)
@@ -162,6 +164,9 @@ class TestGenerativeRerankerConcurrency:
         yes_id, no_id = 50, 51
 
         class MockTokenizer:
+            def convert_tokens_to_ids(self, text):
+                return None
+
             def encode(self, text, **kwargs):
                 return [yes_id] if text in ("yes", " yes") else [no_id]
 

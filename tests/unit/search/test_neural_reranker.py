@@ -49,12 +49,18 @@ class TestNeuralReranker:
 
         results = reranker.rerank("find function", candidates, top_k=2)
 
-        assert len(results) == 2
+        # top_k is unused for scoring (see rerank()'s docstring): model.predict()
+        # already scores every candidate for free, so rerank() returns the full
+        # ranked list and lets the caller (rerank_by_query) slice after
+        # dedupe_split_blocks backfill — same contract as JinaRerankerV3.rerank().
+        assert len(results) == 3
         assert results[0].chunk_id == "a"  # Highest score 0.9
         assert results[1].chunk_id == "c"  # Second highest 0.7
+        assert results[2].chunk_id == "b"  # Third 0.5
         assert "reranker_score" in results[0].metadata
         assert results[0].metadata["reranker_score"] == 0.9
         assert results[1].metadata["reranker_score"] == 0.7
+        assert results[2].metadata["reranker_score"] == 0.5
 
     def test_cleanup_releases_model(self):
         """Cleanup should release model reference."""

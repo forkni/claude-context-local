@@ -156,6 +156,10 @@ class RerankingEngine:
             self.neural_reranker = create_reranker(
                 model_name=config.reranker.model_name,
                 batch_size=config.reranker.batch_size,
+                quantization=config.reranker.quantization,
+                instruction=config.reranker.instruction or None,
+                doc_max_chars=config.reranker.doc_max_chars,
+                listwise_doc_max_chars=config.reranker.listwise_doc_max_chars,
             )
             self._logger.debug(f"{log_prefix} Neural reranker initialized")
         elif (
@@ -174,6 +178,10 @@ class RerankingEngine:
             self.neural_reranker = create_reranker(
                 model_name=config.reranker.model_name,
                 batch_size=config.reranker.batch_size,
+                quantization=config.reranker.quantization,
+                instruction=config.reranker.instruction or None,
+                doc_max_chars=config.reranker.doc_max_chars,
+                listwise_doc_max_chars=config.reranker.listwise_doc_max_chars,
             )
         elif not should_enable and self.neural_reranker is not None:
             self.neural_reranker.cleanup()
