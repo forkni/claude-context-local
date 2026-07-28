@@ -41,6 +41,12 @@
       {
         "date": "2026-07-28",
         "changes": [
+          "Added anchor_chunk_id to the 9 category-F queries (Q70, Q71, Q93-Q99): the normalized ID of the chunk named after 'similar to' in the query text (the grade-1 relevance_grades entry whose trailing symbol matches the named symbol; unique for all 9, and never in expected/expected_primary, so ranked scoring is unchanged). Enables the --f-via-similar benchmark view scoring F via HybridSearcher.find_similar_to_chunk(anchor, rerank=False) instead of search_code; official aggregates keep search_code. Anchors are validated against the live index by scripts/benchmark/audit_golden_dataset.py."
+        ]
+      },
+      {
+        "date": "2026-07-28",
+        "changes": [
           "Full stale-gold audit via new scripts/benchmark/audit_golden_dataset.py against the freshly reindexed live index (2,316 chunks / 2,063 normalized IDs): 19 unresolvable golds in 16 queries, all traced to a dedup_key normalization asymmetry — evaluation/metrics normalization (search/chunk_id.py dedup_key) rewrites split_block -> parent kind (method/function) only for 4-part IDs carrying a line range; live index IDs always carry line ranges while golden IDs never do, so a 3-part golden split_block:X can never match even when the live index still chunks that symbol as a split_block. All split_block golds rewritten to parent-kind form (grades preserved) across Q19, Q32, Q45, Q46, Q50, Q54, Q58, Q60, Q62, Q64, Q65, Q69, Q83, Q88, Q90, Q94: incremental_index, _apply_ego_graph_expansion, RRFReranker.rerank, handle_find_path, CommunityRefreshStage.run, IndexWriteStage.run, _check_auto_reindex, GraphQueryEngine.find_path, get_edge_data, _full_index, build_graph_from_chunks, get_searcher",
           "Q19/Q32: embeddings/embedder.py:split_block:CodeEmbedder.embed_chunks entries deleted — the method-form ID was already present at the same grade 3, making the split_block entry a permanent-miss duplicate that capped any-match recall",
           "Q12 (zero-MRR pool miss; per-leg probes showed BM25 gold rank 3 but dense-leg miss and fusion cut): added the most literal answer mcp_server/tools/status_handlers.py:decorated_definition:handle_get_index_status at grade 3 (expected + expected_primary); existing golds kept (has_snapshot 3, needs_reindex 3, MetadataStore.exists 2, handle_index_directory 1)",
@@ -316,7 +322,8 @@
         "embeddings/embedder.py:class:CodeEmbedder": 2,
         "embeddings/__init__.py:module": 1,
         "search/hybrid_searcher.py:method:HybridSearcher.index_documents": 1,
-        "embeddings/embedder.py:method:CodeEmbedder.embed_chunks": 3,        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk": 3,
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunks": 3,
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk": 3,
         "embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel.encode": 2
       }
     },
@@ -378,7 +385,8 @@
       ],
       "relevance_grades": {
         "embeddings/embedder.py:class:CodeEmbedder": 2,
-        "embeddings/embedder.py:method:CodeEmbedder.embed_chunks": 3,        "search/incremental_indexer.py:method:IncrementalIndexer.__init__": 1,
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunks": 3,
+        "search/incremental_indexer.py:method:IncrementalIndexer.__init__": 1,
         "search/indexer.py:method:CodeIndexManager.get_chunk_by_id": 0
       }
     },
@@ -1276,6 +1284,7 @@
       "query": "find language chunker constructors similar to PythonChunker.__init__ — I want all the concrete language-specific chunker initializers across the codebase",
       "category": "F",
       "split": "train",
+      "anchor_chunk_id": "chunking/languages/python.py:method:PythonChunker.__init__",
       "expected": [
         "chunking/languages/cpp.py:method:CppChunker.__init__",
         "chunking/languages/javascript.py:method:JavaScriptChunker.__init__",
@@ -1306,6 +1315,7 @@
       "query": "find implementations similar to InheritanceExtractor._extract_from_tree — other relationship extractors that override the same abstract tree-walk hook",
       "category": "F",
       "split": "train",
+      "anchor_chunk_id": "chunking/relationships/relationship_extractors/inheritance_extractor.py:method:InheritanceExtractor._extract_from_tree",
       "expected": [
         "chunking/relationships/relationship_extractors/implements_extractor.py:method:ImplementsExtractor._extract_from_tree",
         "chunking/relationships/relationship_extractors/override_extractor.py:method:OverrideExtractor._extract_from_tree",
@@ -1788,6 +1798,7 @@
       "query": "find detect_changes implementations similar to IncrementalIndexer.detect_changes — other change detection routines in the codebase",
       "category": "F",
       "split": "train",
+      "anchor_chunk_id": "search/incremental_indexer.py:method:IncrementalIndexer.detect_changes",
       "expected": [
         "merkle/change_detector.py:method:ChangeDetector.detect_changes",
         "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot"
@@ -1809,6 +1820,7 @@
       "query": "find add_chunk pattern implementations similar to GraphIntegration.add_chunk — other chunk-insertion routines across indexer and graph storage classes",
       "category": "F",
       "split": "train",
+      "anchor_chunk_id": "search/graph_integration.py:method:GraphIntegration.add_chunk",
       "expected": [
         "search/indexer.py:method:CodeIndexManager._add_to_graph",
         "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge",
@@ -1830,6 +1842,7 @@
       "query": "find BM25 search methods similar to BM25Index.search — other keyword retrieval implementations",
       "category": "F",
       "split": "val",
+      "anchor_chunk_id": "search/bm25_index.py:method:BM25Index.search",
       "expected": [
         "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25",
         "search/bm25_index.py:method:BM25Index.index_documents",
@@ -1851,6 +1864,7 @@
       "query": "find search implementations similar to SearchExecutor.search_bm25 — other methods that wrap BM25 or dense retrieval",
       "category": "F",
       "split": "val",
+      "anchor_chunk_id": "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25",
       "expected": [
         "search/bm25_index.py:method:BM25Index.search",
         "search/result_factory.py:decorated_definition:ResultFactory.from_bm25_results",
@@ -1876,6 +1890,7 @@
       "query": "find FaissVectorIndex operations similar to FaissVectorIndex.save — other vector index lifecycle methods",
       "category": "F",
       "split": "test",
+      "anchor_chunk_id": "search/faiss_index.py:method:FaissVectorIndex.save",
       "expected": [
         "search/faiss_index.py:method:FaissVectorIndex.load",
         "search/faiss_index.py:method:FaissVectorIndex.create",
@@ -1900,6 +1915,7 @@
       "query": "find caching get and put implementations similar to QueryEmbeddingCache.get",
       "category": "F",
       "split": "test",
+      "anchor_chunk_id": "embeddings/query_cache.py:method:QueryEmbeddingCache.get",
       "expected": [
         "embeddings/query_cache.py:method:QueryEmbeddingCache.put",
         "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.get",
@@ -1927,6 +1943,7 @@
       "query": "find save and restore implementations similar to GraphIntegration.save — other graph persistence and load methods",
       "category": "F",
       "split": "test",
+      "anchor_chunk_id": "search/graph_integration.py:method:GraphIntegration.save",
       "expected": [
         "graph/graph_storage.py:method:CodeGraphStorage.save",
         "search/indexer.py:method:CodeIndexManager.save_index",

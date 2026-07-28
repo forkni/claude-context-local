@@ -66,10 +66,13 @@ def locate_metadata_db(project_root: Path, model_name: str) -> Path | None:
 
 
 def gold_ids(query: dict) -> set[str]:
-    """All golden chunk IDs referenced by a query entry."""
+    """All golden chunk IDs referenced by a query entry (incl. F-anchor)."""
     ids: set[str] = set(query.get("expected", []))
     ids.update(query.get("expected_primary", []))
     ids.update((query.get("relevance_grades") or {}).keys())
+    anchor = query.get("anchor_chunk_id")
+    if anchor:
+        ids.add(anchor)
     return ids
 
 
@@ -91,7 +94,8 @@ def audit_dataset(dataset_path: Path, index_ids: set[str], raw_ids: list[str]) -
         print(f"  {query['id']} [{query.get('category', '?')}] {query['query'][:70]}")
         for gid in missing:
             primary = " PRIMARY" if gid in query.get("expected_primary", []) else ""
-            print(f"    STALE grade={grades.get(gid)}{primary}  {gid}")
+            anchor = " ANCHOR" if gid == query.get("anchor_chunk_id") else ""
+            print(f"    STALE grade={grades.get(gid)}{primary}{anchor}  {gid}")
             for candidate in suggest_candidates(gid, raw_ids):
                 print(f"      -> candidate: {candidate}")
     status = (

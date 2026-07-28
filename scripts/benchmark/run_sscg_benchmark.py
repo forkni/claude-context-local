@@ -59,6 +59,7 @@ from evaluation.metrics import (  # noqa: E402
     calculate_metrics_from_results,
     expand_retrieved_with_containment,
     flatten_entries,
+    normalize_chunk_id,
     normalize_chunk_ids,
     resolve_chunk_ids_to_ranges,
 )
@@ -432,6 +433,36 @@ def _build_line_lookup(searcher: Any) -> dict[str, tuple[str, int, int]]:
         return {}
 
 
+def _build_anchor_lookup(searcher: Any) -> dict[str, list[str]]:
+    """Map normalized chunk IDs to raw (line-ranged) IDs for anchor resolution.
+
+    Golden ``anchor_chunk_id`` values are stored normalized (stable across
+    reindexes), but ``find_similar_to_chunk`` resolves via the MetadataStore /
+    symbol cache, whose keys are the raw 4-part IDs with line ranges and whose
+    lookup is exact-string — a normalized ID would never resolve. Multiple raw
+    IDs can normalize to the same ID (split_block parts), so values are lists;
+    ``_resolve_anchor`` requires exactly one.
+    """
+    lookup: dict[str, list[str]] = {}
+    try:
+        for raw_id, _ in searcher.dense_index.metadata_store.items():
+            lookup.setdefault(normalize_chunk_id(raw_id), []).append(raw_id)
+    except AttributeError as exc:
+        print(f"  [WARN] Could not build anchor lookup: {exc}", file=sys.stderr)
+    return lookup
+
+
+def _resolve_anchor(anchor: str, anchor_lookup: dict[str, list[str]]) -> str:
+    """Resolve a normalized golden anchor to its unique raw index ID (or raise)."""
+    raw_ids = anchor_lookup.get(normalize_chunk_id(anchor), [])
+    if len(raw_ids) != 1:
+        raise ValueError(
+            f"anchor_chunk_id {anchor!r} resolves to {len(raw_ids)} live chunks "
+            f"(need exactly 1): {raw_ids}"
+        )
+    return raw_ids[0]
+
+
 def _build_merged_membership_lookup(
     searcher: Any,
 ) -> dict[str, tuple[str, frozenset[str]]]:
@@ -478,6 +509,7 @@ def run_benchmark(
     with_centrality: bool = False,
     centrality_alpha: float | None = None,
     merged_membership: dict[str, tuple[str, frozenset[str]]] | None = None,
+    f_via_similar: bool = False,
 ) -> tuple[list[dict[str, Any]], list[float]]:
     """Run all queries and return (per_query_results, latencies).
 
@@ -506,6 +538,12 @@ def run_benchmark(
             ``_build_merged_membership_lookup``. When non-empty, merged chunks
             are credited for golden symbols they absorbed (containment
             credit); empty/None is an exact no-op vs strict scoring.
+        f_via_similar: Score category-F queries carrying an ``anchor_chunk_id``
+            via ``HybridSearcher.find_similar_to_chunk(anchor, rerank=False)``
+            (the ``find_similar_code`` MCP path) instead of ``search_code``.
+            Secondary flagged view only — official aggregates keep search_code.
+            The similar-code path is a dense-only single-leg call with no fused
+            pool, so ``pool_metrics`` stays empty for those rows.
 
     Returns:
         Tuple of (per_query_results, latencies).
@@ -526,6 +564,7 @@ def run_benchmark(
 
     per_query: list[dict[str, Any]] = []
     latencies: list[float] = []
+    anchor_lookup = _build_anchor_lookup(searcher) if f_via_similar else {}
 
     for i, item in enumerate(filtered, 1):
         qid = item["id"]
@@ -544,10 +583,22 @@ def run_benchmark(
         if rerank_engine is not None:
             rerank_engine.last_candidate_ids = None
 
+        anchor = (
+            item.get("anchor_chunk_id") if f_via_similar and category == "F" else None
+        )
+
         try:
-            raw_results, latency_ms = _run_query(
-                searcher, query, k=k, search_mode=search_mode
-            )
+            if anchor:
+                raw_anchor = _resolve_anchor(anchor, anchor_lookup)
+                start = time.perf_counter()
+                raw_results = searcher.find_similar_to_chunk(
+                    raw_anchor, k=k, rerank=False
+                )
+                latency_ms = (time.perf_counter() - start) * 1000.0
+            else:
+                raw_results, latency_ms = _run_query(
+                    searcher, query, k=k, search_mode=search_mode
+                )
             if with_centrality or centrality_alpha is not None:
                 stage_start = time.perf_counter()
                 raw_results = _apply_centrality_stage(
@@ -642,6 +693,7 @@ def run_benchmark(
                     "expected": expected,
                     "expected_primary": expected_primary,
                     "latency_ms": round(latency_ms, 1),
+                    **({"f_via_similar": True} if anchor else {}),
                     **({"containment_credits": containment} if containment else {}),
                     **metrics,
                     **line_metrics,
@@ -977,6 +1029,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--f-via-similar",
+        action="store_true",
+        help=(
+            "Score category-F queries with an anchor_chunk_id via "
+            "find_similar_to_chunk (the find_similar_code MCP path) instead of "
+            "search_code. Secondary flagged view — official aggregates keep "
+            "search_code. Other categories are unaffected."
+        ),
+    )
+    parser.add_argument(
         "--rrf-k",
         type=int,
         help=(
@@ -1049,6 +1111,7 @@ def run_single(
     centrality_alpha: float | None = None,
     reranker_doc_max_chars: int | None = None,
     reranker_listwise_doc_max_chars: int | None = None,
+    f_via_similar: bool = False,
 ) -> dict[str, Any]:
     """Execute one benchmark run and return the result dict."""
     _apply_weight_overrides(bm25_weight, dense_weight, search_mode)
@@ -1102,6 +1165,11 @@ def run_single(
     if with_centrality or centrality_alpha is not None:
         alpha_str = "config default" if centrality_alpha is None else centrality_alpha
         print(f"  Centrality stage: ON (alpha={alpha_str})")
+    if f_via_similar:
+        print(
+            "  F-via-similar: ON (anchored F queries scored via "
+            "find_similar_to_chunk; secondary view, not the official aggregate)"
+        )
 
     # Reset peak VRAM stats and issue a warm-up search so a reranker model swap's
     # first-call load/download cost lands here, not in the timed latency average.
@@ -1137,6 +1205,7 @@ def run_single(
         with_centrality=with_centrality,
         centrality_alpha=centrality_alpha,
         merged_membership=merged_membership,
+        f_via_similar=f_via_similar,
     )
 
     dataset_thresholds = dataset.get("thresholds") or {}
@@ -1165,6 +1234,8 @@ def run_single(
         config_metadata["rrf_k"] = rrf_k
     if bm25_reserved_slots is not None:
         config_metadata["bm25_reserved_slots"] = bm25_reserved_slots
+    if f_via_similar:
+        config_metadata["f_via_similar"] = True
     if with_centrality or centrality_alpha is not None:
         config_metadata["with_centrality"] = True
         config_metadata["centrality_alpha"] = (
@@ -1242,6 +1313,7 @@ def main() -> None:
                 bm25_reserved_slots=args.bm25_reserved_slots,
                 with_centrality=args.with_centrality,
                 centrality_alpha=args.centrality_alpha,
+                f_via_similar=args.f_via_similar,
             )
             reranker_results.append(result)
 
@@ -1287,6 +1359,7 @@ def main() -> None:
                 bm25_reserved_slots=args.bm25_reserved_slots,
                 with_centrality=args.with_centrality,
                 centrality_alpha=args.centrality_alpha,
+                f_via_similar=args.f_via_similar,
             )
             sweep_results.append(result)
 
@@ -1326,6 +1399,7 @@ def main() -> None:
         bm25_reserved_slots=args.bm25_reserved_slots,
         with_centrality=args.with_centrality,
         centrality_alpha=args.centrality_alpha,
+        f_via_similar=args.f_via_similar,
     )
 
     # Print leaderboard (single row)
