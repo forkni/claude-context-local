@@ -6,26 +6,27 @@
 **Status**: [OK] SUCCESS
 
 ## Summary
+
 Successfully committed changes with full validation and logging.
 
 ## Files Committed
 
-M	README.md
-M	config/routing_keywords.yaml
-M	docs/ADVANCED_FEATURES_GUIDE.md
-M	docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md
-M	docs/MCP_TOOLS_REFERENCE.md
-M	embeddings/model_loader.py
-M	mcp_server/model_pool_manager.py
-A	scripts/get_system_status.py
-A	scripts/get_system_status_fast.py
-M	search/config.py
-M	search/neural_reranker.py
-M	search/query_router.py
-M	search/vram_manager.py
-M	search_config.json
-M	start_mcp_server.cmd
-M	tools/batch_index.py
+M README.md
+M config/routing_keywords.yaml
+M docs/ADVANCED_FEATURES_GUIDE.md
+M docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md
+M docs/MCP_TOOLS_REFERENCE.md
+M embeddings/model_loader.py
+M mcp_server/model_pool_manager.py
+A scripts/get_system_status.py
+A scripts/get_system_status_fast.py
+M search/config.py
+M search/neural_reranker.py
+M search/query_router.py
+M search/vram_manager.py
+M search_config.json
+M start_mcp_server.cmd
+M tools/batch_index.py
 
 ## Commit Details
 
@@ -33,7 +34,6 @@ M	tools/batch_index.py
 - **Message**: feat: implement BAAI/bge-code-v1 and optimize dual-model pool triad
 - **Author**: forkni
 - **Date**: Wed Feb 4 02:01:05 2026 -0500
-
 
 ## Validations Passed
 

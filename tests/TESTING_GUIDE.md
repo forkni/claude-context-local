@@ -1809,6 +1809,7 @@ boundary mocking to test properly, which is a larger, separate effort than this 
 pure metric functions, formatter outputs, MCP tool-handler responses.
 
 **Existing snapshot tests:**
+
 - `tests/unit/evaluation/test_metrics_snapshot.py` — `calculate_metrics_from_results` and
   `aggregate_metrics` (9 snapshots)
 - `tests/unit/mcp_server/test_search_results_snapshot.py` — `_format_search_results` (4 snapshots)
@@ -1836,6 +1837,7 @@ def test_some_output(snapshot):
 #### Workflow
 
 **First run (generate snapshots):**
+
 ```bash
 # Generate snapshots for a new test file:
 bash scripts/test/run_tests.sh tests/unit/evaluation/test_metrics_snapshot.py \
@@ -1845,12 +1847,14 @@ bash scripts/test/run_tests.sh tests/unit/evaluation/test_metrics_snapshot.py \
 ```
 
 **Normal run (no flag needed — snapshots are in the suite):**
+
 ```bash
 bash scripts/test/run_tests.sh tests/unit/evaluation/test_metrics_snapshot.py -q
 # "N snapshots passed." printed by syrupy if all match
 ```
 
 **After intentional output change — regenerate:**
+
 ```bash
 bash scripts/test/run_tests.sh tests/unit/evaluation/test_metrics_snapshot.py \
   --snapshot-update -q
@@ -1870,6 +1874,7 @@ AssertionError: snapshot does not match
 ```
 
 `+` is the new value, `-` is the stored value. Review the diff to decide:
+
 - **Expected change** (intentional refactor) → `--snapshot-update` and commit
 - **Regression** (metric formula broken) → fix the code, do not update
 
@@ -1938,9 +1943,11 @@ uv run cr-report cr-<target>.sqlite
 ```
 
 Windows gotcha: `test-command` must use the absolute venv path, not bare `python`:
+
 ```toml
 test-command = "D:/claude-context-local/.venv/Scripts/python.exe -m pytest <paths> -q --no-header --tb=no"
 ```
+
 `subprocess.run(['python', ...])` resolves to system Python via Windows App Paths registry even
 when the venv is first in PATH. See `cr-*.toml` (gitignored) for the per-target configs.
 
@@ -2007,6 +2014,7 @@ CI now emits `--cov-report=xml`; the XML is uploaded after each run including on
 failures, so regressions remain visible on Codecov. The README badge tracks the `development` branch.
 
 **Notes:**
+
 - `fail_ci_if_error: false` — Codecov outages or missing token never fail the CI gate.
 - Authoritative gate remains `--cov-fail-under=80` in CI; Codecov is reporting/visualization only.
 - No `codecov.yml` — relying on Codecov defaults.

@@ -127,11 +127,13 @@ touches stdio.
 ## Overhead
 
 When disabled (default):
+
 - Zero OTel SDK imports at module level.
 - `traced_block` returns on a single boolean check.
 - Benchmark: <1 µs/call, 100k calls < 100 ms.
 
 When enabled:
+
 - Per-span overhead is the OTel SDK's `BatchSpanProcessor` overhead
   (background thread, non-blocking on the hot path).
 - Wall-clock overhead per search query < 5% in benchmarks.

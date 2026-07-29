@@ -405,11 +405,13 @@ Architectural release introducing a pluggable multi-resolver call-graph pipeline
 Feature release adding pyan3-powered cross-module call edges and overhauling `find_connections` direct-caller recall across four phases.
 
 ### Added
+
 - **pyan3 cross-module caller edges** (`chunking/relationships/external_call_graph.py`, new) — `build_call_edges()` runs pyan3 on all project `.py` files at full-index time, maps nodes via `filename+lineno → find_enclosing_chunk` (FQN fallback), and injects resolved pairs into `CodeGraphStorage`. Hard `install_requires` dep; runtime failures are non-fatal warnings. On this codebase: 5,341 edges resolved, 3,594 injected.
 - **Shared FQN/line-number helpers** (`evaluation/chunk_mapping.py`, new) — `build_line_to_chunk_map`, `find_enclosing_chunk`, `chunk_id_from_fqn` promoted from private benchmark internals to a shared public module.
 - **Direct-caller recall harness** (`evaluation/caller_golden.json`, `scripts/benchmark/build_caller_oracle.py`, `scripts/benchmark/run_caller_recall.py`) — 7 golden queries (C001–C007) including 2 cross-module pyan3 targets; baseline shows `total_missed_callers: 0` (14/14 expected callers found).
 
 ### Fixed
+
 - **`find_connections` missed direct callers after incremental reindex** — four-phase fix: stale chunk IDs recovered via `_resolve_by_symbol` Tier 1→3 cascade; common-method blocklist refined; `ImpactReport` confidence counters added. Recall: 0.5667 → 0.9500.
 - **`split_block` chunks emitted zero call edges** — extractor re-reads enclosing `FunctionDef` from source (per-file AST cache) instead of parsing bare body fragment.
 - **Windows backslash `relative_path` in `build_line_to_chunk_map`** — `.replace("\\", "/")` normalization added; fixed zero-pyan3-edges on Windows.
@@ -418,9 +420,11 @@ Feature release adding pyan3-powered cross-module call edges and overhauling `fi
 - **Silent broad-except in pynvml per-device query** — added `logger.debug()` with exc binding.
 
 ### Refactored
+
 - **`exc_info=True` added to all swallow-and-degrade handlers** across `graph/`, `search/`, `chunking/`, `utils/`, `tools/`.
 
 ### Security
+
 - `pyjwt` 2.12.1 → 2.13.0 (CVE-2026-48522, CVE-2026-48524, CVE-2026-48525, CVE-2026-48526); `uv` 0.11.6 → 0.11.18 (GHSA-4gg8-gxpx-9rph).
 
 ---
@@ -430,15 +434,18 @@ Feature release adding pyan3-powered cross-module call edges and overhauling `fi
 Patch release fixing three MCP server bugs and removing the ServiceLocator DI container.
 
 ### Fixed
+
 - **`switch_project` always logged "No indexed model detected"** — `_detect_indexed_model` now reads `project_info.json` (pool-agnostic) before falling back to active-pool scan.
 - **`list_embedding_models` always returned `loaded: false`** — now computes `loaded_names = {e.model_name for e in state.embedders.values() if e is not None}` for accurate VRAM check.
 - **`CodeGraphStorage.clear()` left phantom nodes after full reindex** — `clear()` now deletes the backing JSON file; fresh instance starts empty.
 
 ### Refactored
+
 - **`GraphScoringStage` extracted** — centrality scoring, SSCG subgraph extraction, and k×4 cap encapsulated in `search/graph_scoring_stage.py`.
 - **`ServiceLocator`/`ResourceManager`/`SearchFactory` removed** (ADR-0005) — collapsed to module-level functions; `services.py` reduced to a 2-line re-export shim.
 
 ### Security
+
 - idna 3.11 → 3.17 (CVE-2026-45409).
 
 ---
@@ -448,6 +455,7 @@ Patch release fixing three MCP server bugs and removing the ServiceLocator DI co
 Patch release eliminating the `chunking↔graph` bidirectional import cycle.
 
 ### Refactored
+
 - **`chunking↔graph` import cycle eliminated** — 24 files moved from `graph/` into `chunking/relationships/`. `git mv` history preserved; `graph/__init__.py` re-exports for backward compatibility. Remaining direction: `graph → chunking` (architecturally correct).
 - **`SearchOrchestrator` introduced** (Phases A–D) — `_assemble` logic extracted to helpers; cyclomatic complexity reduced from ~30 to ~5.
 - 20+ helper extractions across `IncrementalIndexer`, `CentralityRanker`, `RelationshipAnalyzer`.
@@ -459,15 +467,18 @@ Patch release eliminating the `chunking↔graph` bidirectional import cycle.
 Patch release fixing a root-cause stale-reference bug in `IndexWriteStage`, improving OOM recovery, refactoring `GraphIntegration` for long-term safety, and tuning `search_config.json` for 8 GB VRAM machines.
 
 ### Fixed
+
 - **Stale embedder/indexer in `IndexWriteStage`** (`search/incremental_indexer.py`): `_build_write_pipeline()` helper now rebuilds both `IndexWriteStage` and `BM25SyncManager` after every `_release_and_verify_resources()` call — stages can no longer embed against cleaned-up objects.
 - **Embedding failure silently reported as success** (`search/index_write_stage.py`): `run()` returns `success=False` + error message when embedding raises; snapshot is not written, preventing a zero-chunk corrupt state.
 - **GPU cache not freed on OOM** (`search/index_write_stage.py`): `_clear_gpu("FULL_INDEX")` called before embedding-failure early return, avoiding cascading OOM on immediate retry.
 
 ### Refactored
+
 - **`GraphIntegration` shared initializer** (`search/graph_integration.py`): `_setup_from_storage(storage)` called by both `__init__` and `from_storage()` — the two construction paths share one attribute-setting site.
 - **Import hoists** (`search/community_stage.py`, `search/graph_integration.py`): `CommunityDetector` and `RelationshipEdge`/`RelationshipType` moved to module level; `LanguageChunker` import annotated with circular-import reason.
 
 ### Changed (breaking config)
+
 - **Embedding model**: `Qwen/Qwen3-Embedding-0.6B` (1024-dim) → `Alibaba-NLP/gte-modernbert-base` (768-dim). Requires full reindex if upgrading from 1024-dim index.
 - **Reranker**: `gte-reranker-modernbert-base` → `jinaai/jina-reranker-v3`; `min_vram_gb` 4.0 → 6.0.
 - **Routing**: `multi_model_enabled` false → true; pool "full" → "lightweight-speed"; `batch_size` 128 → 64.
@@ -479,17 +490,21 @@ Patch release fixing a root-cause stale-reference bug in `IndexWriteStage`, impr
 Patch release fixing missing call and relationship edges for `split_block` chunks, ASGI transport stability, and a search-layer refactor.
 
 ### Added
+
 - ANSI color output in MCP server console (`mcp_server/server.py`): blue=stages, yellow=warnings, red=errors.
 
 ### Fixed
+
 - **split_block call edges** (`chunking/multi_language_chunker.py`): `"split_block"` added to call-extraction allowlist — large methods split at AST boundaries now generate call edges for all fragments.
 - **split_block relationship edges** (`chunking/multi_language_chunker.py`): `_extract_phase3_relationships` extracts from signature-only content for split_blocks, making it parseable. Result: +584 `uses_type`/`imports` edges after re-index.
 - **Starlette 307 on POST `/mcp`** (`mcp_server/server.py`): ASGI wrapper blocks `redirect_slashes` before Starlette issues a 307.
 
 ### Changed
+
 - `CodeRelationshipAnalyzer` moved from `mcp_server/tools/` to `search/relationship_analyzer.py` with `GraphQueryEngine` seam (`graph/graph_queries.py`) and shared types (`search/types.py`). Old path is a backward-compat shim.
 
 ### Security
+
 - `pip ≥ 26.1.1`, `pillow ≥ 12.2.0`, `python-multipart ≥ 0.0.27` (2026-05-25 audit, 13 CVEs resolved).
 
 ---
@@ -518,13 +533,17 @@ Replaced the legacy SSE transport (`SseServerTransport`, two-endpoint GET `/sse`
 ### Migration Note
 
 Update `.claude.json` MCP server config from:
+
 ```json
 {"type": "sse", "url": "http://localhost:8765/sse"}
 ```
+
 to:
+
 ```json
 {"type": "http", "url": "http://localhost:8765/mcp"}
 ```
+
 Re-run `scripts\batch\manual_configure.bat` to apply automatically.
 
 ---

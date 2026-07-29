@@ -127,7 +127,6 @@ When a project is indexed with a `project_id`, `search_code()` automatically inc
 
 ---
 
-
 ## Per-Model Index Storage
 
 **Feature**: Automatic per-model index management enabling instant model switching

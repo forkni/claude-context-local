@@ -108,9 +108,11 @@ codebase index — no second subprocess, no cold model load.
 
 1. **The code-search HTTP server must be running on port 8765.**  Start it
    with `start_mcp_http.bat` if needed, then verify:
+
    ```bash
    curl http://localhost:8765/mcp   # should return MCP protocol response
    ```
+
    Or in Claude Code: `/mcp` → `code-search:list_projects`.
 2. The target project must already be indexed (see `index_directory` tool).
 3. No `ANTHROPIC_API_KEY` set — see above.

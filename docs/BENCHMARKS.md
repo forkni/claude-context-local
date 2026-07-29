@@ -472,6 +472,7 @@ Measures end-to-end retrieval quality for `search_code` queries: how well the ra
 ### Dataset
 
 Golden dataset: `evaluation/golden_dataset.json` — 13 queries (Q01–Q35) across 4 categories:
+
 - **Category A** — Small function discovery (exact symbol lookup)
 - **Category B** — Sibling context (related functions / pairs)
 - **Category C** — Class overview (class + key methods)
@@ -492,6 +493,7 @@ Relevance grades: 3 = primary target, 2 = expected, 1 = acceptable, 0 = distract
 **Thresholds** (from `golden_dataset.json`): MRR ≥ 0.50 ✓ | Recall@5 ≥ 0.55 ✓ | Hit@5 ≥ 0.80 ✓
 
 **Line-overlap metrics** (LR/LP/LIoU) — Chroma-style source-line coverage between retrieved chunks and the expected primary set:
+
 - **Line Recall (LR 0.852)**: 85% of expected source lines are present in the top-k retrieved chunks.
 - **Line Precision (LP 0.267)**: 27% of retrieved source lines are relevant; low LP is expected since chunks contain surrounding context beyond the target function/class.
 - **Line IoU (LIoU ~0.304)**: intersection / union; lower than LR due to context overhead in chunks.
