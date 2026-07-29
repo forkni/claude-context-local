@@ -142,6 +142,17 @@ otel = [
 ]
 # Install: uv pip install -e .[otel]
 # Then set CLAUDE_OTEL_ENABLED=true to activate tracing.
+quant = [
+    # Quantized loading for GenerativeReranker (Qwen3-Reranker family) — see
+    # RerankerConfig.quantization ("fp8"/"8bit"/"4bit"/"mxfp8"). Not needed for
+    # the default "none" (BF16) path.
+    "bitsandbytes>=0.43",
+    "accelerate>=0.30",
+    # torchao: required only for "mxfp8" (torchao.prototype.mx_formats — a
+    # prototype module path, experimental, emulated below Blackwell/sm_100).
+    "torchao>=0.15.0",
+]
+# Install: uv pip install -e .[quant]
 
 [project.urls]
 Homepage = "https://github.com/forkni/claude-context-local"
