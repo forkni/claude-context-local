@@ -645,7 +645,10 @@ def run_benchmark(
                 raw_anchor = _resolve_anchor(anchor, anchor_lookup)
                 start = time.perf_counter()
                 raw_results = searcher.find_similar_to_chunk(
-                    raw_anchor, k=k, rerank=False
+                    raw_anchor,
+                    k=k,
+                    rerank=False,
+                    exclude_same_file=item.get("similar_exclude_same_file", False),
                 )
                 latency_ms = (time.perf_counter() - start) * 1000.0
             else:

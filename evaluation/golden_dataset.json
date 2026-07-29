@@ -1285,6 +1285,7 @@
       "category": "F",
       "split": "train",
       "anchor_chunk_id": "chunking/languages/python.py:method:PythonChunker.__init__",
+      "similar_exclude_same_file": true,
       "expected": [
         "chunking/languages/cpp.py:method:CppChunker.__init__",
         "chunking/languages/javascript.py:method:JavaScriptChunker.__init__",
@@ -1316,6 +1317,7 @@
       "category": "F",
       "split": "train",
       "anchor_chunk_id": "chunking/relationships/relationship_extractors/inheritance_extractor.py:method:InheritanceExtractor._extract_from_tree",
+      "similar_exclude_same_file": true,
       "expected": [
         "chunking/relationships/relationship_extractors/implements_extractor.py:method:ImplementsExtractor._extract_from_tree",
         "chunking/relationships/relationship_extractors/override_extractor.py:method:OverrideExtractor._extract_from_tree",
@@ -1865,6 +1867,7 @@
       "category": "F",
       "split": "val",
       "anchor_chunk_id": "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25",
+      "similar_exclude_same_file": true,
       "expected": [
         "search/bm25_index.py:method:BM25Index.search",
         "search/result_factory.py:decorated_definition:ResultFactory.from_bm25_results",
@@ -1944,6 +1947,7 @@
       "category": "F",
       "split": "test",
       "anchor_chunk_id": "search/graph_integration.py:method:GraphIntegration.save",
+      "similar_exclude_same_file": true,
       "expected": [
         "graph/graph_storage.py:method:CodeGraphStorage.save",
         "search/indexer.py:method:CodeIndexManager.save_index",

@@ -321,6 +321,7 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     """Find code chunks similar to a reference chunk."""
     chunk_id = arguments["chunk_id"]
     k = arguments.get("k", 4)  # Align with default_k=4
+    exclude_same_file = arguments.get("exclude_same_file", False)
 
     # Normalize chunk_id path separators
     # Use CodeIndexManager's normalize_chunk_id for proper cross-platform handling
@@ -330,7 +331,9 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     # Offload blocking get_searcher + find_similar_to_chunk off the event loop.
     def _run_find_similar() -> list:
         _searcher = get_searcher()
-        return _searcher.find_similar_to_chunk(chunk_id, k=k)
+        return _searcher.find_similar_to_chunk(
+            chunk_id, k=k, exclude_same_file=exclude_same_file
+        )
 
     results = await asyncio.to_thread(_run_find_similar)
 

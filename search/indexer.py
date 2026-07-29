@@ -320,9 +320,21 @@ class CodeIndexManager:
         return None
 
     def get_similar_chunks(
-        self, chunk_id: str, k: int = 5
+        self, chunk_id: str, k: int = 5, exclude_same_file: bool = False
     ) -> list[tuple[str, float, dict[str, Any]]]:
-        """Find chunks similar to a given chunk via symbol hash cache (O(1) lookup)."""
+        """Find chunks similar to a given chunk via symbol hash cache (O(1) lookup).
+
+        Args:
+            chunk_id: The anchor chunk to find neighbors of.
+            k: Number of similar chunks to return.
+            exclude_same_file: Drop candidates from the anchor's own file
+                (``relative_path`` match). Caller-supplied intent only — whether
+                same-file siblings or cross-file analogues are wanted cannot be
+                decided from the anchor alone (see
+                evaluation/SIMILAR_DIVERSITY_20260728.md). Not offered on
+                ``get_similar_chunks_batched``: its only production caller is
+                multi-hop semantic expansion, which carries no such intent.
+        """
         # MetadataStore.get() now handles hash cache lookup + variant fallback internally
         metadata_entry = self.metadata_store.get(chunk_id)
 
@@ -335,6 +347,19 @@ class CodeIndexManager:
 
         # Get the embedding for this chunk
         embedding = self._faiss_index.reconstruct(index_id)
+
+        if exclude_same_file:
+            # Same-file neighbors can dominate the top ranks (5-8 of top-10 for
+            # most anchors), so a k+1 fetch would under-return. Overfetch 3x
+            # (the depth the diversity probe validated), then filter.
+            anchor_path = metadata_entry["metadata"].get("relative_path")
+            search_k = min(k * 3 + 1, self.index.ntotal)
+            results = self.search(embedding, search_k)
+            return [
+                (cid, sim, meta)
+                for cid, sim, meta in results
+                if cid != chunk_id and meta.get("relative_path") != anchor_path
+            ][:k]
 
         # Search for similar chunks (excluding the original)
         results = self.search(embedding, k + 1)

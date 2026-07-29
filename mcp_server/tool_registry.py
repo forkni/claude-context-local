@@ -284,6 +284,11 @@ RETURNS:
                     "default": 4,
                     "description": "Number of similar chunks to return (default: 4)",
                 },
+                "exclude_same_file": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Set true when you want cross-file analogues (sibling implementations in other files) — the reference chunk's own-file neighbors often dominate the top ranks. Leave false when you want neighbors within the reference chunk's own file (e.g. other methods of the same class).",
+                },
                 "output_format": {
                     "type": "string",
                     "enum": ["verbose", "compact", "ultra"],

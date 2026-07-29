@@ -993,7 +993,11 @@ class HybridSearcher(BaseSearcher):
             return results
 
     def find_similar_to_chunk(
-        self, chunk_id: str, k: int = 5, rerank: bool = False
+        self,
+        chunk_id: str,
+        k: int = 5,
+        rerank: bool = False,
+        exclude_same_file: bool = False,
     ) -> list:
         """
         Find chunks similar to a given chunk using dense semantic search.
@@ -1002,13 +1006,18 @@ class HybridSearcher(BaseSearcher):
             chunk_id: The ID of the reference chunk
             k: Number of similar chunks to return
             rerank: Whether to apply neural reranking (default: False)
+            exclude_same_file: Drop candidates from the reference chunk's own
+                file. Caller-supplied intent (cross-file analogues vs same-file
+                siblings) — default False preserves existing behaviour.
 
         Returns:
             List of SearchResult objects with similar chunks
         """
         # Fetch more candidates when reranking to improve quality
         fetch_k = k * 2 if rerank else k
-        similar_chunks = self.dense_index.get_similar_chunks(chunk_id, fetch_k)
+        similar_chunks = self.dense_index.get_similar_chunks(
+            chunk_id, fetch_k, exclude_same_file=exclude_same_file
+        )
 
         results = ResultFactory.from_similarity_results(similar_chunks)
 

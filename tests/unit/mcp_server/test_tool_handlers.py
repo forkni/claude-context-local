@@ -691,6 +691,38 @@ async def test_handle_find_similar_code():
         assert result["similar_chunks"][0]["file"] == "file.py"
         assert result["similar_chunks"][0]["score"] == 0.95
 
+        # Default: exclude_same_file=False when the argument is omitted
+        mock_searcher_instance.find_similar_to_chunk.assert_called_once_with(
+            "ref_chunk_id", k=5, exclude_same_file=False
+        )
+
+
+@pytest.mark.asyncio
+async def test_handle_find_similar_code_exclude_same_file_passthrough():
+    """exclude_same_file=True is threaded through to find_similar_to_chunk."""
+    with (
+        patch("mcp_server.tools.search_handlers.get_searcher") as mock_searcher,
+        patch("mcp_server.tools.search_handlers.get_state") as mock_get_state,
+        patch("mcp_server.tools.decorators.get_state") as mock_dec_state,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
+
+        mock_searcher_instance = Mock()
+        mock_searcher_instance.find_similar_to_chunk.return_value = []
+        mock_searcher.return_value = mock_searcher_instance
+
+        result = await tool_handlers.handle_find_similar_code(
+            {"chunk_id": "ref_chunk_id", "k": 4, "exclude_same_file": True}
+        )
+
+        assert result["reference_chunk"] == "ref_chunk_id"
+        mock_searcher_instance.find_similar_to_chunk.assert_called_once_with(
+            "ref_chunk_id", k=4, exclude_same_file=True
+        )
+
 
 # ============================================================================
 # COMPLEX TOOLS TESTS (Simplified - full integration testing elsewhere)

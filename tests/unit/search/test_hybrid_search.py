@@ -495,6 +495,56 @@ class TestHybridSearcher:
 
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")
+    def test_find_similar_default_forwards_exclude_false(self, mock_bm25, mock_dense):
+        """Default call forwards exclude_same_file=False (byte-identical path)."""
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(self.temp_dir)
+
+        dense_mock = mock_dense.return_value
+        dense_mock.get_similar_chunks.return_value = []
+
+        searcher.find_similar_to_chunk("doc1", k=3)
+
+        dense_mock.get_similar_chunks.assert_called_once_with(
+            "doc1", 3, exclude_same_file=False
+        )
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_find_similar_forwards_exclude_same_file(self, mock_bm25, mock_dense):
+        """exclude_same_file=True is forwarded to the dense index."""
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(self.temp_dir)
+
+        dense_mock = mock_dense.return_value
+        dense_mock.get_similar_chunks.return_value = []
+
+        searcher.find_similar_to_chunk("doc1", k=3, exclude_same_file=True)
+
+        dense_mock.get_similar_chunks.assert_called_once_with(
+            "doc1", 3, exclude_same_file=True
+        )
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_find_similar_exclude_composes_with_rerank_fetch_k(
+        self, mock_bm25, mock_dense
+    ):
+        """rerank=True keeps the 2x fetch_k; exclusion overfetch lives in the indexer."""
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(self.temp_dir)
+
+        dense_mock = mock_dense.return_value
+        dense_mock.get_similar_chunks.return_value = []
+
+        searcher.find_similar_to_chunk("doc1", k=3, rerank=True, exclude_same_file=True)
+
+        dense_mock.get_similar_chunks.assert_called_once_with(
+            "doc1", 6, exclude_same_file=True
+        )
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_multi_hop_uses_batched_search(self, mock_bm25, mock_dense):
         """Test that multi-hop expansion uses batched search."""
         # Setup mock for dense index

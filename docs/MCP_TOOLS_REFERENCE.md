@@ -23,7 +23,7 @@ set. This keeps the advertised tool count small without removing the capability.
 | **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types |
 | **find_path** | 🟡 **IMPACT** | Trace shortest path between code entities in relationship graph | source OR source_chunk_id, target OR target_chunk_id, edge_types, max_hops=10 |
 | **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), project_name, incremental=True, wait=True, include_dirs, exclude_dirs |
-| **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=4 |
+| **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=4, exclude_same_file=False (set true for cross-file analogues — sibling implementations in other files; leave false for neighbors within the reference chunk's own file, e.g. other methods of the same class) |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.35, dense_weight=0.65, enable_parallel=True |
 | configure_reranking | Config | Configure neural reranker settings (BGE OR Jina v3, runtime configurable) | enabled, model_name, top_k_candidates=30 |
 | configure_chunking | Config | Configure code chunking settings | enable_community_detection, enable_community_merge, community_resolution, token_estimation, enable_large_node_splitting, max_chunk_lines, split_size_method, max_split_chars, enable_file_summaries, enable_community_summaries |
@@ -630,6 +630,9 @@ At index time, every chunk is tagged with its file role via `_classify_file_role
 
 # Find similar code
 /find_similar_code "auth.py:15-42:function:login"
+
+# Find similar code in OTHER files only (cross-file analogues)
+/find_similar_code "auth.py:15-42:function:login" exclude_same_file=true
 
 # Configure search
 /configure_search_mode "hybrid" 0.35 0.65

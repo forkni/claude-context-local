@@ -90,6 +90,32 @@ That is an API-surface decision, deferred until the current
 benchmark confirmation runs (the harness file and GPU are owned by the
 concurrent pool-flooding session).
 
+## 4a. Addendum (2026-07-28, later): future lever SHIPPED
+
+The pool-flooding fix landed (commit `1bf947b`, ADR-0013), freeing the
+`search/` lane and the harness — the deferred caller-controlled parameter now
+exists end-to-end:
+
+- `CodeIndexManager.get_similar_chunks(..., exclude_same_file=False)` —
+  default path byte-identical (`k+1` fetch); the exclusion path overfetches
+  `min(k*3+1, ntotal)` (the probe's depth) then drops every candidate sharing
+  the anchor's `relative_path`.
+- Threaded through `HybridSearcher.find_similar_to_chunk` and the
+  `find_similar_code` MCP tool (`exclude_same_file` boolean, default false,
+  with intent guidance in the schema description).
+- Harness: F queries whose *query text* asks for cross-file analogues carry
+  `similar_exclude_same_file: true` in both golden datasets
+  (Q70/Q71/Q96/Q99 — Q97/Q98, whose golds are same-file by construction, are
+  deliberately unannotated); `--f-via-similar` passes the annotation through.
+
+Verification run (`f_view_exclude_same_file_r1`, 9 F queries): annotated
+queries reproduce the probe's exclusion-arm ranks exactly —
+Q70 0.500→1.000, Q71 0.200→1.000, Q96 0.250→1.000, Q99 0.333→1.000;
+unannotated queries byte-identical (Q95 0.333, Q97 0.333, Q98 1.000).
+F-mean via similar: **0.544 → 0.852**. The +0.19 intent-supplied ceiling from
+§4 is realized (and exceeded, since exclusion is applied only where intent
+matches).
+
 ## 5. Reproduction
 
 ```bash
