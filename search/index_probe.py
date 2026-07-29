@@ -226,6 +226,45 @@ def _glsl_present(m: ProbeMeasurements) -> bool:
     return any(ext in GLSL_EXTENSIONS for ext in m.language_histogram)
 
 
+def _reranker_below_floor_reason(m: ProbeMeasurements) -> str:
+    if m.vram_total_gb is None:
+        return "no CUDA GPU detected -> neural reranking disabled"
+    tier = _tier_for(m.vram_total_gb)
+    assert tier is not None  # _tier_for always resolves a tier for non-None VRAM
+    return (
+        f"vram_total={m.vram_total_gb:.1f}GB below "
+        f"{tier.name} tier reranking floor -> disabled"
+    )
+
+
+def _embedding_model_mismatch(m: ProbeMeasurements) -> bool:
+    if m.embedding_model is None:
+        return False
+    tier = _tier_for(m.vram_total_gb)
+    return tier is not None and tier.recommended_model != m.embedding_model
+
+
+def _embedding_model_reason(m: ProbeMeasurements) -> str:
+    tier = _tier_for(m.vram_total_gb)
+    assert tier is not None  # guarded by _embedding_model_mismatch's condition
+    return (
+        f"VRAM tier '{tier.name}' recommends "
+        f"{tier.recommended_model} "
+        f"(current: {m.embedding_model}); switching routes to a different "
+        "per-model index dir — manual decision, never auto-applied"
+    )
+
+
+def _max_split_chars_reason(m: ProbeMeasurements) -> str:
+    profile = m.repo_profile
+    assert profile is not None  # guarded by the rule's condition
+    return (
+        f"P90 function size {profile.p90_chars} chars is >2x the "
+        "split threshold — many functions will be split; consider "
+        "sizing_mode=adaptive or a higher max_split_chars"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Rule table — versioned via PROBE_VERSION; every entry is pure over
 # ProbeMeasurements.  Overrides = safe hardware/corpus-structural knobs only.
@@ -272,14 +311,7 @@ RULES: tuple[ProbeRule, ...] = (
         stage="pre_chunking",
         condition=_reranker_below_floor,
         value_fn=lambda m: False,
-        reason_fn=lambda m: (
-            "no CUDA GPU detected -> neural reranking disabled"
-            if m.vram_total_gb is None
-            else (
-                f"vram_total={m.vram_total_gb:.1f}GB below "
-                f"{_tier_for(m.vram_total_gb).name} tier reranking floor -> disabled"
-            )
-        ),
+        reason_fn=_reranker_below_floor_reason,
     ),
     ProbeRule(
         key="reranker.quantization",
@@ -343,18 +375,9 @@ RULES: tuple[ProbeRule, ...] = (
         key="embedding.model_name",
         kind="observation",
         stage="pre_chunking",
-        condition=lambda m: (
-            m.embedding_model is not None
-            and _tier_for(m.vram_total_gb) is not None
-            and _tier_for(m.vram_total_gb).recommended_model != m.embedding_model
-        ),
+        condition=_embedding_model_mismatch,
         value_fn=None,
-        reason_fn=lambda m: (
-            f"VRAM tier '{_tier_for(m.vram_total_gb).name}' recommends "
-            f"{_tier_for(m.vram_total_gb).recommended_model} "
-            f"(current: {m.embedding_model}); switching routes to a different "
-            "per-model index dir — manual decision, never auto-applied"
-        ),
+        reason_fn=_embedding_model_reason,
     ),
     ProbeRule(
         key="chunking.max_split_chars",
@@ -364,11 +387,7 @@ RULES: tuple[ProbeRule, ...] = (
             m.repo_profile is not None and m.repo_profile.p90_chars > 3200
         ),  # 2x the 1600-char default
         value_fn=None,
-        reason_fn=lambda m: (
-            f"P90 function size {m.repo_profile.p90_chars} chars is >2x the "
-            "split threshold — many functions will be split; consider "
-            "sizing_mode=adaptive or a higher max_split_chars"
-        ),
+        reason_fn=_max_split_chars_reason,
     ),
     # --- Pass 2: observations from persisted stats ----------------------
     ProbeRule(
@@ -442,6 +461,7 @@ def run_rules(
             if not rule.condition(measurements):
                 continue
             if rule.kind == "override":
+                assert rule.value_fn is not None  # override rules always carry one
                 _set_dotted(result.overrides, rule.key, rule.value_fn(measurements))
                 result.reasons[rule.key] = rule.reason_fn(measurements)
             else:
