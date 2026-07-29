@@ -133,6 +133,40 @@ remain in the codebase for opt-in use and re-evaluation once the multi-hop
 pool-flooding demotion is addressed — at that point Q101-class queries become
 the honest test of the vocabulary bridge.
 
+## 7. Re-evaluation post-ADR-0013 (2026-07-28, later)
+
+ADR-0012's stated re-evaluation condition — "if the post-retrieval demotion
+issue is addressed" — was met the same day: commit `1bf947b` (ADR-0013,
+`hop1_reserved_slots=6` at the multi-hop rerank window) fixed the listwise
+demotion of hop-1 winners. QE was re-run enabled on both datasets against the
+new N=6 defaults. Controls are ADR-0013's shipped-default numbers, **not**
+`qe_control_r1` (which predates the reserve).
+
+| Run | Dataset | MRR | recall@20 | pool_hit_rate | avg latency |
+|-----|---------|-----|-----------|---------------|-------------|
+| N=6 control (ADR-0013) | 96q | 0.6668 | 0.8156 | 0.974 | — |
+| qe_post_reserve_96q_r1 (ON) | 96q | 0.6663 | 0.8091 | 0.9688 | 4550 ms |
+| N=6 control (ADR-0013) | 63q | 0.7795 | — | — | — |
+| qe_post_reserve_63q_r1 (ON) | 63q | 0.7828 | 0.8107 | 1.0000 | 4573 ms |
+
+Per-target (96q, QE ON): **Q104 hit at MRR 1.0** — but the reserve alone
+already delivers that (it hits identically in the control arm); QE
+contributes nothing. **Q122 miss** (`pool_hit=False`) — confirms the
+model-demotion reclassification from ADR-0013 (distinct, un-fixable-by-reserve
+failure mode); notably the Q122 pool-perturbation flip from §4 did **not**
+survive the reserve's pool reshaping. **Q101 miss** — the one genuine
+vocabulary gap, still unreachable at `variant_weight_discount=0.5` for the §3
+reasons (rescue requires ≥0.75–1.0, which dilutes the dense leg).
+
+Aggregates are flat to marginally negative on 96q (MRR −0.0005,
+recall@20 −0.0065, pool_hit_rate −0.005) and flat on 63q (+0.0033) — all
+within the ±0.02 noise band, with no target gained.
+
+**Verdict: the re-evaluation condition is closed. With the demotion issue
+fixed, QE adds zero targets and zero aggregate lift; the feature remains
+opt-in/disabled. Any future case for it rests on Q101-class vocabulary-gap
+queries appearing in real workloads, not on this golden set.**
+
 ## Reproduction
 
 ```bash

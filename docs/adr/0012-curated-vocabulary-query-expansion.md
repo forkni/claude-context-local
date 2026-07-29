@@ -62,7 +62,16 @@ path (regression-tested).
   discount 1.0). Aggregates and latency were neutral (criteria b/c passed).
   See `evaluation/QUERY_EXPANSION_AB_20260728.md`.
 - The mechanism, config surface, and vocabulary table remain in place for
-  opt-in use and future re-evaluation if the post-retrieval demotion issue
-  is addressed.
+  opt-in use.
+- **Re-evaluation condition closed (2026-07-28, later).** The post-retrieval
+  demotion issue was addressed the same day by ADR-0013
+  (`hop1_reserved_slots=6`, commit `1bf947b`). QE re-run enabled against the
+  new N=6 defaults: Q104 hits identically in both arms (the reserve alone
+  fixes it), Q122 still misses (model-demotion, out of QE's reach — the §4
+  pool-perturbation flip did not survive the reserve's pool reshaping), Q101
+  still misses (the discount ≥0.75 needed to rescue it dilutes the dense
+  leg). Aggregates flat within noise on both datasets, no target gained. The
+  feature stays disabled; no further re-evaluation is scheduled. See
+  `evaluation/QUERY_EXPANSION_AB_20260728.md` §7.
 - The YAML schema does not preclude a future embedding-based trigger matcher;
   only the matcher would change.
