@@ -72,7 +72,20 @@
     "min_vram_gb": 2.0,
     "batch_size": 16,
     "dedupe_split_blocks": true,
-    "single_pass": false
+    "single_pass": false,
+    "quantization": "none",
+    "instruction": "",
+    "doc_max_chars": 4000,
+    "listwise_doc_max_chars": 1000,
+    "hop1_reserved_slots": 6
+  },
+  "query_expansion": {
+    "enabled": false,
+    "variants_path": "",
+    "max_variants": 2,
+    "variant_weight_discount": 0.5,
+    "apply_to_bm25": true,
+    "apply_to_dense": false
   },
   "output": {
     "format": "ultra",
@@ -85,6 +98,7 @@
     "max_merged_tokens": 1000,
     "enable_community_detection": true,
     "enable_community_merge": false,
+    "merge_boundary": "community",
     "community_resolution": 1.5,
     "max_phantom_degree": 20,
     "enable_large_node_splitting": true,
