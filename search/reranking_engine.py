@@ -61,6 +61,11 @@ class RerankingEngine:
         # misses (gold in pool but ranked below the cutoff). Not thread-safe —
         # meaningful only for single-threaded benchmark/diagnostic use.
         self.last_candidate_ids: list[str] | None = None
+        # Chunk IDs actually handed to the listwise model (the
+        # top_k_candidates-sized slice of last_candidate_ids, post hop1-reserve
+        # promotion). Lets diagnostics distinguish pool membership from window
+        # membership — see docs/adr/0013-hop1-reserve-at-final-pool.md.
+        self.last_window_ids: list[str] | None = None
         self._logger = logging.getLogger(__name__)
 
     def should_enable_neural_reranking(
@@ -215,6 +220,7 @@ class RerankingEngine:
         if config is None:
             config = get_search_config()
         rerank_count = min(config.reranker.top_k_candidates, len(candidates))
+        self.last_window_ids = [r.chunk_id for r in candidates[:rerank_count]]
         neural_start = time.time()
 
         try:
@@ -244,12 +250,56 @@ class RerankingEngine:
                 )
             return candidates
 
+    @staticmethod
+    def _apply_hop1_reserve(
+        sorted_results: list,
+        top_k_candidates: int,
+        reserved_slots: int,
+    ) -> list:
+        """Promote hop-1-ranked candidates cut from the rerank window back in.
+
+        Sorting the merged multi-hop pool by ``.score`` (the caller's sort,
+        immediately before this runs) mixes three incomparable scales — hop-1
+        survivors carry an overwritten jina relevance score (~-0.12..+0.22),
+        semantic-expansion candidates carry raw FAISS cosine (~0.5-0.9), and
+        graph-expansion candidates carry literal 0.0. A hop-1 winner can
+        structurally rank below the ``top_k_candidates`` cut on scale alone,
+        never reaching the listwise model at all. This promotes up to
+        ``reserved_slots`` of the best-hop1-ranked candidates from outside the
+        window back into it, evicting an equal number from the window's tail.
+        Intra-window order doesn't matter — the listwise model re-scores the
+        whole window. No-op when the pool doesn't exceed the window or no
+        tail candidate is hop1-tagged.
+        """
+        if reserved_slots <= 0 or len(sorted_results) <= top_k_candidates:
+            return sorted_results
+
+        window = sorted_results[:top_k_candidates]
+        tail = sorted_results[top_k_candidates:]
+
+        tail_hop1 = [
+            (r.metadata.get("hop1_rank"), i, r)
+            for i, r in enumerate(tail)
+            if r.metadata.get("hop1_rank") is not None
+        ]
+        if not tail_hop1:
+            return sorted_results
+
+        tail_hop1.sort(key=lambda item: (item[0], item[1]))
+        promote = [r for _, _, r in tail_hop1[:reserved_slots]]
+        promote_ids = {r.chunk_id for r in promote}
+        remaining_tail = [r for r in tail if r.chunk_id not in promote_ids]
+
+        kept_window = window[: max(0, len(window) - len(promote))]
+        return kept_window + promote + remaining_tail
+
     def rerank_by_query(
         self,
         query: str,
         results: list,
         k: int,
         search_mode: str = SearchMode.HYBRID,
+        hop1_reserved_slots: int = 0,
     ) -> list:
         """
         Re-rank results by sorted score, then apply neural reranking.
@@ -259,6 +309,12 @@ class RerankingEngine:
             results: List of SearchResult objects to re-rank
             k: Number of top results to return
             search_mode: Search mode for re-ranking strategy
+            hop1_reserved_slots: Reserve up to this many hop-1-tagged
+                (``metadata["hop1_rank"]``) candidates into the
+                ``top_k_candidates`` rerank window when the pool exceeds it.
+                0 (default) is a no-op — only ``MultiHopSearcher.search``
+                passes a non-zero value; the ego-graph/parent-expansion tail
+                call sites stay byte-identical.
 
         Returns:
             Top k results sorted by query relevance
@@ -274,6 +330,10 @@ class RerankingEngine:
         # changes. Fetch once per pass (R1) and thread through both helpers instead
         # of each independently re-fetching (was 3 fetches/call, now 1).
         config = get_search_config()
+        if hop1_reserved_slots > 0:
+            sorted_results = self._apply_hop1_reserve(
+                sorted_results, config.reranker.top_k_candidates, hop1_reserved_slots
+            )
         if sorted_results and self._ensure_reranker("[RERANK]", config=config):
             sorted_results = self._run_rerank(
                 query, sorted_results, k, "[NEURAL_RERANK]", config=config

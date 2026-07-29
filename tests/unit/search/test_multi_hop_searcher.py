@@ -312,6 +312,74 @@ class TestMultiHopSearcher:
         self.mock_reranking_engine.rerank_by_query.assert_called_once()
 
     @patch("search.multi_hop_searcher._get_config_via_service_locator")
+    def test_search_multi_hop_tags_hop1_rank(self, mock_config):
+        """Hop-1 survivors get metadata["hop1_rank"] = 1-based rank, so a
+        downstream rerank-window reserve can identify them after the merged
+        pool's score-scale sort (:270 in reranking_engine.py) reorders them
+        away from hop-1 order."""
+        config = MagicMock()
+        config.multi_hop.initial_k_multiplier = 2.0
+        config.reranker.single_pass = False
+        mock_config.return_value = config
+
+        query_emb = np.array([1.0, 0.0, 0.0])
+        self.mock_embedder.embed_query.return_value = query_emb
+
+        initial_results = [
+            SearchResult(chunk_id="chunk1", score=0.9, metadata={}),
+            SearchResult(chunk_id="chunk2", score=0.8, metadata={}),
+        ]
+        self.mock_single_hop_callback.return_value = initial_results
+
+        batched_results = {
+            "chunk1": [("chunk3", 0.7, {"file": "test.py"})],
+            "chunk2": [("chunk4", 0.6, {"file": "test.py"})],
+        }
+        self.mock_dense_index.get_similar_chunks_batched.return_value = batched_results
+        self.mock_reranking_engine.rerank_by_query.return_value = initial_results
+
+        self.searcher.search(
+            query="test query", k=2, search_mode="hybrid", hops=2, expansion_factor=0.3
+        )
+
+        assert initial_results[0].metadata["hop1_rank"] == 1
+        assert initial_results[1].metadata["hop1_rank"] == 2
+
+    @patch("search.multi_hop_searcher._get_config_via_service_locator")
+    def test_search_multi_hop_threads_hop1_reserved_slots(self, mock_config):
+        """The merge-pool rerank call passes config.reranker.hop1_reserved_slots
+        through to RerankingEngine.rerank_by_query — the only call site that
+        does (ego-tail calls in HybridSearcher keep the parameter's 0 default)."""
+        config = MagicMock()
+        config.multi_hop.initial_k_multiplier = 2.0
+        config.reranker.single_pass = False
+        config.reranker.hop1_reserved_slots = 5
+        mock_config.return_value = config
+
+        query_emb = np.array([1.0, 0.0, 0.0])
+        self.mock_embedder.embed_query.return_value = query_emb
+
+        initial_results = [
+            SearchResult(chunk_id="chunk1", score=0.9, metadata={}),
+            SearchResult(chunk_id="chunk2", score=0.8, metadata={}),
+        ]
+        self.mock_single_hop_callback.return_value = initial_results
+
+        batched_results = {
+            "chunk1": [("chunk3", 0.7, {"file": "test.py"})],
+            "chunk2": [("chunk4", 0.6, {"file": "test.py"})],
+        }
+        self.mock_dense_index.get_similar_chunks_batched.return_value = batched_results
+        self.mock_reranking_engine.rerank_by_query.return_value = initial_results
+
+        self.searcher.search(
+            query="test query", k=2, search_mode="hybrid", hops=2, expansion_factor=0.3
+        )
+
+        call_kwargs = self.mock_reranking_engine.rerank_by_query.call_args.kwargs
+        assert call_kwargs["hop1_reserved_slots"] == 5
+
+    @patch("search.multi_hop_searcher._get_config_via_service_locator")
     def test_search_multi_hop_single_pass_skips_rerank(self, mock_config):
         """Q3 single_pass: merge keeps fusion/expansion score order and
         truncates to k without calling the neural reranker."""

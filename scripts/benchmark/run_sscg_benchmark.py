@@ -224,6 +224,43 @@ def _apply_reserved_slots_override(reserved_slots: int | None) -> None:
         print(f"[WARN] Could not apply reserved-slots override: {e}", file=sys.stderr)
 
 
+def _apply_multi_hop_expansion_override(expansion: float | None) -> None:
+    """Override the multi-hop expansion factor in the in-memory config singleton.
+
+    In-memory only. Read live from config on every search
+    (``multi_hop_searcher.py``), so no searcher reset is needed between runs.
+    """
+    if expansion is None:
+        return
+    try:
+        from search.config import get_search_config
+
+        get_search_config().multi_hop.expansion = expansion
+    except Exception as e:
+        print(
+            f"[WARN] Could not apply multi-hop expansion override: {e}", file=sys.stderr
+        )
+
+
+def _apply_hop1_reserved_slots_override(reserved_slots: int | None) -> None:
+    """Override the hop1-reserve rerank-window knob in the in-memory config.
+
+    In-memory only. Read live from config on every search
+    (``multi_hop_searcher.py``), so no searcher reset is needed between runs.
+    """
+    if reserved_slots is None:
+        return
+    try:
+        from search.config import get_search_config
+
+        get_search_config().reranker.hop1_reserved_slots = reserved_slots
+    except Exception as e:
+        print(
+            f"[WARN] Could not apply hop1-reserved-slots override: {e}",
+            file=sys.stderr,
+        )
+
+
 def _apply_query_expansion_override(enabled: bool) -> None:
     """Enable curated-vocabulary query expansion in the in-memory config.
 
@@ -1045,6 +1082,25 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--multi-hop-expansion",
+        type=float,
+        help=(
+            "Override multi_hop.expansion (hop-2 expansion factor, controls "
+            "candidate-pool size before the multi-hop rerank cut) for this run. "
+            "Default: use config value (0.5)."
+        ),
+    )
+    parser.add_argument(
+        "--hop1-reserved-slots",
+        type=int,
+        help=(
+            "Override reranker.hop1_reserved_slots (promotes up to N "
+            "best-hop1-ranked candidates from outside the multi-hop rerank "
+            "window back into it) for this run. Default: use config value "
+            "(0 = disabled)."
+        ),
+    )
+    parser.add_argument(
         "--query-expansion",
         action="store_true",
         help=(
@@ -1139,6 +1195,8 @@ def run_single(
     reranker_listwise_doc_max_chars: int | None = None,
     f_via_similar: bool = False,
     query_expansion: bool = False,
+    multi_hop_expansion: float | None = None,
+    hop1_reserved_slots: int | None = None,
 ) -> dict[str, Any]:
     """Execute one benchmark run and return the result dict."""
     _apply_weight_overrides(bm25_weight, dense_weight, search_mode)
@@ -1149,6 +1207,8 @@ def run_single(
     )
     _apply_rrf_k_override(rrf_k)
     _apply_reserved_slots_override(bm25_reserved_slots)
+    _apply_multi_hop_expansion_override(multi_hop_expansion)
+    _apply_hop1_reserved_slots_override(hop1_reserved_slots)
     _apply_query_expansion_override(query_expansion)
     _maybe_reset_for_construction_overrides(
         bm25_weight,
@@ -1190,6 +1250,10 @@ def run_single(
         print(f"  RRF fusion constant: rrf_k={rrf_k}")
     if bm25_reserved_slots is not None:
         print(f"  BM25 reserved pool slots: {bm25_reserved_slots}")
+    if multi_hop_expansion is not None:
+        print(f"  Multi-hop expansion factor: {multi_hop_expansion}")
+    if hop1_reserved_slots is not None:
+        print(f"  Hop1 reserved rerank-window slots: {hop1_reserved_slots}")
     if with_centrality or centrality_alpha is not None:
         alpha_str = "config default" if centrality_alpha is None else centrality_alpha
         print(f"  Centrality stage: ON (alpha={alpha_str})")
@@ -1267,6 +1331,10 @@ def run_single(
         config_metadata["rrf_k"] = rrf_k
     if bm25_reserved_slots is not None:
         config_metadata["bm25_reserved_slots"] = bm25_reserved_slots
+    if multi_hop_expansion is not None:
+        config_metadata["multi_hop_expansion"] = multi_hop_expansion
+    if hop1_reserved_slots is not None:
+        config_metadata["hop1_reserved_slots"] = hop1_reserved_slots
     if f_via_similar:
         config_metadata["f_via_similar"] = True
     if query_expansion:
@@ -1346,6 +1414,8 @@ def main() -> None:
                 reranker_listwise_doc_max_chars=args.reranker_listwise_doc_max_chars,
                 rrf_k=args.rrf_k,
                 bm25_reserved_slots=args.bm25_reserved_slots,
+                multi_hop_expansion=args.multi_hop_expansion,
+                hop1_reserved_slots=args.hop1_reserved_slots,
                 with_centrality=args.with_centrality,
                 centrality_alpha=args.centrality_alpha,
                 f_via_similar=args.f_via_similar,
@@ -1393,6 +1463,8 @@ def main() -> None:
                 reranker_listwise_doc_max_chars=args.reranker_listwise_doc_max_chars,
                 rrf_k=args.rrf_k,
                 bm25_reserved_slots=args.bm25_reserved_slots,
+                multi_hop_expansion=args.multi_hop_expansion,
+                hop1_reserved_slots=args.hop1_reserved_slots,
                 with_centrality=args.with_centrality,
                 centrality_alpha=args.centrality_alpha,
                 f_via_similar=args.f_via_similar,
@@ -1434,6 +1506,8 @@ def main() -> None:
         reranker_listwise_doc_max_chars=args.reranker_listwise_doc_max_chars,
         rrf_k=args.rrf_k,
         bm25_reserved_slots=args.bm25_reserved_slots,
+        multi_hop_expansion=args.multi_hop_expansion,
+        hop1_reserved_slots=args.hop1_reserved_slots,
         with_centrality=args.with_centrality,
         centrality_alpha=args.centrality_alpha,
         f_via_similar=args.f_via_similar,

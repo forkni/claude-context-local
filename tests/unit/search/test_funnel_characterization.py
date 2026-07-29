@@ -86,10 +86,13 @@ def executor():
     )
 
 
-def _cfg(top_k_candidates=30, single_pass=False, bm25_reserved_slots=0):
+def _cfg(
+    top_k_candidates=30, single_pass=False, bm25_reserved_slots=0, hop1_reserved_slots=0
+):
     cfg = Mock()
     cfg.reranker.top_k_candidates = top_k_candidates
     cfg.reranker.single_pass = single_pass
+    cfg.reranker.hop1_reserved_slots = hop1_reserved_slots
     cfg.search_mode.bm25_reserved_slots = bm25_reserved_slots
     cfg.query_expansion.enabled = False  # Mock attrs are truthy by default
     return cfg
@@ -296,6 +299,95 @@ def test_rerank_slice_caps_at_top_k_candidates():
 
     passed_candidates = engine.neural_reranker.rerank.call_args[0][1]
     assert len(passed_candidates) == 30
+
+
+def test_hop1_reserve_default_zero_is_identical_window():
+    """hop1_reserved_slots=0 (default) must reproduce the exact pre-existing
+    window — no reserve logic runs at all (multi-hop pool flooding fix,
+    docs/adr/0013-hop1-reserve-at-final-pool.md)."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)  # skip neural rerank branch
+    cfg = _cfg(top_k_candidates=5, hop1_reserved_slots=0)
+    # 10 candidates: only the top 5 by score should ever reach the reranker,
+    # even though a lower-scored candidate is tagged hop1_rank=1.
+    candidates = [
+        SearchResult(chunk_id=f"c{i}", score=float(9 - i), metadata={})
+        for i in range(10)
+    ]
+    candidates[9].metadata["hop1_rank"] = 1  # lowest score, best hop1 rank
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query("q", candidates, k=5)
+
+    assert [r.chunk_id for r in out] == ["c0", "c1", "c2", "c3", "c4"]
+
+
+def test_hop1_reserve_promotes_tagged_candidate_into_window():
+    """hop1_reserved_slots > 0 promotes the best-hop1-ranked candidate from
+    outside the top_k_candidates window back into it, evicting the window's
+    worst-scored entry (order otherwise irrelevant — the reranker re-scores
+    the whole window)."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)  # skip neural rerank branch
+    cfg = _cfg(top_k_candidates=5, hop1_reserved_slots=1)
+    candidates = [
+        SearchResult(chunk_id=f"c{i}", score=float(9 - i), metadata={})
+        for i in range(10)
+    ]
+    candidates[9].metadata["hop1_rank"] = (
+        1  # score 0.0, would be cut without the reserve
+    )
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query("q", candidates, k=5, hop1_reserved_slots=1)
+
+    out_ids = {r.chunk_id for r in out}
+    assert "c9" in out_ids
+    assert "c4" not in out_ids  # evicted to make room
+    assert len(out) == 5
+
+
+def test_hop1_reserve_noop_when_pool_within_window():
+    """No-op when the merged pool doesn't exceed top_k_candidates — nothing
+    to reserve room for."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)  # skip neural rerank branch
+    cfg = _cfg(top_k_candidates=30, hop1_reserved_slots=3)
+    candidates = [
+        SearchResult(chunk_id=f"c{i}", score=float(9 - i), metadata={})
+        for i in range(10)
+    ]
+    candidates[9].metadata["hop1_rank"] = 1
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query("q", candidates, k=5, hop1_reserved_slots=3)
+
+    assert [r.chunk_id for r in out] == ["c0", "c1", "c2", "c3", "c4"]
+
+
+def test_hop1_reserve_ego_tail_call_site_unaffected():
+    """rerank_by_query's hop1_reserved_slots parameter defaults to 0 — calls
+    that don't pass it explicitly (the ego-graph/parent-expansion tail in
+    HybridSearcher) are byte-identical even when the config value is
+    non-zero, because the config is only read for top_k_candidates unless
+    the caller opts in via the argument."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)  # skip neural rerank branch
+    # Config has a non-zero knob value, but the caller (simulating the
+    # ego-tail call sites) doesn't pass hop1_reserved_slots.
+    cfg = _cfg(top_k_candidates=5, hop1_reserved_slots=3)
+    candidates = [
+        SearchResult(chunk_id=f"c{i}", score=float(9 - i), metadata={})
+        for i in range(10)
+    ]
+    candidates[9].metadata["hop1_rank"] = 1
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query(
+            "q", candidates, k=5
+        )  # no hop1_reserved_slots kwarg
+
+    assert [r.chunk_id for r in out] == ["c0", "c1", "c2", "c3", "c4"]
 
 
 def test_dedupe_split_blocks_can_return_fewer_than_k():

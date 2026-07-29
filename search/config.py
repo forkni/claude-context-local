@@ -272,7 +272,7 @@ class IntentConfig:
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (11 fields)."""
+    """Neural reranker settings (12 fields)."""
 
     enabled: bool = True  # Enabled by default (Quality First)
     model_name: str = (
@@ -308,6 +308,16 @@ class RerankerConfig:
     # allow_ram_fallback), 42-45/96 queries stalling past 8s (max 354.9s),
     # and every quality metric flat-to-negative within the +/-0.02 MRR noise
     # floor vs this default. See docs/adr/0011-listwise-reranker-doc-cap.md.
+    hop1_reserved_slots: int = 6  # Reserve up to N hop-1-ranked candidates into
+    # the multi-hop rerank window (rerank_by_query) when hop-2 expansion pushes
+    # them out via score-scale incomparability at the top_k_candidates cut
+    # (hop-1 jina scores vs. raw cosine/0.0 expansion scores sorted together).
+    # 6 chosen by A/B sweep (N=5,6,8,9,10 probed; N>=8 starts evicting other
+    # golds' window slots as collateral damage; N=10 aggregate-regressed MRR
+    # on the 96q set). N=6: MRR flat within +/-0.02 noise on 96q and 63q,
+    # recall@20/recall@50/pool_hit_rate all positive on both, no latency cost.
+    # 0 disables (byte-identical to pre-fix behaviour). See
+    # docs/adr/0013-hop1-reserve-at-final-pool.md.
 
 
 @dataclass
@@ -835,6 +845,7 @@ class SearchConfig:
         "reranker_instruction": ("reranker", "instruction"),
         "reranker_doc_max_chars": ("reranker", "doc_max_chars"),
         "reranker_listwise_doc_max_chars": ("reranker", "listwise_doc_max_chars"),
+        "reranker_hop1_reserved_slots": ("reranker", "hop1_reserved_slots"),
         # OutputConfig
         "output_format": ("output", "format"),
         "source_order_output": ("output", "source_order_output"),
@@ -1121,6 +1132,10 @@ class SearchConfigManager:
             "CLAUDE_RERANKER_ENABLED": ("reranker_enabled", self._bool_from_env),
             "CLAUDE_RERANKER_MODEL": ("reranker_model_name", str),
             "CLAUDE_RERANKER_TOP_K": ("reranker_top_k_candidates", int),
+            "CLAUDE_RERANKER_HOP1_RESERVED_SLOTS": (
+                "reranker_hop1_reserved_slots",
+                int,
+            ),
             "CLAUDE_RERANKER_MIN_VRAM_GB": ("reranker_min_vram_gb", float),
             "CLAUDE_RERANKER_BATCH_SIZE": ("reranker_batch_size", int),
             "CLAUDE_RERANKER_DEDUPE_SPLIT_BLOCKS": (

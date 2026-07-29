@@ -420,6 +420,13 @@ class MultiHopSearcher:
             f"({timings['hop_1'] * 1000:.1f}ms)"
         )
 
+        # Tag hop-1 provenance so a downstream rerank-window reserve
+        # (RerankingEngine.rerank_by_query, hop1_reserved_slots) can promote
+        # these candidates back in if the merged pool's score-scale sort
+        # pushes them out of the top_k_candidates cut.
+        for i, r in enumerate(initial_results):
+            r.metadata["hop1_rank"] = i + 1
+
         # Track all discovered chunks
         all_chunk_ids = {r.chunk_id for r in initial_results}
         all_results = {r.chunk_id: r for r in initial_results}
@@ -488,6 +495,7 @@ class MultiHopSearcher:
                 results=merged_results,
                 k=k,
                 search_mode=search_mode,
+                hop1_reserved_slots=config.reranker.hop1_reserved_slots,
             )
 
         timings["rerank"] = time.time() - rerank_start
