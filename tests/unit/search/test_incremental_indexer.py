@@ -1614,3 +1614,137 @@ class TestCheckCommunityDrift:
         assert cumulative == 99  # 0 prev + 99 new distinct
         assert len(paths) == 99
         mock_full.assert_not_called()
+
+
+class TestProbeWiring:
+    """Auto-tuning probe pass 1 wiring in _full_index (ADR-0014).
+
+    The probe must run exactly once per full reindex (when an active project
+    storage dir is set), never on incremental passes, and a probe failure
+    must never break indexing.
+    """
+
+    def setup_method(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.project_path = Path(self.temp_dir) / "test_project"
+        self.project_path.mkdir(parents=True, exist_ok=True)
+        for filename in ("main.py", "utils.py"):
+            (self.project_path / filename).write_text("def f(): return 1")
+
+        self.mock_indexer = Mock()
+        self.mock_indexer.resync_if_desynced.return_value = (False, 0)
+        self.mock_embedder = Mock()
+        self.mock_embedder.model_name = "BAAI/bge-m3"
+        self.mock_chunker = Mock()
+        self.mock_snapshot_manager = Mock()
+
+    def _make_indexer(self) -> IncrementalIndexer:
+        return IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+    def _run_full_index(self, indexer: IncrementalIndexer) -> IncrementalIndexResult:
+        """Drive a full index with the same mock scaffolding as
+        test_full_index_no_snapshot."""
+        self.mock_snapshot_manager.has_snapshot.return_value = False
+        with (
+            patch.object(IncrementalIndexer, "_release_and_verify_resources"),
+            patch("search.incremental_indexer.MerkleDAG") as mock_dag_class,
+        ):
+            mock_dag = Mock()
+            mock_dag.get_all_files.return_value = ["main.py", "utils.py"]
+            mock_dag_class.return_value = mock_dag
+
+            mock_chunk = Mock()
+            mock_chunk.content = "test content"
+            self.mock_chunker.is_supported.return_value = True
+            self.mock_chunker.chunk_file.return_value = [mock_chunk]
+            self.mock_embedder.embed_chunks.side_effect = lambda chunks, **kwargs: [
+                Mock(metadata={}) for _ in chunks
+            ]
+
+            return indexer.incremental_index(str(self.project_path), "test_project")
+
+    def test_full_index_calls_probe_once_and_attaches_summary(self):
+        sentinel_summary = {"stage": "pre_chunking", "override_keys": ["x"]}
+        indexer = self._make_indexer()
+
+        with (
+            patch(
+                "search.incremental_indexer.get_active_project_storage_dir",
+                return_value=self.temp_dir,
+            ),
+            patch(
+                "search.index_probe.probe_pre_chunking",
+                return_value=sentinel_summary,
+            ) as mock_probe,
+        ):
+            result = self._run_full_index(indexer)
+
+        assert result.success is True
+        mock_probe.assert_called_once()
+        args, kwargs = mock_probe.call_args
+        assert args[0] == self.temp_dir  # project storage dir
+        assert sorted(args[1]) == ["main.py", "utils.py"]  # supported files
+        assert kwargs["embedding_model"] == "BAAI/bge-m3"
+        assert result.probe_summary == sentinel_summary
+        assert result.to_dict()["probe_summary"] == sentinel_summary
+
+    def test_full_index_without_active_storage_dir_skips_probe(self):
+        indexer = self._make_indexer()
+        with (
+            patch(
+                "search.incremental_indexer.get_active_project_storage_dir",
+                return_value=None,
+            ),
+            patch("search.index_probe.probe_pre_chunking") as mock_probe,
+        ):
+            result = self._run_full_index(indexer)
+
+        assert result.success is True
+        mock_probe.assert_not_called()
+        assert result.probe_summary is None
+
+    def test_incremental_pass_never_probes(self):
+        indexer = self._make_indexer()
+        self.mock_snapshot_manager.has_snapshot.return_value = True
+        mock_changes = Mock()
+        mock_changes.has_changes.return_value = False
+        mock_dag = Mock()
+        mock_dag.get_all_files.return_value = []
+        indexer.change_detector.detect_changes_from_snapshot = Mock(
+            return_value=(mock_changes, mock_dag)
+        )
+
+        with (
+            patch(
+                "search.incremental_indexer.get_active_project_storage_dir",
+                return_value=self.temp_dir,
+            ),
+            patch("search.index_probe.probe_pre_chunking") as mock_probe,
+        ):
+            result = indexer.incremental_index(str(self.project_path), "test_project")
+
+        assert result.success is True
+        mock_probe.assert_not_called()
+        assert result.probe_summary is None
+
+    def test_probe_failure_never_breaks_indexing(self):
+        indexer = self._make_indexer()
+        with (
+            patch(
+                "search.incremental_indexer.get_active_project_storage_dir",
+                return_value=self.temp_dir,
+            ),
+            patch(
+                "search.index_probe.probe_pre_chunking",
+                side_effect=RuntimeError("probe exploded"),
+            ),
+        ):
+            result = self._run_full_index(indexer)
+
+        assert result.success is True
+        assert result.probe_summary is None

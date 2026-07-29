@@ -253,6 +253,56 @@ class TestRunIndexingSuccessPropagation:
         assert response.get("exclude_dirs") == ["_archive", "tests"]
         assert response.get("include_dirs") is None
 
+    def test_build_index_response_surfaces_probe_summary(self):
+        """A probed full reindex threads the pass-1/pass-2 probe summary
+        through to the MCP response so the caller can see what was
+        auto-tuned without opening search_overrides.json."""
+        from mcp_server.tools.index_handlers import _build_index_response
+
+        probe_summary = {
+            "stage": "pre_chunking",
+            "probe_version": "1",
+            "override_keys": ["embedding.batch_size"],
+            "reasons": {"embedding.batch_size": "vram_total_gb=24.0 -> 256"},
+            "observation_keys": [],
+        }
+        r = {
+            "files_added": 5,
+            "files_modified": 0,
+            "files_removed": 0,
+            "chunks_added": 42,
+            "time_taken": 1.0,
+            "indexing_succeeded": True,
+            "indexing_error": None,
+            "probe_summary": probe_summary,
+        }
+
+        response = _build_index_response([r], "/some/project", incremental=False)
+
+        assert response.get("success") is True
+        assert response.get("probe_summary") == probe_summary
+
+    def test_build_index_response_omits_probe_summary_when_absent(self):
+        """Incremental runs (and probe-disabled runs) carry no probe_summary —
+        responses.ok drops the None so the field never appears at all."""
+        from mcp_server.tools.index_handlers import _build_index_response
+
+        r = {
+            "files_added": 0,
+            "files_modified": 0,
+            "files_removed": 0,
+            "chunks_added": 0,
+            "time_taken": 0.05,
+            "indexing_succeeded": True,
+            "indexing_error": None,
+            "probe_summary": None,
+        }
+
+        response = _build_index_response([r], "/some/project", incremental=True)
+
+        assert response.get("success") is True
+        assert "probe_summary" not in response
+
 
 class TestPurgeIndexDirFailureReporting:
     """_purge_index_dir must report undeletable files via its return value,

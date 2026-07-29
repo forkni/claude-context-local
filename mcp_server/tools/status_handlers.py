@@ -344,7 +344,23 @@ async def handle_cleanup_resources(arguments: dict[str, Any]) -> dict:
 async def handle_get_search_config_status(arguments: dict[str, Any]) -> dict:
     """Get current search configuration status."""
     config = get_config()
+
+    # Per-project overrides provenance (ADR-0014). None when no overrides file
+    # is active for the current project (or the layer is disabled).
+    from search.config import get_config_manager
+
+    overrides_meta = get_config_manager().get_active_overrides_meta()
+
     return {
+        "project_overrides_active": overrides_meta is not None,
+        "project_overrides_path": overrides_meta["path"] if overrides_meta else None,
+        "project_overrides_probe_version": (
+            overrides_meta["probe_version"] if overrides_meta else None
+        ),
+        "project_overrides_generated_at": (
+            overrides_meta["generated_at"] if overrides_meta else None
+        ),
+        "project_overrides_keys": overrides_meta["keys"] if overrides_meta else [],
         "search_mode": config.search_mode.default_mode,
         "bm25_weight": config.search_mode.bm25_weight,
         "dense_weight": config.search_mode.dense_weight,

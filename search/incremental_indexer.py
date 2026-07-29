@@ -32,7 +32,7 @@ from utils.timing import timed
 
 from .community_refresh_stage import CommunityRefreshStage
 from .community_stage import CommunityStage
-from .config import get_search_config
+from .config import get_active_project_storage_dir, get_search_config
 from .graph_integration import GraphIntegration
 from .index_write_stage import IncrementalIndexResult, IndexWriteStage
 from .indexer import CodeIndexManager as Indexer
@@ -782,6 +782,30 @@ class IncrementalIndexer:
             self.repo_profile = repo_profile
             # ========== END Repository Profiling ==========
 
+            # ========== Auto-Tuning Probe: Pass 1 (ADR-0014) ==========
+            # Writes <project_storage_dir>/search_overrides.json BEFORE the
+            # get_search_config() call below, so this very run already sees
+            # the merged overrides. Wired only here in _full_index —
+            # incremental reindexes never re-probe, and an existing overrides
+            # file keeps applying untouched. Storage dir comes from the
+            # config layer's active-project seam (set by the MCP handlers);
+            # when unset (CLI/tests), the probe is skipped entirely.
+            probe_summary = None
+            probe_storage = get_active_project_storage_dir()
+            if probe_storage:
+                try:
+                    from .index_probe import probe_pre_chunking
+
+                    probe_summary = probe_pre_chunking(
+                        probe_storage,
+                        supported_files,
+                        repo_profile,
+                        embedding_model=getattr(self.embedder, "model_name", None),
+                    )
+                except Exception as e:  # noqa: BLE001 - probe isolation: tuning must never break indexing
+                    logger.warning(f"[INDEX_PROBE] Pass 1 failed: {e}")
+            # ========== END Auto-Tuning Probe ==========
+
             # Collect all chunks first, then embed in a single pass for efficiency
             # Use parallel chunking for improved performance
             logger.info(
@@ -800,7 +824,7 @@ class IncrementalIndexer:
             all_chunks = self._community_stage.run(all_chunks, project_path, config)
 
             # Stage 2: embed, index, snapshot, BM25, GPU
-            return self._index_write_stage.run(
+            result = self._index_write_stage.run(
                 all_chunks,
                 project_name,
                 dag,
@@ -810,6 +834,8 @@ class IncrementalIndexer:
                 self.repo_profile,
                 project_path=project_path,
             )
+            result.probe_summary = probe_summary
+            return result
 
         except Exception as e:
             logger.error(f"Full indexing failed: {e}", exc_info=True)

@@ -42,6 +42,9 @@ class IncrementalIndexResult:
     bm25_resync_count: int = 0
     call_edges_injected: int = 0
     call_edge_resolvers: tuple[str, ...] = ()
+    # Pass-1 auto-tuning probe summary (ADR-0014). Attached by _full_index
+    # after the write stage returns; always None on incremental passes.
+    probe_summary: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary.

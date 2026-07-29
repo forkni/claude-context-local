@@ -11,6 +11,7 @@ from typing import Any
 from mcp_server.project_persistence import save_project_selection
 from mcp_server.resource_manager import _cleanup_previous_resources
 from mcp_server.services import get_state
+from mcp_server.state import invalidate_config_caches
 from mcp_server.storage_manager import (
     get_project_storage_dir,
     set_current_project,
@@ -24,6 +25,7 @@ from search.config import (
     SearchMode,
     SearchModeConfig,
     get_config_manager,
+    set_active_project_storage_dir,
     validate_field_value,
 )
 
@@ -141,6 +143,14 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
     # Verify project is indexed
     project_dir = get_project_storage_dir(str(project_path))
     index_dir = project_dir / "index"
+
+    # Point the config layer at the new project's storage dir so its
+    # search_overrides.json (ADR-0014) is merged into subsequent config loads,
+    # then drop config-derived caches (the global file's mtime does not change
+    # on a project switch, so without this the old project's merged config —
+    # and the searcher built from it — would keep serving).
+    set_active_project_storage_dir(project_dir)
+    invalidate_config_caches()
 
     if not index_dir.exists() or not (index_dir / "code.index").exists():
         return responses.ok(

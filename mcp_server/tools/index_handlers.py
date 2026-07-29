@@ -17,6 +17,7 @@ from mcp_server.search_factory import (
     get_searcher,
 )
 from mcp_server.services import get_config, get_state
+from mcp_server.state import invalidate_config_caches
 from mcp_server.storage_manager import (
     get_canonical_project_info,
     get_project_storage_dir,
@@ -30,6 +31,7 @@ from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import (
     MODEL_REGISTRY,
     SearchConfigManager,
+    set_active_project_storage_dir,
 )
 from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
 from search.incremental_indexer import IncrementalIndexer
@@ -173,6 +175,10 @@ def _run_indexing(
         "indexing_error": result.error,
         "call_edges_injected": result.call_edges_injected,
         "call_edge_resolvers": result.call_edge_resolvers,
+        # Pass-1 auto-tuning probe summary (ADR-0014); None unless _full_index
+        # ran with an active project storage dir. getattr-guarded so a mocked
+        # result object without the field cannot break the transport dict.
+        "probe_summary": getattr(result, "probe_summary", None),
     }
 
 
@@ -246,6 +252,10 @@ def _build_index_response(
         call_edge_resolvers=list(r["call_edge_resolvers"])
         if r.get("call_edge_resolvers")
         else None,
+        # Auto-tuning probe (ADR-0014): override keys + reasons the full
+        # reindex just wrote to search_overrides.json. None (omitted) on
+        # incremental runs and when the probe is disabled.
+        probe_summary=r.get("probe_summary") or None,
     )
     return response
 
@@ -385,22 +395,10 @@ def _iter_project_model_dirs(project_path: Path) -> Iterator[Path]:
                 yield model_dir
 
 
-def _invalidate_config_caches() -> None:
-    """Invalidate all process-wide config caches after a model switch.
-
-    Must be called after writing an updated config to disk so that the next
-    :func:`get_config` call reads the new values instead of returning stale ones.
-    Clears two caches in order:
-
-    1. ``search.config._config_manager`` (module-level singleton) — the real cache.
-    2. ``state.reset_for_model_switch()`` (clears embedders, index_manager, searcher)
-    """
-    from search import config as config_module
-
-    config_module._config_manager = None
-
-    state = get_state()
-    state.reset_for_model_switch()
+# Module-level alias so existing tests can keep patching
+# ``mcp_server.tools.index_handlers._invalidate_config_caches``; the shared
+# implementation lives in mcp_server.state (also called by handle_switch_project).
+_invalidate_config_caches = invalidate_config_caches
 
 
 def _switch_active_model(model_name: str) -> None:
@@ -868,6 +866,13 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
     # Set as current project (using setter for proper cross-module sync)
     set_current_project(str(directory_path))
 
+    # Point the config layer at this project's storage dir so its
+    # search_overrides.json (ADR-0014) applies to this run — index_directory
+    # without a prior switch_project must still pick up the right file — then
+    # drop config-derived caches built against the previous project's overrides.
+    set_active_project_storage_dir(get_project_storage_dir(str(directory_path)))
+    invalidate_config_caches()
+
     # Temporarily disable allow_ram_fallback during indexing for performance
     with temporary_ram_fallback_off() as original_value:
         if original_value:
@@ -928,6 +933,36 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
                 )
 
             result = await asyncio.to_thread(_setup_and_run)
+
+            # Auto-tuning probe pass 2 (ADR-0014): append report-only
+            # observations derived from the just-persisted stats.json.
+            # Gated on pass 1 having run (probe_summary set) so it fires
+            # exactly when this run was a probed full reindex — including an
+            # incremental call that fell back to full internally — and never
+            # on a plain incremental pass or when the probe is disabled.
+            if result.get("probe_summary") and result.get("indexing_succeeded"):
+
+                def _post_build_probe() -> dict[str, Any] | None:
+                    try:
+                        from search.index_probe import probe_post_build
+
+                        stats_path = index_dir / "stats.json"
+                        stats = (
+                            json.loads(stats_path.read_text())
+                            if stats_path.exists()
+                            else {}
+                        )
+                        return probe_post_build(project_dir, stats)
+                    except Exception as e:  # noqa: BLE001 - probe isolation: tuning must never break indexing
+                        logger.warning(f"[INDEX_PROBE] Pass 2 failed: {e}")
+                        return None
+
+                pass2_summary = await asyncio.to_thread(_post_build_probe)
+                from search.index_probe import merged_probe_summary
+
+                result["probe_summary"] = merged_probe_summary(
+                    result["probe_summary"], pass2_summary
+                )
 
             # Build response (using helper)
             return _build_index_response(

@@ -302,6 +302,26 @@ def reset_state() -> None:
     _app_state.reset()
 
 
+def invalidate_config_caches() -> None:
+    """Invalidate all process-wide config caches.
+
+    Call after anything that changes what :func:`search.config.get_search_config`
+    should return: a config write (model switch) or an active-project change
+    (per-project overrides, ADR-0014).  Clears two caches in order:
+
+    1. ``search.config._config_manager`` (module-level singleton) — the real cache.
+    2. :meth:`ApplicationState.reset_for_model_switch` (clears embedders,
+       index_manager, searcher — all built against the old config values).
+    """
+    # Deferred import: state.py must stay import-light (it is imported by
+    # every handler module) and search.config must not become a hard
+    # module-level dependency.
+    from search import config as config_module
+
+    config_module._config_manager = None
+    _app_state.reset_for_model_switch()
+
+
 # Convenience functions for accessing ApplicationState
 def get_current_project() -> str | None:
     """Get current project path (backward compatibility)."""

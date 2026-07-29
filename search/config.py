@@ -201,7 +201,7 @@ class SearchModeConfig:
 
 @dataclass
 class PerformanceConfig:
-    """GPU, parallelism, caching settings (17 fields)."""
+    """GPU, parallelism, caching settings (18 fields)."""
 
     use_parallel_search: bool = True
     max_parallel_workers: int = 2
@@ -242,6 +242,11 @@ class PerformanceConfig:
     # Auto-reindexing
     enable_auto_reindex: bool = True
     max_index_age_minutes: float = 5.0
+
+    # Per-project overrides layer (ADR-0014). Read from the GLOBAL config layer
+    # only (an overrides file cannot re-enable itself). Env escape hatch:
+    # CLAUDE_DISABLE_PROJECT_OVERRIDES.
+    enable_project_overrides: bool = True
 
 
 @dataclass
@@ -625,6 +630,22 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> None:
             base[key].update(value)
         else:
             base[key] = value
+
+
+def _dotted_keys(nested: dict[str, Any], _prefix: str = "") -> list[str]:
+    """Flatten a nested dict to sorted dotted leaf-key paths.
+
+    ``{"performance": {"max_chunking_workers": 12}}`` →
+    ``["performance.max_chunking_workers"]``.  Used for override provenance.
+    """
+    keys: list[str] = []
+    for key, value in nested.items():
+        path = f"{_prefix}{key}"
+        if isinstance(value, dict) and value:
+            keys.extend(_dotted_keys(value, f"{path}."))
+        else:
+            keys.append(path)
+    return sorted(keys)
 
 
 def validate_field_value(spec_cls: type, field_name: str, value: Any) -> str | None:
@@ -1017,6 +1038,34 @@ class SearchConfigManager:
         self.config_file = config_file or self._get_default_config_path()
         self._config = None
         self._config_mtime: float | None = None  # Track file modification time
+        # (path, mtime) of the applied per-project overrides file — part of the
+        # hot-reload cache key so project switches and hand-edits invalidate.
+        self._overrides_key: tuple[str, float] | None = None
+        self._active_overrides_meta: dict[str, Any] | None = None
+
+    def _resolve_overrides_path(self) -> Path | None:
+        """Path to the active project's search_overrides.json, or None.
+
+        None when no active project storage dir is set, the file does not
+        exist, or ``CLAUDE_DISABLE_PROJECT_OVERRIDES`` is truthy (escape hatch
+        checked before anything else).
+        """
+        if self._bool_from_env(os.environ.get("CLAUDE_DISABLE_PROJECT_OVERRIDES", "")):
+            return None
+        storage_dir = get_active_project_storage_dir()
+        if not storage_dir:
+            return None
+        path = Path(storage_dir) / PROJECT_OVERRIDES_FILENAME
+        return path if path.exists() else None
+
+    def get_active_overrides_meta(self) -> dict[str, Any] | None:
+        """Provenance of the applied per-project overrides, or None if inactive.
+
+        Keys: ``path``, ``probe_version``, ``generated_at``, ``keys`` (sorted
+        dotted config keys).  Forces a (cached) load so the answer is current.
+        """
+        self.load_config()
+        return self._active_overrides_meta
 
     def _get_default_config_path(self) -> str:
         """Get default config file path (delegates to shared config_paths module)."""
@@ -1043,8 +1092,22 @@ class SearchConfigManager:
         if _read_path.exists():
             current_mtime = _read_path.stat().st_mtime
 
-        # Return cache only if file hasn't changed
-        if self._config is not None and current_mtime == self._config_mtime:
+        # Per-project overrides file (ADR-0014) participates in the cache key:
+        # switching projects or hand-editing the file must trigger a reload.
+        override_path = self._resolve_overrides_path()
+        overrides_key: tuple[str, float] | None = None
+        if override_path is not None:
+            try:
+                overrides_key = (str(override_path), override_path.stat().st_mtime)
+            except OSError:
+                override_path = None
+
+        # Return cache only if neither file has changed
+        if (
+            self._config is not None
+            and current_mtime == self._config_mtime
+            and overrides_key == self._overrides_key
+        ):
             return self._config
 
         # Start with defaults
@@ -1068,6 +1131,37 @@ class SearchConfigManager:
             except Exception as e:  # noqa: BLE001 - parse-recovery: malformed config file, fall back to defaults
                 self.logger.warning(f"Failed to load config file {_read_path}: {e}")
 
+        # Per-project overrides (ADR-0014): deep-merged over the global file so
+        # probe results apply only to the active project.  Env vars are merged
+        # last (below) and therefore still win — the human-in-the-loop escape.
+        # The enable flag is read from the GLOBAL layer only, so an overrides
+        # file can never re-enable itself.
+        self._active_overrides_meta = None
+        if override_path is not None and config_dict.get("performance", {}).get(
+            "enable_project_overrides", True
+        ):
+            try:
+                with open(override_path) as f:
+                    raw_overrides = json.load(f)
+                overrides = raw_overrides.get("overrides") or {}
+                if not isinstance(overrides, dict):
+                    raise TypeError("'overrides' must be a JSON object")
+                _deep_merge(config_dict, overrides)
+                self._active_overrides_meta = {
+                    "path": str(override_path),
+                    "probe_version": raw_overrides.get("probe_version"),
+                    "generated_at": raw_overrides.get("generated_at"),
+                    "keys": _dotted_keys(overrides),
+                }
+                self.logger.info(
+                    f"Applied project overrides from {override_path}: "
+                    f"{', '.join(self._active_overrides_meta['keys']) or '(none)'}"
+                )
+            except Exception as e:  # noqa: BLE001 - parse-recovery: malformed overrides file, skip the layer
+                self.logger.warning(
+                    f"Failed to load project overrides {override_path}: {e}"
+                )
+
         # Translate env-var flat keys to nested and deep-merge so they apply over
         # a nested config file (previously the update() call was a no-op for nested
         # files because the flat env keys were never read by the nested branch).
@@ -1078,8 +1172,9 @@ class SearchConfigManager:
         # Create config object
         self._config = SearchConfig.from_dict(config_dict)
 
-        # Store mtime after loading
+        # Store mtimes after loading
         self._config_mtime = current_mtime
+        self._overrides_key = overrides_key
 
         self.logger.info(
             f"Search mode: {self._config.search_mode.default_mode}, "
@@ -1284,6 +1379,34 @@ def set_indexing_ram_fallback_override(value: bool | None) -> None:
 def get_indexing_ram_fallback_override() -> bool | None:
     """Return the current transient RAM-fallback override, or None if not set."""
     return _indexing_ram_fallback_override
+
+
+# Per-project overrides layer (ADR-0014).
+PROJECT_OVERRIDES_FILENAME = "search_overrides.json"
+
+# Storage directory of the currently active project (set by the MCP server on
+# switch_project / index_directory).  Module-level for the same
+# survive-singleton-reset reason as _indexing_ram_fallback_override: it must
+# outlive `_config_manager = None` resets on model switches.
+_active_project_storage_dir: str | None = None
+
+
+def set_active_project_storage_dir(path: str | Path | None) -> None:
+    """Point the config layer at the active project's storage directory.
+
+    Enables the per-project ``search_overrides.json`` merge in
+    :meth:`SearchConfigManager.load_config`.  Pass ``None`` to detach (no
+    project active).  The manager's hot-reload cache key includes the override
+    file's path+mtime, so no explicit invalidation is required here — the next
+    ``load_config()`` picks up the new project's overrides automatically.
+    """
+    global _active_project_storage_dir
+    _active_project_storage_dir = str(path) if path else None
+
+
+def get_active_project_storage_dir() -> str | None:
+    """Return the active project's storage directory, or None if unset."""
+    return _active_project_storage_dir
 
 
 def get_config_manager(config_file: str | None = None) -> SearchConfigManager:

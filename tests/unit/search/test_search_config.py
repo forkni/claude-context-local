@@ -634,3 +634,230 @@ def test_reranker_listwise_doc_max_chars_env_override(tmp_path):
         config = manager.load_config()
 
     assert config.reranker.listwise_doc_max_chars == 750
+
+
+# ---------------------------------------------------------------------------
+# Per-project overrides layer (ADR-0014): search_overrides.json in the active
+# project's storage dir is deep-merged over the global file; env still wins.
+# ---------------------------------------------------------------------------
+
+
+def _write_overrides(storage_dir, overrides, **extra):
+    """Write a search_overrides.json into *storage_dir* and return its path."""
+    from search.config import PROJECT_OVERRIDES_FILENAME
+
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "probe_version": "1",
+        "generated_at": "2026-07-29T00:00:00",
+        "overrides": overrides,
+        "reasons": {},
+        "observations": [],
+    }
+    payload.update(extra)
+    path = storage_dir / PROJECT_OVERRIDES_FILENAME
+    path.write_text(json.dumps(payload))
+    return path
+
+
+class TestProjectOverrides:
+    """search_overrides.json merge layer in SearchConfigManager.load_config."""
+
+    def _manager(self, tmp_path, global_config=None):
+        config_file = tmp_path / "search_config.json"
+        config_file.write_text(json.dumps(global_config or {}))
+        from search.config import SearchConfigManager
+
+        return SearchConfigManager(config_file=str(config_file))
+
+    def test_no_active_project_is_baseline(self, tmp_path, monkeypatch):
+        """With no active project dir, load_config behaves exactly as before."""
+        import search.config as config_module
+
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", None)
+        manager = self._manager(tmp_path, {"performance": {"max_chunking_workers": 8}})
+        config = manager.load_config()
+
+        assert config.performance.max_chunking_workers == 8
+        assert manager.get_active_overrides_meta() is None
+
+    def test_overrides_merge_over_global_file(self, tmp_path, monkeypatch):
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        _write_overrides(
+            storage,
+            {
+                "performance": {"max_chunking_workers": 12},
+                "reranker": {"batch_size": 8},
+            },
+        )
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        manager = self._manager(tmp_path, {"performance": {"max_chunking_workers": 8}})
+        config = manager.load_config()
+
+        assert config.performance.max_chunking_workers == 12
+        assert config.reranker.batch_size == 8
+        # Untouched sibling fields keep their global/default values
+        assert config.performance.use_parallel_search is True
+
+    def test_env_wins_over_project_overrides(self, tmp_path, monkeypatch):
+        """Precedence: env > per-project overrides > global file > defaults."""
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        _write_overrides(storage, {"performance": {"max_chunking_workers": 12}})
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        with patch.dict(os.environ, {"CLAUDE_MAX_CHUNKING_WORKERS": "3"}):
+            config = self._manager(tmp_path).load_config()
+
+        assert config.performance.max_chunking_workers == 3
+
+    def test_overrides_meta_provenance(self, tmp_path, monkeypatch):
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        path = _write_overrides(
+            storage,
+            {
+                "performance": {"max_chunking_workers": 12},
+                "reranker": {"batch_size": 8},
+            },
+        )
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        meta = self._manager(tmp_path).get_active_overrides_meta()
+
+        assert meta is not None
+        assert meta["path"] == str(path)
+        assert meta["probe_version"] == "1"
+        assert meta["generated_at"] == "2026-07-29T00:00:00"
+        assert meta["keys"] == [
+            "performance.max_chunking_workers",
+            "reranker.batch_size",
+        ]
+
+    def test_hand_edit_hot_reloads_without_new_manager(self, tmp_path, monkeypatch):
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        path = _write_overrides(storage, {"performance": {"max_chunking_workers": 12}})
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        manager = self._manager(tmp_path)
+        assert manager.load_config().performance.max_chunking_workers == 12
+
+        _write_overrides(storage, {"performance": {"max_chunking_workers": 6}})
+        # Force a distinct mtime — same-second writes can otherwise collide.
+        os.utime(path, (os.path.getmtime(path) + 10, os.path.getmtime(path) + 10))
+
+        assert manager.load_config().performance.max_chunking_workers == 6
+
+    def test_project_switch_invalidates_cache(self, tmp_path, monkeypatch):
+        """Changing the active storage dir applies the new project's overrides."""
+        import search.config as config_module
+
+        storage_a = tmp_path / "project_a"
+        storage_b = tmp_path / "project_b"
+        _write_overrides(storage_a, {"performance": {"max_chunking_workers": 12}})
+        _write_overrides(storage_b, {"performance": {"max_chunking_workers": 2}})
+
+        monkeypatch.setattr(
+            config_module, "_active_project_storage_dir", str(storage_a)
+        )
+        manager = self._manager(tmp_path)
+        assert manager.load_config().performance.max_chunking_workers == 12
+
+        config_module.set_active_project_storage_dir(storage_b)
+        assert manager.load_config().performance.max_chunking_workers == 2
+
+        # Detaching drops the layer entirely (back to global/defaults).
+        config_module.set_active_project_storage_dir(None)
+        assert manager.load_config().performance.max_chunking_workers != 2
+
+    def test_env_escape_hatch_disables_layer(self, tmp_path, monkeypatch):
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        _write_overrides(storage, {"performance": {"max_chunking_workers": 12}})
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        with patch.dict(os.environ, {"CLAUDE_DISABLE_PROJECT_OVERRIDES": "1"}):
+            manager = self._manager(tmp_path)
+            config = manager.load_config()
+            meta = manager.get_active_overrides_meta()
+
+        assert config.performance.max_chunking_workers == 4  # dataclass default
+        assert meta is None
+
+    def test_global_flag_escape_hatch_and_no_self_enable(self, tmp_path, monkeypatch):
+        """performance.enable_project_overrides=false in the GLOBAL file disables
+        the layer, and the overrides file cannot re-enable itself."""
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        _write_overrides(
+            storage,
+            {
+                "performance": {
+                    "max_chunking_workers": 12,
+                    "enable_project_overrides": True,
+                }
+            },
+        )
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        manager = self._manager(
+            tmp_path, {"performance": {"enable_project_overrides": False}}
+        )
+
+        assert manager.load_config().performance.max_chunking_workers == 4
+        assert manager.get_active_overrides_meta() is None
+
+    def test_malformed_overrides_file_recovered(self, tmp_path, monkeypatch):
+        """Malformed overrides JSON: warn + skip the layer, global config loads."""
+        import search.config as config_module
+        from search.config import PROJECT_OVERRIDES_FILENAME
+
+        storage = tmp_path / "project_storage"
+        storage.mkdir()
+        (storage / PROJECT_OVERRIDES_FILENAME).write_text("{not valid json")
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        manager = self._manager(tmp_path, {"performance": {"max_chunking_workers": 8}})
+
+        assert manager.load_config().performance.max_chunking_workers == 8
+        assert manager.get_active_overrides_meta() is None
+
+    def test_overrides_wrong_type_recovered(self, tmp_path, monkeypatch):
+        """'overrides' being a non-object skips the layer instead of crashing."""
+        import search.config as config_module
+        from search.config import PROJECT_OVERRIDES_FILENAME
+
+        storage = tmp_path / "project_storage"
+        storage.mkdir()
+        (storage / PROJECT_OVERRIDES_FILENAME).write_text(
+            json.dumps({"probe_version": "1", "overrides": ["not", "a", "dict"]})
+        )
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        manager = self._manager(tmp_path)
+        manager.load_config()
+
+        assert manager.get_active_overrides_meta() is None
+
+    def test_dotted_keys_flattening(self):
+        from search.config import _dotted_keys
+
+        assert _dotted_keys(
+            {
+                "performance": {"max_chunking_workers": 12, "enable_fp16": True},
+                "output": {},
+            }
+        ) == [
+            "output",
+            "performance.enable_fp16",
+            "performance.max_chunking_workers",
+        ]
