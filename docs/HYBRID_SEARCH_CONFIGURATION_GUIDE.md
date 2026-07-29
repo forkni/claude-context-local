@@ -2,7 +2,8 @@
 
 ## Overview
 
-The Claude Context MCP system now includes **hybrid search capabilities** that combine BM25 sparse search with dense vector search for improved accuracy and efficiency. This guide explains how to configure and control these features.
+The Claude Context MCP system now includes **hybrid search capabilities** that combine BM25 sparse search with dense vector search
+for improved accuracy and efficiency. This guide explains how to configure and control these features.
 
 ## Key Benefits
 
@@ -282,7 +283,8 @@ Parameters:
 
 ### Multi-Hop Search Configuration
 
-**Multi-hop search** discovers interconnected code relationships by iteratively expanding search results to find related chunks. Inspired by ChunkHound and cAST research, it provides deeper code context discovery.
+**Multi-hop search** discovers interconnected code relationships by iteratively expanding search results to find related chunks.
+Inspired by ChunkHound and cAST research, it provides deeper code context discovery.
 
 **Empirically validated**: 93.3% of queries benefit, with average 3.2 unique chunks discovered and 40-60% top result changes for complex queries.
 
@@ -362,7 +364,8 @@ These parameters were validated with 15+ queries showing 93% benefit rate and op
 
 ### BM25 Stemming Configuration (v0.5.2)
 
-**BM25 Stemming** normalizes word forms to improve recall by matching different variations of the same word. For example, "indexing", "indexed", "indexes", and "index" all stem to "index" and match each other.
+**BM25 Stemming** normalizes word forms to improve recall by matching different variations of the same word. For example,
+"indexing", "indexed", "indexes", and "index" all stem to "index" and match each other.
 
 **Empirically validated**: 93.3% of queries benefit, with average 3.33 unique discoveries per query and negligible overhead (0.47ms).
 
@@ -425,9 +428,81 @@ export CLAUDE_BM25_USE_STEMMING=false
 
 **Recommendation**: Keep stemming enabled unless you specifically need exact text matching.
 
-**After Upgrade**: Re-index existing projects for optimal stemming benefits. The system automatically detects configuration mismatches and warns you if loading old indices.
+**After Upgrade**: Re-index existing projects for optimal stemming benefits. The system automatically detects configuration
+mismatches and warns you if loading old indices.
 
 Stemming was validated with comparative testing showing improved recall for morphological variations without impacting precision.
+
+### Query Expansion (opt-in, default off)
+
+**Query expansion** bridges zero-identifier English paraphrases to the identifiers code
+actually uses. A curated concept→terms vocabulary (`config/query_expansion_variants.yaml`,
+12 concepts: persistence, eviction, pooling, …) is matched against the query by
+deterministic lowercase trigger containment; each matched concept adds an extra
+**discounted fusion leg** (the query text plus the concept's code-domain terms) to the
+existing RRF fusion. Example: "write the analyzed relationships out so they *survive a
+restart*" triggers the `persistence` concept and adds a BM25 leg carrying "save",
+"persist", "disk".
+
+**Why it ships disabled**: the 2026-07-28 A/B closed FAIL on its primary criterion —
+only 1 of 3 target queries flipped, and rescuing the one genuine vocabulary-gap query
+required a variant weight that measurably diluted the dense leg for other queries.
+Aggregates and latency were neutral. Full verdict:
+[ADR-0012](adr/0012-curated-vocabulary-query-expansion.md) and
+`evaluation/QUERY_EXPANSION_AB_20260728.md`. The mechanism remains available for opt-in
+use and re-evaluation.
+
+#### QueryExpansionConfig fields
+
+All six fields live in `QueryExpansionConfig` (`search/config.py`):
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `enabled` | `false` | Master switch. Disabled/unmatched queries take the exact unexpanded fusion path |
+| `variants_path` | `""` | Vocabulary YAML path; empty = package default `config/query_expansion_variants.yaml` |
+| `max_variants` | `2` | Max matched concepts per query (deterministic order) |
+| `variant_weight_discount` | `0.5` | Variant-leg weight = base leg weight × this |
+| `apply_to_bm25` | `true` | Add expanded-query BM25 leg(s) |
+| `apply_to_dense` | `false` | Add expanded-query dense leg(s) — needs its own A/B before use |
+
+#### Enabling via `search_config.json`
+
+Nested block:
+
+```json
+{
+  "query_expansion": {
+    "enabled": true,
+    "max_variants": 2,
+    "variant_weight_discount": 0.5,
+    "apply_to_bm25": true,
+    "apply_to_dense": false
+  }
+}
+```
+
+Flat-key aliases are also accepted (`search/config.py` `_FLAT_KEY_ALIASES`):
+`query_expansion_enabled`, `query_expansion_variants_path`,
+`query_expansion_max_variants`, `query_expansion_weight_discount`,
+`query_expansion_apply_to_bm25`, `query_expansion_apply_to_dense`.
+There are no environment variables for query expansion — use the configuration file.
+
+No reindex is required; expansion is a search-time-only mechanism.
+
+#### Vocabulary curation policy
+
+The YAML header enforces these rules at review time (restated here; the file is
+authoritative):
+
+- **Generality test**: every concept must plausibly serve queries outside any benchmark
+  set — universal software ideas (persistence, eviction, pooling), never a specific
+  query's wording.
+- **Never query-keyed**: no entry may be named after, or triggered solely by, a
+  golden-dataset query.
+- **Cap ~15 concepts**: growth pressure means the approach is wrong (switch to
+  embedding-based matching instead of adding entries).
+- Matching is verbatim lowercase substring containment — prefer 1–2 word triggers, and
+  use longer phrases only to avoid over-firing (e.g. "memory gets tight", not "memory").
 
 ### 2. Using Environment Variables
 
@@ -884,13 +959,21 @@ start_mcp_server.bat
     "enabled": true,
     "hop_count": 2,
     "expansion": 0.5
+  },
+  "query_expansion": {
+    "enabled": false,
+    "variants_path": "",
+    "max_variants": 2,
+    "variant_weight_discount": 0.5,
+    "apply_to_bm25": true,
+    "apply_to_dense": false
   }
 }
 ```
 
 Field names mirror `search_config.json.example` — see that file (and `search/config.py`'s
-`SearchModeConfig`/`PerformanceConfig`/`MultiHopConfig` dataclasses) for the authoritative
-list; this excerpt is illustrative, not exhaustive. Note `bm25_tokenizer: "whole"` keeps
+`SearchModeConfig`/`PerformanceConfig`/`MultiHopConfig`/`QueryExpansionConfig` dataclasses)
+for the authoritative list; this excerpt is illustrative, not exhaustive. Note `bm25_tokenizer: "whole"` keeps
 identifiers intact with **no stemming** — changing it requires a full reindex.
 
 This configuration provides optimal performance for most Windows development environments with CUDA-capable GPUs.
