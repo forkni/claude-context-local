@@ -7,6 +7,7 @@ Ported from: _archive/BENCHMARKING/tools/benchmark_retrieval_quality.py
 """
 
 import math
+from collections.abc import Sequence
 from statistics import mean
 from typing import Any
 
@@ -75,7 +76,7 @@ def _entry_ids(entry: RetrievedEntry) -> set[str]:
     return entry if isinstance(entry, set) else {entry}
 
 
-def flatten_entries(entries: list[RetrievedEntry]) -> set[str]:
+def flatten_entries(entries: Sequence[RetrievedEntry]) -> set[str]:
     """Union all IDs across retrieved entries (for pool-membership checks)."""
     ids: set[str] = set()
     for entry in entries:
@@ -84,7 +85,7 @@ def flatten_entries(entries: list[RetrievedEntry]) -> set[str]:
 
 
 def calculate_recall_at_k(
-    retrieved: list[RetrievedEntry], relevant: list[str], k: int
+    retrieved: Sequence[RetrievedEntry], relevant: list[str], k: int
 ) -> float:
     """Recall@k = |matched relevant IDs in retrieved[:k]| / |relevant|.
 
@@ -107,7 +108,7 @@ def calculate_recall_at_k(
 
 
 def calculate_precision_at_k(
-    retrieved: list[RetrievedEntry], relevant: list[str], k: int
+    retrieved: Sequence[RetrievedEntry], relevant: list[str], k: int
 ) -> float:
     """Precision@k = |matched relevant IDs in retrieved[:k]| / k.
 
@@ -129,7 +130,7 @@ def calculate_precision_at_k(
     return len(matched) / k
 
 
-def calculate_mrr(retrieved: list[RetrievedEntry], relevant: list[str]) -> float:
+def calculate_mrr(retrieved: Sequence[RetrievedEntry], relevant: list[str]) -> float:
     """Mean Reciprocal Rank of the first highly-relevant (label=3) result.
 
     Args:
@@ -148,7 +149,7 @@ def calculate_mrr(retrieved: list[RetrievedEntry], relevant: list[str]) -> float
 
 
 def calculate_ndcg_at_k(
-    retrieved: list[RetrievedEntry], relevant: list[str], k: int
+    retrieved: Sequence[RetrievedEntry], relevant: list[str], k: int
 ) -> float:
     """NDCG@k with binary relevance (label ≥ 2 = 1, otherwise 0).
 
@@ -172,7 +173,7 @@ def calculate_ndcg_at_k(
 
 
 def calculate_metrics_from_results(
-    retrieved: list[RetrievedEntry],
+    retrieved: Sequence[RetrievedEntry],
     expected: list[str],
     expected_primary: list[str] | None = None,
 ) -> dict[str, float | bool]:

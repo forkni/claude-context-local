@@ -528,9 +528,12 @@ class GenerativeReranker(BaseReranker):
             )
         if self.quantization == "mxfp8":
             try:
+                # pyrefly: ignore [missing-import]
                 from torchao.prototype.mx_formats.inference_workflow import (
                     MXDynamicActivationMXWeightConfig,
                 )
+
+                # pyrefly: ignore [missing-import]
                 from torchao.quantization.quantize_.common import KernelPreference
             except ImportError as e:
                 raise ImportError(
