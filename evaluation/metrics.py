@@ -774,7 +774,9 @@ def build_file_entries(
         if path.startswith(SYNTHETIC_COMMUNITY_PREFIX):
             strict.append(set())
             community_id = extract_community_id(meta.get("tags"))
-            members = (community_files or {}).get(community_id, frozenset())
+            members: frozenset[str] = frozenset()
+            if community_id is not None:
+                members = (community_files or {}).get(community_id, frozenset())
             expanded.append(set(members))
         else:
             file_set = {path} if path else set()

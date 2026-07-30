@@ -452,7 +452,7 @@ def _apply_centrality_stage(
             by_id.setdefault(r.chunk_id, []).append(r)
         out: list[Any] = []
         for item in reordered:
-            bucket = by_id.get(item.get("chunk_id"))
+            bucket = by_id.get(item.get("chunk_id") or "")
             if bucket:
                 out.append(bucket.pop(0))
         return out
@@ -839,8 +839,9 @@ def run_benchmark(
         qid = item["id"]
         query = item["query"]
         category = item.get("category", "?")
-        expected = item["expected"]  # already normalized in golden_dataset.json
-        expected_primary = item.get("expected_primary", expected)
+        # Already normalized in golden_dataset.json
+        expected: list[str] = item["expected"]
+        expected_primary: list[str] = item.get("expected_primary") or expected
 
         prefix = f"  [{i:2d}/{len(filtered)}] [{qid}][{category}]"
         if verbose:
