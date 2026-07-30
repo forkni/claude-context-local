@@ -302,8 +302,18 @@ def aggregate_metrics(
     }
 
     # Line-overlap metrics — only average queries where the key is present
-    # (queries without golden line ranges are excluded, not counted as 0)
-    for key in ("line_recall", "line_precision", "line_iou"):
+    # (queries without golden line ranges are excluded, not counted as 0).
+    # Same rule for Category-G file recall (only queries with expected_files)
+    # and the secondary community-credit MRR (absent = N/A on community-free
+    # arms — never averaged in as 0.0).
+    for key in (
+        "line_recall",
+        "line_precision",
+        "line_iou",
+        "file_recall_strict",
+        "file_recall_expanded",
+        "mrr_community_credit",
+    ):
         vals = [float(q[key]) for q in per_query if key in q]
         if vals:
             agg[key] = round(mean(vals), 4)  # pragma: no mutate
@@ -675,5 +685,197 @@ def expand_retrieved_with_containment(
             continue
         path, members = merged
         contained = {g for g in expected if _golden_id_matches_member(g, path, members)}
+        entries.append({normalized} | contained if contained else normalized)
+    return entries
+
+
+# ---------------------------------------------------------------------------
+# Community-aware file-coverage metrics (Category G, community ablation)
+#
+# Golden ids can never equal a synthetic community chunk's id
+# ("__community__/<label>:community:<label>"), so chunk-id scoring is blind to
+# whatever coverage community summaries provide.  Category G therefore scores
+# **file recall**, reported twice side by side:
+#
+#   - strict: real code chunks only — a retrieved community chunk covers
+#     nothing.  This is the decision metric.
+#   - community-expanded: a retrieved community chunk covers its member
+#     file-set, recovered by inverting the *persisted* community_map by the
+#     chunk-id path token (merge-agnostic).  Reported next to strict — the
+#     gap between the two is the finding, never a blended number.
+#
+# Community ids are read from result metadata ``tags`` ("community:<id>") at
+# scoring time and NEVER stored in golden JSON (Louvain ids shift per reindex).
+# ---------------------------------------------------------------------------
+
+SYNTHETIC_COMMUNITY_PREFIX = "__community__/"
+
+
+def extract_community_id(tags: Sequence[str] | None) -> int | None:
+    """Return the community id from a ``community:<id>`` tag, or ``None``."""
+    for tag in tags or []:
+        if tag.startswith("community:"):
+            try:
+                return int(tag.split(":", 1)[1])
+            except ValueError:
+                return None
+    return None
+
+
+def build_community_file_map(
+    community_map: dict[str, int],
+) -> dict[int, frozenset[str]]:
+    """Invert a persisted community map into per-community member file-sets.
+
+    Member chunk_ids in the persisted map are raw pre-remerge ids
+    (``file:lines:type[:name]``); the path token before the first colon is
+    the member file, forward-slash normalized.  Merge-agnostic by
+    construction — merged chunks never appear in the persisted map.
+
+    Args:
+        community_map: ``{chunk_id: community_id}`` as persisted in
+            ``{project_id}_communities.json``.
+
+    Returns:
+        ``{community_id: frozenset of member relative paths}``.
+    """
+    files: dict[int, set[str]] = {}
+    for chunk_id, community_id in community_map.items():
+        path = normalize_path(chunk_id.split(":", 1)[0])
+        if path:
+            files.setdefault(community_id, set()).add(path)
+    return {cid: frozenset(paths) for cid, paths in files.items()}
+
+
+def build_file_entries(
+    results_meta: Sequence[dict[str, Any]],
+    community_files: dict[int, frozenset[str]] | None = None,
+) -> tuple[list[set[str]], list[set[str]]]:
+    """Derive per-rank file-coverage sets from result metadata, strict + expanded.
+
+    Args:
+        results_meta: One dict per retrieved result (rank order preserved) with
+            ``relative_path`` and optionally ``tags``.  Synthetic community
+            chunks are recognized by the ``__community__/`` path prefix.
+        community_files: Inverted community map from
+            ``build_community_file_map``; ``None``/empty means community
+            chunks expand to nothing (detection-off arms).
+
+    Returns:
+        ``(strict_entries, expanded_entries)`` — parallel lists of per-rank
+        file sets for ``calculate_file_recall_at_k``.  In strict entries a
+        community chunk covers the empty set; in expanded entries it covers
+        its community's member file-set (empty when the id is unknown).
+    """
+    strict: list[set[str]] = []
+    expanded: list[set[str]] = []
+    for meta in results_meta:
+        path = normalize_path(meta.get("relative_path", "") or "")
+        if path.startswith(SYNTHETIC_COMMUNITY_PREFIX):
+            strict.append(set())
+            community_id = extract_community_id(meta.get("tags"))
+            members = (community_files or {}).get(community_id, frozenset())
+            expanded.append(set(members))
+        else:
+            file_set = {path} if path else set()
+            strict.append(file_set)
+            expanded.append(set(file_set))
+    return strict, expanded
+
+
+def calculate_file_recall_at_k(
+    file_entries: Sequence[set[str]],
+    expected_files: list[str],
+    k: int,
+) -> float:
+    """File recall@k = |covered expected files in ranks [:k]| / |expected files|.
+
+    Args:
+        file_entries: Per-rank file-coverage sets (from ``build_file_entries``).
+        expected_files: Golden ``expected_files`` (relative paths; normalized
+            here so separator style never matters).
+        k: Cut-off rank.
+
+    Returns:
+        Recall score in [0.0, 1.0].
+    """
+    if not expected_files:
+        return 0.0
+    expected_set = {normalize_path(f) for f in expected_files}
+    covered: set[str] = set()
+    for entry in file_entries[:k]:
+        covered |= {normalize_path(f) for f in entry} & expected_set
+    return len(covered) / len(expected_set)
+
+
+def build_community_membership(
+    community_map: dict[str, int],
+) -> dict[int, frozenset[tuple[str, str]]]:
+    """Invert a persisted community map into (path, symbol-name) member pairs.
+
+    Companion to ``build_community_file_map`` for the symbol-level secondary
+    metric: nameless member ids (e.g. ``file.py:1-8:module``) contribute no
+    pair, mirroring ``_golden_id_matches_member``.
+
+    Returns:
+        ``{community_id: frozenset of (normalized_path, qualified_name)}``.
+    """
+    members: dict[int, set[tuple[str, str]]] = {}
+    for chunk_id, community_id in community_map.items():
+        parts = chunk_id.split(":")
+        if len(parts) < 4:
+            continue
+        path = normalize_path(parts[0])
+        name = parts[-1]
+        if path and name:
+            members.setdefault(community_id, set()).add((path, name))
+    return {cid: frozenset(pairs) for cid, pairs in members.items()}
+
+
+def expand_retrieved_with_community_credit(
+    raw_chunk_ids: list[str],
+    result_tags: Sequence[Sequence[str] | None],
+    expected: list[str],
+    community_membership: dict[int, frozenset[tuple[str, str]]],
+) -> list[RetrievedEntry]:
+    """Normalize retrieved IDs, crediting community chunks for member golds.
+
+    The ``mrr_community_credit`` counterpart of
+    ``expand_retrieved_with_containment``: a retrieved community-summary chunk
+    is widened to every golden ID whose (path, name) pair belongs to that
+    community's persisted membership.  Unlike merge containment credit (which
+    fixed a proven false-negative scorer artifact), this encodes a *policy* —
+    that "the answer lives in this retrieved neighborhood" deserves rank
+    credit at all — so it is a labeled SECONDARY metric, never a decision
+    trigger.  On community-free indexes callers must report N/A, not 0.0.
+
+    Args:
+        raw_chunk_ids: Raw retrieved chunk IDs (rank order preserved).
+        result_tags: Per-result ``tags`` lists, parallel to ``raw_chunk_ids``.
+        expected: Normalized golden IDs (primaries for MRR use).
+        community_membership: Lookup from ``build_community_membership``.
+
+    Returns:
+        Ordered entries for the ``calculate_*`` metric functions.
+    """
+    seen: set[str] = set()
+    entries: list[RetrievedEntry] = []
+    for raw, tags in zip(raw_chunk_ids, result_tags, strict=True):
+        normalized = normalize_chunk_id(raw)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        community_id = extract_community_id(tags)
+        pairs = (
+            community_membership.get(community_id) if community_id is not None else None
+        )
+        if not pairs:
+            entries.append(normalized)
+            continue
+        contained = set()
+        for golden_id in expected:
+            parts = golden_id.split(":")
+            if len(parts) >= 3 and (normalize_path(parts[0]), parts[-1]) in pairs:
+                contained.add(golden_id)
         entries.append({normalized} | contained if contained else normalized)
     return entries

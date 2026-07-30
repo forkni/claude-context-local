@@ -35,8 +35,10 @@ Usage:
 
 import argparse
 import json
+import logging
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -52,11 +54,17 @@ from evaluation.metrics import (  # noqa: E402
     THRESHOLDS,
     aggregate_metrics,
     build_chunk_line_lookup,
+    build_community_file_map,
+    build_community_membership,
+    build_file_entries,
     build_merged_membership,
+    calculate_file_recall_at_k,
     calculate_line_iou,
     calculate_line_precision,
     calculate_line_recall,
     calculate_metrics_from_results,
+    calculate_mrr,
+    expand_retrieved_with_community_credit,
     expand_retrieved_with_containment,
     flatten_entries,
     normalize_chunk_id,
@@ -277,6 +285,44 @@ def _apply_query_expansion_override(enabled: bool) -> None:
         print(f"[WARN] Could not apply query-expansion override: {e}", file=sys.stderr)
 
 
+def _apply_ego_graph_overrides(
+    ego_graph: str | None,
+    community_bounded: str | None,
+    cross_community_penalty: float | None,
+    expansion_mode: str | None,
+) -> None:
+    """Override ego-graph knobs in the in-memory config singleton.
+
+    In-memory only, like ``_apply_query_expansion_override``. All four knobs
+    are read live per search — ``HybridSearcher.search()`` re-reads
+    ``effective_config.ego_graph`` on every call, and ``EgoGraphRetriever``
+    reads ``community_bounded`` / ``cross_community_penalty`` /
+    ``expansion_mode`` via getattr on the config it is handed — so no
+    searcher reset is needed between runs.
+    """
+    if (
+        ego_graph is None
+        and community_bounded is None
+        and cross_community_penalty is None
+        and expansion_mode is None
+    ):
+        return
+    try:
+        from search.config import get_search_config
+
+        cfg = get_search_config()
+        if ego_graph is not None:
+            cfg.ego_graph.enabled = ego_graph == "on"
+        if community_bounded is not None:
+            cfg.ego_graph.community_bounded = community_bounded == "on"
+        if cross_community_penalty is not None:
+            cfg.ego_graph.cross_community_penalty = cross_community_penalty
+        if expansion_mode is not None:
+            cfg.ego_graph.expansion_mode = expansion_mode
+    except Exception as e:
+        print(f"[WARN] Could not apply ego-graph overrides: {e}", file=sys.stderr)
+
+
 def _apply_rrf_k_override(rrf_k: int | None) -> None:
     """Override the RRF fusion constant in the in-memory config singleton.
 
@@ -330,6 +376,7 @@ def _apply_centrality_stage(
     raw_results: list[Any],
     k: int,
     alpha: float | None,
+    intent: str | None = None,
 ) -> list[Any]:
     """Replay the production GraphScoringStage (Block F) over benchmark results.
 
@@ -340,9 +387,13 @@ def _apply_centrality_stage(
     format SearchResults into result_view dicts, run ``GraphScoringStage``,
     then reorder the raw SearchResults to match the blended-score order.
 
-    ``intent_decision`` is passed as ``None`` (skips only the synthetic
-    module/community demotion; centrality blend + query-aware boosts still
-    run because ``query`` is provided).
+    ``intent_decision`` is built from the golden query's hand-labeled
+    ``"intent"`` field when present (so the synthetic module/community
+    demotion is exercised exactly as production would for that intent);
+    without a label it stays ``None`` (demotion skipped; centrality blend +
+    query-aware boosts still run because ``query`` is provided).  The live
+    intent classifier is deliberately never run here — that would confound
+    retrieval quality with classifier accuracy.
 
     Args:
         searcher: Initialized HybridSearcher instance.
@@ -350,6 +401,8 @@ def _apply_centrality_stage(
         raw_results: SearchResult objects from ``HybridSearcher.search()``.
         k: Result count (drives the k*multiplier cap, as in production).
         alpha: ``centrality_alpha`` override for this run (None = config value).
+        intent: Optional golden-dataset intent label (e.g. ``"GLOBAL"``),
+            matched case-insensitively against ``QueryIntent`` names.
 
     Returns:
         SearchResults reordered (and capped) like production; the original
@@ -363,6 +416,16 @@ def _apply_centrality_stage(
         from mcp_server.tools.result_view import _format_search_results
         from search.config import get_search_config
         from search.graph_scoring_stage import GraphScoringStage
+        from search.intent_classifier import IntentDecision, QueryIntent
+
+        intent_decision = None
+        if intent:
+            intent_decision = IntentDecision(
+                intent=QueryIntent[intent.upper()],
+                confidence=1.0,
+                reason="golden-dataset hand label",
+                scores={},
+            )
 
         # Mirror SearcherView.index_manager: .index_manager on
         # IntelligentSearcher, .dense_index on HybridSearcher.
@@ -378,7 +441,7 @@ def _apply_centrality_stage(
 
         formatted = _format_search_results(raw_results)
         reordered, _subgraph = GraphScoringStage().run(
-            query, None, k, formatted, index_manager, searcher, graph_cfg
+            query, intent_decision, k, formatted, index_manager, searcher, graph_cfg
         )
 
         # Map the reordered dicts back onto the raw SearchResult objects.
@@ -396,6 +459,82 @@ def _apply_centrality_stage(
     except Exception as e:
         print(f"[WARN] Centrality stage failed, using raw order: {e}", file=sys.stderr)
         return raw_results
+
+
+class _EgoConfoundRecorder(logging.Handler):
+    """Capture per-query ego-graph confound signals from log records (0f).
+
+    Listens to the ``search.ego_graph_retriever`` logger instead of editing the
+    behavior under test: the pre-truncation gate logs
+    ``"Limiting N neighbors to M for <anchor>"`` (DEBUG) when it fires, which
+    carries the anchor id — so anchor-in-community-map status (the third
+    penalty gate at ego_graph_retriever.py:169) can be checked exactly — and
+    the PPR path logs a ``"[PPR] ... falling back to BFS"`` warning when power
+    iteration fails to converge.  The loop resets this recorder before every
+    query.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.truncated_anchors: list[str] = []
+        self.ppr_fallback = False
+
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = record.getMessage()
+        if msg.startswith("Limiting ") and " for " in msg:
+            self.truncated_anchors.append(msg.rsplit(" for ", 1)[1])
+        elif "[PPR]" in msg and "falling back to BFS" in msg:
+            self.ppr_fallback = True
+
+    def reset(self) -> None:
+        self.truncated_anchors = []
+        self.ppr_fallback = False
+
+
+def _attach_ego_confound_recorder() -> _EgoConfoundRecorder:
+    """Attach an ``_EgoConfoundRecorder`` to the ego-graph retriever logger.
+
+    Forces that one logger to DEBUG so the truncation records are emitted at
+    all; benchmark-process-only, never touches production logging config.
+    """
+    ego_logger = logging.getLogger("search.ego_graph_retriever")
+    recorder = _EgoConfoundRecorder()
+    ego_logger.addHandler(recorder)
+    if ego_logger.getEffectiveLevel() > logging.DEBUG:
+        ego_logger.setLevel(logging.DEBUG)
+    return recorder
+
+
+def _instrument_rerank_calls(searcher: Any) -> list[tuple[int | None, int]]:
+    """Wrap ``reranking_engine.rerank_by_query`` to record (k_arg, pool_size).
+
+    Detects whether the ego-gated secondary rerank pass fired for a query
+    (``hybrid_searcher.py`` default path: only when ego expansion grew the
+    pool past k, called with ``k=len(results)``) — that pass is a confound on
+    every ego on/off A/B, so a null result without this signal is
+    uninterpretable.  The returned list is shared with the wrapper and
+    cleared by the loop before each query.  Idempotent: re-instrumenting the
+    same engine returns the existing list.
+    """
+    engine = getattr(searcher, "reranking_engine", None)
+    if engine is None:
+        return []
+    existing = getattr(engine, "_sscg_rerank_calls", None)
+    if existing is not None:
+        return existing
+    calls: list[tuple[int | None, int]] = []
+    original = engine.rerank_by_query
+
+    def _recording_rerank(*args: Any, **kwargs: Any) -> Any:
+        pool = kwargs.get("results")
+        if pool is None and len(args) >= 2:
+            pool = args[1]
+        calls.append((kwargs.get("k"), len(pool) if pool is not None else -1))
+        return original(*args, **kwargs)
+
+    engine.rerank_by_query = _recording_rerank
+    engine._sscg_rerank_calls = calls
+    return calls
 
 
 def _get_searcher(project_path: str):
@@ -545,6 +684,68 @@ def _build_merged_membership_lookup(
         return {}
 
 
+def _build_community_scoring_lookup(searcher: Any) -> dict[str, Any]:
+    """Build community lookups + size stats for Category-G file-recall scoring.
+
+    Inverts the persisted community map (already loaded by the ego retriever)
+    into per-community file-sets and (path, name) member pairs, and counts the
+    synthetic community chunks actually present in the index.  The chunk count
+    gates ``mrr_community_credit``: zero community chunks (summaries-off or
+    detection-off arms) → the metric is omitted (N/A), never reported as 0.0.
+
+    The size stats satisfy the protocol rule that every Category-G table is
+    published alongside the community size distribution — with few large
+    communities, expanded file recall is cheap credit, and the reader needs
+    the distribution to judge the strict/expanded gap.
+
+    Returns:
+        ``{"files": ..., "membership": ..., "chunk_count": int, "stats": {...}}``
+        (empty structures when no community map exists).
+    """
+    community_map: dict[str, int] = (
+        getattr(getattr(searcher, "ego_graph_retriever", None), "_community_map", None)
+        or {}
+    )
+    chunk_count = 0
+    try:
+        for _raw_id, entry in searcher.dense_index.metadata_store.items():
+            meta = entry.get("metadata", {}) or {}
+            if meta.get("chunk_type") == "community":
+                chunk_count += 1
+    except AttributeError as exc:
+        print(f"  [WARN] Could not count community chunks: {exc}", file=sys.stderr)
+
+    stats: dict[str, Any] = {}
+    if community_map:
+        sizes = sorted(Counter(community_map.values()).values())
+        stats = {
+            "chunks_in_map": len(community_map),
+            "communities": len(sizes),
+            "singletons": sum(1 for s in sizes if s == 1),
+            "summarizable": sum(1 for s in sizes if s >= 2),
+            "max_size": sizes[-1],
+            "size_histogram": {
+                "1": sum(1 for s in sizes if s == 1),
+                "2-9": sum(1 for s in sizes if 2 <= s <= 9),
+                "10-49": sum(1 for s in sizes if 10 <= s <= 49),
+                "50+": sum(1 for s in sizes if s >= 50),
+            },
+            "community_chunks_in_index": chunk_count,
+        }
+        print(
+            f"  Community structure: {stats['communities']} communities "
+            f"({stats['summarizable']} summarizable, max size {stats['max_size']}); "
+            f"{chunk_count} summary chunks in index",
+            flush=True,
+        )
+    return {
+        "files": build_community_file_map(community_map),
+        "membership": build_community_membership(community_map),
+        "chunk_count": chunk_count,
+        "stats": stats,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Per-query benchmark execution
 # ---------------------------------------------------------------------------
@@ -563,6 +764,9 @@ def run_benchmark(
     centrality_alpha: float | None = None,
     merged_membership: dict[str, tuple[str, frozenset[str]]] | None = None,
     f_via_similar: bool = False,
+    confound_recorder: "_EgoConfoundRecorder | None" = None,
+    rerank_calls: list[tuple[int | None, int]] | None = None,
+    community_lookup: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[float]]:
     """Run all queries and return (per_query_results, latencies).
 
@@ -597,6 +801,18 @@ def run_benchmark(
             Secondary flagged view only — official aggregates keep search_code.
             The similar-code path is a dense-only single-leg call with no fused
             pool, so ``pool_metrics`` stays empty for those rows.
+        confound_recorder: Ego-graph confound recorder from
+            ``_attach_ego_confound_recorder``; when provided, each per-query
+            row gains a ``"confounds"`` dict (ego rerank pass fired, neighbor
+            truncation events, truncated-anchor-in-community-map counts,
+            centrality seeded, PPR fallback).
+        rerank_calls: Shared call list from ``_instrument_rerank_calls``;
+            cleared before each query.
+        community_lookup: Lookup from ``_build_community_scoring_lookup``.
+            Queries carrying ``expected_files`` (Category G) gain
+            ``file_recall_strict`` / ``file_recall_expanded`` (both at the
+            run's k), plus the secondary ``mrr_community_credit`` when the
+            index contains community chunks (omitted otherwise — N/A, not 0.0).
 
     Returns:
         Tuple of (per_query_results, latencies).
@@ -635,6 +851,10 @@ def run_benchmark(
         rerank_engine = getattr(searcher, "reranking_engine", None)
         if rerank_engine is not None:
             rerank_engine.last_candidate_ids = None
+        if confound_recorder is not None:
+            confound_recorder.reset()
+        if rerank_calls is not None:
+            rerank_calls.clear()
 
         anchor = (
             item.get("anchor_chunk_id") if f_via_similar and category == "F" else None
@@ -658,10 +878,40 @@ def run_benchmark(
             if with_centrality or centrality_alpha is not None:
                 stage_start = time.perf_counter()
                 raw_results = _apply_centrality_stage(
-                    searcher, query, raw_results, k, centrality_alpha
+                    searcher,
+                    query,
+                    raw_results,
+                    k,
+                    centrality_alpha,
+                    intent=item.get("intent"),
                 )
                 latency_ms += (time.perf_counter() - stage_start) * 1000.0
             latencies.append(latency_ms)
+
+            # Confound signals for this query (0f): the ego-gated secondary
+            # rerank pass is the hybrid_searcher default-path call with
+            # k == pool_size after ego expansion grew the pool past the
+            # requested k.
+            confounds: dict[str, Any] = {}
+            if confound_recorder is not None:
+                truncated = list(confound_recorder.truncated_anchors)
+                ego_retriever = getattr(searcher, "ego_graph_retriever", None)
+                community_map = getattr(ego_retriever, "_community_map", None) or {}
+                confounds = {
+                    "rerank_calls": len(rerank_calls or []),
+                    "ego_rerank_pass": any(
+                        k_arg is not None and k_arg == pool and pool > k
+                        for k_arg, pool in (rerank_calls or [])
+                    ),
+                    "truncation_events": len(truncated),
+                    "truncated_anchors_in_map": sum(
+                        1 for a in truncated if a in community_map
+                    ),
+                    "centrality_seeded": bool(
+                        getattr(ego_retriever, "_centrality_scores", None)
+                    ),
+                    "ppr_fallback": confound_recorder.ppr_fallback,
+                }
 
             # Normalize chunk IDs for chunk-level metrics.  With a non-empty
             # merged_membership, merged chunks widen to per-rank ID sets that
@@ -678,6 +928,41 @@ def run_benchmark(
                 expected=expected,
                 expected_primary=expected_primary,
             )
+
+            # Category-G file-level metrics (0g): strict counts real code
+            # chunks only; expanded additionally credits a retrieved community
+            # chunk with its member file-set.  The strict/expanded gap is the
+            # finding — never blended.
+            file_metrics: dict[str, float] = {}
+            expected_files = item.get("expected_files") or []
+            if expected_files:
+                lookup = community_lookup or {}
+                results_meta = [getattr(r, "metadata", {}) or {} for r in raw_results]
+                strict_entries, expanded_entries = build_file_entries(
+                    results_meta, lookup.get("files")
+                )
+                file_metrics = {
+                    "file_recall_strict": round(
+                        calculate_file_recall_at_k(strict_entries, expected_files, k),
+                        4,
+                    ),
+                    "file_recall_expanded": round(
+                        calculate_file_recall_at_k(expanded_entries, expected_files, k),
+                        4,
+                    ),
+                }
+                # SECONDARY, community arms only: absent (N/A) when the index
+                # has no community chunks — never 0.0.
+                if lookup.get("chunk_count"):
+                    credit_entries = expand_retrieved_with_community_credit(
+                        raw_ids,
+                        [meta.get("tags") for meta in results_meta],
+                        expected_primary,
+                        lookup.get("membership", {}),
+                    )
+                    file_metrics["mrr_community_credit"] = round(
+                        calculate_mrr(credit_entries, expected_primary), 4
+                    )
 
             # Containment credits actually applied (JSON-serializable record)
             containment: dict[str, list[str]] = {}
@@ -728,10 +1013,16 @@ def run_benchmark(
                     if line_metrics
                     else ""
                 )
+                file_str = (
+                    f"  FR@{k} strict={file_metrics['file_recall_strict']:.2f} "
+                    f"expanded={file_metrics['file_recall_expanded']:.2f}"
+                    if file_metrics
+                    else ""
+                )
                 print(
                     f"          [{status}] R@5={metrics['recall@5']:.2f}  "
                     f"MRR={metrics['mrr']:.3f}  NDCG@5={metrics['ndcg@5']:.3f}  "
-                    f"({latency_ms:.0f} ms){line_str}"
+                    f"({latency_ms:.0f} ms){line_str}{file_str}"
                 )
                 # Failure drill-down
                 if not metrics["hit"]:
@@ -751,7 +1042,9 @@ def run_benchmark(
                     "latency_ms": round(latency_ms, 1),
                     **({"f_via_similar": True} if anchor else {}),
                     **({"containment_credits": containment} if containment else {}),
+                    **({"confounds": confounds} if confounds else {}),
                     **metrics,
+                    **file_metrics,
                     **line_metrics,
                     **pool_metrics,
                 }
@@ -1133,6 +1426,44 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--ego-graph",
+        choices=["on", "off"],
+        help=(
+            "Override ego_graph.enabled for this run (community-ablation arm "
+            "A1). In-memory only; read live per search, no searcher reset "
+            "needed. Default: use config value."
+        ),
+    )
+    parser.add_argument(
+        "--community-bounded",
+        choices=["on", "off"],
+        help=(
+            "Override ego_graph.community_bounded (cross-community penalty "
+            "during ego neighbor truncation) for this run. Only observable "
+            "when truncation fires AND centrality is seeded AND the anchor is "
+            "in the community map — see the per-query confound log. Default: "
+            "use config value."
+        ),
+    )
+    parser.add_argument(
+        "--cross-community-penalty",
+        type=float,
+        help=(
+            "Override ego_graph.cross_community_penalty (score multiplier for "
+            "cross-community neighbors during truncation ranking) for this "
+            "run. Default: use config value (0.6)."
+        ),
+    )
+    parser.add_argument(
+        "--expansion-mode",
+        choices=["bfs", "ppr"],
+        help=(
+            "Override ego_graph.expansion_mode (k-hop BFS vs Personalized "
+            "PageRank ego expansion) for this run (arm A4). Default: use "
+            "config value (bfs)."
+        ),
+    )
+    parser.add_argument(
         "--with-centrality",
         action="store_true",
         help=(
@@ -1200,6 +1531,10 @@ def run_single(
     query_expansion: bool = False,
     multi_hop_expansion: float | None = None,
     hop1_reserved_slots: int | None = None,
+    ego_graph: str | None = None,
+    community_bounded: str | None = None,
+    cross_community_penalty: float | None = None,
+    expansion_mode: str | None = None,
 ) -> dict[str, Any]:
     """Execute one benchmark run and return the result dict."""
     _apply_weight_overrides(bm25_weight, dense_weight, search_mode)
@@ -1213,6 +1548,9 @@ def run_single(
     _apply_multi_hop_expansion_override(multi_hop_expansion)
     _apply_hop1_reserved_slots_override(hop1_reserved_slots)
     _apply_query_expansion_override(query_expansion)
+    _apply_ego_graph_overrides(
+        ego_graph, community_bounded, cross_community_penalty, expansion_mode
+    )
     _maybe_reset_for_construction_overrides(
         bm25_weight,
         dense_weight,
@@ -1260,6 +1598,14 @@ def run_single(
     if with_centrality or centrality_alpha is not None:
         alpha_str = "config default" if centrality_alpha is None else centrality_alpha
         print(f"  Centrality stage: ON (alpha={alpha_str})")
+    if ego_graph is not None:
+        print(f"  Ego-graph expansion: {ego_graph}")
+    if community_bounded is not None:
+        print(f"  Community-bounded ego truncation: {community_bounded}")
+    if cross_community_penalty is not None:
+        print(f"  Cross-community penalty: {cross_community_penalty}")
+    if expansion_mode is not None:
+        print(f"  Ego expansion mode: {expansion_mode}")
     if f_via_similar:
         print(
             "  F-via-similar: ON (anchored F queries scored via "
@@ -1289,10 +1635,35 @@ def run_single(
             except Exception as exc:
                 print(f"  [WARN] Warm-up search failed: {exc}", file=sys.stderr)
 
+    # Centrality cold-start warm-up (0d): production injects centrality into
+    # the ego retriever during each query's own scoring stage, but the replay
+    # here runs the stage *after* the search — so without a warm-up, query 1
+    # searches with an unseeded retriever while queries 2..N inherit the
+    # previous query's scores. One throwaway query + stage run levels this
+    # (centrality is graph-derived, so one seeding is exact steady state).
+    if with_centrality or centrality_alpha is not None:
+        warmup_query = "centrality warmup (unscored)"
+        try:
+            warmup_results, _ = _run_query(
+                searcher, warmup_query, k=k, search_mode=search_mode
+            )
+            _apply_centrality_stage(
+                searcher, warmup_query, warmup_results, k, centrality_alpha
+            )
+            print("  Centrality warm-up: ego retriever seeded before scored loop")
+        except Exception as exc:
+            print(f"  [WARN] Centrality warm-up failed: {exc}", file=sys.stderr)
+
+    # Confound instrumentation (0f)
+    confound_recorder = _attach_ego_confound_recorder()
+    rerank_calls = _instrument_rerank_calls(searcher)
+
     # Build line-range lookup for line-overlap metrics (one-time scan of MetadataStore)
     line_lookup = _build_line_lookup(searcher)
     # Merged-chunk membership for containment-credit scoring (empty = no-op)
     merged_membership = _build_merged_membership_lookup(searcher)
+    # Community lookups for Category-G file recall + size distribution (0g)
+    community_lookup = _build_community_scoring_lookup(searcher)
 
     per_query, latencies = run_benchmark(
         searcher=searcher,
@@ -1306,11 +1677,48 @@ def run_single(
         centrality_alpha=centrality_alpha,
         merged_membership=merged_membership,
         f_via_similar=f_via_similar,
+        confound_recorder=confound_recorder,
+        rerank_calls=rerank_calls,
+        community_lookup=community_lookup,
     )
+
+    # Detach the recorder so repeated run_single calls (sweeps) don't stack handlers
+    logging.getLogger("search.ego_graph_retriever").removeHandler(confound_recorder)
 
     dataset_thresholds = dataset.get("thresholds") or {}
     agg = aggregate_metrics(per_query, thresholds=dataset_thresholds)
     avg_lat = round(mean(latencies), 1) if latencies else 0.0
+
+    # Confound summary (0f): an A1 null result is only interpretable if we
+    # know the gated machinery actually fired ("penalty useless" vs "penalty
+    # never exercised").
+    confound_rows = [q["confounds"] for q in per_query if "confounds" in q]
+    confound_summary: dict[str, Any] = {}
+    if confound_rows:
+        n = len(confound_rows)
+        confound_summary = {
+            "queries": n,
+            "ego_rerank_pass_fired": sum(
+                1 for c in confound_rows if c["ego_rerank_pass"]
+            ),
+            "truncation_events": sum(c["truncation_events"] for c in confound_rows),
+            "truncated_anchors_in_map": sum(
+                c["truncated_anchors_in_map"] for c in confound_rows
+            ),
+            "centrality_seeded": sum(
+                1 for c in confound_rows if c["centrality_seeded"]
+            ),
+            "ppr_fallbacks": sum(1 for c in confound_rows if c["ppr_fallback"]),
+        }
+        print(
+            f"\n  Confounds: ego-rerank pass fired on "
+            f"{confound_summary['ego_rerank_pass_fired']}/{n} queries; "
+            f"truncation events={confound_summary['truncation_events']} "
+            f"(anchors in community map: "
+            f"{confound_summary['truncated_anchors_in_map']}); "
+            f"centrality seeded on {confound_summary['centrality_seeded']}/{n}; "
+            f"PPR fallbacks={confound_summary['ppr_fallbacks']}"
+        )
 
     # Config metadata for comparison / experiment tracking (Lesson 4 pattern)
     config_metadata: dict[str, Any] = {
@@ -1342,6 +1750,14 @@ def run_single(
         config_metadata["f_via_similar"] = True
     if query_expansion:
         config_metadata["query_expansion"] = True
+    if ego_graph is not None:
+        config_metadata["ego_graph"] = ego_graph
+    if community_bounded is not None:
+        config_metadata["community_bounded"] = community_bounded
+    if cross_community_penalty is not None:
+        config_metadata["cross_community_penalty"] = cross_community_penalty
+    if expansion_mode is not None:
+        config_metadata["expansion_mode"] = expansion_mode
     if with_centrality or centrality_alpha is not None:
         config_metadata["with_centrality"] = True
         config_metadata["centrality_alpha"] = (
@@ -1358,6 +1774,12 @@ def run_single(
         "aggregate": agg,
         "avg_latency_ms": avg_lat,
         "config_metadata": config_metadata,
+        **({"confound_summary": confound_summary} if confound_summary else {}),
+        **(
+            {"community_stats": community_lookup["stats"]}
+            if community_lookup.get("stats")
+            else {}
+        ),
         "thresholds": {**THRESHOLDS, **dataset_thresholds},
         "per_query": per_query,
     }
@@ -1423,6 +1845,10 @@ def main() -> None:
                 centrality_alpha=args.centrality_alpha,
                 f_via_similar=args.f_via_similar,
                 query_expansion=args.query_expansion,
+                ego_graph=args.ego_graph,
+                community_bounded=args.community_bounded,
+                cross_community_penalty=args.cross_community_penalty,
+                expansion_mode=args.expansion_mode,
             )
             reranker_results.append(result)
 
@@ -1472,6 +1898,10 @@ def main() -> None:
                 centrality_alpha=args.centrality_alpha,
                 f_via_similar=args.f_via_similar,
                 query_expansion=args.query_expansion,
+                ego_graph=args.ego_graph,
+                community_bounded=args.community_bounded,
+                cross_community_penalty=args.cross_community_penalty,
+                expansion_mode=args.expansion_mode,
             )
             sweep_results.append(result)
 
@@ -1515,6 +1945,10 @@ def main() -> None:
         centrality_alpha=args.centrality_alpha,
         f_via_similar=args.f_via_similar,
         query_expansion=args.query_expansion,
+        ego_graph=args.ego_graph,
+        community_bounded=args.community_bounded,
+        cross_community_penalty=args.cross_community_penalty,
+        expansion_mode=args.expansion_mode,
     )
 
     # Print leaderboard (single row)
