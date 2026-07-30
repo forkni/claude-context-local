@@ -174,6 +174,21 @@ class TestGenerateCommunitySummaries:
         # Should pick "search" as dominant directory (2 chunks vs 1)
         assert "Dominant directory: search" in summaries[0].content
 
+    def test_dominant_directory_with_windows_separators(self):
+        """Backslash relative_paths (Windows) must not collapse to 'root'."""
+        chunks = [
+            self._make_chunk("search\\foo.py", "class", "Foo"),
+            self._make_chunk("search\\bar.py", "function", "bar"),
+        ]
+        community_map = {
+            "search\\foo.py:1-5:class:Foo": 12,
+            "search\\bar.py:1-5:function:bar": 12,
+        }
+        summaries = generate_community_summaries(chunks, community_map)
+        assert "Dominant directory: search" in summaries[0].content
+        assert summaries[0].chunk_id.startswith("__community__/search_")
+        assert "root_" not in summaries[0].chunk_id
+
     def test_label_format_with_class_primary(self):
         chunks = [
             self._make_chunk("graph/storage.py", "class", "GraphStorage"),

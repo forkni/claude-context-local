@@ -4,6 +4,7 @@ from collections import Counter, defaultdict
 from typing import TYPE_CHECKING
 
 from chunking.file_summarizer import collect_symbol_summary
+from utils.path_utils import normalize_path
 
 
 if TYPE_CHECKING:
@@ -63,10 +64,12 @@ def _build_community_summary(
     """
     from chunking.python_ast_chunker import CodeChunk
 
-    # Extract dominant directory for label
+    # Extract dominant directory for label (relative_path may carry OS separators)
+    normalized_paths = [
+        normalize_path(chunk.relative_path) for chunk in community_chunks
+    ]
     directories = [
-        chunk.relative_path.rsplit("/", 1)[0] if "/" in chunk.relative_path else "root"
-        for chunk in community_chunks
+        path.rsplit("/", 1)[0] if "/" in path else "root" for path in normalized_paths
     ]
     directory_counts = Counter(directories)
     dominant_directory = directory_counts.most_common(1)[0][0]
