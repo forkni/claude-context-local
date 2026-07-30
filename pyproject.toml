@@ -38,7 +38,7 @@ dependencies = [
     "mcp>=1.28.1,<2",  # <2: mcp v2 (beta 2026-06-30) has breaking changes. Security: 1.28.1 fixes CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin validation)
     "msgpack>=1.2.1",  # Security: GHSA-6v7p-g79w-8964 (SEGV on repeated unpack after error)
     "networkx>=3.0",  # Required for graph storage and community detection
-    "nltk>=3.9.4",  # Security: Fixes CVE-2025-14009 (path traversal in downloader). CVE-2026-12243 (incomplete fix, path traversal) has no release yet -- see "Deferred (no upstream fix)" block below
+    "nltk>=3.10.0",  # Security: Fixes CVE-2025-14009 (path traversal in downloader), CVE-2026-54293 (URL-encoded path traversal in nltk.data.load()), and takes 3.9.4 out of CVE-2026-12243's affected range
     "psutil>=7.2.1",
     "pydantic-settings>=2.14.2",  # Security: GHSA-4xgf-cpjx-pc3j (symlink follow in secrets_dir)
     "pygments>=2.20.0",  # Security: CVE-2026-4539 (ReDoS in AdlLexer)
@@ -112,6 +112,7 @@ dev = [
     "mutmut>=2.5.1",  # Phase 4.2: mutation testing; run periodically, not per-commit (Linux CI only)
     "cosmic-ray>=8.4",  # Phase 4.2: mutation testing; local cross-platform runner
     "gitpython>=3.1.55",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
+    "deptry>=0.25.1",  # /deps-audit Phase 1.7: dependency-usage hygiene check; declared to match what summarize_audit.py installs into this venv
 ]
 profile = [
     "snoop>=0.6.0",
@@ -167,17 +168,18 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-07-26 (pip-audit — the 2026-07-25 gitpython>=3.1.55 bump was declared in
-#             pyproject.toml/uv.lock but never installed into .venv; GitPython 3.1.50 stayed
-#             live with all 8 CVEs until this audit re-synced it to 3.1.56. Also dropped
-#             tree-sitter-java: a declared runtime dependency with no LANGUAGE_SPECS/
-#             EXT_TO_LANGUAGE entry, kept alive only by scripts/verify_installation.py
-#             asserting its presence. Remaining: diskcache/sqlitedict/nltk, no upstream
-#             fix — see "Deferred (no upstream fix)" block below.)
+# Last audit: 2026-07-30 (pip-audit — default PyPI service cannot resolve local-version wheels
+#             (torch 2.8.0+cu128) and silently skip_reason's them out of every report; re-ran with
+#             `-s osv` and found torch carries 8 CVEs, now tracked below. Also found nltk 3.10.0
+#             is a real fix for CVE-2026-54293 (confirmed via OSV affected-range query) and that
+#             the system `uv` on PATH had drifted to 0.9.26 (2 open CVEs) despite the >=0.11.24
+#             tracking comment below — same record/reality drift class as the 2026-07-25/26
+#             GitPython incident. Remaining: diskcache/sqlitedict/torch, no upstream fix — see
+#             "Deferred (no upstream fix)" block below.)
 #
 # Direct dependency security updates:
 # mcp>=1.28.1,<2       # Fixes CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin); <2 guards against mcp v2 breaking changes (beta 2026-06-30)
-# nltk>=3.9.4          # Fixes CVE-2025-14009 (path traversal in zipfile.extractall)
+# nltk>=3.10.0         # Fixes CVE-2025-14009 (path traversal in zipfile.extractall), CVE-2026-54293 (URL-encoded path traversal in nltk.data.load())
 # aiohttp>=3.14.1      # Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1)
 # python-dotenv>=1.2.2 # Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)
 # starlette>=1.3.1     # Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
@@ -199,7 +201,7 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # setuptools>=83.0.0       # Fixes CVE-2026-59890 (MANIFEST.in path traversal); enforced via [build-system].requires
 #                          # (not a runtime dependency — uv doesn't seed setuptools into .venv at all as of 2026-07-25)
 # urllib3>=2.7.0           # Fixes CVE-2026-44431 (cross-origin redirect), CVE-2026-44432 (decompression)
-# uv>=0.11.24              # Fixes GHSA-4gg8-gxpx-9rph (0.11.15, malicious-wheel path traversal)
+# uv>=0.11.24              # Fixes GHSA-4gg8-gxpx-9rph (0.11.15, malicious-wheel path traversal), GHSA-pjjw-68hj-v9mw (0.11.6, arbitrary file deletion via RECORD entries)
 # werkzeug>=3.1.4          # Fixes CVE-2025-66221 (Windows device name handling)
 # wheel>=0.46.3            # Fixes CVE-2026-24049 (path traversal in unpack)
 #
@@ -207,13 +209,35 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # * transformers PYSEC-2025-217 (X-CLIP checkpoint-conversion RCE) — no fix; not applicable (no X-CLIP conversion use)
 # * transformers PYSEC-2026-2290 / CVE-2026-5241 (LightGlue model-load RCE) — no fix; not applicable (no LightGlue use)
 # * diskcache CVE-2025-69872, sqlitedict CVE-2024-35515 (pickle RCE) — no upstream fix; sqlitedict mitigated via JSON serialization (metadata.py)
-# * nltk CVE-2026-12243 (path traversal, incomplete fix of CVE-2025-14009) — no upstream fix as of nltk 3.10.0
-#   (checked 2026-07-26: no changelog/advisory confirms a fix; OSV still reports fix_versions=[]);
-#   no untrusted NLTK data paths in this project — the only calls are nltk.data.find("corpora/stopwords")
-#   and nltk.download("stopwords", quiet=True) with hardcoded literals (search/bm25_index.py:33,35).
-#   Related: GHSA-p4gq-832x-fm9v / CVE-2026-54293 (same nltk.data.load() path-traversal class) not yet
-#   seen in pip-audit's OSV feed — watch for it.
+# * nltk CVE-2026-12243 (path traversal, incomplete fix of CVE-2025-14009) — still no upstream fix as
+#   of nltk 3.10.0 (OSV: fix_versions=[]); no untrusted NLTK data paths in this project — the only
+#   calls are nltk.data.find("corpora/stopwords") and nltk.download("stopwords", quiet=True) with
+#   hardcoded literals (search/bm25_index.py:33,35).
 # * pyjwt PYSEC-2025-183 (disputed weak encryption) — no upstream fix
+# * torch 2.8.0+cu128, 8 CVEs — pip-audit's default PyPI service silently skip_reason's local-version
+#   wheels like this one; only visible via `pip-audit -s osv`. CVE-2025-55551/-55552/-55554 (DoS,
+#   fixed 2.9.0), CVE-2025-2999 (fixed 2.9.1), CVE-2025-3000 (fixed 2.13.0), CVE-2025-3001 +
+#   CVE-2026-24747 (weights_only unpickler bypass via crafted .pth, CVSS 8.8, fixed 2.10.0),
+#   CVE-2026-4538 (no fix). The <2.9.0 ceiling above is intentional (ModernBERT
+#   @torch.compile(dynamic=True) hits a torch.inductor AssertionError on 2.9.x/Windows — see
+#   commit b68cfff8) and blocks every one of these fixes. Mitigation: local-only tool, no
+#   internet-exposed API; models are loaded from official HuggingFace repos over HTTPS as
+#   safetensors (embeddings/model_loader.py), never as untrusted .pth/pickle checkpoints — the
+#   weights_only bypass and DoS CVEs are not reachable via this project's model-loading path.
+#   Re-check upstream (pytorch/pytorch) each cycle for a fix to the inductor regression that would
+#   unblock the <2.9.0 ceiling.
+#
+# Resolved 2026-07-30: nltk CVE-2026-54293 (URL-encoded path traversal in nltk.data.load()) via
+#   nltk>=3.10.0 (confirmed fixed by OSV affected-range query: [0, 3.10.0); 3.10.0 itself reports
+#   zero vulnerabilities). system uv 0.9.26 -> 0.12.0, closing GHSA-4gg8-gxpx-9rph and
+#   GHSA-pjjw-68hj-v9mw (drift: the >=0.11.24 tracking comment above was already satisfied once,
+#   per the 2026-07-26 entry below, but that copy lived only in .venv/Scripts and was lost in a
+#   subsequent venv rebuild — same drift class as GitPython below, now fixed at the system-Python
+#   level instead so it survives future venv rebuilds). Diagnosed but deferred: torch
+#   2.8.0+cu128's 8 CVEs, invisible to pip-audit's default service — see "Deferred" block above;
+#   also patched tools/summarize_audit.py to surface skip_reason entries and merge an `-s osv`
+#   pass so this class of gap can't recur silently. Tested: CUDA verified intact, pip check clean,
+#   full unit suite green.
 #
 # Resolved 2026-07-25: gitpython CVE set (8 argument-injection advisories: GHSA-2f96-g7mh-g2hx,
 #   GHSA-v396-v7q4-x2qj, GHSA-956x-8gvw-wg5v, GHSA-3rp5-jjmw-4wv2, GHSA-fjr4-x663-mwxc,
