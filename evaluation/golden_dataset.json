@@ -995,8 +995,7 @@
       "split": "train",
       "expected": [
         "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
-        "search/index_write_stage.py:method:IndexWriteStage.run",
-        "search/community_refresh_stage.py:method:CommunityRefreshStage.run"
+        "search/index_write_stage.py:method:IndexWriteStage.run"
       ],
       "expected_primary": [
         "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
@@ -1004,8 +1003,7 @@
       ],
       "relevance_grades": {
         "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks": 3,
-        "search/index_write_stage.py:method:IndexWriteStage.run": 3,
-        "search/community_refresh_stage.py:method:CommunityRefreshStage.run": 2
+        "search/index_write_stage.py:method:IndexWriteStage.run": 3
       }
     },
     {

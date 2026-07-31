@@ -8,6 +8,13 @@ found three entries (OB01, OB03, OB06) that had silently drifted after
 `run_resolvers` grew past the chunk-split threshold, and the harness scored
 them 0.0 without ever surfacing that the IDs themselves were stale.
 
+`evaluation/golden_dataset.json` (77 queries, categories A-F) hand-curates the
+same kind of literal chunk_id strings in `expected` / `expected_primary` /
+`relevance_grades` (plus `anchor_chunk_id` for category F), and is exposed to
+the same drift risk. It references ~240 distinct chunk_ids, so
+`_live_normalized_ids` is memoized per source file to keep the parametrized
+sweep CI-cheap.
+
 This test re-chunks (fresh, no live index or MCP server required) every
 source file referenced by a golden ID and asserts each golden ID is still
 producible today. It is intentionally cheap and dependency-light so it can
@@ -15,6 +22,7 @@ run in the normal `pytest tests/unit/` sweep.
 """
 
 import json
+from functools import cache
 from pathlib import Path
 
 import pytest
@@ -25,6 +33,7 @@ from evaluation.metrics import normalize_chunk_id
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EVALUATION_DIR = REPO_ROOT / "evaluation"
+_CHUNKER = MultiLanguageChunker(str(REPO_ROOT))
 
 
 def _golden_ids(golden_path: Path) -> list[tuple[str, str]]:
@@ -47,18 +56,46 @@ def _golden_ids(golden_path: Path) -> list[tuple[str, str]]:
     return pairs
 
 
-def _live_normalized_ids(file_path: str) -> set[str]:
-    """Fresh-chunk *file_path* (repo-relative) and return its normalized chunk_ids."""
+def _golden_dataset_ids(golden_path: Path) -> list[tuple[str, str]]:
+    """Return (source_label, chunk_id) pairs for every chunk_id in golden_dataset.json.
+
+    Covers `expected`, `expected_primary`, every `relevance_grades` key, and
+    (category F only) `anchor_chunk_id`.
+    """
+    data = json.loads(golden_path.read_text(encoding="utf-8"))
+    pairs: list[tuple[str, str]] = []
+    for query in data["queries"]:
+        qid = query["id"]
+        for chunk_id in query.get("expected", []):
+            pairs.append((f"{qid}.expected", chunk_id))
+        for chunk_id in query.get("expected_primary", []):
+            pairs.append((f"{qid}.expected_primary", chunk_id))
+        for chunk_id in query.get("relevance_grades", {}):
+            pairs.append((f"{qid}.relevance_grades", chunk_id))
+        if "anchor_chunk_id" in query:
+            pairs.append((f"{qid}.anchor_chunk_id", query["anchor_chunk_id"]))
+    return pairs
+
+
+@cache
+def _live_normalized_ids(file_path: str) -> frozenset[str]:
+    """Fresh-chunk *file_path* (repo-relative) and return its normalized chunk_ids.
+
+    Memoized per file path: the 77-query golden_dataset.json alone references
+    ~240 distinct chunk_ids drawn from ~70 files, so without caching this would
+    re-chunk the same file hundreds of times across the parametrized sweep.
+    """
     abs_path = REPO_ROOT / file_path
-    chunker = MultiLanguageChunker(str(REPO_ROOT))
-    chunks = chunker.chunk_file(str(abs_path))
-    return {normalize_chunk_id(c.chunk_id) for c in chunks if c.chunk_id}
+    chunks = _CHUNKER.chunk_file(str(abs_path))
+    return frozenset(normalize_chunk_id(c.chunk_id) for c in chunks if c.chunk_id)
 
 
 GOLDEN_FILES = [
     EVALUATION_DIR / "callee_golden.json",
     EVALUATION_DIR / "caller_golden.json",
 ]
+
+GOLDEN_DATASET_FILE = EVALUATION_DIR / "golden_dataset.json"
 
 
 def _all_golden_id_cases() -> list[tuple[str, str, str]]:
@@ -67,6 +104,8 @@ def _all_golden_id_cases() -> list[tuple[str, str, str]]:
     for golden_path in GOLDEN_FILES:
         for label, chunk_id in _golden_ids(golden_path):
             cases.append((golden_path.name, label, chunk_id))
+    for label, chunk_id in _golden_dataset_ids(GOLDEN_DATASET_FILE):
+        cases.append((GOLDEN_DATASET_FILE.name, label, chunk_id))
     return cases
 
 
