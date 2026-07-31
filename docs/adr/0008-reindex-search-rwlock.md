@@ -155,15 +155,15 @@ Block A was split out into its own method, `_maybe_reindex`, so it can run
 *before* the read lock opens and fully release before it does:
 
 ```python
-early = await self._maybe_reindex(plan)          # Block A — own write-lock scope
+early = await self._maybe_reindex(plan)  # Block A — own write-lock scope
 if isinstance(early, dict):
     return early
 reindexed_flag, lock_project = early
 async with get_state().get_reindex_rwlock(lock_project).read():
-    outcome = await self._search(plan, reindexed_flag)   # Blocks B-D
+    outcome = await self._search(plan, reindexed_flag)  # Blocks B-D
     if isinstance(outcome, dict):
         return outcome
-    return self._assemble(plan, outcome)                 # now inside the lock
+    return self._assemble(plan, outcome)  # now inside the lock
 ```
 
 `_execute` (Blocks A-D, self-managing its own read lock around B-D) no

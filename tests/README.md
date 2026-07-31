@@ -484,6 +484,7 @@ pytest tests/ -m slow -v
 ```python
 from unittest.mock import Mock, patch
 
+
 class TestNewComponent:
     """Test cases for NewComponent."""
 
@@ -499,12 +500,12 @@ class TestNewComponent:
         """Test boundary conditions."""
         pass
 
-    @patch('embeddings.embedder.SentenceTransformer')
+    @patch("embeddings.embedder.SentenceTransformer")
     def test_with_mocked_model(self, mock_transformer):
         """Test with mocked model to avoid downloads."""
         # Mock the model to avoid downloading
         mock_model = Mock()
-        mock_model.encode.return_value = np.random.randn(768).astype('float32')
+        mock_model.encode.return_value = np.random.randn(768).astype("float32")
         mock_transformer.return_value = mock_model
 
         # Test logic here

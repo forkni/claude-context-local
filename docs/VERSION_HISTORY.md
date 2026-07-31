@@ -2430,11 +2430,11 @@ Updated all calls in `run_tests()` function to use new names.
 **Configuration Constants**:
 
 ```python
-FILE_READ_TIMEOUT = 5           # seconds (Layer 2)
+FILE_READ_TIMEOUT = 5  # seconds (Layer 2)
 CHUNKING_TIMEOUT_PER_FILE = 10  # seconds (Layer 5)
-TOTAL_CHUNKING_TIMEOUT = 300    # seconds (Layer 5)
-VRAM_WARNING_THRESHOLD = 0.85   # 85% (Layer 4)
-VRAM_ABORT_THRESHOLD = 0.95     # 95% (Layer 4)
+TOTAL_CHUNKING_TIMEOUT = 300  # seconds (Layer 5)
+VRAM_WARNING_THRESHOLD = 0.85  # 85% (Layer 4)
+VRAM_ABORT_THRESHOLD = 0.95  # 95% (Layer 4)
 ```
 
 **Files Modified**:

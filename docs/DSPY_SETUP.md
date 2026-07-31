@@ -18,7 +18,7 @@ charged to your API account.  Keep that variable unset.
 import dspy
 from utils.dspy_claude_code import configure_dspy
 
-configure_dspy()                      # routes DSPy through the subscription
+configure_dspy()  # routes DSPy through the subscription
 pred = dspy.Predict("question -> answer")
 print(pred(question="capital of France").answer)
 ```
@@ -47,7 +47,7 @@ CLAUDE_CODE_OAUTH_TOKEN=<token>
 ## Model override
 
 ```python
-configure_dspy(model="claude-opus-4-8")   # use a specific model
+configure_dspy(model="claude-opus-4-8")  # use a specific model
 # or via env:
 # DSPY_LM_MODEL=claude-opus-4-8
 ```
@@ -73,7 +73,9 @@ import dspy
 teleprompter = dspy.BootstrapFewShot(max_bootstrapped_demos=4)
 # For MIPRO / BootstrapFewShotWithRandomSearch that expose num_threads:
 compiled = teleprompter.compile(
-    student, trainset=trainset, num_threads=5   # ≤ 10 recommended
+    student,
+    trainset=trainset,
+    num_threads=5,  # ≤ 10 recommended
 )
 ```
 
@@ -127,7 +129,7 @@ from utils.dspy_mcp import run_code_search_agent
 result = asyncio.run(
     run_code_search_agent(
         "Where is the FAISS vector index class defined?",
-        project_path="D:/claude-context-local",   # must already be indexed
+        project_path="D:/claude-context-local",  # must already be indexed
     )
 )
 print(result.answer)
@@ -149,9 +151,13 @@ import dspy
 from utils.dspy_mcp import code_search_session
 from utils.dspy_claude_code import ClaudeCodeLM
 
+
 async def batch_query(questions):
     lm = ClaudeCodeLM()
-    async with code_search_session(project_path="D:/claude-context-local") as (_, tools):
+    async with code_search_session(project_path="D:/claude-context-local") as (
+        _,
+        tools,
+    ):
         agent = dspy.ReAct("question -> answer", tools=tools)
         results = []
         for q in questions:

@@ -846,11 +846,13 @@ export CLAUDE_LOG_LEVEL=INFO
 ```python
 from utils.timing import timed, Timer
 
+
 # Decorator for functions
 @timed("my_operation")
 def my_function():
     # Your code
     pass
+
 
 # Context manager for code blocks
 with Timer("custom_operation") as t:

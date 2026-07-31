@@ -113,7 +113,9 @@ find_connections(chunk_id="...", relationship_types=["imports"])
 # Returns: Only imports/imported_by populated
 
 # Get multiple specific types
-find_connections(symbol_name="MyClass", relationship_types=["inherits", "imports", "decorates"])
+find_connections(
+    symbol_name="MyClass", relationship_types=["inherits", "imports", "decorates"]
+)
 ```
 
 **Valid relationship types**: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
@@ -190,7 +192,12 @@ search_code("authentication handler", ego_graph_enabled=True)
 search_code("database connection", ego_graph_enabled=True, ego_graph_k_hops=1)
 
 # Deep expansion with more neighbors
-search_code("request processing", ego_graph_enabled=True, ego_graph_k_hops=3, ego_graph_max_neighbors_per_hop=20)
+search_code(
+    "request processing",
+    ego_graph_enabled=True,
+    ego_graph_k_hops=3,
+    ego_graph_max_neighbors_per_hop=20,
+)
 ```
 
 ### Performance Characteristics
@@ -407,8 +414,8 @@ Ultra format optimizes token usage by declaring field names once in a header, th
    # Reconstruct object
    object1 = {
        "chunk_id": row1[0],  # "auth.py:10-25:function:login"
-       "kind": row1[1],       # "function"
-       "score": row1[2]       # 0.95
+       "kind": row1[1],  # "function"
+       "score": row1[2],  # 0.95
    }
    ```
 
@@ -1023,6 +1030,7 @@ class UserService:
     def get_user(self, id):  # chunk_id: "service.py:5-10:method:UserService.get_user"
         pass
 
+
 class AdminService:
     def get_user(self, id):  # chunk_id: "service.py:15-20:method:AdminService.get_user"
         pass
@@ -1033,16 +1041,16 @@ class AdminService:
 ```python
 class DataProcessor:
     def process(self):
-        self.validate()     # Resolves to "DataProcessor.validate"
-        super().cleanup()   # Resolves to "BaseProcessor.cleanup"
+        self.validate()  # Resolves to "DataProcessor.validate"
+        super().cleanup()  # Resolves to "BaseProcessor.cleanup"
 ```
 
 **Type Annotation Resolution** (v0.5.13):
 
 ```python
 def process_order(order: Order, payment: PaymentGateway):
-    order.validate()           # Resolves to "Order.validate"
-    payment.charge(amount)     # Resolves to "PaymentGateway.charge"
+    order.validate()  # Resolves to "Order.validate"
+    payment.charge(amount)  # Resolves to "PaymentGateway.charge"
 ```
 
 **Example - Finding Method Callers**:

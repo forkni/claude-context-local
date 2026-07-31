@@ -969,6 +969,7 @@ If you still experience connection issues, disable QuickEdit mode in Windows con
 # Add before mcp.run() in mcp_server/server.py
 if platform.system() == "Windows" and transport == "sse":
     import asyncio
+
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 ```
 

@@ -13,16 +13,19 @@ Skip tests based on hardware availability:
 ```python
 from tests.testing_utils import require_torch, require_torch_gpu
 
+
 @require_torch
 def test_embedding_model():
     """Test runs only if PyTorch is installed."""
     import torch
     # ... test code
 
+
 @require_torch_gpu
 def test_gpu_inference():
     """Test runs only if CUDA GPU is available."""
     import torch
+
     assert torch.cuda.is_available()
     # ... test code
 ```
@@ -70,6 +73,7 @@ with mockenv_context(CUDA_VISIBLE_DEVICES="0", MODEL_NAME="test"):
     # Environment variables set here
     assert os.environ["CUDA_VISIBLE_DEVICES"] == "0"
 # Variables automatically restored here
+
 
 # Decorator
 @mockenv(DEBUG="1", LOG_LEVEL="INFO")

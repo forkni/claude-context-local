@@ -505,10 +505,12 @@ All slow integration tests are marked with the `@pytest.mark.slow` decorator:
 ```python
 import pytest
 
+
 @pytest.mark.slow
 def test_full_indexing_workflow(tmp_path):
     """Complete indexing workflow with real embeddings."""
     # Test implementation...
+
 
 @pytest.mark.slow
 class TestComprehensiveSearch:
@@ -605,16 +607,19 @@ pytest tests/ -v
 ```python
 from tests.testing_utils import require_torch_gpu, CaptureLogger, mockenv
 
+
 @require_torch_gpu
 def test_gpu_inference():
     """Test runs only if CUDA GPU is available."""
     # Test GPU-specific code
+
 
 def test_logging_output():
     """Verify logging output."""
     with CaptureLogger("search.hybrid_searcher") as cl:
         searcher.add_embeddings(results)
     assert "resolved" in cl.out
+
 
 @mockenv(CUDA_VISIBLE_DEVICES="0", MODEL_NAME="test")
 def test_env_dependent():
@@ -665,6 +670,7 @@ def test_<specific_behavior>(self):
 """
 tests/unit/test_new_component.py
 """
+
 import pytest
 from unittest.mock import Mock, patch
 
@@ -677,7 +683,7 @@ class TestNewComponent:
     @pytest.fixture
     def component(self):
         """Create a test instance of NewComponent."""
-        return NewComponent(config={'test': True})
+        return NewComponent(config={"test": True})
 
     def test_basic_functionality(self, component):
         """Test basic operation."""
@@ -706,7 +712,7 @@ class TestNewComponent:
         result = component.process(large_input)
         assert len(result) > 0
 
-    @patch('your_module.external_dependency')
+    @patch("your_module.external_dependency")
     def test_mocked_dependency(self, mock_dependency, component):
         """Test with mocked external dependency."""
         # Arrange
@@ -726,6 +732,7 @@ class TestNewComponent:
 """
 tests/integration/test_new_workflow.py
 """
+
 import pytest
 import tempfile
 from pathlib import Path
@@ -799,10 +806,11 @@ class TestNewWorkflow:
    ```python
    from unittest.mock import Mock, patch
 
-   @patch('embeddings.embedder.SentenceTransformer')
+
+   @patch("embeddings.embedder.SentenceTransformer")
    def test_with_mocked_model(mock_transformer):
        mock_model = Mock()
-       mock_model.encode.return_value = np.random.randn(768).astype('float32')
+       mock_model.encode.return_value = np.random.randn(768).astype("float32")
        mock_transformer.return_value = mock_model
        # Test logic here
    ```
@@ -854,10 +862,10 @@ class TestNewWorkflow:
 
    ```python
    # Allow multiple acceptable error messages
-   assert any(msg in str(exc.value) for msg in [
-       "Project directory not found",
-       "Invalid project path"
-   ])
+   assert any(
+       msg in str(exc.value)
+       for msg in ["Project directory not found", "Invalid project path"]
+   )
    ```
 
 8. **Create regression tests for bugs**: Prevent fixed issues from reoccurring
@@ -959,6 +967,7 @@ def graph_storage(tmp_path: Path):
     """Isolated CodeGraphStorage fixture."""
     # Use this fixture instead of creating CodeGraphStorage manually
 
+
 @pytest.fixture
 def snapshot_manager(tmp_path: Path):
     """Isolated SnapshotManager fixture."""
@@ -975,7 +984,7 @@ def test_with_fixture(graph_storage):
         chunk_id="test.py:1-10:function:test",
         name="test",
         chunk_type="function",
-        file_path="test.py"
+        file_path="test.py",
     )
     # Cleanup is automatic
 ```
@@ -986,6 +995,7 @@ For unit tests, mock components that would access production directories:
 
 ```python
 from unittest.mock import Mock, patch
+
 
 def test_initialization_with_defaults(tmp_path):
     """Mock SnapshotManager to prevent production access."""
@@ -1105,10 +1115,16 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     if their indices were temporarily affected by tests.
     """
     if exitstatus in (0, 1):
-        orphan_cleanup_script = Path(__file__).parent.parent / "tools" / "cleanup_orphaned_projects.py"
+        orphan_cleanup_script = (
+            Path(__file__).parent.parent / "tools" / "cleanup_orphaned_projects.py"
+        )
         if orphan_cleanup_script.exists():
-            subprocess.run([sys.executable, str(orphan_cleanup_script), "--auto"],
-                          capture_output=True, text=True, timeout=30)
+            subprocess.run(
+                [sys.executable, str(orphan_cleanup_script), "--auto"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
 ```
 
 `tools/cleanup_stale_snapshots.py` (below) is a separate, **manual-only** tool. It is deliberately not run automatically: it judges staleness by missing indices rather than by a missing project path, which could delete a real project's merkle trees if its index was temporarily affected by a test run.
@@ -1446,6 +1462,7 @@ If a test is legitimately flaky and cannot be easily fixed, mark it with the `@p
 ```python
 import pytest
 
+
 @pytest.mark.flaky(reruns=3, reruns_delay=1)
 def test_potentially_unstable():
     """Test that may fail intermittently due to external factors."""
@@ -1475,6 +1492,7 @@ pip install pytest-rerunfailures
 ```python
 import random
 
+
 def test_random_selection():
     data = [1, 2, 3, 4, 5]
     result = random.choice(data)
@@ -1485,6 +1503,7 @@ def test_random_selection():
 
 ```python
 import random
+
 
 def test_random_selection():
     random.seed(42)  # Fixed seed for determinism
@@ -1826,9 +1845,11 @@ Override the `snapshot` fixture per module to force JSON extension — do not re
 import pytest
 from syrupy.extensions.json import JSONSnapshotExtension
 
+
 @pytest.fixture
 def snapshot(snapshot):
     return snapshot.use_extension(JSONSnapshotExtension)
+
 
 def test_some_output(snapshot):
     assert compute_thing() == snapshot  # stored as JSON, one file per test
@@ -1884,6 +1905,7 @@ For outputs with timestamps, UUIDs, or absolute paths, mask with `path_type`:
 
 ```python
 from syrupy.matchers import path_type
+
 
 def test_with_timestamp(snapshot):
     assert result == snapshot(

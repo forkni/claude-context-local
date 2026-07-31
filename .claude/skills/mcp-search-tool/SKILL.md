@@ -205,7 +205,11 @@ summary chunks are demoted to the tail for non-GLOBAL queries. Array position 0 
 cross-encoder order, re-sort by `reranker_score`:
 
 ```python
-ranked = sorted(results, key=lambda r: (r.get("reranker_score", 0), r.get("blended_score", 0)), reverse=True)
+ranked = sorted(
+    results,
+    key=lambda r: (r.get("reranker_score", 0), r.get("blended_score", 0)),
+    reverse=True,
+)
 ```
 
 **Caveat:** re-sorting by `reranker_score` will re-promote demoted module summary chunks (e.g. a `module:hybrid_searcher` summary with

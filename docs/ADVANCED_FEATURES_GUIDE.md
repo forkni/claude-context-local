@@ -511,7 +511,7 @@ python tools/benchmark_instructions.py --model Qwen/Qwen3-Embedding-0.6B
 # Sentence-transformers truncates embeddings during model instantiation
 model = SentenceTransformer(
     "Qwen/Qwen3-Embedding-0.6B",
-    truncate_dim=1024  # Output 1024d instead of 2560d
+    truncate_dim=1024,  # Output 1024d instead of 2560d
 )
 
 # All embeddings automatically truncated
@@ -626,6 +626,7 @@ When indexing a standalone function, the system extracts up to `max_import_lines
 # Original code in file
 import numpy as np
 from sklearn.model_selection import train_test_split
+
 
 def prepare_dataset(data):
     X_train, X_test = train_test_split(data)
@@ -877,7 +878,7 @@ cfg.reranker = RerankerConfig(
     enabled=True,
     model_name="Alibaba-NLP/gte-reranker-modernbert-base",
     top_k_candidates=100,
-    batch_size=32
+    batch_size=32,
 )
 
 mgr.save_config(cfg)
@@ -1225,7 +1226,9 @@ embedder.embed_query("test query")
 print(f"Cache size: {embedder._query_cache_size}")
 print(f"Cache hits: {embedder._cache_hits}")
 print(f"Cache misses: {embedder._cache_misses}")
-print(f"Hit rate: {embedder._cache_hits / (embedder._cache_hits + embedder._cache_misses) * 100:.1f}%")
+print(
+    f"Hit rate: {embedder._cache_hits / (embedder._cache_hits + embedder._cache_misses) * 100:.1f}%"
+)
 ```
 
 ### Cache Invalidation
@@ -1406,10 +1409,12 @@ export CLAUDE_LOG_LEVEL=INFO
 ```python
 from utils.timing import timed
 
+
 @timed("my_operation")
 def my_function():
     # Your code
     pass
+
 
 # Logs: [TIMING] my_operation: Xms
 ```
@@ -2183,9 +2188,11 @@ v0.14.0 introduced a pluggable `CallEdgeResolver` protocol with confidence-prece
 # Old: "method_name" (ambiguous if multiple classes have same method)
 # New: "ClassName.method_name" (unambiguous)
 
+
 class UserService:
     def get_user(self, id):  # chunk_id: "service.py:5-10:method:UserService.get_user"
         pass
+
 
 class AdminService:
     def get_user(self, id):  # chunk_id: "service.py:15-20:method:AdminService.get_user"
@@ -2197,9 +2204,9 @@ class AdminService:
 ```python
 class DataProcessor:
     def process(self):
-        self.validate()     # → "DataProcessor.validate"
-        self._transform()   # → "DataProcessor._transform"
-        super().cleanup()   # → "BaseProcessor.cleanup" (parent class)
+        self.validate()  # → "DataProcessor.validate"
+        self._transform()  # → "DataProcessor._transform"
+        super().cleanup()  # → "BaseProcessor.cleanup" (parent class)
 ```
 
 ### Phase 2: Type Annotation Resolution (v0.5.13)
@@ -2208,11 +2215,12 @@ class DataProcessor:
 
 ```python
 def process_order(order: Order, payment: PaymentGateway):
-    order.validate()           # → "Order.validate"
-    payment.charge(amount)     # → "PaymentGateway.charge"
+    order.validate()  # → "Order.validate"
+    payment.charge(amount)  # → "PaymentGateway.charge"
+
 
 def handle_user(user: Optional[User]):
-    user.notify()              # → "User.notify" (extracts from Optional)
+    user.notify()  # → "User.notify" (extracts from Optional)
 ```
 
 **Supported Annotation Types**:
@@ -2239,13 +2247,13 @@ def handle_user(user: Optional[User]):
 ```python
 def process_data():
     extractor = ExceptionExtractor()  # Track assignment
-    extractor.extract()               # → "ExceptionExtractor.extract"
+    extractor.extract()  # → "ExceptionExtractor.extract"
 
-    with ResourceManager() as mgr:    # Track context manager
-        mgr.cleanup()                  # → "ResourceManager.cleanup"
+    with ResourceManager() as mgr:  # Track context manager
+        mgr.cleanup()  # → "ResourceManager.cleanup"
 
-    if (handler := ErrorHandler()):   # Track walrus operator
-        handler.handle()               # → "ErrorHandler.handle"
+    if handler := ErrorHandler():  # Track walrus operator
+        handler.handle()  # → "ErrorHandler.handle"
 ```
 
 **Supported Assignment Patterns**:
@@ -2264,12 +2272,12 @@ def process_data():
 ```python
 class Service:
     def __init__(self):
-        self.repo = UserRepository()    # Track self.repo
-        self.cache = RedisCache()       # Track self.cache
+        self.repo = UserRepository()  # Track self.repo
+        self.cache = RedisCache()  # Track self.cache
 
     def get_user(self, id):
-        cached = self.cache.get(id)     # → "RedisCache.get"
-        user = self.repo.find(id)       # → "UserRepository.find"
+        cached = self.cache.get(id)  # → "RedisCache.get"
+        user = self.repo.find(id)  # → "UserRepository.find"
 ```
 
 **Priority Order**: When multiple sources provide type info:
@@ -2296,11 +2304,12 @@ class Service:
 from handlers import ErrorHandler
 from utils import Logger as L
 
-def process():
-    handler = ErrorHandler()      # Import tracking + assignment
-    handler.handle()              # → "ErrorHandler.handle"
 
-    L.configure()                 # Aliased import
+def process():
+    handler = ErrorHandler()  # Import tracking + assignment
+    handler.handle()  # → "ErrorHandler.handle"
+
+    L.configure()  # Aliased import
     # → "Logger.configure" (resolves alias to original)
 ```
 
@@ -2868,23 +2877,23 @@ Ego-graph expansion automatically retrieves graph neighbors (callers, callees, r
 # Basic ego-graph expansion (2-hop, max 10 neighbors per hop)
 search_code(
     "authentication handler",
-    ego_graph_enabled=True     # Enable expansion
+    ego_graph_enabled=True,  # Enable expansion
 )
 
 # Custom configuration
 search_code(
     "database connection",
     ego_graph_enabled=True,
-    ego_graph_k_hops=1,        # Only direct neighbors
-    ego_graph_max_neighbors_per_hop=20  # Allow more neighbors
+    ego_graph_k_hops=1,  # Only direct neighbors
+    ego_graph_max_neighbors_per_hop=20,  # Allow more neighbors
 )
 
 # Deep traversal
 search_code(
     "request processing",
     ego_graph_enabled=True,
-    ego_graph_k_hops=3,        # 3-hop traversal
-    ego_graph_max_neighbors_per_hop=15
+    ego_graph_k_hops=3,  # 3-hop traversal
+    ego_graph_max_neighbors_per_hop=15,
 )
 ```
 
@@ -2920,9 +2929,9 @@ When ego-graph expansion is enabled, **stdlib and third-party imports are automa
 **Example Classification**:
 
 ```python
-import os                      # → stdlib (filtered)
-from typing import List        # → stdlib (filtered)
-import numpy as np             # → third_party (filtered)
+import os  # → stdlib (filtered)
+from typing import List  # → stdlib (filtered)
+import numpy as np  # → third_party (filtered)
 from .local_module import foo  # → local (included)
 from graph.storage import Bar  # → local (included if in project)
 ```
@@ -3057,7 +3066,9 @@ search_code("API endpoint", ego_graph_enabled=True, ego_graph_k_hops=1)
 
 ```python
 # Large classes with many dependencies
-search_code("DatabaseManager class", ego_graph_enabled=True, ego_graph_max_neighbors_per_hop=20)
+search_code(
+    "DatabaseManager class", ego_graph_enabled=True, ego_graph_max_neighbors_per_hop=20
+)
 ```
 
 **4. Combine with Filters**
@@ -3113,21 +3124,14 @@ Parent-child retrieval automatically includes enclosing class context when searc
 search_code(
     "validate user data",
     chunk_type="method",
-    include_parent=True     # Enable parent retrieval
+    include_parent=True,  # Enable parent retrieval
 )
 
 # Search for authentication methods with class context
-search_code(
-    "authentication methods",
-    include_parent=True
-)
+search_code("authentication methods", include_parent=True)
 
 # Combine with filters
-search_code(
-    "database query methods",
-    include_parent=True,
-    exclude_dirs=["tests/"]
-)
+search_code("database query methods", include_parent=True, exclude_dirs=["tests/"])
 ```
 
 **Parameters**:
@@ -3253,11 +3257,7 @@ search_code("database methods", include_parent=True, exclude_dirs=["tests/"])
 
 ```python
 # Method + class + graph neighbors
-search_code(
-    "authentication method",
-    include_parent=True,
-    ego_graph_enabled=True
-)
+search_code("authentication method", include_parent=True, ego_graph_enabled=True)
 # Returns: method + parent class + callers + callees
 ```
 
