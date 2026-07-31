@@ -31,8 +31,8 @@ Find code with natural language query or direct chunk lookup. Use for all initia
 (default 10, range 1-50), `include_parent` (default false), `output_format` ("compact"/"verbose"/"ultra", default "compact"), `max_context_tokens`
 (token-budget cap). Full parameter reference in [parameters.md](parameters.md).
 
-**chunk_type values (13):** "function", "class", "method", "module", "module_preamble", "decorated_definition", "interface", "enum", "struct", "type",
-"merged", "split_block", "community" (omit the field to match any chunk type)
+**chunk_type values (12):** "function", "class", "method", "module", "module_preamble", "decorated_definition", "interface", "enum", "struct", "type",
+"merged", "split_block" (omit the field to match any chunk type)
 
 **Chunk ID format:** `file.py:start-end:type:name` (e.g., `auth.py:10-50:function:login`)
 
@@ -90,7 +90,7 @@ despite the section title.)*
 |------|------|---------|----------------------|
 | `code-search:find_similar_code` | Core | Find functionally similar code. **Key options:** `chunk_id` (required), `k` (default **4** — does not inherit `default_k`, unlike `search_code`) | — |
 | `code-search:configure_reranking` | Advanced | Neural reranking settings | None |
-| `code-search:configure_chunking` | Advanced | Chunking + community detection (file/community summaries, sizing mode, etc.) | None |
+| `code-search:configure_chunking` | Advanced | Chunking settings (file summaries, sizing mode, etc.) | None |
 
 ## Model Management
 

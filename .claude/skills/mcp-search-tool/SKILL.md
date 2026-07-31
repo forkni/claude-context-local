@@ -66,7 +66,7 @@ queries, so passing `k=7` explicitly is good defensive practice regardless of wh
 1. Call `code-search:search_code(query="<your query>", k=7, include_context=true)` — `include_context` fetches ego-graph/graph-hop neighbors inline
    (more recall per call). Use `k=10` for architectural / global queries.
 2. **Scan ALL k results** — results are pre-sorted in relevance order (centrality-reranked blended_score descending) under the server default;
-   module/community summary chunks appear at the tail for non-GLOBAL queries. Array position 0 is the highest blended_score result. The tool returns
+   module summary chunks appear at the tail for non-GLOBAL queries. Array position 0 is the highest blended_score result. The tool returns
    **metadata rows** (chunk_id, type, name, scores, short snippet). Names + types + scores are enough to judge relevance — you do NOT need to refetch
    bodies to "confirm". You may optionally re-sort by `reranker_score` for pure cross-encoder order, but doing so will **re-promote demoted summary
    chunks** (see Gotchas).
@@ -200,7 +200,7 @@ Full purpose + in-band-alternative table for the 8 advanced tools (only `configu
 
 These are non-obvious traps from real session experience — not things the docs mention.
 
-**Results are pre-sorted by relevance (blended_score descending) under the server default (`source_order_output=false`, v0.18.0+).** Module/community
+**Results are pre-sorted by relevance (blended_score descending) under the server default (`source_order_output=false`, v0.18.0+).** Module
 summary chunks are demoted to the tail for non-GLOBAL queries. Array position 0 is now the highest blended_score result. If you need strict
 cross-encoder order, re-sort by `reranker_score`:
 
@@ -208,7 +208,7 @@ cross-encoder order, re-sort by `reranker_score`:
 ranked = sorted(results, key=lambda r: (r.get("reranker_score", 0), r.get("blended_score", 0)), reverse=True)
 ```
 
-**Caveat:** re-sorting by `reranker_score` will re-promote demoted module/community summary chunks (e.g. a `module:hybrid_searcher` summary with
+**Caveat:** re-sorting by `reranker_score` will re-promote demoted module summary chunks (e.g. a `module:hybrid_searcher` summary with
 reranker_score 0.94 lands at position 28 in the default order because blended_score factors in centrality; re-sorting elevates it back to position 0).
 Apply the re-sort deliberately when you specifically want pure cross-encoder ranking.
 
@@ -249,10 +249,10 @@ named symbol is the question's *subject*, usually **not** in the relevant set �
 `find_connections` returned (the actual callers / callees / subclasses), highest `resolver_confidence` first. Do not prune based on file location or
 kind.
 
-**Community and module summary chunks are demoted to the tail on class-overview queries (v0.18.0+, `source_order_output=false` default).** They have
-IDs like `__community__/label:0-0:community:label` or `file.py:0-0:module:name`. Under the default ordering they appear at the end of the results
+**Module summary chunks are demoted to the tail on class-overview queries (v0.18.0+, `source_order_output=false` default).** They have
+IDs like `file.py:0-0:module:name`. Under the default ordering they appear at the end of the results
 array for non-GLOBAL queries — **don't mistake their low array position for low relevance; their reranker_score may be high.** If you need a summary
-chunk specifically, look at the tail of the result array, or filter with `chunk_type="community"` / `chunk_type="module"`. If
+chunk specifically, look at the tail of the result array, or filter with `chunk_type="module"`. If
 `source_order_output=true` is set (DOS-RAG mode), they can still surface at rank-1 of their file group — use `chunk_type="function"` or
 `chunk_type="class"` to exclude them.
 
@@ -286,7 +286,7 @@ active project is a common silent error — results look plausible but are from 
 | **No results** | 1. Check active project: `code-search:list_projects` → `code-search:switch_project` if needed. 2. Verify index not empty/stale: `code-search:get_index_status`. 3. If index is missing or stale: **rebuild with `code-search:index_directory(directory_path)`**. |
 | **Bad results / wrong project** | Run pre-flight checks above. If the project was recently changed, re-run `switch_project` to confirm. |
 | **Bad results (right project)** | Try different mode: hybrid → semantic → bm25. Add filters: `file_pattern`, `chunk_type`. Increase k |
-| **Wrong result at rank-1** | Scan all k results — answer likely at rank 2-4. Use `chunk_type` filter to exclude module/community summary chunks |
+| **Wrong result at rank-1** | Scan all k results — answer likely at rank 2-4. Use `chunk_type` filter to exclude module summary chunks |
 | **Too slow** | Use `search_mode="bm25"` for exact symbols (fastest). Check: `code-search:get_memory_status`. Free: `code-search:cleanup_resources` |
 | **Memory issues** | 1. `code-search:cleanup_resources` (core, always listed) — free indexes/models/GPU memory first. 2. For a lasting fix, switch to an embedding model lighter than the shipped default (`BAAI/bge-m3`; this machine's locally deployed default is `codefuse-ai/F2LLM-v2-0.6B` per `search_config.json`): `code-search:switch_embedding_model("google/embeddinggemma-300m")` (~1.2GB) or `code-search:switch_embedding_model("Alibaba-NLP/gte-modernbert-base")` (0.28GB, lightest) — **advanced tool, unlisted by default**; requires `MCP_EXPOSE_ADVANCED_TOOLS=1` + reconnect (see "Tool Tiers" below) |
 | **find_similar_code use-case** | Use when you have a seed chunk_id and want to find structural/semantic near-duplicates: sibling method overrides, parallel implementations across language backends, or copied-with-variation functions. Call `search_code` first to get the seed chunk_id, then `find_similar_code(chunk_id=...)`. Returns top-N similar chunks ranked by embedding similarity. |

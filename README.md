@@ -31,7 +31,7 @@
 
 - **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-07-27, 63 queries, hybrid k=7): **Hit@5 100%, MRR 0.787-0.796, Recall@7 0.719-0.734, Recall@20 0.80-0.81** - [benchmarks](docs/BENCHMARKS.md)
 - **Neural Reranking**: Cross-encoder models (default: `Alibaba-NLP/gte-reranker-modernbert-base`; alternatives: jinaai/jina-reranker-v3, Qwen3-Reranker-0.6B) improve ranking quality by 15-25% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
-- **SSCG Integration**: Structural-Semantic Code Graph — 21 relationship types, PageRank centrality reranking, community detection; see [benchmarks](docs/BENCHMARKS.md) for mode-comparison history
+- **SSCG Integration**: Structural-Semantic Code Graph — 21 relationship types, PageRank centrality reranking; see [benchmarks](docs/BENCHMARKS.md) for mode-comparison history
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Layered Call-Graph Resolver Pipeline**: `find_connections` returns callers **and** callees with per-entry provenance (`resolver_source`, `resolver_confidence`). Confidence ladder: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98. Install `pip install -e ".[callgraph]"` for pyan3 + LibCST; core is Apache-2.0-clean — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
 - **OTel Tracing** (opt-in): Zero-overhead `traced_block` / `@timed` spans across the search and index pipeline — export to Jaeger, Tempo, or any OTLP collector. See [Observability](docs/OBSERVABILITY.md).
@@ -427,7 +427,7 @@ claude-context-local/
 ├── embeddings/        # Model loading & embedding generation
 ├── search/            # FAISS + BM25 hybrid search, graph-scoring stage
 ├── merkle/            # Incremental indexing with change detection
-├── graph/             # Graph storage, queries & community detection
+├── graph/             # Graph storage & queries
 ├── mcp_server/        # MCP server implementation (18 tools)
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration

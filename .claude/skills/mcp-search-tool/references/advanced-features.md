@@ -18,7 +18,6 @@ The project has **three distinct graph-aware subsystems** that are often confuse
 - BM25 Snowball Stemming (inactive under the default `bm25_tokenizer="whole"`)
 - A1: Intent-Adaptive Edge Weights (internal)
 - A2: File-Level Summary Chunks (configurable)
-- B1: Community-Level Summary Chunks (configurable)
 - **pyan3 Cross-Module Caller Edges** (v0.13.0 — injected at full-index time)
 
 ---
@@ -210,24 +209,9 @@ query to filter them out.
 
 ---
 
-## B1: Community-Level Summary Chunks
-
-**Status:** Configurable. Enabled by default.
-
-**What they are:** Synthetic `chunk_type="community"` chunks generated per code community (detected via Louvain algorithm). Contain thematic groupings
-of related chunks across files.
-
-**ID format:** `__community__/{label}:0-0:community:{label}`
-
-**Score handling:** Demoted by 0.9–0.95× multiplier. Excluded from call graph.
-
-**Control:** `code-search:configure_chunking(enable_community_summaries=true/false)`
-
----
-
 ## configure_chunking Advanced Options
 
-`code-search:configure_chunking` exposes many options beyond just file/community summaries:
+`code-search:configure_chunking` exposes many options beyond just file summaries:
 
 - `sizing_mode`: "fixed" (default) or "adaptive" (adjusts chunk size by complexity)
 - `adaptive_multiplier_max` / `adaptive_multiplier_min`: bounds for adaptive sizing

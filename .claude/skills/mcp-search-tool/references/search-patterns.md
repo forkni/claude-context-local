@@ -22,7 +22,7 @@ Scan all k results for:
 
 - Class overview queries: "what does X do", "how does X work"
 - Sibling context queries: "encode and decode", "save and load"
-- Queries where module/community summary chunks may surface (they have `chunk_type="module"` or `"community"` and appear at rank 1-2)
+- Queries where module summary chunks may surface (they have `chunk_type="module"` and appear at rank 1-2)
 
 Use `chunk_type="function"` or `chunk_type="class"` to filter out synthetic summary chunks when you need specific implementations.
 

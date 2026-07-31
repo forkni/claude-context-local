@@ -3281,9 +3281,9 @@ search_code(
 
 ### Overview
 
-The Structural-Semantic Code Graph (SSCG) is a comprehensive 5-phase integration based on 4 research papers: RepoGraph (ICLR 2025), SOG (USENIX Security '24), GRACE, and Microsoft GraphRAG. It combines structural code relationships with semantic search for superior code understanding.
+The Structural-Semantic Code Graph (SSCG) is a comprehensive 4-phase integration based on 4 research papers: RepoGraph (ICLR 2025), SOG (USENIX Security '24), GRACE, and Microsoft GraphRAG. It combines structural code relationships with semantic search for superior code understanding.
 
-### Five Phases
+### Four Phases
 
 **Phase 1: Subgraph Extraction**
 
@@ -3304,12 +3304,7 @@ The Structural-Semantic Code Graph (SSCG) is a comprehensive 5-phase integration
 - `CentralityRanker` class with annotate/rerank modes
 - See [Centrality Reranking](#centrality-reranking-v090) section below
 
-**Phase 4: Community Context Surfacing**
-
-- Community ID annotation on subgraph nodes
-- Heuristic label generation from dominant symbols
-
-**Phase 5: Ego-Graph Structure Preservation**
+**Phase 4: Ego-Graph Structure Preservation**
 
 - Structured ego-graph retrieval with edge preservation
 - `EgoGraphData` dataclass for formatted output
@@ -3464,47 +3459,6 @@ Module chunks are demoted to prevent inappropriate displacement of real code:
 ### Configuration
 
 Toggle via `configure_chunking(enable_file_summaries=True)` (default: enabled).
-
----
-
-## B1: Community-Level Summary Chunks (v0.9.0+)
-
-### Overview
-
-Synthetic `chunk_type="community"` chunks generated per community (via Louvain community detection) with 2+ members. These summary chunks group related code that shares thematic connections, improving GLOBAL query recall.
-
-### How It Works
-
-**Community Detection**: Louvain algorithm on the code graph groups related chunks into communities.
-
-**Generation**: For each community with 2+ members:
-
-1. Aggregate community metadata: dominant directory, classes/functions in community
-2. Identify hub function (largest chunk)
-3. Generate summary text with community ID, symbols, imports
-4. Create synthetic CodeChunk with `chunk_type="community"`, `chunk_id` format: `__community__/{label}:0-0:community:{label}`
-
-**Content Example**:
-
-```
-# Community: search_graph_analysis | 8 members
-# Dominant directory: search/
-# Classes: CentralityRanker, GraphQueryEngine
-# Functions: calculate_pagerank, extract_subgraph
-# Hub function: CentralityRanker.rerank_by_centrality
-```
-
-### Demotion Tuning (3-tier)
-
-Same demotion factors as A2 (0.82x-0.90x) to prevent inappropriate displacement.
-
-### Requires
-
-Full reindex to compute community structure (not available in incremental mode).
-
-### Configuration
-
-Toggle via `configure_chunking(enable_community_summaries=True)` (default: enabled).
 
 ---
 

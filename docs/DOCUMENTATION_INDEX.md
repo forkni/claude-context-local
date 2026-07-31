@@ -172,7 +172,7 @@ Detailed technical documentation.
   - `query_cache.py` - LRU cache with TTL for query embeddings (v0.8.6+)
 - `chunking/relationships/` - Call graph extraction and relationship tracking
   - `resolvers/` - Type, import, and assignment resolvers
-- `graph/` - Graph storage, queries & community detection
+- `graph/` - Graph storage & queries
 - `mcp_server/` - MCP tool implementations (18 tools)
 - `merkle/` - Incremental indexing (snapshot management)
 - `search/` - FAISS + BM25 hybrid search

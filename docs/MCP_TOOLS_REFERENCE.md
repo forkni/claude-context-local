@@ -26,7 +26,7 @@ set. This keeps the advertised tool count small without removing the capability.
 | **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=4, exclude_same_file=False (set true for cross-file analogues — sibling implementations in other files; leave false for neighbors within the reference chunk's own file, e.g. other methods of the same class) |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.35, dense_weight=0.65, enable_parallel=True |
 | configure_reranking | Config | Configure neural reranker settings (BGE OR Jina v3, runtime configurable) | enabled, model_name, top_k_candidates=30 |
-| configure_chunking | Config | Configure code chunking settings | enable_community_detection, enable_community_merge, community_resolution, token_estimation, enable_large_node_splitting, max_chunk_lines, split_size_method, max_split_chars, enable_file_summaries, enable_community_summaries |
+| configure_chunking | Config | Configure code chunking settings | token_estimation, enable_large_node_splitting, max_chunk_lines, split_size_method, max_split_chars, enable_file_summaries, sizing_mode |
 | get_search_config_status | Config | View current configuration | *(no parameters)* |
 | get_index_status | Status | Check index health & model info | *(no parameters)* |
 | get_memory_status | Monitor | Check RAM/VRAM usage | *(no parameters)* |
@@ -65,16 +65,15 @@ filters before indexing starts so you can confirm the full list took effect.
 | **file_pattern** | string | Substring match on file path | Any string (e.g., "auth", "test_", "utils/") |
 | **include_dirs** | array | Only search in these directories (prefix match) | `["src/", "lib/"]` |
 | **exclude_dirs** | array | Exclude from search (prefix match) | `["tests/", "vendor/", "node_modules/"]` |
-| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"module_preamble"`, `"community"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"`, `"merged"`, `"split_block"` |
+| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"module_preamble"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"`, `"merged"`, `"split_block"` |
 
 **Synthetic Summary Chunk Types (v0.9.0+)**:
 
 - `"module"`: File-level module summary chunks (A2 feature). Synthetic chunks generated per file with 2+ real chunks, containing file path, module name, classes, functions, key methods, imports, and docstring excerpts. Improves GLOBAL query recall.
-- `"community"`: Community-level summary chunks (B1 feature). Synthetic chunks generated per community (via Louvain detection) with 2+ members, containing community ID, dominant directory, classes/functions in the community, hub function, and imports. Improves GLOBAL query recall.
 
 **Chunking Chunk Types (v0.8.4+)**:
 
-- `"merged"`: Community-merged chunks created by community detection. Multiple related code blocks merged together for better semantic context (e.g., related helper functions merged with main class).
+- `"merged"`: Sibling chunks combined by `LanguageChunker._create_merged_chunk`. Multiple related code blocks merged together for better semantic context (e.g., related helper functions merged with main class).
 - `"module_preamble"`: Real (non-synthetic) top-of-file statements — import-time side effects, module-level constants/config, `if __name__ == "__main__":` guards — that sit between chunked functions/classes but have no chunkable ancestor node type. Unlike `"module"`, this contains the actual verbatim source with real line numbers, and is never subject to synthetic-chunk demotion/exclusion.
 - `"split_block"`: Large function blocks split at AST boundaries when exceeding `max_chunk_lines` (default: 100 lines). Enables better granularity for very large functions.
 
@@ -528,16 +527,12 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 
 **Parameters**:
 
-- `enable_community_detection` (bool): Detect code communities for better chunking (default: True)
-- `enable_community_merge` (bool): Use communities for chunk remerging — full re-index only (default: False)
-- `community_resolution` (float): Louvain algorithm resolution parameter (0.1-2.0, default: 1.5)
 - `token_estimation` (str): Token estimation method - "whitespace" (fast) or "tiktoken" (accurate, default: "whitespace")
 - `enable_large_node_splitting` (bool): Enable AST block splitting for large functions (default: True)
 - `max_chunk_lines` (int): Maximum lines per chunk before splitting at AST boundaries (10-1000, default: 100)
 - `split_size_method` (str): Size method for splitting - "lines" or "characters" (default: "characters")
 - `max_split_chars` (int): Maximum characters per split chunk (1000-10000, default: 1600)
 - `enable_file_summaries` (bool): Generate file-level module summary chunks (A2 feature, default: True)
-- `enable_community_summaries` (bool): Generate community-level summary chunks (B1 feature, default: True)
 - `sizing_mode` (str): Chunk sizing algorithm - "fixed" or "adaptive" (repo-profiled P75 + complexity, default: "fixed")
 - `adaptive_multiplier_max` (float): T_max multiplier for low-complexity functions (1.0-2.0, default: 1.3)
 - `adaptive_multiplier_min` (float): T_min multiplier for high-complexity functions (0.1-1.0, default: 0.5)
@@ -549,7 +544,7 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 
 ```
 /configure_chunking --enable_large_node_splitting true --max_split_chars 1600
-/configure_chunking --enable_community_detection true --sizing_mode adaptive
+/configure_chunking --sizing_mode adaptive
 /get_search_config_status  # View current chunking settings
 ```
 
@@ -561,7 +556,7 @@ Configured via `search_config.json` or the `start_mcp_server.cmd` UI (Search Con
 
 ### Source-Position Reranking (`OutputConfig.source_order_output`, default: False)
 
-After retrieval, results emit in **relevance order** (centrality-reranked blended_score descending) by default. Module/community summary chunks are demoted to the tail for non-GLOBAL queries. `reranker_score` is preserved per-row for optional consumer re-sort.
+After retrieval, results emit in **relevance order** (centrality-reranked blended_score descending) by default. Module summary chunks are demoted to the tail for non-GLOBAL queries. `reranker_score` is preserved per-row for optional consumer re-sort.
 
 Set `source_order_output=true` to restore **DOS-RAG file/line ordering**: results from the same file are grouped and sorted by start line, with `[... N lines omitted ...]` gap indicators between non-contiguous chunks. Useful when feeding chunks verbatim to a long-context LLM that benefits from reading code in document order.
 

@@ -219,5 +219,5 @@ high LR (0.852) confirms the search is surfacing the correct file regions.
 - **Why k=7 over k=5:** targets may rank 6–7 on complex or multi-target queries. The `golden_dataset.recommended_k=7` reflects this.
 - **Rank-1 reliability:** all modes have P@1 ≈ 0.69 (MRR 0.797 — not all primaries rank first). Always scan all k results before concluding.
 - **When rank-1 is most reliable:** exact symbol lookup, small function discovery ("get X", "validate Y").
-- **When you must scan all results:** class overview, sibling pairs ("encode and decode", "save and load"), queries where module/community summary
+- **When you must scan all results:** class overview, sibling pairs ("encode and decode", "save and load"), queries where module summary
   chunks may surface.

@@ -41,8 +41,8 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 | `output_format` | schema `"compact"`, effective `"ultra"` | If omitted, the server uses `config.output.format` (`mcp_server/server.py:323-326`), which ships as **`"ultra"`** (`search/config.py:299-301`, for 45-55% token reduction). Pass `output_format="compact"` or `"verbose"` explicitly to override. |
 | `max_context_tokens` | 0 (no cap) | Token-budget cap to prevent context overflow |
 
-**chunk_type values (13):** "function", "class", "method", "module", "module_preamble", "decorated_definition", "interface", "enum", "struct", "type",
-"merged", "split_block", "community"
+**chunk_type values (12):** "function", "class", "method", "module", "module_preamble", "decorated_definition", "interface", "enum", "struct", "type",
+"merged", "split_block"
 
 **Result fields (always):** `chunk_id`, `kind`, `score`, `blended_score`, `centrality`, `source`
 
