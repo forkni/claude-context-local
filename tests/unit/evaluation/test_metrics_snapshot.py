@@ -1,7 +1,9 @@
 """Snapshot tests for evaluation/metrics.py.
 
 Pins the full output contract of:
-  - calculate_metrics_from_results() → 12-key dict
+  - calculate_metrics_from_results() → 16-key dict (14 unconditional keys,
+    plus ndcg@5_graded/ndcg@10_graded/hard_negative_intrusion only when
+    relevance_grades is passed)
   - aggregate_metrics()              → aggregate dict incl. nested pass_fail block
 
 No volatile fields → no masking needed.
@@ -21,19 +23,24 @@ def snapshot(snapshot):
     return snapshot.use_extension(JSONSnapshotExtension)
 
 
-# ── Fixed per-query rows (all 12 keys produced by calculate_metrics_from_results) ──
+# ── Fixed per-query rows (all 14 unconditional keys produced by
+# calculate_metrics_from_results when relevance_grades is not passed) ──
 
 _ZERO_QUERY: dict = {
     "recall@1": 0.0,
     "recall@5": 0.0,
     "recall@7": 0.0,
     "recall@10": 0.0,
+    "recall@20": 0.0,
+    "recall@50": 0.0,
     "precision@1": 0.0,
     "precision@5": 0.0,
     "precision@10": 0.0,
     "mrr": 0.0,
     "ndcg@5": 0.0,
     "ndcg@10": 0.0,
+    "acc@5": 0.0,
+    "acc@10": 0.0,
     "hit": False,
     "hit@7": False,
 }
@@ -43,19 +50,23 @@ _ONE_QUERY: dict = {
     "recall@5": 1.0,
     "recall@7": 1.0,
     "recall@10": 1.0,
+    "recall@20": 1.0,
+    "recall@50": 1.0,
     "precision@1": 1.0,
     "precision@5": 1.0,
     "precision@10": 1.0,
     "mrr": 1.0,
     "ndcg@5": 1.0,
     "ndcg@10": 1.0,
+    "acc@5": 1.0,
+    "acc@10": 1.0,
     "hit": True,
     "hit@7": True,
 }
 
 
 class TestCalculateMetricsFromResultsSnapshot:
-    """Snapshot the full 12-key dict for representative input cases.
+    """Snapshot the full dict for representative input cases.
 
     These cases mirror the deterministic assertions in test_benchmark_metrics.py
     but capture the *entire* output dict so any new or changed key is caught.
@@ -83,6 +94,24 @@ class TestCalculateMetricsFromResultsSnapshot:
     def test_empty_expected(self, snapshot):
         """Empty expected list: all metrics default to 0 (guard in sub-functions)."""
         result = calculate_metrics_from_results(["A", "B"], [])
+        assert result == snapshot
+
+    def test_relevance_grades_adds_graded_keys(self, snapshot):
+        """relevance_grades passed → +ndcg@5_graded/ndcg@10_graded/hard_negative_intrusion."""
+        result = calculate_metrics_from_results(
+            ["N", "A", "B"],
+            ["A", "B"],
+            relevance_grades={"N": 1, "A": 2, "B": 3},
+        )
+        assert result == snapshot
+
+    def test_relevance_grades_no_hard_negatives(self, snapshot):
+        """relevance_grades with no grade-1 id → hard_negative_intrusion is None."""
+        result = calculate_metrics_from_results(
+            ["A", "B"],
+            ["A", "B"],
+            relevance_grades={"A": 3, "B": 2},
+        )
         assert result == snapshot
 
 
@@ -125,4 +154,31 @@ class TestAggregateMetricsSnapshot:
         queries = [{**_ZERO_QUERY, "mrr": 0.5, "recall@5": 0.5}]
         custom = {"mrr": 0.4, "recall_at_5": 0.4, "hit_rate_at_5": 0.4}
         result = aggregate_metrics(queries, thresholds=custom)
+        assert result == snapshot
+
+    def test_with_graded_ndcg_and_file_rollup_keys(self, snapshot):
+        """ndcg@*_graded and file_recall@*/file_acc@* keys → presence-based averaging."""
+        queries = [
+            {
+                **_ONE_QUERY,
+                "ndcg@5_graded": 0.9,
+                "ndcg@10_graded": 0.85,
+                "file_recall@5": 1.0,
+                "file_recall@10": 1.0,
+                "file_acc@5": 1.0,
+                "file_acc@10": 1.0,
+            },
+            {**_ZERO_QUERY},
+        ]
+        result = aggregate_metrics(queries)
+        assert result == snapshot
+
+    def test_with_hard_negative_intrusion_rate(self, snapshot):
+        """hard_negative_intrusion: True/False/None rows → None rows excluded."""
+        queries = [
+            {**_ONE_QUERY, "hard_negative_intrusion": True},
+            {**_ONE_QUERY, "hard_negative_intrusion": False},
+            {**_ZERO_QUERY, "hard_negative_intrusion": None},
+        ]
+        result = aggregate_metrics(queries)
         assert result == snapshot

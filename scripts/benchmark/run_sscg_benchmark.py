@@ -58,18 +58,22 @@ from evaluation.metrics import (  # noqa: E402
     build_community_membership,
     build_file_entries,
     build_merged_membership,
+    calculate_acc_at_k,
     calculate_file_recall_at_k,
     calculate_line_iou,
     calculate_line_precision,
     calculate_line_recall,
     calculate_metrics_from_results,
     calculate_mrr,
+    calculate_recall_at_k,
+    chunk_ids_to_files,
     expand_retrieved_with_community_credit,
     expand_retrieved_with_containment,
     flatten_entries,
     normalize_chunk_id,
     normalize_chunk_ids,
     resolve_chunk_ids_to_ranges,
+    to_file_entries,
 )
 
 
@@ -813,6 +817,13 @@ def run_benchmark(
             run's k), plus the secondary ``mrr_community_credit`` when the
             index contains community chunks (omitted otherwise — N/A, not 0.0).
 
+    Every successful query also gains ``file_recall@{5,10}`` /
+    ``file_acc@{5,10}`` (SweRank max-pool rollup of the ordinary chunk-level
+    retrieved/expected lists to file-path sets — no community credit; a
+    different axis from the Category-G block above), and, when the query's
+    dataset row carries ``relevance_grades``, ``ndcg@{5,10}_graded`` and
+    ``hard_negative_intrusion`` (see ``calculate_metrics_from_results``).
+
     Returns:
         Tuple of (per_query_results, latencies).
     """
@@ -927,7 +938,30 @@ def run_benchmark(
                 retrieved=retrieved_entries,
                 expected=expected,
                 expected_primary=expected_primary,
+                relevance_grades=item.get("relevance_grades"),
             )
+
+            # File-level rollup (SweRank max-pool, 1d): a different axis from
+            # the Category-G file_recall_strict/expanded block below -- this
+            # rolls the ordinary chunk-level retrieved/expected lists up to
+            # file-path sets and reuses calculate_recall_at_k/calculate_acc_at_k
+            # unchanged, with no community credit involved.
+            file_rollup_entries = to_file_entries(retrieved_entries)
+            expected_files_rollup = list(chunk_ids_to_files(expected))
+            file_rollup_metrics = {
+                "file_recall@5": calculate_recall_at_k(
+                    file_rollup_entries, expected_files_rollup, 5
+                ),
+                "file_recall@10": calculate_recall_at_k(
+                    file_rollup_entries, expected_files_rollup, 10
+                ),
+                "file_acc@5": calculate_acc_at_k(
+                    file_rollup_entries, expected_files_rollup, 5
+                ),
+                "file_acc@10": calculate_acc_at_k(
+                    file_rollup_entries, expected_files_rollup, 10
+                ),
+            }
 
             # Category-G file-level metrics (0g): strict counts real code
             # chunks only; expanded additionally credits a retrieved community
@@ -1044,6 +1078,7 @@ def run_benchmark(
                     **({"containment_credits": containment} if containment else {}),
                     **({"confounds": confounds} if confounds else {}),
                     **metrics,
+                    **file_rollup_metrics,
                     **file_metrics,
                     **line_metrics,
                     **pool_metrics,

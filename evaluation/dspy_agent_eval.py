@@ -246,6 +246,10 @@ def load_examples(
           for D (connection/relationship queries).
         - ``query_id`` — the ID string from the JSON (e.g. ``"Q01"``).
         - ``split`` — ``"train"``, ``"val"``, or ``"test"`` (when present).
+        - ``relevance_grades`` — ``{chunk_id: grade}`` map (0-3) from the
+          source row, or ``None`` when absent. Passed through as-is (never
+          defaulted to ``{}``) so ``calculate_metrics_from_results`` can tell
+          "no grades for this query" apart from "graded, zero hard negatives".
     """
     dataset_path = Path(path) if path else _GOLDEN_DATASET
     with open(dataset_path, encoding="utf-8") as fh:
@@ -279,6 +283,7 @@ def load_examples(
             expected_tool=expected_tool,
             query_id=item.get("id", ""),
             split=item.get("split", ""),
+            relevance_grades=item.get("relevance_grades"),
         ).with_inputs("question")
         examples.append(ex)
 
@@ -727,6 +732,7 @@ async def _eval_one(
                 retrieved=retrieved,
                 expected=example.expected,
                 expected_primary=example.get("expected_primary") or example.expected,
+                relevance_grades=example.get("relevance_grades"),
             )
 
             # Trajectory (tool ceiling) — what the tools actually surfaced

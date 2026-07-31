@@ -2,7 +2,9 @@
 
 Tests cover: THRESHOLDS constant, normalize_chunk_id, normalize_chunk_ids,
 calculate_recall_at_k, calculate_precision_at_k, calculate_mrr,
-calculate_ndcg_at_k, calculate_metrics_from_results, and aggregate_metrics.
+calculate_ndcg_at_k, calculate_graded_ndcg_at_k, calculate_acc_at_k,
+calculate_hard_negative_intrusion, chunk_ids_to_files, to_file_entries,
+calculate_metrics_from_results, and aggregate_metrics.
 
 These are the foundational metrics that drive SSCG benchmark pass/fail decisions.
 """
@@ -14,13 +16,18 @@ import pytest
 from evaluation.metrics import (
     THRESHOLDS,
     aggregate_metrics,
+    calculate_acc_at_k,
+    calculate_graded_ndcg_at_k,
+    calculate_hard_negative_intrusion,
     calculate_metrics_from_results,
     calculate_mrr,
     calculate_ndcg_at_k,
     calculate_precision_at_k,
     calculate_recall_at_k,
+    chunk_ids_to_files,
     normalize_chunk_id,
     normalize_chunk_ids,
+    to_file_entries,
 )
 
 
@@ -322,6 +329,177 @@ class TestCalculateNdcgAtK:
 
 
 # ---------------------------------------------------------------------------
+# calculate_graded_ndcg_at_k
+# ---------------------------------------------------------------------------
+
+
+class TestCalculateGradedNdcgAtK:
+    def test_perfect_ranking_by_grade(self):
+        # Grades sorted descending already at the top → DCG == IDCG → 1.0
+        grades = {"A": 3, "B": 2, "C": 1}
+        assert calculate_graded_ndcg_at_k(["A", "B", "C"], grades, 3) == pytest.approx(
+            1.0
+        )
+
+    def test_reversed_grade_order_scores_below_one(self):
+        # Worst gains at the top → DCG < IDCG
+        grades = {"A": 3, "B": 2, "C": 1}
+        result = calculate_graded_ndcg_at_k(["C", "B", "A"], grades, 3)
+        assert 0.0 < result < 1.0
+
+    def test_unlabeled_id_scores_grade_zero(self):
+        # "X" isn't in relevance_grades → treated as grade 0, contributes no gain
+        grades = {"A": 3}
+        dcg = (2**3 - 1) / math.log2(2) + 0.0 / math.log2(3)
+        idcg = (2**3 - 1) / math.log2(2)
+        assert calculate_graded_ndcg_at_k(["A", "X"], grades, 2) == pytest.approx(
+            dcg / idcg
+        )
+
+    def test_all_zero_grades_returns_zero(self):
+        # Every labeled grade is 0 → idcg == 0 → guard returns 0.0
+        grades = {"A": 0, "B": 0}
+        assert calculate_graded_ndcg_at_k(["A", "B"], grades, 2) == pytest.approx(0.0)
+
+    def test_empty_grades_returns_zero(self):
+        assert calculate_graded_ndcg_at_k(["A", "B"], {}, 2) == pytest.approx(0.0)
+
+    def test_containment_credit_uses_max_grade(self):
+        # A merged entry credited for both "A" (grade 1) and "B" (grade 3)
+        # takes the higher grade at that rank.
+        grades = {"A": 1, "B": 3}
+        result = calculate_graded_ndcg_at_k([{"A", "B"}], grades, 1)
+        assert result == pytest.approx(1.0)
+
+    def test_exponential_gain_not_linear(self):
+        # A single grade-3 hit at rank 1 must score strictly above a single
+        # grade-1 hit at rank 1 relative to their own ideal (both are 1.0
+        # individually) -- verify the *raw* gain uses 2**rel - 1, not rel,
+        # by comparing DCG contributions directly via a shared IDCG denominator.
+        grades_both = {"A": 3, "B": 1}
+        # "A" (grade 3) ranked first beats "B" (grade 1) ranked first.
+        best = calculate_graded_ndcg_at_k(["A", "B"], grades_both, 2)
+        worst = calculate_graded_ndcg_at_k(["B", "A"], grades_both, 2)
+        assert best == pytest.approx(1.0)
+        assert worst < best
+
+
+# ---------------------------------------------------------------------------
+# calculate_acc_at_k
+# ---------------------------------------------------------------------------
+
+
+class TestCalculateAccAtK:
+    def test_full_coverage_scores_one(self):
+        assert calculate_acc_at_k(["A", "B", "X"], ["A", "B"], 3) == pytest.approx(1.0)
+
+    def test_partial_coverage_scores_zero(self):
+        # Recall@k would be 0.5 here; Acc@k is all-or-nothing → 0.0
+        assert calculate_acc_at_k(["A", "X"], ["A", "B"], 2) == pytest.approx(0.0)
+
+    def test_k_excludes_second_relevant_id(self):
+        assert calculate_acc_at_k(["A", "X", "B"], ["A", "B"], 2) == pytest.approx(0.0)
+
+    def test_empty_relevant_scores_zero(self):
+        # Mirrors calculate_recall_at_k's empty-relevant guard, not vacuous truth
+        assert calculate_acc_at_k(["A", "B"], [], 2) == pytest.approx(0.0)
+
+    def test_empty_retrieved_scores_zero(self):
+        assert calculate_acc_at_k([], ["A"], 5) == pytest.approx(0.0)
+
+    def test_containment_credit_entry_covers_multiple_ids(self):
+        # A single merged entry credited for both A and B covers the full set
+        assert calculate_acc_at_k([{"A", "B"}], ["A", "B"], 1) == pytest.approx(1.0)
+
+    def test_acc_never_exceeds_recall(self):
+        retrieved = ["A", "X", "Y"]
+        relevant = ["A", "B"]
+        acc = calculate_acc_at_k(retrieved, relevant, 3)
+        recall = calculate_recall_at_k(retrieved, relevant, 3)
+        assert acc <= recall
+
+
+# ---------------------------------------------------------------------------
+# calculate_hard_negative_intrusion
+# ---------------------------------------------------------------------------
+
+
+class TestCalculateHardNegativeIntrusion:
+    def test_negative_before_positive_is_true(self):
+        result = calculate_hard_negative_intrusion(
+            ["N", "P"], positive_ids=["P"], hard_negative_ids=["N"], k=10
+        )
+        assert result is True
+
+    def test_positive_before_negative_is_false(self):
+        result = calculate_hard_negative_intrusion(
+            ["P", "N"], positive_ids=["P"], hard_negative_ids=["N"], k=10
+        )
+        assert result is False
+
+    def test_no_positive_in_topk_is_none(self):
+        result = calculate_hard_negative_intrusion(
+            ["N", "X"], positive_ids=["P"], hard_negative_ids=["N"], k=10
+        )
+        assert result is None
+
+    def test_no_negative_in_topk_is_none(self):
+        result = calculate_hard_negative_intrusion(
+            ["P", "X"], positive_ids=["P"], hard_negative_ids=["N"], k=10
+        )
+        assert result is None
+
+    def test_neither_in_topk_is_none(self):
+        result = calculate_hard_negative_intrusion(
+            ["X", "Y"], positive_ids=["P"], hard_negative_ids=["N"], k=10
+        )
+        assert result is None
+
+    def test_k_cutoff_excludes_late_negative(self):
+        # Negative appears at rank 3, but k=2 never sees it
+        result = calculate_hard_negative_intrusion(
+            ["P", "X", "N"], positive_ids=["P"], hard_negative_ids=["N"], k=2
+        )
+        assert result is None
+
+    def test_empty_hard_negatives_is_none(self):
+        result = calculate_hard_negative_intrusion(
+            ["P"], positive_ids=["P"], hard_negative_ids=[], k=10
+        )
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# chunk_ids_to_files / to_file_entries
+# ---------------------------------------------------------------------------
+
+
+class TestFileLevelRollup:
+    def test_chunk_ids_to_files_extracts_path(self):
+        ids = ["a/b.py:function:foo", "a/b.py:class:Bar", "c/d.py:module"]
+        assert chunk_ids_to_files(ids) == {"a/b.py", "c/d.py"}
+
+    def test_chunk_ids_to_files_empty(self):
+        assert chunk_ids_to_files([]) == set()
+
+    def test_to_file_entries_maps_each_rank(self):
+        entries = ["a/b.py:function:foo", "c/d.py:class:Bar"]
+        assert to_file_entries(entries) == [{"a/b.py"}, {"c/d.py"}]
+
+    def test_to_file_entries_preserves_containment_sets(self):
+        # A merged rank credited for two chunk IDs in the same file collapses
+        # to a single-file set.
+        entries = [{"a/b.py:function:foo", "a/b.py:method:Bar.baz"}]
+        assert to_file_entries(entries) == [{"a/b.py"}]
+
+    def test_file_rollup_feeds_recall_at_k_unchanged(self):
+        # Two chunks from the same relevant file both count as one file hit.
+        retrieved = to_file_entries(["a/b.py:function:foo", "x/y.py:function:other"])
+        relevant_files = list(chunk_ids_to_files(["a/b.py:function:foo"]))
+        assert calculate_recall_at_k(retrieved, relevant_files, 2) == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
 # calculate_metrics_from_results
 # ---------------------------------------------------------------------------
 
@@ -339,8 +517,17 @@ _EXPECTED_KEYS = {
     "mrr",
     "ndcg@5",
     "ndcg@10",
+    "acc@5",
+    "acc@10",
     "hit",
     "hit@7",
+}
+
+# Additional keys present only when relevance_grades is passed.
+_EXPECTED_GRADED_KEYS = _EXPECTED_KEYS | {
+    "ndcg@5_graded",
+    "ndcg@10_graded",
+    "hard_negative_intrusion",
 }
 
 
@@ -426,6 +613,51 @@ class TestCalculateMetricsFromResults:
         result = calculate_metrics_from_results(["X"] * 10, ["A"])
         assert result["hit"] is False
 
+    def test_acc_at_k_full_coverage(self):
+        result = calculate_metrics_from_results(["A", "B"], ["A", "B"])
+        assert result["acc@5"] == pytest.approx(1.0)
+        assert result["acc@10"] == pytest.approx(1.0)
+
+    def test_acc_at_k_partial_coverage_scores_zero(self):
+        result = calculate_metrics_from_results(["A", "X"], ["A", "B"])
+        assert result["acc@5"] == pytest.approx(0.0)
+
+    def test_relevance_grades_omitted_by_default(self):
+        # No relevance_grades passed → graded keys entirely absent, not 0.0/None
+        result = calculate_metrics_from_results(["A"], ["A"])
+        assert set(result.keys()) == _EXPECTED_KEYS
+        assert "ndcg@5_graded" not in result
+        assert "hard_negative_intrusion" not in result
+
+    def test_relevance_grades_adds_graded_keys(self):
+        result = calculate_metrics_from_results(
+            ["A", "B"],
+            ["A", "B"],
+            relevance_grades={"A": 3, "B": 2},
+        )
+        assert set(result.keys()) == _EXPECTED_GRADED_KEYS
+        assert result["ndcg@5_graded"] == pytest.approx(1.0)
+        assert result["ndcg@10_graded"] == pytest.approx(1.0)
+
+    def test_relevance_grades_derives_hard_negatives_as_grade_one(self):
+        # "N" is grade 1 → treated as a hard negative; ranked before the
+        # positive "P" (grade 2) → intrusion True.
+        result = calculate_metrics_from_results(
+            ["N", "P"],
+            ["P"],
+            relevance_grades={"N": 1, "P": 2},
+        )
+        assert result["hard_negative_intrusion"] is True
+
+    def test_relevance_grades_no_grade_one_ids_is_none(self):
+        # No grade-1 label present → hard_negative_ids empty → always None
+        result = calculate_metrics_from_results(
+            ["P"],
+            ["P"],
+            relevance_grades={"P": 3},
+        )
+        assert result["hard_negative_intrusion"] is None
+
 
 # ---------------------------------------------------------------------------
 # aggregate_metrics
@@ -441,6 +673,8 @@ _ALL_ZERO_QUERY: dict = {
     "mrr": 0.0,
     "ndcg@5": 0.0,
     "ndcg@10": 0.0,
+    "acc@5": 0.0,
+    "acc@10": 0.0,
     "hit": False,
 }
 
@@ -454,6 +688,8 @@ _ALL_ONE_QUERY: dict = {
     "mrr": 1.0,
     "ndcg@5": 1.0,
     "ndcg@10": 1.0,
+    "acc@5": 1.0,
+    "acc@10": 1.0,
     "hit": True,
 }
 
@@ -562,3 +798,50 @@ class TestAggregateMetrics:
         assert agg["hit_rate@5"] == pytest.approx(2 / 3, abs=1e-4)
         assert agg["success_count"] == 2
         assert agg["total_queries"] == 3
+
+    def test_acc_at_k_averaged_via_float_keys(self):
+        agg = aggregate_metrics([_ALL_ONE_QUERY, _ALL_ZERO_QUERY])
+        assert agg["acc@5"] == pytest.approx(0.5)
+        assert agg["acc@10"] == pytest.approx(0.5)
+
+    def test_graded_ndcg_keys_only_when_present(self):
+        q_with = {**_ALL_ONE_QUERY, "ndcg@5_graded": 0.9, "ndcg@10_graded": 0.8}
+        q_without = {**_ALL_ONE_QUERY}
+        agg = aggregate_metrics([q_with, q_without])
+        assert agg["ndcg@5_graded"] == pytest.approx(0.9)
+        assert agg["ndcg@10_graded"] == pytest.approx(0.8)
+        assert agg["ndcg@5_graded_count"] == 1
+
+    def test_graded_ndcg_keys_absent_when_none_have_them(self):
+        agg = aggregate_metrics([_ALL_ONE_QUERY, _ALL_ZERO_QUERY])
+        assert "ndcg@5_graded" not in agg
+        assert "ndcg@10_graded" not in agg
+
+    def test_file_rollup_keys_only_when_present(self):
+        q_with = {**_ALL_ONE_QUERY, "file_recall@5": 0.7, "file_acc@10": 0.4}
+        q_without = {**_ALL_ONE_QUERY}
+        agg = aggregate_metrics([q_with, q_without])
+        assert agg["file_recall@5"] == pytest.approx(0.7)
+        assert agg["file_acc@10"] == pytest.approx(0.4)
+        assert "file_recall@10" not in agg
+        assert "file_acc@5" not in agg
+
+    def test_hard_negative_intrusion_rate_excludes_none_rows(self):
+        # Only rows with a non-None hard_negative_intrusion count toward the rate.
+        queries = [
+            {**_ALL_ONE_QUERY, "hard_negative_intrusion": True},
+            {**_ALL_ONE_QUERY, "hard_negative_intrusion": False},
+            {**_ALL_ONE_QUERY, "hard_negative_intrusion": None},
+            {**_ALL_ONE_QUERY},  # key absent entirely
+        ]
+        agg = aggregate_metrics(queries)
+        assert agg["hard_negative_intrusion_rate"] == pytest.approx(0.5)
+        assert agg["hard_negative_intrusion_count"] == 2
+
+    def test_hard_negative_intrusion_rate_absent_when_all_none(self):
+        queries = [
+            {**_ALL_ONE_QUERY, "hard_negative_intrusion": None},
+            {**_ALL_ONE_QUERY},
+        ]
+        agg = aggregate_metrics(queries)
+        assert "hard_negative_intrusion_rate" not in agg

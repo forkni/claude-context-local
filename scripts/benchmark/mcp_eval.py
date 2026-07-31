@@ -102,7 +102,12 @@ def main() -> None:
         expected_primary = query_meta["expected_primary"]
         category = query_meta["category"]
 
-        metrics = calculate_metrics_from_results(retrieved, expected, expected_primary)
+        metrics = calculate_metrics_from_results(
+            retrieved,
+            expected,
+            expected_primary,
+            relevance_grades=query_meta.get("relevance_grades"),
+        )
         metrics["query_id"] = qid
         metrics["category"] = category
         metrics["query"] = query_meta["query"]

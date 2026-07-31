@@ -84,6 +84,33 @@ def flatten_entries(entries: Sequence[RetrievedEntry]) -> set[str]:
     return ids
 
 
+def chunk_ids_to_files(chunk_ids: Sequence[str]) -> set[str]:
+    """Map normalized chunk IDs to their containing file paths.
+
+    A normalized chunk ID's file-path component is everything before the
+    first ``:`` — ``normalize_chunk_id`` always produces relative,
+    forward-slash paths with no embedded colons (see the module docstring).
+    """
+    return {normalize_path(cid.split(":", 1)[0]) for cid in chunk_ids}
+
+
+def to_file_entries(entries: Sequence[RetrievedEntry]) -> list[set[str]]:
+    """Convert per-rank retrieved entries into per-rank file-path sets (SweRank max-pool rollup).
+
+    Same per-rank shape as the input (str or set[str] per rank, via
+    :func:`_entry_ids`), but rolled up to the file each chunk belongs to.
+    Feeds straight into :func:`calculate_recall_at_k` / :func:`calculate_acc_at_k`
+    unchanged, scoring file-level coverage instead of chunk-level coverage.
+
+    This is a **different axis** from the Category-G
+    ``calculate_file_recall_at_k`` machinery further below, which scores
+    community-summary-expansion coverage against ``expected_files`` using
+    result metadata. This is a plain rollup of *which files* an already-scored
+    chunk-level retrieved list came from — no community credit involved.
+    """
+    return [chunk_ids_to_files(_entry_ids(entry)) for entry in entries]
+
+
 def calculate_recall_at_k(
     retrieved: Sequence[RetrievedEntry], relevant: list[str], k: int
 ) -> float:
@@ -172,11 +199,127 @@ def calculate_ndcg_at_k(
     return dcg / idcg if idcg > 0 else 0.0  # pragma: no mutate
 
 
+def calculate_graded_ndcg_at_k(
+    retrieved: Sequence[RetrievedEntry],
+    relevance_grades: dict[str, int],
+    k: int,
+) -> float:
+    """Graded NDCG@k using exponential gain ``2**grade - 1`` (TREC/pytrec_eval).
+
+    Unlike :func:`calculate_ndcg_at_k` (binary relevance: label >= 2 counts as
+    1, everything else as 0), this uses the full 0-3 relevance grade as gain,
+    so a rank-1 grade-3 hit scores higher than a rank-1 grade-1 hit. An entry
+    that can match multiple golden IDs (containment credit) is scored by the
+    highest grade among its matches (max-pooled), matching how recall/
+    precision already credit the best available match at a rank.
+
+    Args:
+        retrieved: Ordered list of retrieved entries (normalized chunk IDs,
+            or per-rank ID sets for containment credit).
+        relevance_grades: ``{normalized_chunk_id: grade}`` for the query,
+            grade in 0-3. IDs absent from this dict score grade 0.
+        k: Cut-off rank.
+
+    Returns:
+        NDCG score in [0.0, 1.0], or 0.0 when no positive-grade ID exists.
+    """
+
+    def _gain(entry: RetrievedEntry) -> float:
+        top_grade = max(
+            (relevance_grades.get(cid, 0) for cid in _entry_ids(entry)), default=0
+        )
+        return float(2**top_grade - 1)
+
+    dcg = sum(
+        _gain(entry) / math.log2(i + 1) for i, entry in enumerate(retrieved[:k], 1)
+    )
+    ideal_grades = sorted(
+        (g for g in relevance_grades.values() if g > 0), reverse=True
+    )[:k]
+    idcg = sum(
+        (2**grade - 1) / math.log2(i + 1) for i, grade in enumerate(ideal_grades, 1)
+    )
+    return dcg / idcg if idcg > 0 else 0.0  # pragma: no mutate
+
+
+def calculate_acc_at_k(
+    retrieved: Sequence[RetrievedEntry], relevant: list[str], k: int
+) -> float:
+    """Acc@k (SweRank-style strict set coverage): 1.0 iff every relevant ID is covered.
+
+    Unlike Recall@k (partial credit for each matched ID), Acc@k is
+    all-or-nothing: ``retrieved[:k]`` must cover every ID in ``relevant``, not
+    just some. Acc@k <= Recall@k always, for the same (retrieved, relevant, k).
+
+    Args:
+        retrieved: Ordered list of retrieved entries (normalized chunk IDs,
+            or per-rank ID sets for containment credit).
+        relevant: Set of relevant chunk IDs (normalized, label >= 2).
+        k: Cut-off rank.
+
+    Returns:
+        1.0 if ``retrieved[:k]`` covers all of ``relevant``, else 0.0. Empty
+        ``relevant`` returns 0.0 (mirrors :func:`calculate_recall_at_k`'s
+        empty-relevant guard, not vacuous-truth semantics) so an unlabeled
+        query never contributes a free pass to the aggregate.
+    """
+    if not relevant:
+        return 0.0
+    relevant_set = set(relevant)
+    covered = flatten_entries(retrieved[:k])
+    return 1.0 if relevant_set <= covered else 0.0
+
+
+def calculate_hard_negative_intrusion(
+    retrieved: Sequence[RetrievedEntry],
+    positive_ids: list[str],
+    hard_negative_ids: list[str],
+    k: int = 10,
+) -> bool | None:
+    """CoREB-style Hard-Negative Intrusion: did a hard negative outrank every positive?
+
+    A hard negative "intrudes" when it appears in ``retrieved[:k]`` at a rank
+    strictly before the first positive ID -- i.e. a near-duplicate distractor
+    (grade=1) out-competed the actual answer.
+
+    Args:
+        retrieved: Ordered list of retrieved entries (normalized chunk IDs,
+            or per-rank ID sets for containment credit).
+        positive_ids: Relevant chunk IDs (label >= 2, i.e. ``expected``).
+        hard_negative_ids: Hard-negative chunk IDs (label == 1).
+        k: Cut-off rank.
+
+    Returns:
+        ``True`` if a hard negative ranked before the first positive within
+        ``retrieved[:k]``; ``False`` if the first positive ranked before every
+        hard negative seen; ``None`` if ``retrieved[:k]`` surfaced no positive,
+        no hard negative, or neither -- callers must never average ``None``
+        in as 0.0, since "no negative was seen" is not evidence the negative
+        never intrudes.
+    """
+    positive_set = set(positive_ids)
+    negative_set = set(hard_negative_ids)
+    first_positive_rank: int | None = None
+    first_negative_rank: int | None = None
+    for i, entry in enumerate(retrieved[:k], 1):
+        ids = _entry_ids(entry)
+        if first_positive_rank is None and ids & positive_set:
+            first_positive_rank = i
+        if first_negative_rank is None and ids & negative_set:
+            first_negative_rank = i
+        if first_positive_rank is not None and first_negative_rank is not None:
+            break
+    if first_positive_rank is None or first_negative_rank is None:
+        return None
+    return first_negative_rank < first_positive_rank
+
+
 def calculate_metrics_from_results(
     retrieved: Sequence[RetrievedEntry],
     expected: list[str],
     expected_primary: list[str] | None = None,
-) -> dict[str, float | bool]:
+    relevance_grades: dict[str, int] | None = None,
+) -> dict[str, float | bool | None]:
     """Calculate all retrieval metrics for a single query.
 
     Args:
@@ -185,11 +328,21 @@ def calculate_metrics_from_results(
         expected: Relevant chunk IDs with label ≥ 2.
         expected_primary: Highly-relevant chunk IDs with label = 3.
             Falls back to ``expected`` if not provided (for MRR calculation).
+        relevance_grades: Optional ``{normalized_chunk_id: grade}`` map
+            (grade 0-3) for the query. When provided, adds graded-NDCG
+            (``ndcg@5_graded`` / ``ndcg@10_graded``, exponential gain) and the
+            CoREB-style ``hard_negative_intrusion`` flag (grade == 1 IDs are
+            treated as hard negatives). Omitted entirely when not provided --
+            these are optional, presence-based keys, never defaulted to
+            0.0/False.
 
     Returns:
         Dict with keys: recall@1, recall@5, recall@7, recall@10, recall@20,
         recall@50, precision@1, precision@5, precision@10, mrr, ndcg@5,
-        ndcg@10, hit, hit@7.
+        ndcg@10, acc@5, acc@10, hit, hit@7. Plus, only when
+        ``relevance_grades`` is provided: ndcg@5_graded, ndcg@10_graded,
+        hard_negative_intrusion (bool or None -- see
+        :func:`calculate_hard_negative_intrusion`).
 
     Note:
         recall@20 / recall@50 are only meaningful when ``retrieved`` is at
@@ -199,7 +352,7 @@ def calculate_metrics_from_results(
     primary = expected_primary if expected_primary is not None else expected
     recall_5 = calculate_recall_at_k(retrieved, expected, 5)  # pragma: no mutate
     recall_7 = calculate_recall_at_k(retrieved, expected, 7)  # pragma: no mutate
-    return {
+    result: dict[str, float | bool | None] = {
         "recall@1": calculate_recall_at_k(retrieved, expected, 1),
         "recall@5": recall_5,
         "recall@7": recall_7,
@@ -224,9 +377,25 @@ def calculate_metrics_from_results(
         "mrr": calculate_mrr(retrieved, primary),
         "ndcg@5": calculate_ndcg_at_k(retrieved, expected, 5),  # pragma: no mutate
         "ndcg@10": calculate_ndcg_at_k(retrieved, expected, 10),  # pragma: no mutate
+        "acc@5": calculate_acc_at_k(retrieved, expected, 5),
+        "acc@10": calculate_acc_at_k(retrieved, expected, 10),
         "hit": recall_5 > 0,  # pragma: no mutate
         "hit@7": recall_7 > 0,  # pragma: no mutate
     }
+    if relevance_grades is not None:
+        result["ndcg@5_graded"] = calculate_graded_ndcg_at_k(
+            retrieved, relevance_grades, 5
+        )
+        result["ndcg@10_graded"] = calculate_graded_ndcg_at_k(
+            retrieved, relevance_grades, 10
+        )
+        hard_negative_ids = [
+            cid for cid, grade in relevance_grades.items() if grade == 1
+        ]
+        result["hard_negative_intrusion"] = calculate_hard_negative_intrusion(
+            retrieved, expected, hard_negative_ids, k=10
+        )
+    return result
 
 
 def aggregate_metrics(
@@ -263,6 +432,8 @@ def aggregate_metrics(
         "mrr",
         "ndcg@5",
         "ndcg@10",
+        "acc@5",
+        "acc@10",
     ]
     agg: dict[str, Any] = {
         "total_queries": len(per_query),
@@ -303,9 +474,11 @@ def aggregate_metrics(
 
     # Line-overlap metrics — only average queries where the key is present
     # (queries without golden line ranges are excluded, not counted as 0).
-    # Same rule for Category-G file recall (only queries with expected_files)
-    # and the secondary community-credit MRR (absent = N/A on community-free
-    # arms — never averaged in as 0.0).
+    # Same rule for Category-G file recall (only queries with expected_files),
+    # the secondary community-credit MRR (absent = N/A on community-free
+    # arms — never averaged in as 0.0), graded NDCG (absent when
+    # relevance_grades wasn't passed to calculate_metrics_from_results), and
+    # the file-level rollup (absent when the runner didn't compute it).
     for key in (
         "line_recall",
         "line_precision",
@@ -313,6 +486,12 @@ def aggregate_metrics(
         "file_recall_strict",
         "file_recall_expanded",
         "mrr_community_credit",
+        "ndcg@5_graded",
+        "ndcg@10_graded",
+        "file_recall@5",
+        "file_recall@10",
+        "file_acc@5",
+        "file_acc@10",
     ):
         vals = [float(q[key]) for q in per_query if key in q]
         if vals:
@@ -332,6 +511,23 @@ def aggregate_metrics(
         agg["pool_hit_count"] = len(pool_rows)
         sizes = [float(q.get("pool_size", 0)) for q in pool_rows]
         agg["avg_pool_size"] = round(mean(sizes), 1)  # pragma: no mutate
+
+    # Hard-Negative Intrusion Rate (CoREB) — presence-based; a row's key is
+    # either absent (relevance_grades wasn't passed) or explicitly None (no
+    # positive+negative pair surfaced in top-k). Both must be excluded, not
+    # averaged in as 0.0/non-intrusion — .get() returns None for either case,
+    # so a single filter handles both.
+    intrusion_rows = [
+        q for q in per_query if q.get("hard_negative_intrusion") is not None
+    ]
+    if intrusion_rows:
+        agg["hard_negative_intrusion_rate"] = round(
+            mean(
+                [1.0 if q["hard_negative_intrusion"] else 0.0 for q in intrusion_rows]
+            ),
+            4,  # pragma: no mutate
+        )
+        agg["hard_negative_intrusion_count"] = len(intrusion_rows)
 
     return agg
 
