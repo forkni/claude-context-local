@@ -465,24 +465,26 @@ The Mixed approach demonstrates that **MCP semantic search is production-ready**
 
 ## SSCG Retrieval Benchmark
 
-**Added**: v0.9.0 | **Last run**: 2026-06-08
+**Added**: v0.9.0 | **Last run**: 2026-06-08 — **stale, needs rerun** (dataset has since grown from 13 to 77 queries; the table below reflects the old 13-query run only)
 
 Measures end-to-end retrieval quality for `search_code` queries: how well the ranked results cover the labeled relevant chunks for each query.
 
 ### Dataset
 
-Golden dataset: `evaluation/golden_dataset.json` — 13 queries (Q01–Q35) across 4 categories:
+Golden dataset: `evaluation/golden_dataset.json` — 77 queries across 6 categories (splits: 43 train / 16 val / 18 test):
 
 - **Category A** — Small function discovery (exact symbol lookup)
 - **Category B** — Sibling context (related functions / pairs)
 - **Category C** — Class overview (class + key methods)
 - **Category D** — Connection queries (callers, impact)
+- **Category E** — Cross-file / architectural queries
+- **Category F** — Similarity queries (`find_similar_to_chunk`)
 
-Relevance grades: 3 = primary target, 2 = expected, 1 = acceptable, 0 = distractor. Recall/MRR/NDCG are computed on grade ≥ 2 items; MRR uses grade = 3 items.
+Relevance grades: 3 = primary target, 2 = expected, 1 = acceptable/hard-negative, 0 = distractor. Recall/MRR/NDCG are computed on grade ≥ 2 items; MRR uses grade = 3 items.
 
 **Runner**: `scripts/benchmark/run_sscg_benchmark.py` (shell wrapper: `scripts/benchmark/run_benchmark.sh`)
 
-### Results (2026-06-08, k=10, neural reranker active)
+### Results (2026-06-08, k=10, neural reranker active) — stale, 13-query dataset
 
 | Mode | MRR | Recall@5 | Recall@7 | Recall@10 | Hit@5 | NDCG@5 | Line Recall | Line Precision | Line IoU |
 |------|-----|----------|----------|-----------|-------|--------|-------------|----------------|----------|

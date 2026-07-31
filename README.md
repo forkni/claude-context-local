@@ -236,7 +236,7 @@ start_mcp_server.cmd → 3 (Search Configuration)
 
 ## Search Modes
 
-Quality metrics below are from the [SSCG benchmark](#benchmark-results) (2026-06-08, 13 queries, k=10). They describe mode performance on this benchmark only — not general reliability guarantees.
+Quality metrics below are from the [SSCG benchmark](#benchmark-results) (2026-06-08, 13-query dataset, k=10) and are **stale** — the golden dataset has since grown to 77 queries across 6 categories and needs a rerun. They describe mode performance on this benchmark only — not general reliability guarantees.
 
 | Mode | Description | SSCG Quality (2026-06-08, k=10) | Status |
 |------|-------------|-------------------------------|--------|

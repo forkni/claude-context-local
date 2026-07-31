@@ -12,6 +12,14 @@ Claude Code itself.  The API key outranks the Max OAuth token in Claude Code's
 auth precedence, so every request — including the IDE session — would be
 charged to your API account.  Keep that variable unset.
 
+## Install
+
+DSPy lives in the optional `eval` extra, not the base install:
+
+```
+uv pip install -e ".[eval]"
+```
+
 ## Quick start
 
 ```python
@@ -238,7 +246,7 @@ Additionally:
 ### Key parameters
 
 | Flag | Default | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `--budget` | `light` | `light`=6 / `medium`=12 / `heavy`=18 candidates |
 | `--reflection-model` | `claude-opus-4-8` | Stronger model for instruction proposals |
 | `--model` | `claude-sonnet-4-6` | Rollout model (agent invocations) |
@@ -275,14 +283,15 @@ Written to gitignored `results/gepa/`:
 
 ### In-sample caveat
 
-The golden dataset has only 13 queries.  GEPA uses `trainset = valset = all 13`
-(in-sample prompt discovery).  The discovered instruction is plausibly better but
-overfits the dataset.  True generalisation requires a larger dataset (deferred work).
+The golden dataset has 77 queries, split 43 train / 16 val / 18 test.  GEPA uses
+the train/val splits for in-sample prompt discovery (not the held-out test split).
+The discovered instruction is plausibly better but overfits the splits it saw.
+True generalisation requires checking the held-out test split separately.
 
 ## Troubleshooting
 
 | Symptom | Fix |
-|---|---|
+| --- | --- |
 | `RuntimeError: claude CLI not found` | Install Claude Code or set `CLAUDE_CLI_PATH=/path/to/claude` |
 | Responses are slow | Normal — each call is a subprocess.  Use small `n` values. |
 | `RuntimeError: claude CLI exited with code 1` | Check `~/.claude/` login state: run `claude --version` |

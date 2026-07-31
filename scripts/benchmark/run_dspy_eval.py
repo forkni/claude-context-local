@@ -1,13 +1,13 @@
 """CLI entry point: run the DSPy agent evaluation harness.
 
 Connects to the already-running code-search HTTP server, runs the DSPy ReAct
-agent over the SSCG golden dataset (45 queries, categories A–D), and reports
+agent over the SSCG golden dataset (77 queries, categories A–F), and reports
 tool-selection accuracy plus Recall@7/MRR/NDCG.  Results are written to
 results/dspy_eval_<ts>.json.
 
-By default evaluates only the held-out **test split** (8 queries) so the
+By default evaluates only the held-out **test split** (18 queries) so the
 result is a genuine out-of-sample measurement.  Use ``--split all`` for a
-full 45-query run (e.g. as a drift check), or ``--split train``/``val`` during
+full 77-query run (e.g. as a drift check), or ``--split train``/``val`` during
 development.
 
 Usage::
@@ -35,7 +35,8 @@ Prerequisites:
 Cost: $0 — ClaudeCodeLM bills to the Claude Code Max subscription.
       (Usage counters in the JSON are intentionally zero.)
 
-Baseline for comparison (searcher-only, hybrid mode, 2026-06-08, all 45 queries):
+Baseline for comparison (searcher-only, hybrid mode, 2026-06-08, 13-query dataset,
+stale -- needs rerun against the current 77-query dataset):
     Recall@7=0.736  MRR=0.797  NDCG@5=0.717
 """
 

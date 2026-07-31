@@ -1,8 +1,8 @@
 """Python-specific chunker using tree-sitter.
 
-Note: This is the tree-sitter based Python chunker for consistency with
-other languages. The main Python chunker used by the system is the AST-based
-one in chunking/python_ast_chunker.py which provides better Python-specific analysis.
+This is the tree-sitter based Python chunker, used for consistency with all
+other supported languages. `chunking/python_ast_chunker.py` is not a
+competing chunking path -- it holds only the shared `CodeChunk` dataclass.
 """
 
 from typing import Any

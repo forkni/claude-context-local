@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """SSCG Automated Benchmark Runner.
 
-Evaluates retrieval quality against the SSCG golden dataset (45 queries: A/B/C/D).
+Evaluates retrieval quality against the SSCG golden dataset (77 queries: categories A-F).
 Supports single-run evaluation and parameter sweep (config comparison).
 
 Inspired by DeepLearning.AI "Building and Evaluating Advanced RAG" patterns:

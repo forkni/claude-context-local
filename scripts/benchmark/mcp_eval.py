@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-MCP-based SSCG evaluation: evaluate 13 golden queries using pre-collected
+MCP-based SSCG evaluation: evaluate the golden queries using pre-collected
 results from the MCP server.
 
-RAW_RESULTS are stored in benchmark_results/raw_mcp_results_{mode}.json.
+RAW_RESULTS are stored in evaluation/raw_mcp_results_{mode}.json.
 Collect new results by running search_code(query, k=10, search_mode=MODE)
 against the live MCP server and updating the corresponding JSON file.
 
