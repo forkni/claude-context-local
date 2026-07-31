@@ -2,15 +2,19 @@
 
 ## Overview
 
-This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic search system. The project maintains a professional test suite with 3,100+ passing tests organized into clear categories for effective quality assurance.
+This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic
+search system. The project maintains a professional test suite with 3,100+ passing tests
+organized into clear categories for effective quality assurance.
 
 ### Current Test Status
 
-✅ **Full suite green in one process** (re-measured 2026-07-26, honest baseline — Phase 5 of the
-test-suite hardening campaign):
+✅ **Full suite green in one process** (re-measured 2026-07-26, honest baseline — Phase 5 of
+the test-suite hardening campaign):
 
 - **Unit Tests**: 3,377 tests (`tests/unit/`)
-  - Chunking (incl. relationships): includes `test_call_edge_resolver.py`, `test_call_graph_config.py`, `test_libcst_call_graph.py`, `test_lsp_call_graph.py` (1 POSIX skip)
+  - Chunking (incl. relationships): includes `test_call_edge_resolver.py`,
+    `test_call_graph_config.py`, `test_libcst_call_graph.py`,
+    `test_lsp_call_graph.py` (1 POSIX skip)
   - Embeddings, Graph, Merkle, Search, MCP Server, Evaluation, Benchmark, Utils, Tools
 - **Fast Integration + Integration Tests**: included in the full-suite total below
 - **Slow Integration Tests**: included in the full-suite total below
@@ -451,7 +455,7 @@ pytest tests/ --durations=10
 The test suite uses a 4-tier system optimized for CI/CD performance:
 
 | Tier | Location | Count | Execution Time | Purpose |
-|------|----------|-------|----------------|---------|
+| ------ | ---------- | ------- | ---------------- | --------- |
 | **Unit** | `tests/unit/` | 3,377 tests | < 1s per test (~126s total) | Component isolation testing |
 | **Fast Integration** | `tests/fast_integration/` | see full-suite total | < 5s per test | Quick workflow validation |
 | **Integration** | `tests/integration/` | 6 files | up to ~15s per test | Real-component E2E (no model downloads, so still fast enough for CI) |
@@ -468,7 +472,7 @@ Measured 2026-07-26: `pytest tests/` (all tiers, one process) — 3,592 passed, 
 hygiene phase):
 
 | Duration | Test | Current tier |
-|----------|------|---------------|
+| ---------- | ------ | --------------- |
 | 66.81s | `test_auto_reindex.py::test_auto_reindex` | slow_integration |
 | 60.22s | `test_semantic_search.py::...test_semantic_search_basic` (setup) | slow_integration |
 | 14.80s | `test_observability_e2e.py::test_search_span_hierarchy_via_mcp_handlers` | integration |
@@ -1028,7 +1032,7 @@ def test_full_indexing_workflow(tmp_path):
 ### Common Violations and Fixes
 
 | Violation | Problem | Fix |
-|-----------|---------|-----|
+| ----------- | --------- | ----- |
 | `CodeGraphStorage("test_project")` | No `storage_dir` → writes to `~/.claude_code_search/graphs` | Add `storage_dir=tmp_path / "graphs"` |
 | `SnapshotManager()` | No `storage_dir` → writes to `~/.claude_code_search/merkle` | Add `storage_dir=str(tmp_path / "merkle")` |
 | `IncrementalIndexer()` | Creates default SnapshotManager → production pollution | Provide explicit `snapshot_manager` instance or mock |
@@ -1092,7 +1096,7 @@ The cleanup system runs automatically after every pytest session:
 ### Implementation Details
 
 | Component | Location | Purpose |
-|-----------|----------|---------|
+| ----------- | ---------- | --------- |
 | **Hook** | `tests/conftest.py` → `pytest_sessionfinish()` | Triggers cleanup after tests |
 | **Script** | `tools/cleanup_orphaned_projects.py` | Removes projects whose `project_path` no longer exists, along with their merkle trees |
 | **Mode** | `--auto` flag | Silent non-interactive execution |
@@ -1220,7 +1224,7 @@ If needed for debugging, you can temporarily disable the hook:
 ### Target Coverage by Component
 
 | Component | Target Coverage | Priority |
-|-----------|----------------|----------|
+| ----------- | ---------------- | ---------- |
 | **Core search logic** | >90% | Critical |
 | **MCP server tools** | >85% | High |
 | **Language parsing** | >85% | High |
@@ -1447,7 +1451,7 @@ Signs of flaky tests:
 ### Common Causes and Fixes
 
 | Cause | Example | Fix |
-|-------|---------|-----|
+| ------- | --------- | ----- |
 | **Random Data** | `random.randint()`, `uuid.uuid4()` | Use fixed seeds or deterministic data |
 | **Timing Issues** | `time.sleep()`, async operations | Use explicit waits with timeouts |
 | **External Dependencies** | Network calls, file system | Mock external dependencies |
@@ -1744,7 +1748,7 @@ This comprehensive testing guide ensures high-quality, maintainable code through
 ### Summary of changes
 
 | Area | Before | After |
-|------|--------|-------|
+| ------ | -------- | ------- |
 | pytest config | `pytest.ini` (legacy) | `[tool.pytest.ini_options]` in `pyproject.toml` |
 | Import mode | `prepend` (default) + manual `sys.path.insert` in conftest | `importlib` + `pythonpath = ["."]` |
 | New markers | — | `gpu`, `e2e` |
@@ -1935,7 +1939,7 @@ orchestration shells — they test the mocks, not the logic.
 #### Tier 1+2 targets (zero-mock deterministic cores)
 
 | Target | Total | Killed | Pragmaed | Genuine survivors | Score |
-|--------|-------|--------|----------|------------------|-------|
+| -------- | ------- | -------- | ---------- | ------------------ | ------- |
 | `chunking/relationships/call_edge_resolver.py` | 56 | 40 | 16 | 0 | **100%** |
 | `search/reranker.py` | 529 | 265 | 261 | 0 | **100%** |
 | `evaluation/metrics.py` | 581 | 183 | 181 | 1 | **99.5%** |
@@ -1984,10 +1988,10 @@ target. Artifacts: `.mutmut-cache` (14 days retention).
 De-mocked 2026-06-30 — `FakeMetadataStore` + real `SearchConfig`/`RerankerConfig` dataclasses
 replace MagicMock; `_session_oom_detected` drives real methods without patching:
 
-| Module | Status | Score |
-|--------|--------|-------|
+| Module                        | Status                | Score              |
+|-------------------------------|----------------------|-------------------|
 | `search/centrality_ranker.py` | **complete** (2026-07-01) | **100.0%** (199/199) |
-| `search/reranking_engine.py` | **complete** (2026-07-01) | **100.0%** (56/56) |
+| `search/reranking_engine.py`  | **complete** (2026-07-01) | **100.0%** (56/56) |
 
 **`search/centrality_ranker.py`** — 511 mutations total (185 incompetent, 199 killed,
 0 survived, 127 pragma-skipped). 10 kill-tests cover all genuine mutants (including
@@ -2016,7 +2020,7 @@ first extracting pure scoring cores or building in-memory fakes for heavy depend
 ### Deferred improvements (trigger thresholds documented here)
 
 | Improvement | Add when |
-|-------------|----------|
+| ------------- | ---------- |
 | `pytest-xdist -n auto` per job | per-runner wall-clock > ~5 min |
 | `pytest-split` sharding across runners | per-runner wall-clock > ~10 min after xdist |
 | Python 3.12 matrix | validated clean on 3.11 + meaningful new-version diff |

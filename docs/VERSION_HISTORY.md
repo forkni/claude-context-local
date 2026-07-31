@@ -1467,7 +1467,7 @@ for field_name in sorted(all_fields):
 All 3 features confirmed working via MCP search queries:
 
 | Feature | Status | Evidence |
-|---------|--------|----------|
+| --------- | -------- | ---------- |
 | **Complexity Scores** | ✅ Working | Values 6, 2, 4 visible in ultra format |
 | **Intent Classification** | ✅ Working | NAVIGATIONAL queries auto-redirect to find_connections |
 | **Lightweight Pool Routing** | ✅ Working | GTE-ModernBERT (code/impl/validate), BGE-M3 (config/serialize) |
@@ -2004,7 +2004,7 @@ def clear_index(self) -> None:
 **Added helpful descriptions to all menu options** (`start_mcp_server.cmd:343-351`):
 
 | Option | Description |
-|--------|-------------|
+| -------- | ------------- |
 | View Current Configuration | Show all active settings |
 | Set Search Mode | Hybrid/Semantic/BM25 (Hybrid recommended) |
 | Configure Search Weights | Balance text vs semantic matching |
@@ -2417,7 +2417,7 @@ Updated all calls in `run_tests()` function to use new names.
 **Solution**: Comprehensive protection at 6 critical points:
 
 | Layer | Feature | Implementation | Protection |
-|-------|---------|----------------|------------|
+| ------- | --------- | ---------------- | ------------ |
 | **1** | Resource Cleanup | `cleanup_previous_resources()` | Prevents duplicate model loads, clears stale connections |
 | **2** | File Read Timeout | `_read_file_with_timeout()` | 5s ThreadPoolExecutor timeout for locked files |
 | **3** | PermissionError Handling | `try/except PermissionError` | Skip locked files with `[LOCKED]` warnings |
@@ -2484,7 +2484,7 @@ VRAM_ABORT_THRESHOLD = 0.95  # 95% (Layer 4)
 Converted function-scoped fixtures to class-scoped using `tmp_path_factory`:
 
 | Test File | Before | After | Improvement |
-|-----------|--------|-------|-------------|
+| ----------- | -------- | ------- | ------------- |
 | `test_full_flow.py` | ~88s | 1.91s | 98.2% faster |
 | `test_relationship_extraction_integration.py` | ~180s | 3.34s | 98.1% faster |
 | `test_multi_hop_flow.py` | ~70s | 10.21s | 85.4% faster |
@@ -2607,7 +2607,7 @@ Converted function-scoped fixtures to class-scoped using `tmp_path_factory`:
 ### Refactoring Summary
 
 | Component | Extraction | Lines |
-|-----------|------------|-------|
+| ----------- | ------------ | ------- |
 | CodeIndexManager | → GraphIntegration + BatchOperations | ~200 |
 | CodeEmbedder | → ModelLoader + ModelCacheManager + QueryCache | ~300 |
 | HybridSearcher | Removed deprecated methods (Tier 1-3) | ~150 |
@@ -3189,7 +3189,7 @@ Old internal methods → New resolver methods:
 ### New Relationship Types
 
 | Type | Forward Field | Reverse Field | Use Case |
-|------|---------------|---------------|----------|
+| ------ | --------------- | --------------- | ---------- |
 | `decorates` | `decorates` | `decorated_by` | Find decorator usage patterns |
 | `raises` | `exceptions_raised` | `exception_handlers` | Error handling analysis |
 | `catches` | `exceptions_caught` | - | Exception handling locations |
@@ -3275,7 +3275,7 @@ Old internal methods → New resolver methods:
 ### Relationship Types Now Available
 
 | Field | Description |
-|-------|-------------|
+| ------- | ------------- |
 | \ | Classes/traits this code inherits from |
 | \ | Classes/traits that inherit from this code |
 | \ | Types used in annotations or field declarations |

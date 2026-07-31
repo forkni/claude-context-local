@@ -458,7 +458,7 @@ pip install -e ".[test]"
 ### UV vs pip Comparison
 
 | Feature | UV | pip |
-|---------|----|----|
+| --------- | ---- | ---- |
 | Dependency Resolution | Advanced SAT solver | Basic backtracking |
 | Installation Speed | Fast (parallel) | Slower (sequential) |
 | Cache Management | Efficient | Basic |
@@ -569,7 +569,7 @@ After installation, validate that all critical dependencies meet minimum version
 **What Gets Validated:**
 
 | Package | Minimum Version | Purpose |
-|---------|----------------|---------|
+| --------- | ---------------- | --------- |
 | torch | >=2.8.0 | Core deep learning framework |
 | transformers | >=4.30.0 | Hugging Face model support |
 | sentence-transformers | >=2.2.0 | Semantic embedding models |
@@ -1082,8 +1082,8 @@ Two new settings are available to manage GPU memory allocation on systems with l
 **Recommended Configurations**:
 
 | GPU VRAM | Configuration | Notes |
-|----------|---------------|-------|
-| **8GB Laptop** | `allow_ram_fallback: false`, `onnx_gpu_mem_limit: true` | Spill-free with ORT cap |
+| ---------- | --------------- | ------- |
+| **8GB Laptop** | `allow_ram_fallback: false` | Spill-free, relies on the PyTorch VRAM cap below |
 | **10-12GB** | `vram_limit_fraction: 0.80` (default) | Balanced |
 | **16GB+** | `vram_limit_fraction: 0.85-0.90` | More headroom |
 | **24GB+** | `vram_limit_fraction: 0.90-0.95` | Maximum capacity |
@@ -1104,24 +1104,10 @@ which would otherwise trigger the WDDM driver to evict memory to shared system R
 (10–100× slower than dedicated VRAM). Check `[VRAM_LIMIT]` log lines for the
 requested vs. effective fraction and the per-process breakdown.
 
-**ONNX Runtime cap** (`onnx_gpu_mem_limit`, default `true`):
-
-When `use_onnx: true`, the embedding model runs via ORT's `CUDAExecutionProvider`,
-which has its own CUDA allocator that PyTorch's `set_per_process_memory_fraction`
-cannot govern. The `onnx_gpu_mem_limit` setting passes the same effective cap as
-ORT's `gpu_mem_limit` provider option at session creation, constraining the ORT
-arena directly. This is the primary spill-prevention mechanism on ONNX deployments.
-
-Check `[ONNX_VRAM]` log lines for the computed `gpu_mem_limit` and its breakdown.
-Disable (`onnx_gpu_mem_limit: false`) only for debugging — doing so re-exposes the
-ORT allocator to WDDM spillover when external processes hold VRAM.
-
 **When `allow_ram_fallback=true`**:
 
 - `vram_limit_fraction` is ignored for the *PyTorch* allocator (no PyTorch hard cap set)
-- `onnx_gpu_mem_limit` is **not** affected — the ORT cap still applies independently
 - PyTorch can use system RAM when VRAM is full (slower but won't OOM for PyTorch ops)
-- Previously recommended for 8 GB laptops; no longer necessary with `onnx_gpu_mem_limit: true`
 
 **Configuration File**: Settings are persisted in `search_config.json` under `performance` section.
 
@@ -1142,7 +1128,7 @@ ORT allocator to WDDM spillover when external processes hold VRAM.
 #### Search Performance
 
 | Phase | VRAM | Time | What's Happening |
-|-------|------|------|------------------|
+| ------- | ------ | ------ | ------------------ |
 | Server startup | 0 MB | 3-5s | Fast startup, no models |
 | First search (cold) | 0 MB → 1.5-5.3 GB | 8-15s | 5-10s model load + 3-5s search |
 | Subsequent searches (warm) | 1.5-5.3 GB | 3-5s | Models cached, instant search |

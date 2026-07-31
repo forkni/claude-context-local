@@ -9,7 +9,7 @@ This repository uses a **Local-First Privacy Model** where certain development f
 ## 🔒 Local-Only Files (NEVER Committed)
 
 | File/Directory | Size | Purpose | Status |
-|----------------|------|---------|---------|
+| ---------------- | ------ | --------- | --------- |
 | **CLAUDE.md** | ~50KB | Development context and instructions | 🔴 Local Only |
 | **MEMORY.md** | ~5KB | Session memory and notes | 🔴 Local Only |
 | **_archive/** | 7.3MB (764 files) | Historical TouchDesigner documentation | 🔴 Local Only |
@@ -426,7 +426,7 @@ ANTHROPIC_API_KEY=sk-ant-...
 ### Integration Benefits
 
 | Benefit | Description |
-|---------|-------------|
+| --------- | ------------- |
 | **Interactive Help** | @claude mentions provide context-aware assistance |
 | **Workflow Automation** | Custom commands standardize common tasks |
 | **Quality Enforcement** | Validation prevents common mistakes |
@@ -609,7 +609,7 @@ cd claude-context-local
 ### Windows cmd.exe
 
 | Task | Command | Result |
-|------|---------|---------|
+| ------ | --------- | --------- |
 | **Safe commit** | `./scripts/git/commit_enhanced.sh "message"` | Commits with lint checks and validations |
 | **Automated commit** | `./scripts/git/commit_enhanced.sh --non-interactive "message"` | Non-interactive commit with auto-staging and auto-fix |
 | **Check code quality** | `./scripts/git/check_lint.sh` | Validates code with ruff check/ruff format/markdownlint |
@@ -624,7 +624,7 @@ cd claude-context-local
 ### Git Bash / Linux / macOS
 
 | Task | Command | Result |
-|------|---------|---------|
+| ------ | --------- | --------- |
 | **Check code quality** | `./scripts/git/check_lint.sh` | Validates code with ruff check/ruff format/markdownlint |
 | **Fix linting** | `./scripts/git/fix_lint.sh` | Auto-fixes linting issues (Python + markdown) |
 | **Validate branches** | `./scripts/git/validate_branches.sh` | Check branch status before merge |
@@ -681,7 +681,7 @@ chmod +x .git/hooks/pre-commit
 ## 📊 Benefits
 
 | Benefit | Impact |
-|---------|---------|
+| --------- | --------- |
 | **Privacy** | Development context never exposed |
 | **Clean repo** | Professional public presentation |
 | **Space efficiency** | 7.4MB + 764 files excluded |
@@ -1719,7 +1719,7 @@ result=$(command)
 ### Error Code Categories
 
 | Category | Examples | Auto-fixable | Severity |
-|----------|----------|--------------|----------|
+| ---------- | ---------- | -------------- | ---------- |
 | **Imports** | F401, F811, I001 | ✅ Yes (ruff check) | Low |
 | **Formatting** | W293, E501 | ✅ Yes (ruff format) | Low |
 | **Code Style** | C401, C414, B007 | ✅ Yes (ruff --unsafe-fixes) | Low |

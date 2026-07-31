@@ -5,12 +5,15 @@ all 18 semantic search tools — pointing at the **same running HTTP server** th
 
 ## Table of Contents
 
-1. [Overview](#overview)
-2. [Prerequisites](#prerequisites)
-3. [Configuration](#configuration)
-4. [Activate & Verify](#activate--verify)
-5. [Troubleshooting](#troubleshooting)
-6. [Related Documentation](#related-documentation)
+- [Claude Desktop Setup Guide](#claude-desktop-setup-guide)
+  - [Table of Contents](#table-of-contents)
+  - [Overview](#overview)
+    - [Why Desktop needs a bridge](#why-desktop-needs-a-bridge)
+  - [Prerequisites](#prerequisites)
+  - [Configuration](#configuration)
+  - [Activate \& Verify](#activate--verify)
+  - [Troubleshooting](#troubleshooting)
+  - [Related Documentation](#related-documentation)
 
 ---
 

@@ -4,15 +4,31 @@ Complete navigation hub for claude-context-local documentation.
 
 ## 📚 Quick Navigation
 
-- [Getting Started](#getting-started)
-- [Core Guides](#core-guides)
-- [Advanced Features](#advanced-features)
-- [MCP Integration](#mcp-integration)
-- [Development Tools](#development-tools)
-- [Git Automation](#git-automation)
-- [Testing & Validation](#testing--validation)
-- [Technical Implementation](#technical-implementation)
-- [Version History](#version-history)
+- [Documentation Index](#documentation-index)
+  - [📚 Quick Navigation](#-quick-navigation)
+  - [Getting Started](#getting-started)
+  - [Core Guides](#core-guides)
+  - [Advanced Features](#advanced-features)
+  - [MCP Integration](#mcp-integration)
+    - [Transport Options](#transport-options)
+  - [Development Tools](#development-tools)
+    - [Interactive Scripts](#interactive-scripts)
+    - [Batch Files](#batch-files)
+  - [Git Automation](#git-automation)
+    - [Git Scripts](#git-scripts)
+  - [Testing \& Validation](#testing--validation)
+    - [Testing Tools (scripts/test/)](#testing-tools-scriptstest)
+  - [Technical Implementation](#technical-implementation)
+    - [Architecture Files](#architecture-files)
+  - [Version History](#version-history)
+    - [Key Versions](#key-versions)
+  - [Related Projects](#related-projects)
+    - [Multi-Project Documentation](#multi-project-documentation)
+  - [Additional Resources](#additional-resources)
+    - [Archive](#archive)
+    - [Slash Commands (.claude/commands/)](#slash-commands-claudecommands)
+    - [Custom Skills (.claude/skills/)](#custom-skills-claudeskills)
+  - [Navigation Tips](#navigation-tips)
 
 ---
 
@@ -21,7 +37,7 @@ Complete navigation hub for claude-context-local documentation.
 Essential documentation for setup and initial use.
 
 | Document | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | **[INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md)** | Complete installation process for Windows |
 | **[CLAUDE_DESKTOP_SETUP.md](CLAUDE_DESKTOP_SETUP.md)** | Connect the MCP server to the Claude Desktop app (via `mcp-remote` bridge) |
 | **[LOCAL_LLM_GUIDE.md](LOCAL_LLM_GUIDE.md)** | Use local LLMs via LM Studio instead of Anthropic API |
@@ -35,7 +51,7 @@ Essential documentation for setup and initial use.
 Fundamental documentation for daily use.
 
 | Document | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | Complete API reference for all 18 MCP tools |
 | **[HYBRID_SEARCH_CONFIGURATION_GUIDE.md](HYBRID_SEARCH_CONFIGURATION_GUIDE.md)** | Search modes configuration (hybrid/semantic/BM25/auto) |
 | **[BENCHMARKS.md](BENCHMARKS.md)** | Performance benchmarks: SSCG retrieval (MRR/Recall/NDCG/line-overlap), token efficiency, caller recall |
@@ -47,7 +63,7 @@ Fundamental documentation for daily use.
 Comprehensive guides for advanced functionality.
 
 | Document | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | **[ADVANCED_FEATURES_GUIDE.md](ADVANCED_FEATURES_GUIDE.md)** | **Complete guide to all advanced features** |
 | - Multi-Hop Search | Discover interconnected code relationships (93% queries benefit) |
 | - Graph-Enhanced Search | Call relationship tracking for Python code |
@@ -82,7 +98,7 @@ Interactive scripts and batch files.
 ### Interactive Scripts
 
 | Script | Purpose |
-|--------|---------|
+| -------- | --------- |
 | `tools/batch_index.py` | Universal indexing (new/incremental/force) |
 | `tools/cleanup_orphaned_projects.py` | Remove orphaned test projects |
 | `tools/cleanup_stale_snapshots.py` | Interactive snapshot cleanup |
@@ -90,7 +106,7 @@ Interactive scripts and batch files.
 ### Batch Files
 
 | Script | Purpose |
-|--------|---------|
+| -------- | --------- |
 | `start_mcp_server.cmd` | Main launcher (8 options: Quick Start, Project Management, Search Config, Advanced) |
 | `scripts/batch/start_mcp_sse.bat` | SSE transport (port 8765) |
 | `scripts/batch/start_mcp_sse_cli.bat` | CLI SSE transport (port 8766) |
@@ -105,7 +121,7 @@ Interactive scripts and batch files.
 Git workflow automation and safety.
 
 | Document | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | **[auto-git-workflow SKILL.md](../.claude/skills/auto-git-workflow/SKILL.md)** | Step-by-step git workflow rule book for Claude Code |
 | **[GIT_WORKFLOW.md](GIT_WORKFLOW.md)** | Troubleshooting and advanced operations |
 | **[PRE_COMMIT_HOOKS.md](PRE_COMMIT_HOOKS.md)** | Pre-commit hook configuration |
@@ -117,7 +133,7 @@ Git workflow automation and safety.
 - **Shell scripts (.sh)**: `scripts/git/` - the only supported workflow scripts, run via Git Bash
 
 | Script | Purpose |
-|--------|---------|
+| -------- | --------- |
 | `commit_enhanced.sh` | Enhanced commits with validation |
 | `merge_with_validation.sh` | Merge with comprehensive validation |
 | `check_lint.sh` | Lint validation (ruff) |

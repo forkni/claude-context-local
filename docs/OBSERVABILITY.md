@@ -37,7 +37,7 @@ Or add it to your MCP client configuration (`claude_desktop_config.json`):
 ## Configuration
 
 | Env var | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `CLAUDE_OTEL_ENABLED` | `false` | Enable tracing |
 | `CLAUDE_OTEL_EXPORTER` | `otlp` | Exporter: `otlp`, `console`, `none` |
 | `CLAUDE_OTEL_ENDPOINT` | `http://localhost:4318` | OTLP HTTP endpoint |

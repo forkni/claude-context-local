@@ -18,7 +18,7 @@ set. This keeps the advertised tool count small without removing the capability.
 18 tools remain callable directly regardless of the `list_tools` filter.
 
 | Tool | Priority | Purpose | Parameters |
-|------|----------|---------|------------|
+| ------ | ---------- | --------- | ------------ |
 | **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=4 (schema default; `search_config.json.example` sets the effective default to 7), search_mode="hybrid", file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0 |
 | **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types |
 | **find_path** | 🟡 **IMPACT** | Trace shortest path between code entities in relationship graph | source OR source_chunk_id, target OR target_chunk_id, edge_types, max_hops=10 |
@@ -61,7 +61,7 @@ filters before indexing starts so you can confirm the full list took effect.
 ## Filter Parameters for search_code
 
 | Parameter | Type | Description | Valid Values |
-|-----------|------|-------------|--------------|
+| ----------- | ------ | ------------- | -------------- |
 | **file_pattern** | string | Substring match on file path | Any string (e.g., "auth", "test_", "utils/") |
 | **include_dirs** | array | Only search in these directories (prefix match) | `["src/", "lib/"]` |
 | **exclude_dirs** | array | Exclude from search (prefix match) | `["tests/", "vendor/", "node_modules/"]` |
@@ -146,7 +146,7 @@ find_connections(
 **Examples**:
 
 | Query | Filter | Expected Result |
-|-------|--------|-----------------|
+| ------- | -------- | ----------------- |
 | `"test"` | `indexer` | ❌ 0 results (query too generic) |
 | `"index directory embedding"` | `indexer` | ✅ Results from indexer files |
 | `"search implementation"` | `hybrid` | ✅ Results from hybrid_searcher.py |
@@ -167,7 +167,7 @@ find_connections(
 **Purpose**: Automatically retrieve graph neighbors (callers, callees, related code) for search results to provide richer context beyond semantic similarity.
 
 | Parameter | Type | Default | Range | Description |
-|-----------|------|---------|-------|-------------|
+| ----------- | ------ | --------- | ------- | ------------- |
 | `ego_graph_enabled` | boolean | false | - | Enable k-hop neighbor expansion from call graph |
 | `ego_graph_k_hops` | integer | 2 | 1-5 | Graph traversal depth (1=direct neighbors, 2=neighbors of neighbors) |
 | `ego_graph_max_neighbors_per_hop` | integer | 10 | 1-50 | Limit neighbors per hop to prevent explosion |
@@ -286,7 +286,7 @@ Parent chunks are marked in results with:
 The `search_code` tool returns results with the following fields:
 
 | Field | Type | Always Present | Description |
-|-------|------|----------------|-------------|
+| ------- | ------ | ---------------- | ------------- |
 | `chunk_id` | string | ✅ | Unique identifier (format: `"file:lines:type:name"`) |
 | `kind` | string | ✅ | Chunk type (`function`, `class`, `method`, etc.) |
 | `score` | float | ✅ | Relevance score (0.0-1.0, rounded to 2 decimals) |
@@ -325,7 +325,7 @@ All 18 MCP tools support configurable output formatting via the `output_format` 
 ### Available Formats
 
 | Format | Token Reduction | Use Case | Description |
-|--------|----------------|----------|-------------|
+| -------- | ---------------- | ---------- | ------------- |
 | **verbose** | 0% (baseline) | Debugging, backward compatibility | Verbose JSON with indent=2, all fields included |
 | **compact** | 30-40% | Default, recommended | Omits empty fields, no indentation, removes redundant data |
 | **ultra** | 45-55% | Large result sets, bandwidth-constrained | Tabular arrays with header-declared fields |
@@ -476,7 +476,7 @@ Notice:
 **Test Query**: `find_connections` with 5 callers + 10 similar_code results
 
 | Format | Characters | Estimated Tokens | Reduction |
-|--------|-----------|------------------|-----------|
+| -------- | ----------- | ------------------ | ----------- |
 | JSON | 3,259 | ~814 | 0% (baseline) |
 | Compact | 2,167 | ~541 | 33.5% |
 | TOON | 1,877 | ~469 | 42.4% |
@@ -574,7 +574,7 @@ Set `source_order_output=true` to restore **DOS-RAG file/line ordering**: result
 High-centrality chunks (base classes, utility functions, heavily-imported modules) receive an additive score boost based on their PageRank centrality. This compensates for the sign-rank bottleneck proved by the LIMIT paper (DeepMind, ICLR 2026) — single-vector retrieval systematically under-ranks high-connectivity nodes.
 
 | Field | Default | Description |
-|-------|---------|-------------|
+| ------- | --------- | ------------- |
 | `centrality_bm25_boost` | `True` | Enable adaptive boost |
 | `centrality_boost_threshold` | `0.02` | Centrality score minimum to trigger boost |
 | `centrality_boost_factor` | `5.0` | Multiplier: `boost = centrality × factor` |
@@ -585,7 +585,7 @@ High-centrality chunks (base classes, utility functions, heavily-imported module
 At index time, every chunk is tagged with its file role via `_classify_file_role()`. Role tags flow into `CentralityRanker.rerank()` for query-aware demotion:
 
 | Role | Demotion (default query) | Boost (role-specific query) |
-|------|--------------------------|-----------------------------|
+| ------ | -------------------------- | ----------------------------- |
 | `src` | — (baseline) | — |
 | `test` | 0.85× | 1.15× when query contains test keywords |
 | `doc` | 0.80× | — (no boost when doc intent detected) |
@@ -596,7 +596,7 @@ At index time, every chunk is tagged with its file role via `_classify_file_role
 ## Performance Metrics
 
 | Metric | Traditional Reading | Semantic Search (First) | Semantic Search (Cached) | Improvement |
-|--------|---------------------|-------------------------|--------------------------|-------------|
+| -------- | --------------------- | ------------------------- | -------------------------- | ------------- |
 | Tokens | 5,600 | 400 | 400 | 93% reduction |
 | Speed | 30-60s | 8-15s (includes 5-10s model load) | 3-5s | 2-3x faster |
 | VRAM | 0 MB | 0 MB → 1.5-5.3 GB (on-demand) | 1.5-5.3 GB | Lazy loading |
@@ -719,7 +719,7 @@ At index time, every chunk is tagged with its file role via `_classify_file_role
 ### Performance Impact
 
 | Metric | Value | Notes |
-|--------|-------|-------|
+| -------- | ------- | ------- |
 | **VRAM freed** | Returns to 0 MB | Baseline state |
 | **Operation time** | 1-2s | Fast cleanup |
 | **Next search** | +5-10s delay | One-time model reload |
@@ -885,7 +885,7 @@ Server startup:              0 MB VRAM (lazy loading)
 **Additional Output Fields**:
 
 | Field | Description | Output Format |
-|-------|-------------|---------------|
+| ------- | ------------- | --------------- |
 | `parent_classes` | Classes this class inherits from | Name-only (may include chunk_id if resolved) |
 | `child_classes` | Classes that inherit from this class | Full chunk details |
 | `uses_types` | Types used in this function/method | Name-only (type names) |
@@ -1015,7 +1015,7 @@ Server startup:              0 MB VRAM (lazy loading)
 **Resolution Features**:
 
 | Version | Feature | Accuracy |
-|---------|---------|----------|
+| --------- | --------- | ---------- |
 | v0.5.12 | Qualified chunk_ids + self/super resolution | ~70% |
 | v0.5.13 | + Type annotation resolution | ~80% |
 | v0.5.14 | + Assignment tracking | ~85-90% |
@@ -1190,7 +1190,7 @@ def process_order(order: Order, payment: PaymentGateway):
 ## Troubleshooting
 
 | Issue | Solution |
-|-------|----------|
+| ------- | ---------- |
 | "Model not found" | Run `scripts\powershell\hf_auth.ps1` |
 | "Index stale" | Use `auto_reindex=True` (default) |
 | "Slow searches" | Check `/get_memory_status`, run `/cleanup_resources` |
