@@ -77,11 +77,16 @@ def get_index_manager(
 
 def get_searcher(
     project_path: str | None = None,
+    load_existing: bool = True,
 ) -> "BaseSearcher":
     """Get searcher for specific project or current project.
 
     Args:
         project_path: Path to project (None = use current project)
+        load_existing: Forwarded to HybridSearcher(...) — set False when the
+            caller is about to discard whatever is on disk (force-full
+            reindex), so the stale index isn't loaded only to be thrown away.
+            Ignored when a cached searcher for this project is already live.
 
     Returns:
         HybridSearcher or IntelligentSearcher instance depending on config
@@ -162,6 +167,7 @@ def get_searcher(
                         bm25_b=config.search_mode.bm25_b,
                         project_id=project_id,
                         config=config,
+                        load_existing=load_existing,
                     )
                     # The HybridSearcher already loads existing indices during initialization
                     logger.info(

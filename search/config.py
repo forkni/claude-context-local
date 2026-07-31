@@ -4,6 +4,7 @@ import dataclasses
 import json
 import logging
 import os
+import threading
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -1042,6 +1043,12 @@ class SearchConfigManager:
         # hot-reload cache key so project switches and hand-edits invalidate.
         self._overrides_key: tuple[str, float] | None = None
         self._active_overrides_meta: dict[str, Any] | None = None
+        # Guards the reload body in load_config() (#reindex-log-audit-2026-07-30):
+        # a cache-key change (e.g. index_probe rewriting search_overrides.json)
+        # can be observed by every ThreadPoolExecutor worker in the same instant,
+        # and without a lock each one redundantly re-parses and re-merges the
+        # config. RLock because get_active_overrides_meta() re-enters load_config().
+        self._lock = threading.RLock()
 
     def _resolve_overrides_path(self) -> Path | None:
         """Path to the active project's search_overrides.json, or None.
@@ -1102,7 +1109,12 @@ class SearchConfigManager:
             except OSError:
                 override_path = None
 
-        # Return cache only if neither file has changed
+        # Double-checked locking: cheap outer test avoids the lock on the hot
+        # path (#reindex-log-audit-2026-07-30). Only a cache-key change (config
+        # file edit, or index_probe rewriting search_overrides.json) reaches the
+        # lock below — otherwise every ThreadPoolExecutor worker racing a cache
+        # miss (e.g. ParallelChunker calling get_chunking_config() per file)
+        # would redundantly re-parse and re-merge the config in lockstep.
         if (
             self._config is not None
             and current_mtime == self._config_mtime
@@ -1110,78 +1122,88 @@ class SearchConfigManager:
         ):
             return self._config
 
-        # Start with defaults
-        config_dict: dict[str, Any] = {}
+        with self._lock:
+            # Re-check inside the lock: another thread may have already
+            # completed the reload while we were waiting to acquire it.
+            if (
+                self._config is not None
+                and current_mtime == self._config_mtime
+                and overrides_key == self._overrides_key
+            ):
+                return self._config
 
-        # Load from file if exists
-        if _read_path.exists():
-            try:
-                with open(_read_path) as f:
-                    raw = json.load(f)
-                self.logger.info(f"Loaded search config from {_read_path}")
-                # Normalise to nested format so env overrides can be deep-merged
-                # without mixing flat and nested keys in a single dict.
-                file_is_nested = any(
-                    isinstance(v, dict) and k in SearchConfig._SUBCONFIG_NAMES
-                    for k, v in raw.items()
-                )
-                config_dict = (
-                    raw if file_is_nested else SearchConfig._flat_to_nested(raw)
-                )
-            except Exception as e:  # noqa: BLE001 - parse-recovery: malformed config file, fall back to defaults
-                self.logger.warning(f"Failed to load config file {_read_path}: {e}")
+            # Start with defaults
+            config_dict: dict[str, Any] = {}
 
-        # Per-project overrides (ADR-0014): deep-merged over the global file so
-        # probe results apply only to the active project.  Env vars are merged
-        # last (below) and therefore still win — the human-in-the-loop escape.
-        # The enable flag is read from the GLOBAL layer only, so an overrides
-        # file can never re-enable itself.
-        self._active_overrides_meta = None
-        if override_path is not None and config_dict.get("performance", {}).get(
-            "enable_project_overrides", True
-        ):
-            try:
-                with open(override_path) as f:
-                    raw_overrides = json.load(f)
-                overrides = raw_overrides.get("overrides") or {}
-                if not isinstance(overrides, dict):
-                    raise TypeError("'overrides' must be a JSON object")
-                _deep_merge(config_dict, overrides)
-                self._active_overrides_meta = {
-                    "path": str(override_path),
-                    "probe_version": raw_overrides.get("probe_version"),
-                    "generated_at": raw_overrides.get("generated_at"),
-                    "keys": _dotted_keys(overrides),
-                }
-                self.logger.info(
-                    f"Applied project overrides from {override_path}: "
-                    f"{', '.join(self._active_overrides_meta['keys']) or '(none)'}"
-                )
-            except Exception as e:  # noqa: BLE001 - parse-recovery: malformed overrides file, skip the layer
-                self.logger.warning(
-                    f"Failed to load project overrides {override_path}: {e}"
-                )
+            # Load from file if exists
+            if _read_path.exists():
+                try:
+                    with open(_read_path) as f:
+                        raw = json.load(f)
+                    self.logger.info(f"Loaded search config from {_read_path}")
+                    # Normalise to nested format so env overrides can be deep-merged
+                    # without mixing flat and nested keys in a single dict.
+                    file_is_nested = any(
+                        isinstance(v, dict) and k in SearchConfig._SUBCONFIG_NAMES
+                        for k, v in raw.items()
+                    )
+                    config_dict = (
+                        raw if file_is_nested else SearchConfig._flat_to_nested(raw)
+                    )
+                except Exception as e:  # noqa: BLE001 - parse-recovery: malformed config file, fall back to defaults
+                    self.logger.warning(f"Failed to load config file {_read_path}: {e}")
 
-        # Translate env-var flat keys to nested and deep-merge so they apply over
-        # a nested config file (previously the update() call was a no-op for nested
-        # files because the flat env keys were never read by the nested branch).
-        env_overrides = self._load_from_environment()
-        env_nested = SearchConfig._flat_to_nested(env_overrides)
-        _deep_merge(config_dict, env_nested)
+            # Per-project overrides (ADR-0014): deep-merged over the global file so
+            # probe results apply only to the active project.  Env vars are merged
+            # last (below) and therefore still win — the human-in-the-loop escape.
+            # The enable flag is read from the GLOBAL layer only, so an overrides
+            # file can never re-enable itself.
+            self._active_overrides_meta = None
+            if override_path is not None and config_dict.get("performance", {}).get(
+                "enable_project_overrides", True
+            ):
+                try:
+                    with open(override_path) as f:
+                        raw_overrides = json.load(f)
+                    overrides = raw_overrides.get("overrides") or {}
+                    if not isinstance(overrides, dict):
+                        raise TypeError("'overrides' must be a JSON object")
+                    _deep_merge(config_dict, overrides)
+                    self._active_overrides_meta = {
+                        "path": str(override_path),
+                        "probe_version": raw_overrides.get("probe_version"),
+                        "generated_at": raw_overrides.get("generated_at"),
+                        "keys": _dotted_keys(overrides),
+                    }
+                    self.logger.info(
+                        f"Applied project overrides from {override_path}: "
+                        f"{', '.join(self._active_overrides_meta['keys']) or '(none)'}"
+                    )
+                except Exception as e:  # noqa: BLE001 - parse-recovery: malformed overrides file, skip the layer
+                    self.logger.warning(
+                        f"Failed to load project overrides {override_path}: {e}"
+                    )
 
-        # Create config object
-        self._config = SearchConfig.from_dict(config_dict)
+            # Translate env-var flat keys to nested and deep-merge so they apply over
+            # a nested config file (previously the update() call was a no-op for nested
+            # files because the flat env keys were never read by the nested branch).
+            env_overrides = self._load_from_environment()
+            env_nested = SearchConfig._flat_to_nested(env_overrides)
+            _deep_merge(config_dict, env_nested)
 
-        # Store mtimes after loading
-        self._config_mtime = current_mtime
-        self._overrides_key = overrides_key
+            # Create config object
+            self._config = SearchConfig.from_dict(config_dict)
 
-        self.logger.info(
-            f"Search mode: {self._config.search_mode.default_mode}, "
-            f"hybrid enabled: {self._config.search_mode.enable_hybrid}"
-        )
+            # Store mtimes after loading
+            self._config_mtime = current_mtime
+            self._overrides_key = overrides_key
 
-        return self._config
+            self.logger.info(
+                f"Search mode: {self._config.search_mode.default_mode}, "
+                f"hybrid enabled: {self._config.search_mode.enable_hybrid}"
+            )
+
+            return self._config
 
     def _load_from_environment(self) -> dict[str, Any]:
         """Load configuration from environment variables."""

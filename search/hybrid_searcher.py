@@ -71,6 +71,7 @@ class HybridSearcher(BaseSearcher):
         bm25_b: float = 0.75,
         project_id: str | None = None,
         config: Optional["SearchConfig"] = None,
+        load_existing: bool = True,
     ):
         """
         Initialize hybrid searcher.
@@ -89,6 +90,12 @@ class HybridSearcher(BaseSearcher):
             bm25_b: Okapi BM25 document-length normalization parameter
             project_id: Project identifier for graph storage
             config: SearchConfig instance for mmap storage and other settings
+            load_existing: When False, skip reading the on-disk BM25 index
+                (#reindex-log-audit-2026-07-30). Set this for a searcher that
+                exists only as a write target for a force-full reindex — the
+                caller is about to call clear_hybrid_indices(), so loading the
+                stale index first only costs time and emits spurious BM25
+                version/tokenizer mismatch warnings for data being discarded.
         """
         # Initialize base searcher (cache management, dimension validation)
         super().__init__()
@@ -147,9 +154,21 @@ class HybridSearcher(BaseSearcher):
             project_id=project_id,
         )
 
-        # Load both indices in parallel for faster startup
-        self._logger.info(f"[INIT] BM25 storage path: {self.storage_dir / 'bm25'}")
-        bm25_loaded, dense_count = self._load_indices_parallel()
+        # Load both indices in parallel for faster startup — unless the caller
+        # told us this searcher is a write-only target (load_existing=False),
+        # in which case loading the stale on-disk BM25 index would only cost
+        # time and log spurious mismatch warnings for an index about to be
+        # cleared. The dense count still reflects reality: CodeIndexManager
+        # loads the FAISS index unconditionally in its own __init__ above.
+        if load_existing:
+            self._logger.info(f"[INIT] BM25 storage path: {self.storage_dir / 'bm25'}")
+            bm25_loaded, dense_count = self._load_indices_parallel()
+        else:
+            self._logger.info(
+                "[INIT] load_existing=False — skipping BM25 index load "
+                "(write-only searcher for a pending force-full reindex)"
+            )
+            dense_count = self.dense_index.index.ntotal if self.dense_index.index else 0
 
         # Log final initialization status
         total_bm25 = self.bm25_index.size
@@ -160,9 +179,12 @@ class HybridSearcher(BaseSearcher):
             f"[INIT] Ready status: BM25={not self.bm25_index.is_empty}, Dense={dense_count > 0}, Overall={self.is_ready}"
         )
 
-        # Check for index mismatch (early warning system)
+        # Check for index mismatch (early warning system) — skip when this is a
+        # write-only searcher (load_existing=False): BM25 is deliberately unloaded
+        # above, so total_bm25=0 vs dense_count>0 is expected, not a real mismatch.
         if (
-            isinstance(total_bm25, int)
+            load_existing
+            and isinstance(total_bm25, int)
             and isinstance(dense_count, int)
             and abs(total_bm25 - dense_count) > 10
         ):

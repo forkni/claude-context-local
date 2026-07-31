@@ -112,6 +112,12 @@ class TestIncrementalIndexer:
         # Mock components
         self.mock_indexer = Mock()
         self.mock_indexer.resync_if_desynced.return_value = (False, 0)
+        # Default to a clean bill of health: _full_index (and the incremental
+        # batch-removal path) now unconditionally consult validate_index_consistency
+        # via _consistency_target(), and a bare Mock()'s auto-created attribute
+        # returns an unconfigured Mock() that can't be unpacked into (is_valid,
+        # issues). Tests that specifically exercise the failure path override this.
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
         self.mock_embedder = Mock()
         self.mock_chunker = Mock()
         self.mock_snapshot_manager = Mock()
@@ -790,9 +796,19 @@ class TestIncrementalIndexer:
         # Mock file removal
         self.mock_indexer.remove_files = Mock(return_value=5)
 
-        # Mock FAILED validation (index corrupted)
+        # Mock FAILED validation on the incremental batch-removal check (index
+        # corrupted), then a clean bill of health on the second call -- made by
+        # _full_index's own tail check once recovery's clear_index() + reindex
+        # has actually rebuilt things. Fix 2/3 wire _full_index's completion to
+        # re-validate, so a mock that stayed permanently broken would (correctly)
+        # make recovery itself report success=False; this test is about recovery
+        # being *triggered* and *succeeding*, not about recovery being unable to
+        # fix a still-broken index.
         self.mock_indexer.validate_index_consistency = Mock(
-            return_value=(False, ["FAISS index size mismatch"])
+            side_effect=[
+                (False, ["FAISS index size mismatch"]),
+                (True, []),
+            ]
         )
 
         # Mock full re-index components
@@ -816,8 +832,10 @@ class TestIncrementalIndexer:
             assert result.success is True
             # Verify clear_index was called (recovery)
             self.mock_indexer.clear_index.assert_called()
-            # Verify validation was attempted
-            self.mock_indexer.validate_index_consistency.assert_called_once()
+            # Verify validation was attempted twice: once by the incremental
+            # batch-removal check (which fails and triggers recovery), and once
+            # more by _full_index's own tail check once recovery completes.
+            assert self.mock_indexer.validate_index_consistency.call_count == 2
 
     @patch.object(IncrementalIndexer, "_release_and_verify_resources")
     def test_error_recovery_via_full_reindex(self, mock_release):
@@ -1143,6 +1161,9 @@ class TestIncrementalIndexer:
         fresh_embedder.embed_chunks.return_value = [fresh_embedding_result]
         fresh_indexer = Mock()
         fresh_indexer.resync_if_desynced.return_value = (False, 0)
+        # _full_index's tail consults self.indexer (the fresh one, post-swap) via
+        # _consistency_target() -- give it the same clean default as self.mock_indexer.
+        fresh_indexer.validate_index_consistency = Mock(return_value=(True, []))
 
         def swap_resources(project_path):
             indexer.embedder = fresh_embedder
@@ -1177,6 +1198,119 @@ class TestIncrementalIndexer:
         import shutil
 
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+
+class TestConsistencyTarget:
+    """_consistency_target() resolution and its wiring into _full_index.
+
+    Regression coverage for the bug found while diagnosing the community-summary
+    chunk_id collision: self.indexer is declared CodeIndexManager in type hints
+    but is a HybridSearcher in production (mcp_server/tools/index_handlers.py),
+    which has no validate_index_consistency method — only its .dense_index
+    (a CodeIndexManager) does. The old unguarded call site was dead code on
+    every production path; _consistency_target() resolves the right object.
+    """
+
+    def setup_method(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.project_path = Path(self.temp_dir) / "test_project"
+        self.project_path.mkdir(parents=True, exist_ok=True)
+        (self.project_path / "main.py").write_text("def main(): pass")
+
+        self.mock_indexer = Mock()
+        self.mock_indexer.resync_if_desynced.return_value = (False, 0)
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
+        self.mock_embedder = Mock()
+        self.mock_chunker = Mock()
+        self.mock_snapshot_manager = Mock()
+
+    def teardown_method(self):
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_consistency_target_resolves_through_hybrid_searcher_shaped_indexer(self):
+        """Locks down the original bug. A plain MagicMock/Mock would NOT catch a
+        regression here, because hasattr() is unconditionally True on one — that
+        is exactly how the dead branch stayed invisible in every prior test.
+        spec=HybridSearcher makes the attribute that's genuinely absent in
+        production genuinely absent here too."""
+        from search.hybrid_searcher import HybridSearcher
+        from search.indexer import CodeIndexManager
+
+        hybrid_like = Mock(spec=HybridSearcher)
+        hybrid_like.dense_index = Mock(spec=CodeIndexManager)
+        hybrid_like.dense_index.validate_index_consistency = Mock(
+            return_value=(True, [])
+        )
+
+        indexer = IncrementalIndexer(
+            indexer=hybrid_like,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        # Sanity check the fixture actually shapes like production: HybridSearcher
+        # itself has no validate_index_consistency, only dense_index does.
+        assert not hasattr(hybrid_like, "validate_index_consistency")
+        assert hasattr(hybrid_like.dense_index, "validate_index_consistency")
+
+        target = indexer._consistency_target()
+
+        assert target is hybrid_like.dense_index
+
+    def test_consistency_target_uses_indexer_directly_when_it_has_the_method(self):
+        """Under most existing tests self.indexer is a bare CodeIndexManager
+        stand-in (has validate_index_consistency itself) -- _consistency_target
+        must not detour through .dense_index in that case."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        target = indexer._consistency_target()
+
+        assert target is self.mock_indexer
+
+    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
+    def test_full_index_validation_failure_marks_result_failed(self, mock_release):
+        """Fix 2: _full_index's tail now actually re-validates. Before this fix
+        the check was dead code (hasattr false on the real HybridSearcher shape)
+        so a corrupted index would still come back success=True."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        self.mock_snapshot_manager.has_snapshot.return_value = False
+        self.mock_indexer.validate_index_consistency = Mock(
+            return_value=(False, ["metadata rows (10) != chunk_ids length (11)"])
+        )
+
+        with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
+            mock_dag = Mock()
+            mock_dag.get_all_files.return_value = ["main.py"]
+            mock_dag_class.return_value = mock_dag
+
+            mock_chunk = Mock()
+            mock_chunk.content = "test content"
+            self.mock_chunker.is_supported.return_value = True
+            self.mock_chunker.chunk_file.return_value = [mock_chunk]
+
+            mock_embedding_result = Mock()
+            mock_embedding_result.metadata = {}
+            self.mock_embedder.embed_chunks.return_value = [mock_embedding_result]
+
+            result = indexer.incremental_index(str(self.project_path), "test_project")
+
+        assert result.success is False
+        assert result.error is not None
+        assert "metadata rows (10) != chunk_ids length (11)" in result.error
 
 
 class TestParallelChunking:
@@ -1633,6 +1767,8 @@ class TestProbeWiring:
 
         self.mock_indexer = Mock()
         self.mock_indexer.resync_if_desynced.return_value = (False, 0)
+        # See TestIncrementalIndexer.setup_method for why this default is needed.
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
         self.mock_embedder = Mock()
         self.mock_embedder.model_name = "BAAI/bge-m3"
         self.mock_chunker = Mock()

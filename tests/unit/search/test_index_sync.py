@@ -162,6 +162,45 @@ class TestIndexSynchronizer:
         # Should return False
         assert result is False
 
+    def test_validate_index_sync_duplicate_ids_logs_warning_but_stays_synced(
+        self, caplog
+    ):
+        """Fix 4: equal bm25/dense counts can still hide a colliding chunk_id
+        (one metadata write silently upserting over another, as happened with
+        the community-summary chunk_id collision). validate_index_sync must
+        name the cause via a log warning, but must NOT flip synced to False --
+        resync_if_desynced only rebuilds BM25 from dense and cannot repair a
+        duplicate id, so flipping it here would just churn without fixing
+        anything (see graph/community_summarizer.py's chunk_id fix for the
+        actual repair)."""
+        import logging
+
+        self.mock_bm25_index._doc_ids = ["id1", "id2", "id2"]  # id2 duplicated
+        self.mock_dense_index.ntotal = 3
+
+        with caplog.at_level(logging.WARNING):
+            result = self.synchronizer.validate_index_sync()
+
+        # Counts are equal, so this must still report synced.
+        assert result is True
+        assert "Duplicate chunk_ids" in caplog.text
+        assert "3 total" in caplog.text
+        assert "2 unique" in caplog.text
+
+    def test_validate_index_sync_no_duplicates_no_warning(self, caplog):
+        """No false positives: unique ids with equal counts logs no duplicate
+        warning at all."""
+        import logging
+
+        self.mock_bm25_index._doc_ids = ["id1", "id2", "id3"]
+        self.mock_dense_index.ntotal = 3
+
+        with caplog.at_level(logging.WARNING):
+            result = self.synchronizer.validate_index_sync()
+
+        assert result is True
+        assert "Duplicate chunk_ids" not in caplog.text
+
     def test_resync_bm25_from_dense_success(self):
         """Test successful BM25 resync from dense metadata."""
         # Configure mock - uses chunk_ids property

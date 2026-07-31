@@ -94,9 +94,12 @@ def _build_community_summary(
     elif summary.functions:
         primary_symbol = summary.functions[0]
     else:
-        primary_symbol = f"comm{community_id}"
+        primary_symbol = "misc"
 
-    label = f"{dominant_directory}_{primary_symbol}".replace("/", "_")
+    # community_id is what makes this unique: dominant_directory + primary_symbol
+    # collide whenever two communities share a directory and a first class name,
+    # producing byte-identical chunk_ids that silently upsert in metadata.db.
+    label = f"{dominant_directory}_{primary_symbol}_c{community_id}".replace("/", "_")
 
     # Build summary text
     parts = [f"# Community {community_id} | {label}"]

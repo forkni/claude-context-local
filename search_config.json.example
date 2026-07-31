@@ -47,7 +47,8 @@
     "use_onnx": false,
     "onnx_gpu_mem_limit": true,
     "enable_auto_reindex": true,
-    "max_index_age_minutes": 30.0
+    "max_index_age_minutes": 30.0,
+    "enable_project_overrides": true
   },
   "multi_hop": {
     "enabled": true,

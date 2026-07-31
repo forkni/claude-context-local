@@ -187,6 +187,10 @@ def _configure_logging() -> None:
     # Suppress per-attempt DEBUG spam from the filelock library (bge-m3 blob
     # locks generate hundreds of lines per cold load; WARNING+ is sufficient).
     logging.getLogger("filelock").setLevel(logging.WARNING)
+    # Suppress empty TorchDynamo frame-trace dumps that land on every reindex
+    # (#reindex-log-audit-2026-07-30); tests/conftest.py silences this for the
+    # test session, this is the production counterpart.
+    logging.getLogger("torch._dynamo").setLevel(logging.WARNING)
 
 
 _configure_logging()

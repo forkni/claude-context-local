@@ -290,6 +290,45 @@ class TestGenerateCommunitySummaries:
         # Hub is selected by centrality (both 0.0, so first wins via max), but score=0 → no annotation
         assert "centrality:" not in summaries[0].content
 
+    def test_colliding_communities_produce_unique_ids(self):
+        """Two communities that share a dominant directory AND a first class
+        name must not collide on chunk_id/file_path.
+
+        primary_symbol is classes[0], decided purely by chunk-iteration order
+        (chunking/file_summarizer.py collect_symbol_summary). Two unrelated
+        communities dominated by the same directory, whose first-seen class
+        happens to share a name, previously produced byte-identical
+        `__community__/{dir}_{symbol}` labels: same chunk_id AND file_path.
+        FAISS/chunk_ids.pkl append positionally (both kept) but metadata.db
+        is a key-value store (the second write silently upserts over the
+        first) -- so one summary vanishes from metadata with no duplicate
+        community:<id> tag left behind to explain it.
+        """
+        chunks = [
+            self._make_chunk("scripts/benchmark/a.py", "class", "_Recorder"),
+            self._make_chunk("scripts/benchmark/a.py", "class", "BM25Index"),
+            self._make_chunk("scripts/benchmark/b.py", "class", "_Recorder"),
+            self._make_chunk("scripts/benchmark/b.py", "class", "SubgraphExtractor"),
+        ]
+        community_map = {
+            "scripts/benchmark/a.py:1-5:class:_Recorder": 194,
+            "scripts/benchmark/a.py:1-5:class:BM25Index": 194,
+            "scripts/benchmark/b.py:1-5:class:_Recorder": 232,
+            "scripts/benchmark/b.py:1-5:class:SubgraphExtractor": 232,
+        }
+        summaries = generate_community_summaries(chunks, community_map)
+        assert len(summaries) == 2
+        chunk_ids = {s.chunk_id for s in summaries}
+        file_paths = {s.file_path for s in summaries}
+        assert len(chunk_ids) == 2, (
+            f"colliding chunk_id across communities: {[s.chunk_id for s in summaries]}"
+        )
+        assert len(file_paths) == 2, (
+            f"colliding file_path across communities: {[s.file_path for s in summaries]}"
+        )
+        tags = {s.tags[0] for s in summaries}
+        assert tags == {"community:194", "community:232"}
+
     def test_chunks_without_chunk_id(self):
         chunks = [
             CodeChunk(

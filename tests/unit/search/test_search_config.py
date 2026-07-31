@@ -861,3 +861,47 @@ class TestProjectOverrides:
             "performance.enable_fp16",
             "performance.max_chunking_workers",
         ]
+
+
+# ---------------------------------------------------------------------------
+# search_config.json.example must cover the full dataclass field surface --
+# commit 84046622 claimed this but nothing enforced it, which is exactly how
+# the missing performance.enable_project_overrides key went unnoticed.
+# ---------------------------------------------------------------------------
+
+
+def test_example_config_covers_full_dataclass_surface():
+    """Every SearchConfig sub-config field must appear in search_config.json.example.
+
+    Guards against the .example template silently drifting behind the
+    dataclasses it's meant to document -- the same class of gap that let
+    'performance.enable_project_overrides' go missing from the shipped
+    template despite being a real, load-bearing field.
+    """
+    import dataclasses
+    import json
+
+    from search.config import SearchConfig
+    from search.config_paths import _REPO_ROOT
+
+    example_path = _REPO_ROOT / "search_config.json.example"
+    assert example_path.exists(), f"missing {example_path}"
+
+    example = json.loads(example_path.read_text())
+
+    # Every declared sub-config must have a top-level section in the example.
+    assert set(SearchConfig._SUBCONFIG_FIELDS) == set(example.keys()), (
+        "search_config.json.example top-level sections don't match "
+        "SearchConfig._SUBCONFIG_FIELDS"
+    )
+
+    for section_name in SearchConfig._SUBCONFIG_FIELDS:
+        subconfig_type = SearchConfig._SUBCONFIG_TYPES[section_name]
+        field_names = {f.name for f in dataclasses.fields(subconfig_type)}
+        example_keys = set(example[section_name].keys())
+
+        missing = field_names - example_keys
+        assert not missing, (
+            f"search_config.json.example['{section_name}'] is missing fields "
+            f"present on {subconfig_type.__name__}: {sorted(missing)}"
+        )

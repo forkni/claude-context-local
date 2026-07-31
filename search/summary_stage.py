@@ -1,10 +1,14 @@
 """Summary-chunk generation for full and incremental indexing.
 
-Ordering constraint (see incremental_indexer._full_index for the call sequence):
-  1. compute_community_summaries() — BEFORE community remerge, because
-     community_map keys are pre-remerge chunk_ids.
-  2. generate_module_summaries() — AFTER community remerge, because remerge
-     shifts line numbers and finalises chunk_ids.
+Call sequence (see CommunityStage.run / run_post_injection):
+  1. generate_module_summaries() — inside CommunityStage.run(), pre-embed,
+     AFTER community remerge (remerge shifts line numbers and finalises
+     chunk_ids).
+  2. compute_community_summaries() — inside CommunityStage.run_post_injection(),
+     AFTER call-edge injection. community_map keys are final, post-remerge
+     chunk_ids — the same ids the resolved graph and the just-embedded
+     chunks share, because detection itself now runs against that same
+     enriched graph rather than a pre-embed temp graph.
 
 Each method catches its own errors and returns [] on failure, matching the
 graceful-degradation contract of the inline code it replaces.
@@ -26,32 +30,38 @@ logger = logging.getLogger(__name__)
 class SummaryStage:
     """Owns summary-chunk generation for a full index pass.
 
-    The two methods encode the ordering constraint that _full_index imposes:
-    compute_community_summaries() must run before remerge; generate_module_summaries()
-    must run after. The caller is responsible for the interleaved remerge step.
+    generate_module_summaries() runs pre-embed, inside CommunityStage.run(),
+    after remerge finalises chunk_ids. compute_community_summaries() runs
+    post-embed, inside CommunityStage.run_post_injection(), after
+    IndexWriteStage._inject_call_edges resolves the call graph — see
+    CommunityStage for the split and why.
     """
 
     def compute_community_summaries(
         self,
         all_chunks: list[CodeChunk],
         community_map: dict[str, int],
-        temp_graph: GraphIntegration | None,
+        graph: GraphIntegration | None,
     ) -> list[CodeChunk]:
         """Compute community-summary CodeChunks with centrality-weighted hub detection.
 
-        Must be called BEFORE community remerge (chunk_ids must match community_map).
+        Called from CommunityStage.run_post_injection() with the real,
+        fully-resolved GraphIntegration — community_map keys are final,
+        post-remerge chunk_ids, matching graph's nodes.
+        CommunityRefreshStage._regenerate_summaries also calls this, with
+        graph=None, for its centrality-free incremental refresh.
         Returns [] on any failure so the caller can proceed without community summaries.
         """
         try:
             from graph.community_summarizer import generate_community_summaries
 
             centrality_scores: dict[str, float] | None = None
-            if temp_graph is not None:
+            if graph is not None:
                 try:
                     from graph.graph_queries import GraphQueryEngine
 
                     # pyrefly: ignore [bad-argument-type]
-                    gqe = GraphQueryEngine(temp_graph.storage)
+                    gqe = GraphQueryEngine(graph.storage)
                     centrality_scores = gqe.compute_centrality(method="pagerank")
                     logger.info(
                         f"[COMMUNITY_SUMMARIES] Computed centrality for "

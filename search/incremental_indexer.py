@@ -122,11 +122,6 @@ class IncrementalIndexer:
             max_workers=self.max_chunking_workers,
         )
         self._summary_stage = SummaryStage()
-        self._community_stage = CommunityStage(
-            build_graph_fn=self._build_temp_graph,
-            regenerate_ids_fn=self._regenerate_chunk_ids,
-            summary_stage=self._summary_stage,
-        )
         self._build_write_pipeline()
         self.repo_profile: RepoProfile | None = None  # Set during _full_index
 
@@ -134,15 +129,30 @@ class IncrementalIndexer:
         """(Re)build the resource-bound write pipeline.
 
         Call from __init__ and again immediately after _release_and_verify_resources()
-        so IndexWriteStage is always bound to the current self.embedder / self.indexer
-        — never to released objects.
+        so IndexWriteStage / CommunityStage / CommunityRefreshStage are always bound
+        to the current self.embedder / self.indexer — never to released objects.
+
+        CommunityStage is (re)built here too (previously constructed once in
+        __init__): its run_post_injection() phase embeds community summaries
+        and calls add_embeddings, the exact same released-object hazard
+        IndexWriteStage/CommunityRefreshStage already guard against.
+        CommunityStage is stateless, so rebuilding it here twice per full
+        index is free.
         """
+        self._community_stage = CommunityStage(
+            build_graph_fn=self._build_temp_graph,
+            regenerate_ids_fn=self._regenerate_chunk_ids,
+            summary_stage=self._summary_stage,
+            embedder=self.embedder,
+            indexer=self.indexer,
+        )
         self._index_write_stage = IndexWriteStage(
             embedder=self.embedder,
             indexer=self.indexer,
             snapshot_manager=self.snapshot_manager,
             build_metadata_fn=self._build_snapshot_metadata,
             clear_gpu_fn=self._clear_gpu_cache,
+            post_injection_fn=self._community_stage.run_post_injection,
         )
         self._community_refresh_stage = CommunityRefreshStage(
             embedder=self.embedder,
@@ -327,9 +337,10 @@ class IncrementalIndexer:
             # ========== END Community summary refresh ==========
 
             # Validate index consistency after operations
-            if hasattr(self.indexer, "validate_index_consistency"):
+            _consistency_target = self._consistency_target()
+            if _consistency_target is not None:
                 logger.info("[INCREMENTAL] Validating index consistency...")
-                is_valid, issues = self.indexer.validate_index_consistency()
+                is_valid, issues = _consistency_target.validate_index_consistency()
                 if not is_valid:
                     logger.error(
                         f"[INCREMENTAL] Index validation failed with {len(issues)} issues. "
@@ -535,6 +546,21 @@ class IncrementalIndexer:
                 return (_result, _new_cumulative, [])
         return None, _new_cumulative, sorted(_new_paths)
 
+    def _consistency_target(self) -> Any:
+        """Resolve the object that owns metadata_store + chunk_ids.
+
+        self.indexer is a HybridSearcher in production (see
+        mcp_server/tools/index_handlers.py's "indexer: HybridSearcher or
+        CodeIndexManager" docstring) but a bare CodeIndexManager under most
+        tests; only CodeIndexManager defines validate_index_consistency, so
+        calling it unconditionally is dead code on the real path. Reuses the
+        dense_index accessor idiom already used for the same purpose in
+        index_write_stage.py's _inject_call_edges.
+        """
+        if hasattr(self.indexer, "validate_index_consistency"):
+            return self.indexer
+        return getattr(self.indexer, "dense_index", None)
+
     def _attempt_recovery(
         self,
         original_error: str,
@@ -683,8 +709,14 @@ class IncrementalIndexer:
         if hasattr(self.indexer, "_is_shutdown") and self.indexer._is_shutdown:
             from mcp_server.search_factory import get_searcher
 
+            # load_existing=False (#reindex-log-audit-2026-07-30): this searcher
+            # is a write-only target for the force-full reindex about to run —
+            # _full_index() calls clear_index()/clear_hybrid_indices() on it
+            # moments later, so loading the stale on-disk BM25 index here would
+            # only cost time and log spurious version/tokenizer mismatch
+            # warnings for data that is about to be discarded.
             # pyrefly: ignore [bad-assignment]
-            self.indexer = get_searcher(project_path)
+            self.indexer = get_searcher(project_path, load_existing=False)
             logger.info("[FULL_INDEX] Fresh indexer/searcher acquired for reindex")
         else:
             logger.debug(
@@ -819,11 +851,15 @@ class IncrementalIndexer:
             # ParallelChunker._log_chunking_summary.
             logger.info(f"Total chunks collected: {len(all_chunks)}")
 
-            # Stage 1: community detection, summarisation, remerge
+            # Stage 1: community-based remerge (if enabled) + module summaries
             config = get_search_config()
             all_chunks = self._community_stage.run(all_chunks, project_path, config)
 
-            # Stage 2: embed, index, snapshot, BM25, GPU
+            # Stage 2: embed, index, call-edge injection, community
+            # detection + summaries (post-injection), snapshot, BM25, GPU
+            # — community_stage.run_post_injection() is wired in as
+            # IndexWriteStage's post_injection_fn (see
+            # _build_write_pipeline), run once the resolved graph exists.
             result = self._index_write_stage.run(
                 all_chunks,
                 project_name,
@@ -835,10 +871,37 @@ class IncrementalIndexer:
                 project_path=project_path,
             )
             result.probe_summary = probe_summary
+
+            _consistency_target = self._consistency_target()
+            if _consistency_target is not None:
+                is_valid, issues = _consistency_target.validate_index_consistency()
+                if not is_valid:
+                    logger.error(
+                        f"[FULL_INDEX] Index inconsistent after full index: {issues}"
+                    )
+                    result.success = False
+                    result.error = (
+                        f"Index inconsistent after full index "
+                        f"({len(issues)} issues): {issues}"
+                    )
             return result
 
         except Exception as e:
             logger.error(f"Full indexing failed: {e}", exc_info=True)
+            # (#reindex-log-audit-2026-07-30) The searcher acquired above (see
+            # _release_and_verify_resources) was built with load_existing=False,
+            # so if this failure happened after construction but before
+            # clear_hybrid_indices()/rebuild completed, state.searcher is an
+            # empty write-only instance. Null it — same one-line invalidation
+            # search_factory.get_searcher() already does for
+            # DimensionMismatchError — so the next call rebuilds from disk
+            # instead of returning an empty cached searcher.
+            try:
+                from mcp_server.services import get_state
+
+                get_state().searcher = None
+            except Exception:  # noqa: BLE001 - best-effort cache invalidation, never mask the original failure
+                pass
             return self._zero_result(start_time, success=False, error=str(e))
 
     def _get_total_chunks(self) -> int:

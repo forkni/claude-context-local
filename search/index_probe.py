@@ -75,7 +75,7 @@ FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
         "search_mode.rrf_k_parameter",
         "search_mode.bm25_tokenizer",
         "search_mode.bm25_reserved_slots",
-        "search_mode.centrality_alpha",
+        "graph_enhanced.centrality_alpha",
         "reranker.single_pass",
         "reranker.hop1_reserved_slots",
         "query_expansion.enabled",

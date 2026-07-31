@@ -83,7 +83,7 @@ class TestGuardrails:
             "search_mode.rrf_k_parameter",
             "search_mode.bm25_tokenizer",
             "search_mode.bm25_reserved_slots",
-            "search_mode.centrality_alpha",
+            "graph_enhanced.centrality_alpha",
             "reranker.single_pass",
             "reranker.hop1_reserved_slots",
             "query_expansion.enabled",
@@ -99,6 +99,29 @@ class TestGuardrails:
                 assert rule.key not in FORBIDDEN_AUTO_TUNE_KEYS, (
                     f"Rule '{rule.key}' auto-tunes a benchmark-validated key"
                 )
+
+    def test_forbidden_keys_resolve_to_real_fields(self):
+        """Every 'section.field' string must exist on SearchConfig.
+
+        Catches typos like the one that made 'search_mode.centrality_alpha'
+        (should be 'graph_enhanced.centrality_alpha') an inert guardrail --
+        the key it named was never a real config path, so nothing it
+        protected was ever actually forbidden.
+        """
+        import dataclasses
+
+        from search.config import SearchConfig
+
+        for dotted_key in FORBIDDEN_AUTO_TUNE_KEYS:
+            section, _, field = dotted_key.partition(".")
+            assert section in SearchConfig._SUBCONFIG_TYPES, (
+                f"'{dotted_key}': '{section}' is not a SearchConfig sub-config"
+            )
+            subconfig_type = SearchConfig._SUBCONFIG_TYPES[section]
+            field_names = {f.name for f in dataclasses.fields(subconfig_type)}
+            assert field in field_names, (
+                f"'{dotted_key}': '{field}' is not a field of {subconfig_type.__name__}"
+            )
 
     def test_index_affecting_overrides_are_pre_chunking_only(self):
         """chunking.*/call_graph.*/embedding-context overrides may only fire at hook A."""

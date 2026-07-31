@@ -189,6 +189,18 @@ class IndexSynchronizer:
             )
             return False
 
+        # Equal counts can still hide a colliding chunk_id (one metadata write
+        # upserting over another) -- flag it so the cause is named, not just
+        # the symptom. Log only: resync_if_desynced rebuilds BM25 from dense
+        # and cannot repair a duplicate id, so flipping `synced` here would
+        # just churn without fixing anything.
+        ids = self.bm25_index._doc_ids if self.bm25_index else []
+        if len(ids) != len(set(ids)):
+            self._logger.warning(
+                f"[SYNC_CHECK] Duplicate chunk_ids: {len(ids)} total, "
+                f"{len(set(ids))} unique"
+            )
+
         self._logger.info(f"[SYNC_CHECK] Indices synced at {bm25_count} documents")
         return True
 
