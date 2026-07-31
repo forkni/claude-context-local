@@ -47,7 +47,6 @@ class EgoGraphRetriever:
         self.graph = graph_storage
         self._gv = GraphView(graph_storage)
         self._centrality_scores: dict[str, float] = {}
-        self._community_map: dict[str, int] = graph_storage.load_community_map() or {}
         logger.info("EgoGraphRetriever initialized")
 
     def set_centrality_scores(self, scores: dict[str, float]) -> None:
@@ -125,11 +124,8 @@ class EgoGraphRetriever:
                     # QW1: rank by centrality before truncation so hub functions
                     # survive the cap rather than being dropped by BFS order
                     if self._centrality_scores:
-                        anchor_community = self._community_map.get(anchor)
                         valid_neighbors.sort(
-                            key=lambda n: self._rank_neighbor(
-                                n, anchor_community, config
-                            ),
+                            key=lambda n: self._rank_neighbor(n),
                             reverse=True,
                         )
                     valid_neighbors = valid_neighbors[:max_total]
@@ -142,39 +138,19 @@ class EgoGraphRetriever:
 
         return results
 
-    def _rank_neighbor(
-        self,
-        neighbor_id: str,
-        anchor_community: int | None,
-        config: "EgoGraphConfig",
-    ) -> float:
+    def _rank_neighbor(self, neighbor_id: str) -> float:
         """Compute ranking score for a neighbor during pre-truncation sorting.
 
-        Combines PageRank centrality (QW1) with optional community-boundary
-        penalty (QW2). Higher score = higher priority to survive truncation.
+        PageRank centrality (QW1). Higher score = higher priority to survive
+        truncation.
 
         Args:
             neighbor_id: Chunk ID of the neighbor being ranked.
-            anchor_community: Community ID of the anchor chunk (None if unknown).
-            config: EgoGraphConfig with community_bounded and cross_community_penalty.
 
         Returns:
             Ranking score in [0, 1] range.
         """
-        score = self._centrality_scores.get(neighbor_id, 0.0)
-
-        # QW2: apply community penalty for cross-community neighbors
-        if (
-            getattr(config, "community_bounded", False)
-            and anchor_community is not None
-            and self._community_map
-        ):
-            neighbor_community = self._community_map.get(neighbor_id)
-            if neighbor_community != anchor_community:
-                penalty = getattr(config, "cross_community_penalty", 0.6)
-                score *= penalty
-
-        return score
+        return self._centrality_scores.get(neighbor_id, 0.0)
 
     def _expand_via_ppr(
         self,

@@ -15,7 +15,6 @@ class TestEgoGraphRetriever:
     def mock_graph_storage(self):
         """Create a mock graph storage."""
         mock = Mock()
-        mock.load_community_map.return_value = None  # No community data by default
         return mock
 
     @pytest.fixture
@@ -222,7 +221,6 @@ class TestEgoGraphRetriever:
 
     def test_centrality_ranking_survives_truncation(self, mock_graph_storage):
         """High-centrality neighbors survive truncation over low-centrality ones."""
-        mock_graph_storage.load_community_map.return_value = None
         retriever = EgoGraphRetriever(mock_graph_storage)
 
         # 20 neighbors but cap = k_hops * max_neighbors_per_hop = 2*5 = 10
@@ -253,64 +251,6 @@ class TestEgoGraphRetriever:
         # Without centrality, should be the first 10 (BFS discovery order)
         assert result["anchor1"] == neighbors[:10]
 
-    # --- QW2: Community-bounded ego-graph expansion ---
-
-    def test_community_bounded_penalizes_cross_community(self, mock_graph_storage):
-        """Cross-community neighbors get penalized; same-community neighbors preferred."""
-        community_map = {
-            "anchor.py:1-10:function:anchor": 0,
-            "same.py:10-20:function:same": 0,  # same community as anchor
-            "other.py:10-20:function:other": 1,  # different community
-        }
-        mock_graph_storage.load_community_map.return_value = community_map
-        retriever = EgoGraphRetriever(mock_graph_storage)
-
-        # 10 neighbors alternating same/other
-        neighbors = [
-            "same.py:10-20:function:same",
-            "other.py:10-20:function:other",
-        ] * 5
-        mock_graph_storage.get_neighbors = Mock(return_value=neighbors)
-
-        # Equal raw centrality — community penalty should differentiate ranking
-        centrality = {
-            "same.py:10-20:function:same": 0.5,
-            "other.py:10-20:function:other": 0.5,
-        }
-        retriever.set_centrality_scores(centrality)
-
-        # cap = 2*1 = 2, forces truncation
-        config = EgoGraphConfig(
-            k_hops=2,
-            max_neighbors_per_hop=1,
-            community_bounded=True,
-            cross_community_penalty=0.6,
-        )
-        result = retriever.retrieve_ego_graph(
-            ["anchor.py:1-10:function:anchor"], config
-        )
-
-        # Same-community scores 0.5; cross-community scores 0.5*0.6=0.3 → same wins
-        assert (
-            result["anchor.py:1-10:function:anchor"][0] == "same.py:10-20:function:same"
-        )
-
-    def test_community_bounded_false_disables_penalty(self, mock_graph_storage):
-        """community_bounded=False means cross-community neighbors keep full centrality."""
-        community_map = {
-            "anchor.py:1-10:function:anchor": 0,
-            "cross.py:10-20:function:cross": 1,
-        }
-        mock_graph_storage.load_community_map.return_value = community_map
-        retriever = EgoGraphRetriever(mock_graph_storage)
-        retriever.set_centrality_scores({"cross.py:10-20:function:cross": 0.8})
-
-        config = EgoGraphConfig(community_bounded=False)
-        score = retriever._rank_neighbor("cross.py:10-20:function:cross", 0, config)
-
-        # No penalty: returns raw centrality score
-        assert score == 0.8
-
     # --- QW3: Personalized PageRank expansion mode ---
 
     def test_ppr_expansion_routes_correctly(self, mock_graph_storage):
@@ -321,7 +261,6 @@ class TestEgoGraphRetriever:
         nx_graph.add_edge("anchor.py:1-10:function:a", "file1.py:10-20:function:n1")
         nx_graph.add_edge("anchor.py:1-10:function:a", "file2.py:30-40:function:n2")
         mock_graph_storage.graph = nx_graph
-        mock_graph_storage.load_community_map.return_value = None
         retriever = EgoGraphRetriever(mock_graph_storage)
 
         config = EgoGraphConfig(
@@ -341,7 +280,6 @@ class TestEgoGraphRetriever:
         import networkx as nx
 
         mock_graph_storage.graph = nx.DiGraph()
-        mock_graph_storage.load_community_map.return_value = None
         retriever = EgoGraphRetriever(mock_graph_storage)
 
         config = EgoGraphConfig(expansion_mode="ppr")
