@@ -161,7 +161,6 @@ class RerankingEngine:
             self.neural_reranker = create_reranker(
                 model_name=config.reranker.model_name,
                 batch_size=config.reranker.batch_size,
-                quantization=config.reranker.quantization,
                 instruction=config.reranker.instruction or None,
                 doc_max_chars=config.reranker.doc_max_chars,
                 listwise_doc_max_chars=config.reranker.listwise_doc_max_chars,
@@ -183,7 +182,6 @@ class RerankingEngine:
             self.neural_reranker = create_reranker(
                 model_name=config.reranker.model_name,
                 batch_size=config.reranker.batch_size,
-                quantization=config.reranker.quantization,
                 instruction=config.reranker.instruction or None,
                 doc_max_chars=config.reranker.doc_max_chars,
                 listwise_doc_max_chars=config.reranker.listwise_doc_max_chars,

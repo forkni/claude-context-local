@@ -74,7 +74,6 @@
     "batch_size": 16,
     "dedupe_split_blocks": true,
     "single_pass": false,
-    "quantization": "none",
     "instruction": "",
     "doc_max_chars": 4000,
     "listwise_doc_max_chars": 1000,

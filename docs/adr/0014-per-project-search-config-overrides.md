@@ -17,7 +17,7 @@ resolves repo-root `search_config.json` (fallback:
 `~/.claude_code_search/search_config.json`), and `handle_switch_project`
 only changed the storage directory. One config governed every indexed
 project, so any hardware- or corpus-specific tuning (chunking worker
-count, reranker quantization, GLSL prefix filtering) either leaked into
+count, reranker enable, GLSL prefix filtering) either leaked into
 the global file — wrong for every other project — or was lost.
 
 At the same time, accumulated benchmark experience on this repo
@@ -108,7 +108,7 @@ this project behaving differently" is answerable from the MCP surface.
 - **Auto-tuning probe** (`search/index_probe.py`, `PROBE_VERSION = "1"`):
   a full reindex runs a two-pass probe — pass 1 (pre-chunking) measures
   VRAM/CPU/corpus shape and *auto-applies* safe hardware/structural
-  knobs (batch sizes, worker count, reranker enable/quantization, GLSL
+  knobs (batch sizes, worker count, reranker enable, GLSL
   prefix filter), rewriting the file wholesale with fresh provenance;
   pass 2 (post-build) appends *report-only observations* from
   `stats.json` (community resolution, split share, ego density).

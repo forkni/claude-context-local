@@ -860,18 +860,6 @@ class TestCreateRerankerFactory:
         assert isinstance(reranker, GenerativeReranker)
         assert reranker.batch_size == 4
 
-    def test_generative_reranker_quantization_passthrough(self):
-        """quantization must be threaded through create_reranker to GenerativeReranker."""
-        reranker = create_reranker("Qwen/Qwen3-Reranker-0.6B", quantization="fp8")
-        assert isinstance(reranker, GenerativeReranker)
-        assert reranker.quantization == "fp8"
-
-    def test_generative_reranker_quantization_defaults_to_none(self):
-        """Default quantization must be 'none' when not specified."""
-        reranker = create_reranker("Qwen/Qwen3-Reranker-0.6B")
-        assert isinstance(reranker, GenerativeReranker)
-        assert reranker.quantization == "none"
-
     def test_instruction_passthrough_to_generative_reranker(self):
         """instruction must be threaded through create_reranker to GenerativeReranker."""
         reranker = create_reranker(
@@ -930,101 +918,6 @@ class TestCreateRerankerFactory:
         reranker = create_reranker("jinaai/jina-reranker-v3", doc_max_chars=9999)
         assert isinstance(reranker, JinaRerankerV3)
         assert reranker.doc_max_chars == 1000
-
-
-class TestBuildQuantizationConfig:
-    """Tests for GenerativeReranker._build_quantization_config.
-
-    Per the plan's Verification step 7: quantization paths are unit-test-only for
-    this task (bitsandbytes/torchao are not installed and the A/B runs BF16 by
-    decision) — these tests assert the right quantization_config type is built per
-    mode, and that a missing extra raises a named-extra error rather than an opaque
-    import failure deep inside from_pretrained().
-    """
-
-    def test_none_returns_no_config(self):
-        """Default 'none' must return None — the only path the BF16 A/B exercises."""
-        reranker = GenerativeReranker(quantization="none")
-        assert reranker._build_quantization_config() is None
-
-    @patch("torch.cuda.get_device_capability", return_value=(8, 9))
-    def test_fp8_builds_fine_grained_config_on_sufficient_capability(self, mock_cap):
-        """fp8 on capability >= 8.9 must build a FineGrainedFP8Config."""
-        from transformers import FineGrainedFP8Config
-
-        reranker = GenerativeReranker(quantization="fp8")
-        config = reranker._build_quantization_config()
-        assert isinstance(config, FineGrainedFP8Config)
-
-    @patch("torch.cuda.get_device_capability", return_value=(7, 5))
-    def test_fp8_raises_on_insufficient_capability(self, mock_cap):
-        """fp8 below compute capability 8.9 must raise a clear RuntimeError, not OOM later."""
-        reranker = GenerativeReranker(quantization="fp8")
-        with pytest.raises(RuntimeError, match="compute capability"):
-            reranker._build_quantization_config()
-
-    def test_8bit_builds_bitsandbytes_config(self):
-        """8bit must build a BitsAndBytesConfig with load_in_8bit=True."""
-        from transformers import BitsAndBytesConfig
-
-        reranker = GenerativeReranker(quantization="8bit")
-        config = reranker._build_quantization_config()
-        assert isinstance(config, BitsAndBytesConfig)
-        assert config.load_in_8bit is True
-
-    def test_4bit_builds_nf4_bitsandbytes_config(self):
-        """4bit must build a BitsAndBytesConfig with NF4 + bf16 compute dtype."""
-        from transformers import BitsAndBytesConfig
-
-        reranker = GenerativeReranker(quantization="4bit")
-        config = reranker._build_quantization_config()
-        assert isinstance(config, BitsAndBytesConfig)
-        assert config.load_in_4bit is True
-        assert config.bnb_4bit_quant_type == "nf4"
-        assert config.bnb_4bit_compute_dtype == torch.bfloat16
-
-    def test_8bit_missing_extra_raises_named_extra_error(self):
-        """A missing bitsandbytes import must raise an error naming the [quant] extra.
-
-        BitsAndBytesConfig is a plain dataclass that transformers exposes regardless
-        of whether the bitsandbytes package is actually installed (verified: it
-        constructs successfully in this environment, which lacks bitsandbytes), so
-        deleting the attribute off the lazily-loaded transformers module doesn't
-        reproduce a real ImportError — the lazy loader just re-resolves it. Intercept
-        the specific `from transformers import BitsAndBytesConfig` statement via
-        __import__ instead, to exercise the except-ImportError branch honestly.
-        """
-        import builtins
-
-        real_import = builtins.__import__
-
-        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-            if name == "transformers" and fromlist and "BitsAndBytesConfig" in fromlist:
-                raise ImportError("simulated: bitsandbytes not installed")
-            return real_import(name, globals, locals, fromlist, level)
-
-        reranker = GenerativeReranker(quantization="8bit")
-        with (
-            patch("builtins.__import__", side_effect=fake_import),
-            pytest.raises(ImportError, match=r"\[quant\]"),
-        ):
-            reranker._build_quantization_config()
-
-    def test_mxfp8_missing_torchao_raises_named_extra_error(self):
-        """torchao isn't installed in this environment — mxfp8 must name the [quant] extra.
-
-        No mocking needed: torchao genuinely isn't installed here, so this exercises
-        the real ImportError path rather than a simulated one.
-        """
-        reranker = GenerativeReranker(quantization="mxfp8")
-        with pytest.raises(ImportError, match=r"\[quant\]"):
-            reranker._build_quantization_config()
-
-    def test_unknown_quantization_raises_value_error(self):
-        """An unrecognized quantization string must raise ValueError, not silently no-op."""
-        reranker = GenerativeReranker(quantization="bogus")
-        with pytest.raises(ValueError, match="Unknown reranker quantization"):
-            reranker._build_quantization_config()
 
 
 class TestGenerativeRerankerIntegration:

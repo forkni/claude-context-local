@@ -1392,17 +1392,16 @@ echo   - GPU with ^>= 2GB VRAM ^(auto-disabled on insufficient VRAM^)
 echo   - Additional latency: +150-300ms per search
 echo.
 echo Current Setting:
-".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Neural Reranker:', 'Enabled' if cfg.reranker.enabled else 'Disabled'); print('  Model:', cfg.reranker.model_name); print('  Top-K Candidates:', cfg.reranker.top_k_candidates); print('  Quantization:', cfg.reranker.quantization)" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Neural Reranker:', 'Enabled' if cfg.reranker.enabled else 'Disabled'); print('  Model:', cfg.reranker.model_name); print('  Top-K Candidates:', cfg.reranker.top_k_candidates)" 2>nul
 echo.
 echo   1. Enable Neural Reranker
 echo   2. Disable Neural Reranker
 echo   3. Set Top-K Candidates ^(rerank limit^)
 echo   4. Select Reranker Model
-echo   5. Set Reranker Quantization ^(GenerativeReranker only^)
 echo   0. Back to Search Configuration
 echo.
 set "reranker_choice="
-set /p reranker_choice="Select option (0-5): "
+set /p reranker_choice="Select option (0-4): "
 
 if not defined reranker_choice goto search_config_menu
 if "!reranker_choice!"=="" goto search_config_menu
@@ -1464,14 +1463,10 @@ if "!reranker_choice!"=="4" (
     echo      ~1.5GB base VRAM ^(grows with candidate count, up to ~10GB^), ~750ms/search, MRR 0.85
     echo      License: CC-BY-NC-4.0 ^(non-commercial^)
     echo.
-    echo   4. Qwen3 Reranker 4B ^(Qwen/Qwen3-Reranker-4B^)
-    echo      Best for: 18GB+ VRAM, best code quality ^(MTEB-Code 81.20^), Apache-2.0
-    echo      ~8GB VRAM ^(BF16^), slower than the 0.6B/Jina options
-    echo.
     echo   0. Cancel
     echo.
     set "model_sel="
-    set /p model_sel="Select model (0-4): "
+    set /p model_sel="Select model (0-3): "
 
     if "!model_sel!"=="1" (
         echo.
@@ -1506,58 +1501,10 @@ if "!reranker_choice!"=="4" (
             ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
         )
     )
-    if "!model_sel!"=="4" (
-        echo.
-        echo [INFO] Setting reranker to Qwen3 Reranker 4B...
-        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.model_name = 'Qwen/Qwen3-Reranker-4B'; mgr.save_config(cfg); print('[OK] Reranker set to Qwen3 Reranker 4B (Qwen3-Reranker-4B)')" 2>nul
-        if errorlevel 1 (
-            echo [ERROR] Failed to save configuration
-        ) else (
-            REM Notify running MCP server to reload config
-            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-        )
-    )
-)
-if "!reranker_choice!"=="5" (
-    echo.
-    echo === Set Reranker Quantization ===
-    echo.
-    echo Only affects GenerativeReranker models ^(Qwen3-Reranker family^). Cross-encoder
-    echo ^(GTE/BGE^) and Jina v3 rerankers ignore this setting.
-    echo.
-    echo   1. None ^(BF16/FP16, full precision^)  [DEFAULT]
-    echo   2. FP8 ^(FineGrainedFP8Config, needs compute capability ^>= 8.9^)
-    echo   3. 8-bit ^(bitsandbytes, requires the 'quant' extra^)
-    echo   4. 4-bit NF4 ^(bitsandbytes, requires the 'quant' extra^)
-    echo   5. MXFP8 ^(EXPERIMENTAL - requires the 'quant' extra with torchao;
-    echo      emulated on RTX 40-series, no speed win, memory savings only^)
-    echo   0. Cancel
-    echo.
-    set "quant_sel="
-    set /p quant_sel="Select quantization (0-5): "
-
-    set "quant_value="
-    if "!quant_sel!"=="1" set "quant_value=none"
-    if "!quant_sel!"=="2" set "quant_value=fp8"
-    if "!quant_sel!"=="3" set "quant_value=8bit"
-    if "!quant_sel!"=="4" set "quant_value=4bit"
-    if "!quant_sel!"=="5" set "quant_value=mxfp8"
-
-    if defined quant_value (
-        echo.
-        echo [INFO] Setting reranker quantization to !quant_value!...
-        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.quantization = '!quant_value!'; mgr.save_config(cfg); print('[OK] Reranker quantization set to !quant_value!')" 2>nul
-        if errorlevel 1 (
-            echo [ERROR] Failed to save configuration
-        ) else (
-            REM Notify running MCP server to reload config
-            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-        )
-    )
 )
 
-if not "!reranker_choice!"=="1" if not "!reranker_choice!"=="2" if not "!reranker_choice!"=="3" if not "!reranker_choice!"=="4" if not "!reranker_choice!"=="5" (
-    echo [ERROR] Invalid choice. Please select 0-5.
+if not "!reranker_choice!"=="1" if not "!reranker_choice!"=="2" if not "!reranker_choice!"=="3" if not "!reranker_choice!"=="4" (
+    echo [ERROR] Invalid choice. Please select 0-4.
 )
 pause
 goto search_config_menu

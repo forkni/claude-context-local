@@ -438,7 +438,6 @@ class GenerativeReranker(BaseReranker):
         device: str | None = None,
         instruction: str | None = None,
         batch_size: int = 16,
-        quantization: str = "none",
         doc_max_chars: int = 4000,
     ):
         """Initialize GenerativeReranker with lazy loading.
@@ -452,9 +451,6 @@ class GenerativeReranker(BaseReranker):
                 pass ``""`` explicitly to send an empty instruction.
             batch_size: Number of prompts per forward pass. Chunking keeps the
                 logits tensor bounded regardless of candidate-pool size (see rerank()).
-            quantization: One of "none" (default), "fp8", "8bit", "4bit", "mxfp8".
-                Only "none" is exercised by the BF16 A/B trial; the others require the
-                optional `[quant]` extra and are unverified end-to-end (see plan).
             doc_max_chars: Maximum document body length fed to the prompt (see
                 ``_build_rerank_document``). Pointwise architecture — cost scales
                 with ``batch_size * doc_max_chars`` per forward pass, so this can
@@ -465,7 +461,6 @@ class GenerativeReranker(BaseReranker):
             instruction if instruction is not None else _QWEN_RERANK_DEFAULT_INSTRUCTION
         )
         self.batch_size = batch_size
-        self.quantization = quantization
         self.doc_max_chars = doc_max_chars
         self._model = None
         self._tokenizer = None
@@ -491,80 +486,6 @@ class GenerativeReranker(BaseReranker):
         else:
             self.device = device
 
-    def _build_quantization_config(self) -> object | None:
-        """Build the transformers quantization_config for self.quantization.
-
-        Returns None for "none" (the only path exercised by the BF16 A/B). The other
-        branches require the optional `[quant]` extra (bitsandbytes/accelerate/torchao)
-        and raise a clear ImportError naming that extra if it isn't installed, rather
-        than an opaque import failure deep in from_pretrained().
-        """
-        if self.quantization == "none":
-            return None
-        if self.quantization == "fp8":
-            if torch.cuda.get_device_capability(0) < (8, 9):
-                raise RuntimeError(
-                    "quantization='fp8' requires compute capability >= 8.9 (Ada/Hopper "
-                    f"FP8 tensor cores); this GPU reports {torch.cuda.get_device_capability(0)}."
-                )
-            from transformers import FineGrainedFP8Config
-
-            return FineGrainedFP8Config()
-        if self.quantization in ("8bit", "4bit"):
-            try:
-                from transformers import BitsAndBytesConfig
-            except ImportError as e:
-                raise ImportError(
-                    "quantization='8bit'/'4bit' requires the 'quant' extra: "
-                    "pip install -e '.[quant]' (bitsandbytes, accelerate)."
-                ) from e
-            if self.quantization == "8bit":
-                return BitsAndBytesConfig(load_in_8bit=True)
-            return BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.bfloat16,
-            )
-        if self.quantization == "mxfp8":
-            try:
-                # pyrefly: ignore [missing-import]
-                from torchao.prototype.mx_formats.inference_workflow import (
-                    MXDynamicActivationMXWeightConfig,
-                )
-
-                # pyrefly: ignore [missing-import]
-                from torchao.quantization.quantize_.common import KernelPreference
-            except ImportError as e:
-                raise ImportError(
-                    "quantization='mxfp8' requires the 'quant' extra with torchao: "
-                    "pip install -e '.[quant]'. Note: torchao's MX formats are a "
-                    "prototype module path and may move between releases."
-                ) from e
-            if torch.cuda.is_available() and torch.cuda.get_device_capability(0) < (
-                10,
-                0,
-            ):
-                self._logger.warning(
-                    "quantization='mxfp8' on compute capability "
-                    f"{torch.cuda.get_device_capability(0)}: no native MX block-scaled "
-                    "tensor cores below Blackwell (sm_100+) — this emulates MXFP8 "
-                    "(memory savings only, expect slower than BF16)."
-                )
-            from transformers import TorchAoConfig
-
-            return TorchAoConfig(
-                quant_type=MXDynamicActivationMXWeightConfig(
-                    activation_dtype=torch.float8_e4m3fn,
-                    weight_dtype=torch.float8_e4m3fn,
-                    block_size=32,
-                    kernel_preference=KernelPreference.AUTO,
-                )
-            )
-        raise ValueError(
-            f"Unknown reranker quantization '{self.quantization}'. "
-            "Expected one of: none, fp8, 8bit, 4bit, mxfp8."
-        )
-
     def _ensure_loaded(self) -> None:
         """Lazy load model and tokenizer on first access."""
         if self._model is None:
@@ -587,10 +508,6 @@ class GenerativeReranker(BaseReranker):
                 )
             else:
                 self._autocast_dtype = torch.float32
-            # MX quantization requires a BF16 base dtype (matches the verified
-            # reference implementation's forced FP16->BF16 coercion).
-            if self.quantization == "mxfp8" and self.device == "cuda":
-                self._autocast_dtype = torch.bfloat16
 
             self._tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name, trust_remote_code=True
@@ -605,24 +522,16 @@ class GenerativeReranker(BaseReranker):
             # prompt exceeds max_length.
             self._tokenizer.truncation_side = "left"
 
-            quantization_config = self._build_quantization_config()
             load_kwargs = {
                 "torch_dtype": self._autocast_dtype,
                 "trust_remote_code": True,
             }
-            if quantization_config is not None:
-                load_kwargs["quantization_config"] = quantization_config
-                load_kwargs["device_map"] = {"": self.device}
-                self._model = AutoModelForCausalLM.from_pretrained(
-                    self.model_name, **load_kwargs
-                )
-            else:
-                self._model = AutoModelForCausalLM.from_pretrained(
-                    self.model_name, **load_kwargs
-                ).to(self.device)
+            self._model = AutoModelForCausalLM.from_pretrained(
+                self.model_name, **load_kwargs
+            ).to(self.device)
             self._logger.info(
                 f"Generative reranker loaded on {self.device} "
-                f"(dtype={self._autocast_dtype}, quantization={self.quantization})"
+                f"(dtype={self._autocast_dtype})"
             )
 
     @property
@@ -1135,7 +1044,6 @@ def create_reranker(
     model_name: str,
     device: str | None = None,
     batch_size: int = 16,
-    quantization: str = "none",
     instruction: str | None = None,
     doc_max_chars: int = 4000,
     listwise_doc_max_chars: int = 1000,
@@ -1151,9 +1059,6 @@ def create_reranker(
         device: Device to run on ('cuda', 'cpu', or None for auto-detect)
         batch_size: Batch size for inference (NeuralReranker and GenerativeReranker;
             JinaRerankerV3 does its own internal batching)
-        quantization: Quantization mode, only used for GenerativeReranker — one of
-            "none" (default), "fp8", "8bit", "4bit", "mxfp8". See GenerativeReranker
-            for details.
         instruction: Only used for GenerativeReranker — see its docstring.
         doc_max_chars: Only used for GenerativeReranker (pointwise — cost scales
             with batch_size, so it can afford a larger per-document budget).
@@ -1183,7 +1088,6 @@ def create_reranker(
             device,
             instruction=instruction,
             batch_size=batch_size,
-            quantization=quantization,
             doc_max_chars=doc_max_chars,
         )
     if model_name in JINA_V3_RERANKERS:

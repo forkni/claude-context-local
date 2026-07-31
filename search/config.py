@@ -256,7 +256,7 @@ class IntentConfig:
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (12 fields)."""
+    """Neural reranker settings (11 fields)."""
 
     enabled: bool = True  # Enabled by default (Quality First)
     model_name: str = (
@@ -274,12 +274,6 @@ class RerankerConfig:
     # passes; run ONE listwise pass over the final merged pool (hop-1 + multi-hop
     # + ego expansion) at the tail of HybridSearcher.search(). Trade-off: multi-hop
     # expansion seeds degrade from neural-reranked to RRF-fusion order.
-    quantization: str = field(
-        default="none",
-        metadata={"choices": ("none", "fp8", "8bit", "4bit", "mxfp8")},
-    )  # GenerativeReranker only (Qwen3-Reranker family). "fp8"/"8bit"/"4bit" need the
-    # optional [quant] extra (bitsandbytes/accelerate); "mxfp8" additionally needs
-    # torchao and is experimental — emulated (no speed win) below Blackwell (sm_100+).
     instruction: str = ""  # GenerativeReranker only. Empty means "use the
     # model's built-in code-retrieval default" (see GenerativeReranker docstring).
     doc_max_chars: int = 4000  # GenerativeReranker only (pointwise — cost scales
@@ -806,7 +800,6 @@ class SearchConfig:
         "reranker_batch_size": ("reranker", "batch_size"),
         "reranker_dedupe_split_blocks": ("reranker", "dedupe_split_blocks"),
         "reranker_single_pass": ("reranker", "single_pass"),
-        "reranker_quantization": ("reranker", "quantization"),
         "reranker_instruction": ("reranker", "instruction"),
         "reranker_doc_max_chars": ("reranker", "doc_max_chars"),
         "reranker_listwise_doc_max_chars": ("reranker", "listwise_doc_max_chars"),
@@ -1202,7 +1195,6 @@ class SearchConfigManager:
                 "reranker_single_pass",
                 self._bool_from_env,
             ),
-            "CLAUDE_RERANKER_QUANTIZATION": ("reranker_quantization", str),
             "CLAUDE_RERANKER_INSTRUCTION": ("reranker_instruction", str),
             "CLAUDE_RERANKER_DOC_MAX_CHARS": ("reranker_doc_max_chars", int),
             "CLAUDE_RERANKER_LISTWISE_DOC_MAX_CHARS": (

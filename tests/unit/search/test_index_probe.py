@@ -153,9 +153,8 @@ class TestHardwareRules:
         assert result.overrides["embedding"]["batch_size"] == 256
         assert result.overrides["performance"]["dynamic_batch_max"] == 512
         assert result.overrides["reranker"]["batch_size"] == 32
-        # Reranker stays enabled and unquantized on a workstation GPU.
+        # Reranker stays enabled on a workstation GPU.
         assert "enabled" not in result.overrides.get("reranker", {})
-        assert "quantization" not in result.overrides.get("reranker", {})
         assert "vram_limit_fraction" not in result.overrides.get("performance", {})
 
     def test_desktop_band(self):
@@ -171,7 +170,6 @@ class TestHardwareRules:
         result = run_rules(m, "pre_chunking")
         assert result.overrides["embedding"]["batch_size"] == 64
         assert result.overrides["performance"]["dynamic_batch_max"] == 192
-        assert result.overrides["reranker"]["quantization"] == "8bit"
         assert result.overrides["reranker"]["batch_size"] == 8
         assert "enabled" not in result.overrides["reranker"]
 

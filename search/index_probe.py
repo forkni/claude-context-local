@@ -313,17 +313,6 @@ RULES: tuple[ProbeRule, ...] = (
         reason_fn=_reranker_below_floor_reason,
     ),
     ProbeRule(
-        key="reranker.quantization",
-        kind="override",
-        stage="pre_chunking",
-        condition=_reranker_squeezed,
-        value_fn=lambda m: "8bit",
-        reason_fn=lambda m: (
-            f"vram_total={m.vram_total_gb:.1f}GB (laptop tier) -> 8bit "
-            "quantization (applies to GenerativeReranker models only)"
-        ),
-    ),
-    ProbeRule(
         key="reranker.batch_size",
         kind="override",
         stage="pre_chunking",
