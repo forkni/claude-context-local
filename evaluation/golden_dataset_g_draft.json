@@ -83,29 +83,25 @@
     },
     {
       "id": "QG04",
-      "query": "how are groups of related code discovered in the codebase and turned into searchable summary documents",
+      "query": "how are per-file summary documents generated for search",
       "category": "G",
       "split": "test",
       "intent": "GLOBAL",
       "expected_files": [
-        "graph/community_detector.py",
-        "graph/community_summarizer.py",
-        "search/community_stage.py"
+        "chunking/file_summarizer.py",
+        "search/summary_stage.py"
       ],
       "expected": [
-        "graph/community_detector.py:method:CommunityDetector.detect_communities",
-        "graph/community_summarizer.py:function:generate_community_summaries",
-        "search/community_stage.py:method:CommunityStage.run"
+        "chunking/file_summarizer.py:function:generate_file_summaries",
+        "search/summary_stage.py:method:SummaryStage.generate_module_summaries"
       ],
       "expected_primary": [
-        "graph/community_detector.py:method:CommunityDetector.detect_communities",
-        "graph/community_summarizer.py:function:generate_community_summaries",
-        "search/community_stage.py:method:CommunityStage.run"
+        "chunking/file_summarizer.py:function:generate_file_summaries",
+        "search/summary_stage.py:method:SummaryStage.generate_module_summaries"
       ],
       "relevance_grades": {
-        "graph/community_detector.py:method:CommunityDetector.detect_communities": 3,
-        "graph/community_summarizer.py:function:generate_community_summaries": 3,
-        "search/community_stage.py:method:CommunityStage.run": 3
+        "chunking/file_summarizer.py:function:generate_file_summaries": 3,
+        "search/summary_stage.py:method:SummaryStage.generate_module_summaries": 3
       }
     },
     {
@@ -311,23 +307,22 @@
     },
     {
       "id": "QG13",
-      "query": "when only part of the codebase is reindexed, how do the community groupings and their summaries stay up to date",
+      "query": "when only part of the codebase is reindexed, how do file-level module summaries stay up to date",
       "category": "G",
       "split": "test",
       "intent": "GLOBAL",
       "expected_files": [
-        "search/community_refresh_stage.py",
         "search/incremental_indexer.py",
-        "graph/graph_storage.py"
+        "chunking/file_summarizer.py"
       ],
       "expected": [
-        "search/community_refresh_stage.py:method:CommunityRefreshStage.run"
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks"
       ],
       "expected_primary": [
-        "search/community_refresh_stage.py:method:CommunityRefreshStage.run"
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks"
       ],
       "relevance_grades": {
-        "search/community_refresh_stage.py:method:CommunityRefreshStage.run": 3
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks": 3
       }
     },
     {
