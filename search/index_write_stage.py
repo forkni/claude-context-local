@@ -65,21 +65,12 @@ class IndexWriteStage:
         snapshot_manager: SnapshotManager,
         build_metadata_fn: Callable[..., dict[str, Any]],
         clear_gpu_fn: Callable[[str], None],
-        *,
-        post_injection_fn: Callable[[list[CodeChunk], str], int] | None = None,
     ) -> None:
         self._embedder = embedder
         self._indexer = indexer
         self._snapshot_manager = snapshot_manager
         self._build_metadata = build_metadata_fn
         self._clear_gpu = clear_gpu_fn
-        # Optional: community detection on the resolved graph, run between
-        # call-edge injection and metadata build. Keyword-only, defaults to
-        # None so run() no-ops — matching build_graph_fn/regenerate_ids_fn's
-        # injected-callable pattern in CommunityStage. See
-        # incremental_indexer._build_write_pipeline for the production wiring
-        # (CommunityStage.run_post_injection).
-        self._post_injection_fn = post_injection_fn
 
     def run(
         self,
@@ -95,7 +86,7 @@ class IndexWriteStage:
         """Embed, index, snapshot, BM25-sync, and GPU-clear for a full index pass.
 
         Args:
-            all_chunks: Final chunk list after community remerge and summary injection.
+            all_chunks: Final chunk list after summary injection.
             project_name: Name used to key the snapshot and embedding metadata.
             dag: Merkle DAG built during this index pass.
             all_files: All files discovered by the DAG walker.
@@ -167,22 +158,7 @@ class IndexWriteStage:
         if project_path:
             injection_stats = self._inject_call_edges(project_path)
 
-        # Detect communities on the now-fully-resolved graph and index their
-        # summaries. Must run after _inject_call_edges (the graph carries
-        # every pyan/libcst/LSP-resolved edge, not just the AST-derived
-        # subset available before embedding) and before _build_metadata (so
-        # total_chunks below reflects any summaries added). A no-op when
-        # post_injection_fn is None — community detection disabled, or a
-        # caller (e.g. most of this file's unit tests) that never wired one
-        # in.
-        if self._post_injection_fn is not None:
-            try:
-                chunks_added += self._post_injection_fn(all_chunks, project_name)
-            except Exception as e:  # noqa: BLE001 - resilience: optional post-injection community stage, continue without it
-                logger.error(f"[COMMUNITY_DETECT] post_injection_fn failed: {e}")
-                logger.error(traceback.format_exc())
-
-        # Save snapshot (reset cumulative_changed_files on full index pass)
+        # Save snapshot
         metadata = self._build_metadata(
             project_name=project_name,
             all_files=all_files,
@@ -190,7 +166,6 @@ class IndexWriteStage:
             total_chunks=chunks_added,
             is_full=True,
             repo_profile=repo_profile,
-            cumulative_changed_files=0,
         )
         self._snapshot_manager.save_snapshot(dag, metadata)
 
@@ -236,8 +211,8 @@ class IndexWriteStage:
         ``Mock``.
 
         Thin wrapper over ``embeddings.chunk_cache.resolve_chunk_cache`` —
-        shared with the incremental and community-refresh embed sites so all
-        three resolve a cache the same fail-soft way.
+        shared with the incremental embed site so both resolve a cache the
+        same fail-soft way.
         """
         return resolve_chunk_cache(self._indexer.storage_dir, self._embedder)
 
