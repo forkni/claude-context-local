@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Community-detection/summarization/remerge subsystem** (ADR-0015) — deleted
+  `graph/community_detector.py`, `graph/community_summarizer.py`, `search/community_stage.py`,
+  and `search/community_refresh_stage.py`; removed community-map persistence from
+  `graph/graph_storage.py`, the cross-community ego-graph penalty, `subgraph_communities`
+  annotation, the orphaned `_greedy_merge_small_chunks` primitive, and all `community`/
+  `enable_community_*` fields from chunking and index-probe auto-tune config. Module-summary
+  and synthetic-chunk demotion machinery (~194 `module` chunks) and the ablation harness/metrics
+  used to gate ADR-0015 are unaffected and remain in place. `chunk_type="community"` no longer
+  exists; existing indices carrying legacy `*_communities.json` files are unaffected on load and
+  are purged on next full reindex.
+
 ---
 
 ## [0.22.0] - 2026-07-27
