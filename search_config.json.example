@@ -44,8 +44,6 @@
     "enable_dynamic_batch_size": true,
     "dynamic_batch_min": 16,
     "dynamic_batch_max": 64,
-    "use_onnx": false,
-    "onnx_gpu_mem_limit": true,
     "enable_auto_reindex": true,
     "max_index_age_minutes": 30.0,
     "enable_project_overrides": true

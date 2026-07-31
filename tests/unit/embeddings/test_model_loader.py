@@ -48,8 +48,6 @@ class TestModelLoader:
             cache_manager=cache_manager,
             model_config_getter=lambda: model_config_basic,
         )
-        # Keep tests isolated from live search_config.json (use_onnx=True)
-        loader._should_use_onnx = lambda: False
         return loader
 
     def test_initialization(self, temp_cache_dir, cache_manager, model_config_basic):
@@ -491,7 +489,6 @@ class TestMeasureActivationPerItem:
             cache_manager=cache,
             model_config_getter=lambda: {},
         )
-        loader._should_use_onnx = lambda: False
         return loader
 
     def test_cpu_device_returns_zero(self, tmp_path):
@@ -518,33 +515,8 @@ class TestMeasureActivationPerItem:
             mock_torch.cuda.max_memory_allocated.return_value = 150_000_000
 
             result = loader._measure_activation_per_item(
-                mock_model, device, batch_size=2, is_onnx=False
+                mock_model, device, batch_size=2
             )
 
         assert result > 0.0, f"Expected activation measurement for device={device!r}"
-        mock_model.encode.assert_called_once()
-
-    @pytest.mark.parametrize("device", ["cuda", "cuda:0", "cuda:1"])
-    def test_onnx_path_accepts_cuda_index_without_torch(self, tmp_path, device):
-        """ONNX path uses NVML; must not short-circuit when torch is unavailable."""
-        loader = self._make_loader(tmp_path)
-        mock_model = Mock()
-        mock_model.encode.return_value = None
-
-        nvml_values = iter([100_000_000, 160_000_000])
-
-        with (
-            patch("embeddings.model_loader.torch", None),
-            patch(
-                "embeddings.model_loader._get_nvml_used_bytes",
-                side_effect=lambda d: next(nvml_values),
-            ),
-        ):
-            result = loader._measure_activation_per_item(
-                mock_model, device, batch_size=2, is_onnx=True
-            )
-
-        assert result > 0.0, (
-            f"ONNX activation measurement skipped for device={device!r}"
-        )
         mock_model.encode.assert_called_once()

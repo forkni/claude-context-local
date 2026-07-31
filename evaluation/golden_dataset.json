@@ -39,6 +39,12 @@
     "recommended_k": 7,
     "changelog": [
       {
+        "date": "2026-07-31",
+        "changes": [
+          "Q19: removed embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel.encode from expected and relevance_grades (grade 2) — the ONNX embedding backend was deleted wholesale in the ONNX dormant-code removal; no functional equivalent exists to retarget to."
+        ]
+      },
+      {
         "date": "2026-07-28",
         "changes": [
           "Added anchor_chunk_id to the 9 category-F queries (Q70, Q71, Q93-Q99): the normalized ID of the chunk named after 'similar to' in the query text (the grade-1 relevance_grades entry whose trailing symbol matches the named symbol; unique for all 9, and never in expected/expected_primary, so ranked scoring is unchanged). Enables the --f-via-similar benchmark view scoring F via HybridSearcher.find_similar_to_chunk(anchor, rerank=False) instead of search_code; official aggregates keep search_code. Anchors are validated against the live index by scripts/benchmark/audit_golden_dataset.py."
@@ -311,8 +317,7 @@
       "expected": [
         "embeddings/embedder.py:class:CodeEmbedder",
         "embeddings/embedder.py:method:CodeEmbedder.embed_chunks",
-        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk",
-        "embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel.encode"
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk"
       ],
       "expected_primary": [
         "embeddings/embedder.py:method:CodeEmbedder.embed_chunks",
@@ -323,8 +328,7 @@
         "embeddings/__init__.py:module": 1,
         "search/hybrid_searcher.py:method:HybridSearcher.index_documents": 1,
         "embeddings/embedder.py:method:CodeEmbedder.embed_chunks": 3,
-        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk": 3,
-        "embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel.encode": 2
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk": 3
       }
     },
     {

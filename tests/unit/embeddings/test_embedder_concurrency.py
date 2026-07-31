@@ -26,9 +26,6 @@ def _make_embedder_with_mock_loader() -> tuple[CodeEmbedder, MagicMock]:
     fake_loader.model_vram_usage = {}
 
     with (
-        patch(
-            "embeddings.model_loader.ModelLoader._should_use_onnx", return_value=False
-        ),
         patch("embeddings.embedder.ModelLoader") as mock_loader,
         patch("embeddings.embedder.ModelCacheManager"),
         patch("embeddings.embedder.set_vram_limit"),

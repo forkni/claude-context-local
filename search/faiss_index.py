@@ -392,7 +392,7 @@ class FaissVectorIndex:
         # Normalize embeddings for cosine similarity.
         # L2-normalization invariant: all vectors in the index are unit-norm;
         # search() also normalizes the query before scoring, making IndexFlatIP
-        # equivalent to cosine similarity. Both ONNX and PyTorch embeddings
+        # equivalent to cosine similarity. PyTorch embeddings
         # reach this point already approximately unit-norm; the explicit
         # normalize_L2 here is the canonical source of that guarantee (#33).
         # Copy first — normalize_L2 is in-place, and callers must not see

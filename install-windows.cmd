@@ -120,8 +120,6 @@ echo.
 echo === Update/Repair Installation ===
 call :setup_environment
 echo [INFO] Updating all dependencies...
-REM [onnx] extra temporarily removed (2026-07-03): optimum caps transformers<4.52,
-REM incompatible with the transformers>=5.3.0 security upgrade. See pyproject.toml.
 .venv\Scripts\uv.exe sync
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Update failed
@@ -329,15 +327,12 @@ goto :eof
 :install_cuda_mode
 call :setup_environment
 echo [INFO] CUDA detected. PyTorch cu128 will be installed via uv sync...
-REM ONNX extra unavailable (2026-07-03) -- see pyproject.toml [onnx] comment
-set "INSTALL_ONNX=0"
 call :install_remaining_deps
 goto :eof
 
 :install_cpu_mode
 call :setup_environment
 echo [INFO] CPU-only mode. PyTorch CPU build will be installed via uv sync...
-set "INSTALL_ONNX=0"
 call :install_remaining_deps
 goto :eof
 
@@ -411,8 +406,6 @@ REM EmbeddingGemma is now supported in transformers 5.0+ (no preview needed)
 
 
 
-REM [onnx] extra temporarily removed (2026-07-03): optimum caps transformers<4.52,
-REM incompatible with the transformers>=5.3.0 security upgrade. See pyproject.toml.
 echo [INFO] Installing all project dependencies...
 ".venv\Scripts\uv.exe" sync
 if %ERRORLEVEL% neq 0 (
@@ -462,12 +455,6 @@ echo [INFO] Testing hybrid search dependencies...
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Hybrid search dependencies test failed
     goto :eof
-)
-
-echo [INFO] Testing ONNX/optimum availability ^(optional, currently unsupported^)...
-".venv\Scripts\python.exe" -c "import optimum.onnxruntime, onnxruntime; print('[OK] ONNX runtime + optimum available')" 2>nul
-if %ERRORLEVEL% neq 0 (
-    echo [INFO] ONNX/optimum not installed ^(extra temporarily removed -- optimum is incompatible with transformers 5.x^)
 )
 
 echo [INFO] Testing MCP server...

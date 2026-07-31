@@ -8,7 +8,7 @@
     "relevance_scale": "0=not_relevant, 1=marginal, 2=relevant, 3=highly_relevant",
     "expected": "chunk IDs with label >= 2 (used for Recall@k, NDCG@k)",
     "expected_primary": "chunk IDs with label == 3 (used for MRR)",
-    "total_queries": 110,
+    "total_queries": 108,
     "categories": {
       "A": "Small Function Discovery",
       "B": "Sibling Context (paired operations)",
@@ -18,8 +18,8 @@
       "F": "Similarity Queries (use find_similar_code to find near-duplicate implementations)"
     },
     "splits": {
-      "train": 62,
-      "val": 23,
+      "train": 61,
+      "val": 22,
       "test": 25,
       "note": "Stratified by category: A=9/3/3, B=8/3/3, C=10/3/3, D=8/3/3, E=4/2/3, F=4/2/3. Category D excluded from run_sscg_benchmark.py by default (searcher cannot traverse call graph); include with --category D."
     },
@@ -38,6 +38,12 @@
     },
     "recommended_k": 7,
     "changelog": [
+      {
+        "date": "2026-07-31",
+        "changes": [
+          "Q19: removed embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel.encode from expected and relevance_grades (grade 2) — the ONNX embedding backend was deleted wholesale in the ONNX dormant-code removal; no functional equivalent exists to retarget to."
+        ]
+      },
       {
         "date": "2026-07-28",
         "changes": [
@@ -154,6 +160,10 @@
       {
         "date": "2026-07-26",
         "change": "Added 33 hard queries (Q100-Q133, Q130 dropped): distractor-heavy behavioral paraphrases targeting name-collision sets (save/load/search/rerank/clear/get_stats/remove_files). Graded via live search at k=10 (scripts/benchmark/grade_candidate_queries.py, 2 rounds); 8 queries have primary gold outside top-10, several outside the 30-50 candidate rerank pool. Splits stratified: A 16/5/5, B 2/1/1, C 1/1/1 (train/val/test)."
+      },
+      {
+        "date": "2026-07-31",
+        "change": "Removed Q109/Q110 (ONNX backend-selection and ONNX-conversion queries) as part of the ONNX dormant-code deletion: their gold targets (embeddings/model_loader.py:method:ModelLoader._should_use_onnx; embeddings/onnx_loader.py:method:ONNXModelLoader.convert_if_needed and friends) were deleted with no functional equivalent to retarget to. Also dropped the dead embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel.cleanup distractor (grade 1) from Q125's relevance_grades. Splits restratified: A 15/4/5 (was 16/5/5)."
       }
     ]
   },
@@ -315,8 +325,7 @@
       "expected": [
         "embeddings/embedder.py:class:CodeEmbedder",
         "embeddings/embedder.py:method:CodeEmbedder.embed_chunks",
-        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk",
-        "embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel.encode"
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk"
       ],
       "expected_primary": [
         "embeddings/embedder.py:method:CodeEmbedder.embed_chunks",
@@ -327,8 +336,7 @@
         "embeddings/__init__.py:module": 1,
         "search/hybrid_searcher.py:method:HybridSearcher.index_documents": 1,
         "embeddings/embedder.py:method:CodeEmbedder.embed_chunks": 3,
-        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk": 3,
-        "embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel.encode": 2
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk": 3
       }
     },
     {
@@ -2150,43 +2158,6 @@
       }
     },
     {
-      "id": "Q109",
-      "query": "choose the accelerated inference backend when the current platform and model support it",
-      "category": "A",
-      "split": "train",
-      "expected": [
-        "embeddings/model_loader.py:method:ModelLoader._should_use_onnx"
-      ],
-      "expected_primary": [
-        "embeddings/model_loader.py:method:ModelLoader._should_use_onnx"
-      ],
-      "relevance_grades": {
-        "embeddings/model_loader.py:method:ModelLoader._should_use_onnx": 3,
-        "embeddings/model_loader.py:method:ModelLoader._load_onnx": 1,
-        "tools/convert_onnx.py:function:_cuda_available": 1
-      }
-    },
-    {
-      "id": "Q110",
-      "query": "export the model to the accelerated runtime format the first time it is requested",
-      "category": "A",
-      "split": "val",
-      "expected": [
-        "embeddings/onnx_loader.py:method:ONNXModelLoader.convert_if_needed",
-        "embeddings/onnx_loader.py:method:_convert_model",
-        "embeddings/onnx_loader.py:class:ONNXModelLoader"
-      ],
-      "expected_primary": [
-        "embeddings/onnx_loader.py:method:ONNXModelLoader.convert_if_needed"
-      ],
-      "relevance_grades": {
-        "embeddings/onnx_loader.py:method:ONNXModelLoader.convert_if_needed": 3,
-        "embeddings/onnx_loader.py:method:_convert_model": 2,
-        "embeddings/onnx_loader.py:class:ONNXModelLoader": 2,
-        "tools/convert_onnx.py:method:convert": 1
-      }
-    },
-    {
       "id": "Q111",
       "query": "bring the sparse and dense sides back into agreement when one holds fewer documents",
       "category": "A",
@@ -2496,8 +2467,7 @@
         "search/gpu_monitor.py:function:release_gpu_memory": 3,
         "mcp_server/tools/index_handlers.py:function:_release_gpu_memory": 2,
         "search/incremental_indexer.py:method:IncrementalIndexer._clear_gpu_cache": 2,
-        "embeddings/embedder.py:method:CodeEmbedder.cleanup": 2,
-        "embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel.cleanup": 1
+        "embeddings/embedder.py:method:CodeEmbedder.cleanup": 2
       }
     },
     {

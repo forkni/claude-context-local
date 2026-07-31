@@ -744,7 +744,7 @@ under 1s.
 
 **Cache invalidation**: The cache header records the embedding model name, vector dimension, and a
 provenance string (effective device/dtype/backend, e.g. `v1|device=cuda|dtype=fp16|backend=pytorch`).
-Changing the embedding model, or flipping `enable_fp16`, `prefer_bf16`, or `use_onnx` in
+Changing the embedding model, or flipping `enable_fp16` or `prefer_bf16` in
 `PerformanceConfig`, changes this provenance and invalidates the entire cache — the next reindex
 cold-starts (full re-embed) and then re-populates the cache under the new numerics. This is
 expected, one-time behavior, not a bug.

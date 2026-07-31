@@ -74,17 +74,6 @@ GRADES: dict[str, dict[str, int]] = {
         "search/centrality_ranker.py:class:CentralityRanker": 2,
         "search/centrality_ranker.py:method:CentralityRanker.annotate": 1,
     },
-    "Q109": {
-        "embeddings/model_loader.py:method:ModelLoader._should_use_onnx": 3,
-        "embeddings/model_loader.py:method:ModelLoader._load_onnx": 1,
-        "tools/convert_onnx.py:function:_cuda_available": 1,
-    },
-    "Q110": {
-        "embeddings/onnx_loader.py:method:ONNXModelLoader.convert_if_needed": 3,
-        "embeddings/onnx_loader.py:method:_convert_model": 2,
-        "embeddings/onnx_loader.py:class:ONNXModelLoader": 2,
-        "tools/convert_onnx.py:method:convert": 1,
-    },
     "Q111": {
         "search/index_sync.py:method:IndexSynchronizer.resync_bm25_from_dense": 3,
         "search/hybrid_searcher.py:method:HybridSearcher.resync_bm25_from_dense": 2,
@@ -181,7 +170,6 @@ GRADES: dict[str, dict[str, int]] = {
         "mcp_server/tools/index_handlers.py:function:_release_gpu_memory": 2,
         "search/incremental_indexer.py:method:IncrementalIndexer._clear_gpu_cache": 2,
         "embeddings/embedder.py:method:CodeEmbedder.cleanup": 2,
-        "embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel.cleanup": 1,
     },
     "Q126": {
         "search/intent_classifier.py:method:IntentClassifier.classify": 3,
@@ -231,14 +219,13 @@ GRADES: dict[str, dict[str, int]] = {
 }
 
 SPLITS: dict[str, str] = {
-    # A: train 16 / val 5 / test 5
+    # A: train 15 / val 4 / test 5
     "Q100": "train",
     "Q103": "train",
     "Q105": "train",
     "Q106": "train",
     "Q107": "train",
     "Q108": "train",
-    "Q109": "train",
     "Q111": "train",
     "Q114": "train",
     "Q115": "train",
@@ -249,7 +236,6 @@ SPLITS: dict[str, str] = {
     "Q128": "train",
     "Q131": "train",
     "Q102": "val",
-    "Q110": "val",
     "Q116": "val",
     "Q117": "val",
     "Q129": "val",
@@ -283,10 +269,12 @@ def main() -> None:
         sys.exit(
             f"Refusing to merge: IDs already present in canonical: {sorted(clash)}"
         )
-    if set(GRADES) != set(SPLITS) or set(GRADES) != set(candidates):
+    # candidates may also hold ungraded drafts (e.g. Category-G QG01-QG14) awaiting
+    # promotion via grade_candidate_queries.py; only GRADES's own IDs must resolve.
+    if set(GRADES) != set(SPLITS) or not set(GRADES) <= set(candidates):
         sys.exit(
             "ID mismatch between GRADES/SPLITS/candidates: "
-            f"{set(GRADES) ^ set(SPLITS)} | {set(GRADES) ^ set(candidates)}"
+            f"{set(GRADES) ^ set(SPLITS)} | {set(GRADES) - set(candidates)}"
         )
 
     for qid in sorted(GRADES):
@@ -327,6 +315,22 @@ def main() -> None:
                 "2 rounds); 8 queries have primary gold outside top-10, several "
                 "outside the 30-50 candidate rerank pool. Splits stratified: "
                 "A 16/5/5, B 2/1/1, C 1/1/1 (train/val/test)."
+            ),
+        }
+    )
+    meta.setdefault("changelog", []).append(
+        {
+            "date": "2026-07-31",
+            "change": (
+                "Removed Q109/Q110 (ONNX backend-selection and ONNX-conversion "
+                "queries) as part of the ONNX dormant-code deletion: their gold "
+                "targets (embeddings/model_loader.py:method:ModelLoader."
+                "_should_use_onnx; embeddings/onnx_loader.py:method:"
+                "ONNXModelLoader.convert_if_needed and friends) were deleted "
+                "with no functional equivalent to retarget to. Also dropped the "
+                "dead embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel."
+                "cleanup distractor (grade 1) from Q125's relevance_grades. "
+                "Splits restratified: A 15/4/5 (was 16/5/5)."
             ),
         }
     )

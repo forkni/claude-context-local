@@ -47,38 +47,6 @@ from utils.timing import timed
 # Empirically derived from OOM analysis: 2.67GB fragmentation / 14.74GB allocated = 18% overhead
 FRAGMENTATION_OVERHEAD = 0.82  # 1.0 - 0.18 = 82% usable VRAM, 18% fragmentation
 
-# ONNX activation cost FLOORS — used as a safety floor for ONNX Runtime models
-# whose runtime warmup / architecture-formula estimates have proven too optimistic
-# in practice (BFCArena single-op peaks blow past per-item × batch budget).
-#
-# These values were empirically calibrated under conditions that did NOT trigger
-# ORT BFCArena OOM on an 8GB RTX laptop. They act as a lower bound: the final
-# per-item cost is `max(measured_or_estimated, override_floor)`. New ONNX models
-# without a floor entry continue to use measured/estimated values.
-#
-# DO NOT remove without re-validating against a force-reindex run on a memory-
-# constrained GPU — these are the values that prevent OOM on first-try batches.
-MODEL_ACTIVATION_COST_OVERRIDES_ONNX: dict[str, float] = {
-    # BGE-M3: ORT measured 4.5GB activations at batch=16 → 0.28 GB/item.
-    # Without floor, runtime warmup (batch=4) reports 0.053 GB/item → batch=16 OOMs
-    # (single Add op wants 941 MB at batch=16 vs 5 MB free).
-    "BAAI/bge-m3": 0.28,
-}
-
-
-def _get_onnx_cost_floor(model_name: str | None) -> float:
-    """Look up the ONNX activation cost floor for a model (0.0 if no floor)."""
-    if not model_name:
-        return 0.0
-    if model_name in MODEL_ACTIVATION_COST_OVERRIDES_ONNX:
-        return MODEL_ACTIVATION_COST_OVERRIDES_ONNX[model_name]
-    # Fuzzy match for local paths (e.g. "/cache/BAAI/bge-m3")
-    for key, cost in MODEL_ACTIVATION_COST_OVERRIDES_ONNX.items():
-        if model_name.endswith(key) or key in model_name:
-            return cost
-    return 0.0
-
-
 # Model types that use gated MLP (SwiGLU/GeGLU): gate_proj + up_proj + down_proj.
 # These use 2× intermediate_size memory vs standard FFN (one up + down projection).
 _GATED_MLP_MODEL_TYPES = frozenset(
@@ -107,7 +75,6 @@ _PYTORCH_OOM_STRINGS = ("cuda out of memory",)
 
 def estimate_activation_gb_from_config(
     config: Any,
-    is_onnx: bool = False,
 ) -> float:
     """Estimate activation memory per batch item from HuggingFace model config.
 
@@ -124,15 +91,13 @@ def estimate_activation_gb_from_config(
                   = (2·hidden +   intermediate) · dtype_bytes   [standard FFN]
         peak_per_token = max(attn_peak, mlp_peak) + hidden·dtype_bytes
 
-    Validated against 3 of 4 registered models with SAFETY=15, T_eff=1024
+    Validated against registered models with SAFETY=15, T_eff=1024
     (F2LLM-v2-0.6B not yet profiled):
         EmbeddingGemma-300M:  0.13 GB  (observed ~0.04 GB)   safe
-        BGE-M3 (ONNX):        0.41 GB  (observed  0.28 GB)   safe
         Qwen3-Embed-0.6B:     0.26 GB  (observed  0.27 GB)   safe
 
     Args:
         config: HuggingFace PretrainedConfig (has .hidden_size, etc.)
-        is_onnx: True for ONNX Runtime backend (applies 2× overhead factor)
 
     Returns:
         Conservative activation memory per batch item in GB (minimum 0.04 GB)
@@ -170,19 +135,15 @@ def estimate_activation_gb_from_config(
     peak_per_token = max(attn_peak, mlp_peak) + hidden * dtype_bytes
 
     # Effective sequence length: code chunks regularly reach 1500–3000 tokens.
-    # Set to 2048 — matches the explicit max_length cap in the ONNX tokenizer
-    # (onnx_wrapper.py) so the batch-sizer and the tokenizer are consistent (#46).
-    # Using model.max_ctx (up to 32K) would massively over-estimate.
+    # Set to 2048 as a conservative cap (#46) — using model.max_ctx (up to 32K)
+    # would massively over-estimate.
     t_eff = 2048
 
-    # Safety multiplier: accounts for PyTorch/ORT allocator overhead, GEMM workspace
+    # Safety multiplier: accounts for PyTorch allocator overhead, GEMM workspace
     # buffers, and block retention. Calibrated to be ≥ empirically observed costs.
     safety = 15
-    # ORT CUDAExecutionProvider: pre-plans memory arenas for entire graph + no
-    # Flash-Attention (materializes T×T attention matrix) ≈ 2× PyTorch overhead.
-    onnx_factor = 2.0 if is_onnx else 1.0
 
-    gb_per_item = peak_per_token * t_eff * safety * onnx_factor / (1024**3)
+    gb_per_item = peak_per_token * t_eff * safety / (1024**3)
     return max(gb_per_item, 0.04)  # 40 MB floor
 
 
@@ -238,9 +199,7 @@ def compute_effective_vram_cap(
     """Compute effective VRAM cap accounting for other-process allocations.
 
     Pure function — reads current GPU state, does not set any limits or produce
-    any side effects.  Call this from both the PyTorch-cap path
-    (``set_vram_limit``) and the ORT-cap path (``onnx_loader.py``) to ensure
-    both backends use identical budgets.
+    any side effects.  Used by the PyTorch-cap path (``set_vram_limit``).
 
     Formula::
 
@@ -261,7 +220,7 @@ def compute_effective_vram_cap(
         or ``None`` if CUDA is unavailable or measurement fails.
 
         - *effective_fraction* — value for ``set_per_process_memory_fraction``
-        - *cap_bytes*          — value for ORT ``gpu_mem_limit`` provider option
+        - *cap_bytes*          — cap in bytes (diagnostic)
         - *free_gb / us_gb / other_gb / headroom_gb* — diagnostic values for logs
     """
     if not torch or not torch.cuda.is_available():
@@ -309,13 +268,11 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
 
     **Note on `allow_ram_fallback`**: when True in config, this function
     returns without applying any cap — the PyTorch allocator is uncapped and
-    the OS may spill to shared RAM.  The flag does *not* affect the ORT
-    ``gpu_mem_limit`` cap (set in ``embeddings/onnx_loader.py``), which is
-    always-on when ``onnx_gpu_mem_limit=true``.
+    the OS may spill to shared RAM.
 
-    **ORT / FAISS**: ``set_per_process_memory_fraction`` only governs the
-    PyTorch CUDA allocator.  ORT's ``CUDAExecutionProvider`` and FAISS GPU
-    indexes use their own allocators and are not constrained here.
+    **FAISS**: ``set_per_process_memory_fraction`` only governs the PyTorch
+    CUDA allocator.  FAISS GPU indexes use their own allocator and are not
+    constrained here.
 
     Args:
         fraction: Requested fraction of dedicated VRAM (default: 0.90 = 90%).
@@ -387,8 +344,6 @@ def calculate_optimal_batch_size(
     model_vram_gb: float = 0.0,
     model_name: str | None = None,
     activation_gb_per_item: float = 0.0,
-    ort_cap_gb: float = 0.0,
-    is_onnx: bool = False,
 ) -> int:
     """Calculate optimal batch size from architecture-derived activation memory cost.
 
@@ -407,18 +362,11 @@ def calculate_optimal_batch_size(
         model_name: Model identifier (used only for logging)
         activation_gb_per_item: Pre-computed activation cost per batch item in GB.
             Pass 0.0 to signal "unknown" — a 40 MB floor will be used.
-        is_onnx: True when the model is served by ONNX Runtime. Enables tighter
-            VRAM-aware caps to account for BFCArena contiguous single-op peaks
-            that do not scale linearly with batch size.
 
     Returns:
         Batch size clamped to [min_batch, max_batch]
 
     Examples:
-        >>> # RTX 3070 (8GB), BGE-M3, 0.28 GB/item measured
-        >>> calculate_optimal_batch_size(activation_gb_per_item=0.28, model_vram_gb=1.07)
-        16  # ~(4GB free × 0.8 × 0.82) / 0.28
-
         >>> # RTX 4090 (24GB), Qwen3-0.6B, 0.27 GB/item measured
         >>> calculate_optimal_batch_size(activation_gb_per_item=0.27, model_vram_gb=1.1)
         53  # ~(16GB free × 0.8 × 0.82) / 0.27
@@ -434,15 +382,6 @@ def calculate_optimal_batch_size(
 
         # Use free memory — model weights are already loaded so they're excluded
         available_gb = free_gb
-
-        # For ONNX backend: constrain to the ORT arena's remaining activation budget.
-        # ORT's CUDAExecutionProvider has a hard gpu_mem_limit; the model weights
-        # already consume model_vram_gb of that cap.  Using system-wide free_gb
-        # would overestimate — ORT cannot exceed its cap regardless of system free.
-        if ort_cap_gb > 0.0:
-            ort_remaining_gb = max(0.0, ort_cap_gb - model_vram_gb)
-            if ort_remaining_gb < available_gb:
-                available_gb = ort_remaining_gb
 
         # Apply fragmentation factor: PyTorch caching allocator reserves ~18% extra
         # Validated from OOM analysis: 2.67GB fragmentation / 14.74GB allocated = 18%
@@ -468,37 +407,17 @@ def calculate_optimal_batch_size(
         elif free_gb < 6:
             max_batch = min(max_batch, 16)
 
-        # ONNX Runtime: BFCArena allocates large CONTIGUOUS buffers per single op
-        # (attention MatMul, residual Add). These peaks do NOT scale linearly with
-        # batch and have no Flash-Attention fallback, so the linear per-item budget
-        # over-predicts the safe batch under a small ORT arena.
-        # Keyed off available_gb (the ORT-clamped budget, not system free_gb).
-        # Calibrated from a batch=9 BFCArena OOM at available≈4.6 GB (safe batch was 4).
-        if is_onnx:
-            if available_gb < 3.5:
-                max_batch = min(max_batch, 2)
-            elif available_gb < 5.5:
-                max_batch = min(max_batch, 4)
-            elif available_gb < 8.0:
-                max_batch = min(max_batch, 8)
-
         # Clamp to safe bounds
         result = max(min_batch, min(optimal_batch, max_batch))
 
         logger = logging.getLogger(__name__)
-        ort_info = (
-            f", ORT cap: {ort_cap_gb:.1f}GB → remaining: {max(0.0, ort_cap_gb - model_vram_gb):.1f}GB"
-            if ort_cap_gb > 0.0
-            else ""
-        )
-        backend = "onnx" if is_onnx else "torch"
         logger.info(
             f"[DYNAMIC_BATCH] GPU: {free_gb:.1f}GB free / {total_gb:.1f}GB total, "
-            f"model: {model_vram_gb:.1f}GB ({model_name or 'unknown'}){ort_info}, "
+            f"model: {model_vram_gb:.1f}GB ({model_name or 'unknown'}), "
             f"available: {available_gb:.1f}GB → "
             f"target: {target_activation_gb:.1f}GB "
             f"({memory_fraction:.0%} × {FRAGMENTATION_OVERHEAD:.0%} frag), "
-            f"cost: {gb_per_item:.3f}GB/item [{backend}] → batch: {result} chunks"
+            f"cost: {gb_per_item:.3f}GB/item → batch: {result} chunks"
         )
 
         return result
@@ -602,7 +521,6 @@ class CodeEmbedder:
         )
         self.device = device
         self._model = None
-        self._is_onnx: bool = False
         self._logger = logging.getLogger(__name__)
         self._model_config = None
 
@@ -790,29 +708,10 @@ class CodeEmbedder:
         try:
             total_memory = torch.cuda.get_device_properties(0).total_memory
 
-            # Use getattr: tests that construct via __new__ (skipping __init__)
-            # don't set _is_onnx; treat that as False (PyTorch path).
-            if getattr(self, "_is_onnx", False):
-                # ONNX Runtime allocates outside PyTorch's caching allocator;
-                # torch.cuda.memory_allocated() misses ORT's BFCArena allocations.
-                # Use NVML device-wide used/total for an accurate reading (#56).
-                # PyTorch path stays on memory_allocated — it avoids the false 87%
-                # warnings that mem_get_info()-style device-wide reads cause there
-                # (reserved blocks inflate the figure even under light load).
-                from embeddings.model_loader import _get_nvml_used_bytes
-
-                used_bytes = _get_nvml_used_bytes("cuda:0")
-                if used_bytes > 0 and total_memory > 0:
-                    usage_pct = used_bytes / total_memory
-                else:
-                    # NVML unavailable — fall back to torch allocated (undercounts ORT)
-                    allocated = torch.cuda.memory_allocated(0)
-                    usage_pct = allocated / total_memory if total_memory > 0 else 0.0
-            else:
-                # PyTorch path: use allocated (not mem_get_info reserved) to avoid
-                # false 87% warnings from allocator-reserved but unused blocks.
-                allocated = torch.cuda.memory_allocated(0)
-                usage_pct = allocated / total_memory if total_memory > 0 else 0.0
+            # Use allocated (not mem_get_info reserved) to avoid false 87%
+            # warnings from allocator-reserved but unused blocks.
+            allocated = torch.cuda.memory_allocated(0)
+            usage_pct = allocated / total_memory if total_memory > 0 else 0.0
 
             should_warn = usage_pct > vram_warning_threshold
             should_abort = usage_pct > vram_abort_threshold
@@ -841,7 +740,6 @@ class CodeEmbedder:
     def _load_model(self) -> None:
         """Delegate to ModelLoader.load()."""
         self._model, self.device = self._model_loader.load()
-        self._is_onnx = hasattr(self._model, "ort_model")
         # Sync VRAM usage tracking from ModelLoader
         self._model_vram_usage.update(self._model_loader.model_vram_usage)
 
@@ -1402,47 +1300,22 @@ class CodeEmbedder:
                         model_vram_gb = model_vram_mb / 1024.0
 
                 # --- Architecture-derived activation cost per batch item ---
-                # Tier 1: runtime-measured cost stored by ModelLoader at load time.
-                # PyTorch only: that value is a torch peak-allocated delta — a true
-                # marginal per-item cost. For ONNX the loader can only measure an NVML
-                # delta, which captures ORT BFCArena arena growth (large contiguous
-                # buffers reserved up front) rather than the marginal cost per item; it
-                # over-reports by several× and, being larger than the calibrated floor,
-                # would silently defeat the Tier 3 floor guard below. So for ONNX skip
-                # the measured value and let the analytical estimate (Tier 2) and floor
-                # (Tier 3) govern — i.e. the cost becomes max(analytical, floor).
-                activation_gb_per_item = (
-                    0.0
-                    if self._is_onnx
-                    else getattr(self._model, "_activation_gb_per_item", 0.0)
+                # Tier 1: runtime-measured cost stored by ModelLoader at load time —
+                # a torch peak-allocated delta, i.e. a true marginal per-item cost.
+                activation_gb_per_item = getattr(
+                    self._model, "_activation_gb_per_item", 0.0
                 )
                 # Tier 2: derive from HuggingFace model config when measurement unavailable
                 if activation_gb_per_item <= 0.0:
                     hf_cfg = self._extract_hf_config()
                     if hf_cfg is not None:
                         activation_gb_per_item = estimate_activation_gb_from_config(
-                            hf_cfg, is_onnx=self._is_onnx
+                            hf_cfg
                         )
                         self._logger.info(
                             f"[DYNAMIC_BATCH] Activation cost estimated from model config: "
                             f"{activation_gb_per_item:.3f} GB/item"
                         )
-
-                # Tier 3: ONNX safety floor.  Runtime warmup at batch=4 linearly
-                # extrapolates per-item cost, but ORT BFCArena single-op peaks
-                # (e.g. attention MatMul, residual Add) do not scale linearly
-                # with batch and can blow past the per-item × batch budget.
-                # Apply an empirically-validated floor for known ONNX models.
-                if self._is_onnx:
-                    onnx_floor = _get_onnx_cost_floor(self.model_name)
-                    if onnx_floor > activation_gb_per_item:
-                        self._logger.info(
-                            f"[DYNAMIC_BATCH] Applying ONNX activation cost floor "
-                            f"for {self.model_name!r}: "
-                            f"{activation_gb_per_item:.3f} → {onnx_floor:.3f} GB/item "
-                            f"(prevents BFCArena OOM on first-try batch)"
-                        )
-                        activation_gb_per_item = onnx_floor
 
                 # Derive memory_fraction from vram_limit_fraction to maintain consistent safety margin
                 # Target ~81% of hard VRAM ceiling for batch sizing (0.8125 ratio)
@@ -1450,21 +1323,6 @@ class CodeEmbedder:
                 memory_fraction = max(
                     0.05, min(memory_fraction, 0.95)
                 )  # Clamp to safe range
-
-                # ORT cap: gpu_mem_limit is static (set at from_pretrained time), so
-                # computing it once here (not per-batch) is correct and sufficient.
-                ort_cap_gb = 0.0
-                if self._is_onnx:
-                    try:
-                        _cap_result = compute_effective_vram_cap(
-                            config.performance.vram_limit_fraction
-                        )
-                        if _cap_result is not None:
-                            ort_cap_gb = _cap_result[1] / 1024**3  # bytes → GB
-                    except Exception as _ort_err:  # noqa: BLE001 - resilience: ORT VRAM cap best-effort, skip on failure
-                        self._logger.debug(
-                            "Ignoring %s computing ORT cap", type(_ort_err).__name__
-                        )
 
                 batch_size = calculate_optimal_batch_size(
                     embedding_dim=config.embedding.dimension,
@@ -1474,8 +1332,6 @@ class CodeEmbedder:
                     model_vram_gb=model_vram_gb,
                     model_name=self.model_name,
                     activation_gb_per_item=activation_gb_per_item,
-                    ort_cap_gb=ort_cap_gb,
-                    is_onnx=self._is_onnx,
                 )
                 self._logger.info(
                     f"Using dynamic GPU-optimized batch size {batch_size} "
@@ -1506,10 +1362,7 @@ class CodeEmbedder:
         # heavily right-skewed (median ~845 chars, p90 ~3083, capped at 6000), so
         # an unsorted batch routinely pads short chunks out to a rare long one.
         # Sorting first means each batch's members are near-uniform length, so
-        # padding tracks real content instead of the corpus's long tail (#B1) —
-        # mirrors the ONNX path's per-call sort (onnx_wrapper.py#51), applied
-        # globally here since PyTorch batches are caller-sliced rather than
-        # handled inside one encode() call.
+        # padding tracks real content instead of the corpus's long tail (#B1).
         #
         # Descending order so the single largest batch (worst-case VRAM) runs
         # first — an OOM surfaces on batch 1, not after 100 successful batches.
@@ -1890,8 +1743,8 @@ class CodeEmbedder:
 
         model = self._model
         # sentence-transformers >=5 renamed get_sentence_embedding_dimension ->
-        # get_embedding_dimension. Prefer the new name; fall back for the ONNX
-        # wrapper and older ST versions that only expose the old name.
+        # get_embedding_dimension. Prefer the new name; fall back for
+        # pre-5.x sentence-transformers versions that only expose the old name.
         if hasattr(model, "get_embedding_dimension"):
             embedding_dimension = model.get_embedding_dimension()
         else:
@@ -1955,22 +1808,9 @@ class CodeEmbedder:
         Returns GPU memory allocated by the model in gigabytes.
         Used for dynamic batch size calculation to avoid using registry estimates.
 
-        For ONNX models: PyTorch's allocator reports 0 because ORT's
-        CUDAExecutionProvider allocates CUDA memory outside PyTorch. ModelLoader
-        stores the pynvml before/after delta on the wrapper as `_vram_gb` instead.
-
         Returns:
             Model VRAM usage in GB, or 0.0 if GPU not available
         """
-        # ONNX path: use measured ORT allocation delta (set by ModelLoader._load_onnx)
-        if (
-            self._model is not None
-            and hasattr(self._model, "_vram_gb")
-            and self._model._vram_gb > 0
-        ):
-            return self._model._vram_gb
-
-        # PyTorch path
         if torch is None or not torch.cuda.is_available():
             return 0.0
 
@@ -1982,20 +1822,13 @@ class CodeEmbedder:
             return 0.0
 
     def _extract_hf_config(self) -> Any | None:
-        """Extract HuggingFace PretrainedConfig from the loaded model.
+        """Extract HuggingFace PretrainedConfig from the loaded SentenceTransformer model.
 
-        Works for both SentenceTransformer (PyTorch) and ONNXEmbeddingModel backends.
         Returns the first config object found that has a ``hidden_size`` attribute,
         or None if the model is not loaded or the config cannot be extracted.
         """
         if self._model is None:
             return None
-        # ONNX backend: config lives on ort_model
-        ort_model = getattr(self._model, "ort_model", None)
-        if ort_model is not None:
-            cfg = getattr(ort_model, "config", None)
-            if cfg is not None and hasattr(cfg, "hidden_size"):
-                return cfg
         # SentenceTransformer: first module is typically a Transformer
         # SentenceTransformer[0].auto_model.config is the HF config
         try:
@@ -2022,15 +1855,8 @@ class CodeEmbedder:
             if self._model is not None:
                 try:
                     # Step 1: Free GPU memory.
-                    # ONNX path: call cleanup() to explicitly destroy the ORT CUDA session,
-                    # which is the only way to release CUDA memory allocated by ORT's
-                    # CUDAExecutionProvider (not tracked by torch.cuda.memory_allocated).
-                    # PyTorch path: move to CPU first to free VRAM, then delete.
-                    if hasattr(self._model, "cleanup"):
-                        self._logger.info("Releasing ONNX Runtime CUDA session...")
-                        self._model.cleanup()
-                        self._logger.info("ONNX VRAM freed")
-                    elif (
+                    # Move to CPU first to free VRAM, then delete.
+                    if (
                         torch is not None
                         and torch.cuda.is_available()
                         and hasattr(self._model, "cpu")

@@ -16,14 +16,6 @@ from search.config_paths import resolve_config_path
 from utils.atomic_io import write_json_atomic
 
 
-# MODEL_REGISTRY convention for ONNX support:
-# - "onnx_supported": False  -> ONNX path is skipped in _should_use_onnx().
-#   Use this when the upstream pooling mode is not handled by
-#   embeddings/onnx_wrapper.py (which supports only "cls" and "mean").
-# - Key absent (or True)     -> ONNX path allowed, subject to other gates
-#   (trust_remote_code, performance.use_onnx, etc.).
-# New models with non-cls/mean pooling (lasttoken, weightedmean, etc.) MUST
-# set onnx_supported: False explicitly until onnx_wrapper.py gains support.
 MODEL_REGISTRY = {
     "google/embeddinggemma-300m": {
         "dimension": 768,
@@ -32,7 +24,6 @@ MODEL_REGISTRY = {
         "description": "Default model, fast and efficient",
         "vram_gb": "~1.2GB",  # 300M params @FP16 ≈0.6GB weights + buffers; original "4-8GB" was stale estimate
         "fallback_batch_size": 128,  # Used when dynamic sizing disabled
-        "onnx_pooling": "mean",  # Gemma uses mean pooling
     },
     "BAAI/bge-m3": {
         "dimension": 1024,
@@ -40,7 +31,6 @@ MODEL_REGISTRY = {
         "description": "Recommended upgrade, hybrid search support",
         "vram_gb": "1-1.5GB",  # Updated from "3-4GB" (actual measured: 1.07GB)
         "fallback_batch_size": 256,  # Used when dynamic sizing disabled
-        "onnx_pooling": "cls",  # BGE uses CLS pooling (confirmed by Optimum notebook)
     },
     "Qwen/Qwen3-Embedding-0.6B": {
         "dimension": 1024,
@@ -49,7 +39,6 @@ MODEL_REGISTRY = {
         "vram_gb": "2.3GB",
         "fallback_batch_size": 256,
         "vram_tier": "minimal",  # Usable on all GPUs
-        "onnx_pooling": "mean",  # Qwen3-Embedding uses mean pooling
         # Matryoshka Representation Learning (MRL) support
         "mrl_dimensions": [1024, 512, 256, 128, 64, 32],  # Supported MRL dimensions
         "truncate_dim": None,  # Optional: Set to reduce output dimension (e.g., 512)
@@ -65,7 +54,6 @@ MODEL_REGISTRY = {
         "vram_gb": "2.2GB",
         "fallback_batch_size": 256,
         "vram_tier": "minimal",  # Usable on all GPUs
-        "onnx_supported": False,  # Last-token (EOS) pooling not handled by onnx_wrapper
         # Instruction tuning for code retrieval (same "Instruct: ...\nQuery: "
         # template family as Qwen3-Embedding; documents are embedded raw)
         "instruction_mode": "custom",  # "custom" or "prompt_name"
@@ -180,7 +168,7 @@ class SearchModeConfig:
 
 @dataclass
 class PerformanceConfig:
-    """GPU, parallelism, caching settings (18 fields)."""
+    """GPU, parallelism, caching settings (16 fields)."""
 
     use_parallel_search: bool = True
     max_parallel_workers: int = 2
@@ -209,14 +197,6 @@ class PerformanceConfig:
         16  # Minimum batch size (lowered for fragmentation headroom)
     )
     dynamic_batch_max: int = 384  # Maximum batch size (safer for 8-16GB GPUs)
-
-    # ONNX Runtime inference (optional — requires uv pip install -e .[onnx])
-    use_onnx: bool = (
-        False  # When True, loads eligible models via ORTModelForFeatureExtraction
-    )
-    # Constrain ORT CUDAExecutionProvider arena (same formula as set_vram_limit()).
-    # Disable only for debugging — prevents WDDM spillover for ONNX sessions.
-    onnx_gpu_mem_limit: bool = True
 
     # Auto-reindexing
     enable_auto_reindex: bool = True
@@ -776,8 +756,6 @@ class SearchConfig:
         "dynamic_batch_max": ("performance", "dynamic_batch_max"),
         "enable_auto_reindex": ("performance", "enable_auto_reindex"),
         "max_index_age_minutes": ("performance", "max_index_age_minutes"),
-        "use_onnx": ("performance", "use_onnx"),
-        "onnx_gpu_mem_limit": ("performance", "onnx_gpu_mem_limit"),
         "allow_shared_memory": ("performance", "allow_ram_fallback"),  # backward-compat
         # MultiHopConfig
         "enable_multi_hop": ("multi_hop", "enabled"),

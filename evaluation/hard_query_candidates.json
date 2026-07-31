@@ -90,24 +90,6 @@
       "notes": "round1: MEDIUM rank=3 behind module_preamble/annotate"
     },
     {
-      "id": "Q109",
-      "query": "choose the accelerated inference backend when the current platform and model support it",
-      "category": "A",
-      "intended": [
-        "embeddings/model_loader.py:method:ModelLoader._should_use_onnx"
-      ],
-      "notes": "round1 EASY rank=1; rephrased away from 'ONNX runtime/PyTorch'"
-    },
-    {
-      "id": "Q110",
-      "query": "export the model to the accelerated runtime format the first time it is requested",
-      "category": "A",
-      "intended": [
-        "embeddings/onnx_loader.py:method:ONNXModelLoader.convert_if_needed"
-      ],
-      "notes": "round1 EASY rank=1; rephrased away from 'convert/ONNX'"
-    },
-    {
       "id": "Q111",
       "query": "bring the sparse and dense sides back into agreement when one holds fewer documents",
       "category": "A",

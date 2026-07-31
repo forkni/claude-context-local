@@ -230,8 +230,7 @@ def _wrap_model_encode(model_cls: type) -> None:
 def _install_layer3_embedding_split() -> None:
     """Wrap CodeEmbedder.create_embedding_content (CPU, per-chunk) and patch
     the loaded model's .encode() (GPU) the first time embed_chunks resolves
-    the model — the concrete model class (SentenceTransformer vs an ONNX
-    wrapper) isn't known until then.
+    the model — the concrete model class isn't known until then.
     """
     import embeddings.embedder as embedder_mod
 
