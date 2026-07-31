@@ -9,10 +9,12 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import dspy
 import pytest
 
-from evaluation.dspy_agent_eval import (
+
+dspy = pytest.importorskip("dspy")
+
+from evaluation.dspy_agent_eval import (  # noqa: E402
     CodeNavQA,
     _extract_chunk_ids,
     _extract_chunk_ids_from_observations,

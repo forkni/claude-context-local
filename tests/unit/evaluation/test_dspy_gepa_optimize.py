@@ -10,10 +10,12 @@ import asyncio
 from contextlib import asynccontextmanager
 from unittest.mock import MagicMock, patch
 
-import dspy
 import pytest
 
-from evaluation.dspy_gepa_optimize import gepa_metric, gepa_tool_bridge
+
+dspy = pytest.importorskip("dspy")
+
+from evaluation.dspy_gepa_optimize import gepa_metric, gepa_tool_bridge  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

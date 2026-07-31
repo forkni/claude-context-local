@@ -151,9 +151,11 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --locked --extra dev --extra callgraph
-        # dev → pyrefly; callgraph → libcst; base deps → numpy/dspy/mcp/etc.
-        # so pyrefly resolves third-party imports (was: uvx isolated env → 50 false
-        # missing-import errors). Torch wheels are heavy (~2.3 GB) but cached by setup-uv.
+        # dev → pyrefly; callgraph → libcst; base deps → numpy/mcp/etc. so pyrefly
+        # resolves third-party imports (was: uvx isolated env → 50 false missing-import
+        # errors). dspy lives in the [eval] extra (not installed here) and is covered
+        # instead by pyrefly's replace-imports-with-any list. Torch wheels are heavy
+        # (~2.3 GB) but cached by setup-uv.
 
       - name: Run ruff check (linting + import sorting)
         run: uv run ruff check .

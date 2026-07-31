@@ -16,10 +16,12 @@ import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
-import dspy
 import pytest
 
-from utils.dspy_claude_code import ClaudeCodeLM, configure_dspy
+
+dspy = pytest.importorskip("dspy")
+
+from utils.dspy_claude_code import ClaudeCodeLM, configure_dspy  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

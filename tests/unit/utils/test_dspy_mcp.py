@@ -19,8 +19,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import mcp.types as mcp_types
 import pytest
 
-from utils.dspy_claude_code import ClaudeCodeLM
-from utils.dspy_mcp import (
+
+dspy = pytest.importorskip("dspy")
+
+from utils.dspy_claude_code import ClaudeCodeLM  # noqa: E402
+from utils.dspy_mcp import (  # noqa: E402
     _with_timeout,
     run_code_search_agent,
 )
