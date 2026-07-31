@@ -41,3 +41,37 @@ class TestClearIndexPreservesChunkCache:
         assert not (storage_dir / "metadata_symbol_cache.json").exists()
         assert not wal.exists()
         assert not shm.exists()
+
+
+class TestClearIndexSweepsLegacyCommunityFiles:
+    """Regression test for a dead-code bug found during the ADR-0015 community
+    subsystem deletion post-mortem.
+
+    _clear_index_files_before_create (mcp_server/tools/index_handlers.py) held
+    the only glob that ever swept a legacy `*_communities.json` sidecar, but its
+    sole call site was removed as collateral damage in 4ec76278 ("refactor:
+    remove multi-model routing") — it has had zero production callers since.
+    CodeIndexManager.clear_index() is the actual mechanism behind every
+    force-full reindex, and never swept this file, so a legacy
+    `*_communities.json` (written by the community subsystem deleted in
+    ADR-0015) survives force-full reindexes indefinitely.
+    """
+
+    def test_clear_index_sweeps_legacy_communities_json(self, tmp_path):
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+
+        manager = CodeIndexManager(storage_dir=str(storage_dir))
+
+        # *_communities.json lives one level up from the model's index/ dir,
+        # a sibling of it — matching _purge_index_dir's documented layout.
+        legacy = tmp_path / "myproject_communities.json"
+        legacy.write_text("{}")
+
+        manager.clear_index()
+
+        assert not legacy.exists(), (
+            "clear_index() must sweep legacy *_communities.json sidecars — "
+            "nothing writes them since ADR-0015, but nothing was purging them "
+            "either"
+        )

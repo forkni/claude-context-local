@@ -1308,6 +1308,22 @@ class HybridSearcher(BaseSearcher):
         if hasattr(self.dense_index, "_graph") and self.dense_index._graph is not None:
             self._graph_storage = self.dense_index._graph.storage
             self._graph = GraphIntegration.from_storage(self._graph_storage)
+            # Re-wire the other two consumers bound at __init__ time
+            # (_init_graph_components:337, :215-216). Without this they keep
+            # pointing at the old, emptied CodeGraphStorage for the rest of
+            # the process's life — silently zeroing ego-graph expansion and
+            # degrading graph/hybrid multi-hop search until a restart.
+            # ego_graph_retriever is reconstructed rather than patched in
+            # place: EgoGraphRetriever.__init__ also builds a GraphView that
+            # holds its own storage reference, so patching only `.graph`
+            # would leave the PPR path reading the stale object. Rebuilding
+            # also drops _centrality_scores, computed against the pre-clear
+            # graph and re-injected per request anyway.
+            if self._graph_storage is not None:
+                self.ego_graph_retriever = EgoGraphRetriever(self._graph_storage)
+            else:
+                self.ego_graph_retriever = None
+            self.multi_hop_searcher.graph_storage = self._graph_storage
             self._logger.debug(
                 "[CLEAR] Updated graph_storage reference after clear_index()"
             )

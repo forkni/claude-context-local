@@ -787,6 +787,23 @@ class CodeIndexManager:
         # Clear call graph via integration layer
         self._graph.clear()
 
+        # Legacy debris: *_communities.json was written by the community
+        # subsystem removed in ADR-0015. Nothing reads it anymore, but nothing
+        # was purging it either — its would-be purger, _clear_index_files_
+        # before_create (mcp_server/tools/index_handlers.py), lost its only
+        # call site as collateral damage in an unrelated multi-model-routing
+        # refactor and has had zero production callers since. Sweep it here
+        # instead: this is the single place every full clear (force-full
+        # reindex, corruption recovery, or an all-chunks-removed rebuild)
+        # actually goes through.
+        for legacy in self.storage_dir.parent.glob("*_communities.json"):
+            try:
+                legacy.unlink()
+            except OSError as e:
+                self._logger.warning(
+                    f"Could not delete legacy community file {legacy}: {e}"
+                )
+
         # Reinitialize metadata store AFTER deletion
         self._metadata_store = MetadataStore(self.metadata_path)
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import MagicMock, Mock, patch
 
+from search.ego_graph_retriever import EgoGraphRetriever
 from search.graph_integration import GraphIntegration
 from search.hybrid_searcher import HybridSearcher
 from search.indexer import CodeIndexManager
@@ -57,7 +58,10 @@ class TestGraphSaveDuringReindex(TestCase):
         mock_searcher.reranking_engine = None
         mock_searcher.search_executor = Mock()
         mock_searcher.multi_hop_searcher = Mock()
-        mock_searcher._graph_storage = Mock()  # Old (pre-clear) reference
+        old_graph_storage = Mock()  # Old (pre-clear) reference
+        mock_searcher._graph_storage = old_graph_storage
+        mock_searcher.multi_hop_searcher.graph_storage = old_graph_storage
+        mock_searcher.ego_graph_retriever = EgoGraphRetriever(old_graph_storage)
         mock_searcher._metadata_cache = {}  # Added by BaseSearcher.__init__; cleared by clear_index()
         return mock_searcher
 
@@ -94,6 +98,17 @@ class TestGraphSaveDuringReindex(TestCase):
         # (a real instance, not the mock) wrapping the same storage object.
         self.assertIsInstance(mock_searcher._graph, GraphIntegration)
         self.assertIs(mock_searcher._graph.storage, mock_graph_storage)
+        # Regression: clear_index() previously left ego_graph_retriever and
+        # multi_hop_searcher.graph_storage pointed at the old, emptied storage
+        # object — silently zeroing ego-graph expansion and degrading
+        # graph/hybrid multi-hop search until the server process restarted.
+        self.assertIs(mock_searcher.ego_graph_retriever.graph, mock_graph_storage)
+        self.assertIs(
+            mock_searcher.ego_graph_retriever._gv._storage, mock_graph_storage
+        )
+        self.assertIs(
+            mock_searcher.multi_hop_searcher.graph_storage, mock_graph_storage
+        )
 
     def test_clear_index_resyncs_when_new_graph_is_nonempty(self):
         """Same re-sync must also happen when the new graph already has nodes.
@@ -116,6 +131,13 @@ class TestGraphSaveDuringReindex(TestCase):
         self.assertIs(mock_searcher._graph_storage, mock_graph_storage)
         self.assertIsInstance(mock_searcher._graph, GraphIntegration)
         self.assertIs(mock_searcher._graph.storage, mock_graph_storage)
+        self.assertIs(mock_searcher.ego_graph_retriever.graph, mock_graph_storage)
+        self.assertIs(
+            mock_searcher.ego_graph_retriever._gv._storage, mock_graph_storage
+        )
+        self.assertIs(
+            mock_searcher.multi_hop_searcher.graph_storage, mock_graph_storage
+        )
 
     @patch("search.graph_integration.CodeGraphStorage")
     @patch("search.graph_integration.GRAPH_STORAGE_AVAILABLE", True)

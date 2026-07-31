@@ -165,8 +165,8 @@ def _run_indexing(
         "chunks_added": result.chunks_added,
         "time_taken": round(elapsed, 2),
         # Propagated so _build_index_response can turn a caught indexing
-        # exception (e.g. PermissionError during force-full pre-clear) into a
-        # hard failure instead of reporting success with zeroed counts.
+        # exception (e.g. PermissionError during CodeIndexManager.clear_index())
+        # into a hard failure instead of reporting success with zeroed counts.
         # Named indexing_succeeded/indexing_error (not success/error) — this is
         # an internal transport dict, not a client-facing response envelope;
         # "success"/"error" keys are reserved for mcp_server.tools.responses
@@ -223,7 +223,7 @@ def _build_index_response(
             "Full reindex added 0 chunks. This is never a legitimate outcome "
             "for a non-empty project — the index may be left in a partially "
             "cleared state (a common cause is another process, e.g. a running "
-            "MCP server, holding metadata.db open during the pre-clear).",
+            "MCP server, holding metadata.db open during clear_index()).",
             project=str(directory_path),
             mode="full",
         )
@@ -291,9 +291,24 @@ def _purge_index_dir(
         means the purge left a half-cleared index — callers that need this to
         be a hard failure (as opposed to the previous behaviour of only
         logging a warning) must check it explicitly.
+
+    Raises:
+        ValueError: if ``index_dir`` resolves outside the storage root. This
+            guard previously lived only on the now-deleted
+            ``_clear_index_files_before_create`` — a helper that had zero
+            production callers (its sole call site was removed as collateral
+            damage in an unrelated multi-model-routing refactor) and so never
+            actually protected this, the real destructive path (it
+            ``shutil.rmtree``s ``bm25/`` and unlinks a parent-directory glob).
     """
     import glob
     import shutil
+
+    storage_root = get_storage_dir().resolve()
+    if not index_dir.resolve().is_relative_to(storage_root):
+        raise ValueError(
+            f"_purge_index_dir refused: {index_dir} is outside storage root {storage_root}"
+        )
 
     deleted: list[str] = []
     failed: list[str] = []
@@ -340,34 +355,6 @@ def _purge_index_dir(
                 failed.append(Path(graph_file).name)
 
     return deleted, failed
-
-
-def _clear_index_files_before_create(index_dir: Path) -> None:
-    """Clear index files before creating a new HybridSearcher.
-
-    This is needed for force_full reindex to avoid file locks on Windows.
-    When MCP server is running and holds references to metadata.db, deleting
-    files before creating the new HybridSearcher prevents WinError 32.
-
-    Args:
-        index_dir: Directory containing index files to clear
-    """
-    from mcp_server.storage_manager import get_storage_dir
-
-    storage_root = get_storage_dir().resolve()
-    if not index_dir.resolve().is_relative_to(storage_root):
-        raise ValueError(
-            f"_clear_index_files_before_create refused: {index_dir} is outside "
-            f"storage root {storage_root}"
-        )
-
-    logger.info(
-        f"[PRE-CLEAR] Deleting index files before HybridSearcher creation: {index_dir}"
-    )
-    deleted, failed = _purge_index_dir(index_dir, keep_chunk_cache=True)
-    logger.info(f"[PRE-CLEAR] Deleted: {deleted}")
-    if failed:
-        logger.warning(f"[PRE-CLEAR] Failed to delete (still on disk): {failed}")
 
 
 def _release_gpu_memory() -> None:
