@@ -1,0 +1,2490 @@
+{
+  "_meta": {
+    "purpose": "Commit-mined candidate hard queries for categories H (bug-fix localization) and I (broader-context / multi-evidence), Stage 4 of the benchmarking-harness plan. Graded via scripts/benchmark/grade_candidate_queries.py --candidates before promotion into golden_dataset_expanded.json.",
+    "authored_date": "2026-07-31",
+    "source": "git log --no-merges, subjects starting fix:/feat:, full history, filtered to commits touching >=1 non-test .py file and >=1 tests/** file. Gold = hunk-header function/class names fuzzy-matched by bare symbol name against a live re-chunk of HEAD; renamed/deleted/ambiguous-name matches are dropped rather than guessed.",
+    "classification": "H: <=2 matched functions, 1 file. I: >=3 matched functions, >=2 files. Commits landing in neither bucket are dropped (ambiguous middle).",
+    "candidate_count": 200,
+    "category_counts": {
+      "H": 70,
+      "I": 130
+    },
+    "queries_need_paraphrase": true
+  },
+  "candidates": [
+    {
+      "id": "I001",
+      "query": "delete dormant ONNX inference path (Phase D)",
+      "category": "I",
+      "intended": [
+        "embeddings/embedder.py:function:calculate_optimal_batch_size",
+        "embeddings/embedder.py:function:compute_effective_vram_cap",
+        "embeddings/embedder.py:function:estimate_activation_gb_from_config",
+        "embeddings/embedder.py:function:set_vram_limit",
+        "embeddings/embedder.py:method:CodeEmbedder.__init__",
+        "embeddings/embedder.py:method:CodeEmbedder._check_vram_status",
+        "embeddings/embedder.py:method:CodeEmbedder._extract_hf_config",
+        "embeddings/embedder.py:method:CodeEmbedder._get_model_vram_gb",
+        "embeddings/embedder.py:method:CodeEmbedder._load_model",
+        "embeddings/embedder.py:method:CodeEmbedder.cleanup",
+        "embeddings/embedder.py:method:CodeEmbedder.get_model_info",
+        "embeddings/model_loader.py:method:ModelLoader._build_constructor_kwargs",
+        "embeddings/model_loader.py:method:ModelLoader._measure_activation_per_item",
+        "embeddings/model_loader.py:method:ModelLoader.describe_numerics",
+        "scripts/benchmark/merge_hard_queries.py:function:main",
+        "scripts/benchmark/profiling/profile_full_index.py:function:_install_layer3_embedding_split",
+        "search/config.py:decorated_definition:PerformanceConfig",
+        "search/faiss_index.py:method:FaissVectorIndex.add"
+      ],
+      "notes": "commit-mined from 72b68815 ('feat: delete dormant ONNX inference path (Phase D)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I002",
+      "query": "add graded NDCG, Acc@k, file-level rollup, hard-negative intrusion rate",
+      "category": "I",
+      "intended": [
+        "evaluation/dspy_agent_eval.py:function:_eval_one",
+        "evaluation/dspy_agent_eval.py:function:load_examples",
+        "evaluation/metrics.py:function:calculate_metrics_from_results",
+        "evaluation/metrics.py:function:calculate_ndcg_at_k",
+        "evaluation/metrics.py:function:flatten_entries"
+      ],
+      "notes": "commit-mined from 21a438c0 ('feat: add graded NDCG, Acc@k, file-level rollup, hard-negative intrusion rate'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I003",
+      "query": "sweep legacy community JSON, re-wire stale graph refs on clear",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/index_handlers.py:function:_build_index_response",
+        "mcp_server/tools/index_handlers.py:function:_purge_index_dir",
+        "mcp_server/tools/index_handlers.py:function:_run_indexing",
+        "search/hybrid_searcher.py:method:HybridSearcher.clear_index",
+        "search/indexer.py:method:CodeIndexManager.clear_index"
+      ],
+      "notes": "commit-mined from db4c181b ('fix: sweep legacy community JSON, re-wire stale graph refs on clear'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H001",
+      "query": "relocate module-summary injection out of community stage",
+      "category": "H",
+      "intended": [
+        "search/summary_stage.py:class:SummaryStage",
+        "search/summary_stage.py:method:SummaryStage.generate_module_summaries"
+      ],
+      "notes": "commit-mined from 879078b2 ('fix: relocate module-summary injection out of community stage'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I004",
+      "query": "drop community from remaining demotion tables (C1 cont.)",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/result_view.py:function:_format_search_results",
+        "search/centrality_ranker.py:method:CentralityRanker._apply_synthetic_demotion",
+        "search/graph_integration.py:method:GraphIntegration._make_spec_from_chunk",
+        "search/graph_scoring_stage.py:method:GraphScoringStage._reorder_synthetic"
+      ],
+      "notes": "commit-mined from 802d48d9 ('fix: drop community from remaining demotion tables (C1 cont.)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I005",
+      "query": "repair torch CVEs, nltk/uv drift, community post-injection wiring",
+      "category": "I",
+      "intended": [
+        "mcp_server/server.py:function:_configure_logging",
+        "search/incremental_indexer.py:method:IncrementalIndexer.__init__",
+        "search/incremental_indexer.py:method:IncrementalIndexer._build_write_pipeline",
+        "search/index_sync.py:method:IndexSynchronizer.validate_index_sync",
+        "search/index_write_stage.py:method:IndexWriteStage.__init__",
+        "search/index_write_stage.py:method:IndexWriteStage.run",
+        "search/summary_stage.py:class:SummaryStage"
+      ],
+      "notes": "commit-mined from a909cb81 ('fix: repair torch CVEs, nltk/uv drift, community post-injection wiring'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I006",
+      "query": "harness ablation flags, confound logging, Category-G metrics",
+      "category": "I",
+      "intended": [
+        "evaluation/metrics.py:function:expand_retrieved_with_containment",
+        "scripts/benchmark/run_sscg_benchmark.py:function:_apply_centrality_stage",
+        "scripts/benchmark/run_sscg_benchmark.py:function:_apply_query_expansion_override",
+        "scripts/benchmark/run_sscg_benchmark.py:function:_build_merged_membership_lookup",
+        "scripts/benchmark/run_sscg_benchmark.py:function:build_parser"
+      ],
+      "notes": "commit-mined from 92725400 ('feat: harness ablation flags, confound logging, Category-G metrics'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I007",
+      "query": "per-project search_overrides.json + auto-tuning reindex probe",
+      "category": "I",
+      "intended": [
+        "mcp_server/state.py:function:reset_state",
+        "mcp_server/tools/config_handlers.py:decorated_definition:handle_switch_project",
+        "mcp_server/tools/index_handlers.py:function:_build_index_response",
+        "mcp_server/tools/index_handlers.py:function:_iter_project_model_dirs",
+        "mcp_server/tools/index_handlers.py:function:_run_indexing",
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_get_search_config_status",
+        "search/config.py:decorated_definition:PerformanceConfig",
+        "search/config.py:function:_deep_merge",
+        "search/config.py:function:get_indexing_ram_fallback_override",
+        "search/index_write_stage.py:decorated_definition:IncrementalIndexResult"
+      ],
+      "notes": "commit-mined from 6f27aaf1 ('feat: per-project search_overrides.json + auto-tuning reindex probe'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I008",
+      "query": "caller-controlled exclude_same_file on find_similar_code",
+      "category": "I",
+      "intended": [
+        "mcp_server/tool_registry.py:function:_advanced_tools_enabled",
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code",
+        "search/hybrid_searcher.py:method:HybridSearcher.find_similar_to_chunk",
+        "search/indexer.py:method:CodeIndexManager.get_similar_chunks"
+      ],
+      "notes": "commit-mined from d468dcb5 ('feat: caller-controlled exclude_same_file on find_similar_code'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I009",
+      "query": "reserve hop-1 winners at multi-hop rerank window (default N=6)",
+      "category": "I",
+      "intended": [
+        "scripts/benchmark/run_sscg_benchmark.py:function:_apply_reserved_slots_override",
+        "scripts/benchmark/run_sscg_benchmark.py:function:build_parser",
+        "search/config.py:decorated_definition:RerankerConfig",
+        "search/reranking_engine.py:method:RerankingEngine.__init__",
+        "search/reranking_engine.py:method:RerankingEngine._run_rerank",
+        "search/reranking_engine.py:method:RerankingEngine.rerank_by_query"
+      ],
+      "notes": "commit-mined from 1bf947b8 ('fix: reserve hop-1 winners at multi-hop rerank window (default N=6)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I010",
+      "query": "curated-vocabulary query expansion (opt-in, A/B closed FAIL)",
+      "category": "I",
+      "intended": [
+        "scripts/benchmark/run_sscg_benchmark.py:function:_apply_reserved_slots_override",
+        "scripts/benchmark/run_sscg_benchmark.py:function:build_parser",
+        "search/config.py:decorated_definition:ObservabilityConfig"
+      ],
+      "notes": "commit-mined from df73a9d7 ('feat: curated-vocabulary query expansion (opt-in, A/B closed FAIL)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H002",
+      "query": "exclude tmp/temp scratch dirs and code-search-extension from indexing",
+      "category": "H",
+      "intended": [
+        "mcp_server/tool_registry.py:function:_advanced_tools_enabled"
+      ],
+      "notes": "commit-mined from 838c24d9 ('fix: exclude tmp/temp scratch dirs and code-search-extension from indexing'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I011",
+      "query": "containment-credit scoring, sibling-merge gate, and sibling A/B",
+      "category": "I",
+      "intended": [
+        "chunking/languages/base.py:method:LanguageChunker._create_merged_chunk",
+        "embeddings/chunk_metadata.py:class:ChunkMetadata",
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder._build_chunk_metadata",
+        "evaluation/metrics.py:function:calculate_metrics_from_results",
+        "evaluation/metrics.py:function:calculate_mrr",
+        "evaluation/metrics.py:function:calculate_ndcg_at_k",
+        "evaluation/metrics.py:function:calculate_precision_at_k",
+        "evaluation/metrics.py:function:calculate_recall_at_k",
+        "evaluation/metrics.py:function:normalize_chunk_ids",
+        "evaluation/metrics.py:function:resolve_chunk_ids_to_ranges",
+        "scripts/benchmark/run_sscg_benchmark.py:function:_build_line_lookup",
+        "search/config.py:decorated_definition:ChunkingConfig"
+      ],
+      "notes": "commit-mined from 5f9c7ebb ('feat: containment-credit scoring, sibling-merge gate, and sibling A/B'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I012",
+      "query": "revert listwise reranker doc cap to 1000 (ADR-0011)",
+      "category": "I",
+      "intended": [
+        "scripts/benchmark/run_sscg_benchmark.py:function:_apply_reranker_budget_override",
+        "scripts/benchmark/run_sscg_benchmark.py:function:_maybe_reset_for_construction_overrides",
+        "scripts/benchmark/run_sscg_benchmark.py:function:build_parser",
+        "search/config.py:decorated_definition:RerankerConfig",
+        "search/neural_reranker.py:class:JinaRerankerV3",
+        "search/neural_reranker.py:function:_resolve_single_token_id",
+        "search/neural_reranker.py:function:create_reranker",
+        "search/neural_reranker.py:method:GenerativeReranker._ensure_loaded"
+      ],
+      "notes": "commit-mined from ff101855 ('fix: revert listwise reranker doc cap to 1000 (ADR-0011)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I013",
+      "query": "extend reindex read lock over result assembly, close ADR 0008 gap",
+      "category": "I",
+      "intended": [
+        "mcp_server/state.py:class:_AsyncRWLock",
+        "mcp_server/tools/search_orchestrator.py:class:SearchOrchestrator",
+        "mcp_server/tools/search_orchestrator.py:decorated_definition:SearchOrchestrator._build_response",
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.__init__",
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run"
+      ],
+      "notes": "commit-mined from 6695effd ('fix: extend reindex read lock over result assembly, close ADR 0008 gap'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I014",
+      "query": "skip SSCG subgraph extraction when include_subgraph is false",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator._assemble",
+        "search/graph_scoring_stage.py:class:GraphScoringStage",
+        "search/graph_scoring_stage.py:method:GraphScoringStage.run"
+      ],
+      "notes": "commit-mined from 9bba275c ('fix: skip SSCG subgraph extraction when include_subgraph is false'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I015",
+      "query": "repair centrality memo with version-keyed cache on CodeGraphStorage",
+      "category": "I",
+      "intended": [
+        "graph/graph_storage.py:method:CodeGraphStorage.__init__",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_node",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge",
+        "graph/graph_storage.py:method:CodeGraphStorage.clear",
+        "graph/graph_storage.py:method:CodeGraphStorage.load",
+        "graph/graph_storage.py:method:CodeGraphStorage.remove_file_nodes",
+        "graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge",
+        "search/centrality_ranker.py:method:CentralityRanker.__init__",
+        "search/centrality_ranker.py:method:CentralityRanker.get_centrality_scores"
+      ],
+      "notes": "commit-mined from 505d1cfd ('fix: repair centrality memo with version-keyed cache on CodeGraphStorage'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H003",
+      "query": "downgrade [PARSE_ERROR] to DEBUG when ERROR content survives chunking",
+      "category": "H",
+      "intended": [
+        "chunking/tree_sitter.py:decorated_definition:ParsedSource",
+        "chunking/tree_sitter.py:method:TreeSitterChunker.chunk_parsed"
+      ],
+      "notes": "commit-mined from 781e14b5 ('fix: downgrade [PARSE_ERROR] to DEBUG when ERROR content survives chunking'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I016",
+      "query": "silence get_chunk_by_id WARNING on expected recovery-ladder misses",
+      "category": "I",
+      "intended": [
+        "search/hybrid_searcher.py:method:HybridSearcher.get_by_chunk_id",
+        "search/hybrid_searcher.py:method:HybridSearcher.get_index_size",
+        "search/indexer.py:method:CodeIndexManager._matches_filters",
+        "search/indexer.py:method:CodeIndexManager.get_chunk_by_id",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callees",
+        "search/searcher.py:method:IntelligentSearcher.find_similar_to_chunk",
+        "search/searcher.py:method:IntelligentSearcher.get_by_chunk_id"
+      ],
+      "notes": "commit-mined from 6fa88741 ('fix: silence get_chunk_by_id WARNING on expected recovery-ladder misses'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I017",
+      "query": "profiler counter accuracy and per-language function sizing",
+      "category": "I",
+      "intended": [
+        "chunking/languages/base.py:method:LanguageChunker._get_splittable_node_types",
+        "chunking/languages/glsl.py:method:GLSLChunker.__init__",
+        "chunking/repo_profiler.py:function:profile_parsed",
+        "chunking/repo_profiler.py:function:profile_repository"
+      ],
+      "notes": "commit-mined from 9cf5b7dd ('fix: profiler counter accuracy and per-language function sizing'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H004",
+      "query": "stop warning on legitimately-empty files during chunking",
+      "category": "H",
+      "intended": [
+        "search/parallel_chunker.py:decorated_definition:ParallelChunker._accumulate_chunk_stats",
+        "search/parallel_chunker.py:method:ParallelChunker.chunk_files"
+      ],
+      "notes": "commit-mined from dd76f350 ('fix: stop warning on legitimately-empty files during chunking'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H005",
+      "query": "keep non-semantic chunks' relationship edges in populate_from_embeddings",
+      "category": "H",
+      "intended": [
+        "search/graph_integration.py:method:GraphIntegration._make_spec_from_embedding"
+      ],
+      "notes": "commit-mined from 5cd6ee57 (\"fix: keep non-semantic chunks' relationship edges in populate_from_embeddings\"); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H006",
+      "query": "name zero-chunk files, split LSP dropped-URI counter",
+      "category": "H",
+      "intended": [
+        "search/parallel_chunker.py:decorated_definition:ParallelChunker._log_chunking_summary",
+        "search/parallel_chunker.py:method:ParallelChunker.chunk_files"
+      ],
+      "notes": "commit-mined from fd153b23 ('fix: name zero-chunk files, split LSP dropped-URI counter'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H007",
+      "query": "delete orphaned communities.json in CodeGraphStorage.clear()",
+      "category": "H",
+      "intended": [
+        "graph/graph_storage.py:method:CodeGraphStorage.clear"
+      ],
+      "notes": "commit-mined from 16209441 ('fix: delete orphaned communities.json in CodeGraphStorage.clear()'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I018",
+      "query": "surface call_edges_injected count through result and response",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/index_handlers.py:function:_build_index_response",
+        "mcp_server/tools/index_handlers.py:function:_run_indexing",
+        "search/index_write_stage.py:decorated_definition:IncrementalIndexResult",
+        "search/index_write_stage.py:method:IndexWriteStage.run"
+      ],
+      "notes": "commit-mined from c23533b9 ('feat: surface call_edges_injected count through result and response'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I019",
+      "query": "hard-fail silent force-reindex and dropped exclude-dirs",
+      "category": "I",
+      "intended": [
+        "mcp_server/storage_manager.py:function:get_canonical_project_info",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_clear_index",
+        "mcp_server/tools/index_handlers.py:function:_build_index_response",
+        "mcp_server/tools/index_handlers.py:function:_purge_index_dir",
+        "mcp_server/tools/index_handlers.py:function:_run_indexing"
+      ],
+      "notes": "commit-mined from 50ffead1 ('fix: hard-fail silent force-reindex and dropped exclude-dirs'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I020",
+      "query": "keep bm25_text raw, augment BM25 docs at build time in both paths",
+      "category": "I",
+      "intended": [
+        "search/hybrid_searcher.py:method:HybridSearcher.add_embeddings",
+        "search/hybrid_searcher.py:method:HybridSearcher.load_indices",
+        "search/index_sync.py:method:IndexSynchronizer.resync_bm25_from_dense",
+        "search/tokenization.py:function:build_path_symbol_text"
+      ],
+      "notes": "commit-mined from 1544fd81 ('fix: keep bm25_text raw, augment BM25 docs at build time in both paths'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I021",
+      "query": "augment BM25 documents with path/symbol tokens (INDEX_VERSION 4)",
+      "category": "I",
+      "intended": [
+        "search/bm25_index.py:class:BM25Index",
+        "search/hybrid_searcher.py:method:HybridSearcher.add_embeddings",
+        "search/hybrid_searcher.py:method:HybridSearcher.load_indices"
+      ],
+      "notes": "commit-mined from 0e15a3ca ('feat: augment BM25 documents with path/symbol tokens (INDEX_VERSION 4)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I022",
+      "query": "wire real BM25 k1/b scoring params (config-driven, no reindex)",
+      "category": "I",
+      "intended": [
+        "search/bm25_index.py:method:BM25Index.index_documents",
+        "search/bm25_index.py:method:BM25Index.load",
+        "search/bm25_index.py:method:BM25Index.remove_documents",
+        "search/bm25_index.py:method:BM25Index.remove_files",
+        "search/bm25_index.py:method:BM25Index.save",
+        "search/config.py:decorated_definition:SearchModeConfig",
+        "search/hybrid_searcher.py:method:HybridSearcher._init_search_components",
+        "search/index_sync.py:method:IndexSynchronizer.__init__",
+        "search/index_sync.py:method:IndexSynchronizer.clear_index",
+        "search/index_sync.py:method:IndexSynchronizer.resync_bm25_from_dense"
+      ],
+      "notes": "commit-mined from a2b0a751 ('feat: wire real BM25 k1/b scoring params (config-driven, no reindex)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I023",
+      "query": "add bm25_reserved_slots RRF pool-reserve knob, default 0",
+      "category": "I",
+      "intended": [
+        "scripts/benchmark/run_sscg_benchmark.py:function:_apply_reranker_budget_override",
+        "scripts/benchmark/run_sscg_benchmark.py:function:build_parser",
+        "search/config.py:decorated_definition:SearchModeConfig",
+        "search/reranker.py:method:RRFReranker.rerank",
+        "search/reranker.py:method:RRFReranker.rerank_simple"
+      ],
+      "notes": "commit-mined from 2cbc46a8 ('feat: add bm25_reserved_slots RRF pool-reserve knob, default 0'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I024",
+      "query": "identifier-preserving BM25 tokenizer, default whole",
+      "category": "I",
+      "intended": [
+        "scripts/benchmark/bm25_tokenizer_ab.py:function:_make_preprocessor",
+        "scripts/benchmark/bm25_tokenizer_ab.py:function:_search",
+        "scripts/benchmark/bm25_tokenizer_ab.py:function:_tokenize_corpus",
+        "search/bm25_index.py:class:BM25Index",
+        "search/bm25_index.py:class:TextPreprocessor",
+        "search/bm25_index.py:method:BM25Index.get_stats",
+        "search/bm25_index.py:method:BM25Index.index_documents",
+        "search/bm25_index.py:method:BM25Index.load",
+        "search/bm25_index.py:method:BM25Index.save",
+        "search/bm25_index.py:method:BM25Index.search",
+        "search/bm25_index.py:method:TextPreprocessor.preprocess_code",
+        "search/config.py:decorated_definition:SearchModeConfig",
+        "search/hybrid_searcher.py:method:HybridSearcher._init_search_components",
+        "search/index_sync.py:method:IndexSynchronizer.__init__",
+        "search/index_sync.py:method:IndexSynchronizer.clear_index",
+        "search/index_sync.py:method:IndexSynchronizer.resync_bm25_from_dense"
+      ],
+      "notes": "commit-mined from 8118ef07 ('feat: identifier-preserving BM25 tokenizer, default whole'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I025",
+      "query": "centrality stage in benchmark runner, lower centrality_alpha to 0.0",
+      "category": "I",
+      "intended": [
+        "scripts/benchmark/run_sscg_benchmark.py:function:_maybe_reset_for_construction_overrides",
+        "scripts/benchmark/run_sscg_benchmark.py:function:build_parser",
+        "search/config.py:decorated_definition:GraphEnhancedConfig"
+      ],
+      "notes": "commit-mined from 5347fd3d ('feat: centrality stage in benchmark runner, lower centrality_alpha to 0.0'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H008",
+      "query": "reset cached searcher per sweep iteration, add --rrf-k flag (Q4)",
+      "category": "H",
+      "intended": [
+        "scripts/benchmark/run_sscg_benchmark.py:function:_apply_reranker_budget_override",
+        "scripts/benchmark/run_sscg_benchmark.py:function:build_parser"
+      ],
+      "notes": "commit-mined from 4cd0e038 ('fix: reset cached searcher per sweep iteration, add --rrf-k flag (Q4)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H009",
+      "query": "add opt-in single-pass rerank mode, default off (Q3)",
+      "category": "H",
+      "intended": [
+        "search/config.py:decorated_definition:RerankerConfig"
+      ],
+      "notes": "commit-mined from f2dc9481 ('feat: add opt-in single-pass rerank mode, default off (Q3)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I026",
+      "query": "reduce reranker pool budget 50 to 30, add --top-k-candidates flag (Q2)",
+      "category": "I",
+      "intended": [
+        "mcp_server/tool_registry.py:function:_advanced_tools_enabled",
+        "scripts/benchmark/run_sscg_benchmark.py:function:_apply_reranker_override",
+        "scripts/benchmark/run_sscg_benchmark.py:function:build_parser",
+        "search/config.py:decorated_definition:RerankerConfig"
+      ],
+      "notes": "commit-mined from f936d0ba ('feat: reduce reranker pool budget 50 to 30, add --top-k-candidates flag (Q2)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I027",
+      "query": "collapse split_block fragments in live search results (Q1)",
+      "category": "I",
+      "intended": [
+        "search/chunk_id.py:function:dedup_key",
+        "search/config.py:decorated_definition:RerankerConfig",
+        "search/reranking_engine.py:method:RerankingEngine.rerank_by_query"
+      ],
+      "notes": "commit-mined from 9e061189 ('feat: collapse split_block fragments in live search results (Q1)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I028",
+      "query": "drift-promotion miscount, wire auto_reindex, extend chunk cache",
+      "category": "I",
+      "intended": [
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache._evict",
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.get_stats",
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.load",
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.save",
+        "mcp_server/tool_registry.py:function:_advanced_tools_enabled",
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
+        "search/index_write_stage.py:method:IndexWriteStage._resolve_chunk_cache",
+        "search/index_write_stage.py:method:IndexWriteStage.run"
+      ],
+      "notes": "commit-mined from 30dee2fc ('fix: drift-promotion miscount, wire auto_reindex, extend chunk cache'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I029",
+      "query": "widen retrieval funnel to reranker budget, add recall-headroom metrics",
+      "category": "I",
+      "intended": [
+        "evaluation/metrics.py:function:calculate_metrics_from_results",
+        "search/config.py:decorated_definition:GraphEnhancedConfig",
+        "search/graph_scoring_stage.py:decorated_definition:GraphScoringStage._result_score",
+        "search/graph_scoring_stage.py:method:GraphScoringStage.run",
+        "search/reranking_engine.py:decorated_definition:RerankingEngine.apply_neural_reranking",
+        "search/reranking_engine.py:method:RerankingEngine.__init__",
+        "search/reranking_engine.py:method:RerankingEngine.rerank_by_query"
+      ],
+      "notes": "commit-mined from 803831db ('feat: widen retrieval funnel to reranker budget, add recall-headroom metrics'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I030",
+      "query": "consolidate index-file deletion lists, fix clear-index bug",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_clear_index",
+        "mcp_server/tools/index_handlers.py:function:_build_index_response",
+        "search/indexer.py:method:CodeIndexManager.clear_index"
+      ],
+      "notes": "commit-mined from 1a9c53b5 ('fix: consolidate index-file deletion lists, fix clear-index bug'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I031",
+      "query": "harden chunk embedding cache provenance and sizing",
+      "category": "I",
+      "intended": [
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.__init__",
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache._evict",
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.get_stats",
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.load",
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.save",
+        "embeddings/embedder.py:method:CodeEmbedder._get_torch_dtype",
+        "embeddings/embedder.py:method:CodeEmbedder.get_cache_stats",
+        "embeddings/model_loader.py:method:ModelLoader._measure_activation_per_item",
+        "embeddings/model_loader.py:method:ModelLoader.get_torch_dtype",
+        "search/config.py:decorated_definition:EmbeddingConfig",
+        "search/index_write_stage.py:method:IndexWriteStage._resolve_chunk_cache"
+      ],
+      "notes": "commit-mined from 9117a302 ('feat: harden chunk embedding cache provenance and sizing'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I032",
+      "query": "drop SymbolHashCache disk persistence and dead symbol-name lookup",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/search_handlers.py:function:_resolve_symbol_to_chunk_id",
+        "search/incremental_indexer.py:method:IncrementalIndexer._build_write_pipeline",
+        "search/indexer.py:decorated_definition:CodeIndexManager.metadata_store",
+        "search/metadata.py:method:MetadataStore.__init__",
+        "search/metadata.py:method:MetadataStore.commit",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer.__init__",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callees",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callers",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_forward",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._extract_symbol_info",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_target",
+        "search/symbol_cache.py:class:SymbolHashCache",
+        "search/symbol_cache.py:decorated_definition:SymbolHashCache.fnv1a_hash",
+        "search/symbol_cache.py:method:SymbolHashCache.__init__",
+        "search/symbol_cache.py:method:SymbolHashCache.add",
+        "search/symbol_cache.py:method:SymbolHashCache.clear",
+        "search/symbol_cache.py:method:SymbolHashCache.get_by_chunk_id",
+        "search/symbol_cache.py:method:SymbolHashCache.remove"
+      ],
+      "notes": "commit-mined from dff893d7 ('fix: drop SymbolHashCache disk persistence and dead symbol-name lookup'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H010",
+      "query": "profiler median contamination and resolvers=[] config bug",
+      "category": "H",
+      "intended": [
+        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges"
+      ],
+      "notes": "commit-mined from c9086552 ('fix: profiler median contamination and resolvers=[] config bug'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I033",
+      "query": "re-sync graph storage reference after clear_index",
+      "category": "I",
+      "intended": [
+        "graph/graph_storage.py:method:CodeGraphStorage.__len__",
+        "search/graph_integration.py:method:GraphIntegration.__len__",
+        "search/hybrid_searcher.py:method:HybridSearcher.clear_index",
+        "search/metadata.py:method:MetadataStore.__len__",
+        "search/multi_hop_searcher.py:method:MultiHopSearcher._graph_expand",
+        "search/symbol_cache.py:method:SymbolHashCache.__len__"
+      ],
+      "notes": "commit-mined from 3adc724c ('fix: re-sync graph storage reference after clear_index'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H011",
+      "query": "repair rotted slow_integration suite + drift-promotion count bug",
+      "category": "H",
+      "intended": [
+        "search/indexer.py:method:CodeIndexManager.add_embeddings",
+        "search/indexer.py:method:CodeIndexManager.clear_index"
+      ],
+      "notes": "commit-mined from 4dd271e4 ('fix: repair rotted slow_integration suite + drift-promotion count bug'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I034",
+      "query": "address PR #40 review — rwlock cleanup, real-lock test, logger param",
+      "category": "I",
+      "intended": [
+        "chunking/relationships/lsp_call_graph.py:function:_kill_process_tree",
+        "chunking/relationships/lsp_call_graph.py:function:_path_to_uri",
+        "mcp_server/state.py:decorated_definition:ApplicationState"
+      ],
+      "notes": "commit-mined from 0724a634 ('fix: address PR #40 review — rwlock cleanup, real-lock test, logger param'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I035",
+      "query": "effective-python audit — write-locks, LSP logging, async offloads",
+      "category": "I",
+      "intended": [
+        "chunking/relationships/lsp_call_graph.py:function:_kill_process_tree",
+        "chunking/relationships/lsp_call_graph.py:function:_path_to_uri",
+        "chunking/relationships/lsp_call_graph.py:method:_LspClient._on_deadline",
+        "chunking/relationships/lsp_call_graph.py:method:_LspClient._reader_loop",
+        "chunking/relationships/lsp_call_graph.py:method:_LspClient.close",
+        "mcp_server/tools/decorators.py:function:with_mutation_lock",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_clear_index",
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_list_projects",
+        "scripts/benchmark/measure_parse_once.py:function:_time_parse_only"
+      ],
+      "notes": "commit-mined from 8c702dbf ('fix: effective-python audit — write-locks, LSP logging, async offloads'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I036",
+      "query": "scope-aware call-graph resolution to fix alias mis-binding",
+      "category": "I",
+      "intended": [
+        "chunking/relationships/call_graph_extractor.py:decorated_definition:CallEdge",
+        "chunking/relationships/call_graph_extractor.py:method:PythonCallGraphExtractor._extract_call_from_node",
+        "search/graph_integration.py:class:_BuildSpec",
+        "search/graph_integration.py:function:is_chunk_id",
+        "search/graph_integration.py:method:GraphIntegration._get_ambiguous_candidates",
+        "search/graph_integration.py:method:GraphIntegration._make_spec_from_chunk",
+        "search/graph_integration.py:method:GraphIntegration._make_spec_from_embedding",
+        "search/graph_integration.py:method:GraphIntegration._resolve_call_target",
+        "search/graph_integration.py:method:GraphIntegration._two_pass_build",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callees",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callers",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol"
+      ],
+      "notes": "commit-mined from 95b8f757 ('fix: scope-aware call-graph resolution to fix alias mis-binding'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I037",
+      "query": "serialize auto-reindex against in-flight searches, add reranker inference locks",
+      "category": "I",
+      "intended": [
+        "mcp_server/state.py:decorated_definition:ApplicationState",
+        "mcp_server/tools/decorators.py:function:with_mutation_lock",
+        "search/neural_reranker.py:method:NeuralReranker.rerank_batch"
+      ],
+      "notes": "commit-mined from 6e3b9b87 ('fix: serialize auto-reindex against in-flight searches, add reranker inference locks'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I038",
+      "query": "make BAAI/bge-m3 the shared embedding default across all config readers",
+      "category": "I",
+      "intended": [
+        "embeddings/embedder.py:class:CodeEmbedder",
+        "embeddings/embedder.py:method:CodeEmbedder.__init__",
+        "scripts/get_system_status_fast.py:function:get_config_path",
+        "scripts/get_system_status_fast.py:function:main",
+        "search/config.py:decorated_definition:EmbeddingConfig"
+      ],
+      "notes": "commit-mined from c7f32eb6 ('fix: make BAAI/bge-m3 the shared embedding default across all config readers'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I039",
+      "query": "emit module-preamble chunks and respect reranker ordering",
+      "category": "I",
+      "intended": [
+        "chunking/python_ast_chunker.py:decorated_definition:CodeChunk",
+        "chunking/relationships/relationship_extractors/constant_extractor.py:method:ConstantExtractor._extract_from_tree",
+        "mcp_server/tool_registry.py:function:_advanced_tools_enabled",
+        "mcp_server/tools/search_orchestrator.py:decorated_definition:SearchOrchestrator._apply_source_order_and_budget",
+        "search/graph_scoring_stage.py:method:GraphScoringStage._reorder_synthetic"
+      ],
+      "notes": "commit-mined from c5037a3b ('feat: emit module-preamble chunks and respect reranker ordering'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I040",
+      "query": "harden MCP server per architecture-patterns paper (tool tiers, async index jobs, dispatch telemetry, mutation lock)",
+      "category": "I",
+      "intended": [
+        "mcp_server/server.py:decorated_definition:handle_list_tools",
+        "mcp_server/server.py:function:_drop_benign_uvicorn_errors",
+        "mcp_server/state.py:decorated_definition:ApplicationState",
+        "mcp_server/tool_registry.py:function:build_tool_list",
+        "mcp_server/tools/config_handlers.py:decorated_definition:handle_configure_chunking",
+        "mcp_server/tools/config_handlers.py:decorated_definition:handle_configure_reranking",
+        "mcp_server/tools/config_handlers.py:decorated_definition:handle_configure_search_mode",
+        "mcp_server/tools/config_handlers.py:decorated_definition:handle_switch_embedding_model",
+        "mcp_server/tools/config_handlers.py:decorated_definition:handle_switch_project",
+        "mcp_server/tools/config_handlers.py:function:apply_config_patch",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_index_directory",
+        "mcp_server/tools/index_handlers.py:function:_switch_active_model",
+        "mcp_server/tools/result_view.py:function:_format_search_results",
+        "mcp_server/tools/search_orchestrator.py:decorated_definition:ExecutionOutcome",
+        "mcp_server/tools/search_orchestrator.py:decorated_definition:SearchOrchestrator._build_response",
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator._assemble",
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_get_index_status"
+      ],
+      "notes": "commit-mined from 3fda36d4 ('feat: harden MCP server per architecture-patterns paper (tool tiers, async index jobs, dispatch telemetry, mutation lock)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I041",
+      "query": "narrow broad excepts to real raise surface, offload accessibility precheck, add resource_manager coverage",
+      "category": "I",
+      "intended": [
+        "graph/graph_storage.py:method:CodeGraphStorage.load",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_index_directory",
+        "mcp_server/tools/index_handlers.py:function:_check_file_accessibility",
+        "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25",
+        "search/search_executor.py:decorated_definition:SearchExecutor.search_dense",
+        "search/vram_manager.py:method:VRAMTierManager._get_available_vram_gb"
+      ],
+      "notes": "commit-mined from e2384d13 ('fix: narrow broad excepts to real raise surface, offload accessibility precheck, add resource_manager coverage'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H012",
+      "query": "silence benign uvicorn ASGI error on Ctrl+C HTTP-server shutdown",
+      "category": "H",
+      "intended": [
+        "mcp_server/server.py:function:_configure_logging",
+        "mcp_server/server.py:function:app_lifespan"
+      ],
+      "notes": "commit-mined from e0f72a39 ('fix: silence benign uvicorn ASGI error on Ctrl+C HTTP-server shutdown'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I042",
+      "query": "Qwen3-Reranker prompt bug + stale golden-dataset chunk IDs; add reranker comparison benchmarking, remove BGE from UI",
+      "category": "I",
+      "intended": [
+        "scripts/benchmark/run_sscg_benchmark.py:function:_apply_weight_overrides",
+        "scripts/benchmark/run_sscg_benchmark.py:function:build_parser",
+        "scripts/benchmark/run_sscg_benchmark.py:function:print_leaderboard",
+        "search/neural_reranker.py:class:GenerativeReranker",
+        "search/neural_reranker.py:method:NeuralReranker.rerank_batch"
+      ],
+      "notes": "commit-mined from 09951e34 ('fix: Qwen3-Reranker prompt bug + stale golden-dataset chunk IDs; add reranker comparison benchmarking, remove BGE from UI'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H013",
+      "query": "reload_config endpoint AttributeError on SearchConfigManager.config",
+      "category": "H",
+      "intended": [
+        "mcp_server/server.py:function:handle_reload_config"
+      ],
+      "notes": "commit-mined from 324d1404 ('fix: reload_config endpoint AttributeError on SearchConfigManager.config'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I043",
+      "query": "eliminate LSP call-graph resolver deadlock via persistent reader thread",
+      "category": "I",
+      "intended": [
+        "chunking/relationships/lsp_call_graph.py:class:LSPResolver",
+        "chunking/relationships/lsp_call_graph.py:function:_encode",
+        "chunking/relationships/lsp_call_graph.py:function:_find_def_position",
+        "chunking/relationships/lsp_call_graph.py:function:_path_to_uri",
+        "chunking/relationships/lsp_call_graph.py:function:_read_response",
+        "chunking/relationships/lsp_call_graph.py:function:_uri_to_path",
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver._run_lsp",
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver.resolve",
+        "chunking/relationships/lsp_call_graph.py:method:_LspClient._drain_stderr",
+        "search/config.py:decorated_definition:CallGraphConfig",
+        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges"
+      ],
+      "notes": "commit-mined from 2287d1fd ('fix: eliminate LSP call-graph resolver deadlock via persistent reader thread'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H014",
+      "query": "silence embedding dimension deprecation warning",
+      "category": "H",
+      "intended": [
+        "embeddings/embedder.py:method:CodeEmbedder.get_model_info"
+      ],
+      "notes": "commit-mined from d873d080 ('fix: silence embedding dimension deprecation warning'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I044",
+      "query": "route cleanup project-id through hash owner",
+      "category": "I",
+      "intended": [
+        "merkle/snapshot_manager.py:method:SnapshotManager._get_legacy_project_id",
+        "tools/cleanup_orphaned_projects.py:function:_get_full_project_id",
+        "tools/cleanup_stale_snapshots.py:function:_get_full_project_id"
+      ],
+      "notes": "commit-mined from 43465afc ('fix: route cleanup project-id through hash owner'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I045",
+      "query": "classify imports in live index/reindex paths",
+      "category": "I",
+      "intended": [
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker.__init__",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_index_directory",
+        "mcp_server/tools/index_handlers.py:function:_check_file_accessibility"
+      ],
+      "notes": "commit-mined from fe7a6c53 ('fix: classify imports in live index/reindex paths'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H015",
+      "query": "resync_bm25_from_dense drops empty-content chunks causing chronic BM25<Dense desync",
+      "category": "H",
+      "intended": [
+        "search/index_sync.py:method:IndexSynchronizer.resync_bm25_from_dense"
+      ],
+      "notes": "commit-mined from e17780ff ('fix: resync_bm25_from_dense drops empty-content chunks causing chronic BM25<Dense desync'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I046",
+      "query": "parameterize close_project_resources to preserve current_project on clear",
+      "category": "I",
+      "intended": [
+        "mcp_server/resource_manager.py:function:_cleanup_previous_resources",
+        "mcp_server/resource_manager.py:function:close_project_resources",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_clear_index"
+      ],
+      "notes": "commit-mined from c69478c5 ('fix: parameterize close_project_resources to preserve current_project on clear'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I047",
+      "query": "expand eval harness (E/F categories, --tool-names), fix routing threshold, sync SKILL.md",
+      "category": "I",
+      "intended": [
+        "evaluation/dspy_agent_eval.py:class:CodeNavQA",
+        "evaluation/dspy_agent_eval.py:function:load_examples",
+        "scripts/benchmark/run_dspy_eval.py:function:_parse_args",
+        "scripts/benchmark/run_dspy_eval.py:function:main"
+      ],
+      "notes": "commit-mined from c2ae3bb2 ('feat: expand eval harness (E/F categories, --tool-names), fix routing threshold, sync SKILL.md'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I048",
+      "query": "expand golden dataset 13→45 queries, add category D (find_connections)",
+      "category": "I",
+      "intended": [
+        "evaluation/dspy_agent_eval.py:class:CodeNavQA",
+        "evaluation/dspy_agent_eval.py:function:load_examples",
+        "scripts/benchmark/run_dspy_gepa.py:function:_print_prereq_banner",
+        "scripts/benchmark/run_sscg_benchmark.py:function:build_parser"
+      ],
+      "notes": "commit-mined from 5118e1ee ('feat: expand golden dataset 13→45 queries, add category D (find_connections)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H016",
+      "query": "instruct recall-oriented inclusion in CodeNavQA signature",
+      "category": "H",
+      "intended": [
+        "evaluation/dspy_agent_eval.py:class:CodeNavQA"
+      ],
+      "notes": "commit-mined from 5766c128 ('feat: instruct recall-oriented inclusion in CodeNavQA signature'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H017",
+      "query": "use unranked recall for trajectory ceiling metric (ceiling_k = len surfaced)",
+      "category": "H",
+      "intended": [
+        "evaluation/dspy_agent_eval.py:function:_eval_one",
+        "evaluation/dspy_agent_eval.py:function:trajectory_recall_metric"
+      ],
+      "notes": "commit-mined from 721c4cfc ('fix: use unranked recall for trajectory ceiling metric (ceiling_k = len surfaced)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I049",
+      "query": "copy search_code chunk_ids verbatim + add tool-vs-agent recall diagnostic",
+      "category": "I",
+      "intended": [
+        "evaluation/dspy_agent_eval.py:class:CodeNavQA",
+        "evaluation/dspy_agent_eval.py:function:_eval_one",
+        "evaluation/dspy_agent_eval.py:function:run_eval",
+        "evaluation/dspy_agent_eval.py:function:tool_selection_metric",
+        "scripts/benchmark/run_dspy_eval.py:function:_print_aggregate",
+        "scripts/benchmark/run_dspy_eval.py:function:_print_per_query_table"
+      ],
+      "notes": "commit-mined from ebf6002d ('fix: copy search_code chunk_ids verbatim + add tool-vs-agent recall diagnostic'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I050",
+      "query": "Batch 3 — six event-loop offloads, metadata cache clear, ONNX 2048 token contract, dead field drop, graph-id normalization, eval line-check, merkle sentinel (#43-#49)",
+      "category": "I",
+      "intended": [
+        "embeddings/embedder.py:function:estimate_activation_gb_from_config",
+        "evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
+        "evaluation/chunk_mapping.py:function:find_enclosing_chunk",
+        "evaluation/metrics.py:function:build_chunk_line_lookup",
+        "graph/graph_storage.py:method:CodeGraphStorage.__contains__",
+        "graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge",
+        "mcp_server/server.py:function:handle_cleanup",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_clear_index",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_index_directory",
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run",
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_cleanup_resources",
+        "merkle/merkle_dag.py:method:MerkleDAG.hash_file",
+        "search/hybrid_searcher.py:method:HybridSearcher.clear_index",
+        "search/searcher.py:method:IntelligentSearcher._create_search_result"
+      ],
+      "notes": "commit-mined from 9e88b203 ('fix: Batch 3 — six event-loop offloads, metadata cache clear, ONNX 2048 token contract, dead field drop, graph-id normalization, eval line-check, merkle sentinel (#43-#49)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H018",
+      "query": "key call-edge injection on \"calls\" for MultiDiGraph (#3 follow-up)",
+      "category": "H",
+      "intended": [
+        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges"
+      ],
+      "notes": "commit-mined from d1b98da5 ('fix: key call-edge injection on \"calls\" for MultiDiGraph (#3 follow-up)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I051",
+      "query": "DiGraph→MultiDiGraph (#3) — parallel edges by relationship type, backward-compat coerce-on-load, centrality parity via simple-digraph view",
+      "category": "I",
+      "intended": [
+        "graph/graph_queries.py:method:GraphQueryEngine._create_filtered_subgraph",
+        "graph/graph_queries.py:method:GraphQueryEngine.compute_centrality",
+        "graph/graph_queries.py:method:GraphQueryEngine.find_leaf_functions",
+        "graph/graph_queries.py:method:GraphQueryEngine.get_function_call_count",
+        "graph/graph_storage.py:method:CodeGraphStorage.__init__",
+        "graph/graph_storage.py:method:CodeGraphStorage._iter_matching_neighbors",
+        "graph/graph_storage.py:method:CodeGraphStorage._should_exclude_edge",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_relationship_edge",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_edge_data",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_graph",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_nodes_by_name",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_stats",
+        "graph/graph_storage.py:method:CodeGraphStorage.load",
+        "graph/graph_storage.py:method:CodeGraphStorage.save",
+        "graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge"
+      ],
+      "notes": "commit-mined from ae139472 ('fix: DiGraph→MultiDiGraph (#3) — parallel edges by relationship type, backward-compat coerce-on-load, centrality parity via simple-digraph view'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I052",
+      "query": "merkle symlink-cycle guard, per-entry except, snapshot-ignore path-relative match (#21)",
+      "category": "I",
+      "intended": [
+        "merkle/change_detector.py:method:ChangeDetector.__init__",
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot",
+        "merkle/change_detector.py:method:ChangeDetector.quick_check",
+        "merkle/merkle_dag.py:method:MerkleDAG.build_node",
+        "merkle/merkle_dag.py:method:MerkleDAG.should_ignore"
+      ],
+      "notes": "commit-mined from 6b2aa458 ('fix: merkle symlink-cycle guard, per-entry except, snapshot-ignore path-relative match (#21)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I053",
+      "query": "extract write_json_atomic helper; atomic writes at all 4 JSON sites; fix caller-dict mutation in save_snapshot (#27)",
+      "category": "I",
+      "intended": [
+        "graph/graph_storage.py:method:CodeGraphStorage.save",
+        "merkle/snapshot_manager.py:method:SnapshotManager.save_snapshot",
+        "search/config.py:method:SearchConfigManager.save_config"
+      ],
+      "notes": "commit-mined from 4a0981ed ('fix: extract write_json_atomic helper; atomic writes at all 4 JSON sites; fix caller-dict mutation in save_snapshot (#27)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H019",
+      "query": "test regressions from batch1 — file_path fallback (#8), timeout mock (#6), log msg (#11), provider_options dict (#9)",
+      "category": "H",
+      "intended": [
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker._extract_call_relationships",
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker._extract_phase3_relationships"
+      ],
+      "notes": "commit-mined from 6780a94a ('fix: test regressions from batch1 — file_path fallback (#8), timeout mock (#6), log msg (#11), provider_options dict (#9)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I054",
+      "query": "address PR #30 review — metrics return type, golden metric reconcile, getattr cleanup",
+      "category": "I",
+      "intended": [
+        "evaluation/metrics.py:function:calculate_metrics_from_results",
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator._assemble",
+        "scripts/benchmark/run_sscg_benchmark.py:function:_extract_ranges_from_results"
+      ],
+      "notes": "commit-mined from 1453ea0c ('fix: address PR #30 review — metrics return type, golden metric reconcile, getattr cleanup'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H020",
+      "query": "unquote percent-encoded drive colon in _uri_to_path for basedpyright URIs",
+      "category": "H",
+      "intended": [
+        "chunking/relationships/lsp_call_graph.py:function:_uri_to_path"
+      ],
+      "notes": "commit-mined from 3ffca251 ('fix: unquote percent-encoded drive colon in _uri_to_path for basedpyright URIs'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H021",
+      "query": "repair LSP resolver — probe position, ID correlation, URI parsing, diagnostics",
+      "category": "H",
+      "intended": [
+        "chunking/relationships/lsp_call_graph.py:function:_path_to_uri",
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver._run_lsp"
+      ],
+      "notes": "commit-mined from aee8c638 ('fix: repair LSP resolver — probe position, ID correlation, URI parsing, diagnostics'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I055",
+      "query": "call-graph v0.14.0 — namespace guards, LibCST use_pyproject_toml+resolve_cache, min_confidence, tests",
+      "category": "I",
+      "intended": [
+        "chunking/relationships/libcst_call_graph.py:class:LibCSTResolver",
+        "search/config.py:decorated_definition:CallGraphConfig",
+        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges"
+      ],
+      "notes": "commit-mined from 8700e309 ('feat: call-graph v0.14.0 — namespace guards, LibCST use_pyproject_toml+resolve_cache, min_confidence, tests'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H022",
+      "query": "resolver precision tuning - pyan callee-flavor filter and wildcard down-weight, libcst self-call resolution",
+      "category": "H",
+      "intended": [
+        "chunking/relationships/libcst_call_graph.py:method:_CallVisitor.leave_AsyncFunctionDef",
+        "chunking/relationships/libcst_call_graph.py:method:_CallVisitor.visit_Call"
+      ],
+      "notes": "commit-mined from b089d0c6 ('feat: resolver precision tuning - pyan callee-flavor filter and wildcard down-weight, libcst self-call resolution'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I056",
+      "query": "LibCST resolver - absolute path keys and utf-8 source reads",
+      "category": "I",
+      "intended": [
+        "chunking/relationships/libcst_call_graph.py:class:_CallVisitor",
+        "chunking/relationships/libcst_call_graph.py:method:_CallVisitor.leave_FunctionDef",
+        "chunking/relationships/libcst_call_graph.py:method:_CallVisitor.visit_AsyncFunctionDef",
+        "chunking/relationships/lsp_call_graph.py:function:lsp_available",
+        "search/config.py:decorated_definition:CallGraphConfig",
+        "search/graph_integration.py:method:GraphIntegration.build_graph_from_chunks",
+        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges"
+      ],
+      "notes": "commit-mined from b50d234b ('fix: LibCST resolver - absolute path keys and utf-8 source reads'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H023",
+      "query": "preserve legacy string confidence tags in get_edge_data",
+      "category": "H",
+      "intended": [
+        "graph/graph_storage.py:method:CodeGraphStorage.get_edge_data"
+      ],
+      "notes": "commit-mined from ec005b21 ('fix: preserve legacy string confidence tags in get_edge_data'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I057",
+      "query": "rename graph edge attr 'source' -> 'resolver_source' (node-link reserved key)",
+      "category": "I",
+      "intended": [
+        "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge",
+        "graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge",
+        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callees",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callers"
+      ],
+      "notes": "commit-mined from c478f548 (\"fix: rename graph edge attr 'source' -> 'resolver_source' (node-link reserved key)\"); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H024",
+      "query": "Stage 3 LSP resolver (basedpyright, opt-in, confidence 0.98) + 17 tests",
+      "category": "H",
+      "intended": [
+        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges"
+      ],
+      "notes": "commit-mined from 10aa46b0 ('feat: Stage 3 LSP resolver (basedpyright, opt-in, confidence 0.98) + 17 tests'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H025",
+      "query": "Stage 2 LibCST resolver (MIT, confidence 0.90) + inject seam wired",
+      "category": "H",
+      "intended": [
+        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges"
+      ],
+      "notes": "commit-mined from d8b4b1fc ('feat: Stage 2 LibCST resolver (MIT, confidence 0.90) + inject seam wired'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H026",
+      "query": "scope pyan3 to indexed files and skip unparseable files",
+      "category": "H",
+      "intended": [
+        "chunking/relationships/external_call_graph.py:function:build_call_edges"
+      ],
+      "notes": "commit-mined from e9c33351 ('fix: scope pyan3 to indexed files and skip unparseable files'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H027",
+      "query": "log Tier 3 semantic search failures in _resolve_by_symbol",
+      "category": "H",
+      "intended": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol"
+      ],
+      "notes": "commit-mined from 7b5b84ea ('fix: log Tier 3 semantic search failures in _resolve_by_symbol'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H028",
+      "query": "normalize Windows backslash relative_path in build_line_to_chunk_map",
+      "category": "H",
+      "intended": [
+        "evaluation/chunk_mapping.py:function:build_line_to_chunk_map"
+      ],
+      "notes": "commit-mined from 8d073954 ('fix: normalize Windows backslash relative_path in build_line_to_chunk_map'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I058",
+      "query": "Phase 3 — pyan3 cross-module caller edges in find_connections",
+      "category": "I",
+      "intended": [
+        "scripts/benchmark/build_caller_oracle.py:function:_build_line_to_chunk_map",
+        "scripts/benchmark/build_caller_oracle.py:function:_chunk_id_from_pycg_fqn",
+        "scripts/benchmark/build_caller_oracle.py:function:_find_enclosing_chunk",
+        "search/index_write_stage.py:method:IndexWriteStage.run"
+      ],
+      "notes": "commit-mined from 86584298 ('feat: Phase 3 — pyan3 cross-module caller edges in find_connections'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I059",
+      "query": "recover split_block call edges by re-reading method from source file",
+      "category": "I",
+      "intended": [
+        "evaluation/metrics.py:function:normalize_chunk_id",
+        "search/graph_integration.py:method:GraphIntegration._setup_from_storage",
+        "search/graph_integration.py:method:GraphIntegration.build_graph_from_chunks",
+        "search/graph_integration.py:method:GraphIntegration.populate_from_embeddings"
+      ],
+      "notes": "commit-mined from ac41e348 ('fix: recover split_block call edges by re-reading method from source file'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I060",
+      "query": "improve find_connections direct-caller recall (Phase 0-2, Phase 4)",
+      "category": "I",
+      "intended": [
+        "search/graph_integration.py:function:is_chunk_id",
+        "search/graph_integration.py:method:GraphIntegration._resolve_call_target",
+        "search/graph_integration.py:method:GraphIntegration.build_graph_from_chunks",
+        "search/graph_integration.py:method:GraphIntegration.populate_from_embeddings",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callers",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_target",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer.analyze_impact",
+        "search/types.py:decorated_definition:ImpactReport"
+      ],
+      "notes": "commit-mined from 08c2f977 ('feat: improve find_connections direct-caller recall (Phase 0-2, Phase 4)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I061",
+      "query": "resolve stale graph node IDs in find_connections",
+      "category": "I",
+      "intended": [
+        "graph/graph_storage.py:method:CodeGraphStorage.clear",
+        "search/incremental_indexer.py:method:IncrementalIndexer._remove_old_chunks",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_forward",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_reverse",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_target"
+      ],
+      "notes": "commit-mined from a8077787 ('fix: resolve stale graph node IDs in find_connections'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H029",
+      "query": "cross-pool model detection in switch_project and loaded field in list_embedding_models",
+      "category": "H",
+      "intended": [
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_list_embedding_models"
+      ],
+      "notes": "commit-mined from cb827e43 ('fix: cross-pool model detection in switch_project and loaded field in list_embedding_models'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H030",
+      "query": "delete call_graph.json in CodeGraphStorage.clear() to prevent phantom-node reload",
+      "category": "H",
+      "intended": [
+        "graph/graph_storage.py:method:CodeGraphStorage.clear"
+      ],
+      "notes": "commit-mined from ee5ef9cf ('fix: delete call_graph.json in CodeGraphStorage.clear() to prevent phantom-node reload'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H031",
+      "query": "extend graph suffix scan to match class-qualified method names in _resolve_target",
+      "category": "H",
+      "intended": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_target"
+      ],
+      "notes": "commit-mined from c6e556e2 ('fix: extend graph suffix scan to match class-qualified method names in _resolve_target'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H032",
+      "query": "add 3-tier exact-lookup to _resolve_target in RelationshipAnalyzer to fix non-deterministic symbol mis-resolution",
+      "category": "H",
+      "intended": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_target"
+      ],
+      "notes": "commit-mined from 10e759a7 ('fix: add 3-tier exact-lookup to _resolve_target in RelationshipAnalyzer to fix non-deterministic symbol mis-resolution'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H033",
+      "query": "resolve cross-pool model_key in get_project_storage_dir to eliminate spurious ERROR log",
+      "category": "H",
+      "intended": [
+        "mcp_server/storage_manager.py:function:get_project_storage_dir"
+      ],
+      "notes": "commit-mined from a9fbd078 ('fix: resolve cross-pool model_key in get_project_storage_dir to eliminate spurious ERROR log'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H034",
+      "query": "cap ONNX batch size by available VRAM to prevent first-try BFCArena OOM",
+      "category": "H",
+      "intended": [
+        "embeddings/embedder.py:function:calculate_optimal_batch_size"
+      ],
+      "notes": "commit-mined from 230cd470 ('fix: cap ONNX batch size by available VRAM to prevent first-try BFCArena OOM'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H035",
+      "query": "clear GPU cache before embedding-failure early return in IndexWriteStage",
+      "category": "H",
+      "intended": [
+        "search/index_write_stage.py:method:IndexWriteStage.run"
+      ],
+      "notes": "commit-mined from db9a52f0 ('fix: clear GPU cache before embedding-failure early return in IndexWriteStage'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I062",
+      "query": "rebind index-write pipeline to refreshed resources; report embedding failure",
+      "category": "I",
+      "intended": [
+        "search/graph_integration.py:method:GraphIntegration.add_chunk",
+        "search/graph_integration.py:method:GraphIntegration.build_graph_from_chunks",
+        "search/graph_integration.py:method:GraphIntegration.populate_from_embeddings",
+        "search/incremental_indexer.py:method:IncrementalIndexer.__init__",
+        "search/index_write_stage.py:method:IndexWriteStage.run"
+      ],
+      "notes": "commit-mined from 9664bd53 ('fix: rebind index-write pipeline to refreshed resources; report embedding failure'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H036",
+      "query": "split_block chunks extract type annotations from signature portion",
+      "category": "H",
+      "intended": [
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker._extract_phase3_relationships"
+      ],
+      "notes": "commit-mined from bd0ae4c2 ('fix: split_block chunks extract type annotations from signature portion'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I063",
+      "query": "migrate transport from legacy SSE to StreamableHTTP (v0.12.0)",
+      "category": "I",
+      "intended": [
+        "mcp_server/server.py:decorated_definition:handle_get_prompt",
+        "mcp_server/server.py:function:app_lifespan",
+        "mcp_server/server.py:function:handle_win_socket_error",
+        "mcp_server/server.py:function:run_stdio_server",
+        "scripts/manual_configure.py:function:main",
+        "scripts/manual_configure.py:method:ClaudeConfigManager.add_mcp_server",
+        "scripts/manual_configure.py:method:ClaudeConfigManager.create_mcp_server_config",
+        "scripts/manual_configure.py:method:ClaudeConfigManager.validate_config"
+      ],
+      "notes": "commit-mined from ad764288 ('feat: migrate transport from legacy SSE to StreamableHTTP (v0.12.0)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H037",
+      "query": "rollback embedding model from jina-v5 to Qwen3-0.6B",
+      "category": "H",
+      "intended": [
+        "search/vram_manager.py:class:VRAMTierManager",
+        "search/vram_manager.py:decorated_definition:VRAMTier"
+      ],
+      "notes": "commit-mined from 01a38c96 ('fix: rollback embedding model from jina-v5 to Qwen3-0.6B'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H038",
+      "query": "config false wins over CLAUDE_MULTI_MODEL_ENABLED env var in sync_from_config",
+      "category": "H",
+      "intended": [
+        "mcp_server/state.py:decorated_definition:ApplicationState"
+      ],
+      "notes": "commit-mined from f09ec745 ('fix: config false wins over CLAUDE_MULTI_MODEL_ENABLED env var in sync_from_config'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H039",
+      "query": "swap workstation embedding model to jina-embeddings-v5-text-small-retrieval",
+      "category": "H",
+      "intended": [
+        "search/vram_manager.py:class:VRAMTierManager",
+        "search/vram_manager.py:decorated_definition:VRAMTier"
+      ],
+      "notes": "commit-mined from 75b65da6 ('feat: swap workstation embedding model to jina-embeddings-v5-text-small-retrieval'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H040",
+      "query": "swap bge_code → coderankembed in full pool, add Qwen3-4B registry, update routing keywords",
+      "category": "H",
+      "intended": [
+        "search/config.py:decorated_definition:SearchConfig.from_dict"
+      ],
+      "notes": "commit-mined from 6bc6cc16 ('feat: swap bge_code → coderankembed in full pool, add Qwen3-4B registry, update routing keywords'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I064",
+      "query": "session-timestamped log rotation, force_flush in cleanup, OTel test isolation",
+      "category": "I",
+      "intended": [
+        "mcp_server/resource_manager.py:function:initialize_server_state",
+        "mcp_server/server.py:class:_SafeRotatingFileHandler",
+        "mcp_server/server.py:method:_SafeRotatingFileHandler.rotate"
+      ],
+      "notes": "commit-mined from be33d47c ('fix: session-timestamped log rotation, force_flush in cleanup, OTel test isolation'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I065",
+      "query": "extract SummaryStage and add incremental community summary refresh",
+      "category": "I",
+      "intended": [
+        "search/config.py:decorated_definition:ChunkingConfig",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict",
+        "search/incremental_indexer.py:method:IncrementalIndexer.__init__"
+      ],
+      "notes": "commit-mined from c9ba8e5c ('feat: extract SummaryStage and add incremental community summary refresh'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I066",
+      "query": "add opt-in OTel tracing across the search and index pipeline",
+      "category": "I",
+      "intended": [
+        "mcp_server/resource_manager.py:function:initialize_server_state",
+        "search/config.py:decorated_definition:GraphEnhancedConfig",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict",
+        "search/incremental_indexer.py:method:IncrementalIndexer._remove_old_chunks",
+        "search/search_executor.py:method:SearchExecutor._parallel_search"
+      ],
+      "notes": "commit-mined from be48e436 ('feat: add opt-in OTel tracing across the search and index pipeline'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I067",
+      "query": "prevent silent loss of user-defined index exclusions on re-index",
+      "category": "I",
+      "intended": [
+        "mcp_server/storage_manager.py:function:get_project_storage_dir",
+        "mcp_server/storage_manager.py:function:update_project_filters",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_index_directory"
+      ],
+      "notes": "commit-mined from 784f119f ('fix: prevent silent loss of user-defined index exclusions on re-index'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H041",
+      "query": "sync _config_mtime after save_config so load_config short-circuits to cache",
+      "category": "H",
+      "intended": [
+        "search/config.py:method:SearchConfigManager.save_config"
+      ],
+      "notes": "commit-mined from 3f066585 ('fix: sync _config_mtime after save_config so load_config short-circuits to cache'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I068",
+      "query": "prevent silent loss of user-defined index exclusions on re-index",
+      "category": "I",
+      "intended": [
+        "mcp_server/storage_manager.py:function:get_project_storage_dir",
+        "mcp_server/storage_manager.py:function:update_project_filters",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_index_directory"
+      ],
+      "notes": "commit-mined from b8dd7112 ('fix: prevent silent loss of user-defined index exclusions on re-index'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H042",
+      "query": "sync _config_mtime after save_config so load_config short-circuits to cache",
+      "category": "H",
+      "intended": [
+        "search/config.py:method:SearchConfigManager.save_config"
+      ],
+      "notes": "commit-mined from 6326cc5e ('fix: sync _config_mtime after save_config so load_config short-circuits to cache'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I069",
+      "query": "defense-in-depth for all destructive filesystem operations",
+      "category": "I",
+      "intended": [
+        "mcp_server/cleanup_queue.py:method:CleanupQueue.process",
+        "mcp_server/storage_manager.py:function:get_storage_dir",
+        "merkle/snapshot_manager.py:method:SnapshotManager.__init__",
+        "tools/cleanup_orphaned_projects.py:function:find_orphaned_projects",
+        "tools/cleanup_stale_snapshots.py:function:get_indexed_projects"
+      ],
+      "notes": "commit-mined from 31ea7a11 ('fix: defense-in-depth for all destructive filesystem operations'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I070",
+      "query": "embed_queries_batch empty shape (0,dim) + cache key includes instruction_mode/query_instruction (PR #25 review)",
+      "category": "I",
+      "intended": [
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder.embed_query",
+        "embeddings/embedder.py:method:CodeEmbedder.embed_queries_batch",
+        "embeddings/query_cache.py:method:QueryEmbeddingCache._generate_cache_key",
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.get",
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.put"
+      ],
+      "notes": "commit-mined from 1b912de6 ('fix: embed_queries_batch empty shape (0,dim) + cache key includes instruction_mode/query_instruction (PR #25 review)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H043",
+      "query": "gate ONNX on onnx_supported flag, drop wrong onnx_pooling defaults, dtype parens",
+      "category": "H",
+      "intended": [
+        "embeddings/embedder.py:function:estimate_activation_gb_from_config"
+      ],
+      "notes": "commit-mined from fd8ab470 ('fix: gate ONNX on onnx_supported flag, drop wrong onnx_pooling defaults, dtype parens'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H044",
+      "query": "isinstance OOM detection, dtype-aware batch estimate, relabel non_torch_gb",
+      "category": "H",
+      "intended": [
+        "embeddings/embedder.py:function:estimate_activation_gb_from_config"
+      ],
+      "notes": "commit-mined from 9e094368 ('fix: isinstance OOM detection, dtype-aware batch estimate, relabel non_torch_gb'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H045",
+      "query": "dedupe provider-options block, accept cuda:N in activation gate, fix validate() docstring",
+      "category": "H",
+      "intended": [
+        "embeddings/model_loader.py:method:ModelLoader._measure_activation_per_item"
+      ],
+      "notes": "commit-mined from e49bbabe ('fix: dedupe provider-options block, accept cuda:N in activation gate, fix validate() docstring'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H046",
+      "query": "ORT-aware batch sizing + BFCArena OOM recovery (fix B+A)",
+      "category": "H",
+      "intended": [
+        "embeddings/embedder.py:function:calculate_optimal_batch_size"
+      ],
+      "notes": "commit-mined from 054d9c18 ('fix: ORT-aware batch sizing + BFCArena OOM recovery (fix B+A)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I071",
+      "query": "constrain ORT CUDAExecutionProvider arena to prevent WDDM VRAM spillover",
+      "category": "I",
+      "intended": [
+        "embeddings/embedder.py:function:_configure_cuda_allocator",
+        "embeddings/embedder.py:function:set_vram_limit",
+        "search/config.py:decorated_definition:PerformanceConfig",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict"
+      ],
+      "notes": "commit-mined from 480a1fb9 ('fix: constrain ORT CUDAExecutionProvider arena to prevent WDDM VRAM spillover'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H047",
+      "query": "ORT-aware batch sizing + BFCArena OOM recovery (fix B+A)",
+      "category": "H",
+      "intended": [
+        "embeddings/embedder.py:function:calculate_optimal_batch_size"
+      ],
+      "notes": "commit-mined from 5b14cab1 ('fix: ORT-aware batch sizing + BFCArena OOM recovery (fix B+A)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I072",
+      "query": "constrain ORT CUDAExecutionProvider arena to prevent WDDM VRAM spillover",
+      "category": "I",
+      "intended": [
+        "embeddings/embedder.py:function:_configure_cuda_allocator",
+        "embeddings/embedder.py:function:set_vram_limit",
+        "search/config.py:decorated_definition:PerformanceConfig",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict"
+      ],
+      "notes": "commit-mined from 3d15df49 ('fix: constrain ORT CUDAExecutionProvider arena to prevent WDDM VRAM spillover'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I073",
+      "query": "resolve 4 ONNX flaws — cleanup leak, VRAM blindness, batch calc, session compat",
+      "category": "I",
+      "intended": [
+        "embeddings/embedder.py:method:CodeEmbedder._get_model_vram_gb",
+        "embeddings/embedder.py:method:CodeEmbedder.cleanup",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict"
+      ],
+      "notes": "commit-mined from 5a3d7589 ('fix: resolve 4 ONNX flaws — cleanup leak, VRAM blindness, batch calc, session compat'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H048",
+      "query": "address CI review round 4 — hoist _parse_line, fix threshold test, remove dead .env ext",
+      "category": "H",
+      "intended": [
+        "chunking/multi_language_chunker.py:decorated_definition:MultiLanguageChunker._classify_file_role"
+      ],
+      "notes": "commit-mined from f7691ec2 ('fix: address CI review round 4 — hoist _parse_line, fix threshold test, remove dead .env ext'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I074",
+      "query": "address CI review round 3 — gap_after, pipeline order, config from_dict, path normalization, batch hazard",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "search/centrality_ranker.py:method:CentralityRanker.rerank",
+        "search/config.py:decorated_definition:SearchConfig.from_dict"
+      ],
+      "notes": "commit-mined from c0cc6bb4 ('fix: address CI review round 3 — gap_after, pipeline order, config from_dict, path normalization, batch hazard'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I075",
+      "query": "address Charlie CI review round 2 — from_dict defaults, role-tag demotion, gap sentinel, test coverage",
+      "category": "I",
+      "intended": [
+        "chunking/multi_language_chunker.py:decorated_definition:MultiLanguageChunker._classify_file_role",
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "search/centrality_ranker.py:method:CentralityRanker.rerank",
+        "search/config.py:decorated_definition:SearchConfig.from_dict"
+      ],
+      "notes": "commit-mined from 88528509 ('fix: address Charlie CI review round 2 — from_dict defaults, role-tag demotion, gap sentinel, test coverage'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I076",
+      "query": "implement 4 RAG improvements from research analysis",
+      "category": "I",
+      "intended": [
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker._build_folder_structure",
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker._extract_semantic_tags",
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "search/centrality_ranker.py:method:CentralityRanker.rerank",
+        "search/config.py:decorated_definition:ChunkingConfig",
+        "search/config.py:decorated_definition:GraphEnhancedConfig",
+        "search/config.py:decorated_definition:OutputConfig",
+        "search/config.py:decorated_definition:SearchConfig.from_dict"
+      ],
+      "notes": "commit-mined from fd30c4e8 ('feat: implement 4 RAG improvements from research analysis'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H049",
+      "query": "use memory_allocated() for VRAM monitor instead of mem_get_info()",
+      "category": "H",
+      "intended": [
+        "embeddings/embedder.py:method:CodeEmbedder._check_vram_status"
+      ],
+      "notes": "commit-mined from 8561be09 ('fix: use memory_allocated() for VRAM monitor instead of mem_get_info()'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I077",
+      "query": "add automated SSCG benchmark pipeline and semantic intent classification",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "search/config.py:decorated_definition:IntentConfig",
+        "search/intent_classifier.py:method:IntentClassifier.__init__",
+        "search/intent_classifier.py:method:IntentClassifier._calculate_scores",
+        "search/intent_classifier.py:method:IntentClassifier.classify"
+      ],
+      "notes": "commit-mined from d6b0728e ('feat: add automated SSCG benchmark pipeline and semantic intent classification'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H050",
+      "query": "resolve test_handle_search_code_hybrid_searcher_ready failure",
+      "category": "H",
+      "intended": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code"
+      ],
+      "notes": "commit-mined from a71e1dbc ('fix: resolve test_handle_search_code_hybrid_searcher_ready failure'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I078",
+      "query": "address 4 critical Charlie review items",
+      "category": "I",
+      "intended": [
+        "search/intent_classifier.py:method:IntentClassifier._extract_suggested_params",
+        "search/multi_hop_searcher.py:method:MultiHopSearcher.apply_post_expansion_filters",
+        "search/multi_hop_searcher.py:method:MultiHopSearcher.validate_params"
+      ],
+      "notes": "commit-mined from 2bf4a179 ('fix: address 4 critical Charlie review items'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H051",
+      "query": "improve reranker resilience and add debug logging",
+      "category": "H",
+      "intended": [
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.__init__"
+      ],
+      "notes": "commit-mined from 56b0e908 ('fix: improve reranker resilience and add debug logging'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H052",
+      "query": "address PR #8 CI round 2 feedback",
+      "category": "H",
+      "intended": [
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.__init__"
+      ],
+      "notes": "commit-mined from 68ae1eb4 ('fix: address PR #8 CI round 2 feedback'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I079",
+      "query": "Address PR #7 review feedback",
+      "category": "I",
+      "intended": [
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:decorated_definition:SearchModeConfig",
+        "search/intent_classifier.py:class:IntentClassifier"
+      ],
+      "notes": "commit-mined from 597b4aa4 ('fix: Address PR #7 review feedback'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I080",
+      "query": "Qwen3-4B + BGE-Code model pool, Jina v3 reranker, fast UI loader",
+      "category": "I",
+      "intended": [
+        "scripts/get_system_status.py:function:main",
+        "scripts/get_system_status_fast.py:function:get_config_path",
+        "scripts/get_system_status_fast.py:function:get_selection_path",
+        "scripts/get_system_status_fast.py:function:main",
+        "search/centrality_ranker.py:method:CentralityRanker.rerank"
+      ],
+      "notes": "commit-mined from 3800477e ('feat: Qwen3-4B + BGE-Code model pool, Jina v3 reranker, fast UI loader'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I081",
+      "query": "Complete Q07 benchmark fix with 10 production optimizations (Exp 1-6)",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "search/centrality_ranker.py:method:CentralityRanker.rerank",
+        "search/config.py:method:SearchConfigManager.get_search_mode_for_query",
+        "search/intent_classifier.py:class:IntentClassifier",
+        "search/intent_classifier.py:class:QueryIntent",
+        "search/intent_classifier.py:method:IntentClassifier._extract_suggested_params"
+      ],
+      "notes": "commit-mined from 3046e9a4 ('feat: Complete Q07 benchmark fix with 10 production optimizations (Exp 1-6)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H053",
+      "query": "Add structural header context injection to embeddings (v0.9.0)",
+      "category": "H",
+      "intended": [
+        "search/config.py:decorated_definition:EmbeddingConfig"
+      ],
+      "notes": "commit-mined from b32c0bfe ('feat: Add structural header context injection to embeddings (v0.9.0)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I082",
+      "query": "Optimize search output (ego-graph noise reduction, k=4 default, config wiring)",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "search/config.py:decorated_definition:EgoGraphConfig",
+        "search/config.py:decorated_definition:SearchModeConfig",
+        "search/hybrid_searcher.py:method:HybridSearcher._apply_ego_graph_expansion"
+      ],
+      "notes": "commit-mined from 7a2aa541 ('feat: Optimize search output (ego-graph noise reduction, k=4 default, config wiring)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I083",
+      "query": "Add graph-aware multi-hop search (Phase 3)",
+      "category": "I",
+      "intended": [
+        "search/config.py:decorated_definition:MultiHopConfig",
+        "search/multi_hop_searcher.py:method:MultiHopSearcher.__init__",
+        "search/multi_hop_searcher.py:method:MultiHopSearcher.expand_from_initial_results"
+      ],
+      "notes": "commit-mined from 3247d2d9 ('feat: Add graph-aware multi-hop search (Phase 3)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I084",
+      "query": "Add edge-type-weighted BFS traversal (Phase 1)",
+      "category": "I",
+      "intended": [
+        "graph/graph_storage.py:method:CodeGraphStorage.get_neighbors",
+        "search/config.py:decorated_definition:EgoGraphConfig",
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.retrieve_ego_graph"
+      ],
+      "notes": "commit-mined from e17ab6a8 ('feat: Add edge-type-weighted BFS traversal (Phase 1)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I085",
+      "query": "Normalize subgraph paths and reduce output size",
+      "category": "I",
+      "intended": [
+        "mcp_server/output_formatter.py:function:_compact_dict",
+        "mcp_server/output_formatter.py:function:_to_toon_format",
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code"
+      ],
+      "notes": "commit-mined from c9d41cf6 ('fix: Normalize subgraph paths and reduce output size'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I086",
+      "query": "Phase 3 centrality - fix interface mismatches in GraphQueryEngine integration",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "search/config.py:decorated_definition:ParentRetrievalConfig",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict"
+      ],
+      "notes": "commit-mined from b9a5c6a4 ('fix: Phase 3 centrality - fix interface mismatches in GraphQueryEngine integration'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I087",
+      "query": "Phase 2 SSCG - Full relationship enrichment (21 types) in search graph field",
+      "category": "I",
+      "intended": [
+        "mcp_server/output_formatter.py:function:_to_toon_format",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_clear_index",
+        "mcp_server/tools/index_handlers.py:function:_build_index_response",
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code",
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "mcp_server/tools/search_handlers.py:function:_get_index_manager_from_searcher",
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_list_embedding_models",
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_list_projects"
+      ],
+      "notes": "commit-mined from bd81753a ('feat: Phase 2 SSCG - Full relationship enrichment (21 types) in search graph field'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I088",
+      "query": "Intent classifier Phase 2 keyword expansion",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "search/intent_classifier.py:class:IntentClassifier",
+        "search/intent_classifier.py:class:QueryIntent",
+        "search/intent_classifier.py:method:IntentClassifier._extract_suggested_params",
+        "search/intent_classifier.py:method:IntentClassifier._extract_symbol_from_query"
+      ],
+      "notes": "commit-mined from a4bb69f2 ('feat: Intent classifier Phase 2 keyword expansion'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I089",
+      "query": "Community merge path normalization + secondary symbol index + get_neighbors expansion",
+      "category": "I",
+      "intended": [
+        "chunking/python_ast_chunker.py:decorated_definition:CodeChunk",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_neighbors",
+        "search/incremental_indexer.py:method:IncrementalIndexer.__init__",
+        "search/indexer.py:decorated_definition:CodeIndexManager.metadata_store",
+        "search/symbol_cache.py:method:SymbolHashCache.__init__",
+        "search/symbol_cache.py:method:SymbolHashCache.clear",
+        "search/symbol_cache.py:method:SymbolHashCache.get_by_chunk_id"
+      ],
+      "notes": "commit-mined from ba380ea7 ('fix: Community merge path normalization + secondary symbol index + get_neighbors expansion'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I090",
+      "query": "Add chunk_type filters for merged/split_block + graph save bug fix",
+      "category": "I",
+      "intended": [
+        "graph/graph_queries.py:method:GraphQueryEngine.find_call_chain",
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections",
+        "search/hybrid_searcher.py:method:HybridSearcher.clear_index",
+        "search/indexer.py:method:CodeIndexManager.save_index"
+      ],
+      "notes": "commit-mined from 98fc0dda ('feat: Add chunk_type filters for merged/split_block + graph save bug fix'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I091",
+      "query": "Nested include_dirs support + UX improvements",
+      "category": "I",
+      "intended": [
+        "chunking/dedent_utils.py:function:wrap_with_if_true",
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker.chunk_directory",
+        "merkle/merkle_dag.py:method:MerkleDAG.should_ignore",
+        "search/filters.py:function:matches_directory_filter"
+      ],
+      "notes": "commit-mined from d48739b9 ('fix: Nested include_dirs support + UX improvements'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H054",
+      "query": "Phase 2 call graph edge resolution + comprehensive testing improvements",
+      "category": "H",
+      "intended": [
+        "search/hybrid_searcher.py:method:HybridSearcher.add_embeddings",
+        "search/hybrid_searcher.py:method:HybridSearcher.save_indices"
+      ],
+      "notes": "commit-mined from bc94143f ('feat: Phase 2 call graph edge resolution + comprehensive testing improvements'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I092",
+      "query": "Add independent community detection with persistence and fix chunking menu bugs",
+      "category": "I",
+      "intended": [
+        "chunking/tree_sitter.py:method:TreeSitterChunker.chunk_file",
+        "embeddings/embedder.py:function:set_vram_limit",
+        "graph/graph_storage.py:method:CodeGraphStorage.__contains__",
+        "search/config.py:decorated_definition:PerformanceConfig",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict",
+        "search/reranking_engine.py:method:RerankingEngine.should_enable_neural_reranking"
+      ],
+      "notes": "commit-mined from 7f512cc5 ('feat: Add independent community detection with persistence and fix chunking menu bugs'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I093",
+      "query": "Add benchmark-validated inductive search protocol to SKILL.md",
+      "category": "I",
+      "intended": [
+        "chunking/dedent_utils.py:function:smart_dedent",
+        "chunking/languages/base.py:method:LanguageChunker._create_merged_chunk",
+        "mcp_server/tools/config_handlers.py:decorated_definition:handle_configure_chunking",
+        "search/config.py:decorated_definition:ChunkingConfig",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/graph_integration.py:method:GraphIntegration.build_graph_from_chunks"
+      ],
+      "notes": "commit-mined from 6bbd1c80 ('feat: Add benchmark-validated inductive search protocol to SKILL.md'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I094",
+      "query": "Auto-select chunking architecture - community merge for full index, greedy for incremental",
+      "category": "I",
+      "intended": [
+        "chunking/languages/base.py:decorated_definition:TreeSitterChunk",
+        "chunking/python_ast_chunker.py:decorated_definition:CodeChunk",
+        "mcp_server/tools/config_handlers.py:decorated_definition:handle_configure_chunking",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_index_directory",
+        "search/config.py:decorated_definition:ChunkingConfig",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict",
+        "search/graph_integration.py:method:GraphIntegration.add_chunk",
+        "search/incremental_indexer.py:method:IncrementalIndexer._get_supported_files"
+      ],
+      "notes": "commit-mined from 2e8a12f2 ('feat: Auto-select chunking architecture - community merge for full index, greedy for incremental'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I095",
+      "query": "Parent-child retrieval - Match Small, Retrieve Big pattern",
+      "category": "I",
+      "intended": [
+        "chunking/languages/base.py:decorated_definition:TreeSitterChunk",
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker.__init__",
+        "chunking/python_ast_chunker.py:decorated_definition:CodeChunk",
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk",
+        "graph/graph_storage.py:method:CodeGraphStorage.get_neighbors",
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "search/config.py:decorated_definition:EgoGraphConfig",
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.retrieve_ego_graph",
+        "search/hybrid_searcher.py:method:HybridSearcher._apply_ego_graph_expansion"
+      ],
+      "notes": "commit-mined from 91ec52d4 ('feat: Parent-child retrieval - Match Small, Retrieve Big pattern'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I096",
+      "query": "Ego-graph expansion (RepoGraph-style k-hop retrieval) + critical bug fixes",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "search/config.py:decorated_definition:ChunkingConfig",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict",
+        "search/hybrid_searcher.py:method:HybridSearcher._single_hop_search",
+        "search/incremental_indexer.py:method:IncrementalIndexer.auto_reindex_if_needed"
+      ],
+      "notes": "commit-mined from af04ee35 ('feat: Ego-graph expansion (RepoGraph-style k-hop retrieval) + critical bug fixes'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I097",
+      "query": "Python type annotations - comprehensive style guide compliance",
+      "category": "I",
+      "intended": [
+        "mcp_server/cleanup_queue.py:method:CleanupQueue.add",
+        "mcp_server/guidance.py:function:generate_index_message",
+        "mcp_server/guidance.py:function:generate_search_message",
+        "mcp_server/project_persistence.py:function:clear_project_selection",
+        "search/index_sync.py:method:IndexSynchronizer.__init__",
+        "search/indexer.py:method:CodeIndexManager.__init__",
+        "search/intent_classifier.py:class:IntentClassifier",
+        "search/intent_classifier.py:decorated_definition:IntentDecision",
+        "search/intent_classifier.py:method:IntentClassifier._extract_suggested_params"
+      ],
+      "notes": "commit-mined from 2212a92b ('fix: Python type annotations - comprehensive style guide compliance'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H055",
+      "query": "Downgrade PyTorch to 2.8.0 to fix ModernBERT torch.compile error",
+      "category": "H",
+      "intended": [
+        "search/vram_manager.py:decorated_definition:VRAMTier"
+      ],
+      "notes": "commit-mined from b68cfff8 ('fix: Downgrade PyTorch to 2.8.0 to fix ModernBERT torch.compile error'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I098",
+      "query": "Dimension mismatch prevention & recovery system",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "search/exceptions.py:class:ConfigurationError",
+        "search/faiss_index.py:method:FaissVectorIndex.load"
+      ],
+      "notes": "commit-mined from 4b747330 ('feat: Dimension mismatch prevention & recovery system'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I099",
+      "query": "Multi-model pool optimization - routing, filters & configuration",
+      "category": "I",
+      "intended": [
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.__init__",
+        "mcp_server/resource_manager.py:function:initialize_server_state",
+        "mcp_server/storage_manager.py:function:get_project_storage_dir",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_index_directory",
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_list_embedding_models",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict",
+        "search/vram_manager.py:decorated_definition:VRAMTier"
+      ],
+      "notes": "commit-mined from bbd5fdb0 ('feat: Multi-model pool optimization - routing, filters & configuration'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I100",
+      "query": "v0.8.3 complexity score display in search results",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "search/config.py:class:SearchConfig",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict"
+      ],
+      "notes": "commit-mined from ec2f466a ('feat: v0.8.3 complexity score display in search results'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H056",
+      "query": "Phase 1 Quick Wins - relationship extractors and complexity scoring",
+      "category": "H",
+      "intended": [
+        "chunking/languages/python.py:method:PythonChunker._extract_docstring",
+        "chunking/languages/python.py:method:PythonChunker.extract_metadata"
+      ],
+      "notes": "commit-mined from 226cc1b3 ('feat: Phase 1 Quick Wins - relationship extractors and complexity scoring'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I101",
+      "query": "FAISS dimension mismatch bug with embedder propagation and validation",
+      "category": "I",
+      "intended": [
+        "search/faiss_index.py:method:FaissVectorIndex.add",
+        "search/faiss_index.py:method:FaissVectorIndex.search",
+        "search/index_sync.py:method:IndexSynchronizer.__init__",
+        "search/index_sync.py:method:IndexSynchronizer.clear_index"
+      ],
+      "notes": "commit-mined from c759794a ('fix: FAISS dimension mismatch bug with embedder propagation and validation'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I102",
+      "query": "migrate to Qwen3-0.6B and update BGE-M3 VRAM documentation",
+      "category": "I",
+      "intended": [
+        "embeddings/embedder.py:function:parse_vram_gb_from_registry",
+        "search/reranking_engine.py:decorated_definition:RerankingEngine.apply_neural_reranking",
+        "search/reranking_engine.py:method:RerankingEngine.__init__",
+        "search/reranking_engine.py:method:RerankingEngine.rerank_by_query",
+        "search/reranking_engine.py:method:RerankingEngine.should_enable_neural_reranking",
+        "search/vram_manager.py:class:VRAMTierManager",
+        "search/vram_manager.py:decorated_definition:VRAMTier"
+      ],
+      "notes": "commit-mined from 98084c0e ('fix: migrate to Qwen3-0.6B and update BGE-M3 VRAM documentation'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I103",
+      "query": "auto-reindex respects config timeout and clears all models",
+      "category": "I",
+      "intended": [
+        "chunking/languages/base.py:method:LanguageChunker._get_chunking_config",
+        "chunking/tree_sitter.py:method:TreeSitterChunker._get_chunking_config",
+        "embeddings/embedder.py:function:calculate_optimal_batch_size",
+        "embeddings/embedder.py:method:CodeEmbedder.__init__",
+        "embeddings/embedder.py:method:CodeEmbedder._log_vram_usage",
+        "embeddings/embedder.py:method:CodeEmbedder.cleanup",
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "search/config.py:decorated_definition:PerformanceConfig",
+        "search/incremental_indexer.py:method:IncrementalIndexer.auto_reindex_if_needed",
+        "search/parallel_chunker.py:method:ParallelChunker.chunk_files"
+      ],
+      "notes": "commit-mined from e1b49e9d ('fix: auto-reindex respects config timeout and clears all models'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I104",
+      "query": "implement configure_chunking tool and nested config structure",
+      "category": "I",
+      "intended": [
+        "chunking/languages/base.py:method:LanguageChunker.chunk_code",
+        "mcp_server/tools/config_handlers.py:decorated_definition:handle_configure_reranking",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict"
+      ],
+      "notes": "commit-mined from 4c837219 ('feat: implement configure_chunking tool and nested config structure'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I105",
+      "query": "v0.8.0 - cAST greedy sibling merging implementation",
+      "category": "I",
+      "intended": [
+        "chunking/languages/base.py:method:LanguageChunker.chunk_code",
+        "chunking/languages/base.py:method:LanguageChunker.get_line_numbers",
+        "chunking/tree_sitter.py:method:TreeSitterChunker.chunk_file",
+        "embeddings/embedder.py:method:CodeEmbedder._load_model",
+        "search/config.py:class:SearchConfig",
+        "search/config.py:decorated_definition:EmbeddingConfig",
+        "search/config.py:decorated_definition:OutputConfig",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict"
+      ],
+      "notes": "commit-mined from 488bfe6d ('feat: v0.8.0 - cAST greedy sibling merging implementation'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H057",
+      "query": "resolve reference mismatch in HybridSearcher.clear_index() and fix slow integration tests",
+      "category": "H",
+      "intended": [
+        "search/hybrid_searcher.py:method:HybridSearcher.clear_index"
+      ],
+      "notes": "commit-mined from e6fb2e64 ('fix: resolve reference mismatch in HybridSearcher.clear_index() and fix slow integration tests'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H058",
+      "query": "Add missing menu display line for Configure Output Format option",
+      "category": "H",
+      "intended": [
+        "search/vram_manager.py:decorated_definition:VRAMTier"
+      ],
+      "notes": "commit-mined from 067b9185 ('fix: Add missing menu display line for Configure Output Format option'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I106",
+      "query": "Add output format configuration UI and TOON format hint",
+      "category": "I",
+      "intended": [
+        "mcp_server/output_formatter.py:function:_to_toon_format",
+        "search/config.py:class:SearchConfig",
+        "search/config.py:decorated_definition:RerankerConfig",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict"
+      ],
+      "notes": "commit-mined from d4dc8471 ('feat: Add output format configuration UI and TOON format hint'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I107",
+      "query": "Implement memory-mapped vector storage with <1us access performance",
+      "category": "I",
+      "intended": [
+        "mcp_server/search_factory.py:function:get_index_manager",
+        "search/config.py:decorated_definition:PerformanceConfig",
+        "search/faiss_index.py:class:FaissVectorIndex",
+        "search/faiss_index.py:method:FaissVectorIndex.__init__",
+        "search/faiss_index.py:method:FaissVectorIndex.load",
+        "search/faiss_index.py:method:FaissVectorIndex.reconstruct",
+        "search/faiss_index.py:method:FaissVectorIndex.save",
+        "search/indexer.py:class:CodeIndexManager",
+        "search/indexer.py:method:CodeIndexManager.__init__"
+      ],
+      "notes": "commit-mined from f0e082e9 ('feat: Implement memory-mapped vector storage with <1us access performance'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I108",
+      "query": "Implement symbol hash cache for O(1) chunk lookups (Phase 2)",
+      "category": "I",
+      "intended": [
+        "search/indexer.py:method:CodeIndexManager.get_chunk_by_id",
+        "search/indexer.py:method:CodeIndexManager.get_similar_chunks",
+        "search/metadata.py:method:MetadataStore.__init__",
+        "search/metadata.py:method:MetadataStore.commit",
+        "search/metadata.py:method:MetadataStore.delete",
+        "search/metadata.py:method:MetadataStore.get",
+        "search/metadata.py:method:MetadataStore.set"
+      ],
+      "notes": "commit-mined from 9fbc5062 ('feat: Implement symbol hash cache for O(1) chunk lookups (Phase 2)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H059",
+      "query": "Add query intent detection enhancement with confidence scoring",
+      "category": "H",
+      "intended": [
+        "search/searcher.py:method:IntelligentSearcher.__init__",
+        "search/searcher.py:method:IntelligentSearcher._optimize_query"
+      ],
+      "notes": "commit-mined from 1b01889a ('feat: Add query intent detection enhancement with confidence scoring'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H060",
+      "query": "Fix failing incremental indexing tests (API mismatch + performance)",
+      "category": "H",
+      "intended": [
+        "search/indexer.py:method:CodeIndexManager.save_index"
+      ],
+      "notes": "commit-mined from 8c2cdede ('fix: Fix failing incremental indexing tests (API mismatch + performance)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I109",
+      "query": "Add Entity Tracking configuration to UI menu",
+      "category": "I",
+      "intended": [
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker.__init__",
+        "search/config.py:decorated_definition:PerformanceConfig",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict",
+        "search/hybrid_searcher.py:method:HybridSearcher._single_hop_search",
+        "search/hybrid_searcher.py:method:HybridSearcher.find_similar_to_chunk",
+        "search/incremental_indexer.py:method:IncrementalIndexer.__init__"
+      ],
+      "notes": "commit-mined from 9d62648f ('feat: Add Entity Tracking configuration to UI menu'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I110",
+      "query": "Tier 1 entity tracking extractors display in find_connections",
+      "category": "I",
+      "intended": [
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker.__init__",
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker._extract_call_relationships",
+        "embeddings/embedder.py:method:CodeEmbedder._load_model",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge",
+        "search/indexer.py:method:CodeIndexManager._add_to_graph"
+      ],
+      "notes": "commit-mined from 322d0f85 ('fix: Tier 1 entity tracking extractors display in find_connections'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I111",
+      "query": "Add Qwen3 instruction tuning and Matryoshka MRL support",
+      "category": "I",
+      "intended": [
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder.embed_query",
+        "embeddings/embedder.py:method:CodeEmbedder._load_model",
+        "mcp_server/storage_manager.py:function:get_project_storage_dir"
+      ],
+      "notes": "commit-mined from 724daffa ('feat: Add Qwen3 instruction tuning and Matryoshka MRL support'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H061",
+      "query": "VRAM tier management & benchmark validation",
+      "category": "H",
+      "intended": [
+        "mcp_server/resource_manager.py:function:initialize_server_state"
+      ],
+      "notes": "commit-mined from 5ed60ac7 ('feat: VRAM tier management & benchmark validation'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I112",
+      "query": "Drive-agnostic project path detection for external drives",
+      "category": "I",
+      "intended": [
+        "mcp_server/project_persistence.py:function:load_project_selection",
+        "mcp_server/storage_manager.py:function:get_project_storage_dir",
+        "mcp_server/storage_manager.py:function:set_current_project",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_clear_index",
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_list_projects",
+        "merkle/snapshot_manager.py:method:SnapshotManager.get_metadata_path",
+        "merkle/snapshot_manager.py:method:SnapshotManager.get_project_id",
+        "merkle/snapshot_manager.py:method:SnapshotManager.get_snapshot_path"
+      ],
+      "notes": "commit-mined from 19683fe1 ('feat: Drive-agnostic project path detection for external drives'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I113",
+      "query": "Resolve 5 critical MCP and reranking issues",
+      "category": "I",
+      "intended": [
+        "mcp_server/server.py:function:app_lifespan",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_clear_index",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_index_directory",
+        "search/hybrid_searcher.py:method:HybridSearcher._single_hop_search",
+        "search/reranking_engine.py:method:RerankingEngine.rerank_by_query"
+      ],
+      "notes": "commit-mined from 2e1e4a26 ('fix: Resolve 5 critical MCP and reranking issues'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I114",
+      "query": "Add neural cross-encoder reranker integration",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/config_handlers.py:decorated_definition:handle_switch_embedding_model",
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_get_search_config_status",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:method:SearchConfig.to_dict",
+        "search/hybrid_searcher.py:method:HybridSearcher.__exit__",
+        "search/hybrid_searcher.py:method:HybridSearcher._single_hop_search",
+        "search/hybrid_searcher.py:method:HybridSearcher.shutdown"
+      ],
+      "notes": "commit-mined from 34f487e3 ('feat: Add neural cross-encoder reranker integration'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H062",
+      "query": "Phase 13-C - Remove 35 property aliases from SearchConfig",
+      "category": "H",
+      "intended": [
+        "search/config.py:class:SearchConfig"
+      ],
+      "notes": "commit-mined from 2f88010e ('feat: Phase 13-C - Remove 35 property aliases from SearchConfig'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I115",
+      "query": "Multi-model indexing - snapshots, GPU memory, and cache validation",
+      "category": "I",
+      "intended": [
+        "embeddings/embedder.py:method:CodeEmbedder._get_default_hf_cache_path",
+        "embeddings/embedder.py:method:CodeEmbedder._get_torch_dtype",
+        "embeddings/embedder.py:method:CodeEmbedder._validate_model_cache",
+        "merkle/snapshot_manager.py:method:SnapshotManager._get_model_slug_and_dimension"
+      ],
+      "notes": "commit-mined from 6a96d03e ('fix: Multi-model indexing - snapshots, GPU memory, and cache validation'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I116",
+      "query": "Phase 13-B2 - Migrate search/*.py to nested config access",
+      "category": "I",
+      "intended": [
+        "search/config.py:function:get_default_search_mode",
+        "search/config.py:function:is_hybrid_search_enabled",
+        "search/config.py:method:SearchConfigManager.get_search_mode_for_query",
+        "search/config.py:method:SearchConfigManager.save_config",
+        "search/incremental_indexer.py:method:IncrementalIndexer.__init__"
+      ],
+      "notes": "commit-mined from 999bdb59 ('feat: Phase 13-B2 - Migrate search/*.py to nested config access'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I117",
+      "query": "Phase 13-B1 - Migrate mcp_server/tools to nested config access",
+      "category": "I",
+      "intended": [
+        "mcp_server/tools/config_handlers.py:decorated_definition:handle_configure_search_mode",
+        "mcp_server/tools/config_handlers.py:decorated_definition:handle_switch_embedding_model",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_index_directory",
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_get_index_status",
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_get_search_config_status",
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_list_embedding_models"
+      ],
+      "notes": "commit-mined from f7dc5132 ('feat: Phase 13-B1 - Migrate mcp_server/tools to nested config access'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I118",
+      "query": "Phase 12 - Dependency Injection via Service Locator",
+      "category": "I",
+      "intended": [
+        "embeddings/embedder.py:method:CodeEmbedder._get_torch_dtype",
+        "mcp_server/state.py:function:get_state",
+        "merkle/snapshot_manager.py:method:SnapshotManager._get_model_slug_and_dimension",
+        "search/config.py:function:get_model_slug"
+      ],
+      "notes": "commit-mined from c3ab9a34 ('feat: Phase 12 - Dependency Injection via Service Locator'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H063",
+      "query": "Update method references after MetadataStore extraction",
+      "category": "H",
+      "intended": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections",
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code"
+      ],
+      "notes": "commit-mined from b968df93 ('fix: Update method references after MetadataStore extraction'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I119",
+      "query": "Add safe project deletion with cleanup queue",
+      "category": "I",
+      "intended": [
+        "mcp_server/server.py:function:app_lifespan",
+        "mcp_server/server.py:function:run_stdio_server",
+        "mcp_server/tools/index_handlers.py:decorated_definition:handle_clear_index"
+      ],
+      "notes": "commit-mined from da68d625 ('feat: Add safe project deletion with cleanup queue'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H064",
+      "query": "Multi-model clear_index - Delete BM25 files for ALL models",
+      "category": "H",
+      "intended": [
+        "search/hybrid_searcher.py:method:HybridSearcher.clear_index"
+      ],
+      "notes": "commit-mined from 26c399dc ('fix: Multi-model clear_index - Delete BM25 files for ALL models'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I120",
+      "query": "GPU embedding optimizations - fp16/bf16 + convert_to_tensor (40-60% faster)",
+      "category": "I",
+      "intended": [
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder.embed_query",
+        "embeddings/embedder.py:method:CodeEmbedder._load_model",
+        "embeddings/embedder.py:method:CodeEmbedder._log_gpu_memory",
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk",
+        "search/config.py:class:SearchConfig"
+      ],
+      "notes": "commit-mined from f12af1ef ('feat: GPU embedding optimizations - fp16/bf16 + convert_to_tensor (40-60% faster)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H065",
+      "query": "Inherit directory filters from snapshot in incremental indexing",
+      "category": "H",
+      "intended": [
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot",
+        "merkle/change_detector.py:method:ChangeDetector.quick_check"
+      ],
+      "notes": "commit-mined from 93aa24b7 ('fix: Inherit directory filters from snapshot in incremental indexing'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I121",
+      "query": "Full bi-directional config sync between MCP tools and UI",
+      "category": "I",
+      "intended": [
+        "mcp_server/server.py:function:app_lifespan",
+        "mcp_server/server.py:function:run_stdio_server",
+        "search/config.py:class:SearchConfig"
+      ],
+      "notes": "commit-mined from bc97ca8a ('feat: Full bi-directional config sync between MCP tools and UI'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H066",
+      "query": "get_index_status now shows synced field via lazy searcher init",
+      "category": "H",
+      "intended": [
+        "search/hybrid_searcher.py:method:HybridSearcher.get_stats"
+      ],
+      "notes": "commit-mined from c0fdd20d ('fix: get_index_status now shows synced field via lazy searcher init'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H067",
+      "query": "Complete ApplicationState migration cleanup",
+      "category": "H",
+      "intended": [
+        "mcp_server/server.py:function:app_lifespan",
+        "mcp_server/server.py:function:run_stdio_server"
+      ],
+      "notes": "commit-mined from 5c2f3d03 ('fix: Complete ApplicationState migration cleanup'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H068",
+      "query": "Phase D - Batched multi-hop FAISS search (50-100ms savings)",
+      "category": "H",
+      "intended": [
+        "search/indexer.py:method:CodeIndexManager.get_similar_chunks"
+      ],
+      "notes": "commit-mined from 06501b66 ('feat: Phase D - Batched multi-hop FAISS search (50-100ms savings)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H069",
+      "query": "Remove PytestReturnNotNoneWarning and AttributeError in __del__",
+      "category": "H",
+      "intended": [
+        "search/indexer.py:method:CodeIndexManager.__del__"
+      ],
+      "notes": "commit-mined from 1106ba58 ('fix: Remove PytestReturnNotNoneWarning and AttributeError in __del__'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I122",
+      "query": "Performance optimizations - query cache, parallel chunking, bug fixes",
+      "category": "I",
+      "intended": [
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker.chunk_directory",
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder.embed_query",
+        "embeddings/embedder.py:method:CodeEmbedder.__init__",
+        "search/config.py:class:SearchConfig",
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
+        "search/incremental_indexer.py:method:IncrementalIndexer.__init__"
+      ],
+      "notes": "commit-mined from 06410d8e ('feat: Performance optimizations - query cache, parallel chunking, bug fixes'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I123",
+      "query": "Test fixes + documentation updates for v0.5.17+ performance optimizations",
+      "category": "I",
+      "intended": [
+        "chunking/multi_language_chunker.py:class:MultiLanguageChunker",
+        "mcp_server/server.py:function:run_stdio_server",
+        "search/hybrid_searcher.py:method:HybridSearcher._single_hop_search"
+      ],
+      "notes": "commit-mined from 86aadb6e ('fix: Test fixes + documentation updates for v0.5.17+ performance optimizations'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I124",
+      "query": "Persistent project selection + refactoring completion (v0.5.17)",
+      "category": "I",
+      "intended": [
+        "mcp_server/server.py:function:app_lifespan",
+        "mcp_server/server.py:function:run_stdio_server",
+        "search/hybrid_searcher.py:method:HybridSearcher.find_similar_to_chunk",
+        "search/indexer.py:method:CodeIndexManager._matches_filters",
+        "search/indexer.py:method:CodeIndexManager.search",
+        "tools/switch_project_helper.py:function:main"
+      ],
+      "notes": "commit-mined from bc85afb6 ('feat: Persistent project selection + refactoring completion (v0.5.17)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I125",
+      "query": "Resolve ruff lint errors (E402, E722, F821, B007, B018)",
+      "category": "I",
+      "intended": [
+        "scripts/list_projects_display.py:function:main",
+        "scripts/list_projects_parseable.py:function:main",
+        "tools/cleanup_stale_snapshots.py:function:main"
+      ],
+      "notes": "commit-mined from c6ad3a82 ('fix: Resolve ruff lint errors (E402, E722, F821, B007, B018)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I126",
+      "query": "Add Git Bash lint validation scripts, logging infrastructure, and documentation",
+      "category": "I",
+      "intended": [
+        "merkle/snapshot_manager.py:method:SnapshotManager.get_metadata_path",
+        "merkle/snapshot_manager.py:method:SnapshotManager.get_project_id",
+        "merkle/snapshot_manager.py:method:SnapshotManager.get_snapshot_path",
+        "search/bm25_index.py:method:BM25Index.index_documents"
+      ],
+      "notes": "commit-mined from 66de88a7 ('feat: Add Git Bash lint validation scripts, logging infrastructure, and documentation'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I127",
+      "query": "Migrate Ruff VSCode settings and improve lint workflow",
+      "category": "I",
+      "intended": [
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes",
+        "search/bm25_index.py:method:BM25Index.get_stats",
+        "search/hybrid_searcher.py:method:HybridSearcher.index_documents",
+        "search/hybrid_searcher.py:method:HybridSearcher.optimize_weights",
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
+        "search/indexer.py:method:CodeIndexManager.search",
+        "search/reranker.py:method:RRFReranker.rerank"
+      ],
+      "notes": "commit-mined from e2c91f62 ('fix: Migrate Ruff VSCode settings and improve lint workflow'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "H070",
+      "query": "Resolve test failures and enhance MCP configuration",
+      "category": "H",
+      "intended": [
+        "search/indexer.py:method:CodeIndexManager.save_index"
+      ],
+      "notes": "commit-mined from 7f4fc09d ('fix: Resolve test failures and enhance MCP configuration'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I128",
+      "query": "Infrastructure optimization and PyTorch installation fixes",
+      "category": "I",
+      "intended": [
+        "chunking/multi_language_chunker.py:class:MultiLanguageChunker",
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder.get_supported_models",
+        "embeddings/embedder.py:method:CodeEmbedder.__init__",
+        "scripts/verify_installation.py:function:main",
+        "search/config.py:method:SearchConfigManager._get_default_config_path",
+        "search/config.py:method:SearchConfigManager.save_config",
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
+        "search/indexer.py:method:CodeIndexManager.save_index"
+      ],
+      "notes": "commit-mined from 69f57a08 ('feat: Infrastructure optimization and PyTorch installation fixes'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I129",
+      "query": "Add BGE-M3 multi-model support with PyTorch 2.6.0",
+      "category": "I",
+      "intended": [
+        "embeddings/embedder.py:class:CodeEmbedder",
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder.embed_query",
+        "embeddings/embedder.py:method:CodeEmbedder.__init__",
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk",
+        "search/config.py:class:SearchConfig",
+        "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "search/config.py:function:get_default_search_mode",
+        "search/config.py:method:SearchConfigManager.save_config",
+        "search/indexer.py:class:CodeIndexManager",
+        "search/indexer.py:method:CodeIndexManager.__init__",
+        "search/indexer.py:method:CodeIndexManager.save_index"
+      ],
+      "notes": "commit-mined from f862f2ab ('feat: Add BGE-M3 multi-model support with PyTorch 2.6.0'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    },
+    {
+      "id": "I130",
+      "query": "UI improvements, GLSL support, and documentation cleanup",
+      "category": "I",
+      "intended": [
+        "chunking/multi_language_chunker.py:class:MultiLanguageChunker",
+        "chunking/tree_sitter.py:class:TreeSitterChunker",
+        "embeddings/embedder.py:class:CodeEmbedder",
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder.embed_query",
+        "embeddings/embedder.py:decorated_definition:CodeEmbedder.model",
+        "embeddings/embedder.py:decorated_definition:EmbeddingResult",
+        "embeddings/embedder.py:method:CodeEmbedder.__init__",
+        "embeddings/embedder.py:method:CodeEmbedder._find_local_model_dir",
+        "embeddings/embedder.py:method:CodeEmbedder._is_model_cached",
+        "embeddings/embedder.py:method:CodeEmbedder._load_model",
+        "embeddings/embedder.py:method:CodeEmbedder._resolve_device",
+        "embeddings/embedder.py:method:CodeEmbedder.cleanup",
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunk",
+        "embeddings/embedder.py:method:CodeEmbedder.get_model_info"
+      ],
+      "notes": "commit-mined from 9be09f1b ('feat: UI improvements, GLSL support, and documentation cleanup'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
+    }
+  ]
+}
