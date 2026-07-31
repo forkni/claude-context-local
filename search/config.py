@@ -342,32 +342,13 @@ class OutputConfig:
 
 @dataclass
 class ChunkingConfig:
-    """Chunking algorithm settings (13 fields)."""
+    """Chunking algorithm settings (14 fields)."""
 
     # Token size constraints for chunks
     min_chunk_tokens: int = 50  # Minimum tokens before considering merge
     max_merged_tokens: int = (
         400  # Maximum tokens for merged chunk (research: 200-400 optimal)
     )
-
-    # Community Detection settings (independent control restored)
-    enable_community_detection: bool = (
-        True  # Enable community detection via Louvain algorithm
-    )
-    enable_community_merge: bool = (
-        True  # Enable community-based remerge (full index only)
-    )
-    merge_boundary: str = field(
-        default="community", metadata={"choices": ("community", "sibling")}
-    )  # Greedy-merge boundary when enable_community_merge is on: "community"
-    # (Louvain community_id) or "sibling" (parent_class — merges small
-    # same-class siblings regardless of community assignment)
-    community_resolution: float = field(
-        default=1.0, metadata={"range": (0.1, 2.0)}
-    )  # Resolution parameter (higher = more/smaller communities)
-    max_phantom_degree: int = field(
-        default=20, metadata={"range": (1, 1000)}
-    )  # Skip phantom nodes with >N callers during community detection
 
     # Large function splitting (cAST paper: AST-aware splitting improves Recall@5 +66%)
     enable_large_node_splitting: bool = True  # Split functions > max_chunk_lines
@@ -391,17 +372,6 @@ class ChunkingConfig:
 
     # File-level module summaries (A2: improve GLOBAL query recall)
     enable_file_summaries: bool = True  # Generate module-summary chunks per file
-
-    # Community-level summaries (B1: thematic grouping via Louvain communities)
-    enable_community_summaries: bool = True  # Generate community-summary chunks
-
-    # Incremental community-summary refresh (subordinate to enable_community_summaries)
-    enable_incremental_community_summaries: bool = (
-        True  # Refresh stale community summaries on incremental index
-    )
-    incremental_community_redetect_threshold: float = (
-        0.3  # Cumulative changed-file fraction that triggers full redetect
-    )
 
     # Adaptive chunk sizing (research: P75 baseline + complexity modulation)
     sizing_mode: str = field(
@@ -444,11 +414,6 @@ class EgoGraphConfig:
     edge_weights: dict[str, float] | None = field(
         default_factory=lambda: DEFAULT_EDGE_WEIGHTS.copy()
     )  # Use weighted BFS by default (calls > imports priority)
-    # QW2: community-bounded expansion — prefer intra-community neighbors
-    community_bounded: bool = True  # Apply cross-community penalty when ranking
-    cross_community_penalty: float = (
-        0.6  # Score multiplier for cross-community neighbors
-    )
     # QW3: expansion mode — "bfs" (default) or "ppr" (Personalized PageRank)
     expansion_mode: str = "bfs"  # "bfs" = k-hop BFS, "ppr" = Personalized PageRank
     ppr_alpha: float = 0.85  # PPR damping factor (standard default)
@@ -879,13 +844,9 @@ class SearchConfig:
         "enable_large_node_splitting": ("chunking", "enable_large_node_splitting"),
         "max_chunk_lines": ("chunking", "max_chunk_lines"),
         "token_estimation": ("chunking", "token_estimation"),
-        "community_resolution": ("chunking", "community_resolution"),
         "size_method": ("chunking", "size_method"),
-        "enable_community_detection": ("chunking", "enable_community_detection"),
-        "enable_community_merge": ("chunking", "enable_community_merge"),
         "split_size_method": ("chunking", "split_size_method"),
         "max_split_chars": ("chunking", "max_split_chars"),
-        "max_phantom_degree": ("chunking", "max_phantom_degree"),
         # EgoGraphConfig
         "ego_graph_enabled": ("ego_graph", "enabled"),
         "ego_graph_k_hops": ("ego_graph", "k_hops"),

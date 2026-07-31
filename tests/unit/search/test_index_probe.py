@@ -87,7 +87,6 @@ class TestGuardrails:
             "reranker.single_pass",
             "reranker.hop1_reserved_slots",
             "query_expansion.enabled",
-            "chunking.enable_community_merge",
             "multi_hop.expansion",
             "multi_hop.multi_hop_mode",
             "embedding.model_name",
@@ -298,11 +297,6 @@ class TestPostBuildRules:
         assert result.overrides == {}
         assert result.reasons == {}
 
-    def test_large_corpus_community_note(self):
-        m = make_measurements(stats={"total_chunks": 6000, "files_indexed": 500})
-        keys = [o["key"] for o in run_rules(m, "post_build").observations]
-        assert "chunking.community_resolution" in keys
-
     def test_split_heavy_corpus_note(self):
         m = make_measurements(
             stats={
@@ -448,7 +442,7 @@ class TestWriter:
         original = json.loads((tmp_path / PROJECT_OVERRIDES_FILENAME).read_text())
 
         pass2 = ProbeResult(
-            observations=[{"key": "chunking.community_resolution", "note": "big"}]
+            observations=[{"key": "chunking.max_merged_tokens", "note": "big"}]
         )
         write_overrides_file(tmp_path, pass2, mode="append")
 
@@ -458,7 +452,7 @@ class TestWriter:
         assert data["generated_at"] == original["generated_at"]
         assert data["observations"] == [
             {"key": "embedding.model_name", "note": "tier note"},
-            {"key": "chunking.community_resolution", "note": "big"},
+            {"key": "chunking.max_merged_tokens", "note": "big"},
         ]
 
     def test_append_dedupes_identical_observations(self, tmp_path):
@@ -546,10 +540,10 @@ class TestEntryPoints:
         assert summary is not None
         assert summary["stage"] == "post_build"
         assert summary["override_keys"] == []
-        assert "chunking.community_resolution" in summary["observation_keys"]
+        assert "ego_graph.max_neighbors_per_hop" in summary["observation_keys"]
         data = json.loads((tmp_path / PROJECT_OVERRIDES_FILENAME).read_text())
         obs_keys = [o["key"] for o in data["observations"]]
-        assert "chunking.community_resolution" in obs_keys
+        assert "ego_graph.max_neighbors_per_hop" in obs_keys
         # Pass-1 overrides survive the append.
         assert data["overrides"]["performance"]["max_chunking_workers"] == 12
 
@@ -599,7 +593,7 @@ class TestMergedSummary:
         merged = merged_probe_summary(pass1, pass2)
         assert merged["probe_version"] == PROBE_VERSION
         assert "performance.max_chunking_workers" in merged["override_keys"]
-        assert "chunking.community_resolution" in merged["observation_keys"]
+        assert "ego_graph.max_neighbors_per_hop" in merged["observation_keys"]
 
     def test_pass1_only(self):
         pass1 = run_rules(make_measurements(), "pre_chunking").summary("pre_chunking")

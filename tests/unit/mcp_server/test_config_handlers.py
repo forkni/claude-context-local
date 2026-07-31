@@ -81,32 +81,6 @@ async def test_configure_search_mode_valid_saves_config(
 
 
 @pytest.mark.asyncio
-async def test_chunking_community_resolution_out_of_range(mock_config_manager):
-    with patch(
-        "mcp_server.tools.config_handlers.get_config_manager",
-        return_value=mock_config_manager,
-    ):
-        result = await handle_configure_chunking({"community_resolution": 0.05})
-
-    assert "error" in result
-    assert "community_resolution" in result["error"]
-    mock_config_manager.save_config.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_chunking_max_phantom_degree_out_of_range(mock_config_manager):
-    with patch(
-        "mcp_server.tools.config_handlers.get_config_manager",
-        return_value=mock_config_manager,
-    ):
-        result = await handle_configure_chunking({"max_phantom_degree": 0})
-
-    assert "error" in result
-    assert "max_phantom_degree" in result["error"]
-    mock_config_manager.save_config.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_chunking_token_estimation_invalid(mock_config_manager):
     with patch(
         "mcp_server.tools.config_handlers.get_config_manager",
@@ -206,8 +180,6 @@ async def test_chunking_all_valid_saves_config(mock_config_manager):
     ):
         result = await handle_configure_chunking(
             {
-                "community_resolution": 1.0,
-                "max_phantom_degree": 50,
                 "token_estimation": "whitespace",
                 "split_size_method": "lines",
                 "max_split_chars": 5000,
@@ -245,8 +217,6 @@ class TestConfigValidationOwnership:
     @pytest.mark.parametrize(
         "field_name,spec_key,expected",
         [
-            ("community_resolution", "range", (0.1, 2.0)),
-            ("max_phantom_degree", "range", (1, 1000)),
             ("max_split_chars", "range", (1000, 10000)),
             ("adaptive_multiplier_max", "range", (1.0, 2.0)),
             ("adaptive_multiplier_min", "range", (0.1, 1.0)),

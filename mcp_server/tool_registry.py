@@ -811,13 +811,12 @@ RETURNS:
         },
     },
     "configure_chunking": {
-        "description": """Configure code chunking, splitting, and community-detection parameters. Changes are persisted to config; re-index the project to apply them to existing chunks.
+        "description": """Configure code chunking and splitting parameters. Changes are persisted to config; re-index the project to apply them to existing chunks.
 
 WHEN TO USE:
 - Tuning chunk granularity (max_chunk_lines, max_split_chars, sizing_mode) for
   a codebase with unusually large or small functions
-- Disabling community detection or file/community summaries to speed up
-  indexing on very large repos
+- Disabling file summaries to speed up indexing on very large repos
 
 Each field's factory default and valid range are documented on its own schema
 property below (see this tool's input schema). min_chunk_tokens (factory
@@ -835,26 +834,6 @@ RETURNS:
         "input_schema": {
             "type": "object",
             "properties": {
-                "enable_community_detection": {
-                    "type": "boolean",
-                    "description": "Enable/disable community detection",
-                },
-                "enable_community_merge": {
-                    "type": "boolean",
-                    "description": "Enable/disable community-based remerge (full index only)",
-                },
-                "community_resolution": {
-                    "type": "number",
-                    "description": "Resolution parameter for Louvain community detection (higher = more communities)",
-                    "minimum": 0.1,
-                    "maximum": 2.0,
-                },
-                "max_phantom_degree": {
-                    "type": "integer",
-                    "description": "Skip phantom nodes with >N callers to reduce graph noise (prevents builtins from creating O(N²) edges)",
-                    "minimum": 1,
-                    "maximum": 1000,
-                },
                 "token_estimation": {
                     "type": "string",
                     "enum": ["whitespace", "tiktoken"],
@@ -884,10 +863,6 @@ RETURNS:
                 "enable_file_summaries": {
                     "type": "boolean",
                     "description": "Enable/disable file-level module summary chunks (A2 feature)",
-                },
-                "enable_community_summaries": {
-                    "type": "boolean",
-                    "description": "Enable/disable community-level summary chunks (B1 feature)",
                 },
                 "sizing_mode": {
                     "type": "string",

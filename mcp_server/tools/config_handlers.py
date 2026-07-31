@@ -40,17 +40,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _CHUNKING_FIELDS: tuple[tuple[str, str], ...] = (
-    ("enable_community_detection", "enable_community_detection"),
-    ("enable_community_merge", "enable_community_merge"),
-    ("community_resolution", "community_resolution"),
-    ("max_phantom_degree", "max_phantom_degree"),
     ("token_estimation", "token_estimation"),
     ("enable_large_node_splitting", "enable_large_node_splitting"),
     ("max_chunk_lines", "max_chunk_lines"),
     ("split_size_method", "split_size_method"),
     ("max_split_chars", "max_split_chars"),
     ("enable_file_summaries", "enable_file_summaries"),
-    ("enable_community_summaries", "enable_community_summaries"),
     ("sizing_mode", "sizing_mode"),
     ("adaptive_multiplier_max", "adaptive_multiplier_max"),
     ("adaptive_multiplier_min", "adaptive_multiplier_min"),
@@ -59,17 +54,12 @@ _CHUNKING_FIELDS: tuple[tuple[str, str], ...] = (
 
 # Echo subset: the fields the response returns (curated; may include read-only fields).
 _CHUNKING_ECHO: tuple[str, ...] = (
-    "enable_community_detection",
-    "enable_community_merge",
-    "community_resolution",
-    "max_phantom_degree",
     "token_estimation",
     "enable_large_node_splitting",
     "max_chunk_lines",
     "split_size_method",
     "max_split_chars",
     "enable_file_summaries",
-    "enable_community_summaries",
     "sizing_mode",
     "adaptive_multiplier_max",
     "adaptive_multiplier_min",
@@ -274,10 +264,9 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
 
     Valid values per field are enforced by ``ChunkingConfig`` field metadata
     (see ``search.config.validate_field_value``).  Exposed parameters:
-    enable_community_detection, enable_community_merge, community_resolution (0.1-2.0),
-    max_phantom_degree (1-1000), token_estimation ("whitespace"|"tiktoken"),
-    enable_large_node_splitting, max_chunk_lines, split_size_method ("lines"|"characters"),
-    max_split_chars (1000-10000), enable_file_summaries, enable_community_summaries,
+    token_estimation ("whitespace"|"tiktoken"), enable_large_node_splitting,
+    max_chunk_lines, split_size_method ("lines"|"characters"),
+    max_split_chars (1000-10000), enable_file_summaries,
     sizing_mode ("fixed"|"adaptive"), adaptive_multiplier_max (1.0-2.0),
     adaptive_multiplier_min (0.1-1.0), max_complexity_cap (5-100).
 

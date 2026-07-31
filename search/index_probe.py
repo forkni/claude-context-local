@@ -66,8 +66,8 @@ GLSL_EXTENSIONS = frozenset(
 # has no golden set on arbitrary projects, so these stay human decisions:
 # fusion weights/rrf_k saturated; centrality_alpha 0.0 replicated;
 # single_pass kills recall; hop1_reserved_slots ADR-0013; bm25_reserved_slots
-# rejected; query_expansion ADR-0012 closed FAIL; community merge
-# rejected-for-now; bm25_tokenizer is INDEX_VERSION 4; multi_hop tuned.
+# rejected; query_expansion ADR-0012 closed FAIL; bm25_tokenizer is
+# INDEX_VERSION 4; multi_hop tuned.
 FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
     {
         "search_mode.bm25_weight",
@@ -79,7 +79,6 @@ FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
         "reranker.single_pass",
         "reranker.hop1_reserved_slots",
         "query_expansion.enabled",
-        "chunking.enable_community_merge",
         "multi_hop.expansion",
         "multi_hop.multi_hop_mode",
         "embedding.model_name",  # routes to a different per-model index dir
@@ -390,18 +389,6 @@ RULES: tuple[ProbeRule, ...] = (
         reason_fn=_max_split_chars_reason,
     ),
     # --- Pass 2: observations from persisted stats ----------------------
-    ProbeRule(
-        key="chunking.community_resolution",
-        kind="observation",
-        stage="post_build",
-        condition=lambda m: _stats_total_chunks(m) >= 5000,
-        value_fn=None,
-        reason_fn=lambda m: (
-            f"{_stats_total_chunks(m)} chunks indexed — large corpus; "
-            "community granularity may benefit from a resolution sweep "
-            "(scripts/benchmark/analyze_chunking_corpus.py)"
-        ),
-    ),
     ProbeRule(
         key="chunking.max_merged_tokens",
         kind="observation",
