@@ -1884,3 +1884,107 @@ class TestProbeWiring:
 
         assert result.success is True
         assert result.probe_summary is None
+
+
+class TestModuleSummaryInjection:
+    """Module-summary generation is called directly from _full_index(),
+    not routed through CommunityStage.run() (relocated ahead of its removal).
+    """
+
+    def setup_method(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.project_path = Path(self.temp_dir) / "test_project"
+        self.project_path.mkdir(parents=True, exist_ok=True)
+        for filename in ("main.py", "utils.py"):
+            (self.project_path / filename).write_text("def f(): return 1")
+
+        self.mock_indexer = Mock()
+        self.mock_indexer.resync_if_desynced.return_value = (False, 0)
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
+        self.mock_embedder = Mock()
+        self.mock_embedder.model_name = "BAAI/bge-m3"
+        self.mock_chunker = Mock()
+        self.mock_snapshot_manager = Mock()
+
+    def _make_indexer(self) -> IncrementalIndexer:
+        return IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+    def _run_full_index(
+        self,
+        indexer: IncrementalIndexer,
+        enable_file_summaries: bool,
+        chunker_supported: bool = True,
+    ) -> IncrementalIndexResult:
+        """Drive a full index with the same mock scaffolding as
+        TestProbeWiring._run_full_index, with enable_file_summaries controlled."""
+        self.mock_snapshot_manager.has_snapshot.return_value = False
+        mock_config = Mock()
+        mock_config.chunking.enable_file_summaries = enable_file_summaries
+
+        with (
+            patch.object(IncrementalIndexer, "_release_and_verify_resources"),
+            patch("search.incremental_indexer.MerkleDAG") as mock_dag_class,
+            patch(
+                "search.incremental_indexer.get_active_project_storage_dir",
+                return_value=None,
+            ),
+            patch(
+                "search.incremental_indexer.get_search_config",
+                return_value=mock_config,
+            ),
+        ):
+            mock_dag = Mock()
+            mock_dag.get_all_files.return_value = ["main.py", "utils.py"]
+            mock_dag_class.return_value = mock_dag
+
+            mock_chunk = Mock()
+            mock_chunk.content = "test content"
+            self.mock_chunker.is_supported.return_value = chunker_supported
+            self.mock_chunker.chunk_file.return_value = [mock_chunk]
+            self.mock_embedder.embed_chunks.side_effect = lambda chunks, **kwargs: [
+                Mock(metadata={}) for _ in chunks
+            ]
+
+            return indexer.incremental_index(str(self.project_path), "test_project")
+
+    def test_generates_and_appends_module_summaries(self):
+        indexer = self._make_indexer()
+        sentinel_summary = Mock()
+        with patch.object(
+            indexer._summary_stage,
+            "generate_module_summaries",
+            return_value=[sentinel_summary],
+        ) as mock_generate:
+            result = self._run_full_index(indexer, enable_file_summaries=True)
+
+        assert result.success is True
+        mock_generate.assert_called_once()
+        embedded_chunks = self.mock_embedder.embed_chunks.call_args.args[0]
+        assert sentinel_summary in embedded_chunks
+
+    def test_disabled_by_config_skips_generation(self):
+        indexer = self._make_indexer()
+        with patch.object(
+            indexer._summary_stage, "generate_module_summaries"
+        ) as mock_generate:
+            result = self._run_full_index(indexer, enable_file_summaries=False)
+
+        assert result.success is True
+        mock_generate.assert_not_called()
+
+    def test_no_chunks_skips_generation(self):
+        indexer = self._make_indexer()
+        with patch.object(
+            indexer._summary_stage, "generate_module_summaries"
+        ) as mock_generate:
+            result = self._run_full_index(
+                indexer, enable_file_summaries=True, chunker_supported=False
+            )
+
+        assert result.success is True
+        mock_generate.assert_not_called()

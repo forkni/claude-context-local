@@ -851,9 +851,17 @@ class IncrementalIndexer:
             # ParallelChunker._log_chunking_summary.
             logger.info(f"Total chunks collected: {len(all_chunks)}")
 
-            # Stage 1: community-based remerge (if enabled) + module summaries
+            # Stage 1: file-level module summaries
             config = get_search_config()
-            all_chunks = self._community_stage.run(all_chunks, project_path, config)
+            if config.chunking.enable_file_summaries and all_chunks:
+                module_summaries = self._summary_stage.generate_module_summaries(
+                    all_chunks
+                )
+                if module_summaries:
+                    all_chunks.extend(module_summaries)
+                    logger.info(
+                        f"[FILE_SUMMARIES] Appended {len(module_summaries)} module summaries"
+                    )
 
             # Stage 2: embed, index, call-edge injection, community
             # detection + summaries (post-injection), snapshot, BM25, GPU

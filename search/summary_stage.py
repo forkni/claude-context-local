@@ -1,9 +1,8 @@
 """Summary-chunk generation for full and incremental indexing.
 
-Call sequence (see CommunityStage.run / run_post_injection):
-  1. generate_module_summaries() — inside CommunityStage.run(), pre-embed,
-     AFTER community remerge (remerge shifts line numbers and finalises
-     chunk_ids).
+Call sequence:
+  1. generate_module_summaries() — called directly from
+     IncrementalIndexer._full_index(), pre-embed.
   2. compute_community_summaries() — inside CommunityStage.run_post_injection(),
      AFTER call-edge injection. community_map keys are final, post-remerge
      chunk_ids — the same ids the resolved graph and the just-embedded
@@ -30,11 +29,10 @@ logger = logging.getLogger(__name__)
 class SummaryStage:
     """Owns summary-chunk generation for a full index pass.
 
-    generate_module_summaries() runs pre-embed, inside CommunityStage.run(),
-    after remerge finalises chunk_ids. compute_community_summaries() runs
+    generate_module_summaries() runs pre-embed, called directly from
+    IncrementalIndexer._full_index(). compute_community_summaries() runs
     post-embed, inside CommunityStage.run_post_injection(), after
-    IndexWriteStage._inject_call_edges resolves the call graph — see
-    CommunityStage for the split and why.
+    IndexWriteStage._inject_call_edges resolves the call graph.
     """
 
     def compute_community_summaries(
@@ -91,7 +89,6 @@ class SummaryStage:
     ) -> list[CodeChunk]:
         """Generate per-file module-summary CodeChunks.
 
-        Must be called AFTER community remerge (chunk_ids must be stable).
         Returns [] on any failure.
         """
         try:
