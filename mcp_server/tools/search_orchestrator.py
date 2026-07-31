@@ -613,8 +613,6 @@ class SearchOrchestrator:
             response["subgraph_edges"] = subgraph_data["edges"]
             if subgraph_data.get("topology_order"):
                 response["subgraph_order"] = subgraph_data["topology_order"]
-            if subgraph_data.get("communities"):
-                response["subgraph_communities"] = subgraph_data["communities"]
 
         response = add_system_message(
             response, tool_name="search_code", query=plan.query, chunk_id=None

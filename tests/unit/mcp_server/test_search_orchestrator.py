@@ -518,7 +518,6 @@ class TestBuildResponse:
             "nodes": [{"id": "a"}],
             "edges": [{"src": "a", "tgt": "b"}],
             "topology_order": ["a"],
-            "communities": {"1": {"label": "search", "count": 1}},
         }
         with patch(
             "mcp_server.guidance.add_system_message", side_effect=lambda r, **kw: r
@@ -527,10 +526,9 @@ class TestBuildResponse:
         assert response["subgraph_nodes"] == subgraph_data["nodes"]
         assert response["subgraph_edges"] == subgraph_data["edges"]
         assert response["subgraph_order"] == subgraph_data["topology_order"]
-        assert response["subgraph_communities"] == subgraph_data["communities"]
 
     def test_build_response_subgraph_without_optional_keys(self):
-        """subgraph_order and subgraph_communities are omitted when absent."""
+        """subgraph_order is omitted when absent."""
         plan = _make_plan()
         subgraph_data = {"nodes": [{"id": "a"}], "edges": []}
         with patch(
@@ -539,7 +537,6 @@ class TestBuildResponse:
             response = SearchOrchestrator._build_response(plan, [], subgraph_data)
         assert "subgraph_nodes" in response
         assert "subgraph_order" not in response
-        assert "subgraph_communities" not in response
 
 
 class TestApplySourceOrderAndBudget:
