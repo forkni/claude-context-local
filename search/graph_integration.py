@@ -133,7 +133,7 @@ SEMANTIC_TYPES = (
     "impl",
     "constant",
     "variable",
-    "merged",  # Community-merged chunks from Louvain detection
+    "merged",  # Sibling chunks combined by LanguageChunker._create_merged_chunk
     "split_block",  # Large node split blocks (AST block splitting)
 )
 
@@ -481,7 +481,7 @@ class GraphIntegration:
         """Normalise a CodeChunk into a _BuildSpec.
 
         Returns None if the chunk should be skipped (missing chunk_id, or
-        synthetic module/community chunk_type).  Handles both CallEdge objects
+        synthetic module chunk_type).  Handles both CallEdge objects
         and dicts for calls, and both RelationshipEdge objects and dicts for
         relationships, so the builder is input-type-agnostic.
         """
@@ -812,14 +812,7 @@ class GraphIntegration:
         )
 
     def build_graph_from_chunks(self, chunks) -> None:
-        """Build graph from chunks WITHOUT embeddings (for pre-embedding community detection).
-
-        This enables the two-pass chunking flow:
-        1. Chunk WITHOUT merging
-        2. Build graph from unmerged chunks
-        3. Detect communities
-        4. Remerge with community boundaries
-        5. Embed and index
+        """Build graph from chunks WITHOUT embeddings.
 
         Uses NetworkX DiGraph API:
         - G.add_node(chunk_id, **attrs)

@@ -135,7 +135,7 @@ class MetadataStore:
         """Get just the metadata dict for a chunk (without index_id wrapper).
 
         This is a convenience method for cases where only chunk metadata is needed,
-        not the FAISS index position. Used by community remerge operations.
+        not the FAISS index position.
 
         Args:
             chunk_id: Chunk identifier

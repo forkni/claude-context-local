@@ -71,8 +71,8 @@ RETURNS:
 - query: the query string that was executed
 - results: ranked list of chunks, each with chunk_id, file, lines, kind
   (function/class/method/module/...), score, and — when available — name,
-  reranker_score, complexity_score, summary (module/community docstring
-  preview), source ("ego_graph" for expanded graph-neighbor results)
+  reranker_score, complexity_score, summary (module docstring preview),
+  source ("ego_graph" for expanded graph-neighbor results)
 - subgraph_nodes / subgraph_edges: present when a result subgraph is serialized
 - system_message: routing/reindex guidance for the calling model""",
         "input_schema": {

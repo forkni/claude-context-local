@@ -304,7 +304,7 @@ class CentralityRanker:
         """Entity-query vs code-query type multiplier.
 
         Entity queries (mentioning class/module/struct/enum) promote class chunks
-        and demote module/community summaries.  Code queries use a milder variant.
+        and demote module summaries.  Code queries use a milder variant.
         """
         is_entity_query = any(
             w in query_lower for w in ("class", "module", "struct", "enum")
@@ -332,9 +332,9 @@ class CentralityRanker:
     def _apply_synthetic_demotion(
         self, result: dict, chunk_type: str, chunk_id: str
     ) -> None:
-        """×0.5 demotion for synthetic module/community chunks with zero centrality.
+        """×0.5 demotion for synthetic module chunks with zero centrality.
 
-        Synthetic chunks (module summaries, community summaries) are not in the
+        Synthetic chunks (module summaries) are not in the
         call graph so they always have centrality=0.  Real code chunks have
         centrality > 0.  Combined with type-based demotion:
           0.90 × 0.5 = 0.45x total (code queries)

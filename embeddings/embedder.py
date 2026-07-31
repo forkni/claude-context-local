@@ -1276,7 +1276,7 @@ class CodeEmbedder:
                 ``full_pass``. ``True`` (the default — matches a full index)
                 lets the save prune down to exactly this run's ``live_keys``.
                 Callers embedding only a subset of the project's chunks (an
-                incremental update, a community-summary refresh) must pass
+                incremental update, a module-summary refresh) must pass
                 ``False``, or the tiny ``live_keys`` from that partial run
                 would evict the vast majority of a cache built by prior full
                 passes. Ignored when ``cache`` is ``None``.
@@ -1677,9 +1677,9 @@ class CodeEmbedder:
         # sort_order above); restore pending order first, then scatter into the
         # `ordered_results` array that cache hits (if any) already populated
         # during partitioning above. Callers (index_write_stage.py,
-        # incremental_indexer.py, community_refresh_stage.py) all zip this
-        # return value positionally against the original `chunks` list, so a
-        # mis-scattered return would silently mis-associate metadata.
+        # incremental_indexer.py) all zip this return value positionally
+        # against the original `chunks` list, so a mis-scattered return
+        # would silently mis-associate metadata.
         pending_ordered: list[EmbeddingResult | None] = [None] * len(pending_chunks)
         for sorted_pos, pending_idx in enumerate(sort_order):
             pending_ordered[pending_idx] = results[sorted_pos]

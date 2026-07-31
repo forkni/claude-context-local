@@ -1110,7 +1110,6 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                 )
             )
 
-        # Community merge happens during full index (graph-aware boundaries)
         # No greedy merge - raw AST chunks returned
 
         return chunks

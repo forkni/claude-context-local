@@ -171,7 +171,7 @@ class GraphScoringStage:
         results: list[dict],
         intent_decision: IntentDecision | None,
     ) -> list[dict]:
-        """Move module/community summary chunks to the end for non-GLOBAL queries.
+        """Move module summary chunks to the end for non-GLOBAL queries.
 
         Intent-aware synthetic chunk ordering (post-centrality reranking).
         Research: TNO, GRACE, GraphRAG all separate summaries from code retrieval.

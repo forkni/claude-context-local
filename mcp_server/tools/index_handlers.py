@@ -271,8 +271,9 @@ def _purge_index_dir(
     orphaning the ``metadata.db`` WAL/SHM sidecars (routinely full-size, not
     a crash-only edge case) and a legacy ``metadata_symbol_cache.json``.
 
-    ``index_dir`` is a model's ``index/`` directory; the call-graph and
-    community-detection files live one level up, in its parent.
+    ``index_dir`` is a model's ``index/`` directory; the call-graph files
+    (and any legacy ``*_communities.json`` left by a pre-removal index)
+    live one level up, in its parent.
 
     Args:
         index_dir: The model's ``index/`` directory to purge.
@@ -285,8 +286,8 @@ def _purge_index_dir(
     Returns:
         ``(deleted, failed)``: names of the files/directories actually
         deleted, and names that raised ``OSError`` and are still on disk
-        (relative to ``index_dir``, except call-graph/community files which
-        are bare filenames from the parent directory). A non-empty ``failed``
+        (relative to ``index_dir``, except call-graph/legacy-community files
+        which are bare filenames from the parent directory). A non-empty ``failed``
         means the purge left a half-cleared index — callers that need this to
         be a hard failure (as opposed to the previous behaviour of only
         logging a warning) must check it explicitly.

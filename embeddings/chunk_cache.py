@@ -223,7 +223,7 @@ class ChunkEmbeddingCache:
         Args:
             full_pass: Whether *live_keys* is the authoritative set for the
                 whole project (a full index) or only a subset (an incremental
-                update, a community-summary refresh). ``True`` allows
+                update, a module-summary refresh). ``True`` allows
                 eviction to target the entries-based cap derived from
                 ``len(live_keys)`` — correct only when ``live_keys`` really is
                 everything the project needs. ``False`` caps by the byte
@@ -274,7 +274,7 @@ class ChunkEmbeddingCache:
         The entries-based cap (``2 * len(live_keys)``, floored at
         ``_AUTO_MIN_ENTRIES``) is only sound when ``live_keys`` is the
         authoritative set for the whole project — i.e. ``full_pass=True``. A
-        partial run (incremental update, community-summary refresh) touches
+        partial run (incremental update, module-summary refresh) touches
         only the handful of chunks that changed; naively applying the same
         formula would shrink a cache built by prior full passes down to
         roughly twice *that* handful. When ``full_pass=False`` the cap is
@@ -319,7 +319,7 @@ class ChunkEmbeddingCache:
 # -- shared resolution helpers --------------------------------------------
 #
 # Module-level so every embed_chunks() call site (full index, incremental
-# update, community-summary refresh) resolves a cache the same fail-soft
+# update, module-summary refresh) resolves a cache the same fail-soft
 # way instead of each reimplementing it. Originally lived as private methods
 # on IndexWriteStage, which only ever wired the full-index path.
 
