@@ -343,7 +343,7 @@ class CentralityRanker:
         """
         # Eq_LtE: centrality is always >= 0 so ==0 and <=0 are equivalent.
         if (
-            chunk_type in ("module", "community")
+            chunk_type == "module"
             and result.get("centrality", 0) == 0  # pragma: no mutate
         ):
             # round() precision: 4 vs 3/5 is below retrieval noise floor.

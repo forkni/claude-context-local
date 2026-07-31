@@ -868,12 +868,11 @@ class TestBuildGraphFromChunks(TestCase):
         graph.build_graph_from_chunks([])
         storage.clear.assert_called_once()
 
-    def test_skips_module_and_community(self):
-        """module and community chunk types are not added as nodes."""
+    def test_skips_module(self):
+        """module chunk type is not added as a node."""
         graph, storage = self._make_graph()
         chunks = [
             _make_chunk("f.py:0-0:module:f", chunk_type="module"),
-            _make_chunk("f.py:0-0:community:grp", chunk_type="community"),
         ]
         graph.build_graph_from_chunks(chunks)
         storage.add_node.assert_not_called()

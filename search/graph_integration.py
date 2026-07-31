@@ -487,7 +487,7 @@ class GraphIntegration:
         """
         if not chunk.chunk_id:
             return None
-        if chunk.chunk_type in ("module", "community"):
+        if chunk.chunk_type == "module":
             return None
 
         file_path = chunk.file_path or ""

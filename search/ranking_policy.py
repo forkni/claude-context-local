@@ -75,7 +75,6 @@ TYPE_BOOSTS_CLASS_KEYWORD: dict[str, float] = {
     "function": 1.2,
     "method": 1.2,
     "module": 0.82,
-    "community": 0.82,
 }
 """Applied when the query explicitly contains the word 'class' (ranking_heuristics branch)."""
 
@@ -84,7 +83,6 @@ TYPE_BOOSTS_ENTITY: dict[str, float] = {
     "function": 1.15,
     "method": 1.15,
     "module": 0.85,
-    "community": 0.85,
     "struct": 1.25,
 }
 """Applied when the query looks like an entity/type name (shared by both rankers)."""
@@ -94,7 +92,6 @@ TYPE_BOOSTS_CODE: dict[str, float] = {
     "method": 1.2,
     "class": 1.35,
     "module": 0.90,
-    "community": 0.90,
 }
 """Default type multipliers for code/prose queries (shared by both rankers)."""
 
