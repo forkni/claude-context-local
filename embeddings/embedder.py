@@ -63,10 +63,6 @@ MODEL_ACTIVATION_COST_OVERRIDES_ONNX: dict[str, float] = {
     # Without floor, runtime warmup (batch=4) reports 0.053 GB/item → batch=16 OOMs
     # (single Add op wants 941 MB at batch=16 vs 5 MB free).
     "BAAI/bge-m3": 0.28,
-    # GTE-ModernBERT (ONNX): batch=22 at 0.15 GB/item spilled to shared memory.
-    # Without floor, runtime warmup reports 0.046 GB/item → batch=32 OOMs
-    # (single MatMul wants 1.34 GB at batch=32 vs 875 MB free).
-    "Alibaba-NLP/gte-modernbert-base": 0.25,
 }
 
 
@@ -128,13 +124,11 @@ def estimate_activation_gb_from_config(
                   = (2·hidden +   intermediate) · dtype_bytes   [standard FFN]
         peak_per_token = max(attn_peak, mlp_peak) + hidden·dtype_bytes
 
-    Validated against all 6 registered models with SAFETY=15, T_eff=1024:
+    Validated against 3 of 4 registered models with SAFETY=15, T_eff=1024
+    (F2LLM-v2-0.6B not yet profiled):
         EmbeddingGemma-300M:  0.13 GB  (observed ~0.04 GB)   safe
         BGE-M3 (ONNX):        0.41 GB  (observed  0.28 GB)   safe
-        BGE-Code-v1:          0.65 GB  (observed  0.40 GB)   safe
         Qwen3-Embed-0.6B:     0.26 GB  (observed  0.27 GB)   safe
-        CodeRankEmbed:        0.24 GB  (observed  0.25 GB)   safe
-        GTE-ModernBERT (ONNX):0.26 GB  (observed  0.25 GB)   safe
 
     Args:
         config: HuggingFace PretrainedConfig (has .hidden_size, etc.)

@@ -93,7 +93,6 @@ RERANKER_SWEEP: list[dict[str, Any]] = [
     },
     {"config_name": "jina_v3", "reranker_model": "jinaai/jina-reranker-v3"},
     {"config_name": "qwen_0.6b", "reranker_model": "Qwen/Qwen3-Reranker-0.6B"},
-    {"config_name": "qwen_4b", "reranker_model": "Qwen/Qwen3-Reranker-4B"},
     {"config_name": "bge_v2_m3", "reranker_model": "BAAI/bge-reranker-v2-m3"},
     {"config_name": "none", "reranker_enabled": False},
 ]

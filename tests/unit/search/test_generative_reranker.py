@@ -7,7 +7,6 @@ import torch
 
 from search.neural_reranker import (
     GENERATIVE_RERANKERS,
-    RERANKER_MODELS,
     GenerativeReranker,
     NeuralReranker,
     create_reranker,
@@ -849,11 +848,6 @@ class TestCreateRerankerFactory:
             reranker = create_reranker(model_name)
             assert isinstance(reranker, GenerativeReranker)
             assert reranker.model_name == model_name
-
-    def test_generative_4b_registered(self):
-        """Qwen3-Reranker-4B must be in both RERANKER_MODELS and GENERATIVE_RERANKERS."""
-        assert RERANKER_MODELS["generative-4b"] == "Qwen/Qwen3-Reranker-4B"
-        assert "Qwen/Qwen3-Reranker-4B" in GENERATIVE_RERANKERS
 
     def test_generative_reranker_preserves_batch_size(self):
         """Regression: batch_size was previously silently dropped for GenerativeReranker.

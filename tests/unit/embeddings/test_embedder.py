@@ -590,28 +590,38 @@ def test_query_cache_with_task_instruction(
     mock_sentence_transformer.return_value = mock_model
     mock_model_loader_st.return_value = mock_model  # Same mock for ModelLoader
 
-    # Use existing model with task_instruction (CodeRankEmbed)
-    embedder = CodeEmbedder(model_name="nomic-ai/CodeRankEmbed")
+    # Use a synthetic model with task_instruction (a generic feature, not tied
+    # to any specific registered model)
+    MODEL_REGISTRY["test/task-instruction-model"] = {
+        "dimension": 768,
+        "task_instruction": "Represent this query for searching relevant code",
+    }
+    try:
+        embedder = CodeEmbedder(model_name="test/task-instruction-model")
+        embedder._model = mock_model  # bypass ModelLoader's HF Hub existence check
 
-    query = "test query"
+        query = "test query"
 
-    # First call - should encode with task instruction
-    # (no warm-up encode; index 0 is the real query)
-    embedding1 = embedder.embed_query(query)
-    assert len(encoded_queries) == 1
-    assert encoded_queries[0].startswith(
-        "Represent this query for searching relevant code"
-    )
-    assert "test query" in encoded_queries[0]
+        # First call - should encode with task instruction
+        # (no warm-up encode; index 0 is the real query)
+        embedding1 = embedder.embed_query(query)
+        assert len(encoded_queries) == 1
+        assert encoded_queries[0].startswith(
+            "Represent this query for searching relevant code"
+        )
+        assert "test query" in encoded_queries[0]
 
-    # Second call - should hit cache
-    embedding2 = embedder.embed_query(query)
-    assert len(encoded_queries) == 1  # No new encode call
-    assert np.allclose(embedding1, embedding2)
+        # Second call - should hit cache
+        embedding2 = embedder.embed_query(query)
+        assert len(encoded_queries) == 1  # No new encode call
+        assert np.allclose(embedding1, embedding2)
 
-    stats = embedder.get_cache_stats()
-    assert stats["hits"] == 1
-    assert stats["misses"] == 1
+        stats = embedder.get_cache_stats()
+        assert stats["hits"] == 1
+        assert stats["misses"] == 1
+    finally:
+        # Clean up the temporary model
+        del MODEL_REGISTRY["test/task-instruction-model"]
 
 
 @_patch_no_onnx

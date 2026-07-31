@@ -23,22 +23,6 @@ MODEL_REGISTRY = {
         "vram": "2.2GB",
         "short": "f2llm-v2-0.6b",
     },
-    "Qwen/Qwen3-Embedding-4B": {"dim": 2560, "vram": "~10GB", "short": "qwen3-4b"},
-    "nomic-ai/CodeRankEmbed": {
-        "dim": 768,
-        "vram": "0.5-0.6GB",
-        "short": "coderankembed",
-    },
-    "Alibaba-NLP/gte-modernbert-base": {
-        "dim": 768,
-        "vram": "0.28GB",
-        "short": "gte-modernbert",
-    },
-    "jinaai/jina-embeddings-v5-text-small-retrieval": {
-        "dim": 1024,
-        "vram": "1.2-1.5GB",
-        "short": "jina-v5-small",
-    },
 }
 
 DEFAULT_STORAGE_DIR = Path.home() / ".claude_code_search"

@@ -21,12 +21,11 @@ RERANKER_MODELS = {
     "full": "BAAI/bge-reranker-v2-m3",  # ~1.5GB VRAM, discriminative cross-encoder
     "lightweight": "Alibaba-NLP/gte-reranker-modernbert-base",  # ~0.3GB VRAM, efficient
     "generative": "Qwen/Qwen3-Reranker-0.6B",  # ~1.5GB VRAM, +8.7 pts over BGE (generative)
-    "generative-4b": "Qwen/Qwen3-Reranker-4B",  # ~8GB VRAM (BF16), MTEB-Code 81.20, Apache-2.0
     "jina-v3": "jinaai/jina-reranker-v3",  # ~1.5GB VRAM, code-optimized listwise (CoIR 70.64)
 }
 
 # Generative rerankers (auto-detected by model name)
-GENERATIVE_RERANKERS = {"Qwen/Qwen3-Reranker-0.6B", "Qwen/Qwen3-Reranker-4B"}
+GENERATIVE_RERANKERS = {"Qwen/Qwen3-Reranker-0.6B"}
 
 # Jina v3 rerankers (listwise architecture)
 JINA_V3_RERANKERS = {"jinaai/jina-reranker-v3"}

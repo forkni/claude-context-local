@@ -58,28 +58,6 @@ MODEL_REGISTRY = {
         "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
         "prompt_name": "query",  # Alternative: use model's built-in prompt (generic)
     },
-    # Code-specific models (optimized for Python, C++, and programming languages)
-    "nomic-ai/CodeRankEmbed": {
-        "dimension": 768,
-        "max_context": 8192,
-        "description": "Code-specific embedding model (CSN: 77.9 MRR, CoIR: 60.1 NDCG@10)",
-        "vram_gb": "0.5-0.6GB",  # Updated from "2GB" (actual measured: 0.52GB)
-        "fallback_batch_size": 128,
-        "model_type": "code-specific",
-        "task_instruction": "Represent this query for searching relevant code",  # Required query prefix
-        "trust_remote_code": True,
-        # Upstream pooling is CLS; `.get("onnx_pooling", "cls")` in model_loader
-        # defaults correctly. ONNX is blocked anyway via trust_remote_code=True.
-    },
-    "Alibaba-NLP/gte-modernbert-base": {
-        "dimension": 768,
-        "max_context": 8192,
-        "description": "Lightweight code-optimized model (CoIR: 79.31 NDCG@10, 144 docs/s throughput)",
-        "vram_gb": "0.28GB",
-        "fallback_batch_size": 256,
-        "model_type": "code-optimized",
-        "onnx_pooling": "cls",  # GTE-ModernBERT uses CLS pooling
-    },
     "codefuse-ai/F2LLM-v2-0.6B": {
         "dimension": 1024,
         "max_context": 40960,
