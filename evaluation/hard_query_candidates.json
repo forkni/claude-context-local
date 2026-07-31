@@ -360,20 +360,18 @@
     },
     {
       "id": "QG04",
-      "query": "how are groups of related code discovered in the codebase and turned into searchable summary documents",
+      "query": "how are per-file summary documents generated for search",
       "category": "G",
       "intent": "GLOBAL",
       "expected_files": [
-        "graph/community_detector.py",
-        "graph/community_summarizer.py",
-        "search/community_stage.py"
+        "chunking/file_summarizer.py",
+        "search/summary_stage.py"
       ],
       "intended": [
-        "graph/community_detector.py:method:CommunityDetector.detect_communities",
-        "graph/community_summarizer.py:function:generate_community_summaries",
-        "search/community_stage.py:method:CommunityStage.run"
+        "chunking/file_summarizer.py:function:generate_file_summaries",
+        "search/summary_stage.py:method:SummaryStage.generate_module_summaries"
       ],
-      "notes": "G draft (community-ablation Phase 1, 2026-07-30) — human grading required before promotion; score at k=10; graded 2026-07-30: hard"
+      "notes": "G draft (community-ablation Phase 1, 2026-07-30) — human grading required before promotion; score at k=10; retargeted 2026-07-30 ahead of community subsystem removal (was community-detection query)"
     },
     {
       "id": "QG05",
@@ -508,18 +506,17 @@
     },
     {
       "id": "QG13",
-      "query": "when only part of the codebase is reindexed, how do the community groupings and their summaries stay up to date",
+      "query": "when only part of the codebase is reindexed, how do file-level module summaries stay up to date",
       "category": "G",
       "intent": "GLOBAL",
       "expected_files": [
-        "search/community_refresh_stage.py",
         "search/incremental_indexer.py",
-        "graph/graph_storage.py"
+        "chunking/file_summarizer.py"
       ],
       "intended": [
-        "search/community_refresh_stage.py:method:CommunityRefreshStage.run"
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks"
       ],
-      "notes": "G draft (community-ablation Phase 1, 2026-07-30) — human grading required before promotion; score at k=10; graded 2026-07-30: easy"
+      "notes": "G draft (community-ablation Phase 1, 2026-07-30) — human grading required before promotion; score at k=10; retargeted 2026-07-30 ahead of community subsystem removal (was community-refresh query)"
     },
     {
       "id": "QG14",
