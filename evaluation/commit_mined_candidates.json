@@ -1,13 +1,13 @@
 {
   "_meta": {
-    "purpose": "Commit-mined candidate hard queries for categories H (bug-fix localization) and I (broader-context / multi-evidence), Stage 4 of the benchmarking-harness plan. Graded via scripts/benchmark/grade_candidate_queries.py --candidates before promotion into golden_dataset_expanded.json.",
+    "purpose": "Commit-mined candidate hard queries for categories H (bug-fix localization) and I (broader-context / multi-evidence), Stage 4 of the benchmarking-harness plan. Graded via scripts/benchmark/grade_candidate_queries.py --candidates before promotion into golden_dataset_expanded.json. (2026-08-01: 6 candidates referencing the removed DSPy eval subsystem pruned — see ADR-0016.)",
     "authored_date": "2026-07-31",
     "source": "git log --no-merges, subjects starting fix:/feat:, full history, filtered to commits touching >=1 non-test .py file and >=1 tests/** file. Gold = hunk-header function/class names fuzzy-matched by bare symbol name against a live re-chunk of HEAD; renamed/deleted/ambiguous-name matches are dropped rather than guessed.",
     "classification": "H: <=2 matched functions, 1 file. I: >=3 matched functions, >=2 files. Commits landing in neither bucket are dropped (ambiguous middle).",
-    "candidate_count": 200,
+    "candidate_count": 194,
     "category_counts": {
-      "H": 70,
-      "I": 130
+      "H": 68,
+      "I": 126
     },
     "queries_need_paraphrase": true
   },
@@ -37,19 +37,6 @@
         "search/faiss_index.py:method:FaissVectorIndex.add"
       ],
       "notes": "commit-mined from 72b68815 ('feat: delete dormant ONNX inference path (Phase D)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
-    },
-    {
-      "id": "I002",
-      "query": "add graded NDCG, Acc@k, file-level rollup, hard-negative intrusion rate",
-      "category": "I",
-      "intended": [
-        "evaluation/dspy_agent_eval.py:function:_eval_one",
-        "evaluation/dspy_agent_eval.py:function:load_examples",
-        "evaluation/metrics.py:function:calculate_metrics_from_results",
-        "evaluation/metrics.py:function:calculate_ndcg_at_k",
-        "evaluation/metrics.py:function:flatten_entries"
-      ],
-      "notes": "commit-mined from 21a438c0 ('feat: add graded NDCG, Acc@k, file-level rollup, hard-negative intrusion rate'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
     },
     {
       "id": "I003",
@@ -833,63 +820,6 @@
         "mcp_server/tools/index_handlers.py:decorated_definition:handle_clear_index"
       ],
       "notes": "commit-mined from c69478c5 ('fix: parameterize close_project_resources to preserve current_project on clear'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
-    },
-    {
-      "id": "I047",
-      "query": "expand eval harness (E/F categories, --tool-names), fix routing threshold, sync SKILL.md",
-      "category": "I",
-      "intended": [
-        "evaluation/dspy_agent_eval.py:class:CodeNavQA",
-        "evaluation/dspy_agent_eval.py:function:load_examples",
-        "scripts/benchmark/run_dspy_eval.py:function:_parse_args",
-        "scripts/benchmark/run_dspy_eval.py:function:main"
-      ],
-      "notes": "commit-mined from c2ae3bb2 ('feat: expand eval harness (E/F categories, --tool-names), fix routing threshold, sync SKILL.md'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
-    },
-    {
-      "id": "I048",
-      "query": "expand golden dataset 13→45 queries, add category D (find_connections)",
-      "category": "I",
-      "intended": [
-        "evaluation/dspy_agent_eval.py:class:CodeNavQA",
-        "evaluation/dspy_agent_eval.py:function:load_examples",
-        "scripts/benchmark/run_dspy_gepa.py:function:_print_prereq_banner",
-        "scripts/benchmark/run_sscg_benchmark.py:function:build_parser"
-      ],
-      "notes": "commit-mined from 5118e1ee ('feat: expand golden dataset 13→45 queries, add category D (find_connections)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
-    },
-    {
-      "id": "H016",
-      "query": "instruct recall-oriented inclusion in CodeNavQA signature",
-      "category": "H",
-      "intended": [
-        "evaluation/dspy_agent_eval.py:class:CodeNavQA"
-      ],
-      "notes": "commit-mined from 5766c128 ('feat: instruct recall-oriented inclusion in CodeNavQA signature'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
-    },
-    {
-      "id": "H017",
-      "query": "use unranked recall for trajectory ceiling metric (ceiling_k = len surfaced)",
-      "category": "H",
-      "intended": [
-        "evaluation/dspy_agent_eval.py:function:_eval_one",
-        "evaluation/dspy_agent_eval.py:function:trajectory_recall_metric"
-      ],
-      "notes": "commit-mined from 721c4cfc ('fix: use unranked recall for trajectory ceiling metric (ceiling_k = len surfaced)'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
-    },
-    {
-      "id": "I049",
-      "query": "copy search_code chunk_ids verbatim + add tool-vs-agent recall diagnostic",
-      "category": "I",
-      "intended": [
-        "evaluation/dspy_agent_eval.py:class:CodeNavQA",
-        "evaluation/dspy_agent_eval.py:function:_eval_one",
-        "evaluation/dspy_agent_eval.py:function:run_eval",
-        "evaluation/dspy_agent_eval.py:function:tool_selection_metric",
-        "scripts/benchmark/run_dspy_eval.py:function:_print_aggregate",
-        "scripts/benchmark/run_dspy_eval.py:function:_print_per_query_table"
-      ],
-      "notes": "commit-mined from ebf6002d ('fix: copy search_code chunk_ids verbatim + add tool-vs-agent recall diagnostic'); needs paraphrase before grading -- query text is the literal commit subject and may leak function names"
     },
     {
       "id": "I050",

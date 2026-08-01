@@ -42,9 +42,9 @@ three current-config runs measured 0.9841 (62/63). Recommended operating k: **7*
 when correctness matters. Use `k=10` for architectural/global queries. See [references/performance.md](references/performance.md) for full results,
 including the broader 96-query set where pool-hit rate drops to ~97–98%.
 
-**DSPy agent eval (2026-06-26, 77-query dataset, 4-tool):** Recall@7=0.9046, MRR=0.8519, Hit@7=1.000, tool_sel=1.000 on the held-out test split (18
-queries, A–F coverage). Use all 4 tools: search_code, find_connections, find_path, find_similar_code. See
-[references/performance.md](references/performance.md).
+**DSPy agent eval (historical — subsystem removed, ADR-0016; 2026-06-26, 77-query dataset, 4-tool):** Recall@7=0.9046, MRR=0.8519, Hit@7=1.000,
+tool_sel=1.000 on the held-out test split (18 queries, A–F coverage). Use all 4 tools: search_code, find_connections, find_path, find_similar_code.
+See [references/performance.md](references/performance.md).
 
 ---
 
@@ -239,7 +239,8 @@ by stripping the line-range portion: `file.py:10-40:type:name` → `file.py:type
 means edges are upgraded in-place to the highest-confidence resolver — `resolver_source: "lsp"` means basedpyright confirmed the call. Configure via
 `call_graph.min_confidence` (drops low-confidence edges) and see `docs/CALL_GRAPH_TUNING.md` for tuning recipes.
 
-**INCLUSION vs ORDERING — do not conflate (top-2 failure modes from GEPA eval).** Two rules that work together but are often confused:
+**INCLUSION vs ORDERING — do not conflate (top-2 failure modes from GEPA eval, historical — subsystem removed, ADR-0016).** Two rules that work
+together but are often confused:
 
 - **INCLUSION:** include *every* relevant chunk you surfaced, regardless of `kind`. A `decorated_definition` config/dataclass (`SearchModeConfig`,
   `FileChanges`, etc.) that appeared in your results must appear in your answer if it is relevant to the question. The ordering rule below is about

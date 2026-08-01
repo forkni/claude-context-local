@@ -126,12 +126,6 @@ otel = [
 ]
 # Install: uv pip install -e .[otel]
 # Then set CLAUDE_OTEL_ENABLED=true to activate tracing.
-eval = [
-    # dspy: agent-eval / GEPA-optimization tooling (evaluation/dspy_*.py,
-    # utils/dspy_*.py). No production (mcp_server/, search/) consumer.
-    "dspy>=3.2.1",
-]
-# Install: uv pip install -e .[eval]
 
 [project.urls]
 Homepage = "https://github.com/forkni/claude-context-local"
@@ -395,8 +389,6 @@ replace-imports-with-any = [
     "networkx", "networkx.*",
     "snoop", "py_heat",
     "pyan", "pyan.*",
-    "dspy", "dspy.*",
-    "gepa", "gepa.*",
     "litellm", "litellm.*",
 ]
 

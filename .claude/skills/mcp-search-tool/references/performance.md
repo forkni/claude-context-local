@@ -81,7 +81,7 @@ All thresholds pass: MRR ≥ 0.50 ✓ | Recall@5 ≥ 0.55 ✓ | Hit@5 ≥ 0.80 �
 
 Note: the 2026-06-08 13-query baseline (MRR 0.797) used a smaller query set; numbers not directly comparable to this 63-query run.
 
-## DSPy Agent Eval (2026-06-26, 77-query dataset, 4-tool, 18 test queries)
+## DSPy Agent Eval (historical — subsystem removed, ADR-0016; 2026-06-26, 77-query dataset, 4-tool, 18 test queries)
 
 Full 4-tool harness (search_code, find_connections, find_path, find_similar_code) against the 18-query held-out test split (A–F coverage). Prior
 baselines used 2 tools — those were an eval artifact; this is the corrected reference.

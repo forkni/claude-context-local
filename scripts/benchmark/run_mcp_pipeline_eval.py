@@ -177,10 +177,7 @@ async def main_async(args) -> None:
     print(f"\n{'=' * 75}")
     print(f"AGGREGATE  (n={len(per_query)} queries)")
     print(f"{'=' * 75}")
-    print(
-        f"  MRR:        {agg.get('mrr', 0):.4f}  "
-        f"(baseline 0.700 searcher-only; 0.8519 DSPy-agent)"
-    )
+    print(f"  MRR:        {agg.get('mrr', 0):.4f}  (baseline 0.700 searcher-only)")
     print(f"  Recall@7:   {agg.get('recall@7', 0):.4f}  (baseline 0.696 searcher-only)")
     print(f"  Hit@7:      {agg.get('hit_rate@7', agg.get('hit_rate@5', 0)):.4f}")
     print(f"  NDCG@5:     {agg.get('ndcg@5', 0):.4f}")
