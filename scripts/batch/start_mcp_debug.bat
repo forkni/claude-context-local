@@ -74,6 +74,11 @@ if %SERVER_EXIT_CODE% equ 0 (
 ) else (
     echo [DEBUG ERROR] MCP server failed with exit code: %SERVER_EXIT_CODE%
     echo [DEBUG] Check error messages above for troubleshooting
+    if %SERVER_EXIT_CODE% equ 3 (
+        echo [DEBUG HINT] Exit code 3 usually means the port is already in use
+        echo [DEBUG HINT] ^(e.g. another MCP server instance is already running^).
+        echo [DEBUG HINT] Check with: netstat -ano ^| findstr :8765
+    )
 )
 echo [DEBUG] =======================================
 popd

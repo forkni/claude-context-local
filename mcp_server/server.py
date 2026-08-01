@@ -19,6 +19,7 @@ import logging
 import logging.handlers
 import os
 import platform
+import socket
 import sys
 import time
 from collections.abc import AsyncGenerator
@@ -234,6 +235,66 @@ def _drop_benign_uvicorn_errors(record: logging.LogRecord) -> bool:
     """
     msg = record.getMessage()
     return not any(s in msg for s in _BENIGN_UVICORN_ERROR_SUBSTRINGS)
+
+
+def _find_port_conflict(host: str, port: int) -> str | None:
+    """Return a description of what's blocking (host, port), or None if free.
+
+    Probes every address `host` resolves to (e.g. "localhost" resolves to both
+    "::1" and "127.0.0.1" on this machine), matching what asyncio's
+    create_server() binds. Deliberately does NOT set SO_REUSEADDR on the probe
+    socket: on Windows that option lets a bind succeed against an
+    already-listening socket, which would mask the very conflict this function
+    exists to detect.
+    """
+    try:
+        addrinfos = socket.getaddrinfo(
+            host, port, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP
+        )
+    except socket.gaierror as exc:
+        return f"host {host!r} could not be resolved: {exc}"
+
+    for family, socktype, proto, _canonname, sockaddr in addrinfos:
+        probe = socket.socket(family, socktype, proto)
+        try:
+            probe.bind(sockaddr)
+        except OSError as exc:
+            return f"{sockaddr[0]}:{sockaddr[1]} is already in use ({exc})"
+        finally:
+            probe.close()
+    return None
+
+
+def _describe_port_owner(port: int) -> str:
+    """Best-effort description of the process listening on `port`.
+
+    Uses psutil (already a direct dependency) when available, matching the
+    established idiom in chunking/relationships/lsp_call_graph.py
+    (_kill_process_tree) and mcp_server/tools/status_handlers.py: import
+    inside the function, catch the specific psutil exceptions, and fall back
+    to a manual-lookup hint rather than raising.
+    """
+    try:
+        import psutil
+
+        for conn in psutil.net_connections(kind="tcp"):
+            if (
+                conn.laddr
+                and conn.laddr.port == port
+                and conn.status == psutil.CONN_LISTEN
+                and conn.pid
+            ):
+                try:
+                    proc = psutil.Process(conn.pid)
+                    return f"PID {conn.pid} ({proc.name()})"
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    return f"PID {conn.pid} (name unavailable)"
+    except Exception as exc:  # noqa: BLE001 - best-effort diagnostic, never block on it
+        logger.debug(f"Could not identify port owner via psutil: {exc}")
+
+    if platform.system() == "Windows":
+        return f"an unknown process (run: netstat -ano | findstr :{port})"
+    return f"an unknown process (run: lsof -i :{port})"
 
 
 # Multi-model pool configuration imported from search.config
@@ -639,6 +700,22 @@ if __name__ == "__main__":
             # Run the async function
             asyncio.run(run_stdio_server())
         elif args.transport == "http":
+            # Pre-flight port check: fail fast, before loading anything, instead
+            # of letting uvicorn discover the conflict after the embedding model
+            # has already been loaded and an "APPLICATION READY" banner logged.
+            # See ADR discussion / diagnose session 2026-08-01.
+            conflict = _find_port_conflict(args.host, args.port)
+            if conflict is not None:
+                owner = _describe_port_owner(args.port)
+                logger.error(
+                    f"Port {args.port} is already in use by {owner} on {args.host} "
+                    f"({conflict})."
+                )
+                logger.error(
+                    "Stop that process, or start this server with --port <other>."
+                )
+                sys.exit(3)
+
             # StreamableHTTP transport using Starlette + StreamableHTTPSessionManager + uvicorn
             import uvicorn
             from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -757,6 +834,7 @@ if __name__ == "__main__":
                     return JSONResponse({"error": str(e)}, status_code=500)
 
             # Starlette app with lifespan integration
+            @contextlib.asynccontextmanager
             async def app_lifespan(app: Any) -> AsyncGenerator[None, None]:
                 """Application lifecycle - initialize global state ONCE before accepting connections."""
                 logger.info("=" * 60)
@@ -784,14 +862,16 @@ if __name__ == "__main__":
                                 f"[INIT] Model pre-load failed (non-critical): {e}"
                             )
 
-                    logger.info("=" * 60)
-                    logger.info("APPLICATION READY - Accepting connections")
-                    if debug_mode:
-                        startup_duration = time.perf_counter() - _startup_time
-                        logger.info(
-                            f"[DEBUG] Startup completed in {startup_duration:.2f} seconds"
-                        )
-                    logger.info("=" * 60)
+                    logger.info(
+                        "[INIT] Global state initialized; binding HTTP socket..."
+                    )
+                    # NOTE: The "APPLICATION READY" banner is intentionally NOT logged
+                    # here. uvicorn calls this lifespan's startup() BEFORE it binds the
+                    # listening socket(s) (see uvicorn/server.py Server.startup()), so
+                    # logging readiness at this point would be a lie whenever the bind
+                    # subsequently fails (e.g. port already in use). The real banner is
+                    # logged by _ReadyAfterBindServer below, once the bind has actually
+                    # succeeded.
 
                     # Suppress noisy-but-benign uvicorn.error messages (disconnected
                     # clients, SSE streams cancelled at shutdown) — see
@@ -829,7 +909,6 @@ if __name__ == "__main__":
                 ),
             ]
 
-            # pyrefly: ignore [bad-argument-type]
             starlette_app = Starlette(routes=routes, lifespan=app_lifespan)
 
             # Top-level ASGI app: routes /mcp directly to StreamableHTTP before
@@ -863,7 +942,33 @@ if __name__ == "__main__":
                 log_level="info",
                 loop="asyncio",  # Force asyncio (fixes uvicorn 0.36+ regression)
             )
-            uvi_server = uvicorn.Server(config)
+
+            class _ReadyAfterBindServer(uvicorn.Server):
+                """uvicorn.Server that logs readiness only after the socket binds.
+
+                uvicorn's own Server.startup() runs the ASGI lifespan (our
+                app_lifespan, including the embedding-model preload) BEFORE it
+                attempts to bind the listening socket(s), and sys.exit(3)s if
+                the bind fails. Logging "APPLICATION READY" from inside the
+                lifespan therefore lies whenever the bind subsequently fails.
+                Overriding startup() to log after super().startup() returns
+                means the banner only appears once a live socket exists.
+                """
+
+                async def startup(
+                    self, sockets: list[socket.socket] | None = None
+                ) -> None:
+                    await super().startup(sockets=sockets)
+                    logger.info("=" * 60)
+                    logger.info("APPLICATION READY - Accepting connections")
+                    if debug_mode:
+                        startup_duration = time.perf_counter() - _startup_time
+                        logger.info(
+                            f"[DEBUG] Startup completed in {startup_duration:.2f} seconds"
+                        )
+                    logger.info("=" * 60)
+
+            uvi_server = _ReadyAfterBindServer(config)
 
             # Windows: Use SelectorEventLoop to prevent WinError 64
             # (uvicorn 0.36+ ignores asyncio.set_event_loop_policy when using uvicorn.run)
