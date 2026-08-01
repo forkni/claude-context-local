@@ -648,7 +648,7 @@ class HybridSearcher(BaseSearcher):
         self,
         query: str,
         k: int = 4,
-        search_mode: str = SearchMode.HYBRID,
+        search_mode: str | SearchMode = SearchMode.HYBRID,
         use_parallel: bool = True,
         min_bm25_score: float = 0.0,
         filters: dict[str, Any] | None = None,
@@ -674,6 +674,13 @@ class HybridSearcher(BaseSearcher):
         Returns:
             Search results (reranked for hybrid mode, direct for single modes)
         """
+        # Normalize to the enum once at the boundary. Unknown strings have
+        # always fallen through every dispatch else-branch to hybrid; keep that.
+        try:
+            search_mode = SearchMode(search_mode)
+        except ValueError:
+            search_mode = SearchMode.HYBRID
+
         # Reset session-level OOM tracking at start of new search
         if hasattr(self, "reranking_engine") and self.reranking_engine:
             self.reranking_engine.reset_session_state()
