@@ -156,8 +156,6 @@ def get_searcher(
                     new_searcher = HybridSearcher(
                         storage_dir=str(storage_dir),
                         embedder=embedder,
-                        bm25_weight=config.search_mode.bm25_weight,
-                        dense_weight=config.search_mode.dense_weight,
                         rrf_k=config.search_mode.rrf_k_parameter,
                         max_workers=2,
                         bm25_use_stopwords=config.search_mode.bm25_use_stopwords,

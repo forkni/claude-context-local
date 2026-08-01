@@ -5,7 +5,41 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from search.config import SearchConfig
 from search.search_executor import SearchExecutor
+from search.types import RetrievalRequest
+
+
+def _request(
+    query: str = "test query",
+    k: int = 5,
+    search_mode: str = "hybrid",
+    bm25_weight: float = 0.35,
+    dense_weight: float = 0.65,
+    min_bm25_score: float = 0.0,
+    use_parallel: bool = True,
+    filters: dict | None = None,
+    config: SearchConfig | None = None,
+) -> RetrievalRequest:
+    """Build a RetrievalRequest for execute_single_hop tests.
+
+    Defaults to a real SearchConfig() (query_expansion disabled, single_pass
+    False, bm25_reserved_slots 0) — since C2, execute_single_hop reads
+    everything off request.config; there is no more get_search_config()
+    fallback to patch, so tests that need non-default config values build
+    one and pass it here.
+    """
+    return RetrievalRequest(
+        query=query,
+        k=k,
+        search_mode=search_mode,
+        bm25_weight=bm25_weight,
+        dense_weight=dense_weight,
+        min_bm25_score=min_bm25_score,
+        use_parallel=use_parallel,
+        filters=filters,
+        config=config if config is not None else SearchConfig(),
+    )
 
 
 @pytest.fixture
@@ -39,7 +73,7 @@ def executor():
 
 def test_bm25_mode_calls_bm25_only(executor):
     """BM25 mode calls bm25_index.search but not dense_index.search."""
-    executor.execute_single_hop("test query", k=5, search_mode="bm25")
+    executor.execute_single_hop(_request(k=5, search_mode="bm25"))
 
     executor.bm25_index.search.assert_called_once()
     executor.dense_index.search.assert_not_called()
@@ -47,7 +81,7 @@ def test_bm25_mode_calls_bm25_only(executor):
 
 def test_semantic_mode_calls_dense_only(executor):
     """Semantic mode calls dense_index.search but not bm25_index.search."""
-    executor.execute_single_hop("test query", k=5, search_mode="semantic")
+    executor.execute_single_hop(_request(k=5, search_mode="semantic"))
 
     executor.dense_index.search.assert_called_once()
     executor.bm25_index.search.assert_not_called()
@@ -59,7 +93,7 @@ def test_hybrid_mode_calls_both_and_reranks(executor):
     executor.reranker.rerank_simple.return_value = [mock_result]
     executor.reranking_engine.apply_neural_reranking.return_value = [mock_result]
 
-    results = executor.execute_single_hop("test query", k=5, search_mode="hybrid")
+    results = executor.execute_single_hop(_request(k=5, search_mode="hybrid"))
 
     executor.bm25_index.search.assert_called_once()
     executor.dense_index.search.assert_called_once()
@@ -74,12 +108,11 @@ def test_hybrid_single_pass_skips_hop1_neural_rerank(executor):
     mock_result = Mock()
     executor.reranker.rerank_simple.return_value = [mock_result]
 
-    cfg = Mock()
-    cfg.reranker.top_k_candidates = 30
+    cfg = SearchConfig()
     cfg.reranker.single_pass = True
-    cfg.query_expansion.enabled = False  # Mock attrs are truthy by default
-    with patch("search.search_executor.get_search_config", return_value=cfg):
-        results = executor.execute_single_hop("test query", k=5, search_mode="hybrid")
+    results = executor.execute_single_hop(
+        _request(k=5, search_mode="hybrid", config=cfg)
+    )
 
     executor.reranking_engine.apply_neural_reranking.assert_not_called()
     assert results == [mock_result]
@@ -89,15 +122,19 @@ def test_hybrid_skips_neural_reranking_when_rrf_returns_empty(executor):
     """Neural reranking is skipped when RRF produces no results."""
     executor.reranker.rerank_simple.return_value = []
 
-    executor.execute_single_hop("test query", k=5, search_mode="hybrid")
+    executor.execute_single_hop(_request(k=5, search_mode="hybrid"))
 
     executor.reranking_engine.apply_neural_reranking.assert_not_called()
 
 
-def test_per_call_weights_override_instance_defaults(executor):
-    """Explicit bm25_weight/dense_weight args override the instance-level defaults."""
+def test_request_weights_reach_rerank_simple(executor):
+    """request.bm25_weight/dense_weight (resolved upstream by HybridSearcher)
+    flow straight through to the fusion call. C2 removed the instance-level
+    bm25_weight/dense_weight fields that used to silently hide a dropped
+    per-call weight behind a stale construction-time default — there is no
+    fallback left to override; the request is the only source now."""
     executor.execute_single_hop(
-        "test query", k=5, search_mode="hybrid", bm25_weight=0.7, dense_weight=0.3
+        _request(k=5, search_mode="hybrid", bm25_weight=0.7, dense_weight=0.3)
     )
 
     kwargs = executor.reranker.rerank_simple.call_args.kwargs
@@ -157,8 +194,8 @@ def test_stats_increment_after_each_search(executor):
     """stats property reflects total_searches count after calls."""
     assert executor.stats["total_searches"] == 0
 
-    executor.execute_single_hop("q1", k=3, search_mode="bm25")
-    executor.execute_single_hop("q2", k=3, search_mode="semantic")
+    executor.execute_single_hop(_request(query="q1", k=3, search_mode="bm25"))
+    executor.execute_single_hop(_request(query="q2", k=3, search_mode="semantic"))
 
     assert executor.stats["total_searches"] == 2
 
@@ -166,7 +203,9 @@ def test_stats_increment_after_each_search(executor):
 def test_hybrid_disabled_expansion_takes_exact_rerank_simple_path(executor):
     """query_expansion.enabled=False (the default) → today's rerank_simple call,
     never the generic rerank(); regression guard for the unexpanded path."""
-    executor.execute_single_hop("survive a restart", k=5, search_mode="hybrid")
+    executor.execute_single_hop(
+        _request(query="survive a restart", k=5, search_mode="hybrid")
+    )
 
     executor.reranker.rerank_simple.assert_called_once()
     executor.reranker.rerank.assert_not_called()
@@ -174,20 +213,19 @@ def test_hybrid_disabled_expansion_takes_exact_rerank_simple_path(executor):
 
 def test_hybrid_enabled_but_unmatched_query_takes_rerank_simple_path(executor):
     """Enabled expansion with no concept match must still take rerank_simple."""
-    cfg = Mock()
-    cfg.reranker.top_k_candidates = 30
-    cfg.reranker.single_pass = False
-    cfg.search_mode.bm25_reserved_slots = 0
+    cfg = SearchConfig()
     cfg.query_expansion.enabled = True
     cfg.query_expansion.variants_path = ""
     cfg.query_expansion.max_variants = 2
     cfg.query_expansion.variant_weight_discount = 0.5
     cfg.query_expansion.apply_to_bm25 = True
     cfg.query_expansion.apply_to_dense = False
-    with patch("search.search_executor.get_search_config", return_value=cfg):
-        executor.execute_single_hop(
-            "where is QueryRouter defined", k=5, search_mode="hybrid"
+
+    executor.execute_single_hop(
+        _request(
+            query="where is QueryRouter defined", k=5, search_mode="hybrid", config=cfg
         )
+    )
 
     executor.reranker.rerank_simple.assert_called_once()
     executor.reranker.rerank.assert_not_called()
@@ -197,20 +235,22 @@ def test_hybrid_enabled_matched_query_fuses_variant_legs(executor):
     """Enabled + matched concept → generic rerank() with >2 lists and the
     variant leg weighted at bm25_weight * variant_weight_discount."""
     executor.reranker.rerank.return_value = []
-    cfg = Mock()
-    cfg.reranker.top_k_candidates = 30
-    cfg.reranker.single_pass = False
-    cfg.search_mode.bm25_reserved_slots = 0
+    cfg = SearchConfig()
     cfg.query_expansion.enabled = True
     cfg.query_expansion.variants_path = ""
     cfg.query_expansion.max_variants = 2
     cfg.query_expansion.variant_weight_discount = 0.5
     cfg.query_expansion.apply_to_bm25 = True
     cfg.query_expansion.apply_to_dense = False
-    with patch("search.search_executor.get_search_config", return_value=cfg):
-        executor.execute_single_hop(
-            "how does state survive a restart", k=5, search_mode="hybrid"
+
+    executor.execute_single_hop(
+        _request(
+            query="how does state survive a restart",
+            k=5,
+            search_mode="hybrid",
+            config=cfg,
         )
+    )
 
     executor.reranker.rerank_simple.assert_not_called()
     kwargs = executor.reranker.rerank.call_args.kwargs

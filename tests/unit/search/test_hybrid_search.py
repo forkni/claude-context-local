@@ -47,8 +47,6 @@ class TestHybridSearcher:
         mock_dense.return_value.index = None
         searcher = HybridSearcher(self.temp_dir)
 
-        assert searcher.bm25_weight == 0.35
-        assert searcher.dense_weight == 0.65
         assert searcher.max_workers == 2
         assert not searcher._is_shutdown
 
@@ -264,43 +262,6 @@ class TestHybridSearcher:
         assert "dense_stats" in stats
         assert "gpu_memory" in stats
         assert stats["dense_stats"]["total_vectors"] == 100
-
-    @patch("search.hybrid_searcher.CodeIndexManager")
-    @patch("search.hybrid_searcher.BM25Index")
-    def test_weight_optimization(self, mock_bm25, mock_dense):
-        """Test weight optimization."""
-        # Setup mock for dense index
-        mock_dense.return_value.index = None
-        searcher = HybridSearcher(self.temp_dir)
-
-        # Mock indices as ready
-        bm25_mock = mock_bm25.return_value
-        bm25_mock.is_empty = False
-        bm25_mock.search.return_value = [("doc1", 0.8, {"type": "function"})]
-
-        dense_mock = mock_dense.return_value
-        dense_mock.index = Mock()
-        dense_mock.index.ntotal = 100
-        dense_mock.search.return_value = [("doc2", 0.9, {"type": "class"})]
-
-        # Mock embedder
-        with patch("embeddings.embedder.CodeEmbedder") as mock_embedder:
-            embedder_mock = mock_embedder.return_value
-            embedder_mock.embed_text.return_value = np.random.rand(768)
-
-            # Test optimization
-            test_queries = ["test query 1", "test query 2"]
-
-            result = searcher.optimize_weights(test_queries)
-
-            assert "bm25_weight" in result
-            assert "dense_weight" in result
-            assert "optimization_score" in result
-            assert "tested_combinations" in result
-
-            # In mocked environment, weights might not change, just verify optimization ran
-            assert result["tested_combinations"] > 0
-            assert isinstance(result["optimization_score"], (int, float))
 
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")
@@ -961,7 +922,10 @@ class TestCallEdgeResolution:
 @patch("search.hybrid_searcher.CodeIndexManager")
 @patch("search.hybrid_searcher.BM25Index")
 def test_search_accepts_per_call_weights(mock_bm25, mock_dense):
-    """Per-call bm25_weight/dense_weight flow through to SearchExecutor without mutating instance state."""
+    """Per-call bm25_weight/dense_weight resolve into the RetrievalRequest
+    handed to SearchExecutor. There is no instance state left to mutate or
+    leave untouched — C2 deleted the construction-time weight fields that
+    this test used to also assert on."""
     import tempfile
 
     temp_dir = tempfile.mkdtemp()
@@ -988,15 +952,53 @@ def test_search_accepts_per_call_weights(mock_bm25, mock_dense):
             searcher.search("test query", bm25_weight=0.9, dense_weight=0.1)
 
         exec_mock.assert_called_once()
-        call_kwargs = exec_mock.call_args.kwargs
-        # Per-call weights forwarded
-        assert call_kwargs.get("bm25_weight") == 0.9
-        assert call_kwargs.get("dense_weight") == 0.1
-        # Instance state untouched
-        assert searcher.bm25_weight == 0.35
-        assert searcher.dense_weight == 0.65
-        assert searcher.search_executor.bm25_weight == 0.35
-        assert searcher.search_executor.dense_weight == 0.65
+        req = exec_mock.call_args.args[0]
+        assert req.bm25_weight == 0.9
+        assert req.dense_weight == 0.1
+    finally:
+        import shutil
+
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@patch("search.hybrid_searcher.CodeIndexManager")
+@patch("search.hybrid_searcher.BM25Index")
+def test_intent_weights_reach_the_leg_via_multihop(mock_bm25, mock_dense):
+    """D1 regression: per-call weights must reach the leg through the
+    multi-hop branch — the branch production actually runs (MultiHopConfig
+    defaults to enabled=True) and the one that used to drop them across the
+    single_hop_callback seam before RetrievalRequest existed."""
+    import tempfile
+
+    temp_dir = tempfile.mkdtemp()
+    try:
+        mock_bm25.return_value.is_empty = False
+        mock_dense_inst = Mock()
+        mock_dense_inst.ntotal = 10
+        mock_dense.return_value.index = mock_dense_inst
+
+        searcher = HybridSearcher(temp_dir)
+
+        leg = Mock(return_value=[])
+        searcher.search_executor.execute_single_hop = leg
+
+        with patch(
+            "search.hybrid_searcher._get_config_via_service_locator"
+        ) as mock_cfg:
+            cfg = Mock()
+            cfg.multi_hop.enabled = True
+            cfg.multi_hop.hop_count = 2
+            cfg.multi_hop.expansion = 0.3
+            cfg.multi_hop.edge_weights = None
+            cfg.multi_hop.initial_k_multiplier = 2
+            cfg.ego_graph.enabled = False
+            cfg.parent_retrieval.enabled = False
+            mock_cfg.return_value = cfg
+            searcher.search("q", k=4, bm25_weight=0.9, dense_weight=0.1)
+
+        leg.assert_called_once()
+        req = leg.call_args.args[0]
+        assert (req.bm25_weight, req.dense_weight) == (0.9, 0.1)
     finally:
         import shutil
 

@@ -6,17 +6,16 @@ to discover related code across multiple hops.
 
 import logging
 import time
+from dataclasses import replace
 from typing import Any
 
 from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
-from mcp_server.utils.config_helpers import (
-    get_config_via_service_locator as _get_config_via_service_locator,
-)
 from search.config import SearchMode
 from search.graph_integration import is_chunk_id
 from utils.timing import timed
 
 from .reranker import SearchResult as RerankerSearchResult
+from .types import RetrievalRequest
 
 
 class MultiHopSearcher:
@@ -330,14 +329,9 @@ class MultiHopSearcher:
     @timed("multi_hop_search")
     def search(
         self,
-        query: str,
-        k: int = 5,
-        search_mode: str = SearchMode.HYBRID,
+        request: RetrievalRequest,
         hops: int = 2,
         expansion_factor: float = 0.3,
-        use_parallel: bool = True,
-        min_bm25_score: float = 0.0,
-        filters: dict[str, Any] | None = None,
         edge_weights: dict[str, float] | None = None,
     ) -> list:
         """
@@ -349,18 +343,25 @@ class MultiHopSearcher:
         3. Re-ranking all discovered chunks by query relevance
 
         Args:
-            query: Search query
-            k: Number of final results to return
-            search_mode: Search mode - "hybrid", "semantic", or "bm25"
+            request: The RetrievalRequest this search executes against. Hop 1
+                runs against a derived copy with a widened k
+                (config.multi_hop.initial_k_multiplier); later hops and the
+                final rerank use request's own k. Multi-hop policy (hops,
+                expansion_factor, edge_weights) is not part of the request —
+                it is not what a single leg executes against.
             hops: Number of search hops (default: 2)
             expansion_factor: Fraction of k to expand per hop (default: 0.3)
-            use_parallel: Whether to use parallel search
-            min_bm25_score: Minimum BM25 score threshold
-            filters: Optional filters for search
+            edge_weights: Optional per-intent edge weights for graph expansion
 
         Returns:
             List of SearchResult objects with discovered related code
         """
+        query = request.query
+        k = request.k
+        search_mode = request.search_mode
+        filters = request.filters
+        config = request.config
+
         # Reset session-level OOM tracking at start of new search
         if hasattr(self, "reranking_engine") and self.reranking_engine:
             self.reranking_engine.reset_session_state()
@@ -394,20 +395,13 @@ class MultiHopSearcher:
                     f"[MULTI_HOP] Failed to pre-compute embedding: {e}"
                 )
 
-        # Hop 1: Initial query-based search
-        # Use ServiceLocator helper instead of inline import
-        config = _get_config_via_service_locator()
+        # Hop 1: Initial query-based search, against a k-widened copy of the request
         initial_k = int(k * config.multi_hop.initial_k_multiplier)
+        hop1_request = replace(request, k=initial_k)
 
         hop1_start = time.time()
         initial_results = self._single_hop_search(
-            query=query,
-            k=initial_k,
-            search_mode=search_mode,
-            use_parallel=use_parallel,
-            min_bm25_score=min_bm25_score,
-            filters=filters,
-            query_embedding=query_embedding,
+            hop1_request, query_embedding=query_embedding
         )
         timings["hop_1"] = time.time() - hop1_start
 
@@ -483,7 +477,7 @@ class MultiHopSearcher:
 
         rerank_start = time.time()
         merged_results = list(all_results.values())
-        if _get_config_via_service_locator().reranker.single_pass:
+        if config.reranker.single_pass:
             # Q3 single-pass: defer neural reranking to the one listwise pass
             # at the tail of HybridSearcher.search(); keep fusion/expansion
             # score order so ego expansion still seeds from this top-k.

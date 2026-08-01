@@ -50,7 +50,7 @@ from .reranking_engine import RerankingEngine
 from .result_factory import ResultFactory
 from .search_executor import SearchExecutor
 from .tokenization import augment_bm25_document
-from .weight_optimizer import WeightOptimizer
+from .types import RetrievalRequest
 
 
 class HybridSearcher(BaseSearcher):
@@ -60,8 +60,6 @@ class HybridSearcher(BaseSearcher):
         self,
         storage_dir: str,
         embedder: Optional["CodeEmbedder"] = None,
-        bm25_weight: float = 0.35,
-        dense_weight: float = 0.65,
         rrf_k: int = 60,
         max_workers: int = 2,
         bm25_use_stopwords: bool = True,
@@ -79,8 +77,6 @@ class HybridSearcher(BaseSearcher):
         Args:
             storage_dir: Directory for storing indices
             embedder: CodeEmbedder instance for semantic search (optional)
-            bm25_weight: Weight for BM25 results (0.0 to 1.0)
-            dense_weight: Weight for dense vector results (0.0 to 1.0)
             rrf_k: RRF parameter for reranking
             max_workers: Maximum thread pool workers for parallel execution
             bm25_use_stopwords: Whether BM25 should filter stopwords
@@ -111,10 +107,6 @@ class HybridSearcher(BaseSearcher):
 
         # Store config for index synchronizer
         self.config = config
-
-        # Weights
-        self.bm25_weight = bm25_weight
-        self.dense_weight = dense_weight
 
         # BM25 configuration
         self.bm25_use_stopwords = bm25_use_stopwords
@@ -197,8 +189,6 @@ class HybridSearcher(BaseSearcher):
         self._init_search_components(
             embedder=embedder,
             rrf_k=rrf_k,
-            bm25_weight=bm25_weight,
-            dense_weight=dense_weight,
             max_workers=max_workers,
             bm25_use_stopwords=bm25_use_stopwords,
             bm25_use_stemming=bm25_use_stemming,
@@ -227,8 +217,6 @@ class HybridSearcher(BaseSearcher):
         self,
         embedder: Optional["CodeEmbedder"],
         rrf_k: int,
-        bm25_weight: float,
-        dense_weight: float,
         max_workers: int,
         bm25_use_stopwords: bool,
         bm25_use_stemming: bool,
@@ -245,8 +233,6 @@ class HybridSearcher(BaseSearcher):
         Args:
             embedder: CodeEmbedder instance
             rrf_k: RRF parameter for reranking
-            bm25_weight: Weight for BM25 results
-            dense_weight: Weight for dense vector results
             max_workers: Maximum thread pool workers
             bm25_use_stopwords: Whether BM25 uses stopwords
             bm25_use_stemming: Whether BM25 uses stemming
@@ -287,8 +273,6 @@ class HybridSearcher(BaseSearcher):
             reranker=self.reranker,
             reranking_engine=self.reranking_engine,
             gpu_monitor=self.gpu_monitor,
-            bm25_weight=bm25_weight,
-            dense_weight=dense_weight,
             max_workers=max_workers,
             logger=self._logger,
         )
@@ -516,11 +500,6 @@ class HybridSearcher(BaseSearcher):
         """
         return self.index_sync
 
-    def _set_hybrid_weights(self, bm25_weight: float, dense_weight: float) -> None:
-        """Set both BM25 and dense weights atomically (for weight optimizer)."""
-        self.bm25_weight = bm25_weight
-        self.dense_weight = dense_weight
-
     @property
     def neural_reranker(self) -> NeuralReranker | None:
         """Access the neural reranker instance (backward compatibility).
@@ -732,32 +711,46 @@ class HybridSearcher(BaseSearcher):
                 config if config is not None else _get_config_via_service_locator()
             )
 
+            # Resolve weights once, here: explicit kwarg wins, else the
+            # effective config's defaults. Resolving from config (not an
+            # instance field — HybridSearcher no longer keeps one) means the
+            # two values placed on the request below cannot disagree by
+            # construction. See ADR-0018.
+            eff_bm25_weight = (
+                bm25_weight
+                if bm25_weight is not None
+                else effective_config.search_mode.bm25_weight
+            )
+            eff_dense_weight = (
+                dense_weight
+                if dense_weight is not None
+                else effective_config.search_mode.dense_weight
+            )
+
+            request = RetrievalRequest(
+                query=query,
+                k=k,
+                search_mode=search_mode,
+                bm25_weight=eff_bm25_weight,
+                dense_weight=eff_dense_weight,
+                min_bm25_score=min_bm25_score,
+                use_parallel=use_parallel,
+                filters=filters,
+                config=effective_config,
+            )
+
             # Get initial search results (multi-hop or single-hop)
             if effective_config.multi_hop.enabled:
                 # Use multi-hop search for discovering related code
                 results = self.multi_hop_searcher.search(
-                    query=query,
-                    k=k,
-                    search_mode=search_mode,
+                    request,
                     hops=effective_config.multi_hop.hop_count,
                     expansion_factor=effective_config.multi_hop.expansion,
-                    use_parallel=use_parallel,
-                    min_bm25_score=min_bm25_score,
-                    filters=filters,
                     edge_weights=effective_config.multi_hop.edge_weights,
                 )
             else:
                 # Single-hop search (direct matching only)
-                results = self._single_hop_search(
-                    query=query,
-                    k=k,
-                    search_mode=search_mode,
-                    use_parallel=use_parallel,
-                    min_bm25_score=min_bm25_score,
-                    filters=filters,
-                    bm25_weight=bm25_weight,
-                    dense_weight=dense_weight,
-                )
+                results = self._single_hop_search(request)
 
             # Apply ego-graph expansion if enabled
             if (
@@ -819,15 +812,8 @@ class HybridSearcher(BaseSearcher):
 
     def _single_hop_search(
         self,
-        query: str,
-        k: int = 5,
-        search_mode: str = SearchMode.HYBRID,
-        use_parallel: bool = True,
-        min_bm25_score: float = 0.0,
-        filters: dict[str, Any] | None = None,
+        request: RetrievalRequest,
         query_embedding: np.ndarray | None = None,
-        bm25_weight: float | None = None,
-        dense_weight: float | None = None,
     ) -> list[SearchResult]:
         """
         Internal single-hop search implementation (direct query matching).
@@ -835,27 +821,14 @@ class HybridSearcher(BaseSearcher):
         Delegates to SearchExecutor. Used as callback by MultiHopSearcher.
 
         Args:
-            query: Search query
-            k: Number of results to return
-            search_mode: Search mode - "hybrid", "semantic", or "bm25"
-            use_parallel: Whether to run BM25 and dense search in parallel
-            min_bm25_score: Minimum BM25 score threshold
-            filters: Optional filters for dense search
+            request: The RetrievalRequest this leg executes against.
             query_embedding: Pre-computed query embedding (optional, for caching)
 
         Returns:
             Search results from single-hop search
         """
         return self.search_executor.execute_single_hop(
-            query=query,
-            k=k,
-            search_mode=search_mode,
-            use_parallel=use_parallel,
-            min_bm25_score=min_bm25_score,
-            filters=filters,
-            query_embedding=query_embedding,
-            bm25_weight=bm25_weight,
-            dense_weight=dense_weight,
+            request, query_embedding=query_embedding
         )
 
     def _apply_ego_graph_expansion(
@@ -1087,6 +1060,15 @@ class HybridSearcher(BaseSearcher):
         avg_dense_time = stats["dense_time"] / total_searches
         avg_rerank_time = stats["rerank_time"] / total_searches
 
+        # No per-call config here (this reports aggregate stats, not one
+        # request) — resolve the same way HybridSearcher.search() does: the
+        # config given at construction, else the service-locator default.
+        effective_config = (
+            self.config
+            if self.config is not None
+            else _get_config_via_service_locator()
+        )
+
         return {
             "total_searches": total_searches,
             "average_times": {
@@ -1098,41 +1080,10 @@ class HybridSearcher(BaseSearcher):
             "parallel_efficiency": stats.get("parallel_efficiency", 0.0),
             "gpu_utilization": self.gpu_monitor.get_available_memory(),
             "search_distribution": {
-                "bm25_contribution": self.bm25_weight,
-                "dense_contribution": self.dense_weight,
+                "bm25_contribution": effective_config.search_mode.bm25_weight,
+                "dense_contribution": effective_config.search_mode.dense_weight,
             },
         }
-
-    def optimize_weights(
-        self, test_queries: list[str], ground_truth: list[list[str]] | None = None
-    ) -> dict[str, float]:
-        """
-        Optimize BM25/dense weights based on test queries.
-
-        Delegates to WeightOptimizer for grid search over weight combinations.
-
-        Args:
-            test_queries: List of test queries
-            ground_truth: Optional ground truth results for each query
-
-        Returns:
-            Optimized weights dict with keys:
-                - bm25_weight: Optimal BM25 weight
-                - dense_weight: Optimal dense weight
-                - optimization_score: Best score achieved
-                - tested_combinations: Number of combinations tested
-        """
-        # Create optimizer with callbacks
-        optimizer = WeightOptimizer(
-            search_callback=lambda q, k: self.search(q, k=k, use_parallel=False),
-            analyze_callback=self.reranker.analyze_fusion_quality,
-            set_weights_callback=self._set_hybrid_weights,
-            get_weights_callback=lambda: (self.bm25_weight, self.dense_weight),
-            logger=self._logger,
-        )
-
-        # Delegate to optimizer
-        return optimizer.optimize(test_queries, ground_truth=ground_truth)
 
     def save_indices(self) -> None:
         """Save BM25, dense indices, and call graph. Delegates to IndexSynchronizer.

@@ -80,9 +80,7 @@ class TestHybridSearchIntegration:
                 None
             )  # Prevent cleanup from destroying model_loader in tests
             chunker = MultiLanguageChunker(str(project_dir))
-            hybrid_searcher = HybridSearcher(
-                storage_dir=str(storage_dir), bm25_weight=0.4, dense_weight=0.6
-            )
+            hybrid_searcher = HybridSearcher(storage_dir=str(storage_dir))
             incremental_indexer = IncrementalIndexer(
                 indexer=hybrid_searcher,
                 embedder=embedder,
@@ -240,9 +238,7 @@ class DatabaseConnection:
             chunker = MultiLanguageChunker(str(project_dir))
 
             # Initialize hybrid searcher
-            hybrid_searcher = HybridSearcher(
-                storage_dir=str(storage_dir), bm25_weight=0.4, dense_weight=0.6
-            )
+            hybrid_searcher = HybridSearcher(storage_dir=str(storage_dir))
 
             # Initialize incremental indexer
             # This should work with HybridSearcher as indexer
@@ -514,8 +510,6 @@ class DatabaseConnection:
         # Create new searcher instance
         new_searcher = HybridSearcher(
             storage_dir=str(indexed_hybrid_environment["storage_dir"]),
-            bm25_weight=0.4,
-            dense_weight=0.6,
         )
 
         # Load indices
@@ -608,27 +602,13 @@ def validate_item(item):
         )
         assert result.success, "Indexing must succeed"
 
-        # Test weight adjustment
-        original_bm25_weight = indexed_hybrid_environment["hybrid_searcher"].bm25_weight
-        original_dense_weight = indexed_hybrid_environment[
-            "hybrid_searcher"
-        ].dense_weight
-
-        # Change weights
-        indexed_hybrid_environment["hybrid_searcher"].bm25_weight = 0.8
-        indexed_hybrid_environment["hybrid_searcher"].dense_weight = 0.2
-
-        # Search should still work
+        # Weights are resolved per-call now (C2 removed the instance-level
+        # bm25_weight/dense_weight fields — see ADR-0018); an explicit
+        # per-call override is the only way left to change them.
         results = indexed_hybrid_environment["hybrid_searcher"].search(
-            "user authentication", k=3
+            "user authentication", k=3, bm25_weight=0.8, dense_weight=0.2
         )
         assert len(results) > 0, "Search should work with different weights"
-
-        # Restore weights
-        indexed_hybrid_environment["hybrid_searcher"].bm25_weight = original_bm25_weight
-        indexed_hybrid_environment[
-            "hybrid_searcher"
-        ].dense_weight = original_dense_weight
 
     def test_error_handling(self, indexed_hybrid_environment):
         """Test error handling in hybrid search system."""
@@ -739,13 +719,15 @@ class TestHybridSearchConfigIntegration:
 
         searcher = HybridSearcher(
             storage_dir=str(self.temp_dir / "indices"),
-            bm25_weight=config.search_mode.bm25_weight,
-            dense_weight=config.search_mode.dense_weight,
+            config=config,
             rrf_k=config.search_mode.rrf_k_parameter,
         )
 
-        assert searcher.bm25_weight == 0.7
-        assert searcher.dense_weight == 0.3
+        # C2 removed the instance-level bm25_weight/dense_weight fields —
+        # HybridSearcher now stores whatever SearchConfig it was given
+        # (self.config) instead of copying the weights onto its own attrs.
+        assert searcher.config.search_mode.bm25_weight == 0.7
+        assert searcher.config.search_mode.dense_weight == 0.3
         assert searcher.reranker.k == 50
 
     def teardown_method(self):

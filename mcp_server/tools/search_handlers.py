@@ -168,8 +168,6 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
         indexer = HybridSearcher(
             storage_dir=str(storage_dir),
             embedder=embedder,
-            bm25_weight=config.search_mode.bm25_weight,
-            dense_weight=config.search_mode.dense_weight,
             rrf_k=config.search_mode.rrf_k_parameter,
             max_workers=2,
             bm25_use_stopwords=config.search_mode.bm25_use_stopwords,

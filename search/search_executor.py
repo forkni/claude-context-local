@@ -12,13 +12,14 @@ from typing import Any
 
 import numpy as np
 
-from search.config import SearchMode, get_search_config
+from search.config import SearchMode
 from utils.observability import wrap_in_context
 from utils.timing import timed
 
 from .filters import FilterEngine
 from .reranker import SearchResult
 from .result_factory import ResultFactory
+from .types import RetrievalRequest
 
 
 class SearchExecutor:
@@ -35,8 +36,6 @@ class SearchExecutor:
         reranker,  # RRFReranker
         reranking_engine,  # RerankingEngine
         gpu_monitor,  # GPUMemoryMonitor
-        bm25_weight: float = 0.35,
-        dense_weight: float = 0.65,
         max_workers: int = 2,
         logger: logging.Logger | None = None,
     ):
@@ -50,8 +49,6 @@ class SearchExecutor:
             reranker: RRFReranker for result fusion
             reranking_engine: RerankingEngine for neural reranking
             gpu_monitor: GPUMemoryMonitor for VRAM tracking
-            bm25_weight: Weight for BM25 results (0.0 to 1.0)
-            dense_weight: Weight for dense results (0.0 to 1.0)
             max_workers: Maximum thread pool workers
             logger: Optional logger instance
         """
@@ -62,8 +59,6 @@ class SearchExecutor:
         self.reranking_engine = reranking_engine
         self.gpu_monitor = gpu_monitor
 
-        self.bm25_weight = bm25_weight
-        self.dense_weight = dense_weight
         self.max_workers = max_workers
 
         self._logger = logger or logging.getLogger(__name__)
@@ -84,31 +79,27 @@ class SearchExecutor:
 
     def execute_single_hop(
         self,
-        query: str,
-        k: int = 5,
-        search_mode: str = SearchMode.HYBRID,
-        use_parallel: bool = True,
-        min_bm25_score: float = 0.0,
-        filters: dict[str, Any] | None = None,
+        request: RetrievalRequest,
         query_embedding: np.ndarray | None = None,
-        bm25_weight: float | None = None,
-        dense_weight: float | None = None,
     ) -> list[SearchResult]:
         """
         Execute single-hop search (direct query matching).
 
         Args:
-            query: Search query
-            k: Number of results to return
-            search_mode: Search mode - "hybrid", "semantic", or "bm25"
-            use_parallel: Whether to run BM25 and dense search in parallel
-            min_bm25_score: Minimum BM25 score threshold
-            filters: Optional filters for dense search
+            request: The RetrievalRequest this leg executes against.
             query_embedding: Pre-computed query embedding (optional, for caching)
 
         Returns:
             Search results from single-hop search
         """
+        query = request.query
+        k = request.k
+        search_mode = request.search_mode
+        use_parallel = request.use_parallel
+        min_bm25_score = request.min_bm25_score
+        filters = request.filters
+        config = request.config
+
         self._logger.debug(f"{search_mode.title()} search for: '{query}' (k={k})")
 
         start_time = time.time()
@@ -135,7 +126,7 @@ class SearchExecutor:
             # can actually fill the neural reranker's candidate budget
             # (reranker.top_k_candidates, deployed 30) instead of starving it at
             # k*2. Exact FlatIP dense search makes the wider sweep ~free.
-            reranker_budget = get_search_config().reranker.top_k_candidates
+            reranker_budget = config.reranker.top_k_candidates
             search_k = max(reranker_budget, k * 5)
 
             if use_parallel and not self._is_shutdown:
@@ -149,15 +140,18 @@ class SearchExecutor:
                     query, search_k, min_bm25_score, filters, query_embedding
                 )
 
-            eff_bm25 = bm25_weight if bm25_weight is not None else self.bm25_weight
-            eff_dense = dense_weight if dense_weight is not None else self.dense_weight
+            # Resolved once, upstream in HybridSearcher.search — never None
+            # here (ADR-0018 deletes the is-not-None fallback that used to
+            # hide a dropped weight as a stale construction-time default).
+            eff_bm25 = request.bm25_weight
+            eff_dense = request.dense_weight
 
             # Curated-vocabulary query expansion (opt-in): matched concepts add
             # discounted variant legs to the fusion below. Disabled or unmatched
             # queries skip this entirely and take the exact rerank_simple path.
             variant_legs: list[list[SearchResult]] = []
             variant_weights: list[float] = []
-            qe_cfg = get_search_config().query_expansion
+            qe_cfg = config.query_expansion
             if qe_cfg.enabled:
                 variant_legs, variant_weights = self._build_variant_legs(
                     query,
@@ -199,7 +193,7 @@ class SearchExecutor:
                     results_lists=[primary_bm25, primary_dense, *variant_legs],
                     weights=[eff_bm25, eff_dense, *variant_weights],
                     max_results=fusion_k,
-                    reserved_slots=get_search_config().search_mode.bm25_reserved_slots,
+                    reserved_slots=config.search_mode.bm25_reserved_slots,
                     reserve_list_idx=0,
                 )
             else:
@@ -209,7 +203,7 @@ class SearchExecutor:
                     max_results=fusion_k,
                     bm25_weight=eff_bm25,
                     dense_weight=eff_dense,
-                    reserved_slots=get_search_config().search_mode.bm25_reserved_slots,
+                    reserved_slots=config.search_mode.bm25_reserved_slots,
                 )
             rerank_time = time.time() - rerank_start
             self._logger.debug(
@@ -219,7 +213,7 @@ class SearchExecutor:
             # Neural reranking (Quality First mode) - delegate to reranking_engine.
             # Skipped under reranker.single_pass: the one listwise pass runs at
             # the tail of HybridSearcher.search(); hop-1 seeds keep RRF order.
-            if len(final_results) > 0 and not get_search_config().reranker.single_pass:
+            if len(final_results) > 0 and not config.reranker.single_pass:
                 final_results = self.reranking_engine.apply_neural_reranking(
                     query, final_results, k, context="search"
                 )

@@ -7,7 +7,11 @@ import it without pulling in the full analyzer or its graph dependencies.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+
+if TYPE_CHECKING:
+    from search.config import SearchConfig, SearchMode
 
 
 # Python primitives, stdlib types, and typing module types that will never be
@@ -60,6 +64,32 @@ BUILTIN_TYPES: frozenset[str] = frozenset(
         "VT",
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalRequest:
+    """Everything one retrieval executes against.
+
+    Constructed once by HybridSearcher.search and threaded unchanged through
+    MultiHopSearcher, the single-hop callback, and SearchExecutor.execute_single_hop.
+    Hop-1 widening derives a copy with a different k via dataclasses.replace —
+    there is no with_k() helper; one call site doesn't earn one.
+
+    NB: shallow freeze — `config` is a mutable SearchConfig reachable through
+    this object. Nothing may mutate it mid-request; the orchestrator's only
+    config mutation happens before construction (search_orchestrator.py:498-501,
+    before the search call at :511).
+    """
+
+    query: str
+    k: int
+    search_mode: SearchMode
+    bm25_weight: float
+    dense_weight: float
+    min_bm25_score: float
+    use_parallel: bool
+    filters: dict[str, Any] | None
+    config: SearchConfig
 
 
 @dataclass

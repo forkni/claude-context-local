@@ -42,7 +42,12 @@ import numpy as np
 import pytest
 
 from search.chunk_id import dedupe_results
-from search.config import EgoGraphConfig, GraphEnhancedConfig, ParentRetrievalConfig
+from search.config import (
+    EgoGraphConfig,
+    GraphEnhancedConfig,
+    ParentRetrievalConfig,
+    SearchMode,
+)
 from search.graph_scoring_stage import GraphScoringStage
 from search.hybrid_searcher import HybridSearcher
 from search.indexer import CodeIndexManager
@@ -50,6 +55,7 @@ from search.multi_hop_searcher import MultiHopSearcher
 from search.reranker import SearchResult
 from search.reranking_engine import RerankingEngine
 from search.search_executor import SearchExecutor
+from search.types import RetrievalRequest
 
 
 # ---------------------------------------------------------------------------
@@ -98,10 +104,40 @@ def _cfg(
     return cfg
 
 
+def _request(
+    query="q",
+    k=4,
+    search_mode=SearchMode.HYBRID,
+    use_parallel=True,
+    filters=None,
+    config=None,
+    bm25_weight=0.35,
+    dense_weight=0.65,
+    min_bm25_score=0.0,
+):
+    """Build a RetrievalRequest for execute_single_hop funnel-width tests.
+
+    config defaults to _cfg() (rather than a real SearchConfig) so these
+    tests keep asserting against the same explicit knob values they always
+    have — execute_single_hop reads everything off request.config now, there
+    is no more get_search_config() import in search_executor.py to patch.
+    """
+    return RetrievalRequest(
+        query=query,
+        k=k,
+        search_mode=search_mode,
+        bm25_weight=bm25_weight,
+        dense_weight=dense_weight,
+        min_bm25_score=min_bm25_score,
+        use_parallel=use_parallel,
+        filters=filters,
+        config=config if config is not None else _cfg(),
+    )
+
+
 def test_hybrid_widen_uses_reranker_budget_floor(executor):
     """search_k = max(reranker_budget, k*5); budget wins when k*5 < budget."""
-    with patch("search.search_executor.get_search_config", return_value=_cfg()):
-        executor.execute_single_hop("q", k=4, use_parallel=False)
+    executor.execute_single_hop(_request(k=4, use_parallel=False))
 
     assert executor.bm25_index.search.call_args[0][1] == 30
     assert executor.dense_index.search.call_args[0][1] == 30
@@ -109,8 +145,7 @@ def test_hybrid_widen_uses_reranker_budget_floor(executor):
 
 def test_hybrid_widen_uses_k5_when_larger_than_budget(executor):
     """search_k = max(reranker_budget, k*5); k*5 wins once k is large enough."""
-    with patch("search.search_executor.get_search_config", return_value=_cfg()):
-        executor.execute_single_hop("q", k=8, use_parallel=False)
+    executor.execute_single_hop(_request(k=8, use_parallel=False))
 
     assert executor.bm25_index.search.call_args[0][1] == 40
     assert executor.dense_index.search.call_args[0][1] == 40
@@ -121,8 +156,7 @@ def test_fusion_k_uses_reranker_budget_floor(executor):
     executor.reranker.rerank_simple.return_value = [
         SearchResult(chunk_id="x", score=1.0, metadata={})
     ]
-    with patch("search.search_executor.get_search_config", return_value=_cfg()):
-        executor.execute_single_hop("q", k=4, use_parallel=False)
+    executor.execute_single_hop(_request(k=4, use_parallel=False))
 
     assert executor.reranker.rerank_simple.call_args.kwargs["max_results"] == 30
 
@@ -223,6 +257,25 @@ def test_faiss_search_capped_by_ntotal_when_smaller():
 # ---------------------------------------------------------------------------
 
 
+def _mh_request(query="q", k=4, config=None, filters=None):
+    """Build a RetrievalRequest for MultiHopSearcher.search tests.
+
+    config defaults to a bare Mock (rather than _cfg()) since these tests
+    exercise multi_hop-specific knobs that _cfg() doesn't set.
+    """
+    return RetrievalRequest(
+        query=query,
+        k=k,
+        search_mode=SearchMode.HYBRID,
+        bm25_weight=0.35,
+        dense_weight=0.65,
+        min_bm25_score=0.0,
+        use_parallel=True,
+        filters=filters,
+        config=config if config is not None else Mock(),
+    )
+
+
 def test_multihop_widens_initial_k_by_multiplier():
     """initial_k = int(k * initial_k_multiplier) (multi_hop_searcher.py:400)."""
     cfg = Mock()
@@ -236,12 +289,10 @@ def test_multihop_widens_initial_k_by_multiplier():
         logger=logging.getLogger("test"),
     )
 
-    with patch(
-        "search.multi_hop_searcher._get_config_via_service_locator", return_value=cfg
-    ):
-        searcher.search("q", k=4, hops=1)
+    searcher.search(_mh_request(k=4, config=cfg), hops=1)
 
-    assert callback.call_args.kwargs["k"] == 8
+    req = callback.call_args.args[0]
+    assert req.k == 8
 
 
 def test_multihop_single_pass_tail_sorts_and_slices_without_reranker():
@@ -271,10 +322,7 @@ def test_multihop_single_pass_tail_sorts_and_slices_without_reranker():
         side_effect=lambda all_results, **_: all_results
     )
 
-    with patch(
-        "search.multi_hop_searcher._get_config_via_service_locator", return_value=cfg
-    ):
-        results = searcher.search("q", k=1, hops=2, filters=None)
+    results = searcher.search(_mh_request(k=1, config=cfg, filters=None), hops=2)
 
     reranking_engine.rerank_by_query.assert_not_called()
     assert [r.chunk_id for r in results] == ["b"]

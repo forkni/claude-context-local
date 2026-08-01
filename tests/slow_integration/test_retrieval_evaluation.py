@@ -272,8 +272,6 @@ class TestRetrievalEvaluation:
         searcher = HybridSearcher(
             storage_dir=str(storage_dir),
             embedder=None,  # Not needed for BM25 mode
-            bm25_weight=0.4,
-            dense_weight=0.6,
             config=test_config,
         )
 
