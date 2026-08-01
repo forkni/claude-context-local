@@ -3349,6 +3349,7 @@ Old internal methods → New resolver methods:
 ✅ Discover type dependencies across codebase
 ✅ Track import relationships
 ✅ Complete dependency analysis with
+
 ---
 
 ## v0.5.5 - Low-Level MCP SDK Migration (2025-11-13)

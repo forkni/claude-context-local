@@ -8,7 +8,8 @@
     "node_modules",
     ".venv",
     "benchmark_results",
-    "logs"
+    "logs",
+    ".claude/Charlie_DOC.md"
   ],
 
   // Rule configuration
