@@ -14,14 +14,14 @@ import pytest
 
 
 try:
-    import opentelemetry  # noqa: F401
+    import opentelemetry.sdk  # noqa: F401
 
     _OTEL_AVAILABLE = True
 except ImportError:
     _OTEL_AVAILABLE = False
 
 needs_otel = pytest.mark.skipif(
-    not _OTEL_AVAILABLE, reason="opentelemetry not installed"
+    not _OTEL_AVAILABLE, reason="opentelemetry-sdk not installed"
 )
 
 
