@@ -362,7 +362,8 @@ def recall_at_k_metric(
         expected=example.expected,
         expected_primary=example.get("expected_primary") or example.expected,
     )
-    return float(scores.get(f"recall@{k}", 0.0))
+    value = scores.get(f"recall@{k}", 0.0)
+    return value if isinstance(value, float) else 0.0
 
 
 def mrr_metric(
@@ -386,7 +387,8 @@ def mrr_metric(
         expected=example.expected,
         expected_primary=example.get("expected_primary") or example.expected,
     )
-    return float(scores.get("mrr", 0.0))
+    value = scores.get("mrr", 0.0)
+    return value if isinstance(value, float) else 0.0
 
 
 def tool_selection_metric(
