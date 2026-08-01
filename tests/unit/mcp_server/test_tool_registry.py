@@ -73,4 +73,4 @@ class TestBuildToolList:
         for tool in tools:
             assert tool.name in TOOL_REGISTRY
             assert tool.description == TOOL_REGISTRY[tool.name]["description"]
-            assert tool.inputSchema == TOOL_REGISTRY[tool.name]["input_schema"]
+            assert tool.input_schema == TOOL_REGISTRY[tool.name]["input_schema"]

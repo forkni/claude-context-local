@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-context-local"
-version = "0.22.0"
+version = "0.23.0"
 description = "Local semantic code search for Claude Code (MCP) using FAISS, hybrid BM25+semantic search, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -34,7 +34,7 @@ dependencies = [
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
     "huggingface-hub>=1.3.0",  # transformers>=5.3.0 requires >=1.3.0,<2
     "idna>=3.15",  # Security: CVE-2026-45409
-    "mcp>=1.28.1,<2",  # <2: mcp v2 (beta 2026-06-30) has breaking changes. Security: 1.28.1 fixes CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin validation)
+    "mcp>=2,<3",  # v2: migrated to the SDK v2 API (decorator->constructor-kwarg handlers, see ADR-0017). Security: carries forward 1.28.1's CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin validation) fixes
     "msgpack>=1.2.1",  # Security: GHSA-6v7p-g79w-8964 (SEGV on repeated unpack after error)
     "networkx>=3.0",  # Required for graph storage and community detection
     "nltk>=3.10.0",  # Security: Fixes CVE-2025-14009 (path traversal in downloader), CVE-2026-54293 (URL-encoded path traversal in nltk.data.load()), and takes 3.9.4 out of CVE-2026-12243's affected range
@@ -150,7 +150,7 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 #             "Deferred (no upstream fix)" block below.)
 #
 # Direct dependency security updates:
-# mcp>=1.28.1,<2       # Fixes CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin); <2 guards against mcp v2 breaking changes (beta 2026-06-30)
+# mcp>=2,<3            # Fixes CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin), carried forward from 1.28.1; migrated to SDK v2 API (ADR-0017)
 # nltk>=3.10.0         # Fixes CVE-2025-14009 (path traversal in zipfile.extractall), CVE-2026-54293 (URL-encoded path traversal in nltk.data.load())
 # aiohttp>=3.14.1      # Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1)
 # python-dotenv>=1.2.2 # Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)

@@ -919,7 +919,7 @@ def build_tool_list(include_advanced: bool | None = None) -> list[Tool]:
             Tool(
                 name=name,
                 description=meta["description"],
-                inputSchema=meta["input_schema"],
+                input_schema=meta["input_schema"],
             )
         )
     return tools

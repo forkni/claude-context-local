@@ -1,12 +1,13 @@
 """Low-level MCP server for Claude Code integration.
 
-AUTO-GENERATED from FastMCP backup.
-DO NOT EDIT MANUALLY - regenerate with tools/build_lowlevel_server.py
-
-Migrated from FastMCP to official MCP SDK for:
+Built directly on the official MCP SDK's low-level `Server` (not FastMCP) for:
 - Explicit lifecycle management
 - Predictable state initialization
 - Better production reliability
+
+Handlers are registered via SDK v2's constructor-kwarg pattern
+(`Server(..., on_call_tool=handle_call_tool, ...)`) rather than v1's
+`@server.call_tool()` decorators — see ADR-0017.
 """
 
 import argparse
@@ -33,14 +34,26 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 # Official MCP SDK imports
+from mcp.server import ServerRequestContext  # noqa: E402
 from mcp.server.lowlevel import Server  # noqa: E402
+from mcp.shared.exceptions import MCPError  # noqa: E402
 from mcp.types import (  # noqa: E402
+    INVALID_PARAMS,
+    CallToolRequestParams,
+    CallToolResult,
+    GetPromptRequestParams,
     GetPromptResult,
+    ListPromptsResult,
+    ListResourcesResult,
+    ListToolsResult,
+    PaginatedRequestParams,
     Prompt,
     PromptMessage,
+    ReadResourceRequestParams,
+    ReadResourceResult,
     Resource,
     TextContent,
-    Tool,
+    TextResourceContents,
 )
 
 # Project imports
@@ -267,11 +280,8 @@ def _get_server_version() -> str:
     try:
         return _pkg_version("claude-context-local")
     except PackageNotFoundError:
-        return "0.21.0"
+        return "0.23.0"
 
-
-# Create server instance
-server = Server("Code Search", version=_get_server_version())
 
 # Import tool registry
 from mcp_server.tool_registry import build_tool_list  # noqa: E402
@@ -280,14 +290,22 @@ from mcp_server.tool_registry import build_tool_list  # noqa: E402
 # ============================================================================
 # SERVER HANDLERS
 # ============================================================================
+#
+# SDK v2 handlers take a uniform (ctx, params) signature and are wired into
+# the server via constructor kwargs below (v1 used @server.*() decorators).
+# `ctx: ServerRequestContext` is unused by every handler here — none of them
+# need session/lifespan state beyond the module-level globals already
+# managed by resource_manager.py / search_factory.py — but the SDK dispatches
+# positionally, so it must still be accepted.
 
 
-@server.list_tools()
-async def handle_list_tools() -> list[Tool]:
+async def handle_list_tools(
+    ctx: ServerRequestContext, params: PaginatedRequestParams | None
+) -> ListToolsResult:
     """List all available tools."""
     tools = build_tool_list()
     logger.debug(f"Listing {len(tools)} tools")
-    return tools
+    return ListToolsResult(tools=tools)
 
 
 def _hash_arguments(arguments: dict[str, Any] | None) -> str:
@@ -305,9 +323,12 @@ def _hash_arguments(arguments: dict[str, Any] | None) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
 
 
-@server.call_tool()
-async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+async def handle_call_tool(
+    ctx: ServerRequestContext, params: CallToolRequestParams
+) -> CallToolResult:
     """Dispatch tool calls to appropriate handlers."""
+    name = params.name
+    arguments: dict[str, Any] = dict(params.arguments) if params.arguments else {}
     logger.info(f"[TOOL_CALL] {name}")
     _start = time.monotonic()
     _input_hash = _hash_arguments(arguments)
@@ -369,17 +390,13 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
             f"out_bytes={_out_bytes} status=ok"
         )
 
-        # Return both content (backward compat) and structuredContent (native JSON, no double encoding)
-        # MCP SDK 1.25.0+ supports structuredContent - clients can choose which to read.
-        # structuredContent is attached ONLY for verbose: compact/ultra clients (e.g. Claude Code UI)
+        # Return both content (backward compat) and structured_content (native JSON, no double encoding)
+        # structured_content is attached ONLY for verbose: compact/ultra clients (e.g. Claude Code UI)
         # pretty-print the dict regardless, making the response appear as full/indented output and
         # defeating the token-reduction goal. For compact/ultra the content text is canonical.
-        from mcp import types as mcp_types
-
-        # pyrefly: ignore [bad-return]
-        return mcp_types.CallToolResult(
+        return CallToolResult(
             content=[TextContent(type="text", text=result_text)],
-            structuredContent=(
+            structured_content=(
                 formatted_result
                 if output_format == "verbose" and isinstance(formatted_result, dict)
                 else None
@@ -411,7 +428,9 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
             f"out_bytes={len(_error_text.encode('utf-8'))} status=error "
             f"err_type={type(e).__name__}"
         )
-        return [TextContent(type="text", text=_error_text)]
+        return CallToolResult(
+            is_error=True, content=[TextContent(type="text", text=_error_text)]
+        )
 
 
 # ============================================================================
@@ -419,36 +438,46 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
 # ============================================================================
 
 
-@server.list_resources()
-async def handle_list_resources() -> list[Resource]:
+async def handle_list_resources(
+    ctx: ServerRequestContext, params: PaginatedRequestParams | None
+) -> ListResourcesResult:
     """List all available resources."""
-    return [
-        Resource(
-            uri="search://stats",
-            name="Search Statistics",
-            description="Detailed search index statistics",
-            mimeType="application/json",
-        )
-    ]
+    return ListResourcesResult(
+        resources=[
+            Resource(
+                uri="search://stats",
+                name="Search Statistics",
+                description="Detailed search index statistics",
+                mime_type="application/json",
+            )
+        ]
+    )
 
 
-# pyrefly: ignore [bad-argument-type]
-@server.read_resource()
-async def handle_read_resource(uri: str) -> str:
+async def handle_read_resource(
+    ctx: ServerRequestContext, params: ReadResourceRequestParams
+) -> ReadResourceResult:
     """Read a resource by URI."""
+    uri = params.uri
     logger.info(f"[RESOURCE_READ] {uri}")
 
     if uri == "search://stats":
         try:
             index_manager = get_index_manager()
             stats = index_manager.get_stats()
-            return json.dumps(stats, indent=2)
+            text = json.dumps(stats, indent=2)
         except Exception as e:  # noqa: BLE001 - api-boundary: convert to structured error response
-            return json.dumps(
+            text = json.dumps(
                 responses.error(f"Failed to get statistics: {str(e)}"), indent=2
             )
     else:
-        return json.dumps(responses.error(f"Unknown resource URI: {uri}"), indent=2)
+        text = json.dumps(responses.error(f"Unknown resource URI: {uri}"), indent=2)
+
+    return ReadResourceResult(
+        contents=[
+            TextResourceContents(uri=uri, mime_type="application/json", text=text)
+        ]
+    )
 
 
 # ============================================================================
@@ -456,22 +485,26 @@ async def handle_read_resource(uri: str) -> str:
 # ============================================================================
 
 
-@server.list_prompts()
-async def handle_list_prompts() -> list[Prompt]:
+async def handle_list_prompts(
+    ctx: ServerRequestContext, params: PaginatedRequestParams | None
+) -> ListPromptsResult:
     """List all available prompts."""
-    return [
-        Prompt(
-            name="search_help",
-            description="Get help on how to use the code search tools effectively",
-            arguments=[],
-        )
-    ]
+    return ListPromptsResult(
+        prompts=[
+            Prompt(
+                name="search_help",
+                description="Get help on how to use the code search tools effectively",
+                arguments=[],
+            )
+        ]
+    )
 
 
-# pyrefly: ignore [bad-argument-type]
-@server.get_prompt()
-async def handle_get_prompt(name: str, arguments: dict[str, str]) -> GetPromptResult:
+async def handle_get_prompt(
+    ctx: ServerRequestContext, params: GetPromptRequestParams
+) -> GetPromptResult:
     """Get a prompt by name."""
+    name = params.name
     logger.info(f"[PROMPT_GET] {name}")
 
     if name == "search_help":
@@ -515,7 +548,25 @@ For more information, see the project documentation.
             ],
         )
     else:
-        raise ValueError(f"Unknown prompt: {name}")
+        raise MCPError(INVALID_PARAMS, f"Unknown prompt: {name}")
+
+
+# ============================================================================
+# CREATE SERVER INSTANCE
+# ============================================================================
+# SDK v2 wires handlers in via constructor kwargs (v1 used @server.*()
+# decorators after the fact) — must come after every handle_* def above.
+
+server = Server(
+    "Code Search",
+    version=_get_server_version(),
+    on_list_tools=handle_list_tools,
+    on_call_tool=handle_call_tool,
+    on_list_resources=handle_list_resources,
+    on_read_resource=handle_read_resource,
+    on_list_prompts=handle_list_prompts,
+    on_get_prompt=handle_get_prompt,
+)
 
 
 # ============================================================================

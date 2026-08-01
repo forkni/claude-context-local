@@ -2,15 +2,71 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-07-27)
+## Current Status: All Features Operational (2026-08-01)
 
-- **Version**: 0.22.0
+- **Version**: 0.23.0
 - **Status**: Production-ready, concurrency-safe
 - **Test Coverage**: 3,359 unit tests · 103 fast_integration · 22 integration · 93 slow_integration (2026-07-27)
 - **Dependencies**: 38 direct (`pyproject.toml`) + optional `[callgraph]` / `[lsp]` / `[gpu]` / `[otel]` extras
 - **SSCG Benchmark**: MRR 0.787-0.796, Recall@7 0.719-0.734, Recall@20 0.80-0.81 (2026-07-26/27)
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: v0.22.0 — GLSL indexing parity, persistent chunk embedding cache (43× reindex speedup), BM25 path/symbol augmentation (MRR +0.113), `HybridSearcher.clear_index()` truthiness fix (was discarding 100% of resolver-derived call edges); v0.21.0 — MCPB extension bundle, module-preamble chunks, core/advanced MCP tool tiering, default embedder corrected to `BAAI/bge-m3`, Qwen3-Reranker official-template fix (MRR 0.311→0.754); v0.20.1 — intent-classifier verification-term routing fix (Q12)
+- **Recent**: v0.23.0 — MCP Python SDK v1→v2 migration (`mcp>=2,<3`, decorator handlers → constructor-kwarg `on_*` handlers), DSPy eval subsystem removed (13 files, 4,849 lines); v0.22.0 — GLSL indexing parity, persistent chunk embedding cache (43× reindex speedup), BM25 path/symbol augmentation (MRR +0.113), `HybridSearcher.clear_index()` truthiness fix (was discarding 100% of resolver-derived call edges); v0.21.0 — MCPB extension bundle, module-preamble chunks, core/advanced MCP tool tiering, default embedder corrected to `BAAI/bge-m3`, Qwen3-Reranker official-template fix (MRR 0.311→0.754)
+
+---
+
+## v0.23.0 - MCP SDK v2 Migration, DSPy Eval Subsystem Removed (2026-08-01)
+
+Two-commit release: removes the DSPy agent-evaluation subsystem (no production consumer,
+superseded by `scripts/benchmark/run_mcp_pipeline_eval.py`), then migrates the MCP Python SDK
+from v1 to v2 now that the subsystem's client-session usage is out of the way. Full rationale in
+`docs/adr/0016-remove-dspy-eval-subsystem.md` and `docs/adr/0017-adopt-mcp-sdk-v2.md`.
+
+### Migration
+
+- **No index rebuild required** — this release touches the MCP transport layer and eval
+  tooling only; chunking, embedding, and index format are unchanged.
+
+### Removed
+
+- **DSPy eval subsystem** (13 files, 4,849 lines): `evaluation/dspy_agent_eval.py`,
+  `evaluation/dspy_gepa_optimize.py`, `utils/dspy_claude_code.py`, `utils/dspy_mcp.py`,
+  `scripts/benchmark/run_dspy_eval.py`, `scripts/benchmark/run_dspy_gepa.py`,
+  `scripts/dspy_mcp_demo.py`, `docs/DSPY_SETUP.md`, and their unit/integration tests, plus the
+  now-dead `env.example`. The `[project.optional-dependencies] eval` extra (`dspy>=3.2.1`) and
+  its pyrefly stub-ignore entries are gone from `pyproject.toml`. Historical measurements
+  (Recall@7=0.9046, MRR=0.8519, 77-query set) are preserved as dated citations in
+  `.claude/skills/mcp-search-tool/SKILL.md` and `references/performance.md`.
+
+### Changed
+
+- **`mcp` pinned to `>=2,<3`** (was `>=1.28.1,<2`). `mcp_server/server.py`'s six JSON-RPC
+  handlers (`list_tools`, `call_tool`, `list_resources`, `read_resource`, `list_prompts`,
+  `get_prompt`) converted from v1's post-construction `@server.*()` decorators to v2's
+  constructor-kwarg `on_*` pattern; every handler now takes `(ctx: ServerRequestContext,
+  params)` and returns a typed v2 result object (`ListToolsResult`, `CallToolResult`, etc.)
+  instead of a bare list/string.
+- Field renames: `Tool.inputSchema` → `.input_schema`, `CallToolResult.structuredContent`/
+  `.isError` → `.structured_content`/`.is_error`, `Resource.mimeType` → `.mime_type`. Wire
+  format is unchanged — pydantic aliases still serialize camelCase on the wire, verified
+  end-to-end against the HTTP transport, the live `code-search` MCP client, and the
+  `code-search-extension` stdio↔HTTP bridge.
+- Unknown-prompt error path now raises `mcp.shared.exceptions.MCPError(INVALID_PARAMS, ...)`
+  instead of a bare `ValueError`, matching v2's dispatch-layer error contract.
+- `mcp_server/tool_registry.py`'s `Tool(...)` construction and its unit test updated to
+  `input_schema=`.
+
+### Notes
+
+- `opentelemetry-api>=1.28.0` becomes a hard transitive dependency of `mcp` (v2 instruments
+  every JSON-RPC message with a protocol-level span by default). Verified non-conflicting with
+  this repo's own opt-in `[otel]` tracing — see `docs/adr/0017-adopt-mcp-sdk-v2.md`.
+- `truststore==0.10.4` now installs transitively (`truststore ← httpcore2 ← httpx2 ← mcp`), not
+  as a direct `mcp` dependency; `httpx2`/`httpcore2` install alongside the repo's existing
+  `httpx`/`httpcore` without conflict.
+- StreamableHTTP's bare-GET behavior differs from a naive v1-era expectation: a bare `GET /mcp`
+  with a wildcard `Accept: */*` opens a standalone SSE stream (`200 OK`, held open) rather than
+  returning `406` — only an explicit `Accept: application/json` (excluding `text/event-stream`)
+  triggers the `406` rejection. Spec-compliant v2 behavior, not a regression.
 
 ---
 
