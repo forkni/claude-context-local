@@ -1003,8 +1003,7 @@
       "split": "train",
       "expected": [
         "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
-        "search/index_write_stage.py:method:IndexWriteStage.run",
-        "search/community_refresh_stage.py:method:CommunityRefreshStage.run"
+        "search/index_write_stage.py:method:IndexWriteStage.run"
       ],
       "expected_primary": [
         "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
@@ -1012,8 +1011,7 @@
       ],
       "relevance_grades": {
         "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks": 3,
-        "search/index_write_stage.py:method:IndexWriteStage.run": 3,
-        "search/community_refresh_stage.py:method:CommunityRefreshStage.run": 2
+        "search/index_write_stage.py:method:IndexWriteStage.run": 3
       }
     },
     {
@@ -2041,7 +2039,7 @@
         "graph/graph_storage.py:method:CodeGraphStorage.clear": 3,
         "search/graph_integration.py:method:GraphIntegration.clear": 2,
         "graph/graph_storage.py:method:CodeGraphStorage.remove_file_nodes": 1,
-        "mcp_server/tools/index_handlers.py:function:_clear_index_files_before_create": 1
+        "mcp_server/tools/index_handlers.py:function:_purge_index_dir": 1
       }
     },
     {
