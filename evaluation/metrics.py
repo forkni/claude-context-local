@@ -7,7 +7,7 @@ Ported from: _archive/BENCHMARKING/tools/benchmark_retrieval_quality.py
 """
 
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from statistics import mean
 from typing import Any
 
@@ -84,7 +84,7 @@ def flatten_entries(entries: Sequence[RetrievedEntry]) -> set[str]:
     return ids
 
 
-def chunk_ids_to_files(chunk_ids: Sequence[str]) -> set[str]:
+def chunk_ids_to_files(chunk_ids: Iterable[str]) -> set[str]:
     """Map normalized chunk IDs to their containing file paths.
 
     A normalized chunk ID's file-path component is everything before the
