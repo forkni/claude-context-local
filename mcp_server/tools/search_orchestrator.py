@@ -66,8 +66,6 @@ class SearchPlan:
     auto_reindex: bool
     max_age_minutes: float
     max_context_tokens: int
-    suggested_bm25: float | None
-    suggested_dense: float | None
     redirect: PlanRedirect | None = None
 
 
@@ -238,13 +236,6 @@ class SearchPlanner:
             )
         )
 
-        # Intent-driven weight suggestions (applied in execute section)
-        suggested_bm25: float | None = None
-        suggested_dense: float | None = None
-        if intent_decision:
-            suggested_bm25 = intent_decision.suggested_params.get("bm25_weight")
-            suggested_dense = intent_decision.suggested_params.get("dense_weight")
-
         return SearchPlan(
             query=query,
             k=k,
@@ -264,8 +255,6 @@ class SearchPlanner:
             ),
             max_age_minutes=max_age_minutes,
             max_context_tokens=max_context_tokens,
-            suggested_bm25=suggested_bm25,
-            suggested_dense=suggested_dense,
             redirect=redirect,
         )
 
@@ -474,26 +463,6 @@ class SearchOrchestrator:
             )
             logger.info("[PARENT_RETRIEVAL] Enabled")
 
-        # Apply intent-driven weight overrides (per-request kwargs — no shared-state mutation)
-        # Use plan.suggested_bm25/dense — already computed by SearchPlanner (no re-derivation needed)
-        # Gated behind intent_adaptive_weights (default False, ADR-0018): the parameter-drop
-        # defect (D1) that stopped these from ever reaching the retrieval leg is fixed, but
-        # flipping the flag on is a separate, benchmarked change pending
-        # probe_weight_sensitivity.py evidence of per-query headroom.
-        apply_intent_weights = (
-            config_singleton.search_mode.intent_adaptive_weights
-            and isinstance(searcher, HybridSearcher)
-            and plan.suggested_bm25 is not None
-            and plan.suggested_dense is not None
-            and plan.intent_decision is not None
-        )
-        if apply_intent_weights:
-            logger.info(
-                f"[INTENT] Weight override for {plan.intent_decision.intent.value}: "
-                f"BM25={config_singleton.search_mode.bm25_weight:.2f}→{plan.suggested_bm25:.2f}, "
-                f"Dense={config_singleton.search_mode.dense_weight:.2f}→{plan.suggested_dense:.2f}"
-            )
-
         # Apply intent-driven edge weights for graph traversal (A1)
         if isinstance(searcher, HybridSearcher) and plan.intent_decision:
             from graph.graph_storage import INTENT_EDGE_WEIGHT_PROFILES
@@ -523,8 +492,6 @@ class SearchOrchestrator:
                 use_parallel=get_config().performance.use_parallel_search,
                 filters=filters if filters else None,
                 config=effective_config,
-                bm25_weight=plan.suggested_bm25 if apply_intent_weights else None,
-                dense_weight=plan.suggested_dense if apply_intent_weights else None,
             )
         else:
             context_depth = 1 if plan.include_context else 0

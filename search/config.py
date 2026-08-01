@@ -151,11 +151,6 @@ class SearchModeConfig:
     # them. 0 = disabled (today's behavior).
     bm25_reserved_slots: int = 0
     min_bm25_score: float = 0.1
-    # Gate for IntentClassifier's suggested per-intent bm25/dense weights
-    # reaching the retrieval leg (search_orchestrator.py). Opt-in pending A/B
-    # (flip on pass) — same house pattern as QueryExpansionConfig.enabled
-    # (ADR-0012). See ADR-0018.
-    intent_adaptive_weights: bool = False
 
     # Reranking Configuration
     rrf_k_parameter: int = 100
@@ -743,7 +738,6 @@ class SearchConfig:
         "bm25_tokenizer": ("search_mode", "bm25_tokenizer"),
         "bm25_reserved_slots": ("search_mode", "bm25_reserved_slots"),
         "min_bm25_score": ("search_mode", "min_bm25_score"),
-        "intent_adaptive_weights": ("search_mode", "intent_adaptive_weights"),
         "rrf_k_parameter": ("search_mode", "rrf_k_parameter"),
         "enable_result_reranking": ("search_mode", "enable_result_reranking"),
         "default_k": ("search_mode", "default_k"),

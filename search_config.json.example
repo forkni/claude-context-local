@@ -24,7 +24,6 @@
     "bm25_tokenizer": "whole",
     "bm25_reserved_slots": 0,
     "min_bm25_score": 0.1,
-    "intent_adaptive_weights": false,
     "rrf_k_parameter": 100,
     "enable_result_reranking": true,
     "default_k": 7,

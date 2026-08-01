@@ -123,23 +123,6 @@ class QueryIntent(Enum):
     HYBRID = "hybrid"  # Ambiguous/uncertain queries
 
 
-# Intent-driven BM25/Dense weight profiles
-# NOTE: ranking factor constants (type boosts, lifecycle set, name-overlap tiers) live in
-# search.ranking_policy, not here.  Migrate weight profiles there if a shared owner is needed.
-INTENT_WEIGHT_PROFILES: dict[QueryIntent, tuple[float, float]] = {
-    QueryIntent.LOCAL: (
-        0.35,
-        0.65,
-    ),  # (bm25, dense) - Semantic-dominant for symbol discovery (optimal via Step 1A/1B testing)
-    QueryIntent.GLOBAL: (0.3, 0.7),  # semantic understanding matters
-    QueryIntent.CONTEXTUAL: (0.3, 0.7),  # similar to GLOBAL
-    QueryIntent.NAVIGATIONAL: (0.5, 0.5),  # balanced for relationship tracing
-    QueryIntent.PATH_TRACING: (0.4, 0.6),
-    QueryIntent.SIMILARITY: (0.4, 0.6),
-    QueryIntent.HYBRID: (0.4, 0.6),  # default balanced
-}
-
-
 @dataclass
 class IntentDecision:
     """Result of intent classification decision."""
@@ -311,16 +294,6 @@ class IntentClassifier:
             )
             if scores:
                 logger.debug(f"[INTENT] Scores: {scores}")
-            # Log weight overrides for debugging Q12
-            if "bm25_weight" in decision.suggested_params:
-                bm25_w = decision.suggested_params["bm25_weight"]
-                dense_w = decision.suggested_params["dense_weight"]
-                profile_w = INTENT_WEIGHT_PROFILES.get(decision.intent, (None, None))
-                if (bm25_w, dense_w) != profile_w:
-                    logger.info(
-                        f"[INTENT] Weight override active: BM25={bm25_w}, Dense={dense_w} "
-                        f"(profile default would be {profile_w})"
-                    )
 
         return decision
 
@@ -601,16 +574,6 @@ class IntentClassifier:
             params["k"] = 5
             params["search_mode"] = SearchMode.HYBRID
 
-            # Existence-checking queries benefit from semantic-heavy weights.
-            # BM25 over-matches "index" and "exists" on internal implementation code,
-            # while semantic search better understands user intent for discovery queries.
-            query_lower = query.lower()
-            if any(
-                p in query_lower for p in ("check if", "is there", "exists for")
-            ) or re.search(r"^does\b.+\b(exist|have|support|contain)\b", query_lower):
-                params["bm25_weight"] = 0.35
-                params["dense_weight"] = 0.65
-
         elif intent == QueryIntent.NAVIGATIONAL:
             # Extract symbol name for find_connections redirect
             symbol_name = self._extract_symbol_from_query(query)
@@ -644,12 +607,6 @@ class IntentClassifier:
             symbol_name = self._extract_symbol_from_query(query)
             if symbol_name:
                 params["symbol_name"] = symbol_name
-
-        # Add weight suggestions from profile (don't overwrite intent-specific)
-        if intent in INTENT_WEIGHT_PROFILES and "bm25_weight" not in params:
-            bm25_w, dense_w = INTENT_WEIGHT_PROFILES[intent]
-            params["bm25_weight"] = bm25_w
-            params["dense_weight"] = dense_w
 
         return params
 

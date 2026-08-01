@@ -288,31 +288,6 @@ def _apply_query_expansion_override(enabled: bool) -> None:
         print(f"[WARN] Could not apply query-expansion override: {e}", file=sys.stderr)
 
 
-def _apply_intent_weights_override(enabled: bool) -> None:
-    """Enable intent-adaptive fusion weights in the in-memory config.
-
-    In-memory only, like ``_apply_query_expansion_override``. Unlike that
-    flag, ``intent_adaptive_weights`` is read live only inside
-    ``mcp_server/tools/search_orchestrator.py`` (Block D, gating
-    ``plan.suggested_bm25``/``suggested_dense``) — a layer this benchmark's
-    own scored searches never reach, since ``run_single`` calls
-    ``HybridSearcher.search()`` directly (see ``_apply_centrality_stage``'s
-    docstring for the same bypass, documented there for the centrality
-    stage). Setting this override therefore does **not** move this script's
-    own MRR numbers; it exists so the flag can be flipped for a live MCP
-    ``search_code`` check (``[INTENT] Weight override`` log line) without
-    editing ``search_config.json``. See ADR-0018.
-    """
-    if not enabled:
-        return
-    try:
-        from search.config import get_search_config
-
-        get_search_config().search_mode.intent_adaptive_weights = True
-    except Exception as e:
-        print(f"[WARN] Could not apply intent-weights override: {e}", file=sys.stderr)
-
-
 def _apply_ego_graph_overrides(
     ego_graph: str | None,
     community_bounded: str | None,
@@ -579,7 +554,10 @@ def _get_searcher(project_path: str):
 
 
 def _run_query(
-    searcher: Any, query: str, k: int, search_mode: str | None = None
+    searcher: Any,
+    query: str,
+    k: int,
+    search_mode: str | None = None,
 ) -> tuple[list[Any], float]:
     """Execute a single search query and return (raw SearchResult objects, latency_ms).
 
@@ -592,7 +570,7 @@ def _run_query(
             behaviour (hybrid) exactly.
     """
     start = time.perf_counter()
-    kwargs = {"search_mode": search_mode} if search_mode else {}
+    kwargs: dict[str, Any] = {"search_mode": search_mode} if search_mode else {}
     results = searcher.search(query, k=k, **kwargs)
     latency_ms = (time.perf_counter() - start) * 1000.0
     return results, latency_ms
@@ -909,7 +887,10 @@ def run_benchmark(
                 latency_ms = (time.perf_counter() - start) * 1000.0
             else:
                 raw_results, latency_ms = _run_query(
-                    searcher, query, k=k, search_mode=search_mode
+                    searcher,
+                    query,
+                    k=k,
+                    search_mode=search_mode,
                 )
             if with_centrality or centrality_alpha is not None:
                 stage_start = time.perf_counter()
@@ -1467,18 +1448,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--intent-weights",
-        action="store_true",
-        help=(
-            "Enable intent-adaptive fusion weights (search_mode."
-            "intent_adaptive_weights=True) in the in-memory config. No effect "
-            "on this script's own scored searches — HybridSearcher.search() is "
-            "called directly here, bypassing the SearchOrchestrator layer that "
-            "reads this flag. Use to flip the flag for a live MCP search_code "
-            "check instead. Default: use config value (disabled)."
-        ),
-    )
-    parser.add_argument(
         "--f-via-similar",
         action="store_true",
         help=(
@@ -1601,7 +1570,6 @@ def run_single(
     reranker_listwise_doc_max_chars: int | None = None,
     f_via_similar: bool = False,
     query_expansion: bool = False,
-    intent_weights: bool = False,
     multi_hop_expansion: float | None = None,
     hop1_reserved_slots: int | None = None,
     ego_graph: str | None = None,
@@ -1621,7 +1589,6 @@ def run_single(
     _apply_multi_hop_expansion_override(multi_hop_expansion)
     _apply_hop1_reserved_slots_override(hop1_reserved_slots)
     _apply_query_expansion_override(query_expansion)
-    _apply_intent_weights_override(intent_weights)
     _apply_ego_graph_overrides(
         ego_graph, community_bounded, cross_community_penalty, expansion_mode
     )
@@ -1689,11 +1656,6 @@ def run_single(
         print(
             "  Query expansion: ON (curated-vocabulary variant legs, "
             "config/query_expansion_variants.yaml)"
-        )
-    if intent_weights:
-        print(
-            "  Intent-adaptive weights: ON (config only — no effect on this "
-            "script's own scored searches; see _apply_intent_weights_override)"
         )
 
     # Reset peak VRAM stats and issue a warm-up search so a reranker model swap's
@@ -1829,8 +1791,6 @@ def run_single(
         config_metadata["f_via_similar"] = True
     if query_expansion:
         config_metadata["query_expansion"] = True
-    if intent_weights:
-        config_metadata["intent_weights"] = True
     if ego_graph is not None:
         config_metadata["ego_graph"] = ego_graph
     if community_bounded is not None:
@@ -1926,7 +1886,6 @@ def main() -> None:
                 centrality_alpha=args.centrality_alpha,
                 f_via_similar=args.f_via_similar,
                 query_expansion=args.query_expansion,
-                intent_weights=args.intent_weights,
                 ego_graph=args.ego_graph,
                 community_bounded=args.community_bounded,
                 cross_community_penalty=args.cross_community_penalty,
@@ -1980,7 +1939,6 @@ def main() -> None:
                 centrality_alpha=args.centrality_alpha,
                 f_via_similar=args.f_via_similar,
                 query_expansion=args.query_expansion,
-                intent_weights=args.intent_weights,
                 ego_graph=args.ego_graph,
                 community_bounded=args.community_bounded,
                 cross_community_penalty=args.cross_community_penalty,
@@ -2028,7 +1986,6 @@ def main() -> None:
         centrality_alpha=args.centrality_alpha,
         f_via_similar=args.f_via_similar,
         query_expansion=args.query_expansion,
-        intent_weights=args.intent_weights,
         ego_graph=args.ego_graph,
         community_bounded=args.community_bounded,
         cross_community_penalty=args.cross_community_penalty,

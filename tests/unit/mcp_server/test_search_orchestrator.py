@@ -38,8 +38,6 @@ def _make_plan(
     auto_reindex=True,
     max_age_minutes=5.0,
     max_context_tokens=0,
-    suggested_bm25=None,
-    suggested_dense=None,
 ):
     from mcp_server.tools.search_orchestrator import SearchPlan
 
@@ -60,8 +58,6 @@ def _make_plan(
         auto_reindex=auto_reindex,
         max_age_minutes=max_age_minutes,
         max_context_tokens=max_context_tokens,
-        suggested_bm25=suggested_bm25,
-        suggested_dense=suggested_dense,
     )
 
 
