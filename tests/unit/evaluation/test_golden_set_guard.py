@@ -8,12 +8,13 @@ found three entries (OB01, OB03, OB06) that had silently drifted after
 `run_resolvers` grew past the chunk-split threshold, and the harness scored
 them 0.0 without ever surfacing that the IDs themselves were stale.
 
-`evaluation/golden_dataset.json` (77 queries, categories A-F) hand-curates the
-same kind of literal chunk_id strings in `expected` / `expected_primary` /
-`relevance_grades` (plus `anchor_chunk_id` for category F), and is exposed to
-the same drift risk. It references ~240 distinct chunk_ids, so
-`_live_normalized_ids` is memoized per source file to keep the parametrized
-sweep CI-cheap.
+`evaluation/golden_dataset.json` (77 queries, categories A-F) and
+`evaluation/golden_dataset_expanded.json` (its superset with additional
+queries) hand-curate the same kind of literal chunk_id strings in `expected` /
+`expected_primary` / `relevance_grades` (plus `anchor_chunk_id` for category
+F), and are exposed to the same drift risk. Together they reference several
+hundred distinct chunk_ids, so `_live_normalized_ids` is memoized per source
+file to keep the parametrized sweep CI-cheap.
 
 This test re-chunks (fresh, no live index or MCP server required) every
 source file referenced by a golden ID and asserts each golden ID is still
@@ -57,7 +58,7 @@ def _golden_ids(golden_path: Path) -> list[tuple[str, str]]:
 
 
 def _golden_dataset_ids(golden_path: Path) -> list[tuple[str, str]]:
-    """Return (source_label, chunk_id) pairs for every chunk_id in golden_dataset.json.
+    """Return (source_label, chunk_id) pairs for every chunk_id in a golden_dataset*.json file.
 
     Covers `expected`, `expected_primary`, every `relevance_grades` key, and
     (category F only) `anchor_chunk_id`.
@@ -95,7 +96,10 @@ GOLDEN_FILES = [
     EVALUATION_DIR / "caller_golden.json",
 ]
 
-GOLDEN_DATASET_FILE = EVALUATION_DIR / "golden_dataset.json"
+GOLDEN_DATASET_FILES = [
+    EVALUATION_DIR / "golden_dataset.json",
+    EVALUATION_DIR / "golden_dataset_expanded.json",
+]
 
 
 def _all_golden_id_cases() -> list[tuple[str, str, str]]:
@@ -104,8 +108,9 @@ def _all_golden_id_cases() -> list[tuple[str, str, str]]:
     for golden_path in GOLDEN_FILES:
         for label, chunk_id in _golden_ids(golden_path):
             cases.append((golden_path.name, label, chunk_id))
-    for label, chunk_id in _golden_dataset_ids(GOLDEN_DATASET_FILE):
-        cases.append((GOLDEN_DATASET_FILE.name, label, chunk_id))
+    for dataset_path in GOLDEN_DATASET_FILES:
+        for label, chunk_id in _golden_dataset_ids(dataset_path):
+            cases.append((dataset_path.name, label, chunk_id))
     return cases
 
 

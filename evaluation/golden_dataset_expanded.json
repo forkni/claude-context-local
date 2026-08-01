@@ -2272,14 +2272,14 @@
       "split": "val",
       "expected": [
         "search/gpu_monitor.py:method:GPUMemoryMonitor.estimate_batch_memory",
-        "embeddings/embedder.py:method:calculate_optimal_batch_size"
+        "embeddings/embedder.py:function:calculate_optimal_batch_size"
       ],
       "expected_primary": [
         "search/gpu_monitor.py:method:GPUMemoryMonitor.estimate_batch_memory"
       ],
       "relevance_grades": {
         "search/gpu_monitor.py:method:GPUMemoryMonitor.estimate_batch_memory": 3,
-        "embeddings/embedder.py:method:calculate_optimal_batch_size": 2,
+        "embeddings/embedder.py:function:calculate_optimal_batch_size": 2,
         "search/gpu_monitor.py:method:GPUMemoryMonitor.can_use_gpu": 1,
         "embeddings/embedder.py:method:CodeEmbedder._check_vram_status": 1
       }
