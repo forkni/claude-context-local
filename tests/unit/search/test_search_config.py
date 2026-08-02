@@ -618,6 +618,31 @@ def test_reranker_listwise_dtype_env_override(tmp_path):
     assert config.reranker.listwise_dtype == "fp32"
 
 
+def test_deterministic_gpu_default_and_flat_alias():
+    """Defaults to False (byte-identical behavior); flat key round-trips."""
+    from search.config import PerformanceConfig
+
+    assert PerformanceConfig().deterministic_gpu is False
+
+    config = SearchConfig.from_dict({"deterministic_gpu": True})
+    assert config.performance.deterministic_gpu is True
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.performance.deterministic_gpu is True
+
+
+def test_deterministic_gpu_env_override(tmp_path):
+    """CLAUDE_DETERMINISTIC_GPU must override the nested config value."""
+    config_file = tmp_path / "search_config.json"
+    config_file.write_text(json.dumps({"performance": {"deterministic_gpu": False}}))
+
+    with patch.dict(os.environ, {"CLAUDE_DETERMINISTIC_GPU": "true"}):
+        manager = SearchConfigManager(config_file=str(config_file))
+        config = manager.load_config()
+
+    assert config.performance.deterministic_gpu is True
+
+
 # ---------------------------------------------------------------------------
 # Per-project overrides layer (ADR-0014): search_overrides.json in the active
 # project's storage dir is deep-merged over the global file; env still wins.

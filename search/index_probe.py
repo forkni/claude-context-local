@@ -82,6 +82,7 @@ FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
         "multi_hop.expansion",
         "multi_hop.multi_hop_mode",
         "embedding.model_name",  # routes to a different per-model index dir
+        "performance.deterministic_gpu",  # determinism/quality trade pinned by A/B
     }
 )
 

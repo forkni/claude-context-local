@@ -169,6 +169,14 @@ def initialize_server_state() -> None:
         from utils.observability import init_observability
 
         init_observability(config.observability)
+
+        # Must run before the first model load (cuBLAS reads the workspace
+        # env var lazily at its first call). warn_only=True: the server must
+        # not crash on an op without a deterministic implementation.
+        if config.performance.deterministic_gpu:
+            from utils.determinism import apply_gpu_determinism
+
+            apply_gpu_determinism(warn_only=True)
     except Exception as e:  # noqa: BLE001 - cleanup: non-fatal init step, falls back to default config
         logger.warning(f"[INIT] Config sync failed (using defaults): {e}")
 

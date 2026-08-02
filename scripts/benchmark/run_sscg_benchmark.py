@@ -1443,6 +1443,26 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--deterministic-gpu",
+        action="store_true",
+        help=(
+            "Pin deterministic CUDA kernels for this run "
+            "(CUBLAS_WORKSPACE_CONFIG + torch.use_deterministic_algorithms + "
+            "cuDNN determinism). Applied at startup before any model load. "
+            "Strict by default (RuntimeError on ops without a deterministic "
+            "implementation) — see --determinism-warn-only."
+        ),
+    )
+    parser.add_argument(
+        "--determinism-warn-only",
+        action="store_true",
+        help=(
+            "With --deterministic-gpu: downgrade non-deterministic-op errors "
+            "to warnings (those ops stay non-deterministic). Use only if the "
+            "strict mode raises."
+        ),
+    )
+    parser.add_argument(
         "--bm25-reserved-slots",
         type=int,
         help=(
@@ -1881,6 +1901,17 @@ def main() -> None:
     if args.compare:
         compare_runs(args.compare)
         return
+
+    # Determinism must be pinned before the first cuBLAS call (first model
+    # load), so this precedes _setup_project/_get_searcher.
+    if args.deterministic_gpu:
+        from utils.determinism import apply_gpu_determinism
+
+        apply_gpu_determinism(warn_only=args.determinism_warn_only)
+        print(
+            f"  GPU determinism: ON (warn_only={args.determinism_warn_only})",
+            file=sys.stderr,
+        )
 
     # -----------------------------------------------------------------------
     # Require project path for search runs

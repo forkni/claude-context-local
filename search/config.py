@@ -167,7 +167,7 @@ class SearchModeConfig:
 
 @dataclass
 class PerformanceConfig:
-    """GPU, parallelism, caching settings (16 fields)."""
+    """GPU, parallelism, caching settings (17 fields)."""
 
     use_parallel_search: bool = True
     max_parallel_workers: int = 2
@@ -185,6 +185,7 @@ class PerformanceConfig:
     allow_ram_fallback: bool = (
         False  # Allow spillover to system RAM (slower but reliable)
     )
+    deterministic_gpu: bool = False  # Pin deterministic CUDA kernels (cuBLAS workspace + cuDNN); costs latency
 
     # Precision Configuration (fp16/bf16 for faster inference)
     enable_fp16: bool = True  # Enable fp16 for GPU (30-50% faster inference)
@@ -752,6 +753,7 @@ class SearchConfig:
         "max_chunking_workers": ("performance", "max_chunking_workers"),
         "enable_entity_tracking": ("performance", "enable_entity_tracking"),
         "prefer_gpu": ("performance", "prefer_gpu"),
+        "deterministic_gpu": ("performance", "deterministic_gpu"),
         "enable_fp16": ("performance", "enable_fp16"),
         "prefer_bf16": ("performance", "prefer_bf16"),
         "enable_dynamic_batch_size": ("performance", "enable_dynamic_batch_size"),
@@ -1137,6 +1139,7 @@ class SearchConfigManager:
                 self._bool_from_env,
             ),
             "CLAUDE_PREFER_GPU": ("prefer_gpu", self._bool_from_env),
+            "CLAUDE_DETERMINISTIC_GPU": ("deterministic_gpu", self._bool_from_env),
             "CLAUDE_ENABLE_FP16": ("enable_fp16", self._bool_from_env),
             "CLAUDE_PREFER_BF16": ("prefer_bf16", self._bool_from_env),
             "CLAUDE_DYNAMIC_BATCH_ENABLED": (
