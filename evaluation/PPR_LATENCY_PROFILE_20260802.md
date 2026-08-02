@@ -10,9 +10,12 @@ a priced-in recall debit (recall@20 −0.0250, MRR flat).
 
 ## Setup
 
-- Substrate: index @ 2,286 chunks, post-B1 source (commit `e81c7db` adds
-  `@timed("ego_expansion")` — proven behavior-neutral below). Deterministic
-  harness (hash seed auto-pinned); fresh process per round, idle RTX 4090.
+- Substrate: index @ 2,286 chunks, post-B1 source (commit `e81c7db` adds the
+  `ego_expansion` timing stage — proven behavior-neutral below; `918b3a5`
+  later moved it from a `@timed` decorator to a call-site `timer()` so the
+  method's chunk ID stays `method:` for golden-dataset stability, identical
+  timing output). Deterministic harness (hash seed auto-pinned); fresh
+  process per round, idle RTX 4090.
 - Rounds: 1×131q `bfs` (same-session control; also verifies B1 neutrality)
   - 2×131q `--expansion-mode ppr`.
 
@@ -20,8 +23,8 @@ a priced-in recall debit (recall@20 −0.0250, MRR flat).
 
 The bfs control round is **0-flip identical** to the deterministic canon
 (`sscg_hs0_expanded_r1_20260802.json`): MRR 0.6527, recall@10 0.7839,
-recall@20 0.8365 exactly — the `@timed` decorator is behavior-neutral and the
-canon carries over. Latency 4,501 vs 4,471 ms (within noise).
+recall@20 0.8365 exactly — the timing instrumentation is behavior-neutral and
+the canon carries over. Latency 4,501 vs 4,471 ms (within noise).
 
 ## Results
 
