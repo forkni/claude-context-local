@@ -1,15 +1,17 @@
-# Embedder A/B: google/embeddinggemma-300m vs F2LLM-v2-0.6B (2026-08-01) — INCIDENT, CANCELLED
+# Embedder A/B: google/embeddinggemma-300m vs F2LLM-v2-0.6B (2026-08-01) — INCIDENT, DROPPED
 
-## Verdict: CANCELLED — question deferred, not answered
+## Verdict: DROPPED — not scheduled
 
 The A/B never produced a comparison. Its own harness
 (`scripts/benchmark/embedder_gemma_vs_bgem3_ab.py`) destroyed the deployed
 search index mid-run, on a safety premise that was false at HEAD. The harness
 has been deleted (repo policy: delete-don't-leave-dormant, per
-ADR-0015/ADR-0016/ADR-0019). `google/embeddinggemma-300m` (768d,
-`MODEL_REGISTRY` entry, `search/config.py:20-27`) stays in the registry and
-usable via manual model switch; whether it beats the deployed
-`codefuse-ai/F2LLM-v2-0.6B` remains **undecided**.
+ADR-0015/ADR-0016/ADR-0019). This comparison is **dropped, not deferred**:
+Gemma-vs-F2LLM is not a pending task and will not be re-run absent a new
+harness satisfying the precondition in Decision 3 below. `google/embeddinggemma-300m`
+(768d, `MODEL_REGISTRY` entry, `search/config.py:20-27`) stays in the registry
+and remains selectable via manual model switch — only the comparison is
+dropped, not the model.
 
 ## What happened
 
@@ -90,13 +92,20 @@ a partial or corrupted rebuild). Verified via `get_index_status` and a
    caller that could trigger this specific sequence; a code-level guard was
    considered and explicitly declined in favor of documenting the defect
    here.
-3. **`embeddinggemma-300m` stays in `MODEL_REGISTRY`**, deferred rather than
-   evaluated. A future A/B needs a harness that either (a) persists the
+3. **`embeddinggemma-300m` stays in `MODEL_REGISTRY`**, dropped rather than
+   evaluated. This A/B is not scheduled for a retry. If a future need arises
+   anyway, the precondition is a harness that either (a) persists the
    model swap via `save_config()`/`_switch_active_model` before reindexing
    so cache invalidation resolves the *intended* directory, or (b) drives
    the isolated reindex through a separate `--project-path` pointed at a
    throwaway storage root, never through the live server's config-caching
    path.
+4. **Orphaned storage.** The empty `claude-context-local_9e7f0a98_gemma-300m_768d/`
+   directory (created by the harness's pre-reindex storage-dir lookup,
+   described above) contains only `project_info.json` and is safe to remove —
+   it regenerates automatically if anyone ever switches to that model. No
+   functional effect either way; it lives outside the repo
+   (`C:\Users\Inter\.claude_code_search\projects\`), not tracked by git.
 
 ## Durable lesson
 

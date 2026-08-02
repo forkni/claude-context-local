@@ -9,7 +9,8 @@
       "H": 68,
       "I": 126
     },
-    "queries_need_paraphrase": true
+    "queries_need_paraphrase": true,
+    "i_category_status": "DESCOPED 2026-08-02 -- see evaluation/COMMIT_MINED_I_DESCOPE_20260802.md. Not graded, not promoted, not scheduled: I-category golds average 6.1/query across 3.5 files, which the k=10 rank-sensitive scorer cannot reliably measure. Candidates remain here unmodified as raw data; reopening requires a set-level/file-level primary metric."
   },
   "candidates": [
     {
