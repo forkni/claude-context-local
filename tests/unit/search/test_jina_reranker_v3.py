@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 import torch
 
 from search.neural_reranker import (
@@ -20,6 +21,29 @@ class TestJinaRerankerV3:
         reranker = JinaRerankerV3()
         assert reranker._model is None
         assert not reranker.is_loaded()
+
+    def test_dtype_defaults_to_auto(self):
+        """Default dtype must stay "auto" (checkpoint default, bf16) — the
+        fp32 determinism option is opt-in with zero default behavior change."""
+        reranker = JinaRerankerV3()
+        assert reranker.dtype == "auto"
+
+    def test_dtype_stored_when_valid(self):
+        for dtype in ("auto", "fp32", "bf16", "fp16"):
+            assert JinaRerankerV3(dtype=dtype).dtype == dtype
+
+    def test_invalid_dtype_raises_at_construction(self):
+        """Bad dtype values must fail fast, not at first (lazy) model load."""
+        with pytest.raises(ValueError, match="Unsupported reranker dtype"):
+            JinaRerankerV3(dtype="float64")
+
+    def test_dtype_map_resolves_to_torch_dtypes(self):
+        """DTYPE_MAP is what _load_or_fetch passes to from_pretrained (and to
+        the post-load .to() cast covering the TypeError fallback path)."""
+        assert JinaRerankerV3.DTYPE_MAP["auto"] == "auto"
+        assert JinaRerankerV3.DTYPE_MAP["fp32"] is torch.float32
+        assert JinaRerankerV3.DTYPE_MAP["bf16"] is torch.bfloat16
+        assert JinaRerankerV3.DTYPE_MAP["fp16"] is torch.float16
 
     def test_rerank_empty_candidates(self):
         """Empty candidates should return empty list."""

@@ -219,6 +219,25 @@ def _apply_reranker_doc_max_chars_override(
         )
 
 
+def _apply_reranker_dtype_override(reranker_dtype: str | None) -> None:
+    """Override the listwise reranker weight dtype in the in-memory config singleton.
+
+    Like the doc budgets, ``listwise_dtype`` is baked into the JinaRerankerV3
+    instance at construction (``create_reranker(...)`` in
+    ``RerankingEngine._ensure_reranker``) and the swap branch there reloads only
+    on ``model_name`` change — a dtype-only override silently no-ops without a
+    searcher reset (see ``_maybe_reset_for_construction_overrides``).
+    """
+    if reranker_dtype is None:
+        return
+    try:
+        from search.config import get_search_config
+
+        get_search_config().reranker.listwise_dtype = reranker_dtype
+    except Exception as e:
+        print(f"[WARN] Could not apply reranker dtype override: {e}", file=sys.stderr)
+
+
 def _apply_reserved_slots_override(reserved_slots: int | None) -> None:
     """Override the BM25 reserved fused-pool slots in the in-memory config.
 
@@ -349,13 +368,15 @@ def _maybe_reset_for_construction_overrides(
     rrf_k: int | None,
     doc_max_chars: int | None = None,
     listwise_doc_max_chars: int | None = None,
+    reranker_dtype: str | None = None,
 ) -> None:
     """Drop the cached HybridSearcher when construction-baked params are overridden.
 
     ``search_factory.get_searcher()`` caches the searcher in server state, and
-    bm25/dense weights, rrf_k, and the reranker document budgets are all baked
-    in at construction — without this reset, a ``--sweep`` silently reuses the
-    first iteration's params for every subsequent config (Blocker B).
+    bm25/dense weights, rrf_k, the reranker document budgets, and the listwise
+    reranker dtype are all baked in at construction — without this reset, a
+    ``--sweep`` silently reuses the first iteration's params for every
+    subsequent config (Blocker B).
     """
     if (
         bm25_weight is None
@@ -363,6 +384,7 @@ def _maybe_reset_for_construction_overrides(
         and rrf_k is None
         and doc_max_chars is None
         and listwise_doc_max_chars is None
+        and reranker_dtype is None
     ):
         return
     try:
@@ -1410,6 +1432,17 @@ def build_parser() -> argparse.ArgumentParser:
         # since docs/adr/0011-listwise-reranker-doc-cap.md reverted it there.
     )
     parser.add_argument(
+        "--reranker-dtype",
+        choices=["auto", "fp32", "bf16", "fp16"],
+        help=(
+            "Override reranker.listwise_dtype (JinaRerankerV3 weight dtype) "
+            "for this run. 'auto' = checkpoint default (bf16, run-to-run "
+            "non-deterministic at ranking boundaries); 'fp32' = deterministic "
+            "scores at ~2x reranker VRAM. Resets the cached searcher so the "
+            "value takes effect. Default: use config value ('auto')."
+        ),
+    )
+    parser.add_argument(
         "--bm25-reserved-slots",
         type=int,
         help=(
@@ -1568,6 +1601,7 @@ def run_single(
     centrality_alpha: float | None = None,
     reranker_doc_max_chars: int | None = None,
     reranker_listwise_doc_max_chars: int | None = None,
+    reranker_dtype: str | None = None,
     f_via_similar: bool = False,
     query_expansion: bool = False,
     multi_hop_expansion: float | None = None,
@@ -1584,6 +1618,7 @@ def run_single(
     _apply_reranker_doc_max_chars_override(
         reranker_doc_max_chars, reranker_listwise_doc_max_chars
     )
+    _apply_reranker_dtype_override(reranker_dtype)
     _apply_rrf_k_override(rrf_k)
     _apply_reserved_slots_override(bm25_reserved_slots)
     _apply_multi_hop_expansion_override(multi_hop_expansion)
@@ -1598,6 +1633,7 @@ def run_single(
         rrf_k,
         reranker_doc_max_chars,
         reranker_listwise_doc_max_chars,
+        reranker_dtype,
     )
 
     try:
@@ -1628,6 +1664,8 @@ def run_single(
             f"  Reranker doc budget: doc_max_chars={reranker_doc_max_chars or 'default'}  "
             f"listwise_doc_max_chars={reranker_listwise_doc_max_chars or 'default'}"
         )
+    if reranker_dtype is not None:
+        print(f"  Reranker dtype: listwise_dtype={reranker_dtype}")
     if rrf_k is not None:
         print(f"  RRF fusion constant: rrf_k={rrf_k}")
     if bm25_reserved_slots is not None:
@@ -1659,9 +1697,14 @@ def run_single(
         )
 
     # Reset peak VRAM stats and issue a warm-up search so a reranker model swap's
-    # first-call load/download cost lands here, not in the timed latency average.
+    # (or dtype swap's) first-call load/download cost lands here, not in the
+    # timed latency average.
     torch_module = None
-    if reranker_model is not None or reranker_enabled is not None:
+    if (
+        reranker_model is not None
+        or reranker_enabled is not None
+        or reranker_dtype is not None
+    ):
         try:
             import torch
 
@@ -1779,6 +1822,8 @@ def run_single(
         config_metadata["reranker_enabled"] = reranker_enabled
     if top_k_candidates is not None:
         config_metadata["top_k_candidates"] = top_k_candidates
+    if reranker_dtype is not None:
+        config_metadata["reranker_dtype"] = reranker_dtype
     if rrf_k is not None:
         config_metadata["rrf_k"] = rrf_k
     if bm25_reserved_slots is not None:
@@ -1878,6 +1923,7 @@ def main() -> None:
                 top_k_candidates=args.top_k_candidates,
                 reranker_doc_max_chars=args.reranker_doc_max_chars,
                 reranker_listwise_doc_max_chars=args.reranker_listwise_doc_max_chars,
+                reranker_dtype=args.reranker_dtype,
                 rrf_k=args.rrf_k,
                 bm25_reserved_slots=args.bm25_reserved_slots,
                 multi_hop_expansion=args.multi_hop_expansion,
@@ -1931,6 +1977,7 @@ def main() -> None:
                 top_k_candidates=args.top_k_candidates,
                 reranker_doc_max_chars=args.reranker_doc_max_chars,
                 reranker_listwise_doc_max_chars=args.reranker_listwise_doc_max_chars,
+                reranker_dtype=args.reranker_dtype,
                 rrf_k=args.rrf_k,
                 bm25_reserved_slots=args.bm25_reserved_slots,
                 multi_hop_expansion=args.multi_hop_expansion,
@@ -1978,6 +2025,7 @@ def main() -> None:
         top_k_candidates=args.top_k_candidates,
         reranker_doc_max_chars=args.reranker_doc_max_chars,
         reranker_listwise_doc_max_chars=args.reranker_listwise_doc_max_chars,
+        reranker_dtype=args.reranker_dtype,
         rrf_k=args.rrf_k,
         bm25_reserved_slots=args.bm25_reserved_slots,
         multi_hop_expansion=args.multi_hop_expansion,

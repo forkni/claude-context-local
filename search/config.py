@@ -156,9 +156,9 @@ class SearchModeConfig:
     rrf_k_parameter: int = 100
 
     # Search Result Limits
-    default_k: int = (
-        4  # Reduced from 5: 0% result loss post-ego-fix + 20% token savings
-    )
+    default_k: int = field(
+        default=4, metadata={"range": (1, 50)}
+    )  # Reduced from 5: 0% result loss post-ego-fix + 20% token savings
     max_k: int = 50
 
     # Context budget (0 = unlimited)
@@ -212,7 +212,9 @@ class MultiHopConfig:
     """Multi-hop search settings (6 fields)."""
 
     enabled: bool = True
-    hop_count: int = 2  # Number of expansion hops
+    hop_count: int = field(
+        default=2, metadata={"range": (1, 3)}
+    )  # Number of expansion hops
     expansion: float = 0.3  # Expansion factor per hop
     initial_k_multiplier: float = 2.0  # Multiplier for initial results (k * multiplier)
     multi_hop_mode: str = "hybrid"  # "semantic" | "graph" | "hybrid"
@@ -235,7 +237,7 @@ class IntentConfig:
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (11 fields)."""
+    """Neural reranker settings (12 fields)."""
 
     enabled: bool = True  # Enabled by default (Quality First)
     model_name: str = (
@@ -265,6 +267,18 @@ class RerankerConfig:
     # allow_ram_fallback), 42-45/96 queries stalling past 8s (max 354.9s),
     # and every quality metric flat-to-negative within the +/-0.02 MRR noise
     # floor vs this default. See docs/adr/0011-listwise-reranker-doc-cap.md.
+    listwise_dtype: str = field(
+        default="auto", metadata={"choices": ("auto", "fp32", "bf16", "fp16")}
+    )  # JinaRerankerV3 only. Weight dtype for the
+    # listwise reranker: "auto" (checkpoint default — bf16), "fp32", "bf16",
+    # or "fp16". bf16 listwise scoring is run-to-run non-deterministic at
+    # ranking boundaries (4-5 golden queries flip between identical SSCG
+    # runs); "fp32" trades ~2x reranker VRAM (~2.4 GB for the 0.6B model)
+    # for reproducible scores. Construction-baked like listwise_doc_max_chars:
+    # _ensure_reranker() rebuilds only on model_name change, so a dtype-only
+    # config change needs a searcher reset to take effect (the SSCG
+    # benchmark's --reranker-dtype handles this via
+    # _maybe_reset_for_construction_overrides).
     hop1_reserved_slots: int = 6  # Reserve up to N hop-1-ranked candidates into
     # the multi-hop rerank window (rerank_by_query) when hop-2 expansion pushes
     # them out via score-scale incomparability at the top_k_candidates cut
@@ -337,7 +351,9 @@ class EgoGraphConfig:
     """Ego-graph retrieval settings (RepoGraph ICLR 2025)."""
 
     enabled: bool = False  # Enable ego-graph expansion
-    k_hops: int = 1  # Number of hops (1=direct neighbors, reduces noise vs 2-hop)
+    k_hops: int = field(
+        default=1, metadata={"range": (1, 3)}
+    )  # Number of hops (1=direct neighbors, reduces noise vs 2-hop)
     max_neighbors_per_hop: int = (
         5  # Max neighbors per hop (reduced from 10 to limit noise)
     )
@@ -352,7 +368,9 @@ class EgoGraphConfig:
         default_factory=lambda: DEFAULT_EDGE_WEIGHTS.copy()
     )  # Use weighted BFS by default (calls > imports priority)
     # QW3: expansion mode — "bfs" (default) or "ppr" (Personalized PageRank)
-    expansion_mode: str = "bfs"  # "bfs" = k-hop BFS, "ppr" = Personalized PageRank
+    expansion_mode: str = field(
+        default="bfs", metadata={"choices": ("bfs", "ppr")}
+    )  # "bfs" = k-hop BFS, "ppr" = Personalized PageRank
     ppr_alpha: float = 0.85  # PPR damping factor (standard default)
     # QW5: minimum cosine similarity threshold for ego-graph neighbor filtering
     min_similarity_threshold: float = 0.15  # Neighbors below this are filtered out
@@ -404,7 +422,9 @@ class ObservabilityConfig:
 
     enabled: bool = False
     service_name: str = "claude-context-local"
-    exporter: str = "otlp"  # otlp | console(->stderr) | none
+    exporter: str = field(
+        default="otlp", metadata={"choices": ("otlp", "console", "none")}
+    )  # otlp | console(->stderr) | none
     otlp_endpoint: str = "http://localhost:4318"
     sample_ratio: float = 1.0
     capture_query_text: bool = False  # off by default (query text can be sensitive)
@@ -764,6 +784,7 @@ class SearchConfig:
         "reranker_instruction": ("reranker", "instruction"),
         "reranker_doc_max_chars": ("reranker", "doc_max_chars"),
         "reranker_listwise_doc_max_chars": ("reranker", "listwise_doc_max_chars"),
+        "reranker_listwise_dtype": ("reranker", "listwise_dtype"),
         "reranker_hop1_reserved_slots": ("reranker", "hop1_reserved_slots"),
         # OutputConfig
         "output_format": ("output", "format"),
@@ -1158,6 +1179,7 @@ class SearchConfigManager:
                 "reranker_listwise_doc_max_chars",
                 int,
             ),
+            "CLAUDE_RERANKER_LISTWISE_DTYPE": ("reranker_listwise_dtype", str),
             # Observability (OTel tracing) env vars
             "CLAUDE_OTEL_ENABLED": ("otel_enabled", self._bool_from_env),
             "CLAUDE_OTEL_EXPORTER": ("otel_exporter", str),

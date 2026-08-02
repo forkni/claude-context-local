@@ -919,6 +919,28 @@ class TestCreateRerankerFactory:
         assert isinstance(reranker, JinaRerankerV3)
         assert reranker.doc_max_chars == 1000
 
+    def test_listwise_dtype_passthrough_to_jina(self):
+        """listwise_dtype must land on JinaRerankerV3.dtype (fp32 determinism arm)."""
+        from search.neural_reranker import JinaRerankerV3
+
+        reranker = create_reranker("jinaai/jina-reranker-v3", listwise_dtype="fp32")
+        assert isinstance(reranker, JinaRerankerV3)
+        assert reranker.dtype == "fp32"
+
+    def test_listwise_dtype_defaults_to_auto_for_jina(self):
+        from search.neural_reranker import JinaRerankerV3
+
+        reranker = create_reranker("jinaai/jina-reranker-v3")
+        assert isinstance(reranker, JinaRerankerV3)
+        assert reranker.dtype == "auto"
+
+    def test_listwise_dtype_ignored_for_non_jina_rerankers(self):
+        """Non-listwise rerankers have no dtype knob — the factory must not
+        forward listwise_dtype to them (bf16 non-determinism is a listwise,
+        context-dependent-scoring problem; pointwise rerankers are unaffected)."""
+        reranker = create_reranker("BAAI/bge-reranker-v2-m3", listwise_dtype="fp32")
+        assert not hasattr(reranker, "dtype")
+
 
 class TestGenerativeRerankerIntegration:
     """Integration-style tests for GenerativeReranker (no mocks)."""

@@ -721,17 +721,32 @@ class JinaRerankerV3(BaseReranker):
         >>> results = reranker.rerank("authentication functions", candidates, top_k=10)
     """
 
+    #: Accepted ``dtype`` values -> torch dtype ("auto" = checkpoint default, bf16).
+    DTYPE_MAP: dict[str, "str | torch.dtype"] = {
+        "auto": "auto",
+        "fp32": torch.float32,
+        "bf16": torch.bfloat16,
+        "fp16": torch.float16,
+    }
+
     def __init__(
         self,
         model_name: str = "jinaai/jina-reranker-v3",
         device: str | None = None,
         doc_max_chars: int = 1000,
+        dtype: str = "auto",
     ):
         """Initialize JinaRerankerV3 with lazy loading.
 
         Args:
             model_name: HuggingFace model ID for Jina reranker
             device: Device to run on ('cuda', 'cpu', or None for auto-detect)
+            dtype: Weight dtype — "auto" (checkpoint default, bf16), "fp32",
+                "bf16", or "fp16". bf16 listwise scoring is run-to-run
+                non-deterministic at ranking boundaries (context-dependent
+                scores + reduced mantissa); "fp32" doubles reranker VRAM
+                (~2.4 GB for the 0.6B model) in exchange for reproducible
+                scores.
             doc_max_chars: Maximum document body length per candidate (see
                 ``_build_rerank_document``). Listwise architecture — ALL
                 candidates share one context window, so cost does scale with
@@ -758,8 +773,14 @@ class JinaRerankerV3(BaseReranker):
                 ``GenerativeReranker.doc_max_chars`` in neither value nor
                 rationale — that budget is pointwise and stays at 4000.
         """
+        if dtype not in self.DTYPE_MAP:
+            raise ValueError(
+                f"Unsupported reranker dtype {dtype!r}; "
+                f"expected one of {sorted(self.DTYPE_MAP)}"
+            )
         self.model_name = model_name
         self.doc_max_chars = doc_max_chars
+        self.dtype = dtype
         self._model = None
         self._logger = logging.getLogger(__name__)
         self._load_lock = threading.Lock()
@@ -859,15 +880,17 @@ class JinaRerankerV3(BaseReranker):
                     return AutoModel.from_pretrained(
                         self.model_name,
                         config=cfg,
-                        dtype="auto",  # Jina's custom parameter
+                        dtype=self.DTYPE_MAP[self.dtype],  # Jina's custom parameter
                         trust_remote_code=True,
                         local_files_only=local_files_only,
                     )
                 except TypeError:
-                    # dtype="auto" is Jina-specific; retry without it on older transformers
+                    # dtype is Jina-specific; retry without it on older
+                    # transformers (a non-"auto" request is re-applied via the
+                    # explicit .to(dtype) cast after loading).
                     self._logger.warning(
-                        f"dtype='auto' not supported (transformers {_tf.__version__}), "
-                        "retrying without it"
+                        f"dtype={self.dtype!r} not supported "
+                        f"(transformers {_tf.__version__}), retrying without it"
                     )
                     return AutoModel.from_pretrained(
                         self.model_name,
@@ -888,6 +911,11 @@ class JinaRerankerV3(BaseReranker):
             config = _load_config(False)
             self._model = _load_model(config, False)
 
+        if self.dtype != "auto":
+            # Cast on CPU before the device move so the requested dtype holds
+            # even when the TypeError fallback above dropped the load-time
+            # dtype kwarg (no-op when from_pretrained already honored it).
+            self._model = self._model.to(self.DTYPE_MAP[self.dtype])
         self._model = self._model.to(self.device)  # Move to GPU if available
         self._model.eval()
 
@@ -1047,6 +1075,7 @@ def create_reranker(
     instruction: str | None = None,
     doc_max_chars: int = 4000,
     listwise_doc_max_chars: int = 1000,
+    listwise_dtype: str = "auto",
 ) -> "NeuralReranker | GenerativeReranker | JinaRerankerV3":
     """Factory function to create appropriate reranker based on model name.
 
@@ -1073,6 +1102,8 @@ def create_reranker(
             docs/adr/0011-listwise-reranker-doc-cap.md. Not aligned with
             ``doc_max_chars`` above by default; the two budgets are
             independent on purpose.
+        listwise_dtype: Only used for JinaRerankerV3 — weight dtype ("auto",
+            "fp32", "bf16", "fp16"); see ``JinaRerankerV3.__init__``.
 
     Returns:
         NeuralReranker, GenerativeReranker, or JinaRerankerV3 instance
@@ -1092,6 +1123,9 @@ def create_reranker(
         )
     if model_name in JINA_V3_RERANKERS:
         return JinaRerankerV3(
-            model_name, device, doc_max_chars=listwise_doc_max_chars
+            model_name,
+            device,
+            doc_max_chars=listwise_doc_max_chars,
+            dtype=listwise_dtype,
         )  # Listwise reranker
     return NeuralReranker(model_name, device, batch_size)

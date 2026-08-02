@@ -650,6 +650,30 @@ class TestApplyRrfKOverride:
         assert calls == []
 
 
+class TestApplyRerankerDtypeOverride:
+    """--reranker-dtype must mutate the in-memory config; None is a strict no-op."""
+
+    def _apply(self, value):
+        from scripts.benchmark.run_sscg_benchmark import _apply_reranker_dtype_override
+
+        return _apply_reranker_dtype_override(value)
+
+    def test_sets_listwise_dtype_on_config(self, monkeypatch):
+        from search.config import SearchConfig
+
+        cfg = SearchConfig()
+        assert cfg.reranker.listwise_dtype == "auto"  # deployed default
+        monkeypatch.setattr("search.config.get_search_config", lambda: cfg)
+        self._apply("fp32")
+        assert cfg.reranker.listwise_dtype == "fp32"
+
+    def test_none_is_noop(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr("search.config.get_search_config", lambda: calls.append(1))
+        self._apply(None)
+        assert calls == []
+
+
 class TestMaybeResetForConstructionOverrides:
     """Q4 Blocker-B fix: the cached searcher must be dropped whenever a
     construction-baked param (bm25/dense weight, rrf_k) is overridden, so
@@ -668,6 +692,7 @@ class TestMaybeResetForConstructionOverrides:
             kwargs.get("bm25_weight"),
             kwargs.get("dense_weight"),
             kwargs.get("rrf_k"),
+            reranker_dtype=kwargs.get("reranker_dtype"),
         )
         return state
 
@@ -677,6 +702,13 @@ class TestMaybeResetForConstructionOverrides:
 
     def test_resets_when_rrf_k_overridden(self, monkeypatch):
         state = self._call(monkeypatch, rrf_k=60)
+        state.reset_searcher.assert_called_once()
+
+    def test_resets_when_reranker_dtype_overridden(self, monkeypatch):
+        """A dtype-only override MUST reset the cached searcher —
+        _ensure_reranker's swap branch reloads only on model_name change, so
+        without the reset --reranker-dtype fp32 silently keeps the bf16 model."""
+        state = self._call(monkeypatch, reranker_dtype="fp32")
         state.reset_searcher.assert_called_once()
 
     def test_no_reset_without_construction_overrides(self, monkeypatch):

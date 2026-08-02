@@ -513,6 +513,27 @@ def test_reranker_listwise_doc_max_chars_default_and_flat_alias():
     assert restored.reranker.listwise_doc_max_chars == 500
 
 
+def test_reranker_listwise_dtype_default_and_flat_alias():
+    """Defaults to "auto" (checkpoint bf16 — zero behavior change); flat key
+    round-trips. "fp32" is the opt-in determinism setting."""
+    assert RerankerConfig().listwise_dtype == "auto"
+
+    config = SearchConfig.from_dict({"reranker_listwise_dtype": "fp32"})
+    assert config.reranker.listwise_dtype == "fp32"
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.reranker.listwise_dtype == "fp32"
+
+
+def test_reranker_listwise_dtype_choices_validation():
+    """listwise_dtype carries a choices spec for validate_field_value."""
+    from search.config import validate_field_value
+
+    assert validate_field_value(RerankerConfig, "listwise_dtype", "fp32") is None
+    error = validate_field_value(RerankerConfig, "listwise_dtype", "float64")
+    assert error is not None and "listwise_dtype" in error
+
+
 def test_query_expansion_defaults():
     """QueryExpansionConfig defaults: opt-in, BM25-only, 2 concepts, 0.5 discount."""
     from search.config import QueryExpansionConfig
@@ -581,6 +602,20 @@ def test_reranker_listwise_doc_max_chars_env_override(tmp_path):
         config = manager.load_config()
 
     assert config.reranker.listwise_doc_max_chars == 750
+
+
+def test_reranker_listwise_dtype_env_override(tmp_path):
+    """CLAUDE_RERANKER_LISTWISE_DTYPE must override the nested config value."""
+    from search.config import SearchConfigManager
+
+    config_file = tmp_path / "search_config.json"
+    config_file.write_text(json.dumps({"reranker": {"listwise_dtype": "auto"}}))
+
+    with patch.dict(os.environ, {"CLAUDE_RERANKER_LISTWISE_DTYPE": "fp32"}):
+        manager = SearchConfigManager(config_file=str(config_file))
+        config = manager.load_config()
+
+    assert config.reranker.listwise_dtype == "fp32"
 
 
 # ---------------------------------------------------------------------------
