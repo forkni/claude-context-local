@@ -2,26 +2,27 @@
   "_meta": {
     "description": "SSCG golden dataset for automated retrieval benchmarking",
     "source": "benchmark_results/sscg_evaluation/ground_truth.md",
-    "labeled_by": "Claude Sonnet 4.5 (Q01-Q35), Claude Opus 4.8 (Q36-Q67), Claude Fable 5 (Q100-Q133, hard-query expansion)",
+    "labeled_by": "Claude Sonnet 4.5 (Q01-Q35), Claude Opus 4.8 (Q36-Q67), Claude Fable 5 (Q100-Q133, hard-query expansion), Claude Sonnet 5 (H001-H067 subset, commit-mined bug-fix expansion)",
     "labeled_date": "2026-06-24",
     "normalization": "Chunk IDs have line-range portions stripped (e.g., 'file.py:10-20:type:name' -> 'file.py:type:name') for stability across code churn",
     "relevance_scale": "0=not_relevant, 1=marginal, 2=relevant, 3=highly_relevant",
     "expected": "chunk IDs with label >= 2 (used for Recall@k, NDCG@k)",
     "expected_primary": "chunk IDs with label == 3 (used for MRR)",
-    "total_queries": 108,
+    "total_queries": 145,
     "categories": {
       "A": "Small Function Discovery",
       "B": "Sibling Context (paired operations)",
       "C": "Class Overview",
       "D": "Connection Queries (use find_connections, not ranked search)",
       "E": "Path/Flow Queries (use find_path to trace call-graph route between two symbols)",
-      "F": "Similarity Queries (use find_similar_code to find near-duplicate implementations)"
+      "F": "Similarity Queries (use find_similar_code to find near-duplicate implementations)",
+      "H": "Bug-fix Localization (commit-mined)"
     },
     "splits": {
-      "train": 61,
-      "val": 22,
-      "test": 25,
-      "note": "Stratified by category: A=9/3/3, B=8/3/3, C=10/3/3, D=8/3/3, E=4/2/3, F=4/2/3. Category D excluded from run_sscg_benchmark.py by default (searcher cannot traverse call graph); include with --category D."
+      "train": 86,
+      "val": 28,
+      "test": 31,
+      "note": "Stratified by category: A=9/3/3, B=8/3/3, C=10/3/3, D=8/3/3, E=4/2/3, F=4/2/3. Category D excluded from run_sscg_benchmark.py by default (searcher cannot traverse call graph); include with --category D. H: train 25/val 6/test 6."
     },
     "baseline_metrics": {
       "mrr": 0.73,
@@ -164,6 +165,10 @@
       {
         "date": "2026-07-31",
         "change": "Removed Q109/Q110 (ONNX backend-selection and ONNX-conversion queries) as part of the ONNX dormant-code deletion: their gold targets (embeddings/model_loader.py:method:ModelLoader._should_use_onnx; embeddings/onnx_loader.py:method:ONNXModelLoader.convert_if_needed and friends) were deleted with no functional equivalent to retarget to. Also dropped the dead embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel.cleanup distractor (grade 1) from Q125's relevance_grades. Splits restratified: A 15/4/5 (was 16/5/5)."
+      },
+      {
+        "date": "2026-08-02",
+        "change": "Added 37 H-category queries (Q100-Q133-adjacent, id-prefixed H not Q to keep the commit-mined batch visually distinct): bug-fix localization queries mined from single-file/<=2-gold commits, paraphrased from commit subjects (evaluation/commit_mined_candidates.json, benchmark_results/h_candidates_paraphrased.json) and graded via live search at k=10 across 2 rounds (scripts/benchmark/grade_candidate_queries.py --candidates). All intended golds graded 3 as-is (no manual sibling/near-miss grade-2 embellishment this round). H012 and H067 had an invalid intended gold (mcp_server/server.py:function:app_lifespan, a stale pre-refactor ID) corrected to the grader's suggested mcp_server/server.py:decorated_definition:app_lifespan. Dropped H042 as an exact duplicate of H041 (same query text and gold, different source commit). Excluded H035/H060/H061/H068 despite being found in top-10 during round 1: round 2 (an identical re-run scoped to round 1's passers) dropped all four to pool_miss against the same live index -- bf16 neural-reranker batch-composition non-determinism changes score ordering for borderline candidates between runs of different query-set sizes, and a single lucky run isn't enough signal to fix these into a golden set. Splits: train 25 / val 6 / test 6. 126 I-category candidates (multi-file or >2 golds) remain out of scope."
       }
     ]
   },
@@ -2609,6 +2614,603 @@
         "chunking/relationships/lsp_call_graph.py:method:_LspClient.request": 2,
         "chunking/relationships/lsp_call_graph.py:method:_LspClient._reader_loop": 2,
         "chunking/relationships/lsp_call_graph.py:class:_LspClient": 2
+      }
+    },
+    {
+      "id": "H001",
+      "query": "move per-module summary generation out of the community-detection stage so it runs as a separate step",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/summary_stage.py:class:SummaryStage",
+        "search/summary_stage.py:method:SummaryStage.generate_module_summaries"
+      ],
+      "expected_primary": [
+        "search/summary_stage.py:class:SummaryStage",
+        "search/summary_stage.py:method:SummaryStage.generate_module_summaries"
+      ],
+      "relevance_grades": {
+        "search/summary_stage.py:class:SummaryStage": 3,
+        "search/summary_stage.py:method:SummaryStage.generate_module_summaries": 3
+      }
+    },
+    {
+      "id": "H003",
+      "query": "quiet the parse-error log level when a file's error content still produces a usable chunk",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "chunking/tree_sitter.py:decorated_definition:ParsedSource",
+        "chunking/tree_sitter.py:method:TreeSitterChunker.chunk_parsed"
+      ],
+      "expected_primary": [
+        "chunking/tree_sitter.py:decorated_definition:ParsedSource",
+        "chunking/tree_sitter.py:method:TreeSitterChunker.chunk_parsed"
+      ],
+      "relevance_grades": {
+        "chunking/tree_sitter.py:decorated_definition:ParsedSource": 3,
+        "chunking/tree_sitter.py:method:TreeSitterChunker.chunk_parsed": 3
+      }
+    },
+    {
+      "id": "H004",
+      "query": "avoid logging a warning for files that are genuinely empty rather than failing to parse",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/parallel_chunker.py:decorated_definition:ParallelChunker._accumulate_chunk_stats",
+        "search/parallel_chunker.py:method:ParallelChunker.chunk_files"
+      ],
+      "expected_primary": [
+        "search/parallel_chunker.py:decorated_definition:ParallelChunker._accumulate_chunk_stats",
+        "search/parallel_chunker.py:method:ParallelChunker.chunk_files"
+      ],
+      "relevance_grades": {
+        "search/parallel_chunker.py:decorated_definition:ParallelChunker._accumulate_chunk_stats": 3,
+        "search/parallel_chunker.py:method:ParallelChunker.chunk_files": 3
+      }
+    },
+    {
+      "id": "H005",
+      "query": "don't drop relationship edges for chunks that aren't semantic definitions when building the graph from embeddings",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/graph_integration.py:method:GraphIntegration._make_spec_from_embedding"
+      ],
+      "expected_primary": [
+        "search/graph_integration.py:method:GraphIntegration._make_spec_from_embedding"
+      ],
+      "relevance_grades": {
+        "search/graph_integration.py:method:GraphIntegration._make_spec_from_embedding": 3
+      }
+    },
+    {
+      "id": "H006",
+      "query": "log which specific files produced zero chunks, and track dropped language-server URIs as a separate counter from other failures",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/parallel_chunker.py:decorated_definition:ParallelChunker._log_chunking_summary",
+        "search/parallel_chunker.py:method:ParallelChunker.chunk_files"
+      ],
+      "expected_primary": [
+        "search/parallel_chunker.py:decorated_definition:ParallelChunker._log_chunking_summary",
+        "search/parallel_chunker.py:method:ParallelChunker.chunk_files"
+      ],
+      "relevance_grades": {
+        "search/parallel_chunker.py:decorated_definition:ParallelChunker._log_chunking_summary": 3,
+        "search/parallel_chunker.py:method:ParallelChunker.chunk_files": 3
+      }
+    },
+    {
+      "id": "H007",
+      "query": "make the graph storage's clear operation also remove the leftover community-detection cache file",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "graph/graph_storage.py:method:CodeGraphStorage.clear"
+      ],
+      "expected_primary": [
+        "graph/graph_storage.py:method:CodeGraphStorage.clear"
+      ],
+      "relevance_grades": {
+        "graph/graph_storage.py:method:CodeGraphStorage.clear": 3
+      }
+    },
+    {
+      "id": "H008",
+      "query": "make a parameter-sweep script rebuild its searcher instance fresh on every iteration instead of reusing a stale one, and expose the RRF k constant as a CLI flag",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "scripts/benchmark/run_sscg_benchmark.py:function:_apply_reranker_budget_override",
+        "scripts/benchmark/run_sscg_benchmark.py:function:build_parser"
+      ],
+      "expected_primary": [
+        "scripts/benchmark/run_sscg_benchmark.py:function:_apply_reranker_budget_override",
+        "scripts/benchmark/run_sscg_benchmark.py:function:build_parser"
+      ],
+      "relevance_grades": {
+        "scripts/benchmark/run_sscg_benchmark.py:function:_apply_reranker_budget_override": 3,
+        "scripts/benchmark/run_sscg_benchmark.py:function:build_parser": 3
+      }
+    },
+    {
+      "id": "H009",
+      "query": "introduce an opt-in reranking mode that scores candidates in a single pass instead of two, off by default",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/config.py:decorated_definition:RerankerConfig"
+      ],
+      "expected_primary": [
+        "search/config.py:decorated_definition:RerankerConfig"
+      ],
+      "relevance_grades": {
+        "search/config.py:decorated_definition:RerankerConfig": 3
+      }
+    },
+    {
+      "id": "H012",
+      "query": "suppress a harmless ASGI error message the web server prints when stopped with Ctrl+C",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "mcp_server/server.py:function:_configure_logging",
+        "mcp_server/server.py:decorated_definition:app_lifespan"
+      ],
+      "expected_primary": [
+        "mcp_server/server.py:function:_configure_logging",
+        "mcp_server/server.py:decorated_definition:app_lifespan"
+      ],
+      "relevance_grades": {
+        "mcp_server/server.py:function:_configure_logging": 3,
+        "mcp_server/server.py:decorated_definition:app_lifespan": 3
+      }
+    },
+    {
+      "id": "H013",
+      "query": "fix a crash in the config-reload endpoint from accessing an attribute that no longer exists on the config manager",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "mcp_server/server.py:function:handle_reload_config"
+      ],
+      "expected_primary": [
+        "mcp_server/server.py:function:handle_reload_config"
+      ],
+      "relevance_grades": {
+        "mcp_server/server.py:function:handle_reload_config": 3
+      }
+    },
+    {
+      "id": "H015",
+      "query": "fix the routine that rebuilds the BM25 index from the dense index silently skipping chunks with empty text content, which kept the two indices out of sync",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/index_sync.py:method:IndexSynchronizer.resync_bm25_from_dense"
+      ],
+      "expected_primary": [
+        "search/index_sync.py:method:IndexSynchronizer.resync_bm25_from_dense"
+      ],
+      "relevance_grades": {
+        "search/index_sync.py:method:IndexSynchronizer.resync_bm25_from_dense": 3
+      }
+    },
+    {
+      "id": "H020",
+      "query": "decode a percent-encoded drive-letter colon when converting a language-server URI back to a Windows file path",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "chunking/relationships/lsp_call_graph.py:function:_uri_to_path"
+      ],
+      "expected_primary": [
+        "chunking/relationships/lsp_call_graph.py:function:_uri_to_path"
+      ],
+      "relevance_grades": {
+        "chunking/relationships/lsp_call_graph.py:function:_uri_to_path": 3
+      }
+    },
+    {
+      "id": "H021",
+      "query": "fix several protocol bugs in the language-server call-graph resolver: where the symbol probe is positioned, matching response IDs back to requests, and URI parsing",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "chunking/relationships/lsp_call_graph.py:function:_path_to_uri",
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver._run_lsp"
+      ],
+      "expected_primary": [
+        "chunking/relationships/lsp_call_graph.py:function:_path_to_uri",
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver._run_lsp"
+      ],
+      "relevance_grades": {
+        "chunking/relationships/lsp_call_graph.py:function:_path_to_uri": 3,
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver._run_lsp": 3
+      }
+    },
+    {
+      "id": "H022",
+      "query": "tune the call-graph resolvers for precision: filter out a category of callee edges from one resolver, downweight wildcard matches, and fix self-referential calls in another",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "chunking/relationships/libcst_call_graph.py:method:_CallVisitor.leave_AsyncFunctionDef",
+        "chunking/relationships/libcst_call_graph.py:method:_CallVisitor.visit_Call"
+      ],
+      "expected_primary": [
+        "chunking/relationships/libcst_call_graph.py:method:_CallVisitor.leave_AsyncFunctionDef",
+        "chunking/relationships/libcst_call_graph.py:method:_CallVisitor.visit_Call"
+      ],
+      "relevance_grades": {
+        "chunking/relationships/libcst_call_graph.py:method:_CallVisitor.leave_AsyncFunctionDef": 3,
+        "chunking/relationships/libcst_call_graph.py:method:_CallVisitor.visit_Call": 3
+      }
+    },
+    {
+      "id": "H023",
+      "query": "make the call-graph edge lookup keep returning the older string-valued confidence labels instead of coercing them to floats",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "graph/graph_storage.py:method:CodeGraphStorage.get_edge_data"
+      ],
+      "expected_primary": [
+        "graph/graph_storage.py:method:CodeGraphStorage.get_edge_data"
+      ],
+      "relevance_grades": {
+        "graph/graph_storage.py:method:CodeGraphStorage.get_edge_data": 3
+      }
+    },
+    {
+      "id": "H027",
+      "query": "add logging when the lowest-priority fallback tier of symbol resolution fails to find a semantic match",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol"
+      ],
+      "expected_primary": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol"
+      ],
+      "relevance_grades": {
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol": 3
+      }
+    },
+    {
+      "id": "H028",
+      "query": "normalize backslash path separators on Windows when building the line-number-to-chunk lookup",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "evaluation/chunk_mapping.py:function:build_line_to_chunk_map"
+      ],
+      "expected_primary": [
+        "evaluation/chunk_mapping.py:function:build_line_to_chunk_map"
+      ],
+      "relevance_grades": {
+        "evaluation/chunk_mapping.py:function:build_line_to_chunk_map": 3
+      }
+    },
+    {
+      "id": "H029",
+      "query": "detect an embedding model loaded in a different pool when switching projects, and fix an always-false loaded flag in the model-listing tool",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_list_embedding_models"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_list_embedding_models"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/status_handlers.py:decorated_definition:handle_list_embedding_models": 3
+      }
+    },
+    {
+      "id": "H030",
+      "query": "have the graph storage's clear routine also delete the on-disk call-graph JSON so a later reload doesn't resurrect stale nodes",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "graph/graph_storage.py:method:CodeGraphStorage.clear"
+      ],
+      "expected_primary": [
+        "graph/graph_storage.py:method:CodeGraphStorage.clear"
+      ],
+      "relevance_grades": {
+        "graph/graph_storage.py:method:CodeGraphStorage.clear": 3
+      }
+    },
+    {
+      "id": "H032",
+      "query": "add a multi-tier exact-match lookup step to symbol resolution to fix inconsistent results across runs",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_target"
+      ],
+      "expected_primary": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_target"
+      ],
+      "relevance_grades": {
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_target": 3
+      }
+    },
+    {
+      "id": "H033",
+      "query": "fix the storage-directory resolver logging a spurious error when the active model belongs to a different pool",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "mcp_server/storage_manager.py:function:get_project_storage_dir"
+      ],
+      "expected_primary": [
+        "mcp_server/storage_manager.py:function:get_project_storage_dir"
+      ],
+      "relevance_grades": {
+        "mcp_server/storage_manager.py:function:get_project_storage_dir": 3
+      }
+    },
+    {
+      "id": "H034",
+      "query": "cap the inference batch size for the ONNX backend based on free GPU memory so the very first run doesn't immediately run out of VRAM",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "embeddings/embedder.py:function:calculate_optimal_batch_size"
+      ],
+      "expected_primary": [
+        "embeddings/embedder.py:function:calculate_optimal_batch_size"
+      ],
+      "relevance_grades": {
+        "embeddings/embedder.py:function:calculate_optimal_batch_size": 3
+      }
+    },
+    {
+      "id": "H039",
+      "query": "change the recommended embedding model for high-VRAM workstations to a newer retrieval-tuned model",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/vram_manager.py:class:VRAMTierManager",
+        "search/vram_manager.py:decorated_definition:VRAMTier"
+      ],
+      "expected_primary": [
+        "search/vram_manager.py:class:VRAMTierManager",
+        "search/vram_manager.py:decorated_definition:VRAMTier"
+      ],
+      "relevance_grades": {
+        "search/vram_manager.py:class:VRAMTierManager": 3,
+        "search/vram_manager.py:decorated_definition:VRAMTier": 3
+      }
+    },
+    {
+      "id": "H041",
+      "query": "update the tracked config-file modification time right after saving so the next load can skip re-reading from disk",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "search/config.py:method:SearchConfigManager.save_config"
+      ],
+      "expected_primary": [
+        "search/config.py:method:SearchConfigManager.save_config"
+      ],
+      "relevance_grades": {
+        "search/config.py:method:SearchConfigManager.save_config": 3
+      }
+    },
+    {
+      "id": "H045",
+      "query": "remove a duplicated block of execution-provider options, accept a numbered CUDA device string in a validation gate, and correct a docstring",
+      "category": "H",
+      "split": "train",
+      "expected": [
+        "embeddings/model_loader.py:method:ModelLoader._measure_activation_per_item"
+      ],
+      "expected_primary": [
+        "embeddings/model_loader.py:method:ModelLoader._measure_activation_per_item"
+      ],
+      "relevance_grades": {
+        "embeddings/model_loader.py:method:ModelLoader._measure_activation_per_item": 3
+      }
+    },
+    {
+      "id": "H048",
+      "query": "pull a line-parsing helper out to a shared location, fix a flaky size-threshold test, and remove an unused environment-file extension from file-role classification",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "chunking/multi_language_chunker.py:decorated_definition:MultiLanguageChunker._classify_file_role"
+      ],
+      "expected_primary": [
+        "chunking/multi_language_chunker.py:decorated_definition:MultiLanguageChunker._classify_file_role"
+      ],
+      "relevance_grades": {
+        "chunking/multi_language_chunker.py:decorated_definition:MultiLanguageChunker._classify_file_role": 3
+      }
+    },
+    {
+      "id": "H049",
+      "query": "switch the VRAM-usage monitor to reading the process's own allocated-memory counter instead of the device-wide free/total query",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "embeddings/embedder.py:method:CodeEmbedder._check_vram_status"
+      ],
+      "expected_primary": [
+        "embeddings/embedder.py:method:CodeEmbedder._check_vram_status"
+      ],
+      "relevance_grades": {
+        "embeddings/embedder.py:method:CodeEmbedder._check_vram_status": 3
+      }
+    },
+    {
+      "id": "H050",
+      "query": "fix a failing test around the search-code handler not being ready to use the hybrid searcher",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code": 3
+      }
+    },
+    {
+      "id": "H052",
+      "query": "apply a round of code-review feedback to the query-embedding cache initialization",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.__init__"
+      ],
+      "expected_primary": [
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.__init__"
+      ],
+      "relevance_grades": {
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.__init__": 3
+      }
+    },
+    {
+      "id": "H054",
+      "query": "add a second phase of call-graph edge resolution when saving indices, with broader test coverage",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "search/hybrid_searcher.py:method:HybridSearcher.add_embeddings",
+        "search/hybrid_searcher.py:method:HybridSearcher.save_indices"
+      ],
+      "expected_primary": [
+        "search/hybrid_searcher.py:method:HybridSearcher.add_embeddings",
+        "search/hybrid_searcher.py:method:HybridSearcher.save_indices"
+      ],
+      "relevance_grades": {
+        "search/hybrid_searcher.py:method:HybridSearcher.add_embeddings": 3,
+        "search/hybrid_searcher.py:method:HybridSearcher.save_indices": 3
+      }
+    },
+    {
+      "id": "H056",
+      "query": "extract docstrings and compute complexity-related metadata during Python chunking as an early low-effort improvement",
+      "category": "H",
+      "split": "val",
+      "expected": [
+        "chunking/languages/python.py:method:PythonChunker._extract_docstring",
+        "chunking/languages/python.py:method:PythonChunker.extract_metadata"
+      ],
+      "expected_primary": [
+        "chunking/languages/python.py:method:PythonChunker._extract_docstring",
+        "chunking/languages/python.py:method:PythonChunker.extract_metadata"
+      ],
+      "relevance_grades": {
+        "chunking/languages/python.py:method:PythonChunker._extract_docstring": 3,
+        "chunking/languages/python.py:method:PythonChunker.extract_metadata": 3
+      }
+    },
+    {
+      "id": "H062",
+      "query": "remove a large batch of backward-compatibility property aliases from the main search config class",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "search/config.py:class:SearchConfig"
+      ],
+      "expected_primary": [
+        "search/config.py:class:SearchConfig"
+      ],
+      "relevance_grades": {
+        "search/config.py:class:SearchConfig": 3
+      }
+    },
+    {
+      "id": "H063",
+      "query": "update call sites in the connection-analysis and similar-code handlers after metadata storage was pulled out into its own class",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections",
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections",
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections": 3,
+        "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code": 3
+      }
+    },
+    {
+      "id": "H064",
+      "query": "make the clear-index operation remove BM25 index files for every embedding model, not just the active one",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "search/hybrid_searcher.py:method:HybridSearcher.clear_index"
+      ],
+      "expected_primary": [
+        "search/hybrid_searcher.py:method:HybridSearcher.clear_index"
+      ],
+      "relevance_grades": {
+        "search/hybrid_searcher.py:method:HybridSearcher.clear_index": 3
+      }
+    },
+    {
+      "id": "H065",
+      "query": "carry forward the directory-exclusion filters from the saved snapshot when detecting incremental changes",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot",
+        "merkle/change_detector.py:method:ChangeDetector.quick_check"
+      ],
+      "expected_primary": [
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot",
+        "merkle/change_detector.py:method:ChangeDetector.quick_check"
+      ],
+      "relevance_grades": {
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot": 3,
+        "merkle/change_detector.py:method:ChangeDetector.quick_check": 3
+      }
+    },
+    {
+      "id": "H066",
+      "query": "make the index-status report include a synced flag by lazily initializing the searcher instead of requiring one already loaded",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "search/hybrid_searcher.py:method:HybridSearcher.get_stats"
+      ],
+      "expected_primary": [
+        "search/hybrid_searcher.py:method:HybridSearcher.get_stats"
+      ],
+      "relevance_grades": {
+        "search/hybrid_searcher.py:method:HybridSearcher.get_stats": 3
+      }
+    },
+    {
+      "id": "H067",
+      "query": "finish cleaning up leftover references after migrating global server state into an application-state object, including server startup and stdio entrypoints",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "mcp_server/server.py:decorated_definition:app_lifespan",
+        "mcp_server/server.py:function:run_stdio_server"
+      ],
+      "expected_primary": [
+        "mcp_server/server.py:decorated_definition:app_lifespan",
+        "mcp_server/server.py:function:run_stdio_server"
+      ],
+      "relevance_grades": {
+        "mcp_server/server.py:decorated_definition:app_lifespan": 3,
+        "mcp_server/server.py:function:run_stdio_server": 3
       }
     }
   ]

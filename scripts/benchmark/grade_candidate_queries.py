@@ -1,14 +1,16 @@
 """Grade hard-query candidates against the live index (Track 1.2 authoring aid).
 
-Loads evaluation/hard_query_candidates.json, runs each query through the same
-searcher the SSCG benchmark uses, and prints per-query grading output:
-intended-gold validity, rank in top-k, rerank-pool membership, and the top-k
-normalized IDs so labels can be assigned by inspection.
+Loads evaluation/hard_query_candidates.json (or --candidates), runs each query
+through the same searcher the SSCG benchmark uses, and prints per-query
+grading output: intended-gold validity, rank in top-k, rerank-pool
+membership, and the top-k normalized IDs so labels can be assigned by
+inspection.
 
 Usage:
     .venv/Scripts/python.exe scripts/benchmark/grade_candidate_queries.py \
         [--project-path F:/RD_PROJECTS/COMPONENTS/claude-context-local] \
-        [--k 10] [--only Q100,Q105]
+        [--k 10] [--only Q100,Q105] \
+        [--candidates evaluation/commit_mined_candidates.json]
 """
 
 import argparse
@@ -59,6 +61,11 @@ def main() -> None:
     parser.add_argument("--project-path", default=str(REPO_ROOT))
     parser.add_argument("--k", type=int, default=10)
     parser.add_argument("--only", default="", help="Comma-separated query IDs to run")
+    parser.add_argument(
+        "--candidates",
+        default=str(CANDIDATES_PATH),
+        help="Path to a candidates JSON file (default: hard_query_candidates.json)",
+    )
     args = parser.parse_args()
 
     from mcp_server.search_factory import get_searcher
@@ -70,7 +77,8 @@ def main() -> None:
     all_ids, by_name = build_index_id_sets(searcher)
     print(f"Index: {len(all_ids)} unique normalized chunk IDs\n", flush=True)
 
-    data = json.loads(CANDIDATES_PATH.read_text(encoding="utf-8"))
+    candidates_path = Path(args.candidates)
+    data = json.loads(candidates_path.read_text(encoding="utf-8"))
     candidates = data["candidates"]
     if args.only:
         wanted = {q.strip() for q in args.only.split(",")}

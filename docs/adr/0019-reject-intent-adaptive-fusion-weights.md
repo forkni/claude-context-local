@@ -87,4 +87,9 @@ Delete the feature rather than leave it dormant (same policy as ADR-0015/0016):
   funnel reshapes the pool downstream of fusion, so small fusion-weight shifts can demote a
   rank-1 gold out of the final pool entirely — per-intent *static* profiles are the wrong
   granularity.
-- Raw A/B artifacts: `benchmark_results/ab_intent/` (12 run JSONs + `analyze_ab.py`).
+- Raw A/B artifacts (local-only, gitignored `benchmark_results/ab_intent/`): 12 run JSONs
+  (6 base + 6 replay, 3 replicates × 2 datasets) with matching logs, plus `run_ab.sh` (the
+  12-run protocol) and `analyze_ab.py` (pre-registered rule evaluation). Both scripts drive
+  the `--intent-weights` replay path removed by this ADR and are retained as a historical
+  record, not as re-runnable tooling; the evidence tables above carry every number they
+  produced.
