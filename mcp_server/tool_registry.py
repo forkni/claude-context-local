@@ -772,7 +772,7 @@ RETURNS:
 
 Args:
     enabled: Enable/disable neural reranking (default: True)
-    model_name: Cross-encoder model to use (default: BAAI/bge-reranker-v2-m3)
+    model_name: Cross-encoder model to use (default: Alibaba-NLP/gte-reranker-modernbert-base)
     top_k_candidates: Number of candidates to rerank (default: 30)
 
 NOTE: this changes global server config (one active setting at a time). On the
@@ -877,6 +877,10 @@ RETURNS:
                     "description": "Cyclomatic complexity ceiling for Cv normalization — functions above this are treated as maximally complex",
                     "minimum": 5,
                     "maximum": 100,
+                },
+                "glsl_filter_td_prefix": {
+                    "type": "boolean",
+                    "description": "Filter TouchDesigner's TD-prefixed shader-include builtins (TDPanelSize, TDOutputSwizzle, ...) out of GLSL call-graph metadata. Disable for non-TouchDesigner GLSL projects where a real user-defined symbol might start with 'TD'.",
                 },
                 "output_format": {
                     "type": "string",

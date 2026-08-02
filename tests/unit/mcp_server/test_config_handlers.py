@@ -15,7 +15,7 @@ from mcp_server.tools.config_handlers import (
     handle_configure_chunking,
     handle_configure_search_mode,
 )
-from search.config import ChunkingConfig, SearchModeConfig
+from search.config import ChunkingConfig, SearchConfig, SearchModeConfig
 
 
 @pytest.fixture
@@ -73,6 +73,42 @@ async def test_configure_search_mode_valid_saves_config(
     assert "error" not in result
     assert result.get("success") is True
     mock_config_manager.save_config.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_configure_search_mode_partial_call_retains_persisted_weights(
+    mock_state,
+):
+    """Phase 1.1 regression guard: a call that only sets ``search_mode`` must not
+    stomp bm25_weight/dense_weight/use_parallel_search back to hardcoded literals.
+
+    Uses a real SearchConfig (not a Mock) with ADR-0019 benchmark-locked-looking
+    values pre-set to something other than the old hardcoded defaults (0.35/0.65/
+    True), so a regression back to unconditional assignment would be caught by
+    value, not just by call count.
+    """
+    config = SearchConfig()
+    config.search_mode.bm25_weight = 0.7
+    config.search_mode.dense_weight = 0.3
+    config.performance.use_parallel_search = False
+
+    mgr = Mock()
+    mgr.load_config.return_value = config
+
+    with (
+        patch("mcp_server.tools.config_handlers.get_config_manager", return_value=mgr),
+        patch("mcp_server.tools.config_handlers.get_state", return_value=mock_state),
+    ):
+        result = await handle_configure_search_mode({"search_mode": "bm25"})
+
+    assert "error" not in result
+    assert config.search_mode.default_mode == "bm25"
+    assert config.search_mode.bm25_weight == 0.7
+    assert config.search_mode.dense_weight == 0.3
+    assert config.performance.use_parallel_search is False
+    assert result["config"]["bm25_weight"] == 0.7
+    assert result["config"]["dense_weight"] == 0.3
+    assert result["config"]["enable_parallel"] is False
 
 
 # ============================================================================

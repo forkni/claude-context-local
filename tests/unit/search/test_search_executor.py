@@ -79,6 +79,20 @@ def test_bm25_mode_calls_bm25_only(executor):
     executor.dense_index.search.assert_not_called()
 
 
+def test_bm25_mode_passes_filters_to_search_bm25(executor):
+    """BM25-only mode must forward request.filters to search_bm25 (Phase 1.6 fix) —
+    previously dropped at the call site, which silently defeated include_dirs/
+    exclude_dirs on this path and skipped search_bm25's filter-aware k widening."""
+    filters = {"exclude_dirs": ["tests"]}
+
+    with patch.object(executor, "search_bm25", wraps=executor.search_bm25) as mock_bm25:
+        executor.execute_single_hop(
+            _request(query="test query", k=5, search_mode="bm25", filters=filters)
+        )
+
+    mock_bm25.assert_called_once_with("test query", 5, 0.0, filters)
+
+
 def test_semantic_mode_calls_dense_only(executor):
     """Semantic mode calls dense_index.search but not bm25_index.search."""
     executor.execute_single_hop(_request(k=5, search_mode="semantic"))

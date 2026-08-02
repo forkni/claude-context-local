@@ -1196,14 +1196,30 @@ class SearchConfigManager:
             env_value = os.environ.get(env_var)
             if env_value is not None:
                 try:
-                    config_dict[config_key] = converter(env_value)
-                    self.logger.debug(
-                        f"Set {config_key} = {config_dict[config_key]} from {env_var}"
-                    )
+                    converted = converter(env_value)
                 except ValueError as e:
                     self.logger.warning(
                         f"Invalid value for {env_var}: {env_value} ({e})"
                     )
+                    continue
+
+                # Validate against the same field metadata the MCP config handlers
+                # use (validate_field_value), so an env override can't smuggle in a
+                # value the file-based path would never persist. Warn-and-skip,
+                # matching the ValueError handling above.
+                alias = SearchConfig._FLAT_KEY_ALIASES.get(config_key)
+                if alias is not None:
+                    section, field_name = alias
+                    spec_cls = SearchConfig._SUBCONFIG_TYPES[section]
+                    err = validate_field_value(spec_cls, field_name, converted)
+                    if err:
+                        self.logger.warning(f"Invalid value for {env_var}: {err}")
+                        continue
+
+                config_dict[config_key] = converted
+                self.logger.debug(
+                    f"Set {config_key} = {config_dict[config_key]} from {env_var}"
+                )
 
         # Auto-detect: if standard OTEL_* vars are present without CLAUDE_OTEL_ENABLED,
         # treat as opted-in with OTLP (network exporter — never touches stdio).

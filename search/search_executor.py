@@ -109,7 +109,7 @@ class SearchExecutor:
         # Handle different search modes
         if search_mode == SearchMode.BM25:
             # BM25-only search
-            bm25_results = self.search_bm25(query, k, min_bm25_score)
+            bm25_results = self.search_bm25(query, k, min_bm25_score, filters)
             # Convert BM25 results to SearchResult format
             final_results = ResultFactory.from_bm25_results(bm25_results)
             rerank_time = 0.0  # No reranking for single mode

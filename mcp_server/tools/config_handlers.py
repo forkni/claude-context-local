@@ -21,6 +21,7 @@ from mcp_server.tools.decorators import error_handler, with_mutation_lock
 from search.config import (
     MODEL_REGISTRY,
     ChunkingConfig,
+    PerformanceConfig,
     RerankerConfig,
     SearchMode,
     SearchModeConfig,
@@ -49,6 +50,7 @@ _CHUNKING_FIELDS: tuple[tuple[str, str], ...] = (
     ("adaptive_multiplier_max", "adaptive_multiplier_max"),
     ("adaptive_multiplier_min", "adaptive_multiplier_min"),
     ("max_complexity_cap", "max_complexity_cap"),
+    ("glsl_filter_td_prefix", "glsl_filter_td_prefix"),
 )
 
 # Echo subset: the fields the response returns (curated; may include read-only fields).
@@ -62,6 +64,7 @@ _CHUNKING_ECHO: tuple[str, ...] = (
     "adaptive_multiplier_max",
     "adaptive_multiplier_min",
     "max_complexity_cap",
+    "glsl_filter_td_prefix",
 )
 
 _RERANKER_FIELDS: tuple[tuple[str, str], ...] = (
@@ -77,6 +80,15 @@ _RERANKER_ECHO: tuple[str, ...] = (
     "top_k_candidates",
     "min_vram_gb",
     "batch_size",
+)
+
+_SEARCH_MODE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("bm25_weight", "bm25_weight"),
+    ("dense_weight", "dense_weight"),
+)
+
+_PERFORMANCE_SEARCH_FIELDS: tuple[tuple[str, str], ...] = (
+    ("enable_parallel", "use_parallel_search"),
 )
 
 
@@ -159,11 +171,14 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
 @error_handler("Configure search mode")
 @with_mutation_lock
 async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
-    """Configure search mode and parameters."""
+    """Configure search mode and parameters.
+
+    Unspecified fields (bm25_weight, dense_weight, enable_parallel) retain their
+    persisted values — only search_mode/enable_hybrid are unconditionally set from
+    this call; the rest are patched via apply_config_patch, matching
+    handle_configure_reranking/handle_configure_chunking's skip-if-absent pattern.
+    """
     search_mode = arguments.get("search_mode", SearchMode.HYBRID)
-    bm25_weight = arguments.get("bm25_weight", 0.35)
-    dense_weight = arguments.get("dense_weight", 0.65)
-    enable_parallel = arguments.get("enable_parallel", True)
 
     err = validate_field_value(SearchModeConfig, "default_mode", search_mode)
     if err:
@@ -177,9 +192,17 @@ async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
         SearchMode.HYBRID,
         SearchMode.AUTO,
     )
-    config.search_mode.bm25_weight = bm25_weight
-    config.search_mode.dense_weight = dense_weight
-    config.performance.use_parallel_search = enable_parallel
+    err = apply_config_patch(
+        config.search_mode, SearchModeConfig, arguments, _SEARCH_MODE_FIELDS
+    )
+    if err:
+        return responses.error(err)
+
+    err = apply_config_patch(
+        config.performance, PerformanceConfig, arguments, _PERFORMANCE_SEARCH_FIELDS
+    )
+    if err:
+        return responses.error(err)
 
     config_manager.save_config(config)
 
@@ -191,9 +214,9 @@ async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
         success=True,
         config={
             "search_mode": search_mode,
-            "bm25_weight": bm25_weight,
-            "dense_weight": dense_weight,
-            "enable_parallel": enable_parallel,
+            "bm25_weight": config.search_mode.bm25_weight,
+            "dense_weight": config.search_mode.dense_weight,
+            "enable_parallel": config.performance.use_parallel_search,
         },
     )
 
@@ -266,7 +289,8 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
     split_size_method ("lines"|"characters"),
     max_split_chars (1000-10000), enable_file_summaries,
     sizing_mode ("fixed"|"adaptive"), adaptive_multiplier_max (1.0-2.0),
-    adaptive_multiplier_min (0.1-1.0), max_complexity_cap (5-100).
+    adaptive_multiplier_min (0.1-1.0), max_complexity_cap (5-100),
+    glsl_filter_td_prefix (bool).
     """
     config_manager = get_config_manager()
     config = config_manager.load_config()
