@@ -192,6 +192,44 @@ search_code("request handler", ego_graph_enabled=True)
 - **Expansion factor**: 3.5-4.6× (e.g., 5 anchors → 23 total results)
 - **Symbol filtering**: Automatic (removes 4-33 invalid nodes per anchor)
 
+### Latency Profile: PPR Expansion Mode (opt-in)
+
+**Default**: `expansion_mode: "bfs"` — best recall, canonical. Do not change
+it unless query latency matters more than recall depth.
+
+`ego_graph.expansion_mode: "ppr"` (Personalized PageRank) is a supported
+per-project **latency profile**, measured on the deterministic 131-query
+benchmark (2026-08-02, `evaluation/PPR_LATENCY_PROFILE_20260802.md`):
+
+| Metric | bfs (default) | ppr | Delta |
+|--------|---------------|-----|-------|
+| Avg query latency | 4,501 ms | 3,787 ms | **−15.8%** |
+| MRR | 0.6527 | 0.6483 | −0.0044 (flat) |
+| recall@10 | 0.7839 | 0.7742 | −0.0097 |
+| recall@20 | 0.8365 | 0.8115 | **−0.0250** |
+
+**Mechanism**: BFS floods to the neighbor cap on most queries (mean pool 29.2
+chunks); PPR's top-N-by-score selection returns smaller, better-ranked pools
+(mean 21.7), making the final listwise rerank ~680 ms cheaper per query. The
+smaller pool is equally the source of the recall@20 debit — fewer candidates
+survive to the deep-recall window. Known replicated per-query losses: Q51
+(0.5→0.333) and Q70 (→0.0) class.
+
+**Enabling per project** (ADR-0014 override layer — create
+`search_overrides.json` next to the project's `search_config.json`):
+
+```json
+{
+  "ego_graph": {
+    "expansion_mode": "ppr"
+  }
+}
+```
+
+Verify after switching: benchmark or spot-check with `confounds.ppr_fallback`
+= 0 (a nonzero count means the graph lacks PPR support and BFS silently took
+over — the latency win will not materialize).
+
 ---
 
 ## Filter Parameters
