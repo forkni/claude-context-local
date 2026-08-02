@@ -46,23 +46,29 @@ from statistics import mean
 from typing import Any
 
 
-# Reproducibility: chunk-ID set iteration order feeds candidate-pool
-# composition, so unpinned hash randomization flips ~25/131 queries between
-# otherwise-identical rounds (evaluation/GPU_DETERMINISM_AB_20260802.md).
-# Re-exec with a pinned seed unless the caller already chose one (any explicit
-# PYTHONHASHSEED, including "random", is respected).
-if os.environ.get("PYTHONHASHSEED") is None:
-    print(
-        "[HASHSEED] PYTHONHASHSEED unset - re-exec with PYTHONHASHSEED=0 "
-        "for reproducible rounds",
-        file=sys.stderr,
-    )
-    raise SystemExit(
-        subprocess.call(
-            [sys.executable, *sys.argv],
-            env={**os.environ, "PYTHONHASHSEED": "0"},
+def _ensure_pinned_hash_seed() -> None:
+    """Re-exec with PYTHONHASHSEED=0 when unset (script execution only).
+
+    Reproducibility: chunk-ID set iteration order feeds candidate-pool
+    composition, so unpinned hash randomization flips ~25/131 queries between
+    otherwise-identical rounds (evaluation/GPU_DETERMINISM_AB_20260802.md).
+    Any explicit PYTHONHASHSEED, including "random", is respected. Must only
+    run under __main__ — at import time (tests import this module) sys.argv
+    belongs to the importer and re-exec'ing it is wrong.
+    """
+    if os.environ.get("PYTHONHASHSEED") is None:
+        print(
+            "[HASHSEED] PYTHONHASHSEED unset - re-exec with PYTHONHASHSEED=0 "
+            "for reproducible rounds",
+            file=sys.stderr,
         )
-    )
+        raise SystemExit(
+            subprocess.call(
+                [sys.executable, *sys.argv],
+                env={**os.environ, "PYTHONHASHSEED": "0"},
+            )
+        )
+
 
 # Add project root to sys.path so imports resolve from any working directory
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -2131,4 +2137,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    _ensure_pinned_hash_seed()
     main()

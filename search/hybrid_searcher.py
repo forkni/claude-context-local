@@ -36,7 +36,7 @@ from utils.otel_attributes import (
     ATTR_RESULT_COUNT,
     ATTR_SEARCH_MODE,
 )
-from utils.timing import timed
+from utils.timing import timer
 
 from .base_searcher import BaseSearcher
 from .bm25_index import BM25Index
@@ -770,9 +770,13 @@ class HybridSearcher(BaseSearcher):
                 and self.ego_graph_retriever
                 and results
             ):
-                results = self._apply_ego_graph_expansion(
-                    results, effective_config.ego_graph, k, query
-                )
+                # timer() at the call site (not @timed on the method): a
+                # decorator changes the chunk kind to decorated_definition,
+                # breaking golden-dataset chunk IDs that reference this method
+                with timer("ego_expansion"):
+                    results = self._apply_ego_graph_expansion(
+                        results, effective_config.ego_graph, k, query
+                    )
 
             # Apply parent expansion if enabled (limit to primary k results to prevent bloat)
             if effective_config.parent_retrieval.enabled and results:
@@ -843,7 +847,6 @@ class HybridSearcher(BaseSearcher):
             request, query_embedding=query_embedding
         )
 
-    @timed("ego_expansion")
     def _apply_ego_graph_expansion(
         self,
         results: list[SearchResult],
