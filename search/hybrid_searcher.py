@@ -36,6 +36,7 @@ from utils.otel_attributes import (
     ATTR_RESULT_COUNT,
     ATTR_SEARCH_MODE,
 )
+from utils.timing import timed
 
 from .base_searcher import BaseSearcher
 from .bm25_index import BM25Index
@@ -842,6 +843,7 @@ class HybridSearcher(BaseSearcher):
             request, query_embedding=query_embedding
         )
 
+    @timed("ego_expansion")
     def _apply_ego_graph_expansion(
         self,
         results: list[SearchResult],
