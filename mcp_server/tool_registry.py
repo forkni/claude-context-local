@@ -280,8 +280,7 @@ RETURNS:
                 },
                 "k": {
                     "type": "integer",
-                    "default": 4,
-                    "description": "Number of similar chunks to return (default: 4)",
+                    "description": "Number of similar chunks to return (default: the configured search_mode.default_k)",
                 },
                 "exclude_same_file": {
                     "type": "boolean",

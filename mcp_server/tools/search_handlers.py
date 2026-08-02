@@ -20,6 +20,7 @@ from mcp_server.tools import responses
 from mcp_server.tools.decorators import error_handler, require_indexed_project
 from mcp_server.tools.search_orchestrator import SearchOrchestrator
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
+from search.config import get_search_config
 from search.exceptions import DimensionMismatchError
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
@@ -318,7 +319,11 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     """Find code chunks similar to a reference chunk."""
     chunk_id = arguments["chunk_id"]
-    k = arguments.get("k", 4)  # Align with default_k=4
+    # Default k from config (search_mode.default_k) — the deployed config
+    # raised default_k to 7 as a deliberate recall adjustment, and this
+    # handler's old hardcoded fallback (4) silently never picked it up.
+    # Explicit per-request k is passed through untouched.
+    k = arguments.get("k", get_search_config().search_mode.default_k)
     exclude_same_file = arguments.get("exclude_same_file", False)
 
     # Normalize chunk_id path separators
