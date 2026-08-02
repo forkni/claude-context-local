@@ -304,7 +304,7 @@ class TestPostBuildRules:
             }
         )
         keys = [o["key"] for o in run_rules(m, "post_build").observations]
-        assert "chunking.max_merged_tokens" in keys
+        assert "chunking.max_chunk_lines" in keys
 
     def test_dense_files_ego_note(self):
         m = make_measurements(stats={"total_chunks": 3000, "files_indexed": 100})

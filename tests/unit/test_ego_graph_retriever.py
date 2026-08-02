@@ -127,6 +127,21 @@ class TestEgoGraphRetriever:
         assert set(result) == {"anchor1", "anchor2", "n1", "n2", "n3"}
         assert len(result) == 5
 
+    def test_flatten_for_context_deduplicate_false_preserves_duplicates(
+        self, retriever
+    ):
+        """When deduplicate=False, duplicates are retained in insertion order."""
+        ego_graphs = {
+            "anchor1": ["n1", "n2"],
+            "anchor2": ["n3", "n1"],  # n1 is duplicate
+        }
+        config = EgoGraphConfig(include_anchor=True, deduplicate=False)
+
+        result = retriever.flatten_for_context(ego_graphs, config)
+
+        assert result == ["anchor1", "n1", "n2", "anchor2", "n3", "n1"]
+        assert len(result) == 6
+
     def test_flatten_without_anchors(self, retriever):
         """Test flattening without including anchors."""
         ego_graphs = {

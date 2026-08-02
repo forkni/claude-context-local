@@ -25,7 +25,6 @@
     "bm25_reserved_slots": 0,
     "min_bm25_score": 0.1,
     "rrf_k_parameter": 100,
-    "enable_result_reranking": true,
     "default_k": 7,
     "max_k": 50,
     "default_max_context_tokens": 0
@@ -92,12 +91,8 @@
     "include_result_graph": false
   },
   "chunking": {
-    "min_chunk_tokens": 50,
-    "max_merged_tokens": 1000,
     "enable_large_node_splitting": true,
     "max_chunk_lines": 100,
-    "token_estimation": "whitespace",
-    "size_method": "tokens",
     "split_size_method": "characters",
     "max_split_chars": 3000,
     "enable_file_summaries": true,
@@ -145,8 +140,7 @@
   },
   "parent_retrieval": {
     "enabled": false,
-    "include_parent_content": true,
-    "max_parents_per_result": 1
+    "include_parent_content": true
   },
   "graph_enhanced": {
     "centrality_method": "pagerank",

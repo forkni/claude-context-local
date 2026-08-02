@@ -846,6 +846,7 @@ async def test_handle_search_code_hybrid_searcher_ready():
         mock_dec_state.return_value = mock_state
         mock_cm.return_value.get_search_mode_for_query.return_value = "hybrid"
         mock_cfg.return_value.performance.use_parallel_search = False
+        mock_cfg.return_value.intent.default_intent = "HYBRID"
         mock_ic.return_value.classify.return_value = Mock(
             intent=Mock(value="hybrid"),
             confidence=0.0,

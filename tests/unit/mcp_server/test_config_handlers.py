@@ -81,19 +81,6 @@ async def test_configure_search_mode_valid_saves_config(
 
 
 @pytest.mark.asyncio
-async def test_chunking_token_estimation_invalid(mock_config_manager):
-    with patch(
-        "mcp_server.tools.config_handlers.get_config_manager",
-        return_value=mock_config_manager,
-    ):
-        result = await handle_configure_chunking({"token_estimation": "gpt4"})
-
-    assert "error" in result
-    assert "token_estimation" in result["error"]
-    mock_config_manager.save_config.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_chunking_split_size_method_invalid(mock_config_manager):
     with patch(
         "mcp_server.tools.config_handlers.get_config_manager",
@@ -180,7 +167,6 @@ async def test_chunking_all_valid_saves_config(mock_config_manager):
     ):
         result = await handle_configure_chunking(
             {
-                "token_estimation": "whitespace",
                 "split_size_method": "lines",
                 "max_split_chars": 5000,
                 "sizing_mode": "adaptive",
@@ -221,7 +207,6 @@ class TestConfigValidationOwnership:
             ("adaptive_multiplier_max", "range", (1.0, 2.0)),
             ("adaptive_multiplier_min", "range", (0.1, 1.0)),
             ("max_complexity_cap", "range", (5, 100)),
-            ("token_estimation", "choices", ("whitespace", "tiktoken")),
             ("split_size_method", "choices", ("lines", "characters")),
             ("sizing_mode", "choices", ("fixed", "adaptive")),
         ],

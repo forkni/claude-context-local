@@ -819,10 +819,7 @@ WHEN TO USE:
 - Disabling file summaries to speed up indexing on very large repos
 
 Each field's factory default and valid range are documented on its own schema
-property below (see this tool's input schema). min_chunk_tokens (factory
-default 50) and max_merged_tokens (factory default 400) are not exposed as
-parameters of this tool, but both remain configurable via search_config.json
-(the shipped example sets max_merged_tokens=1000). Live values currently in
+property below (see this tool's input schema). Live values currently in
 effect may differ from factory defaults — check get_search_config_status.
 
 NOTE: this changes global server config (one active setting at a time). On the
@@ -834,11 +831,6 @@ RETURNS:
         "input_schema": {
             "type": "object",
             "properties": {
-                "token_estimation": {
-                    "type": "string",
-                    "enum": ["whitespace", "tiktoken"],
-                    "description": "Token estimation method - 'whitespace' (fast) or 'tiktoken' (accurate)",
-                },
                 "enable_large_node_splitting": {
                     "type": "boolean",
                     "description": "Enable/disable AST block splitting for large functions",

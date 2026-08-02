@@ -379,7 +379,7 @@ RULES: tuple[ProbeRule, ...] = (
     ),
     # --- Pass 2: observations from persisted stats ----------------------
     ProbeRule(
-        key="chunking.max_merged_tokens",
+        key="chunking.max_chunk_lines",
         kind="observation",
         stage="post_build",
         condition=lambda m: _stats_split_share(m) > 0.15,

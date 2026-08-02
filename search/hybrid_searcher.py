@@ -31,6 +31,7 @@ from search.config import SearchMode
 from search.graph_integration import GraphIntegration
 from utils.observability import traced_block
 from utils.otel_attributes import (
+    ATTR_CAPTURE_QUERY,
     ATTR_K,
     ATTR_RESULT_COUNT,
     ATTR_SEARCH_MODE,
@@ -718,6 +719,9 @@ class HybridSearcher(BaseSearcher):
                 config if config is not None else _get_config_via_service_locator()
             )
 
+            if effective_config.observability.capture_query_text:
+                span.set_attribute(ATTR_CAPTURE_QUERY, query)
+
             # Resolve weights once, here: explicit kwarg wins, else the
             # effective config's defaults. Resolving from config (not an
             # instance field — HybridSearcher no longer keeps one) means the
@@ -966,6 +970,10 @@ class HybridSearcher(BaseSearcher):
                 try:
                     metadata = self.dense_index.get_chunk_by_id(parent_id)
                     if metadata:
+                        if not config.include_parent_content:
+                            metadata = {
+                                k: v for k, v in metadata.items() if k != "content"
+                            }
                         parent_results.append(
                             ResultFactory.from_expansion(
                                 parent_id, 0.0, metadata, "parent_expansion"

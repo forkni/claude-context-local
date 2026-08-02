@@ -154,7 +154,6 @@ class SearchModeConfig:
 
     # Reranking Configuration
     rrf_k_parameter: int = 100
-    enable_result_reranking: bool = True
 
     # Search Result Limits
     default_k: int = (
@@ -294,25 +293,11 @@ class OutputConfig:
 
 @dataclass
 class ChunkingConfig:
-    """Chunking algorithm settings (14 fields)."""
-
-    # Token size constraints for chunks
-    min_chunk_tokens: int = 50  # Minimum tokens before considering merge
-    max_merged_tokens: int = (
-        400  # Maximum tokens for merged chunk (research: 200-400 optimal)
-    )
+    """Chunking algorithm settings (10 fields)."""
 
     # Large function splitting (cAST paper: AST-aware splitting improves Recall@5 +66%)
     enable_large_node_splitting: bool = True  # Split functions > max_chunk_lines
     max_chunk_lines: int = 100  # Maximum lines before AST block splitting
-
-    # Token estimation method
-    token_estimation: str = field(
-        default="whitespace", metadata={"choices": ("whitespace", "tiktoken")}
-    )  # "whitespace" (fast) or "tiktoken" (accurate)
-
-    # Size method for chunking (Option A: character-based vs Option B: token-based)
-    size_method: str = "tokens"  # "tokens" (default) or "characters" (cAST paper)
 
     # Splitting-specific configs (separate from merging)
     split_size_method: str = field(
@@ -379,7 +364,6 @@ class ParentRetrievalConfig:
 
     enabled: bool = False  # Disabled — parents get score=0, no ranking value
     include_parent_content: bool = True  # Include parent's full content
-    max_parents_per_result: int = 1  # Usually 1 (direct parent only)
 
 
 @dataclass
@@ -739,7 +723,6 @@ class SearchConfig:
         "bm25_reserved_slots": ("search_mode", "bm25_reserved_slots"),
         "min_bm25_score": ("search_mode", "min_bm25_score"),
         "rrf_k_parameter": ("search_mode", "rrf_k_parameter"),
-        "enable_result_reranking": ("search_mode", "enable_result_reranking"),
         "default_k": ("search_mode", "default_k"),
         "max_k": ("search_mode", "max_k"),
         # PerformanceConfig
@@ -788,12 +771,8 @@ class SearchConfig:
         "include_subgraph": ("output", "include_subgraph"),
         "include_result_graph": ("output", "include_result_graph"),
         # ChunkingConfig (flat keys equal their field names for most)
-        "min_chunk_tokens": ("chunking", "min_chunk_tokens"),
-        "max_merged_tokens": ("chunking", "max_merged_tokens"),
         "enable_large_node_splitting": ("chunking", "enable_large_node_splitting"),
         "max_chunk_lines": ("chunking", "max_chunk_lines"),
-        "token_estimation": ("chunking", "token_estimation"),
-        "size_method": ("chunking", "size_method"),
         "split_size_method": ("chunking", "split_size_method"),
         "max_split_chars": ("chunking", "max_split_chars"),
         # EgoGraphConfig

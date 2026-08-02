@@ -40,7 +40,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _CHUNKING_FIELDS: tuple[tuple[str, str], ...] = (
-    ("token_estimation", "token_estimation"),
     ("enable_large_node_splitting", "enable_large_node_splitting"),
     ("max_chunk_lines", "max_chunk_lines"),
     ("split_size_method", "split_size_method"),
@@ -54,7 +53,6 @@ _CHUNKING_FIELDS: tuple[tuple[str, str], ...] = (
 
 # Echo subset: the fields the response returns (curated; may include read-only fields).
 _CHUNKING_ECHO: tuple[str, ...] = (
-    "token_estimation",
     "enable_large_node_splitting",
     "max_chunk_lines",
     "split_size_method",
@@ -264,14 +262,11 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
 
     Valid values per field are enforced by ``ChunkingConfig`` field metadata
     (see ``search.config.validate_field_value``).  Exposed parameters:
-    token_estimation ("whitespace"|"tiktoken"), enable_large_node_splitting,
-    max_chunk_lines, split_size_method ("lines"|"characters"),
+    enable_large_node_splitting, max_chunk_lines,
+    split_size_method ("lines"|"characters"),
     max_split_chars (1000-10000), enable_file_summaries,
     sizing_mode ("fixed"|"adaptive"), adaptive_multiplier_max (1.0-2.0),
     adaptive_multiplier_min (0.1-1.0), max_complexity_cap (5-100).
-
-    Note: min_chunk_tokens (50) and max_merged_tokens (400) are optimal defaults and
-    not exposed for user configuration.
     """
     config_manager = get_config_manager()
     config = config_manager.load_config()

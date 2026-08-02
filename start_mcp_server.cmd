@@ -362,6 +362,9 @@ echo === Search Mode Configuration ===
 echo.
 echo Current Settings:
 ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Search Mode:', cfg.search_mode.default_mode); print('  BM25 Weight:', cfg.search_mode.bm25_weight); print('  Dense Weight:', cfg.search_mode.dense_weight); print('  Parallel Search:', 'Enabled' if cfg.performance.use_parallel_search else 'Disabled'); print('  Semantic Intent:', 'Enabled' if cfg.intent.semantic_enabled else 'Disabled')" 2>nul
+if errorlevel 1 (
+    echo   [WARN] Could not read configuration - run option 9 ^(Reset to Defaults^) from Search Configuration menu
+)
 echo.
 echo   1. Set Search Mode              - Hybrid/Semantic/BM25/Auto ^(Auto recommended - intent-driven^)
 echo   2. Configure Search Weights     - Balance BM25 vs semantic matching
@@ -398,11 +401,14 @@ echo.
 echo === Entity Tracking Configuration ===
 echo.
 echo Current Settings:
-".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Entity Tracking:', 'Enabled' if cfg.performance.enable_entity_tracking else 'Disabled'); print('  Import Context:', 'Enabled' if cfg.embedding.enable_import_context else 'Disabled'); print('  Class Context:', 'Enabled' if cfg.embedding.enable_class_context else 'Disabled'); print('  File Summaries:', 'Enabled' if cfg.chunking.enable_file_summaries else 'Disabled'); print('  Community Summaries:', 'Enabled' if cfg.chunking.enable_community_summaries else 'Disabled')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Entity Tracking:', 'Enabled' if cfg.performance.enable_entity_tracking else 'Disabled'); print('  Import Context:', 'Enabled' if cfg.embedding.enable_import_context else 'Disabled'); print('  Class Context:', 'Enabled' if cfg.embedding.enable_class_context else 'Disabled'); print('  File Summaries:', 'Enabled' if cfg.chunking.enable_file_summaries else 'Disabled')" 2>nul
+if errorlevel 1 (
+    echo   [WARN] Could not read configuration - run option 9 ^(Reset to Defaults^) from Search Configuration menu
+)
 echo.
 echo   1. Configure Entity Tracking    - Enable/disable symbol tracking
 echo   2. Configure Context Enhancement - Import/class context in embeddings ^(+1-5%% quality^)
-echo   3. Configure Summary Chunks      - File/community-level summaries ^(A2/B1^)
+echo   3. Configure Summary Chunks      - File-level summaries ^(A2^)
 echo   0. Back to Search Configuration
 echo.
 set "entity_choice="
@@ -433,16 +439,17 @@ echo.
 echo === Configure Summary Chunks ===
 echo.
 echo Current Settings:
-".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  File Summaries:', 'Enabled' if cfg.chunking.enable_file_summaries else 'Disabled'); print('  Community Summaries:', 'Enabled' if cfg.chunking.enable_community_summaries else 'Disabled')" 2>nul
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  File Summaries:', 'Enabled' if cfg.chunking.enable_file_summaries else 'Disabled')" 2>nul
+if errorlevel 1 (
+    echo   [WARN] Could not read configuration - run option 9 ^(Reset to Defaults^) from Search Configuration menu
+)
 echo.
 echo   1. Enable File Summaries        - Module-level summaries ^(A2^)
 echo   2. Disable File Summaries       - Skip file summary generation
-echo   3. Enable Community Summaries   - Community-level summaries ^(B1^)
-echo   4. Disable Community Summaries  - Skip community summary generation
 echo   0. Back to Entity Tracking Configuration
 echo.
 set "summary_choice="
-set /p summary_choice="Select option (0-4): "
+set /p summary_choice="Select option (0-2): "
 
 if not defined summary_choice goto entity_tracking_menu
 if "!summary_choice!"=="" goto entity_tracking_menu
@@ -474,34 +481,7 @@ if "!summary_choice!"=="2" (
     )
     goto summary_chunks_end
 )
-if "!summary_choice!"=="3" (
-    echo.
-    echo [INFO] Enabling community summaries...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_summaries = True; mgr.save_config(cfg); print('[OK] Community summaries enabled')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save configuration
-    ) else (
-        echo [INFO] Community-level summary chunks will be generated
-        echo [INFO] Re-index project to apply changes
-        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-    )
-    goto summary_chunks_end
-)
-if "!summary_choice!"=="4" (
-    echo.
-    echo [INFO] Disabling community summaries...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_summaries = False; mgr.save_config(cfg); print('[OK] Community summaries disabled')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save configuration
-    ) else (
-        echo [INFO] Community summary generation will be skipped
-        echo [INFO] Re-index project to apply changes
-        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-    )
-    goto summary_chunks_end
-)
-
-echo [ERROR] Invalid choice. Please select 0-4.
+echo [ERROR] Invalid choice. Please select 0-2.
 :summary_chunks_end
 pause
 goto configure_summary_chunks
@@ -552,8 +532,8 @@ echo === Developer Options ===
 echo.
 echo   1. Start Server in Debug Mode
 echo   2. Run Unit Tests
-echo   3. Run Fast Integration Tests (77 tests, ~2 min)
-echo   4. Run Slow Integration Tests (67 tests, ~10 min)
+echo   3. Run Fast Integration Tests (100 tests, ~2 min)
+echo   4. Run Slow Integration Tests (108 tests, ~10 min)
 echo   5. Run Regression Tests
 echo   0. Back to Main Menu
 echo.
@@ -1178,7 +1158,7 @@ REM Search Configuration Functions
 echo.
 echo [INFO] Current Search Configuration:
 if exist ".venv\Scripts\python.exe" (
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); model_display = f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print('    File Summaries:', 'Enabled' if config.chunking.enable_file_summaries else 'Disabled'); print('    Community Summaries:', 'Enabled' if config.chunking.enable_community_summaries else 'Disabled'); print(); print('  Chunking Settings:'); print('    Community Detection:', 'Enabled' if config.chunking.enable_community_detection else 'Disabled'); print('    Community Merge (full re-index only):', 'Enabled' if config.chunking.enable_community_merge else 'Disabled'); print(f'    Community Resolution: {config.chunking.community_resolution}'); print(f'    Token Estimation: {config.chunking.token_estimation}'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Split Size Method: {config.chunking.split_size_method}'); print(f'    Max Split Chars: {config.chunking.max_split_chars}'); print(f'    Sizing Mode: {config.chunking.sizing_mode}'); print(f'    Adaptive Max Multiplier: {config.chunking.adaptive_multiplier_max}'); print(f'    Adaptive Min Multiplier: {config.chunking.adaptive_multiplier_min}'); print(f'    Max Complexity Cap: {config.chunking.max_complexity_cap}'); print(f'    Max Merged Tokens: {config.chunking.max_merged_tokens}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format); g = config.graph_enhanced; print(); print('  Output ^& Ranking Enhancements:'); print('    Source-Position Ordering:', 'Enabled' if config.output.source_order_output else 'Disabled'); print('    Centrality BM25 Boost:', 'Enabled' if g.centrality_bm25_boost else 'Disabled'); print(f'      Boost Threshold: {g.centrality_boost_threshold}'); print(f'      Boost Factor: {g.centrality_boost_factor}'); print(f'      Boost Cap: {g.centrality_boost_cap}')"
+    ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config, MODEL_REGISTRY; config = get_search_config(); model = config.embedding.model_name; specs = MODEL_REGISTRY.get(model, {}); model_short = model.split('/')[-1]; dim = specs.get('dimension', 768); vram = specs.get('vram_gb', '?'); model_display = f'{model_short} ({dim}d, {vram})'; reranker_model_short = config.reranker.model_name.split('/')[-1] if config.reranker.enabled else 'N/A'; print(f'  Embedding Model: {model_display}'); print(); print('  Search Mode:', config.search_mode.default_mode); print('    Hybrid Search:', 'Enabled' if config.search_mode.enable_hybrid else 'Disabled'); print('      BM25 Weight:', config.search_mode.bm25_weight); print('      Dense Weight:', config.search_mode.dense_weight); print('    Parallel Search:', 'Enabled' if config.performance.use_parallel_search else 'Disabled'); print(); print('  Neural Reranker:', 'Enabled' if config.reranker.enabled else 'Disabled'); print(f'    Model: {reranker_model_short}'); print(f'    Reranker Top-K: {config.reranker.top_k_candidates}'); print(); print('  Entity Tracking:', 'Enabled' if config.performance.enable_entity_tracking else 'Disabled'); print('    Import Context:', 'Enabled' if config.embedding.enable_import_context else 'Disabled'); print('    Class Context:', 'Enabled' if config.embedding.enable_class_context else 'Disabled'); print('    File Summaries:', 'Enabled' if config.chunking.enable_file_summaries else 'Disabled'); print(); print('  Chunking Settings:'); print('    Large Node Splitting:', 'Enabled' if config.chunking.enable_large_node_splitting else 'Disabled'); print(f'    Max Chunk Lines: {config.chunking.max_chunk_lines}'); print(f'    Split Size Method: {config.chunking.split_size_method}'); print(f'    Max Split Chars: {config.chunking.max_split_chars}'); print(f'    Sizing Mode: {config.chunking.sizing_mode}'); print(f'    Adaptive Max Multiplier: {config.chunking.adaptive_multiplier_max}'); print(f'    Adaptive Min Multiplier: {config.chunking.adaptive_multiplier_min}'); print(f'    Max Complexity Cap: {config.chunking.max_complexity_cap}'); print(); print('  Performance:'); print(f'    Prefer GPU: {config.performance.prefer_gpu}'); print(f'    Auto-Reindex: {\"Enabled\" if config.performance.enable_auto_reindex else \"Disabled\"}'); print(f'      Max Age: {config.performance.max_index_age_minutes} minutes'); print(f'    VRAM Limit: {int(config.performance.vram_limit_fraction * 100)}%%'); print(f'    RAM Fallback: {\"On\" if config.performance.allow_ram_fallback else \"Off\"}'); print(); print('  Output Format:', config.output.format); g = config.graph_enhanced; print(); print('  Output ^& Ranking Enhancements:'); print('    Source-Position Ordering:', 'Enabled' if config.output.source_order_output else 'Disabled'); print('    Centrality BM25 Boost:', 'Enabled' if g.centrality_bm25_boost else 'Disabled'); print(f'      Boost Threshold: {g.centrality_boost_threshold}'); print(f'      Boost Factor: {g.centrality_boost_factor}'); print(f'      Boost Cap: {g.centrality_boost_cap}')"
     if "!ERRORLEVEL!" neq "0" (
         echo Error loading configuration
         echo Using defaults: hybrid mode, BM25=0.35, Dense=0.65
@@ -1292,6 +1272,9 @@ echo Recommendation: Keep ENABLED unless you have resource constraints.
 echo.
 echo Current Setting:
 ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Parallel Search:', 'Enabled' if cfg.performance.use_parallel_search else 'Disabled')" 2>nul
+if errorlevel 1 (
+    echo   [WARN] Could not read configuration - run option 9 ^(Reset to Defaults^) from Search Configuration menu
+)
 echo.
 echo   1. Enable Parallel Search
 echo   2. Disable Parallel Search
@@ -1341,6 +1324,9 @@ echo Recommendation: Keep ENABLED if you have a CUDA-capable GPU.
 echo.
 echo Current Setting:
 ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Prefer GPU:', 'True' if cfg.performance.prefer_gpu else 'False')" 2>nul
+if errorlevel 1 (
+    echo   [WARN] Could not read configuration - run option 9 ^(Reset to Defaults^) from Search Configuration menu
+)
 echo.
 echo   1. Enable GPU Acceleration
 echo   2. Disable GPU Acceleration
@@ -1393,6 +1379,9 @@ echo   - Additional latency: +150-300ms per search
 echo.
 echo Current Setting:
 ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Neural Reranker:', 'Enabled' if cfg.reranker.enabled else 'Disabled'); print('  Model:', cfg.reranker.model_name); print('  Top-K Candidates:', cfg.reranker.top_k_candidates)" 2>nul
+if errorlevel 1 (
+    echo   [WARN] Could not read configuration - run option 9 ^(Reset to Defaults^) from Search Configuration menu
+)
 echo.
 echo   1. Enable Neural Reranker
 echo   2. Disable Neural Reranker
@@ -1515,6 +1504,9 @@ echo === Performance Settings ===
 echo.
 echo Current Settings:
 ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Prefer GPU:', 'True' if cfg.performance.prefer_gpu else 'False'); print('  Auto-Reindex:', 'Enabled' if cfg.performance.enable_auto_reindex else 'Disabled'); print('    Max Age:', cfg.performance.max_index_age_minutes, 'minutes'); print(f'  VRAM Limit: {cfg.performance.vram_limit_fraction:.0%%}'); print('  RAM Fallback:', 'On' if cfg.performance.allow_ram_fallback else 'Off')" 2>nul
+if errorlevel 1 (
+    echo   [WARN] Could not read configuration - run option 9 ^(Reset to Defaults^) from Search Configuration menu
+)
 echo.
 echo   1. Configure GPU Acceleration   - Prefer GPU for embeddings/search
 echo   2. Configure Auto-Reindex       - Auto-refresh when index is stale
@@ -1553,6 +1545,9 @@ echo This prevents searching outdated code without manual reindexing.
 echo.
 echo Current Setting:
 ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Auto-Reindex:', 'Enabled' if cfg.performance.enable_auto_reindex else 'Disabled'); print('  Max Age:', cfg.performance.max_index_age_minutes, 'minutes')" 2>nul
+if errorlevel 1 (
+    echo   [WARN] Could not read configuration - run option 9 ^(Reset to Defaults^) from Search Configuration menu
+)
 echo.
 echo   1. Enable Auto-Reindex
 echo   2. Disable Auto-Reindex
@@ -1615,6 +1610,9 @@ echo === GPU Memory Configuration ===
 echo.
 echo Current Settings:
 ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print(f'  VRAM Limit: {cfg.performance.vram_limit_fraction:.0%%}'); print('  RAM Fallback:', 'On' if cfg.performance.allow_ram_fallback else 'Off')" 2>nul
+if errorlevel 1 (
+    echo   [WARN] Could not read configuration - run option 9 ^(Reset to Defaults^) from Search Configuration menu
+)
 echo.
 echo   1. Adjust VRAM Limit          - Set hard ceiling (70-95%%)
 echo   2. Configure RAM Fallback     - Enable system RAM spillover (slower)
@@ -1850,6 +1848,9 @@ echo   - Class attributes, dataclass fields, constants
 echo.
 echo Current Setting:
 ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Entity Tracking:', 'Enabled' if cfg.performance.enable_entity_tracking else 'Disabled')" 2>nul
+if errorlevel 1 (
+    echo   [WARN] Could not read configuration - run option 9 ^(Reset to Defaults^) from Search Configuration menu
+)
 echo.
 echo   1. Enable Entity Tracking
 echo   2. Disable Entity Tracking
@@ -1906,6 +1907,9 @@ echo   - Class Context: Include parent class signature for methods
 echo.
 echo Current Settings:
 ".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Import Context:', 'Enabled' if cfg.embedding.enable_import_context else 'Disabled'); print('  Class Context:', 'Enabled' if cfg.embedding.enable_class_context else 'Disabled'); print('  Max Import Lines:', cfg.embedding.max_import_lines); print('  Max Class Signature Lines:', cfg.embedding.max_class_signature_lines)" 2>nul
+if errorlevel 1 (
+    echo   [WARN] Could not read configuration - run option 9 ^(Reset to Defaults^) from Search Configuration menu
+)
 echo.
 echo   1. Enable Import Context
 echo   2. Disable Import Context
@@ -2008,124 +2012,37 @@ echo.
 echo === Configure Chunking Settings ===
 echo.
 echo Chunking settings control how code is split into semantic units.
-echo Community-based chunk merging combines chunks using graph analysis for better retrieval.
-echo.
-echo Note: Community merge runs ONLY during full re-indexing.
-echo       Incremental indexing uses raw AST chunks (no merging).
-echo.
-echo Benefits:
-echo   - +4.3 Recall@5 improvement (EMNLP 2025 academic validation)
-echo   - 20-30%% fewer chunks (merged getters/setters)
-echo   - Denser embeddings with more context per vector
 echo.
 echo Current Settings:
-".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Community Detection:', 'Enabled' if cfg.chunking.enable_community_detection else 'Disabled'); print('  Community Merge (full re-index only):', 'Enabled' if cfg.chunking.enable_community_merge else 'Disabled'); print('  Community Resolution:', cfg.chunking.community_resolution); print('  Token Estimation:', cfg.chunking.token_estimation); print('  Large Node Splitting:', 'Enabled' if cfg.chunking.enable_large_node_splitting else 'Disabled'); print('  Max Chunk Lines:', cfg.chunking.max_chunk_lines); print('  Split Size Method:', cfg.chunking.split_size_method); print('  Max Split Chars:', cfg.chunking.max_split_chars); print('  Sizing Mode:', cfg.chunking.sizing_mode); print('  Adaptive Max Multiplier:', cfg.chunking.adaptive_multiplier_max); print('  Adaptive Min Multiplier:', cfg.chunking.adaptive_multiplier_min); print('  Max Complexity Cap:', cfg.chunking.max_complexity_cap)" 2>nul
-echo.
-echo   --- Community Detection ^& Merging ---
-echo   1. Enable Community Detection           - Detect code communities for better chunking
-echo   2. Disable Community Detection          - Skip community detection
-echo   3. Enable Community Merge               - Use communities for chunk remerging (full re-index only)
-echo   4. Disable Community Merge              - Skip community-based remerging
-echo   5. Set Community Resolution             - Louvain algorithm parameter (0.1-2.0, default: 1.0)
+".\.venv\Scripts\python.exe" -c "from search.config import get_search_config; cfg = get_search_config(); print('  Large Node Splitting:', 'Enabled' if cfg.chunking.enable_large_node_splitting else 'Disabled'); print('  Max Chunk Lines:', cfg.chunking.max_chunk_lines); print('  Split Size Method:', cfg.chunking.split_size_method); print('  Max Split Chars:', cfg.chunking.max_split_chars); print('  Sizing Mode:', cfg.chunking.sizing_mode); print('  Adaptive Max Multiplier:', cfg.chunking.adaptive_multiplier_max); print('  Adaptive Min Multiplier:', cfg.chunking.adaptive_multiplier_min); print('  Max Complexity Cap:', cfg.chunking.max_complexity_cap)" 2>nul
+if errorlevel 1 (
+    echo   [WARN] Could not read configuration - run option 9 ^(Reset to Defaults^) from Search Configuration menu
+)
 echo.
 echo   --- Large Node Splitting ---
-echo   6. Enable Large Node Splitting          - Split functions ^> threshold at AST boundaries
-echo   7. Disable Large Node Splitting         - Keep large functions intact
-echo   8. Set Split Size Method                - lines or characters (default: characters)
-echo   9. Set Max Chunk Lines                  - Line threshold (default: 100)
-echo   A. Set Max Split Characters             - Character threshold (1000-10000, default: 1600)
-echo.
-echo   --- Token Estimation ---
-echo   B. Set Token Estimation                 - whitespace (fast) or tiktoken (accurate)
+echo   1. Enable Large Node Splitting          - Split functions ^> threshold at AST boundaries
+echo   2. Disable Large Node Splitting         - Keep large functions intact
+echo   3. Set Split Size Method                - lines or characters (default: characters)
+echo   4. Set Max Chunk Lines                  - Line threshold (default: 100)
+echo   5. Set Max Split Characters             - Character threshold (1000-10000, default: 1600)
 echo.
 echo   --- Adaptive Sizing ---
-echo   C. Set Sizing Mode                      - fixed (static) or adaptive (repo-profiled P75 + complexity)
-echo   D. Set Adaptive Max Multiplier          - T_max: P75 x this for low-complexity (1.0-2.0, default: 1.3)
-echo   E. Set Adaptive Min Multiplier          - T_min: P75 x this for high-complexity (0.1-1.0, default: 0.5)
-echo   F. Set Max Complexity Cap               - CC ceiling for normalization (5-100, default: 30)
+echo   6. Set Sizing Mode                      - fixed (static) or adaptive (repo-profiled P75 + complexity)
+echo   7. Set Adaptive Max Multiplier          - T_max: P75 x this for low-complexity (1.0-2.0, default: 1.3)
+echo   8. Set Adaptive Min Multiplier          - T_min: P75 x this for high-complexity (0.1-1.0, default: 0.5)
+echo   9. Set Max Complexity Cap               - CC ceiling for normalization (5-100, default: 30)
 echo.
 echo   0. Back to Search Configuration
 echo.
 set "chunk_choice="
-set /p chunk_choice="Select option (0-9, A-F): "
+set /p chunk_choice="Select option (0-9): "
 
 if not defined chunk_choice goto search_config_menu
 if "!chunk_choice!"=="" goto search_config_menu
 if "!chunk_choice!"=="0" goto search_config_menu
 
-REM --- Community Detection & Merging Handlers ---
-if "!chunk_choice!"=="1" (
-    echo.
-    echo [INFO] Enabling community detection...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_detection = True; mgr.save_config(cfg); print('[OK] Community detection enabled')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save configuration
-    ) else (
-        echo [INFO] Code communities will be detected during indexing
-        echo [INFO] Re-index project to apply changes
-        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-    )
-    goto chunking_menu_end
-)
-if "!chunk_choice!"=="2" (
-    echo.
-    echo [INFO] Disabling community detection...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_detection = False; mgr.save_config(cfg); print('[OK] Community detection disabled')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save configuration
-    ) else (
-        echo [INFO] Community detection will be skipped
-        echo [INFO] Re-index project to apply changes
-        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-    )
-    goto chunking_menu_end
-)
-if "!chunk_choice!"=="3" (
-    echo.
-    echo [INFO] Enabling community-based merge...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_merge = True; mgr.save_config(cfg); print('[OK] Community merge enabled')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save configuration
-    ) else (
-        echo [INFO] Chunks will be remerged using community boundaries (full re-index only^)
-        echo [INFO] Requires: enable_community_detection=True
-        echo [INFO] Re-index project to apply changes
-        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-    )
-    goto chunking_menu_end
-)
-if "!chunk_choice!"=="4" (
-    echo.
-    echo [INFO] Disabling community-based merge...
-    ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_community_merge = False; mgr.save_config(cfg); print('[OK] Community merge disabled')" 2>nul
-    if errorlevel 1 (
-        echo [ERROR] Failed to save configuration
-    ) else (
-        echo [INFO] Community-based remerging will be skipped
-        echo [INFO] Re-index project to apply changes
-        ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-    )
-    goto chunking_menu_end
-)
-if "!chunk_choice!"=="5" (
-    echo.
-    set "community_res="
-    set /p community_res="Enter community resolution (0.1-2.0, default: 1.0): "
-    if defined community_res (
-        echo [INFO] Setting community resolution to: !community_res!
-        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = float('!community_res!'); assert 0.1 <= val <= 2.0, 'Out of range'; cfg.chunking.community_resolution = val; mgr.save_config(cfg); print('[OK] Community resolution updated to !community_res!')" 2>nul
-        if errorlevel 1 (
-            echo [ERROR] Failed to save configuration. Please enter a valid number between 0.1 and 2.0.
-        ) else (
-            echo [INFO] Re-index project to apply changes
-            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-        )
-    )
-    goto chunking_menu_end
-)
-
 REM --- Large Node Splitting Handlers ---
-if "!chunk_choice!"=="6" (
+if "!chunk_choice!"=="1" (
     echo.
     echo [INFO] Enabling large node splitting...
     ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_large_node_splitting = True; mgr.save_config(cfg); print('[OK] Large node splitting enabled')" 2>nul
@@ -2138,7 +2055,7 @@ if "!chunk_choice!"=="6" (
     )
     goto chunking_menu_end
 )
-if "!chunk_choice!"=="7" (
+if "!chunk_choice!"=="2" (
     echo.
     echo [INFO] Disabling large node splitting...
     ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.enable_large_node_splitting = False; mgr.save_config(cfg); print('[OK] Large node splitting disabled')" 2>nul
@@ -2151,7 +2068,7 @@ if "!chunk_choice!"=="7" (
     )
     goto chunking_menu_end
 )
-if "!chunk_choice!"=="8" (
+if "!chunk_choice!"=="3" (
     echo.
     echo Select split size method:
     echo   1. characters - Character-based splitting ^(recommended, +54%% Recall^)
@@ -2183,7 +2100,7 @@ if "!chunk_choice!"=="8" (
     )
     goto chunking_menu_end
 )
-if "!chunk_choice!"=="9" (
+if "!chunk_choice!"=="4" (
     echo.
     set "max_lines="
     set /p max_lines="Enter max chunk lines (10-500, default: 100): "
@@ -2200,13 +2117,13 @@ if "!chunk_choice!"=="9" (
     )
     goto chunking_menu_end
 )
-if /i "!chunk_choice!"=="A" (
+if "!chunk_choice!"=="5" (
     echo.
     set "max_chars="
     set /p max_chars="Enter max split characters (1000-10000, default: 1600): "
     if defined max_chars (
         echo [INFO] Setting max split characters to: !max_chars!
-        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = int('!max_chars!'); assert 1000 <= val <= 10000, 'Out of range'; cfg.chunking.max_split_chars = val; mgr.save_config(cfg); print('[OK] Max split characters updated to !max_chars!')" 2>nul
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager, validate_field_value, ChunkingConfig; mgr = get_config_manager(); cfg = mgr.load_config(); val = int('!max_chars!'); err = validate_field_value(ChunkingConfig, 'max_split_chars', val); assert err is None, err; cfg.chunking.max_split_chars = val; mgr.save_config(cfg); print('[OK] Max split characters updated to !max_chars!')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Failed to save configuration. Please enter a valid number between 1000 and 10000.
         ) else (
@@ -2218,40 +2135,8 @@ if /i "!chunk_choice!"=="A" (
     goto chunking_menu_end
 )
 
-REM --- Token Estimation Handler ---
-if /i "!chunk_choice!"=="B" (
-    echo.
-    echo Select token estimation method:
-    echo   1. whitespace - Fast, approximate ^(recommended^)
-    echo   2. tiktoken   - Accurate, slower ^(requires tiktoken package^)
-    echo.
-    set "token_method="
-    set /p token_method="Enter choice (1-2): "
-    if "!token_method!"=="1" (
-        echo [INFO] Setting token estimation to whitespace...
-        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.token_estimation = 'whitespace'; mgr.save_config(cfg); print('[OK] Token estimation set to whitespace')" 2>nul
-        if errorlevel 1 (
-            echo [ERROR] Failed to save configuration
-        ) else (
-            echo [INFO] Re-index project to apply changes
-            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-        )
-    )
-    if "!token_method!"=="2" (
-        echo [INFO] Setting token estimation to tiktoken...
-        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.chunking.token_estimation = 'tiktoken'; mgr.save_config(cfg); print('[OK] Token estimation set to tiktoken')" 2>nul
-        if errorlevel 1 (
-            echo [ERROR] Failed to save configuration
-        ) else (
-            echo [INFO] Re-index project to apply changes
-            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-        )
-    )
-    goto chunking_menu_end
-)
-
 REM --- Adaptive Sizing Handlers ---
-if /i "!chunk_choice!"=="C" (
+if "!chunk_choice!"=="6" (
     echo.
     echo Select sizing mode:
     echo   1. fixed    - Static thresholds ^(current: max_split_chars^)
@@ -2283,7 +2168,7 @@ if /i "!chunk_choice!"=="C" (
     )
     goto chunking_menu_end
 )
-if /i "!chunk_choice!"=="D" (
+if "!chunk_choice!"=="7" (
     echo.
     echo Enter adaptive max multiplier (1.0-2.0, default: 1.3^):
     echo   Controls chunk size for LOW-complexity functions: T_max = P75_baseline x this
@@ -2291,7 +2176,7 @@ if /i "!chunk_choice!"=="D" (
     set "adapt_max="
     set /p adapt_max="Enter value: "
     if defined adapt_max if not "!adapt_max!"=="" (
-        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = float('!adapt_max!'); assert 1.0 <= val <= 2.0, 'Out of range'; cfg.chunking.adaptive_multiplier_max = val; mgr.save_config(cfg); print('[OK] Adaptive max multiplier updated to !adapt_max!')" 2>nul
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager, validate_field_value, ChunkingConfig; mgr = get_config_manager(); cfg = mgr.load_config(); val = float('!adapt_max!'); err = validate_field_value(ChunkingConfig, 'adaptive_multiplier_max', val); assert err is None, err; cfg.chunking.adaptive_multiplier_max = val; mgr.save_config(cfg); print('[OK] Adaptive max multiplier updated to !adapt_max!')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Invalid value. Must be between 1.0 and 2.0
         ) else (
@@ -2301,7 +2186,7 @@ if /i "!chunk_choice!"=="D" (
     )
     goto chunking_menu_end
 )
-if /i "!chunk_choice!"=="E" (
+if "!chunk_choice!"=="8" (
     echo.
     echo Enter adaptive min multiplier (0.1-1.0, default: 0.5^):
     echo   Controls chunk size for HIGH-complexity functions: T_min = P75_baseline x this
@@ -2309,7 +2194,7 @@ if /i "!chunk_choice!"=="E" (
     set "adapt_min="
     set /p adapt_min="Enter value: "
     if defined adapt_min if not "!adapt_min!"=="" (
-        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = float('!adapt_min!'); assert 0.1 <= val <= 1.0, 'Out of range'; cfg.chunking.adaptive_multiplier_min = val; mgr.save_config(cfg); print('[OK] Adaptive min multiplier updated to !adapt_min!')" 2>nul
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager, validate_field_value, ChunkingConfig; mgr = get_config_manager(); cfg = mgr.load_config(); val = float('!adapt_min!'); err = validate_field_value(ChunkingConfig, 'adaptive_multiplier_min', val); assert err is None, err; cfg.chunking.adaptive_multiplier_min = val; mgr.save_config(cfg); print('[OK] Adaptive min multiplier updated to !adapt_min!')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Invalid value. Must be between 0.1 and 1.0
         ) else (
@@ -2319,7 +2204,7 @@ if /i "!chunk_choice!"=="E" (
     )
     goto chunking_menu_end
 )
-if /i "!chunk_choice!"=="F" (
+if "!chunk_choice!"=="9" (
     echo.
     echo Enter max complexity cap (5-100, default: 30^):
     echo   Cyclomatic complexity ceiling for Cv normalization
@@ -2327,7 +2212,7 @@ if /i "!chunk_choice!"=="F" (
     set "max_cc="
     set /p max_cc="Enter value: "
     if defined max_cc if not "!max_cc!"=="" (
-        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); val = int('!max_cc!'); assert 5 <= val <= 100, 'Out of range'; cfg.chunking.max_complexity_cap = val; mgr.save_config(cfg); print('[OK] Max complexity cap updated to !max_cc!')" 2>nul
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager, validate_field_value, ChunkingConfig; mgr = get_config_manager(); cfg = mgr.load_config(); val = int('!max_cc!'); err = validate_field_value(ChunkingConfig, 'max_complexity_cap', val); assert err is None, err; cfg.chunking.max_complexity_cap = val; mgr.save_config(cfg); print('[OK] Max complexity cap updated to !max_cc!')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Invalid value. Must be between 5 and 100
         ) else (
@@ -2338,8 +2223,8 @@ if /i "!chunk_choice!"=="F" (
     goto chunking_menu_end
 )
 
-if not "!chunk_choice!"=="1" if not "!chunk_choice!"=="2" if not "!chunk_choice!"=="3" if not "!chunk_choice!"=="4" if not "!chunk_choice!"=="5" if not "!chunk_choice!"=="6" if not "!chunk_choice!"=="7" if not "!chunk_choice!"=="8" if not "!chunk_choice!"=="9" if /i not "!chunk_choice!"=="A" if /i not "!chunk_choice!"=="B" if /i not "!chunk_choice!"=="C" if /i not "!chunk_choice!"=="D" if /i not "!chunk_choice!"=="E" if /i not "!chunk_choice!"=="F" (
-    echo [ERROR] Invalid choice. Please select 0-9, A-F.
+if not "!chunk_choice!"=="1" if not "!chunk_choice!"=="2" if not "!chunk_choice!"=="3" if not "!chunk_choice!"=="4" if not "!chunk_choice!"=="5" if not "!chunk_choice!"=="6" if not "!chunk_choice!"=="7" if not "!chunk_choice!"=="8" if not "!chunk_choice!"=="9" (
+    echo [ERROR] Invalid choice. Please select 0-9.
 )
 :chunking_menu_end
 pause
@@ -2589,7 +2474,7 @@ echo   Embedding Model: BAAI/bge-m3 ^(1024d^)
 echo.
 echo   Neural Reranker:
 echo     - Enabled: True
-echo     - Top-K Candidates: 50
+echo     - Top-K Candidates: 30
 echo.
 echo   Entity Tracking:
 echo     - Entity Tracking: Disabled ^(faster indexing^)
@@ -2597,12 +2482,10 @@ echo     - Import Context: Enabled
 echo     - Class Context: Enabled
 echo.
 echo   Chunking Settings:
-echo     - Community Detection: Enabled
-echo     - Community Merge: Enabled (full re-index only)
-echo     - Community Resolution: 1.0
-echo     - Token Estimation: whitespace
-echo     - Large Node Splitting: Disabled ^(preserve full functions^)
+echo     - Large Node Splitting: Enabled ^(cAST AST-aware splitting^)
 echo     - Max Chunk Lines: 100
+echo     - Split Size Method: characters
+echo     - Max Split Chars: 1600
 echo     - Sizing Mode: fixed
 echo     - Adaptive Max Multiplier: 1.3
 echo     - Adaptive Min Multiplier: 0.5
@@ -2615,8 +2498,8 @@ REM Persist defaults to config file via Python
 if errorlevel 1 (
     echo [ERROR] Failed to reset config file
     set "CLAUDE_SEARCH_MODE=hybrid"
-    set "CLAUDE_BM25_WEIGHT=0.4"
-    set "CLAUDE_DENSE_WEIGHT=0.6"
+    set "CLAUDE_BM25_WEIGHT=0.35"
+    set "CLAUDE_DENSE_WEIGHT=0.65"
     set "CLAUDE_ENABLE_HYBRID=true"
     echo [INFO] Reset environment variables for this session only
 )

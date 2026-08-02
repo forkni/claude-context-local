@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from mcp_server.search_factory import get_searcher
@@ -22,8 +22,6 @@ from mcp_server.services import get_config, get_state
 from mcp_server.tools import responses, result_view
 from mcp_server.tools.searcher_view import SearcherView
 from search.config import (
-    EgoGraphConfig,
-    ParentRetrievalConfig,
     SearchConfig,
     SearchMode,
     get_config_manager,
@@ -154,6 +152,7 @@ class SearchPlanner:
                 embedder=_intent_embedder,
                 semantic_enabled=config.intent.semantic_enabled,
                 semantic_weight=config.intent.semantic_weight,
+                default_intent=QueryIntent(config.intent.default_intent.lower()),
             )
             intent_decision = intent_classifier.classify(query)
 
@@ -422,7 +421,9 @@ class SearchOrchestrator:
             return config_copy
 
         if isinstance(searcher, HybridSearcher) and plan.ego_graph_enabled:
-            mutable_config().ego_graph = EgoGraphConfig(
+            cfg = mutable_config()
+            cfg.ego_graph = replace(
+                cfg.ego_graph,
                 enabled=plan.ego_graph_enabled,
                 k_hops=plan.ego_graph_k_hops,
                 max_neighbors_per_hop=plan.ego_graph_max_neighbors,
@@ -458,8 +459,9 @@ class SearchOrchestrator:
             mutable_config().ego_graph.min_similarity_threshold = intent_threshold
 
         if isinstance(searcher, HybridSearcher) and plan.include_parent:
-            mutable_config().parent_retrieval = ParentRetrievalConfig(
-                enabled=plan.include_parent
+            cfg = mutable_config()
+            cfg.parent_retrieval = replace(
+                cfg.parent_retrieval, enabled=plan.include_parent
             )
             logger.info("[PARENT_RETRIEVAL] Enabled")
 
@@ -488,7 +490,7 @@ class SearchOrchestrator:
                 query=plan.query,
                 k=plan.k,
                 search_mode=actual_search_mode,
-                min_bm25_score=0.1,
+                min_bm25_score=effective_config.search_mode.min_bm25_score,
                 use_parallel=get_config().performance.use_parallel_search,
                 filters=filters if filters else None,
                 config=effective_config,

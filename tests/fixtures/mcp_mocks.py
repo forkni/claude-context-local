@@ -62,6 +62,7 @@ def make_app_config_mock() -> Mock:
     app_cfg.intent.semantic_enabled = False
     app_cfg.intent.confidence_threshold = 0.0
     app_cfg.intent.log_classifications = False
+    app_cfg.intent.default_intent = "HYBRID"
     app_cfg.performance.use_parallel_search = False
     app_cfg.performance.max_index_age_minutes = 5.0
     app_cfg.search_mode.default_max_context_tokens = 0

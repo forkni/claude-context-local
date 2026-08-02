@@ -242,18 +242,29 @@ class EgoGraphRetriever:
             config: Ego-graph configuration
 
         Returns:
-            List of unique chunk_ids combining all ego-graphs
+            List of chunk_ids combining all ego-graphs. Deduplicated when
+            config.deduplicate is True (default); otherwise order-preserving
+            with duplicates retained.
         """
-        all_chunks: set[str] = set()
+        if config.deduplicate:
+            all_chunks: set[str] = set()
 
-        for anchor, neighbors in ego_graphs.items():
-            if config.include_anchor:
-                all_chunks.add(anchor)
-            all_chunks.update(neighbors)
+            for anchor, neighbors in ego_graphs.items():
+                if config.include_anchor:
+                    all_chunks.add(anchor)
+                all_chunks.update(neighbors)
 
-        result = list(all_chunks)
+            result = list(all_chunks)
+        else:
+            result = []
+            for anchor, neighbors in ego_graphs.items():
+                if config.include_anchor:
+                    result.append(anchor)
+                result.extend(neighbors)
+
         logger.debug(
-            f"Flattened {len(ego_graphs)} ego-graphs into {len(result)} unique chunks"
+            f"Flattened {len(ego_graphs)} ego-graphs into {len(result)} chunks "
+            f"(deduplicate={config.deduplicate})"
         )
         return result
 

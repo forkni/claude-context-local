@@ -12,8 +12,9 @@ import pytest
 
 from mcp_server.state import ApplicationState
 from mcp_server.tools.search_orchestrator import ExecutionOutcome, SearchOrchestrator
-from search.config import SearchConfig
+from search.config import EgoGraphConfig, ParentRetrievalConfig, SearchConfig
 from search.exceptions import DimensionMismatchError
+from search.hybrid_searcher import HybridSearcher
 
 
 # ---------------------------------------------------------------------------
@@ -141,10 +142,19 @@ def _patch_execute(real_sc=None, project="/test"):
 def _make_ready_searcher():
     """Create a mock HybridSearcher that is ready (1000 chunks).
 
-    ``index_manager`` is set to None explicitly so that SearcherView falls
-    through to ``dense_index`` (the HybridSearcher attribute name).
+    ``spec=HybridSearcher`` so ``isinstance(searcher, HybridSearcher)`` — the
+    guard on every ego_graph/parent_retrieval/intent-edge mutation block and
+    the Block D hybrid-search-call branch in ``_search()`` — actually
+    evaluates True, matching what this helper's name and docstring claim. A
+    bare ``Mock()`` fails that isinstance check silently, so every one of
+    those blocks would be skipped with no test failure to show it (caught by
+    ``test_ego_graph_rebuild_preserves_sibling_fields`` /
+    ``test_parent_retrieval_rebuild_preserves_sibling_fields``, which read
+    back ``effective_config`` and therefore need the mutation to actually
+    run). ``index_manager`` is set to None explicitly so that SearcherView
+    falls through to ``dense_index`` (the HybridSearcher attribute name).
     """
-    s = Mock()
+    s = Mock(spec=HybridSearcher)
     s.is_ready = True
     s.index_manager = None  # HybridSearcher: manager is at .dense_index
     s.bm25_weight = 0.35
@@ -309,6 +319,53 @@ class TestExecuteConfigIsolation:
             mock_gs.return_value = searcher
             await _run_execute(SearchOrchestrator(), plan)
         assert sc.ego_graph.enabled == original_ego_enabled
+
+    @pytest.mark.asyncio
+    async def test_ego_graph_rebuild_preserves_sibling_fields(self):
+        """Regression: the ego_graph rebuild previously used
+        EgoGraphConfig(enabled=..., k_hops=..., max_neighbors_per_hop=...),
+        silently discarding every other configured field (expansion_mode,
+        ppr_alpha, deduplicate). dataclasses.replace() must preserve them."""
+        sc = SearchConfig(
+            ego_graph=EgoGraphConfig(
+                expansion_mode="ppr",
+                ppr_alpha=0.42,
+                deduplicate=False,
+            )
+        )
+        plan = _make_plan(
+            ego_graph_enabled=True, ego_graph_k_hops=3, ego_graph_max_neighbors=7
+        )
+        searcher = _make_ready_searcher()
+        with _patch_execute(real_sc=sc) as (_, mock_gs):
+            mock_gs.return_value = searcher
+            result = await _run_execute(SearchOrchestrator(), plan)
+
+        eg = result.effective_config.ego_graph
+        assert eg.enabled is True
+        assert eg.k_hops == 3
+        assert eg.max_neighbors_per_hop == 7
+        assert eg.expansion_mode == "ppr"
+        assert eg.ppr_alpha == 0.42
+        assert eg.deduplicate is False
+
+    @pytest.mark.asyncio
+    async def test_parent_retrieval_rebuild_preserves_sibling_fields(self):
+        """Regression: the parent_retrieval rebuild previously used
+        ParentRetrievalConfig(enabled=...), silently discarding
+        include_parent_content. dataclasses.replace() must preserve it."""
+        sc = SearchConfig(
+            parent_retrieval=ParentRetrievalConfig(include_parent_content=False)
+        )
+        plan = _make_plan(include_parent=True)
+        searcher = _make_ready_searcher()
+        with _patch_execute(real_sc=sc) as (_, mock_gs):
+            mock_gs.return_value = searcher
+            result = await _run_execute(SearchOrchestrator(), plan)
+
+        pr = result.effective_config.parent_retrieval
+        assert pr.enabled is True
+        assert pr.include_parent_content is False
 
 
 class TestExecuteConcurrencyIntegration:

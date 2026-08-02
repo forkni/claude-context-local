@@ -217,7 +217,6 @@ query to filter them out.
 - `adaptive_multiplier_max` / `adaptive_multiplier_min`: bounds for adaptive sizing
 - `max_complexity_cap`: cap on complexity-based growth
 - `max_phantom_degree`: limit on phantom node degree
-- `token_estimation`: algorithm for token counting
 - `enable_large_node_splitting` / `max_chunk_lines` / `split_size_method` / `max_split_chars`
 
 These are advanced tuning options. For most projects, defaults are correct.

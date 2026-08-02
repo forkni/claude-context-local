@@ -533,12 +533,14 @@ class CodeEmbedder:
                 fraction = config.performance.vram_limit_fraction
             else:
                 fraction = 0.90
+            query_cache_size = config.embedding.query_cache_size if config else 128
         except (RuntimeError, AttributeError):
             fraction = 0.90
+            query_cache_size = 128
         set_vram_limit(fraction)
 
         # Query embedding cache (LRU)
-        self._query_cache = QueryEmbeddingCache(max_size=128)
+        self._query_cache = QueryEmbeddingCache(max_size=query_cache_size)
 
         # Model cache manager
         self._cache_manager = ModelCacheManager(

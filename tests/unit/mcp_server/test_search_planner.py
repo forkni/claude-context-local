@@ -19,6 +19,7 @@ def _make_app_config(intent_enabled=True, semantic_enabled=False):
     cfg.intent.confidence_threshold = 0.3
     cfg.intent.log_classifications = False
     cfg.intent.semantic_weight = 0.3
+    cfg.intent.default_intent = "HYBRID"
     cfg.performance.max_index_age_minutes = 5.0
     cfg.search_mode.default_max_context_tokens = 0
     return cfg

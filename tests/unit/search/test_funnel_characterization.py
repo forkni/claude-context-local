@@ -517,6 +517,48 @@ def test_parent_cap_only_expands_first_max_results_to_expand():
     assert requested == {"parent0", "parent1", "parent2", "parent3"}
 
 
+def test_include_parent_content_false_strips_content_from_parent_metadata():
+    """include_parent_content=False strips `content` before ResultFactory builds
+    the parent SearchResult, but leaves other metadata keys intact."""
+    searcher = _bare_hybrid_searcher()
+    searcher.dense_index.get_chunk_by_id.return_value = {
+        "content": "full parent source",
+        "file_path": "foo.py",
+    }
+    results = [
+        SearchResult(chunk_id="r0", score=1.0, metadata={"parent_chunk_id": "parent0"})
+    ]
+    config = ParentRetrievalConfig(enabled=True, include_parent_content=False)
+
+    combined = searcher._apply_parent_expansion(
+        results, config, max_results_to_expand=4
+    )
+
+    parent_result = next(r for r in combined if r.chunk_id == "parent0")
+    assert "content" not in parent_result.metadata
+    assert parent_result.metadata["file_path"] == "foo.py"
+
+
+def test_include_parent_content_true_keeps_content_in_parent_metadata():
+    """include_parent_content=True (default) is unchanged: content stays attached."""
+    searcher = _bare_hybrid_searcher()
+    searcher.dense_index.get_chunk_by_id.return_value = {
+        "content": "full parent source",
+        "file_path": "foo.py",
+    }
+    results = [
+        SearchResult(chunk_id="r0", score=1.0, metadata={"parent_chunk_id": "parent0"})
+    ]
+    config = ParentRetrievalConfig(enabled=True)
+
+    combined = searcher._apply_parent_expansion(
+        results, config, max_results_to_expand=4
+    )
+
+    parent_result = next(r for r in combined if r.chunk_id == "parent0")
+    assert parent_result.metadata["content"] == "full parent source"
+
+
 # ---------------------------------------------------------------------------
 # GraphScoringStage: output cap (:245-249; config.py:451)
 # ---------------------------------------------------------------------------

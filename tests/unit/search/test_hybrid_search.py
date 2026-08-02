@@ -3,12 +3,14 @@
 Note: GPUMemoryMonitor tests have been moved to test_gpu_monitor.py (Phase 3.1 refactoring).
 """
 
+import contextlib
 import tempfile
 from unittest.mock import Mock, patch
 
 import numpy as np
 
 from search.hybrid_searcher import HybridSearcher
+from utils.otel_attributes import ATTR_CAPTURE_QUERY
 
 
 class TestHybridSearcher:
@@ -1200,3 +1202,78 @@ class TestSinglePassTailRerank:
             "src/b.py:1-10:function:beta",
             "src/c.py:1-10:function:gamma",
         ]
+
+
+class TestCaptureQueryText:
+    """observability.capture_query_text gates ATTR_CAPTURE_QUERY on the
+    search.hybrid span (:688-695 fails closed unless config opts in)."""
+
+    def _make_ready_searcher(self, mock_bm25, mock_dense):
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(tempfile.mkdtemp())
+
+        mock_bm25.return_value.is_empty = False
+        dense_index = Mock()
+        dense_index.ntotal = 100
+        mock_dense.return_value.index = dense_index
+        return searcher
+
+    def _make_config(self, *, capture: bool):
+        from search.config import MultiHopConfig, ObservabilityConfig, SearchConfig
+
+        config = SearchConfig(
+            multi_hop=MultiHopConfig(enabled=False),
+            observability=ObservabilityConfig(capture_query_text=capture),
+        )
+        config.ego_graph.enabled = False
+        config.parent_retrieval.enabled = False
+        return config
+
+    def _run_search_capturing_spans(self, searcher, config, query):
+        spans: list[Mock] = []
+
+        @contextlib.contextmanager
+        def _fake_traced_block(name, **attrs):  # noqa: ARG001 - matches traced_block signature
+            span = Mock()
+            spans.append(span)
+            yield span
+
+        with (
+            patch(
+                "search.hybrid_searcher._get_config_via_service_locator",
+                return_value=config,
+            ),
+            patch.object(searcher, "_single_hop_search", return_value=[]),
+            patch("search.hybrid_searcher.traced_block", _fake_traced_block),
+        ):
+            searcher.search(query, k=5)
+
+        assert spans, "search.hybrid span was never opened"
+        return spans[0]
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_capture_query_text_true_sets_span_attribute(self, mock_bm25, mock_dense):
+        searcher = self._make_ready_searcher(mock_bm25, mock_dense)
+        config = self._make_config(capture=True)
+
+        span = self._run_search_capturing_spans(searcher, config, "secret query text")
+
+        span.set_attribute.assert_any_call(ATTR_CAPTURE_QUERY, "secret query text")
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_capture_query_text_false_does_not_set_span_attribute(
+        self, mock_bm25, mock_dense
+    ):
+        searcher = self._make_ready_searcher(mock_bm25, mock_dense)
+        config = self._make_config(capture=False)
+
+        span = self._run_search_capturing_spans(searcher, config, "secret query text")
+
+        calls = [
+            c
+            for c in span.set_attribute.call_args_list
+            if c.args[0] == ATTR_CAPTURE_QUERY
+        ]
+        assert calls == []

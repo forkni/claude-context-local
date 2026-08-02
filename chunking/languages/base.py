@@ -61,43 +61,6 @@ def compute_adaptive_threshold(
     return min(int(effective), hard_cap)
 
 
-def estimate_tokens(content: str, method: str = "whitespace") -> int:
-    """Estimate token count for content.
-
-    Args:
-        content: Text content to estimate
-        method: Estimation method - "whitespace" (fast) or "tiktoken" (accurate)
-
-    Returns:
-        Estimated token count
-
-    Note:
-        Whitespace splitting approximates tokens for code reasonably well
-        (~1 token per whitespace-separated word). For more accuracy, use
-        tiktoken (adds ~0.5ms per call, requires package installation).
-    """
-    if method == "tiktoken":
-        try:
-            import tiktoken
-
-            enc = tiktoken.get_encoding("cl100k_base")
-            token_count = len(enc.encode(content))
-            logger.debug(f"tiktoken: {len(content)} chars -> {token_count} tokens")
-            return token_count
-        except ImportError:
-            # Fall back to whitespace if tiktoken not installed
-            logger.warning(
-                "tiktoken not installed, falling back to whitespace estimation. "
-                "Install with: pip install tiktoken"
-            )
-            pass
-
-    # Whitespace approximation: split on whitespace and count words
-    token_count = len(content.split())
-    logger.debug(f"whitespace: {len(content)} chars -> {token_count} tokens")
-    return token_count
-
-
 def estimate_characters(content: str, count_whitespace: bool = False) -> int:
     """Count characters in content (cAST paper approach).
 
@@ -622,63 +585,6 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         """
         # Tree-sitter uses 0-based indexing, convert to 1-based
         return node.start_point[0] + 1, node.end_point[0] + 1
-
-    def _create_merged_chunk(self, chunks: list[TreeSitterChunk]) -> TreeSitterChunk:
-        """Combine multiple chunks into a single merged chunk.
-
-        Args:
-            chunks: List of chunks to merge (must be non-empty)
-
-        Returns:
-            Single TreeSitterChunk combining all content
-
-        Note:
-            Members are sorted by source position first — emission order is
-            not source order (e.g. module_preamble is emitted after symbol
-            chunks), and trusting it inverts the merged line range.
-            Sets node_type to "merged" to indicate merged origin.
-            Only should be called with chunks that have the same parent_class.
-        """
-        if len(chunks) == 1:
-            return chunks[0]
-
-        chunks = sorted(chunks, key=lambda c: (c.start_line, c.end_line))
-
-        # Combine content with double newline separator for readability
-        merged_content = "\n\n".join(c.content for c in chunks)
-
-        # Qualified member names (Class.method when a parent exists) so that
-        # merged_from entries align with golden/benchmark chunk-ID naming.
-        merged_names = []
-        for c in chunks:
-            name = c.metadata.get("name")
-            if name:
-                merged_names.append(
-                    f"{c.parent_class}.{name}" if c.parent_class else name
-                )
-
-        # Create merged metadata
-        merged_metadata = {
-            "merged_from": merged_names,
-            "merged_count": len(chunks),
-            "original_node_types": [c.node_type for c in chunks],
-        }
-
-        # Copy parent info and file location from first chunk (all should have same parent)
-        first_meta = chunks[0].metadata
-        for key in ["parent_name", "parent_type", "name", "file_path", "relative_path"]:
-            if key in first_meta:
-                merged_metadata[key] = first_meta[key]
-
-        return TreeSitterChunk(
-            content=merged_content,
-            start_line=chunks[0].start_line,
-            end_line=chunks[-1].end_line,
-            node_type="merged",
-            language=chunks[0].language,
-            metadata=merged_metadata,
-            parent_class=chunks[0].parent_class,
-        )
 
     def _get_block_boundary_types(self) -> set[str]:
         """Get node types that are valid split boundaries.

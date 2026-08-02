@@ -133,7 +133,7 @@ SEMANTIC_TYPES = (
     "impl",
     "constant",
     "variable",
-    "merged",  # Sibling chunks combined by LanguageChunker._create_merged_chunk
+    "merged",  # Sibling chunks combined during chunking (legacy, pre-existing indices)
     "split_block",  # Large node split blocks (AST block splitting)
 )
 

@@ -26,7 +26,7 @@ set. This keeps the advertised tool count small without removing the capability.
 | **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=4, exclude_same_file=False (set true for cross-file analogues — sibling implementations in other files; leave false for neighbors within the reference chunk's own file, e.g. other methods of the same class) |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.35, dense_weight=0.65, enable_parallel=True |
 | configure_reranking | Config | Configure neural reranker settings (BGE OR Jina v3, runtime configurable) | enabled, model_name, top_k_candidates=30 |
-| configure_chunking | Config | Configure code chunking settings | token_estimation, enable_large_node_splitting, max_chunk_lines, split_size_method, max_split_chars, enable_file_summaries, sizing_mode |
+| configure_chunking | Config | Configure code chunking settings | enable_large_node_splitting, max_chunk_lines, split_size_method, max_split_chars, enable_file_summaries, sizing_mode |
 | get_search_config_status | Config | View current configuration | *(no parameters)* |
 | get_index_status | Status | Check index health & model info | *(no parameters)* |
 | get_memory_status | Monitor | Check RAM/VRAM usage | *(no parameters)* |
@@ -534,7 +534,6 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 
 **Parameters**:
 
-- `token_estimation` (str): Token estimation method - "whitespace" (fast) or "tiktoken" (accurate, default: "whitespace")
 - `enable_large_node_splitting` (bool): Enable AST block splitting for large functions (default: True)
 - `max_chunk_lines` (int): Maximum lines per chunk before splitting at AST boundaries (10-1000, default: 100)
 - `split_size_method` (str): Size method for splitting - "lines" or "characters" (default: "characters")
@@ -545,7 +544,7 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 - `adaptive_multiplier_min` (float): T_min multiplier for high-complexity functions (0.1-1.0, default: 0.5)
 - `max_complexity_cap` (int): Cyclomatic complexity ceiling for normalization (5-100, default: 30)
 
-**Note**: `min_chunk_tokens` (50) and `max_merged_tokens` (400) are optimal defaults and not exposed for configuration. Re-index project to apply changes.
+**Note**: Re-index project to apply changes.
 
 ### Commands
 
