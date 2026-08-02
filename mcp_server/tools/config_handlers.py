@@ -25,6 +25,7 @@ from search.config import (
     RerankerConfig,
     SearchMode,
     SearchModeConfig,
+    _derive_mcp_field_names,
     get_config_manager,
     set_active_project_storage_dir,
     validate_field_value,
@@ -38,48 +39,32 @@ logger = logging.getLogger(__name__)
 # Field maps: (arg_key, attr_name) pairs for apply_config_patch.
 # Attribute names must match the real dataclass fields so that
 # validate_field_value can look up metadata from the spec class.
+#
+# _CHUNKING_FIELDS/_ECHO and _RERANKER_FIELDS/_ECHO are derived from each
+# field's spec(mcp=...) tag (see ADR-0022) — the settable/echo split is
+# declared once, on the field, instead of restated here.
 # ---------------------------------------------------------------------------
 
-_CHUNKING_FIELDS: tuple[tuple[str, str], ...] = (
-    ("enable_large_node_splitting", "enable_large_node_splitting"),
-    ("max_chunk_lines", "max_chunk_lines"),
-    ("split_size_method", "split_size_method"),
-    ("max_split_chars", "max_split_chars"),
-    ("enable_file_summaries", "enable_file_summaries"),
-    ("sizing_mode", "sizing_mode"),
-    ("adaptive_multiplier_max", "adaptive_multiplier_max"),
-    ("adaptive_multiplier_min", "adaptive_multiplier_min"),
-    ("max_complexity_cap", "max_complexity_cap"),
-    ("glsl_filter_td_prefix", "glsl_filter_td_prefix"),
+_CHUNKING_FIELD_NAMES: tuple[str, ...] = _derive_mcp_field_names(
+    ChunkingConfig, "chunking"
+)
+_CHUNKING_FIELDS: tuple[tuple[str, str], ...] = tuple(
+    (name, name) for name in _CHUNKING_FIELD_NAMES
 )
 
 # Echo subset: the fields the response returns (curated; may include read-only fields).
-_CHUNKING_ECHO: tuple[str, ...] = (
-    "enable_large_node_splitting",
-    "max_chunk_lines",
-    "split_size_method",
-    "max_split_chars",
-    "enable_file_summaries",
-    "sizing_mode",
-    "adaptive_multiplier_max",
-    "adaptive_multiplier_min",
-    "max_complexity_cap",
-    "glsl_filter_td_prefix",
-)
+_CHUNKING_ECHO: tuple[str, ...] = _CHUNKING_FIELD_NAMES
 
-_RERANKER_FIELDS: tuple[tuple[str, str], ...] = (
-    ("enabled", "enabled"),
-    ("model_name", "model_name"),
-    ("top_k_candidates", "top_k_candidates"),
+_RERANKER_SETTABLE_NAMES: tuple[str, ...] = _derive_mcp_field_names(
+    RerankerConfig, "reranker"
+)
+_RERANKER_FIELDS: tuple[tuple[str, str], ...] = tuple(
+    (name, name) for name in _RERANKER_SETTABLE_NAMES
 )
 
 # Echoes include non-settable fields (min_vram_gb, batch_size) — read from target after patch.
-_RERANKER_ECHO: tuple[str, ...] = (
-    "enabled",
-    "model_name",
-    "top_k_candidates",
-    "min_vram_gb",
-    "batch_size",
+_RERANKER_ECHO: tuple[str, ...] = _derive_mcp_field_names(
+    RerankerConfig, "reranker", "reranker_echo"
 )
 
 _SEARCH_MODE_FIELDS: tuple[tuple[str, str], ...] = (

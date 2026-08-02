@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -68,27 +69,117 @@ MODEL_REGISTRY = {
 # of discovery quality and performance (+25-35ms overhead, 93%+ queries benefit)
 
 
+def spec(
+    *,
+    range: tuple[float, float] | None = None,
+    choices: tuple[str, ...] | None = None,
+    flat_alias: str | None = None,
+    env: str | None = None,
+    mcp: str | None = None,
+    reader: str | None = None,
+    schema_only: bool = False,
+) -> dict[str, Any]:
+    """Build a ``field(metadata=...)`` dict for one config field — the single
+    declaration site for its validation rule, legacy/env alias, MCP exposure,
+    and liveness anchor (see ADR-0022).
+
+    Every key is explicit and defaults to absent/``None`` — nothing here is
+    inferred from the field's name, so a field with no alias or no env var
+    stays that way rather than acquiring one by convention.  ``reader`` names
+    the production file whose behavior the field actually controls (checked
+    by ``test_config_field_liveness.py``); ``schema_only=True`` is the escape
+    hatch for a field that has no single behavioral reader.
+    """
+    meta: dict[str, Any] = {}
+    if range is not None:
+        meta["range"] = range
+    if choices is not None:
+        meta["choices"] = choices
+    if flat_alias is not None:
+        meta["flat_alias"] = flat_alias
+    if env is not None:
+        meta["env"] = env
+    if mcp is not None:
+        meta["mcp"] = mcp
+    if reader is not None:
+        meta["reader"] = reader
+    if schema_only:
+        meta["schema_only"] = True
+    return meta
+
+
 @dataclass
 class EmbeddingConfig:
     """Embedding model configuration (11 fields)."""
 
-    model_name: str = "BAAI/bge-m3"
-    dimension: int = 1024
-    batch_size: int = 64  # Dynamic based on model, see MODEL_REGISTRY
-    query_cache_size: int = 128  # LRU cache size for query embeddings
+    model_name: str = field(
+        default="BAAI/bge-m3",
+        metadata=spec(
+            flat_alias="embedding_model_name",
+            env="CLAUDE_EMBEDDING_MODEL",
+            reader="embeddings/model_loader.py",
+        ),
+    )
+    dimension: int = field(
+        default=1024,
+        metadata=spec(flat_alias="model_dimension", reader="embeddings/embedder.py"),
+    )
+    batch_size: int = field(
+        default=64,  # Dynamic based on model, see MODEL_REGISTRY
+        metadata=spec(
+            flat_alias="embedding_batch_size",
+            env="CLAUDE_EMBEDDING_BATCH_SIZE",
+            reader="embeddings/embedder.py",
+        ),
+    )
+    query_cache_size: int = field(
+        default=128,  # LRU cache size for query embeddings
+        metadata=spec(
+            flat_alias="query_cache_size",
+            env="CLAUDE_QUERY_CACHE_SIZE",
+            reader="embeddings/embedder.py",
+        ),
+    )
 
     # Context Enhancement Features (v0.8.0+)
-    enable_import_context: bool = True  # Include import statements in embeddings
-    enable_class_context: bool = True  # Include parent class signature for methods
-    max_import_lines: int = 25  # Maximum import lines to extract
-    max_class_signature_lines: int = 20  # Maximum lines for class signature
-    enable_structural_header: bool = (
-        True  # Prepend file path + chunk type + qualified name
+    enable_import_context: bool = field(
+        default=True,  # Include import statements in embeddings
+        metadata=spec(
+            flat_alias="enable_import_context", reader="embeddings/embedder.py"
+        ),
+    )
+    enable_class_context: bool = field(
+        default=True,  # Include parent class signature for methods
+        metadata=spec(
+            flat_alias="enable_class_context", reader="embeddings/embedder.py"
+        ),
+    )
+    max_import_lines: int = field(
+        default=25,  # Maximum import lines to extract
+        metadata=spec(flat_alias="max_import_lines", reader="embeddings/embedder.py"),
+    )
+    max_class_signature_lines: int = field(
+        default=20,  # Maximum lines for class signature
+        metadata=spec(
+            flat_alias="max_class_signature_lines", reader="embeddings/embedder.py"
+        ),
+    )
+    enable_structural_header: bool = field(
+        default=True,  # Prepend file path + chunk type + qualified name
+        metadata=spec(
+            flat_alias="enable_structural_header", reader="embeddings/embedder.py"
+        ),
     )
 
     # Persistent content-hash embedding cache (Round 3)
-    enable_chunk_cache: bool = True  # Skip GPU re-embedding for unchanged chunks
-    chunk_cache_max_entries: int = 0  # 0 = auto (max(2 * live_keys, 2_000), 32MB clamp)
+    enable_chunk_cache: bool = field(
+        default=True,  # Skip GPU re-embedding for unchanged chunks
+        metadata=spec(reader="embeddings/chunk_cache.py"),
+    )
+    chunk_cache_max_entries: int = field(
+        default=0,  # 0 = auto (max(2 * live_keys, 2_000), 32MB clamp)
+        metadata=spec(reader="embeddings/chunk_cache.py"),
+    )
 
 
 class SearchMode(StrEnum):
@@ -115,13 +206,41 @@ class SearchModeConfig:
     # is itself a valid str default since StrEnum subclasses str.
     default_mode: str = field(
         default=SearchMode.HYBRID,
-        metadata={"choices": tuple(m.value for m in SearchMode)},
+        metadata=spec(
+            choices=tuple(m.value for m in SearchMode),
+            flat_alias="default_search_mode",
+            env="CLAUDE_SEARCH_MODE",
+            reader="mcp_server/server.py",
+        ),
     )  # hybrid, semantic, bm25, auto
-    enable_hybrid: bool = True
+    enable_hybrid: bool = field(
+        default=True,
+        metadata=spec(
+            flat_alias="enable_hybrid_search",
+            env="CLAUDE_ENABLE_HYBRID",
+            reader="mcp_server/search_factory.py",
+        ),
+    )
 
     # Hybrid Search Weights
-    bm25_weight: float = 0.35
-    dense_weight: float = 0.65
+    bm25_weight: float = field(
+        default=0.35,
+        metadata=spec(
+            range=(0.0, 1.0),
+            flat_alias="bm25_weight",
+            env="CLAUDE_BM25_WEIGHT",
+            reader="search/hybrid_searcher.py",
+        ),
+    )
+    dense_weight: float = field(
+        default=0.65,
+        metadata=spec(
+            range=(0.0, 1.0),
+            flat_alias="dense_weight",
+            env="CLAUDE_DENSE_WEIGHT",
+            reader="search/hybrid_searcher.py",
+        ),
+    )
 
     # BM25 Configuration
     # Okapi BM25 scoring parameters (rank_bm25 defaults). k1 controls term-
@@ -129,10 +248,26 @@ class SearchModeConfig:
     # at query time — changing them takes effect on next load, no re-index
     # needed. (Replaces the dead ``bm25_k_parameter`` field, which was never
     # read by any scoring path.)
-    bm25_k1: float = 1.5
-    bm25_b: float = 0.75
-    bm25_use_stopwords: bool = True
-    bm25_use_stemming: bool = True  # Snowball stemmer for word normalization
+    bm25_k1: float = field(
+        default=1.5,
+        metadata=spec(flat_alias="bm25_k1", reader="search/index_sync.py"),
+    )
+    bm25_b: float = field(
+        default=0.75,
+        metadata=spec(flat_alias="bm25_b", reader="search/index_sync.py"),
+    )
+    bm25_use_stopwords: bool = field(
+        default=True,
+        metadata=spec(flat_alias="bm25_use_stopwords", reader="search/index_sync.py"),
+    )
+    bm25_use_stemming: bool = field(
+        default=True,  # Snowball stemmer for word normalization
+        metadata=spec(
+            flat_alias="bm25_use_stemming",
+            env="CLAUDE_BM25_USE_STEMMING",
+            reader="search/index_sync.py",
+        ),
+    )
     # Tokenizer variant (arXiv 2605.18561): "legacy" = destructive camel/snake
     # split + stemming; "whole" = identifiers kept intact, no stemming;
     # "additive" = whole identifiers + camel/snake sub-tokens. Changing this
@@ -141,7 +276,11 @@ class SearchModeConfig:
     # 96q/63q golden sets (BM25-standalone, bm25_tokenizer_ab.py 2026-07-26).
     bm25_tokenizer: str = field(
         default="whole",
-        metadata={"choices": ("legacy", "whole", "additive")},
+        metadata=spec(
+            choices=("legacy", "whole", "additive"),
+            flat_alias="bm25_tokenizer",
+            reader="search/index_sync.py",
+        ),
     )
     # Reserved fused-pool slots for BM25-unique candidates. Under weighted RRF
     # (bm25 0.35 / dense 0.65, rrf_k 100) the best BM25-unique candidate scores
@@ -149,80 +288,236 @@ class SearchModeConfig:
     # (see evaluation/POOL_MISS_DIAGNOSIS.md). N > 0 fills the last N pool
     # slots with the top BM25-only candidates so the neural reranker can judge
     # them. 0 = disabled (today's behavior).
-    bm25_reserved_slots: int = 0
-    min_bm25_score: float = 0.1
+    bm25_reserved_slots: int = field(
+        default=0,
+        metadata=spec(
+            flat_alias="bm25_reserved_slots", reader="search/search_executor.py"
+        ),
+    )
+    min_bm25_score: float = field(
+        default=0.1,
+        metadata=spec(flat_alias="min_bm25_score", reader="search/search_executor.py"),
+    )
 
     # Reranking Configuration
-    rrf_k_parameter: int = 100
+    rrf_k_parameter: int = field(
+        default=100,
+        metadata=spec(
+            flat_alias="rrf_k_parameter", reader="mcp_server/search_factory.py"
+        ),
+    )
 
     # Search Result Limits
     default_k: int = field(
-        default=7, metadata={"range": (1, 50)}
+        default=7,
+        metadata=spec(
+            range=(1, 50),
+            flat_alias="default_k",
+            env="CLAUDE_DEFAULT_K",
+            reader="mcp_server/tools/search_handlers.py",
+        ),
     )  # SSCG MRR +0.093, R@7 +0.122 vs 4 (commit 447dc9a); aligned with
     # find_similar_code's default (commit 730f67c)
-    max_k: int = 50
+    max_k: int = field(
+        default=50,
+        metadata=spec(
+            flat_alias="max_k",
+            env="CLAUDE_MAX_K",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
 
     # Context budget (0 = unlimited)
-    default_max_context_tokens: int = 0
+    default_max_context_tokens: int = field(
+        default=0,
+        metadata=spec(reader="mcp_server/tools/search_orchestrator.py"),
+    )
 
 
 @dataclass
 class PerformanceConfig:
     """GPU, parallelism, caching settings (16 fields)."""
 
-    use_parallel_search: bool = True
-    max_parallel_workers: int = 2
+    use_parallel_search: bool = field(
+        default=True,
+        metadata=spec(
+            flat_alias="use_parallel_search",
+            env="CLAUDE_USE_PARALLEL",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
+    max_parallel_workers: int = field(
+        default=2,
+        metadata=spec(
+            flat_alias="max_parallel_workers", reader="mcp_server/search_factory.py"
+        ),
+    )
 
     # Parallel Chunking Configuration
-    enable_parallel_chunking: bool = True  # Enable parallel file chunking
-    max_chunking_workers: int = 8  # ThreadPoolExecutor workers for chunking
-    enable_entity_tracking: bool = (
-        True  # Enable P4-5 entity extractors (enums, defaults, context managers)
+    enable_parallel_chunking: bool = field(
+        default=True,  # Enable parallel file chunking
+        metadata=spec(
+            flat_alias="enable_parallel_chunking",
+            env="CLAUDE_ENABLE_PARALLEL_CHUNKING",
+            reader="search/incremental_indexer.py",
+        ),
+    )
+    max_chunking_workers: int = field(
+        default=8,  # ThreadPoolExecutor workers for chunking
+        metadata=spec(
+            flat_alias="max_chunking_workers",
+            env="CLAUDE_MAX_CHUNKING_WORKERS",
+            reader="search/incremental_indexer.py",
+        ),
+    )
+    enable_entity_tracking: bool = field(
+        default=True,  # Enable P4-5 entity extractors (enums, defaults, context managers)
+        metadata=spec(
+            flat_alias="enable_entity_tracking",
+            env="CLAUDE_ENABLE_ENTITY_TRACKING",
+            reader="chunking/multi_language_chunker.py",
+        ),
     )
 
     # GPU Configuration
-    prefer_gpu: bool = True
-    vram_limit_fraction: float = 0.80  # Hard VRAM ceiling (80% of dedicated)
-    allow_ram_fallback: bool = (
-        True  # Allow spillover to system RAM (slower but reliable); indexing
+    prefer_gpu: bool = field(
+        default=True,
+        metadata=spec(
+            flat_alias="prefer_gpu",
+            env="CLAUDE_PREFER_GPU",
+            reader="embeddings/embedder.py",
+        ),
+    )
+    vram_limit_fraction: float = field(
+        default=0.80,  # Hard VRAM ceiling (80% of dedicated)
+        metadata=spec(reader="embeddings/embedder.py"),
+    )
+    allow_ram_fallback: bool = field(
+        default=True,  # Allow spillover to system RAM (slower but reliable); indexing
         # overrides this locally via temporary_ram_fallback_off()
+        metadata=spec(
+            flat_alias="allow_shared_memory", reader="embeddings/embedder.py"
+        ),
     )
 
     # Precision Configuration (fp16/bf16 for faster inference)
-    enable_fp16: bool = True  # Enable fp16 for GPU (30-50% faster inference)
-    prefer_bf16: bool = True  # Prefer bf16 on Ampere+ GPUs (better accuracy than fp16)
+    enable_fp16: bool = field(
+        default=True,  # Enable fp16 for GPU (30-50% faster inference)
+        metadata=spec(
+            flat_alias="enable_fp16",
+            env="CLAUDE_ENABLE_FP16",
+            reader="embeddings/model_loader.py",
+        ),
+    )
+    prefer_bf16: bool = field(
+        default=True,  # Prefer bf16 on Ampere+ GPUs (better accuracy than fp16)
+        metadata=spec(
+            flat_alias="prefer_bf16",
+            env="CLAUDE_PREFER_BF16",
+            reader="embeddings/model_loader.py",
+        ),
+    )
 
     # Dynamic Batch Sizing (GPU-based optimization)
-    enable_dynamic_batch_size: bool = True  # Enable GPU-based auto-sizing
-    dynamic_batch_min: int = (
-        16  # Minimum batch size (lowered for fragmentation headroom)
+    enable_dynamic_batch_size: bool = field(
+        default=True,  # Enable GPU-based auto-sizing
+        metadata=spec(
+            flat_alias="enable_dynamic_batch_size",
+            env="CLAUDE_DYNAMIC_BATCH_ENABLED",
+            reader="embeddings/embedder.py",
+        ),
     )
-    dynamic_batch_max: int = 64  # Maximum batch size (safer for 8-16GB GPUs)
+    dynamic_batch_min: int = field(
+        default=16,  # Minimum batch size (lowered for fragmentation headroom)
+        metadata=spec(
+            flat_alias="dynamic_batch_min",
+            env="CLAUDE_DYNAMIC_BATCH_MIN",
+            reader="embeddings/embedder.py",
+        ),
+    )
+    dynamic_batch_max: int = field(
+        default=64,  # Maximum batch size (safer for 8-16GB GPUs)
+        metadata=spec(
+            flat_alias="dynamic_batch_max",
+            env="CLAUDE_DYNAMIC_BATCH_MAX",
+            reader="embeddings/embedder.py",
+        ),
+    )
 
     # Auto-reindexing
-    enable_auto_reindex: bool = True
-    max_index_age_minutes: float = 30.0
+    enable_auto_reindex: bool = field(
+        default=True,
+        metadata=spec(
+            flat_alias="enable_auto_reindex",
+            env="CLAUDE_AUTO_REINDEX",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
+    max_index_age_minutes: float = field(
+        default=30.0,
+        metadata=spec(
+            flat_alias="max_index_age_minutes",
+            env="CLAUDE_MAX_INDEX_AGE",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
 
     # Per-project overrides layer (ADR-0014). Read from the GLOBAL config layer
     # only (an overrides file cannot re-enable itself). Env escape hatch:
     # CLAUDE_DISABLE_PROJECT_OVERRIDES.
-    enable_project_overrides: bool = True
+    enable_project_overrides: bool = field(
+        default=True,
+        metadata=spec(reader="search/index_probe.py"),
+    )
 
 
 @dataclass
 class MultiHopConfig:
     """Multi-hop search settings (6 fields)."""
 
-    enabled: bool = True
+    enabled: bool = field(
+        default=True,
+        metadata=spec(
+            flat_alias="enable_multi_hop",
+            env="CLAUDE_ENABLE_MULTI_HOP",
+            reader="search/hybrid_searcher.py",
+        ),
+    )
     hop_count: int = field(
-        default=2, metadata={"range": (1, 3)}
+        default=2,
+        metadata=spec(
+            range=(1, 3),
+            flat_alias="multi_hop_count",
+            env="CLAUDE_MULTI_HOP_COUNT",
+            reader="search/hybrid_searcher.py",
+        ),
     )  # Number of expansion hops
-    expansion: float = 0.5  # Expansion factor per hop (0.25 arm rejected 2026-08-02:
-    # replicated recall losses H034/H067; 0.5 stays)
-    initial_k_multiplier: float = 2.0  # Multiplier for initial results (k * multiplier)
-    multi_hop_mode: str = "hybrid"  # "semantic" | "graph" | "hybrid"
-    edge_weights: dict[str, float] | None = (
-        None  # Intent-specific weights (None = DEFAULT_EDGE_WEIGHTS)
+    expansion: float = field(
+        default=0.5,  # Expansion factor per hop (0.25 arm rejected 2026-08-02:
+        # replicated recall losses H034/H067; 0.5 stays)
+        metadata=spec(
+            flat_alias="multi_hop_expansion",
+            env="CLAUDE_MULTI_HOP_EXPANSION",
+            reader="search/hybrid_searcher.py",
+        ),
+    )
+    initial_k_multiplier: float = field(
+        default=2.0,  # Multiplier for initial results (k * multiplier)
+        metadata=spec(
+            flat_alias="multi_hop_initial_k_multiplier",
+            env="CLAUDE_MULTI_HOP_INITIAL_K_MULTIPLIER",
+            reader="search/multi_hop_searcher.py",
+        ),
+    )
+    multi_hop_mode: str = field(
+        default="hybrid",  # "semantic" | "graph" | "hybrid"
+        metadata=spec(
+            flat_alias="multi_hop_mode", reader="search/multi_hop_searcher.py"
+        ),
+    )
+    edge_weights: dict[str, float] | None = field(
+        default=None,  # Intent-specific weights (None = DEFAULT_EDGE_WEIGHTS)
+        metadata=spec(reader="search/hybrid_searcher.py"),
     )
 
 
@@ -230,48 +525,161 @@ class MultiHopConfig:
 class IntentConfig:
     """Intent classification settings (6 fields)."""
 
-    enabled: bool = True  # Enable intent classification for query routing
-    confidence_threshold: float = 0.4  # Minimum confidence for intent-specific routing
-    default_intent: str = "HYBRID"  # Default intent when confidence is low
-    log_classifications: bool = True  # Log intent classification decisions
-    semantic_enabled: bool = True  # Enable semantic anchor-embedding scoring
-    semantic_weight: float = 0.3  # Semantic score weight in ensemble (0.0-1.0)
+    enabled: bool = field(
+        default=True,  # Enable intent classification for query routing
+        metadata=spec(
+            flat_alias="intent_enabled",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
+    confidence_threshold: float = field(
+        default=0.4,  # Minimum confidence for intent-specific routing
+        metadata=spec(
+            flat_alias="intent_confidence_threshold",
+            reader="search/intent_classifier.py",
+        ),
+    )
+    default_intent: str = field(
+        default="HYBRID",  # Default intent when confidence is low
+        metadata=spec(
+            flat_alias="intent_default_intent", reader="search/intent_classifier.py"
+        ),
+    )
+    log_classifications: bool = field(
+        default=True,  # Log intent classification decisions
+        metadata=spec(
+            flat_alias="intent_log_classifications",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
+    semantic_enabled: bool = field(
+        default=True,  # Enable semantic anchor-embedding scoring
+        metadata=spec(
+            flat_alias="intent_semantic_enabled",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
+    semantic_weight: float = field(
+        default=0.3,  # Semantic score weight in ensemble (0.0-1.0)
+        metadata=spec(
+            flat_alias="intent_semantic_weight",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
 
 
 @dataclass
 class RerankerConfig:
     """Neural reranker settings (12 fields)."""
 
-    enabled: bool = True  # Enabled by default (Quality First)
-    model_name: str = (
-        "Alibaba-NLP/gte-reranker-modernbert-base"  # Cross-encoder reranker model
+    enabled: bool = field(
+        default=True,  # Enabled by default (Quality First)
+        metadata=spec(
+            flat_alias="reranker_enabled",
+            env="CLAUDE_RERANKER_ENABLED",
+            mcp="reranker",
+            reader="search/reranking_engine.py",
+        ),
     )
-    top_k_candidates: int = 30  # Rerank top 30 from RRF (Q2 sweep 2026-07-26:
-    # 30 vs 50 quality-neutral within ±0.025 on both golden sets, -32% latency;
-    # listwise reranking saturates ≈30 candidates)
-    min_vram_gb: float = 2.0  # Auto-disable below this threshold (reranker uses ~1.5GB)
-    batch_size: int = 16  # Reranker inference batch size
-    dedupe_split_blocks: bool = (
-        True  # Collapse split_block fragments to one result before final truncation
+    model_name: str = field(
+        default="Alibaba-NLP/gte-reranker-modernbert-base",  # Cross-encoder reranker model
+        metadata=spec(
+            flat_alias="reranker_model_name",
+            env="CLAUDE_RERANKER_MODEL",
+            mcp="reranker",
+            reader="search/reranking_engine.py",
+        ),
     )
-    single_pass: bool = False  # Q3: skip hop-1 and multi-hop-merge neural rerank
-    # passes; run ONE listwise pass over the final merged pool (hop-1 + multi-hop
-    # + ego expansion) at the tail of HybridSearcher.search(). Trade-off: multi-hop
-    # expansion seeds degrade from neural-reranked to RRF-fusion order.
-    instruction: str = ""  # GenerativeReranker only. Empty means "use the
-    # model's built-in code-retrieval default" (see GenerativeReranker docstring).
-    doc_max_chars: int = 4000  # GenerativeReranker only (pointwise — cost scales
-    # with batch_size, so it can afford a larger per-document budget).
-    listwise_doc_max_chars: int = 1000  # JinaRerankerV3 only (listwise — ALL
-    # candidates share one context window, so cost is O(n^2) in the packed
-    # sequence length via attention activation memory — not context-window
-    # occupancy). A 4-run SSCG sweep at 4000 measured peak_vram_reserved_gb
-    # 27.66 on a 24GB card (WDDM shared-memory spill, no OOM raised — see
-    # allow_ram_fallback), 42-45/96 queries stalling past 8s (max 354.9s),
-    # and every quality metric flat-to-negative within the +/-0.02 MRR noise
-    # floor vs this default. See docs/adr/0011-listwise-reranker-doc-cap.md.
+    top_k_candidates: int = field(
+        default=30,  # Rerank top 30 from RRF (Q2 sweep 2026-07-26:
+        # 30 vs 50 quality-neutral within ±0.025 on both golden sets, -32% latency;
+        # listwise reranking saturates ≈30 candidates)
+        metadata=spec(
+            range=(5, 100),
+            flat_alias="reranker_top_k_candidates",
+            env="CLAUDE_RERANKER_TOP_K",
+            mcp="reranker",
+            reader="search/reranking_engine.py",
+        ),
+    )
+    min_vram_gb: float = field(
+        default=2.0,  # Auto-disable below this threshold (reranker uses ~1.5GB)
+        metadata=spec(
+            flat_alias="reranker_min_vram_gb",
+            env="CLAUDE_RERANKER_MIN_VRAM_GB",
+            mcp="reranker_echo",
+            reader="search/reranking_engine.py",
+        ),
+    )
+    batch_size: int = field(
+        default=16,  # Reranker inference batch size
+        metadata=spec(
+            flat_alias="reranker_batch_size",
+            env="CLAUDE_RERANKER_BATCH_SIZE",
+            mcp="reranker_echo",
+            reader="search/reranking_engine.py",
+        ),
+    )
+    dedupe_split_blocks: bool = field(
+        default=True,  # Collapse split_block fragments to one result before final truncation
+        metadata=spec(
+            flat_alias="reranker_dedupe_split_blocks",
+            env="CLAUDE_RERANKER_DEDUPE_SPLIT_BLOCKS",
+            reader="search/reranking_engine.py",
+        ),
+    )
+    single_pass: bool = field(
+        default=False,  # Q3: skip hop-1 and multi-hop-merge neural rerank
+        # passes; run ONE listwise pass over the final merged pool (hop-1 + multi-hop
+        # + ego expansion) at the tail of HybridSearcher.search(). Trade-off: multi-hop
+        # expansion seeds degrade from neural-reranked to RRF-fusion order.
+        metadata=spec(
+            flat_alias="reranker_single_pass",
+            env="CLAUDE_RERANKER_SINGLE_PASS",
+            reader="search/search_executor.py",
+        ),
+    )
+    instruction: str = field(
+        default="",  # GenerativeReranker only. Empty means "use the
+        # model's built-in code-retrieval default" (see GenerativeReranker docstring).
+        metadata=spec(
+            flat_alias="reranker_instruction",
+            env="CLAUDE_RERANKER_INSTRUCTION",
+            reader="search/reranking_engine.py",
+        ),
+    )
+    doc_max_chars: int = field(
+        default=4000,  # GenerativeReranker only (pointwise — cost scales
+        # with batch_size, so it can afford a larger per-document budget).
+        metadata=spec(
+            flat_alias="reranker_doc_max_chars",
+            env="CLAUDE_RERANKER_DOC_MAX_CHARS",
+            reader="search/reranking_engine.py",
+        ),
+    )
+    listwise_doc_max_chars: int = field(
+        default=1000,  # JinaRerankerV3 only (listwise — ALL
+        # candidates share one context window, so cost is O(n^2) in the packed
+        # sequence length via attention activation memory — not context-window
+        # occupancy). A 4-run SSCG sweep at 4000 measured peak_vram_reserved_gb
+        # 27.66 on a 24GB card (WDDM shared-memory spill, no OOM raised — see
+        # allow_ram_fallback), 42-45/96 queries stalling past 8s (max 354.9s),
+        # and every quality metric flat-to-negative within the +/-0.02 MRR noise
+        # floor vs this default. See docs/adr/0011-listwise-reranker-doc-cap.md.
+        metadata=spec(
+            flat_alias="reranker_listwise_doc_max_chars",
+            env="CLAUDE_RERANKER_LISTWISE_DOC_MAX_CHARS",
+            reader="search/reranking_engine.py",
+        ),
+    )
     listwise_dtype: str = field(
-        default="auto", metadata={"choices": ("auto", "fp32", "bf16", "fp16")}
+        default="auto",
+        metadata=spec(
+            choices=("auto", "fp32", "bf16", "fp16"),
+            flat_alias="reranker_listwise_dtype",
+            env="CLAUDE_RERANKER_LISTWISE_DTYPE",
+            reader="search/reranking_engine.py",
+        ),
     )  # JinaRerankerV3 only. Weight dtype for the
     # listwise reranker: "auto" (checkpoint default — bf16), "fp32", "bf16",
     # or "fp16". bf16 listwise scoring is run-to-run non-deterministic at
@@ -282,30 +690,53 @@ class RerankerConfig:
     # config change needs a searcher reset to take effect (the SSCG
     # benchmark's --reranker-dtype handles this via
     # _maybe_reset_for_construction_overrides).
-    hop1_reserved_slots: int = 6  # Reserve up to N hop-1-ranked candidates into
-    # the multi-hop rerank window (rerank_by_query) when hop-2 expansion pushes
-    # them out via score-scale incomparability at the top_k_candidates cut
-    # (hop-1 jina scores vs. raw cosine/0.0 expansion scores sorted together).
-    # 6 chosen by A/B sweep (N=5,6,8,9,10 probed; N>=8 starts evicting other
-    # golds' window slots as collateral damage; N=10 aggregate-regressed MRR
-    # on the 96q set). N=6: MRR flat within +/-0.02 noise on 96q and 63q,
-    # recall@20/recall@50/pool_hit_rate all positive on both, no latency cost.
-    # 0 disables (byte-identical to pre-fix behaviour). See
-    # docs/adr/0013-hop1-reserve-at-final-pool.md.
+    hop1_reserved_slots: int = field(
+        default=6,  # Reserve up to N hop-1-ranked candidates into
+        # the multi-hop rerank window (rerank_by_query) when hop-2 expansion pushes
+        # them out via score-scale incomparability at the top_k_candidates cut
+        # (hop-1 jina scores vs. raw cosine/0.0 expansion scores sorted together).
+        # 6 chosen by A/B sweep (N=5,6,8,9,10 probed; N>=8 starts evicting other
+        # golds' window slots as collateral damage; N=10 aggregate-regressed MRR
+        # on the 96q set). N=6: MRR flat within +/-0.02 noise on 96q and 63q,
+        # recall@20/recall@50/pool_hit_rate all positive on both, no latency cost.
+        # 0 disables (byte-identical to pre-fix behaviour). See
+        # docs/adr/0013-hop1-reserve-at-final-pool.md.
+        metadata=spec(
+            flat_alias="reranker_hop1_reserved_slots",
+            env="CLAUDE_RERANKER_HOP1_RESERVED_SLOTS",
+            reader="search/multi_hop_searcher.py",
+        ),
+    )
 
 
 @dataclass
 class OutputConfig:
     """MCP output formatting settings (4 fields)."""
 
-    format: str = (
-        "ultra"  # verbose, compact, ultra (default: ultra for 45-55% token reduction)
+    format: str = field(
+        default="ultra",  # verbose, compact, ultra (default: ultra for 45-55% token reduction)
+        metadata=spec(flat_alias="output_format", reader="mcp_server/server.py"),
     )
-    source_order_output: bool = False  # Emit results in relevance order (blended_score desc); set True to restore DOS-RAG file/line ordering
-    include_subgraph: bool = (
-        False  # Serialize ego_graph subgraph_* blocks into the response
+    source_order_output: bool = field(
+        default=False,  # Emit results in relevance order (blended_score desc); set True to restore DOS-RAG file/line ordering
+        metadata=spec(
+            flat_alias="source_order_output",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
     )
-    include_result_graph: bool = False  # Attach per-result `graph` dict to each result
+    include_subgraph: bool = field(
+        default=False,  # Serialize ego_graph subgraph_* blocks into the response
+        metadata=spec(
+            flat_alias="include_subgraph", reader="search/graph_scoring_stage.py"
+        ),
+    )
+    include_result_graph: bool = field(
+        default=False,  # Attach per-result `graph` dict to each result
+        metadata=spec(
+            flat_alias="include_result_graph",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
 
 
 @dataclass
@@ -313,32 +744,76 @@ class ChunkingConfig:
     """Chunking algorithm settings (10 fields)."""
 
     # Large function splitting (cAST paper: AST-aware splitting improves Recall@5 +66%)
-    enable_large_node_splitting: bool = True  # Split functions > max_chunk_lines
-    max_chunk_lines: int = 100  # Maximum lines before AST block splitting
+    enable_large_node_splitting: bool = field(
+        default=True,  # Split functions > max_chunk_lines
+        metadata=spec(
+            flat_alias="enable_large_node_splitting",
+            mcp="chunking",
+            reader="chunking/languages/base.py",
+        ),
+    )
+    max_chunk_lines: int = field(
+        default=100,  # Maximum lines before AST block splitting
+        metadata=spec(
+            range=(10, 1000),
+            flat_alias="max_chunk_lines",
+            mcp="chunking",
+            reader="chunking/languages/base.py",
+        ),
+    )
 
     # Splitting-specific configs (separate from merging)
     split_size_method: str = field(
-        default="characters", metadata={"choices": ("lines", "characters")}
+        default="characters",
+        metadata=spec(
+            choices=("lines", "characters"),
+            flat_alias="split_size_method",
+            mcp="chunking",
+            reader="chunking/languages/base.py",
+        ),
     )  # "lines" or "characters"
     max_split_chars: int = field(
-        default=3000, metadata={"range": (1000, 10000)}
+        default=3000,
+        metadata=spec(
+            range=(1000, 10000),
+            flat_alias="max_split_chars",
+            mcp="chunking",
+            reader="chunking/languages/base.py",
+        ),
     )  # Character-based splitting (~750 tokens, optimal for retrieval)
 
     # File-level module summaries (A2: improve GLOBAL query recall)
-    enable_file_summaries: bool = True  # Generate module-summary chunks per file
+    enable_file_summaries: bool = field(
+        default=True,  # Generate module-summary chunks per file
+        metadata=spec(mcp="chunking", reader="search/incremental_indexer.py"),
+    )
 
     # Adaptive chunk sizing (research: P75 baseline + complexity modulation)
     sizing_mode: str = field(
-        default="adaptive", metadata={"choices": ("fixed", "adaptive")}
+        default="adaptive",
+        metadata=spec(
+            choices=("fixed", "adaptive"),
+            mcp="chunking",
+            reader="chunking/languages/base.py",
+        ),
     )  # "fixed" (static) or "adaptive" (repo-profiled)
     adaptive_multiplier_max: float = field(
-        default=1.3, metadata={"range": (1.0, 2.0)}
+        default=1.3,
+        metadata=spec(
+            range=(1.0, 2.0), mcp="chunking", reader="chunking/languages/base.py"
+        ),
     )  # T_max = P75_baseline × this (low-complexity)
     adaptive_multiplier_min: float = field(
-        default=0.5, metadata={"range": (0.1, 1.0)}
+        default=0.5,
+        metadata=spec(
+            range=(0.1, 1.0), mcp="chunking", reader="chunking/languages/base.py"
+        ),
     )  # T_min = P75_baseline × this (high-complexity)
     max_complexity_cap: int = field(
-        default=30, metadata={"range": (5, 100)}
+        default=30,
+        metadata=spec(
+            range=(5, 100), mcp="chunking", reader="chunking/languages/base.py"
+        ),
     )  # Cv normalization ceiling (CC >= cap → Cv = 1.0)
 
     # GLSL call-graph extraction (Phase 2b): filter TouchDesigner's TD-prefixed
@@ -346,89 +821,242 @@ class ChunkingConfig:
     # metadata["calls"] alongside the always-on GLSL builtin/type-constructor
     # filter. Disable for non-TouchDesigner GLSL projects where a real
     # user-defined symbol might start with "TD".
-    glsl_filter_td_prefix: bool = True
+    glsl_filter_td_prefix: bool = field(
+        default=True,
+        metadata=spec(mcp="chunking", reader="chunking/languages/glsl.py"),
+    )
 
 
 @dataclass
 class EgoGraphConfig:
     """Ego-graph retrieval settings (RepoGraph ICLR 2025)."""
 
-    enabled: bool = True  # Enable ego-graph expansion
+    enabled: bool = field(
+        default=True,  # Enable ego-graph expansion
+        metadata=spec(
+            flat_alias="ego_graph_enabled", reader="search/hybrid_searcher.py"
+        ),
+    )
     k_hops: int = field(
-        default=2, metadata={"range": (1, 3)}
+        default=2,
+        metadata=spec(
+            range=(1, 3),
+            flat_alias="ego_graph_k_hops",
+            reader="search/ego_graph_retriever.py",
+        ),
     )  # Number of hops (1=direct neighbors, 2=include second-degree)
-    max_neighbors_per_hop: int = 10  # Max neighbors per hop
-    relation_types: list | None = None  # Filter to specific relations (None = all)
-    include_anchor: bool = True  # Include original anchor nodes in results
-    deduplicate: bool = True  # Remove duplicate chunk_ids
+    max_neighbors_per_hop: int = field(
+        default=10,  # Max neighbors per hop
+        metadata=spec(
+            flat_alias="ego_graph_max_neighbors_per_hop",
+            reader="search/ego_graph_retriever.py",
+        ),
+    )
+    relation_types: list | None = field(
+        default=None,  # Filter to specific relations (None = all)
+        metadata=spec(
+            flat_alias="ego_graph_relation_types",
+            reader="search/ego_graph_retriever.py",
+        ),
+    )
+    include_anchor: bool = field(
+        default=True,  # Include original anchor nodes in results
+        metadata=spec(
+            flat_alias="ego_graph_include_anchor",
+            reader="search/ego_graph_retriever.py",
+        ),
+    )
+    deduplicate: bool = field(
+        default=True,  # Remove duplicate chunk_ids
+        metadata=spec(
+            flat_alias="ego_graph_deduplicate", reader="search/ego_graph_retriever.py"
+        ),
+    )
     # RepoGraph relation filtering (Feature #5)
-    exclude_stdlib_imports: bool = True  # Filter stdlib from graph traversal
-    exclude_third_party_imports: bool = True  # Filter third-party from traversal
+    exclude_stdlib_imports: bool = field(
+        default=True,  # Filter stdlib from graph traversal
+        metadata=spec(reader="search/ego_graph_retriever.py"),
+    )
+    exclude_third_party_imports: bool = field(
+        default=True,  # Filter third-party from traversal
+        metadata=spec(reader="search/ego_graph_retriever.py"),
+    )
     # Weighted graph traversal
     edge_weights: dict[str, float] | None = field(
-        default_factory=lambda: DEFAULT_EDGE_WEIGHTS.copy()
+        default_factory=lambda: DEFAULT_EDGE_WEIGHTS.copy(),
+        metadata=spec(reader="search/ego_graph_retriever.py"),
     )  # Use weighted BFS by default (calls > imports priority)
     # QW3: expansion mode — "bfs" (default) or "ppr" (Personalized PageRank)
     expansion_mode: str = field(
-        default="bfs", metadata={"choices": ("bfs", "ppr")}
+        default="bfs",
+        metadata=spec(choices=("bfs", "ppr"), reader="search/ego_graph_retriever.py"),
     )  # "bfs" = k-hop BFS, "ppr" = Personalized PageRank
-    ppr_alpha: float = 0.85  # PPR damping factor (standard default)
+    ppr_alpha: float = field(
+        default=0.85,  # PPR damping factor (standard default)
+        metadata=spec(reader="search/ego_graph_retriever.py"),
+    )
     # QW5: minimum cosine similarity threshold for ego-graph neighbor filtering
-    min_similarity_threshold: float = 0.15  # Neighbors below this are filtered out
+    min_similarity_threshold: float = field(
+        default=0.15,  # Neighbors below this are filtered out
+        metadata=spec(reader="search/ego_graph_retriever.py"),
+    )
 
 
 @dataclass
 class ParentRetrievalConfig:
     """Parent chunk retrieval settings for Match Small, Retrieve Big."""
 
-    enabled: bool = False  # Disabled — parents get score=0, no ranking value
-    include_parent_content: bool = True  # Include parent's full content
+    enabled: bool = field(
+        default=False,  # Disabled — parents get score=0, no ranking value
+        metadata=spec(reader="search/hybrid_searcher.py"),
+    )
+    include_parent_content: bool = field(
+        default=True,  # Include parent's full content
+        metadata=spec(reader="search/hybrid_searcher.py"),
+    )
 
 
 @dataclass
 class GraphEnhancedConfig:
     """Graph-enhanced search settings."""
 
-    centrality_method: str = "pagerank"  # Centrality algorithm
+    centrality_method: str = field(
+        default="pagerank",  # Centrality algorithm
+        metadata=spec(
+            flat_alias="centrality_method", reader="search/graph_scoring_stage.py"
+        ),
+    )
     # Blending weight (0=semantic, 1=centrality). 0.0 per 2026-07-26 SSCG sweep:
     # recall falls monotonically with alpha on both golden sets (replicated
     # R@5 -0.027 at 0.2, -0.038 at 0.3 vs 0.0) with no MRR gain; the
     # query-aware boost suite in CentralityRanker.rerank() stays active.
-    centrality_alpha: float = 0.0
-    centrality_annotation: bool = True  # Always annotate centrality when graph exists
-    centrality_reranking: bool = True  # Always rerank by blended score
+    centrality_alpha: float = field(
+        default=0.0,
+        metadata=spec(
+            flat_alias="centrality_alpha", reader="search/graph_scoring_stage.py"
+        ),
+    )
+    centrality_annotation: bool = field(
+        default=True,  # Always annotate centrality when graph exists
+        metadata=spec(
+            flat_alias="centrality_annotation", reader="search/graph_scoring_stage.py"
+        ),
+    )
+    centrality_reranking: bool = field(
+        default=True,  # Always rerank by blended score
+        metadata=spec(
+            flat_alias="centrality_reranking", reader="search/graph_scoring_stage.py"
+        ),
+    )
     # Chunk-size normalization (penalize oversized chunks)
-    enable_size_normalization: bool = True  # Enable logarithmic size penalty
-    size_norm_target_lines: int = 200  # Target chunk size (no penalty below this)
-    size_norm_alpha: float = 0.1  # Penalty strength (higher = stronger penalty)
+    enable_size_normalization: bool = field(
+        default=True,  # Enable logarithmic size penalty
+        metadata=spec(
+            flat_alias="enable_size_normalization", reader="search/centrality_ranker.py"
+        ),
+    )
+    size_norm_target_lines: int = field(
+        default=200,  # Target chunk size (no penalty below this)
+        metadata=spec(
+            flat_alias="size_norm_target_lines", reader="search/centrality_ranker.py"
+        ),
+    )
+    size_norm_alpha: float = field(
+        default=0.1,  # Penalty strength (higher = stronger penalty)
+        metadata=spec(
+            flat_alias="size_norm_alpha", reader="search/centrality_ranker.py"
+        ),
+    )
     # Centrality-adaptive BM25 boost (LIMIT paper insight)
     # High-centrality chunks (utility functions, base classes) are exactly where
     # single-vector embeddings fail. Extra boost compensates for this limitation.
-    centrality_bm25_boost: bool = (
-        True  # Enable adaptive boost for high-centrality results
+    centrality_bm25_boost: bool = field(
+        default=True,  # Enable adaptive boost for high-centrality results
+        metadata=spec(
+            flat_alias="centrality_bm25_boost", reader="search/centrality_ranker.py"
+        ),
     )
-    centrality_boost_threshold: float = (
-        0.02  # Centrality score threshold to trigger boost
+    centrality_boost_threshold: float = field(
+        default=0.02,  # Centrality score threshold to trigger boost
+        metadata=spec(
+            flat_alias="centrality_boost_threshold",
+            reader="search/centrality_ranker.py",
+        ),
     )
-    centrality_boost_factor: float = 5.0  # Multiplier: boost = centrality * factor
-    centrality_boost_cap: float = 0.15  # Maximum boost added to blended_score
+    centrality_boost_factor: float = field(
+        default=5.0,  # Multiplier: boost = centrality * factor
+        metadata=spec(
+            flat_alias="centrality_boost_factor", reader="search/centrality_ranker.py"
+        ),
+    )
+    centrality_boost_cap: float = field(
+        default=0.15,  # Maximum boost added to blended_score
+        metadata=spec(
+            flat_alias="centrality_boost_cap", reader="search/centrality_ranker.py"
+        ),
+    )
     # Post-centrality result cap: total results kept = k * this multiplier
     # (k primary + (multiplier-1)*k graph/ego/parent context chunks)
-    max_results_multiplier: int = 8
+    max_results_multiplier: int = field(
+        default=8,
+        metadata=spec(
+            flat_alias="max_results_multiplier", reader="search/graph_scoring_stage.py"
+        ),
+    )
 
 
 @dataclass
 class ObservabilityConfig:
     """OTel tracing configuration (traces-only v1; metrics deferred to v2)."""
 
-    enabled: bool = False
-    service_name: str = "claude-context-local"
+    enabled: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="otel_enabled",
+            env="CLAUDE_OTEL_ENABLED",
+            reader="utils/observability.py",
+        ),
+    )
+    service_name: str = field(
+        default="claude-context-local",
+        metadata=spec(
+            flat_alias="otel_service_name",
+            reader="utils/observability.py",
+        ),
+    )
     exporter: str = field(
-        default="otlp", metadata={"choices": ("otlp", "console", "none")}
+        default="otlp",
+        metadata=spec(
+            choices=("otlp", "console", "none"),
+            flat_alias="otel_exporter",
+            env="CLAUDE_OTEL_EXPORTER",
+            reader="utils/observability.py",
+        ),
     )  # otlp | console(->stderr) | none
-    otlp_endpoint: str = "http://localhost:4318"
-    sample_ratio: float = 1.0
-    capture_query_text: bool = False  # off by default (query text can be sensitive)
+    otlp_endpoint: str = field(
+        default="http://localhost:4318",
+        metadata=spec(
+            flat_alias="otel_endpoint",
+            env="CLAUDE_OTEL_ENDPOINT",
+            reader="utils/observability.py",
+        ),
+    )
+    sample_ratio: float = field(
+        default=1.0,
+        metadata=spec(
+            flat_alias="otel_sample_ratio",
+            env="CLAUDE_OTEL_SAMPLE",
+            reader="utils/observability.py",
+        ),
+    )
+    capture_query_text: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="otel_capture_query_text",
+            env="CLAUDE_OTEL_CAPTURE_QUERY",
+            reader="search/hybrid_searcher.py",
+        ),
+    )  # off by default (query text can be sensitive)
 
 
 @dataclass
@@ -444,14 +1072,48 @@ class QueryExpansionConfig:
     exactly the unexpanded two-leg fusion path.
     """
 
-    enabled: bool = False  # Opt-in pending A/B (flip on pass, BM25-only)
-    variants_path: str = (
-        ""  # Empty = package default config/query_expansion_variants.yaml
+    enabled: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="query_expansion_enabled",
+            reader="search/search_executor.py",
+        ),
+    )  # Opt-in pending A/B (flip on pass, BM25-only)
+    variants_path: str = field(
+        default="",  # Empty = package default config/query_expansion_variants.yaml
+        metadata=spec(
+            flat_alias="query_expansion_variants_path",
+            reader="search/search_executor.py",
+        ),
     )
-    max_variants: int = 2  # Max matched concepts per query (deterministic order)
-    variant_weight_discount: float = 0.5  # Variant-leg weight = base leg weight * this
-    apply_to_bm25: bool = True  # Add expanded-query BM25 leg(s)
-    apply_to_dense: bool = False  # Add expanded-query dense leg(s) — needs its own A/B
+    max_variants: int = field(
+        default=2,
+        metadata=spec(
+            flat_alias="query_expansion_max_variants",
+            reader="search/search_executor.py",
+        ),
+    )  # Max matched concepts per query (deterministic order)
+    variant_weight_discount: float = field(
+        default=0.5,
+        metadata=spec(
+            flat_alias="query_expansion_weight_discount",
+            reader="search/search_executor.py",
+        ),
+    )  # Variant-leg weight = base leg weight * this
+    apply_to_bm25: bool = field(
+        default=True,
+        metadata=spec(
+            flat_alias="query_expansion_apply_to_bm25",
+            reader="search/search_executor.py",
+        ),
+    )  # Add expanded-query BM25 leg(s)
+    apply_to_dense: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="query_expansion_apply_to_dense",
+            reader="search/search_executor.py",
+        ),
+    )  # Add expanded-query dense leg(s) — needs its own A/B
 
 
 @dataclass
@@ -474,14 +1136,20 @@ class CallGraphConfig:
     seam runs.
     """
 
-    resolvers: list[str] | None = None
+    resolvers: list[str] | None = field(
+        default=None,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
     """Resolver names to attempt in the injection pipeline.
 
     Default: ``["pyan", "libcst"]`` (both in the ``[callgraph]`` extra).
     Set to ``["pyan"]`` to disable LibCST (Stage 2), ``[]`` to skip entirely.
     """
 
-    lsp_enabled: bool = True
+    lsp_enabled: bool = field(
+        default=True,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
     """Enable the basedpyright LSP resolver (Stage 3).
 
     Requested by default; no-ops unless the ``[lsp]`` extra is installed:
@@ -490,13 +1158,19 @@ class CallGraphConfig:
     full-type-check pass.
     """
 
-    lsp_timeout_seconds: float = 30.0
+    lsp_timeout_seconds: float = field(
+        default=30.0,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
     """Per-request timeout for LSP JSON-RPC calls (seconds).
 
     Increase for large codebases where basedpyright type-checking takes longer.
     """
 
-    lsp_total_timeout_seconds: float = 180.0
+    lsp_total_timeout_seconds: float = field(
+        default=180.0,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
     """Aggregate wall-clock budget for the *entire* LSP pass (seconds).
 
     Unlike ``lsp_timeout_seconds`` (per JSON-RPC request), this bounds the
@@ -506,7 +1180,10 @@ class CallGraphConfig:
     edges the pyan/libcst resolvers already produced.
     """
 
-    use_pyproject_toml: bool = False
+    use_pyproject_toml: bool = field(
+        default=False,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
     """Derive LibCST FQNs from the nearest ``pyproject.toml`` package root.
 
     Enable for *src-layout* projects (``src/mypkg/mod.py``) where the project
@@ -519,7 +1196,10 @@ class CallGraphConfig:
     Has no effect when ``"libcst"`` is not in ``resolvers``.
     """
 
-    min_confidence: float = 0.65
+    min_confidence: float = field(
+        default=0.65,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
     """Minimum resolver confidence required to inject an edge (inclusive floor).
 
     Edges from ``run_resolvers()`` whose ``confidence`` is strictly below this
@@ -597,6 +1277,67 @@ def validate_field_value(spec_cls: type, field_name: str, value: Any) -> str | N
             )
         return None  # found the field — spec passes (or no relevant key)
     return None  # unknown field — no spec to enforce
+
+
+def _derive_flat_key_aliases(
+    subconfig_types: dict[str, type],
+) -> dict[str, tuple[str, str]]:
+    """Derive the legacy-flat-key alias map from each field's ``spec(flat_alias=...)``.
+
+    Single declaration site per ADR-0022: a field states its own alias (or
+    leaves it unset), rather than restating that decision in a second
+    hand-maintained table.
+    """
+    aliases: dict[str, tuple[str, str]] = {}
+    for section_name, section_cls in subconfig_types.items():
+        for f in dataclasses.fields(section_cls):
+            alias = f.metadata.get("flat_alias")
+            if alias is not None:
+                aliases[alias] = (section_name, f.name)
+    return aliases
+
+
+def _derive_env_mapping(
+    subconfig_types: dict[str, type],
+    bool_converter: Callable[[str], bool],
+) -> dict[str, tuple[str, Callable[[str], Any]]]:
+    """Derive the ``CLAUDE_*`` env-var mapping from each field's ``spec(env=...)``.
+
+    The converter is inferred from the field's declared type — ``bool`` uses
+    the tolerant *bool_converter* (``bool("false")`` is truthy, so the raw
+    type is never usable directly); ``str``/``int``/``float`` use the type
+    itself. Every env-settable field is also flat-aliased (asserted by
+    ``test_search_config.py``), so ``flat_alias`` doubles as the dict key the
+    validation path looks up in ``_FLAT_KEY_ALIASES``. See ADR-0022.
+    """
+    type_converters: dict[type, Callable[[str], Any]] = {
+        str: str,
+        int: int,
+        float: float,
+        bool: bool_converter,
+    }
+    mapping: dict[str, tuple[str, Callable[[str], Any]]] = {}
+    for section_cls in subconfig_types.values():
+        for f in dataclasses.fields(section_cls):
+            env_var = f.metadata.get("env")
+            if env_var is None:
+                continue
+            mapping[env_var] = (f.metadata["flat_alias"], type_converters[f.type])
+    return mapping
+
+
+def _derive_mcp_field_names(section_cls: type, *mcp_tags: str) -> tuple[str, ...]:
+    """Field names (declaration order) whose ``spec(mcp=...)`` is one of *mcp_tags*.
+
+    Derives the MCP config handlers' per-tool field maps (e.g. ``configure_chunking``'s
+    settable fields, ``configure_reranker``'s settable + read-only echo fields) from the
+    same spec table instead of a hand-maintained tuple. See ADR-0022.
+    """
+    return tuple(
+        f.name
+        for f in dataclasses.fields(section_cls)
+        if f.metadata.get("mcp") in mcp_tags
+    )
 
 
 class SearchConfig:
@@ -722,121 +1463,13 @@ class SearchConfig:
     # (sub_config_name, field_name) in the nested schema.
     # Used by _flat_to_nested() and by SearchConfigManager.load_config()
     # to translate env overrides into the nested structure before merging.
-    _FLAT_KEY_ALIASES: dict[str, tuple[str, str]] = {
-        # EmbeddingConfig
-        "embedding_model_name": ("embedding", "model_name"),
-        "model_dimension": ("embedding", "dimension"),
-        "embedding_batch_size": ("embedding", "batch_size"),
-        "query_cache_size": ("embedding", "query_cache_size"),
-        "enable_import_context": ("embedding", "enable_import_context"),
-        "enable_class_context": ("embedding", "enable_class_context"),
-        "max_import_lines": ("embedding", "max_import_lines"),
-        "max_class_signature_lines": ("embedding", "max_class_signature_lines"),
-        "enable_structural_header": ("embedding", "enable_structural_header"),
-        # SearchModeConfig
-        "default_search_mode": ("search_mode", "default_mode"),
-        "enable_hybrid_search": ("search_mode", "enable_hybrid"),
-        "bm25_weight": ("search_mode", "bm25_weight"),
-        "dense_weight": ("search_mode", "dense_weight"),
-        "bm25_k1": ("search_mode", "bm25_k1"),
-        "bm25_b": ("search_mode", "bm25_b"),
-        "bm25_use_stopwords": ("search_mode", "bm25_use_stopwords"),
-        "bm25_use_stemming": ("search_mode", "bm25_use_stemming"),
-        "bm25_tokenizer": ("search_mode", "bm25_tokenizer"),
-        "bm25_reserved_slots": ("search_mode", "bm25_reserved_slots"),
-        "min_bm25_score": ("search_mode", "min_bm25_score"),
-        "rrf_k_parameter": ("search_mode", "rrf_k_parameter"),
-        "default_k": ("search_mode", "default_k"),
-        "max_k": ("search_mode", "max_k"),
-        # PerformanceConfig
-        "use_parallel_search": ("performance", "use_parallel_search"),
-        "max_parallel_workers": ("performance", "max_parallel_workers"),
-        "enable_parallel_chunking": ("performance", "enable_parallel_chunking"),
-        "max_chunking_workers": ("performance", "max_chunking_workers"),
-        "enable_entity_tracking": ("performance", "enable_entity_tracking"),
-        "prefer_gpu": ("performance", "prefer_gpu"),
-        "enable_fp16": ("performance", "enable_fp16"),
-        "prefer_bf16": ("performance", "prefer_bf16"),
-        "enable_dynamic_batch_size": ("performance", "enable_dynamic_batch_size"),
-        "dynamic_batch_min": ("performance", "dynamic_batch_min"),
-        "dynamic_batch_max": ("performance", "dynamic_batch_max"),
-        "enable_auto_reindex": ("performance", "enable_auto_reindex"),
-        "max_index_age_minutes": ("performance", "max_index_age_minutes"),
-        "allow_shared_memory": ("performance", "allow_ram_fallback"),  # backward-compat
-        # MultiHopConfig
-        "enable_multi_hop": ("multi_hop", "enabled"),
-        "multi_hop_count": ("multi_hop", "hop_count"),
-        "multi_hop_expansion": ("multi_hop", "expansion"),
-        "multi_hop_initial_k_multiplier": ("multi_hop", "initial_k_multiplier"),
-        "multi_hop_mode": ("multi_hop", "multi_hop_mode"),
-        # IntentConfig
-        "intent_enabled": ("intent", "enabled"),
-        "intent_confidence_threshold": ("intent", "confidence_threshold"),
-        "intent_default_intent": ("intent", "default_intent"),
-        "intent_log_classifications": ("intent", "log_classifications"),
-        "intent_semantic_enabled": ("intent", "semantic_enabled"),
-        "intent_semantic_weight": ("intent", "semantic_weight"),
-        # RerankerConfig
-        "reranker_enabled": ("reranker", "enabled"),
-        "reranker_model_name": ("reranker", "model_name"),
-        "reranker_top_k_candidates": ("reranker", "top_k_candidates"),
-        "reranker_min_vram_gb": ("reranker", "min_vram_gb"),
-        "reranker_batch_size": ("reranker", "batch_size"),
-        "reranker_dedupe_split_blocks": ("reranker", "dedupe_split_blocks"),
-        "reranker_single_pass": ("reranker", "single_pass"),
-        "reranker_instruction": ("reranker", "instruction"),
-        "reranker_doc_max_chars": ("reranker", "doc_max_chars"),
-        "reranker_listwise_doc_max_chars": ("reranker", "listwise_doc_max_chars"),
-        "reranker_listwise_dtype": ("reranker", "listwise_dtype"),
-        "reranker_hop1_reserved_slots": ("reranker", "hop1_reserved_slots"),
-        # OutputConfig
-        "output_format": ("output", "format"),
-        "source_order_output": ("output", "source_order_output"),
-        "include_subgraph": ("output", "include_subgraph"),
-        "include_result_graph": ("output", "include_result_graph"),
-        # ChunkingConfig (flat keys equal their field names for most)
-        "enable_large_node_splitting": ("chunking", "enable_large_node_splitting"),
-        "max_chunk_lines": ("chunking", "max_chunk_lines"),
-        "split_size_method": ("chunking", "split_size_method"),
-        "max_split_chars": ("chunking", "max_split_chars"),
-        # EgoGraphConfig
-        "ego_graph_enabled": ("ego_graph", "enabled"),
-        "ego_graph_k_hops": ("ego_graph", "k_hops"),
-        "ego_graph_max_neighbors_per_hop": ("ego_graph", "max_neighbors_per_hop"),
-        "ego_graph_relation_types": ("ego_graph", "relation_types"),
-        "ego_graph_include_anchor": ("ego_graph", "include_anchor"),
-        "ego_graph_deduplicate": ("ego_graph", "deduplicate"),
-        # GraphEnhancedConfig (flat keys equal their field names)
-        "centrality_method": ("graph_enhanced", "centrality_method"),
-        "centrality_alpha": ("graph_enhanced", "centrality_alpha"),
-        "centrality_annotation": ("graph_enhanced", "centrality_annotation"),
-        "centrality_reranking": ("graph_enhanced", "centrality_reranking"),
-        "enable_size_normalization": ("graph_enhanced", "enable_size_normalization"),
-        "size_norm_target_lines": ("graph_enhanced", "size_norm_target_lines"),
-        "size_norm_alpha": ("graph_enhanced", "size_norm_alpha"),
-        "centrality_bm25_boost": ("graph_enhanced", "centrality_bm25_boost"),
-        "centrality_boost_threshold": ("graph_enhanced", "centrality_boost_threshold"),
-        "centrality_boost_factor": ("graph_enhanced", "centrality_boost_factor"),
-        "centrality_boost_cap": ("graph_enhanced", "centrality_boost_cap"),
-        "max_results_multiplier": ("graph_enhanced", "max_results_multiplier"),
-        # ObservabilityConfig
-        "otel_enabled": ("observability", "enabled"),
-        "otel_service_name": ("observability", "service_name"),
-        "otel_exporter": ("observability", "exporter"),
-        "otel_endpoint": ("observability", "otlp_endpoint"),
-        "otel_sample_ratio": ("observability", "sample_ratio"),
-        "otel_capture_query_text": ("observability", "capture_query_text"),
-        # QueryExpansionConfig
-        "query_expansion_enabled": ("query_expansion", "enabled"),
-        "query_expansion_variants_path": ("query_expansion", "variants_path"),
-        "query_expansion_max_variants": ("query_expansion", "max_variants"),
-        "query_expansion_weight_discount": (
-            "query_expansion",
-            "variant_weight_discount",
-        ),
-        "query_expansion_apply_to_bm25": ("query_expansion", "apply_to_bm25"),
-        "query_expansion_apply_to_dense": ("query_expansion", "apply_to_dense"),
-    }
+    #
+    # Derived from each field's spec(flat_alias=...) — see ADR-0022. The
+    # backward-compat shim ("allow_shared_memory" -> performance.allow_ram_fallback)
+    # is declared the same way, as PerformanceConfig.allow_ram_fallback's alias.
+    _FLAT_KEY_ALIASES: dict[str, tuple[str, str]] = _derive_flat_key_aliases(
+        _SUBCONFIG_TYPES
+    )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to nested dictionary for JSON serialization.
@@ -1120,79 +1753,10 @@ class SearchConfigManager:
 
     def _load_from_environment(self) -> dict[str, Any]:
         """Load configuration from environment variables."""
-        env_mapping = {
-            "CLAUDE_EMBEDDING_MODEL": ("embedding_model_name", str),
-            "CLAUDE_EMBEDDING_BATCH_SIZE": ("embedding_batch_size", int),
-            "CLAUDE_QUERY_CACHE_SIZE": ("query_cache_size", int),
-            "CLAUDE_SEARCH_MODE": ("default_search_mode", str),
-            "CLAUDE_ENABLE_HYBRID": ("enable_hybrid_search", self._bool_from_env),
-            "CLAUDE_BM25_WEIGHT": ("bm25_weight", float),
-            "CLAUDE_DENSE_WEIGHT": ("dense_weight", float),
-            "CLAUDE_BM25_USE_STEMMING": ("bm25_use_stemming", self._bool_from_env),
-            "CLAUDE_USE_PARALLEL": ("use_parallel_search", self._bool_from_env),
-            "CLAUDE_ENABLE_PARALLEL_CHUNKING": (
-                "enable_parallel_chunking",
-                self._bool_from_env,
-            ),
-            "CLAUDE_MAX_CHUNKING_WORKERS": ("max_chunking_workers", int),
-            "CLAUDE_ENABLE_ENTITY_TRACKING": (
-                "enable_entity_tracking",
-                self._bool_from_env,
-            ),
-            "CLAUDE_PREFER_GPU": ("prefer_gpu", self._bool_from_env),
-            "CLAUDE_ENABLE_FP16": ("enable_fp16", self._bool_from_env),
-            "CLAUDE_PREFER_BF16": ("prefer_bf16", self._bool_from_env),
-            "CLAUDE_DYNAMIC_BATCH_ENABLED": (
-                "enable_dynamic_batch_size",
-                self._bool_from_env,
-            ),
-            "CLAUDE_DYNAMIC_BATCH_MIN": ("dynamic_batch_min", int),
-            "CLAUDE_DYNAMIC_BATCH_MAX": ("dynamic_batch_max", int),
-            "CLAUDE_AUTO_REINDEX": ("enable_auto_reindex", self._bool_from_env),
-            "CLAUDE_MAX_INDEX_AGE": ("max_index_age_minutes", float),
-            "CLAUDE_ENABLE_MULTI_HOP": ("enable_multi_hop", self._bool_from_env),
-            "CLAUDE_MULTI_HOP_COUNT": ("multi_hop_count", int),
-            "CLAUDE_MULTI_HOP_EXPANSION": ("multi_hop_expansion", float),
-            "CLAUDE_MULTI_HOP_INITIAL_K_MULTIPLIER": (
-                "multi_hop_initial_k_multiplier",
-                float,
-            ),
-            "CLAUDE_DEFAULT_K": ("default_k", int),
-            "CLAUDE_MAX_K": ("max_k", int),
-            "CLAUDE_RERANKER_ENABLED": ("reranker_enabled", self._bool_from_env),
-            "CLAUDE_RERANKER_MODEL": ("reranker_model_name", str),
-            "CLAUDE_RERANKER_TOP_K": ("reranker_top_k_candidates", int),
-            "CLAUDE_RERANKER_HOP1_RESERVED_SLOTS": (
-                "reranker_hop1_reserved_slots",
-                int,
-            ),
-            "CLAUDE_RERANKER_MIN_VRAM_GB": ("reranker_min_vram_gb", float),
-            "CLAUDE_RERANKER_BATCH_SIZE": ("reranker_batch_size", int),
-            "CLAUDE_RERANKER_DEDUPE_SPLIT_BLOCKS": (
-                "reranker_dedupe_split_blocks",
-                self._bool_from_env,
-            ),
-            "CLAUDE_RERANKER_SINGLE_PASS": (
-                "reranker_single_pass",
-                self._bool_from_env,
-            ),
-            "CLAUDE_RERANKER_INSTRUCTION": ("reranker_instruction", str),
-            "CLAUDE_RERANKER_DOC_MAX_CHARS": ("reranker_doc_max_chars", int),
-            "CLAUDE_RERANKER_LISTWISE_DOC_MAX_CHARS": (
-                "reranker_listwise_doc_max_chars",
-                int,
-            ),
-            "CLAUDE_RERANKER_LISTWISE_DTYPE": ("reranker_listwise_dtype", str),
-            # Observability (OTel tracing) env vars
-            "CLAUDE_OTEL_ENABLED": ("otel_enabled", self._bool_from_env),
-            "CLAUDE_OTEL_EXPORTER": ("otel_exporter", str),
-            "CLAUDE_OTEL_ENDPOINT": ("otel_endpoint", str),
-            "CLAUDE_OTEL_SAMPLE": ("otel_sample_ratio", float),
-            "CLAUDE_OTEL_CAPTURE_QUERY": (
-                "otel_capture_query_text",
-                self._bool_from_env,
-            ),
-        }
+        # Derived from each field's spec(env=...) — see ADR-0022.
+        env_mapping = _derive_env_mapping(
+            SearchConfig._SUBCONFIG_TYPES, self._bool_from_env
+        )
 
         config_dict: dict[str, Any] = {}
         for env_var, (config_key, converter) in env_mapping.items():
