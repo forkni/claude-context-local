@@ -113,10 +113,12 @@ reading pre-2026-08-02 records).
    measured no-op on results with a +2–4% latency cost. Retained as a
    diagnostic for future GPU-stack changes (e.g. verifying a new torch/CUDA
    version still runs strict-deterministic end to end).
-3. **`performance.deterministic_gpu` is NOT promoted to production** — it
-   stays `False` in the dataclass default, the deployed config, and the
-   example config. The knob and `utils/determinism.py` remain (harmless,
-   default-off, precedent: `listwise_dtype`).
+3. **`performance.deterministic_gpu` is REMOVED from the config surface**
+   (user decision after this verdict): the dataclass field, flat alias,
+   `CLAUDE_DETERMINISTIC_GPU` env mapping, `initialize_server_state` wiring,
+   and example-config line are deleted, and no menu-UI entry is added. The
+   diagnostic survives only as the benchmark `--deterministic-gpu` flag,
+   which calls `utils/determinism.py` directly.
 4. **Production MCP server stays unpinned.** Within one server process results
    are already reproducible (one process = one hash seed); cross-restart
    variance is quality-neutral pool re-realization. Pinning

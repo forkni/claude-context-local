@@ -90,7 +90,6 @@ class TestGuardrails:
             "multi_hop.expansion",
             "multi_hop.multi_hop_mode",
             "embedding.model_name",
-            "performance.deterministic_gpu",
         } == FORBIDDEN_AUTO_TUNE_KEYS
 
     def test_no_override_rule_touches_forbidden_keys(self):

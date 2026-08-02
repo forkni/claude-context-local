@@ -1,9 +1,12 @@
-"""GPU determinism pinning.
+"""GPU determinism pinning — benchmark-harness diagnostic only.
 
-The fp32 reranker arm (evaluation/RERANKER_FP32_DETERMINISM_AB_20260802.md)
-established that run-to-run MRR flips are kernel-layer noise — cuBLAS
-reduction order cascading through the listwise rerank pool — not weight
-precision. This module pins the deterministic kernel paths:
+The determinism arm (docs/adr/0021-benchmark-hash-seed-determinism.md) proved
+run-to-run MRR flips were Python hash randomization, not GPU kernels: this
+pin is a measured no-op on results with a +2-4% latency cost. It is kept
+solely as a diagnostic — e.g. re-validating that a new torch/CUDA version
+still runs the funnel strict-deterministic end to end — reachable only via
+``run_sscg_benchmark.py --deterministic-gpu``. There is no config knob or
+production wiring. Pinned paths:
 
 - ``CUBLAS_WORKSPACE_CONFIG=:4096:8`` (must be set before the FIRST cuBLAS
   call in the process, i.e. before any model load)
@@ -12,9 +15,6 @@ precision. This module pins the deterministic kernel paths:
 
 The pinning is intentionally process-global: the embedder's dense leg feeds
 the candidate pool, so whole-pipeline pinning is the point.
-
-Gated by ``performance.deterministic_gpu`` (default False = byte-identical
-behavior, no torch global touched).
 """
 
 import logging

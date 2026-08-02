@@ -76,7 +76,6 @@ def test_warn_only_passthrough():
 
 
 def test_fresh_process_reports_untouched():
-    """Default state: nothing applied until the config flag opts in
-    (resource_manager only calls the helper when
-    performance.deterministic_gpu is True)."""
+    """Default state: nothing applied until the benchmark flag opts in
+    (only run_sscg_benchmark.py --deterministic-gpu calls the helper)."""
     assert determinism.is_applied() is False

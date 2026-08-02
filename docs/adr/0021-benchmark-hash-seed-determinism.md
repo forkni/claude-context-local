@@ -8,9 +8,10 @@ the noise floor that forced the flapper list and the 2-agreeing-rounds rule)
 are caused by Python hash randomization, not GPU kernel non-determinism.
 `run_sscg_benchmark.py` now re-execs itself with `PYTHONHASHSEED=0` when the
 variable is unset, making rounds bit-identical at zero latency cost. The
-`performance.deterministic_gpu` knob shipped for this arm is retained as an
-opt-in diagnostic but rejected for any default: it is a measured no-op on
-results with a +2–4% latency cost.
+`performance.deterministic_gpu` config knob shipped for this arm is removed
+again (user decision after the verdict): it is a measured no-op on results
+with a +2–4% latency cost. The diagnostic survives only as the
+benchmark-harness `--deterministic-gpu` flag.
 
 ## Context
 
@@ -49,10 +50,14 @@ model was right; its seed was wrong.
   (`sscg_hs0_expanded_r{1,2}_20260802.json`). Deliberate comparability break
   with all unpinned baselines. The flapper list and 2-agreeing-rounds rule
   retire for benchmark work.
-- **Keep `--deterministic-gpu` and `performance.deterministic_gpu` opt-in,
-  default off, everywhere.** No production promotion. The helper
-  (`utils/determinism.py`) stays as a diagnostic (e.g. re-validating strict
-  determinism after a torch/CUDA upgrade), precedent `listwise_dtype`.
+- **Remove the `performance.deterministic_gpu` config knob; the diagnostic is
+  harness-only.** No production surface: the dataclass field, its flat alias,
+  the `CLAUDE_DETERMINISTIC_GPU` env mapping, the server startup wiring, and
+  the example-config line are deleted (user decision after the verdict — a
+  measured no-op does not earn a config field). The benchmark flag
+  `--deterministic-gpu` stays, calling `utils/determinism.py` directly, as a
+  diagnostic for future GPU-stack changes (e.g. re-validating strict
+  determinism after a torch/CUDA upgrade).
 - **Leave the production MCP server unpinned.** One long-lived process has one
   hash seed, so live sessions are already internally consistent; cross-restart
   pool re-realization is quality-neutral.
