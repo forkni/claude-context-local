@@ -30,12 +30,10 @@ This guide covers the complete installation process for the Claude Context MCP s
   - EmbeddingGemma model: ~1.2 GB
   - Qwen3-0.6B model: ~2.3 GB (long-context, MRL support)
   - F2LLM-v2-0.6B model: ~2.2 GB (best retrieval ordering, opt-in)
-  - CodeRankEmbed model: ~0.6 GB (code-specific, CSN: 77.9 MRR)
-  - GTE-ModernBERT-base model: ~0.28 GB (lightest, code-optimized)
   - PyTorch with CUDA: ~2.4 GB
   - Dependencies and cache: ~500 MB
 - **Memory**: 4GB RAM minimum, 8GB+ recommended
-- **GPU** (optional): NVIDIA GPU with CUDA 11.8+ or 12.x support
+- **GPU** (optional): NVIDIA GPU with CUDA 12.8 (primary) or CUDA 12.4 (fallback) support
   - **Startup VRAM (v0.5.17+)**: 0 MB (lazy loading enabled)
   - **After first search**: 1.5-2 GB VRAM (single embedding model, plus ~2GB for the neural reranker if enabled)
   - Single-model mode: 2-4 GB VRAM total
@@ -469,14 +467,13 @@ pip install -e ".[test]"
 
 ### Version Requirements
 
-- **Minimum PyTorch**: 2.6.0+
+- **Required range**: `torch>=2.8.0,<2.9.0` — pinned in `pyproject.toml`, installed automatically by `uv sync`
 - **Reason**:
-  - BGE-M3 model requires PyTorch 2.6.0+ for security fixes and stability
-  - EmbeddingGemma requires transformers >= 4.51.3, which needs PyTorch >= 2.4.0
-  - PyTorch 2.6.0 only provides cu118 builds (no cu121 available)
-- **CUDA Compatibility**: cu118 builds work with CUDA 11.8, 12.x systems
+  - BGE-M3 (default model) needs PyTorch >= 2.6.0; EmbeddingGemma-300m needs >= 2.4.0 (transformers >= 4.51.3) — `>=2.8.0` covers both floors
+  - The `<2.9.0` ceiling is intentional: PyTorch 2.9.x breaks GTE-ModernBERT's `torch.compile(dynamic=True)` on Windows — see `docs/PYTORCH_COMPATIBILITY.md` for the full rationale and deferred-CVE tracking
+- **CUDA Compatibility**: `pyproject.toml` pins an explicit `cu128` wheel index (default; required for RTX 50-series, also works on older Ampere/Ada cards) with a `cu124` index kept as a manual fallback for older drivers
 - **Compatible Versions**:
-  - PyTorch: 2.6.0+
+  - PyTorch: `>=2.8.0,<2.9.0`
   - transformers: 4.51.3+ (4.56.0-Embedding-Gemma-preview for EmbeddingGemma)
   - sentence-transformers: 5.1.0+
 
@@ -485,8 +482,8 @@ pip install -e ".[test]"
 #### UV Method (Recommended)
 
 ```bash
-# Windows - CUDA 11.8 build (compatible with CUDA 12.x)
-uv pip install torch>=2.6.0 torchvision torchaudio --python .venv\Scripts\python.exe --index-url https://download.pytorch.org/whl/cu118
+# uv resolves torch via the pinned pytorch-cu128 index automatically -- no extra flags needed
+uv sync
 ```
 
 > **Note**: This project only uses `torch` directly. `torchvision` and `torchaudio` are included for PyTorch ecosystem compatibility but are not actively used by the codebase.
@@ -494,16 +491,17 @@ uv pip install torch>=2.6.0 torchvision torchaudio --python .venv\Scripts\python
 #### pip Method (Fallback)
 
 ```bash
-# CUDA 11.8 build (compatible with CUDA 12.x)
-pip install torch>=2.6.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# CUDA 12.8 build (primary index)
+pip install "torch>=2.8.0,<2.9.0" torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 ```
 
 ### CUDA Index URLs
 
-- **CUDA 11.8**: `https://download.pytorch.org/whl/cu118` (recommended, works with CUDA 11.8+ and 12.x)
+- **CUDA 12.8**: `https://download.pytorch.org/whl/cu128` (default; required for RTX 50-series, backward compatible with older Ampere/Ada cards)
+- **CUDA 12.4**: `https://download.pytorch.org/whl/cu124` (fallback for systems with an older driver that can't satisfy `cu128`)
 - **CPU only**: `https://download.pytorch.org/whl/cpu`
 
-> **Note**: PyTorch 2.6.0 only provides cu118 builds. The cu118 build is fully compatible with CUDA 12.x systems due to backward compatibility.
+> **Note**: See `docs/PYTORCH_COMPATIBILITY.md` for the full CUDA index configuration, the `<2.9.0` ceiling rationale, and troubleshooting steps.
 
 ## Verification & Testing
 
@@ -558,7 +556,7 @@ After installation, validate that all critical dependencies meet minimum version
 .venv\Scripts\python.exe -m utils.version_check
 
 # Expected output:
-# [OK] torch==2.8.0+cu118
+# [OK] torch==2.8.0+cu128
 # [OK] transformers==4.47.1
 # [OK] sentence-transformers==3.4.1
 # [OK] numpy==2.2.4
@@ -578,7 +576,7 @@ After installation, validate that all critical dependencies meet minimum version
 
 **Features:**
 
-- Handles CUDA build metadata (e.g., `2.8.0+cu118` correctly compared)
+- Handles CUDA build metadata (e.g., `2.8.0+cu128` correctly compared)
 - ASCII-safe output compatible with Windows console
 - Clear error messages with upgrade instructions
 - Validates at startup to catch environment issues early
@@ -834,8 +832,8 @@ These utilities are interactive and will show you what will be deleted before pr
 **Solution**:
 
 ```bash
-# Ensure PyTorch >= 2.6.0
-uv pip install --upgrade torch>=2.6.0 --index-url https://download.pytorch.org/whl/cu118
+# Ensure PyTorch is within the pinned range (>=2.8.0,<2.9.0)
+uv pip install --upgrade "torch>=2.8.0,<2.9.0" --index-url https://download.pytorch.org/whl/cu128
 ```
 
 **Cause**: Old PyTorch version incompatible with newer transformers
@@ -1175,8 +1173,8 @@ Startup (server starts):              0 MB VRAM (lazy loading)
 
 1. **CUDA Setup**
    - Install NVIDIA drivers (latest)
-   - Verify CUDA toolkit compatibility (11.8+ or 12.x)
-   - Use cu118 PyTorch builds (compatible with CUDA 11.8+ and 12.x)
+   - Verify CUDA toolkit compatibility (CUDA 12.8 primary, CUDA 12.4 fallback)
+   - Use cu128 PyTorch builds (fall back to cu124 on older drivers)
 
 2. **Memory Management**
    - Monitor GPU memory usage during indexing

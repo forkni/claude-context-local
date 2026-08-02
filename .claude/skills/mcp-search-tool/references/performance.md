@@ -2,7 +2,7 @@
 
 ## Latest Validation (2026-07-26/27, post-Q2-sweep, `top_k_candidates=30`, F2LLM-v2-0.6B + jina-reranker-v3, RTX 4090 24GB)
 
-Current-config benchmark headline, run **after** the Q2 sweep retuned `RerankerConfig.top_k_candidates` (`search/config.py:281`) from 50 to **30**
+Current-config benchmark headline, run **after** the Q2 sweep retuned `RerankerConfig.top_k_candidates` (`search/config.py`) from 50 to **30**
 (quality-neutral within ±0.025, 32% faster). These runs used this machine's locally deployed models (`codefuse-ai/F2LLM-v2-0.6B` embedder +
 `jinaai/jina-reranker-v3` reranker per `search_config.json`) — not the shipped code defaults (`BAAI/bge-m3` +
 `Alibaba-NLP/gte-reranker-modernbert-base`); treat these numbers as validation of the *tuning*, not a claim about out-of-the-box behavior on a fresh

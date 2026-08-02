@@ -18,7 +18,7 @@ for improved accuracy and efficiency. This guide explains how to configure and c
 
 - **Reciprocal Rank Fusion (RRF)** combines results from multiple search methods
 - **Complementary strengths**: BM25 for exact text matches, dense search for semantic similarity
-- **Proven quality metrics**: MRR 0.797, Recall@5 0.689, Hit@5 100% (see [SSCG Retrieval Benchmark](BENCHMARKS.md#sscg-retrieval-benchmark))
+- **Proven quality metrics**: MRR 0.7987 on the 63-query canonical golden set, k=10, hybrid mode (2026-08-01/02 baseline; see [SSCG Retrieval Benchmark](BENCHMARKS.md#sscg-retrieval-benchmark) for the full provenance-stamped tables and comparability notes)
 - **Configurable weights** to tune for your specific use case
 - **Auto-mode detection** based on query characteristics
 
@@ -389,7 +389,9 @@ The Snowball stemmer (Porter2 algorithm) normalizes words during BM25 text prepr
 > all** — `bm25_use_stemming` is only consulted by the `"legacy"` tokenizer variant
 > (`search/bm25_index.py`). The `"whole"` default keeps identifiers intact (no
 > camelCase/snake_case split, no stemming) and outperforms `"legacy"` on the golden
-> sets (+0.05/+0.07 Recall@5, +0.09/+0.10 MRR — `search/config.py:173-174`). The
+> sets (+0.05/+0.07 Recall@5, +0.09/+0.10 MRR — see the `bm25_tokenizer` field in
+> `search/config.py`'s `SearchModeConfig`; the tokenizer choice is consumed by
+> `TextPreprocessor._resolve_tokenizer` in `search/bm25_index.py`). The
 > stemming behavior and benchmark numbers below apply only if you opt back into
 > `bm25_tokenizer: "legacy"`; switching tokenizers requires a full reindex.
 
@@ -977,5 +979,14 @@ Field names mirror `search_config.json.example` — see that file (and `search/c
 `SearchModeConfig`/`PerformanceConfig`/`MultiHopConfig`/`QueryExpansionConfig` dataclasses)
 for the authoritative list; this excerpt is illustrative, not exhaustive. Note `bm25_tokenizer: "whole"` keeps
 identifiers intact with **no stemming** — changing it requires a full reindex.
+
+> **Packaged vs. deployed model config**: the dataclass factory defaults and the tracked
+> `search_config.json.example` both ship `embedding.model_name = "BAAI/bge-m3"` and
+> `reranker.model_name = "Alibaba-NLP/gte-reranker-modernbert-base"`. A **deployed**
+> `search_config.json` (gitignored, machine-local) can diverge from that — e.g. this
+> development machine currently runs `F2LLM-v2-0.6B` + `jina-reranker-v3`. Docs and
+> benchmark reports that name a specific model are describing whichever layer they
+> measured; check `get_search_config_status` for the model actually active on your
+> installation rather than assuming the packaged default.
 
 This configuration provides optimal performance for most Windows development environments with CUDA-capable GPUs.

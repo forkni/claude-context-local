@@ -1,7 +1,8 @@
-# ADR-0019: Reject intent-adaptive fusion weights (measured, replicated, removed)
+# Reject intent-adaptive fusion weights (measured, replicated, removed)
 
-**Status**: Accepted (2026-08-01)
-**Supersedes the open question left by**: ADR-0018
+Status: accepted
+Date: 2026-08-01
+Supersedes the open question left by: ADR-0018
 
 ## Context
 

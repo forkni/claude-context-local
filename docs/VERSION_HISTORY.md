@@ -2,32 +2,54 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-08-01)
+## Current Status: All Features Operational (2026-08-02)
 
 - **Version**: 0.23.0
 - **Status**: Production-ready, concurrency-safe
-- **Test Coverage**: 3,359 unit tests · 103 fast_integration · 22 integration · 93 slow_integration (2026-07-27)
-- **Dependencies**: 38 direct (`pyproject.toml`) + optional `[callgraph]` / `[lsp]` / `[gpu]` / `[otel]` extras
-- **SSCG Benchmark**: MRR 0.787-0.796, Recall@7 0.719-0.734, Recall@20 0.80-0.81 (2026-07-26/27)
+- **Test Coverage**: 5,540 unit tests · 102 fast_integration · 19 integration · 108 slow_integration (2026-08-02)
+- **Dependencies**: 36 direct (`pyproject.toml`) + optional `[callgraph]` / `[lsp]` / `[test]` / `[dev]` / `[gpu]` / `[otel]` extras
+- **SSCG Benchmark**: MRR 0.7987 (canonical, 63q, k=10) / 0.659 (expanded, 131 non-D, k=10) — see `evaluation/BASELINE_20260801.md` for full provenance; the README's k=7 headline (MRR 0.787-0.796, 2026-07-27) is a separate operating point, not directly comparable
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: v0.23.0 — MCP Python SDK v1→v2 migration (`mcp>=2,<3`, decorator handlers → constructor-kwarg `on_*` handlers), DSPy eval subsystem removed (13 files, 4,849 lines); v0.22.0 — GLSL indexing parity, persistent chunk embedding cache (43× reindex speedup), BM25 path/symbol augmentation (MRR +0.113), `HybridSearcher.clear_index()` truthiness fix (was discarding 100% of resolver-derived call edges); v0.21.0 — MCPB extension bundle, module-preamble chunks, core/advanced MCP tool tiering, default embedder corrected to `BAAI/bge-m3`, Qwen3-Reranker official-template fix (MRR 0.311→0.754)
+- **Recent**: v0.23.0 — MCP Python SDK v1→v2 migration, community/DSPy/ONNX subsystems removed (86 commits since v0.22.0, three models dropped from the registries), per-project config overrides (ADR-0014), config field liveness audit (ADR-0020); v0.22.0 — GLSL indexing parity, persistent chunk embedding cache (43× reindex speedup), BM25 path/symbol augmentation (MRR +0.113), `HybridSearcher.clear_index()` truthiness fix (was discarding 100% of resolver-derived call edges); v0.21.0 — MCPB extension bundle, module-preamble chunks, core/advanced MCP tool tiering, default embedder corrected to `BAAI/bge-m3`, Qwen3-Reranker official-template fix (MRR 0.311→0.754)
 
 ---
 
-## v0.23.0 - MCP SDK v2 Migration, DSPy Eval Subsystem Removed (2026-08-01)
+## v0.23.0 - SDK v2 Migration, Three Subsystems Removed, Config Liveness Audit (2026-08-02)
 
-Two-commit release: removes the DSPy agent-evaluation subsystem (no production consumer,
-superseded by `scripts/benchmark/run_mcp_pipeline_eval.py`), then migrates the MCP Python SDK
-from v1 to v2 now that the subsystem's client-session usage is out of the way. Full rationale in
-`docs/adr/0016-remove-dspy-eval-subsystem.md` and `docs/adr/0017-adopt-mcp-sdk-v2.md`.
+86 commits since `v0.22.0`. The headline is three subsystem removals — community-detection/
+summarization (ADR-0015), DSPy agent-evaluation (ADR-0016, no production consumer, superseded by
+`scripts/benchmark/run_mcp_pipeline_eval.py`), and the ONNX inference path — landing alongside an
+MCP Python SDK v1→v2 migration (ADR-0017) and a 13-field config liveness audit (ADR-0020: 7 fields
+wired to real config control, 6 dead fields deleted). Full CHANGELOG entry: `CHANGELOG.md` `[0.23.0]`.
 
 ### Migration
 
-- **No index rebuild required** — this release touches the MCP transport layer and eval
-  tooling only; chunking, embedding, and index format are unchanged.
+- **Reindex recommended, not required.** `INDEX_VERSION` stays at 4, but the community-removal
+  score-demotion change means any stale `__community__/*` chunks from a pre-0.23.0 index now
+  compete at full score instead of being demoted — a full reindex clears them.
+- Before upgrading a deployed `search_config.json`, check `embedding.model_name` and
+  `reranker.model_name` against the pruned registries below — a config pinned to a removed model
+  fails to load until repointed.
+
+### Added
+
+- **Per-project config overrides + auto-tune probe** (ADR-0014) — a `search_overrides.json` layer
+  between the shipped defaults and a project's live config.
+- **`exclude_same_file` on `find_similar_code`** (`d468dcb`) — caller-controlled cross-file-only
+  filtering, default byte-identical to prior behavior.
+- **Four new evaluation metrics** (`21a438c`) — `recall@20`, `recall@50`, `pool_hit_rate`,
+  `file_acc@k`/`file_recall@k`; plus an `mcp_eval` CI regression gate (`d20e0de`).
+- **Golden dataset expanded 108 → 145 queries** (`988f1f9`) — 37 commit-mined bug-fix-localization
+  queries promoted after a 2-round grading pass.
+- **Config field liveness audit** (ADR-0020) — 7 previously-hardcoded fields wired to real config
+  control (byte-identical default behavior); an ego-graph config-reset bug found and fixed
+  alongside the audit.
 
 ### Removed
 
+- **Community-detection/summarization subsystem** (ADR-0015) — scoped to the retrieval pipeline;
+  `evaluation/metrics.py` and `scripts/benchmark/run_sscg_benchmark.py` retain
+  community-membership helpers used only for benchmark ablation, not live search.
 - **DSPy eval subsystem** (13 files, 4,849 lines): `evaluation/dspy_agent_eval.py`,
   `evaluation/dspy_gepa_optimize.py`, `utils/dspy_claude_code.py`, `utils/dspy_mcp.py`,
   `scripts/benchmark/run_dspy_eval.py`, `scripts/benchmark/run_dspy_gepa.py`,
@@ -36,6 +58,12 @@ from v1 to v2 now that the subsystem's client-session usage is out of the way. F
   its pyrefly stub-ignore entries are gone from `pyproject.toml`. Historical measurements
   (Recall@7=0.9046, MRR=0.8519, 77-query set) are preserved as dated citations in
   `.claude/skills/mcp-search-tool/SKILL.md` and `references/performance.md`.
+- **ONNX inference path** (`72b6881`).
+- **Three models removed from the registries** (`24f6b8c`, **breaking**): `nomic-ai/CodeRankEmbed`
+  and `Alibaba-NLP/gte-modernbert-base` from `MODEL_REGISTRY`; `Qwen/Qwen3-Reranker-4B` from
+  `GENERATIVE_RERANKERS`. `MODEL_REGISTRY` now has 4 entries: `google/embeddinggemma-300m`,
+  `BAAI/bge-m3`, `Qwen/Qwen3-Embedding-0.6B`, `codefuse-ai/F2LLM-v2-0.6B`.
+- **`[eval]` / `[profile]` optional-dependency extras** — no longer needed after the DSPy removal.
 
 ### Changed
 
@@ -311,7 +339,7 @@ New agent-evaluation and optimization subsystem built on DSPy, plus search quali
 
 ### Added — DSPy/GEPA agent-evaluation harness
 
-- **`ClaudeCodeLM` subscription backend** (`utils/dspy_claude_code.py`) — `dspy.BaseLM` subclass that shells to `claude -p --output-format json`; routes rollout and reflection calls through a Claude Max subscription with zero API cost. Handles dict and array CLI JSON shapes, async dispatch, intentionally-zero cost accounting. `configure_dspy()` helper. See `docs/DSPY_SETUP.md`.
+- **`ClaudeCodeLM` subscription backend** (`utils/dspy_claude_code.py`) — `dspy.BaseLM` subclass that shells to `claude -p --output-format json`; routes rollout and reflection calls through a Claude Max subscription with zero API cost. Handles dict and array CLI JSON shapes, async dispatch, intentionally-zero cost accounting. `configure_dspy()` helper. (Setup guide `docs/DSPY_SETUP.md` removed along with the rest of this subsystem in v0.23.0, ADR-0016.)
 - **DSPy ReAct → MCP HTTP bridge** — wraps the running code-search HTTP server as DSPy-callable tools for structured agent rollouts against the live index.
 - **DSPy agent-evaluation harness** — `dspy.Evaluate` + `dspy.GEPA` end-to-end harness; dataset loading, metric wiring, trace collection.
 - **GEPA optimization on CodeNavQA** — reflective evolutionary search with the subscription LM as proposer. GEPA-discovered guidance improved **Recall@7 0.668→0.717** after distillation back into the `CodeNavQA` signature. Includes chunk-id verbatim copy fix, unranked recall ceiling metric, tool-vs-agent recall diagnostic.

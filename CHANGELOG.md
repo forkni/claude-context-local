@@ -9,6 +9,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.23.0] - 2026-08-02
+
+86 commits since `v0.22.0`. The headline is three subsystem removals (community, DSPy, ONNX)
+plus an MCP SDK major-version migration; see `### Removed` for the breaking changes.
+
+### Migration
+
+- **MCP SDK bumped to v2** (`mcp>=2,<3`, ADR-0017) — `mcp_server/server.py`'s six JSON-RPC
+  handlers moved from post-construction `@server.*()` decorators to v2's constructor-kwarg
+  `on_*` pattern. Wire format is unchanged (verified end-to-end over HTTP transport and a live
+  MCP client); no client-side action needed unless you vendor `mcp_server/server.py` directly.
+- **Reindex recommended, not required.** `INDEX_VERSION` stays at 4 — no forced rebuild — but
+  the community-subsystem removal (below) dropped `community` from the score-demotion tables
+  while any stale `__community__/*` chunks from a pre-0.23.0 index persist on disk and now
+  compete at full score instead of being demoted. A full reindex clears them; leaving an old
+  index in place is safe, just not optimal.
+- Before upgrading a deployed `search_config.json`, check `embedding.model_name` and
+  `reranker.model_name` — three models were removed from the registries this release (see
+  `### Removed`); a deployed config pinned to one of them will fail to load until repointed.
+
+### Added
+
+- **Per-project config overrides + auto-tune probe** (ADR-0014) — a `search_overrides.json`
+  layer sits between the shipped defaults and a project's live config.
+- **`exclude_same_file` on `find_similar_code`** (`d468dcb`) — caller-controlled cross-file-only
+  filtering; default is byte-identical to prior behavior.
+- **Listwise reranker document-budget config** (ADR-0011) — `listwise_doc_max_chars`, decoupled
+  from the pointwise reranker's `doc_max_chars`.
+- **Curated query-expansion feature**, shipped **disabled** (ADR-0012) — complete but opt-in;
+  re-evaluated and closed in ADR-0012's follow-up with the flag left off (pool-flooding
+  interaction with the listwise reranker, not a vocabulary gap).
+- **Four new evaluation metrics** (`21a438c`) — `recall@20`, `recall@50`, `pool_hit_rate`,
+  `file_acc@k`/`file_recall@k` for multi-file-localization queries.
+- **`mcp_eval` CI regression gate** (`d20e0de`) — golden-set drift guard runs in CI.
+- **Golden dataset expanded 108 → 145 queries** (`988f1f9`) — 37 commit-mined bug-fix-
+  localization queries promoted after a 2-round grading pass.
+- **Commit-mined query-candidate harness** (`scripts/benchmark/grade_candidate_queries.py`,
+  `merge_h_queries.py`) — mines historical bug-fix commits into candidate golden queries.
+- **Stable-miss funnel probe** (`c5467e3`, `scripts/benchmark/probe_stable_misses.py`) —
+  diagnostic tooling for queries that miss consistently across repeated runs.
+- **Config field liveness audit** (ADR-0020) — 7 previously-hardcoded fields wired to real
+  config control: `embedding.query_cache_size`, `search_mode.min_bm25_score`,
+  `performance.max_parallel_workers`, `intent.default_intent`, `ego_graph.deduplicate`,
+  `parent_retrieval.include_parent_content`, `observability.capture_query_text`. Every wired
+  default equals the prior hardcoded value, so this is byte-identical behavior on a default
+  config.
+
+### Changed
+
+- **`RetrievalRequest` carries effective config** (ADR-0018) — search-time config resolution
+  moved onto the request object instead of being re-derived mid-pipeline.
+- **Base install trimmed** — fewer transitive packages after the DSPy and ONNX removals below.
+- `tmp/` and `temp/` directories added to default index excludes (`838c24d`) — these were
+  previously indexed as ordinary source, polluting search results with scratch files.
+
+### Fixed
+
+- **HTTP transport now fails fast on port conflicts** (`7606b40`) instead of hanging.
+- **Two clear/force-reindex bugs** (`db4c181`): `CodeGraphStorage.clear()` wasn't deleting its
+  backing JSON, and the ego-graph retriever was silently returning zero neighbors after every
+  in-process full reindex.
+- **Hop-1 candidate reservation** (ADR-0013, default 6 slots) — multi-hop expansion no longer
+  displaces strong hop-1 candidates via score-scale incomparability at the rerank-window cut.
+- **19 stale golden-dataset entries repaired** (`6df36db`) after a `dedup_key` normalization
+  gap let 3-part `split_block` golds drift from their parent chunk.
+- **Ego-graph config reset bug** (ADR-0020, `search/ego_graph_retriever.py`) — found and fixed
+  alongside the config-field audit.
+
 ### Removed
 
 - **Community-detection/summarization/remerge subsystem** (ADR-0015) — deleted
@@ -20,7 +90,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and synthetic-chunk demotion machinery (~194 `module` chunks) and the ablation harness/metrics
   used to gate ADR-0015 are unaffected and remain in place. `chunk_type="community"` no longer
   exists; existing indices carrying legacy `*_communities.json` files are unaffected on load and
-  are purged on next full reindex.
+  are purged on next full reindex. This removal is scoped to the retrieval pipeline —
+  `evaluation/metrics.py` and `scripts/benchmark/run_sscg_benchmark.py` retain
+  community-membership helpers used only for benchmark ablation, not for live search.
+- **DSPy evaluation subsystem** (ADR-0016) — 13 files, 4,849 lines, superseded by
+  `run_mcp_pipeline_eval.py`; zero production consumers at time of removal.
+- **ONNX inference path** (`72b6881`).
+- **Three models removed from the registries** (`24f6b8c`, **breaking** for any deployed config
+  pinned to one of these): `nomic-ai/CodeRankEmbed` and `Alibaba-NLP/gte-modernbert-base` from
+  `MODEL_REGISTRY`, and `Qwen/Qwen3-Reranker-4B` from `GENERATIVE_RERANKERS`.
+  `MODEL_REGISTRY` now has 4 entries: `google/embeddinggemma-300m`, `BAAI/bge-m3`,
+  `Qwen/Qwen3-Embedding-0.6B`, `codefuse-ai/F2LLM-v2-0.6B`.
+- **`[eval]` and `[profile]` optional-dependency extras** — no longer needed after the DSPy
+  removal.
+- **6 dead config fields deleted** (ADR-0020), each confirmed orphaned by three independent
+  methods (semantic search, call-graph zero-caller lookup, exhaustive grep):
+  `chunking.min_chunk_tokens`, `chunking.max_merged_tokens`, `chunking.token_estimation`,
+  `chunking.size_method`, `search_mode.enable_result_reranking`,
+  `parent_retrieval.max_parents_per_result`. Their driver — the greedy-merge chunk pass — had
+  already been removed from `chunking/languages/base.py` in a prior refactor; this audit deleted
+  the ~94 lines of now-orphaned code the fields still configured, plus two test files that only
+  exercised it (`tests/unit/chunking/test_greedy_merge.py`,
+  `tests/unit/chunking/test_token_estimation.py`).
+
+### Security
+
+- 8 previously-deferred `torch` CVEs addressed (`4332736`); `nltk` bumped to 3.10.0, `uv` to
+  0.12.0; a 24-package safe-update wave across the rest of the dependency tree.
+
+### Performance
+
+- Full index builds ~7-9s (11-14%) faster from the community-subsystem removal (fewer stages in
+  the write path).
 
 ---
 

@@ -3,9 +3,9 @@
 Status: superseded
 Date: 2026-06-12
 
-**Superseded 2026-07-31**: the ONNX inference path this ADR describes was deleted wholesale as
-dormant code (never wired to a runtime toggle, no supported conversion path) as part of the
-dependency-optimization plan's Phase D. `embeddings/onnx_wrapper.py`, `embeddings/onnx_loader.py`,
+**Superseded 2026-07-31** (`72b6881`): the ONNX inference path this ADR describes was deleted
+wholesale as dormant code (never wired to a runtime toggle, no supported conversion path) as
+part of the dependency-optimization plan's Phase D. `embeddings/onnx_wrapper.py`, `embeddings/onnx_loader.py`,
 `tools/convert_onnx.py`, `ModelLoader._should_use_onnx`/`_load_onnx`, and
 `PerformanceConfig.use_onnx`/`onnx_gpu_mem_limit` no longer exist. The remaining PyTorch-only path
 uses `embeddings/embedder.py`'s activation-cost floors without an ONNX/PyTorch branch. Kept for

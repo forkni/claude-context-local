@@ -22,7 +22,8 @@ Scan all k results for:
 
 - Class overview queries: "what does X do", "how does X work"
 - Sibling context queries: "encode and decode", "save and load"
-- Queries where module summary chunks may surface (they have `chunk_type="module"` and appear at rank 1-2)
+- Queries where module summary chunks matter — under the default ordering (`source_order_output=false`, v0.18.0+) they are demoted to the **tail** of
+  the array for non-GLOBAL queries, not rank 1-2, so a low array position does not mean low relevance (`chunk_type="module"`)
 
 Use `chunk_type="function"` or `chunk_type="class"` to filter out synthetic summary chunks when you need specific implementations.
 

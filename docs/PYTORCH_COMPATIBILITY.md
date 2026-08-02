@@ -12,9 +12,10 @@ This document explains PyTorch version requirements and compatibility for claude
 - **PyTorch 2.4.0+** - Minimum for EmbeddingGemma-300m
 - **transformers >= 4.51.3** - Required for EmbeddingGemma support
 
-These floors apply to the current 6-model registry (BGE-M3, EmbeddingGemma-300m,
-Qwen3-0.6B, F2LLM-v2-0.6B, CodeRankEmbed, GTE-ModernBERT-base) — none of the
-models added since this guide was written raise the minimum versions above.
+These floors apply to the current 4-model registry (BGE-M3, EmbeddingGemma-300m,
+Qwen3-0.6B, F2LLM-v2-0.6B) — none of the models added since this guide was written
+raise the minimum versions above. (`CodeRankEmbed` and `GTE-ModernBERT-base` were
+removed from `MODEL_REGISTRY` in v0.23.0.)
 
 ### Recommended (and Enforced) Versions
 

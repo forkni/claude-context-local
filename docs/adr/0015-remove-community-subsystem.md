@@ -1,6 +1,6 @@
 # Remove the community-detection subsystem; cancel the Leiden migration
 
-Status: proposed (pending human grading of Category G golds)
+Status: accepted
 Date: 2026-07-30
 
 We planned to migrate community detection from Louvain to Leiden. Before

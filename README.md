@@ -42,18 +42,18 @@
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 3,359 unit tests passing | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
+**Status**: ✅ Production-ready | 5,540 unit tests passing (+102 fast_integration, +19 integration, +108 slow_integration) | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
 
-*Last reviewed: 2026-07-27*
+*Last reviewed: 2026-08-02*
 
-## What's New in v0.22.0
+## What's New in v0.23.0
 
-- **GLSL indexing parity with Python**: rewrote `GLSLChunker` around the real tree-sitter grammar — named uniforms/UBO blocks/structs/macros, GLSL call-graph edges, `.glslinc` as an 8th GLSL extension (20 extensions total)
-- **Persistent chunk embedding cache**: cuts a full reindex's embedding phase from ~34s to well under 1s (43×) once the codebase is unchanged
-- **BM25 path/symbol token augmentation**: adopted after A/B verification — MRR +0.113 on the 63-query benchmark; drives `INDEX_VERSION` 3→4
-- **Fixed the highest-severity bug this cycle**: every full reindex was silently discarding 100% of resolver-derived call-graph edges (`HybridSearcher.clear_index()` truthiness bug)
-- **Widened retrieval funnel**: hybrid `search_k` raised to `max(reranker_budget, k*5)` — the largest recall improvement this release
-- ⚠️ **Migration**: existing indices need one full, non-incremental reindex (`INDEX_VERSION` 4, BM25 tokenizer switch, GLSL parity) — see [CHANGELOG.md](CHANGELOG.md)
+- **MCP Python SDK v1 → v2 migration**: six JSON-RPC handlers converted to the v2 constructor-kwarg pattern; wire format unchanged, verified end-to-end
+- **Three subsystems removed**: community-detection/summarization (ADR-0015), DSPy evaluation (ADR-0016, 4,849 lines), and the ONNX inference path
+- **Per-project config overrides + auto-tune probe** (ADR-0014) and `exclude_same_file` on `find_similar_code`
+- **Richer evaluation**: `recall@20`/`recall@50`/`pool_hit_rate`/`file_acc@k` metrics, a CI regression gate, and the golden dataset expanded 108 → 145 queries
+- **Config field liveness audit** (ADR-0020): 7 previously-hardcoded settings wired to real config control (byte-identical default behavior), 6 dead fields removed
+- ⚠️ **Breaking**: `nomic-ai/CodeRankEmbed`, `Alibaba-NLP/gte-modernbert-base`, and `Qwen/Qwen3-Reranker-4B` removed from the model registries — a deployed config pinned to one of these will fail to load until repointed. See [CHANGELOG.md](CHANGELOG.md)
 
 Previous release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -235,7 +235,7 @@ start_mcp_server.cmd → 3 (Search Configuration)
 
 ## Search Modes
 
-Quality metrics below are from the [SSCG benchmark](#benchmark-results) (2026-06-08, 13-query dataset, k=10) and are **stale** — the golden dataset has since grown to 77 queries across 6 categories and needs a rerun. They describe mode performance on this benchmark only — not general reliability guarantees.
+Quality metrics below are from the [SSCG benchmark](#benchmark-results) (2026-06-08, 13-query dataset, k=10) and are **stale** — the canonical golden dataset (`evaluation/golden_dataset.json`) has since grown to 77 queries across 6 categories, and a separate expanded set (`evaluation/golden_dataset_expanded.json`) now holds 145. No per-mode (hybrid/semantic/bm25) A/B has been rerun on either; see [Benchmark Results](#benchmark-results) for the current hybrid-only baseline. This table describes mode performance on the old 13-query benchmark only — not general reliability guarantees.
 
 | Mode | Description | SSCG Quality (2026-06-08, k=10) | Status |
 |------|-------------|-------------------------------|--------|
@@ -309,7 +309,7 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
   - Qwen3-0.6B: ~2.3GB
   - F2LLM-v2-0.6B: ~2.2GB
 - **Windows**: Windows 10/11 with PowerShell
-- **PyTorch**: 2.6.0+ (auto-installed with CUDA 11.8/12.4/12.6 support)
+- **PyTorch**: `>=2.8.0,<2.9.0` (auto-installed with CUDA 12.8 primary / CUDA 12.4 fallback support; 2.9.x is excluded — it breaks ModernBERT `torch.compile`)
 - **GPU** (optional): NVIDIA GPU with CUDA for 8.6x faster indexing
 
 Everything works on CPU if GPU unavailable.
@@ -361,8 +361,6 @@ Weights should sum to 1.0.
 | **EmbeddingGemma-300m** | ~1.2GB | Lightweight, low-VRAM systems |
 | **Qwen3-0.6B** | 2.3GB | High efficiency, excellent value |
 | **F2LLM-v2-0.6B** | 2.2GB | Best retrieval ordering (MTEB avg 66.47) |
-| **CodeRankEmbed** | 0.5-0.6GB | Code-specific retrieval |
-| **GTE-ModernBERT** | ~0.28GB | Lightest option |
 
 **Instant switching**: <150ms with no re-indexing required.
 
@@ -410,8 +408,6 @@ For automation and CI/CD, settings can be overridden via environment variables. 
 | **EmbeddingGemma-300m** | 768 | ~1.2GB | Lightweight, low-VRAM systems |
 | **Qwen3-0.6B** | 1024 | 2.3GB | High efficiency, excellent value |
 | **F2LLM-v2-0.6B** | 1024 | 2.2GB | Best retrieval ordering (MTEB avg 66.47) |
-| **CodeRankEmbed** | 768 | 0.5-0.6GB | Code-specific retrieval |
-| **GTE-ModernBERT** | 768 | ~0.28GB | Lightest option |
 
 **Instant model switching**: <150ms with per-model index storage - no re-indexing needed!
 
@@ -431,7 +427,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 3,359 unit tests (+103 fast_integration, 22 integration, 93 slow_integration)
+└── tests/             # 5,540 unit tests (+102 fast_integration, 19 integration, 108 slow_integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -444,29 +440,43 @@ claude-context-local/
 
 ## Benchmark Results
 
-### Latest Validation (2026-06-08, hybrid k=10)
+### Latest Validation (2026-08-01/02, hybrid-only, k=10)
 
-Post golden-set drift fix (`b5cfc24`) and line-overlap harness fix (`184e13b`). Recommended operating point: **k=7** (`golden_dataset.recommended_k=7`). All metrics auto-computed by `scripts/benchmark/run_sscg_benchmark.py`. Thresholds enforced from `evaluation/golden_dataset.json`.
+Provenance: `evaluation/BASELINE_20260801.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`), taken after the MCP SDK v2 migration and ADR-0018/ADR-0019 (intent-adaptive-weights rejection). Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
 
-| MRR | Recall@5 | Recall@7 | Recall@10 | Hit@5 | NDCG@5 | Line Recall | Line Precision | Line IoU |
-|-----|----------|----------|-----------|-------|--------|-------------|----------------|----------|
-| **0.797** | **0.689** | **0.736** | **0.770** | **13/13 (100%)** | **0.717** | 0.852 | 0.267 | 0.304 |
+| Dataset | Queries | MRR | Recall@5 | Recall@10 | NDCG@5 | pool_hit_rate |
+|---|---|---|---|---|---|---|
+| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.7987** (μ, n=3) | 0.6170 | 0.7700 | 0.6394 | 1.0000 |
+| Expanded (`golden_dataset_expanded.json`, non-D, post H-promotion) | 131 | **0.659** (0.6591 / 0.6587, n=2) | 0.636 | 0.765 | 0.600 | ~0.96 |
+| F-via-similar (anchor-chunk view, F-category) | 9 | **0.8502** | — | file_recall@5 0.8034 | 0.6561 | 1.0000 |
 
-Thresholds: MRR ≥ 0.50 ✓ | Recall@5 ≥ 0.55 ✓ | Hit@5 ≥ 0.80 ✓
+Run-to-run noise band is **±0.02 MRR**, measured directly via a same-code control (two 94-query runs on unchanged code landed 0.701 and 0.683). Treat any delta smaller than that as noise.
 
-### SSCG Mode Comparison (2026-06-08, k=10)
+**Comparability breaks** — do not read the numbers above as a trend against older figures in this repo's history:
 
-All three modes evaluated against 13 queries with neural reranker active. The cross-encoder reranker dominates final ranking — all modes reach the same MRR (0.797). Hybrid leads on deep recall.
+- The 2026-07-28 golden-dataset repair (`6df36db`) changed scoring for 3-part `split_block` chunks; nothing measured before that commit is comparable to what's measured after.
+- The 2026-08-02 H-category promotion grew the expanded set 108→145 queries (94→131 non-D) by adding 37 commit-mined bug-localization queries; the pre-promotion 94-query MRR (0.6815) and the post-promotion 131-query MRR (0.659) describe different datasets, not a regression — H queries are harder by construction (single-file, ≤2 golds).
+- `0.797` in the historical table below (2026-06-08, 13 queries) predates the golden-dataset repair, the H-promotion, and the SDK v2 migration; kept only for continuity.
 
-| Mode | MRR | Recall@5 | Recall@7 | Recall@10 | Hit@5 | NDCG@5 | Best for |
-|------|-----|----------|----------|-----------|-------|--------|----------|
-| **Hybrid** (default) | 0.797 | **0.689** | **0.736** | 0.770 | 13/13 (100%) | **0.717** | Deep recall, balanced |
-| **BM25** | 0.797 | **0.689** | 0.723 | **0.777** | 13/13 (100%) | **0.717** | Exact symbol lookup |
-| **Semantic** | 0.797 | 0.676 | 0.723 | 0.758 | 13/13 (100%) | 0.705 | Concept/intent queries |
+### Live MCP pipeline eval (k=7, orchestrator + multi-hop, 2026-08-01)
 
-**Key findings**: Reranker normalises MRR across modes. Hybrid leads on R@7 (0.736); BM25 highest raw R@10 (0.777). All modes Hit@5 = 100% (13/13). See `evaluation/golden_dataset.json` and `scripts/benchmark/run_sscg_benchmark.py` for details.
+`run_mcp_pipeline_eval.py --k 7`, categories A/B/C (n=45) — exercises the full multi-hop + ego-graph + reranker orchestrator path, not just the bare searcher:
 
-A newer A/B run (2026-07-26, 63-query original golden set, `F2LLM-v2-0.6B` vs `Qwen3-Embedding-0.6B`) showed a consistent MRR gain for F2LLM (+0.026/+0.027 mean, 4/4 runs); recall and latency were flat. F2LLM is available as an opt-in embedding model — see `evaluation/EMBEDDER_F2LLM_AB_20260726.md` for the full protocol and results.
+| MRR | Recall@7 | Hit@7 | NDCG@5 | Recall@5 |
+|---|---|---|---|---|
+| **0.9019** | **0.7741** | 97.8% | 0.7278 | 0.7122 |
+
+### Historical: 2026-06-08 mode comparison (13-query dataset, superseded)
+
+Kept for continuity only — do not compare against the tables above. No current per-mode (hybrid/semantic/bm25) A/B exists on the 2026-08-01 baseline; only hybrid was measured there.
+
+| Mode | MRR | Recall@5 | Recall@7 | Recall@10 | Hit@5 | Best for |
+|------|-----|----------|----------|-----------|-------|----------|
+| **Hybrid** (default) | 0.797 | 0.689 | 0.736 | 0.770 | 13/13 (100%) | Deep recall, balanced |
+| **BM25** | 0.797 | 0.689 | 0.723 | 0.777 | 13/13 (100%) | Exact symbol lookup |
+| **Semantic** | 0.797 | 0.676 | 0.723 | 0.758 | 13/13 (100%) | Concept/intent queries |
+
+A separate embedder A/B (2026-07-26, 63-query original golden set, `F2LLM-v2-0.6B` vs `Qwen3-Embedding-0.6B`) showed a consistent MRR gain for F2LLM (+0.026/+0.027 mean, 4/4 runs); recall and latency were flat. F2LLM is available as an opt-in embedding model — see `evaluation/EMBEDDER_F2LLM_AB_20260726.md` for the full protocol and results.
 
 See [benchmarks](docs/BENCHMARKS.md) for full SSCG retrieval metrics and token efficiency results (63% reduction).
 
@@ -539,7 +549,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (3,359 unit tests, 100% pass rate)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (5,540 unit tests, 100% pass rate)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 
@@ -551,7 +561,7 @@ Contributions welcome! Quick start:
 
 1. Fork and clone the repository
 2. Install: `install-windows.cmd` or `pip install -e .[dev,test]`
-3. Run tests: `pytest tests/ -v`
+3. Run tests: `./scripts/test/run_tests.sh tests/unit/ -q` (the project `.venv` is not auto-activated; bare `pytest` resolves to system Python and fails the venv guard in `tests/conftest.py`)
 4. Create a branch from `development`
 5. Submit PR to `development` branch
 

@@ -294,7 +294,7 @@ When filters change during incremental indexing:
 - **Fix**: Corrected field names in `index_handlers.py` and `incremental_indexer.py`
 - **Result**: Consistent filter persistence across all models during multi-model indexing
 
-**Files**: `mcp_server/index_handlers.py`, `mcp_server/search_handlers.py`, `search/filter_engine.py`, `search/filters.py`
+**Files**: `mcp_server/tools/index_handlers.py`, `mcp_server/tools/search_handlers.py`, `search/filter_engine.py`, `search/filters.py`
 
 ---
 
@@ -353,7 +353,10 @@ set CLAUDE_DEFAULT_PROJECT=C:\Projects\MyProject
 
 ## Model Selection Guide
 
-### Available Models (6 total)
+### Available Models (4 total)
+
+`nomic-ai/CodeRankEmbed` and `Alibaba-NLP/gte-modernbert-base` were removed from `MODEL_REGISTRY`
+in v0.23.0 (`24f6b8c`) — a deployed config pinned to either now fails to load until repointed.
 
 | Model | Type | Dimensions | VRAM | Best For |
 | ------- | ------ | ------------ | ------ | ---------- |
@@ -361,24 +364,22 @@ set CLAUDE_DEFAULT_PROJECT=C:\Projects\MyProject
 | **EmbeddingGemma-300m** | General | 768 | ~1.2 GB | Lightweight, low-VRAM systems |
 | **Qwen3-0.6B** | General | 1024 | 2.3 GB | Long-context (32k), MRL support |
 | **F2LLM-v2-0.6B** | General | 1024 | 2.2 GB | Best retrieval ordering (MTEB avg 66.47) |
-| **CodeRankEmbed** | Code | 768 | 0.5–0.6 GB | Code-specific retrieval (CSN: 77.9 MRR) |
-| **GTE-ModernBERT-base** | Code | 768 | 0.28 GB | Lightest option, code-optimized (CoIR: 79.31 NDCG@10) |
 
 ### Switching Models
 
 **Environment Variable Examples:**
 
 ```bash
-# General-purpose (recommended)
+# General-purpose (recommended, default)
 set CLAUDE_EMBEDDING_MODEL=BAAI/bge-m3
 
-# Code-specific
-set CLAUDE_EMBEDDING_MODEL=nomic-ai/CodeRankEmbed
-
-# High efficiency
+# High efficiency, long-context
 set CLAUDE_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
 
-# Default (fast)
+# Best retrieval ordering
+set CLAUDE_EMBEDDING_MODEL=codefuse-ai/F2LLM-v2-0.6B
+
+# Lightest, low-VRAM
 set CLAUDE_EMBEDDING_MODEL=google/embeddinggemma-300m
 ```
 
@@ -400,18 +401,13 @@ start_mcp_server.bat → 3 (Search Config) → 4 (Select Model)
 
 **For Code Projects:**
 
-- ✅ **CodeRankEmbed** - Code-specific retrieval (CSN: 77.9 MRR, CoIR: 60.1 NDCG@10), 2GB VRAM
+- ✅ **F2LLM-v2-0.6B** - Best retrieval ordering measured on this repo's own benchmark (MRR +0.026 vs Qwen3-0.6B), 2.2GB VRAM
 - ✅ **BGE-M3** - General-purpose with hybrid search support, 1-1.5GB VRAM
 
 **For General Text/Documents:**
 
 - ✅ **Qwen3-0.6B** - Best value, high efficiency, 2.3GB VRAM
 - ✅ **BGE-M3** - Production baseline, 1-1.5GB VRAM
-
-### Detailed Research
-
-- **Code models**: `docs/Researches/CODE_SPECIFIC_EMBEDDING_MODELS.md`
-- **General models**: `docs/Researches/GENERAL_PURPOSE_EMBEDDING_MODELS.md`
 
 ---
 
@@ -723,8 +719,8 @@ regardless of hardware capabilities.
 | Tier | VRAM Range | Default Models | Features Enabled |
 | ------ | ------------ | ---------------- | ------------------ |
 | **Minimal** | <6GB | EmbeddingGemma-300m (fallback) | Single-model only, no neural reranking |
-| **Laptop** | 6-10GB | EmbeddingGemma or BGE-M3 | Single-model; 6 models selectable |
-| **Desktop** | 10-18GB | BGE-M3 (default) | Single-model; 6 models selectable |
+| **Laptop** | 6-10GB | EmbeddingGemma or BGE-M3 | Single-model; 4 models selectable |
+| **Desktop** | 10-18GB | BGE-M3 (default) | Single-model; 4 models selectable |
 | **Workstation** | 18GB+ | Any model | Single-model; all features available |
 
 ### Automatic Configuration
@@ -796,11 +792,11 @@ set CLAUDE_RERANKER_ENABLED=false
 
 ### Implementation Details
 
-**File**: `embeddings/vram_manager.py`
+**File**: `search/vram_manager.py` (`VRAMTierManager`)
 
 **Test Coverage**: 42 unit tests
 
-**See also**: `docs/MODEL_MIGRATION_GUIDE.md` for model selection guidance
+**See also**: [Model Selection Guide](#model-selection-guide) above
 
 ---
 
@@ -915,13 +911,12 @@ mgr.save_config(cfg)
 
 ### Benchmark Results
 
-From `tools/benchmark_models.py`:
-
-| Query Type | With Reranking | Without Reranking | Improvement |
-| ------------ | --------------- | ------------------- | ------------- |
-| Semantic queries | 0.85 MRR | 0.78 MRR | +9% |
-| Keyword queries | 0.92 MRR | 0.90 MRR | +2% |
-| Mixed queries | 0.83 MRR | 0.79 MRR | +5% |
+Neural reranking improves ranking quality by 15-25% (see the Highlights table in
+[README.md](../README.md)). The per-query-type table formerly here cited
+`tools/benchmark_models.py`, which has since moved to `_archive/BENCHMARKING/` (excluded from
+the index) with no run date recorded — it's been removed rather than carried forward unlabeled.
+Current provenance-stamped figures live in [Benchmark Results](../README.md#benchmark-results)
+and `evaluation/BASELINE_20260801.md`.
 
 **Implementation**: `search/neural_reranker.py`, `search/reranking_engine.py`
 
@@ -1017,12 +1012,12 @@ Traditional hash-based project identification breaks when drive letters change, 
 
 ### Implementation Details
 
-**4 Utility Functions** (`search/filters.py`, `mcp_server/utils/path_utils.py`):
+**4 Utility Functions** (`search/filters.py`, `utils/path_utils.py`):
 
 1. `compute_drive_agnostic_hash(path)` - Hash without drive letter
 2. `compute_legacy_hash(path)` - Traditional full-path hash
 3. `get_effective_filters()` - Resolve default + user filters
-4. `normalize_path_filters()` - Normalize path separators
+4. `normalize_path(path)` - Normalize path separators to forward slashes
 
 **Storage**: Merkle snapshots include drive-agnostic project IDs
 
@@ -3360,7 +3355,11 @@ PageRank-based centrality scoring is blended with semantic search scores to boos
 blended_score = centrality × alpha + semantic_score × (1 - alpha)
 ```
 
-Where `alpha = 0.3` (30% centrality, 70% semantic).
+Where `alpha` is `GraphEnhancedConfig.centrality_alpha` (`search/config.py`), **default `0.0`**
+(pure semantic score, no centrality blend) as of a 2026-07-26 SSCG sweep — recall fell
+monotonically with alpha on both golden sets (R@5 −0.027 at 0.2, −0.038 at 0.3, replicated) with
+no MRR gain. The query-aware boost suite in `CentralityRanker.rerank()` stays active regardless
+of alpha; raise alpha only if you've re-validated it against your own corpus.
 
 **PageRank Calculation**: Standard PageRank algorithm on the code graph with all 21 relationship types as edges.
 
@@ -3378,7 +3377,9 @@ isolated helper, improving ranking for queries like "core data processing functi
 
 ### Configuration
 
-Centrality reranking is **always-on** when graph data is available. No configuration needed.
+Centrality *annotation* and the blended-score *rerank pass* (`centrality_annotation`,
+`centrality_reranking`) are always-on when graph data is available. The blend *weight*
+(`centrality_alpha`) is configurable and defaults to `0.0` — see above.
 
 ### Status
 
