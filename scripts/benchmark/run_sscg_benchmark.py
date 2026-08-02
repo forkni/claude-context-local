@@ -36,6 +36,8 @@ Usage:
 import argparse
 import json
 import logging
+import os
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -43,6 +45,24 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
+
+# Reproducibility: chunk-ID set iteration order feeds candidate-pool
+# composition, so unpinned hash randomization flips ~25/131 queries between
+# otherwise-identical rounds (evaluation/GPU_DETERMINISM_AB_20260802.md).
+# Re-exec with a pinned seed unless the caller already chose one (any explicit
+# PYTHONHASHSEED, including "random", is respected).
+if os.environ.get("PYTHONHASHSEED") is None:
+    print(
+        "[HASHSEED] PYTHONHASHSEED unset - re-exec with PYTHONHASHSEED=0 "
+        "for reproducible rounds",
+        file=sys.stderr,
+    )
+    raise SystemExit(
+        subprocess.call(
+            [sys.executable, *sys.argv],
+            env={**os.environ, "PYTHONHASHSEED": "0"},
+        )
+    )
 
 # Add project root to sys.path so imports resolve from any working directory
 _SCRIPT_DIR = Path(__file__).resolve().parent
