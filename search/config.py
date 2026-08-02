@@ -74,14 +74,14 @@ class EmbeddingConfig:
 
     model_name: str = "BAAI/bge-m3"
     dimension: int = 1024
-    batch_size: int = 128  # Dynamic based on model, see MODEL_REGISTRY
+    batch_size: int = 64  # Dynamic based on model, see MODEL_REGISTRY
     query_cache_size: int = 128  # LRU cache size for query embeddings
 
     # Context Enhancement Features (v0.8.0+)
     enable_import_context: bool = True  # Include import statements in embeddings
     enable_class_context: bool = True  # Include parent class signature for methods
-    max_import_lines: int = 10  # Maximum import lines to extract
-    max_class_signature_lines: int = 5  # Maximum lines for class signature
+    max_import_lines: int = 25  # Maximum import lines to extract
+    max_class_signature_lines: int = 20  # Maximum lines for class signature
     enable_structural_header: bool = (
         True  # Prepend file path + chunk type + qualified name
     )
@@ -157,8 +157,9 @@ class SearchModeConfig:
 
     # Search Result Limits
     default_k: int = field(
-        default=4, metadata={"range": (1, 50)}
-    )  # Reduced from 5: 0% result loss post-ego-fix + 20% token savings
+        default=7, metadata={"range": (1, 50)}
+    )  # SSCG MRR +0.093, R@7 +0.122 vs 4 (commit 447dc9a); aligned with
+    # find_similar_code's default (commit 730f67c)
     max_k: int = 50
 
     # Context budget (0 = unlimited)
@@ -174,16 +175,17 @@ class PerformanceConfig:
 
     # Parallel Chunking Configuration
     enable_parallel_chunking: bool = True  # Enable parallel file chunking
-    max_chunking_workers: int = 4  # ThreadPoolExecutor workers for chunking
+    max_chunking_workers: int = 8  # ThreadPoolExecutor workers for chunking
     enable_entity_tracking: bool = (
-        False  # Enable P4-5 entity extractors (enums, defaults, context managers)
+        True  # Enable P4-5 entity extractors (enums, defaults, context managers)
     )
 
     # GPU Configuration
     prefer_gpu: bool = True
     vram_limit_fraction: float = 0.80  # Hard VRAM ceiling (80% of dedicated)
     allow_ram_fallback: bool = (
-        False  # Allow spillover to system RAM (slower but reliable)
+        True  # Allow spillover to system RAM (slower but reliable); indexing
+        # overrides this locally via temporary_ram_fallback_off()
     )
 
     # Precision Configuration (fp16/bf16 for faster inference)
@@ -195,11 +197,11 @@ class PerformanceConfig:
     dynamic_batch_min: int = (
         16  # Minimum batch size (lowered for fragmentation headroom)
     )
-    dynamic_batch_max: int = 384  # Maximum batch size (safer for 8-16GB GPUs)
+    dynamic_batch_max: int = 64  # Maximum batch size (safer for 8-16GB GPUs)
 
     # Auto-reindexing
     enable_auto_reindex: bool = True
-    max_index_age_minutes: float = 5.0
+    max_index_age_minutes: float = 30.0
 
     # Per-project overrides layer (ADR-0014). Read from the GLOBAL config layer
     # only (an overrides file cannot re-enable itself). Env escape hatch:
@@ -215,7 +217,8 @@ class MultiHopConfig:
     hop_count: int = field(
         default=2, metadata={"range": (1, 3)}
     )  # Number of expansion hops
-    expansion: float = 0.3  # Expansion factor per hop
+    expansion: float = 0.5  # Expansion factor per hop (0.25 arm rejected 2026-08-02:
+    # replicated recall losses H034/H067; 0.5 stays)
     initial_k_multiplier: float = 2.0  # Multiplier for initial results (k * multiplier)
     multi_hop_mode: str = "hybrid"  # "semantic" | "graph" | "hybrid"
     edge_weights: dict[str, float] | None = (
@@ -228,10 +231,10 @@ class IntentConfig:
     """Intent classification settings (6 fields)."""
 
     enabled: bool = True  # Enable intent classification for query routing
-    confidence_threshold: float = 0.35  # Minimum confidence for intent-specific routing
+    confidence_threshold: float = 0.4  # Minimum confidence for intent-specific routing
     default_intent: str = "HYBRID"  # Default intent when confidence is low
     log_classifications: bool = True  # Log intent classification decisions
-    semantic_enabled: bool = False  # Enable semantic anchor-embedding scoring (opt-in)
+    semantic_enabled: bool = True  # Enable semantic anchor-embedding scoring
     semantic_weight: float = 0.3  # Semantic score weight in ensemble (0.0-1.0)
 
 
@@ -318,15 +321,15 @@ class ChunkingConfig:
         default="characters", metadata={"choices": ("lines", "characters")}
     )  # "lines" or "characters"
     max_split_chars: int = field(
-        default=1600, metadata={"range": (1000, 10000)}
-    )  # Character-based splitting (~400 tokens, optimal for retrieval)
+        default=3000, metadata={"range": (1000, 10000)}
+    )  # Character-based splitting (~750 tokens, optimal for retrieval)
 
     # File-level module summaries (A2: improve GLOBAL query recall)
     enable_file_summaries: bool = True  # Generate module-summary chunks per file
 
     # Adaptive chunk sizing (research: P75 baseline + complexity modulation)
     sizing_mode: str = field(
-        default="fixed", metadata={"choices": ("fixed", "adaptive")}
+        default="adaptive", metadata={"choices": ("fixed", "adaptive")}
     )  # "fixed" (static) or "adaptive" (repo-profiled)
     adaptive_multiplier_max: float = field(
         default=1.3, metadata={"range": (1.0, 2.0)}
@@ -350,13 +353,11 @@ class ChunkingConfig:
 class EgoGraphConfig:
     """Ego-graph retrieval settings (RepoGraph ICLR 2025)."""
 
-    enabled: bool = False  # Enable ego-graph expansion
+    enabled: bool = True  # Enable ego-graph expansion
     k_hops: int = field(
-        default=1, metadata={"range": (1, 3)}
-    )  # Number of hops (1=direct neighbors, reduces noise vs 2-hop)
-    max_neighbors_per_hop: int = (
-        5  # Max neighbors per hop (reduced from 10 to limit noise)
-    )
+        default=2, metadata={"range": (1, 3)}
+    )  # Number of hops (1=direct neighbors, 2=include second-degree)
+    max_neighbors_per_hop: int = 10  # Max neighbors per hop
     relation_types: list | None = None  # Filter to specific relations (None = all)
     include_anchor: bool = True  # Include original anchor nodes in results
     deduplicate: bool = True  # Remove duplicate chunk_ids
@@ -480,12 +481,13 @@ class CallGraphConfig:
     Set to ``["pyan"]`` to disable LibCST (Stage 2), ``[]`` to skip entirely.
     """
 
-    lsp_enabled: bool = False
-    """Enable the basedpyright LSP resolver (Stage 3, opt-in).
+    lsp_enabled: bool = True
+    """Enable the basedpyright LSP resolver (Stage 3).
 
-    Requires the ``[lsp]`` extra: ``pip install -e ".[lsp]"``.
-    Adds basedpyright as the highest-accuracy resolver (confidence 0.98) but
-    is the slowest and requires a full-type-check pass.
+    Requested by default; no-ops unless the ``[lsp]`` extra is installed:
+    ``pip install -e ".[lsp]"``. Adds basedpyright as the highest-accuracy
+    resolver (confidence 0.98) but is the slowest and requires a
+    full-type-check pass.
     """
 
     lsp_timeout_seconds: float = 30.0
@@ -517,12 +519,13 @@ class CallGraphConfig:
     Has no effect when ``"libcst"`` is not in ``resolvers``.
     """
 
-    min_confidence: float = 0.0
+    min_confidence: float = 0.65
     """Minimum resolver confidence required to inject an edge (inclusive floor).
 
     Edges from ``run_resolvers()`` whose ``confidence`` is strictly below this
-    threshold are discarded before injection.  The default ``0.0`` accepts all
-    edges (no behaviour change).
+    threshold are discarded before injection.  The default ``0.65`` drops
+    wildcard-fan-out pyan edges (0.6) while keeping whole-project pyan (0.75)
+    and higher-confidence resolvers.
 
     Reference confidence tiers:
     - ``0.5`` / ``0.7`` — in-house AST (single-file, already in graph)

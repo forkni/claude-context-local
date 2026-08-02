@@ -669,10 +669,11 @@ RETURNS:
 
 CALL-GRAPH ACCURACY:
 The call edges are produced by a layered resolver pipeline:
-  AST (0.5/0.7) → pyan (0.75) → libcst (0.90) → LSP (0.98, opt-in)
+  AST (0.5/0.7) → pyan (0.75) → libcst (0.90) → LSP (0.98)
 Higher-confidence resolvers upgrade lower-confidence edges for the same pair.
 Install `pip install -e ".[callgraph]"` to enable pyan3 + LibCST resolvers.
-Enable `lsp_enabled=true` in call_graph config for basedpyright LSP resolution.""",
+`lsp_enabled` is requested by default in call_graph config; basedpyright LSP
+resolution no-ops unless the `[lsp]` extra is installed.""",
         "input_schema": {
             "type": "object",
             "properties": {

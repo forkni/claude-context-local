@@ -79,7 +79,7 @@ class EgoGraphRetriever:
             return {}
 
         # QW3: route to PPR expansion when requested
-        if getattr(config, "expansion_mode", "bfs") == "ppr":
+        if config.expansion_mode == "ppr":
             return self._expand_via_ppr(anchor_chunk_ids, config)
 
         results = {}
@@ -395,7 +395,7 @@ class EgoGraphRetriever:
         # Pass 2 — score neighbors, batching FAISS reconstruction and
         # computing similarities in a single matmul (#52/#59).
         neighbor_results: list[SearchResult] = []
-        threshold = getattr(ego_config, "min_similarity_threshold", 0.15)
+        threshold = ego_config.min_similarity_threshold
 
         if query_embedding_available and valid_neighbors:
             assert query_embedding is not None

@@ -77,7 +77,8 @@ class TestRerankingEngine:
 
         with patch("search.reranking_engine.get_search_config") as mock_config:
             mock_config.return_value = SearchConfig(
-                reranker=RerankerConfig(enabled=True, min_vram_gb=4.0)
+                reranker=RerankerConfig(enabled=True, min_vram_gb=4.0),
+                performance=PerformanceConfig(allow_ram_fallback=False),
             )
 
             result = self.engine.should_enable_neural_reranking()
@@ -94,7 +95,8 @@ class TestRerankingEngine:
 
         with patch("search.reranking_engine.get_search_config") as mock_config:
             mock_config.return_value = SearchConfig(
-                reranker=RerankerConfig(enabled=True, min_vram_gb=4.0)
+                reranker=RerankerConfig(enabled=True, min_vram_gb=4.0),
+                performance=PerformanceConfig(allow_ram_fallback=False),
             )
 
             result = self.engine.should_enable_neural_reranking()
@@ -199,7 +201,8 @@ class TestRerankingEngine:
 
         with patch("search.reranking_engine.get_search_config") as mock_config:
             mock_config.return_value = SearchConfig(
-                reranker=RerankerConfig(enabled=True, min_vram_gb=4.3)
+                reranker=RerankerConfig(enabled=True, min_vram_gb=4.3),
+                performance=PerformanceConfig(allow_ram_fallback=False),
             )
             result = self.engine.should_enable_neural_reranking()
 

@@ -657,10 +657,10 @@ class TestProjectOverrides:
         import search.config as config_module
 
         monkeypatch.setattr(config_module, "_active_project_storage_dir", None)
-        manager = self._manager(tmp_path, {"performance": {"max_chunking_workers": 8}})
+        manager = self._manager(tmp_path, {"performance": {"max_chunking_workers": 10}})
         config = manager.load_config()
 
-        assert config.performance.max_chunking_workers == 8
+        assert config.performance.max_chunking_workers == 10
         assert manager.get_active_overrides_meta() is None
 
     def test_overrides_merge_over_global_file(self, tmp_path, monkeypatch):
@@ -771,7 +771,7 @@ class TestProjectOverrides:
             config = manager.load_config()
             meta = manager.get_active_overrides_meta()
 
-        assert config.performance.max_chunking_workers == 4  # dataclass default
+        assert config.performance.max_chunking_workers == 8  # dataclass default
         assert meta is None
 
     def test_global_flag_escape_hatch_and_no_self_enable(self, tmp_path, monkeypatch):
@@ -795,7 +795,7 @@ class TestProjectOverrides:
             tmp_path, {"performance": {"enable_project_overrides": False}}
         )
 
-        assert manager.load_config().performance.max_chunking_workers == 4
+        assert manager.load_config().performance.max_chunking_workers == 8
         assert manager.get_active_overrides_meta() is None
 
     def test_malformed_overrides_file_recovered(self, tmp_path, monkeypatch):
@@ -808,9 +808,9 @@ class TestProjectOverrides:
         (storage / PROJECT_OVERRIDES_FILENAME).write_text("{not valid json")
         monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
 
-        manager = self._manager(tmp_path, {"performance": {"max_chunking_workers": 8}})
+        manager = self._manager(tmp_path, {"performance": {"max_chunking_workers": 10}})
 
-        assert manager.load_config().performance.max_chunking_workers == 8
+        assert manager.load_config().performance.max_chunking_workers == 10
         assert manager.get_active_overrides_meta() is None
 
     def test_overrides_wrong_type_recovered(self, tmp_path, monkeypatch):

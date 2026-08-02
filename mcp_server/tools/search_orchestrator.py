@@ -529,15 +529,13 @@ class SearchOrchestrator:
         context-token-budget truncation (when plan.max_context_tokens > 0).
 
         ``source_order_output`` defaults to ``False`` (``OutputConfig``) so relevance
-        order from the neural reranker is respected by default; the getattr fallback
-        below mirrors that default rather than re-enabling the DOS-RAG override on a
-        malformed/partial config.
+        order from the neural reranker is respected by default.
         """
         if (
-            getattr(outcome.effective_config.output, "source_order_output", False)
+            outcome.effective_config.output.source_order_output
             and len(formatted_results) > 1
         ):
-            if getattr(outcome.effective_config.reranker, "enabled", False):
+            if outcome.effective_config.reranker.enabled:
                 logger.warning(
                     "[SOURCE_ORDER] source_order_output=True overrides the neural "
                     "reranker's ordering (reranker.enabled=True) — DOS-RAG file/line "
