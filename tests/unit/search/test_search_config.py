@@ -852,13 +852,27 @@ class TestProjectOverrides:
 # ---------------------------------------------------------------------------
 
 
-def test_example_config_covers_full_dataclass_surface():
-    """Every SearchConfig sub-config field must appear in search_config.json.example.
+# The two model fields are deliberately allowed to diverge in value between
+# the dataclass default and search_config.json.example (ADR-0022 / Phase 2):
+# .example is the portable template for arbitrary hardware, the dataclass
+# default targets this workstation. Key presence is still required for both.
+_MODEL_VALUE_EXEMPT_FIELDS = {
+    ("embedding", "model_name"),
+    ("reranker", "model_name"),
+}
 
-    Guards against the .example template silently drifting behind the
-    dataclasses it's meant to document -- the same class of gap that let
+
+def test_example_config_covers_full_dataclass_surface():
+    """search_config.json.example's keys and values must match the dataclass
+    surface exactly, apart from the two model fields' values.
+
+    Bidirectional (ADR-0022): a stray/renamed key in the example survives a
+    one-directional 'missing' check just as easily as a field silently
+    dropped from the example would -- the same class of gap that let
     'performance.enable_project_overrides' go missing from the shipped
-    template despite being a real, load-bearing field.
+    template despite being a real, load-bearing field. Value parity guards
+    against the dataclass defaults quietly drifting away from the documented
+    template (the exact divergence Phase 2 found and fixed for 19 fields).
     """
     import dataclasses
     import json
@@ -877,13 +891,36 @@ def test_example_config_covers_full_dataclass_surface():
         "SearchConfig._SUBCONFIG_FIELDS"
     )
 
+    default_config = SearchConfig()
+    value_mismatches = []
+
     for section_name in SearchConfig._SUBCONFIG_FIELDS:
         subconfig_type = SearchConfig._SUBCONFIG_TYPES[section_name]
         field_names = {f.name for f in dataclasses.fields(subconfig_type)}
         example_keys = set(example[section_name].keys())
 
         missing = field_names - example_keys
-        assert not missing, (
-            f"search_config.json.example['{section_name}'] is missing fields "
-            f"present on {subconfig_type.__name__}: {sorted(missing)}"
+        stray = example_keys - field_names
+        assert not missing and not stray, (
+            f"search_config.json.example['{section_name}'] keys diverge from "
+            f"{subconfig_type.__name__}'s fields -- missing {sorted(missing)}, "
+            f"stray (renamed/removed?) {sorted(stray)}"
         )
+
+        default_section = getattr(default_config, section_name)
+        for field_name in field_names:
+            if (section_name, field_name) in _MODEL_VALUE_EXEMPT_FIELDS:
+                continue
+            default_value = getattr(default_section, field_name)
+            example_value = example[section_name][field_name]
+            if default_value != example_value:
+                value_mismatches.append(
+                    f"  {section_name}.{field_name}: dataclass default "
+                    f"{default_value!r} != example {example_value!r}"
+                )
+
+    assert not value_mismatches, (
+        "search_config.json.example value(s) diverge from the dataclass "
+        "default (see ADR-0022 / Phase 2 default alignment):\n"
+        + "\n".join(value_mismatches)
+    )

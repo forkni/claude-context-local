@@ -23,6 +23,10 @@ from pathlib import Path
 from search.config import SearchConfig
 
 
+_ALIAS_COUNT = len(SearchConfig._FLAT_KEY_ALIASES)
+_SECTION_COUNT = len(SearchConfig._SUBCONFIG_FIELDS)
+
+
 CMD_PATH = Path(__file__).resolve().parents[2] / "start_mcp_server.cmd"
 
 # Matches `cfg.section.field` / `config.section.field` (python -c one-liners
@@ -79,10 +83,15 @@ def test_config_field_references_resolve_against_schema() -> None:
                 )
 
     # Sanity check that the regex is actually finding real references - a guard
-    # that matches nothing is vacuously true, not a guard.
-    assert match_count > 50, (
-        f"Expected 50+ cfg./config. field references in {CMD_PATH.name}, "
-        f"found {match_count}. The scan pattern may be broken."
+    # that matches nothing is vacuously true, not a guard. The floor is tied to
+    # the spec table (ADR-0022, len(_FLAT_KEY_ALIASES)) rather than a hardcoded
+    # magic number, since aliased fields are exactly the ones exposed at the
+    # flat/env/menu surface the .cmd file manages - it tightens automatically
+    # as more fields gain a flat alias.
+    assert match_count > _ALIAS_COUNT, (
+        f"Expected more than {_ALIAS_COUNT} (flat-alias count) cfg./config. "
+        f"field references in {CMD_PATH.name}, found {match_count}. The scan "
+        "pattern may be broken."
     )
 
     assert not unknown, (
@@ -103,9 +112,14 @@ def test_menu_choice_ranges_match_handlers_and_guards() -> None:
         if match:
             prompts.append((i, match.group(1), match.group(2)))
 
-    assert len(prompts) >= 15, (
-        f"Expected 15+ 'Select option' menu prompts in {CMD_PATH.name}, "
-        f"found {len(prompts)}. The scan pattern may be broken."
+    # One menu per config section, plus the top-level main menu (ADR-0022) -
+    # tied to SearchConfig._SUBCONFIG_FIELDS rather than a hardcoded floor, so
+    # it grows if a new config section is added.
+    expected_min_prompts = _SECTION_COUNT + 1
+    assert len(prompts) >= expected_min_prompts, (
+        f"Expected {expected_min_prompts}+ (section count + main menu) "
+        f"'Select option' menu prompts in {CMD_PATH.name}, found "
+        f"{len(prompts)}. The scan pattern may be broken."
     )
 
     problems: list[str] = []

@@ -15,6 +15,7 @@ import search.index_probe as probe_module
 from chunking.repo_profiler import RepoProfile
 from search.config import PROJECT_OVERRIDES_FILENAME, _dotted_keys
 from search.index_probe import (
+    BENCHMARK_LOCK_CITATIONS,
     FORBIDDEN_AUTO_TUNE_KEYS,
     GLSL_EXTENSIONS,
     PROBE_VERSION,
@@ -81,6 +82,9 @@ class TestGuardrails:
             "search_mode.bm25_weight",
             "search_mode.dense_weight",
             "search_mode.rrf_k_parameter",
+            "search_mode.bm25_k1",
+            "search_mode.bm25_b",
+            "search_mode.bm25_use_stopwords",
             "search_mode.bm25_tokenizer",
             "search_mode.bm25_reserved_slots",
             "graph_enhanced.centrality_alpha",
@@ -91,6 +95,15 @@ class TestGuardrails:
             "multi_hop.multi_hop_mode",
             "embedding.model_name",
         } == FORBIDDEN_AUTO_TUNE_KEYS
+
+    def test_benchmark_lock_citations_match_forbidden_keys(self):
+        """BENCHMARK_LOCK_CITATIONS (start_mcp_server.cmd's ADR-0022 display
+        source) must cover every forbidden key except embedding.model_name,
+        which is locked for index-routing safety, not a benchmark result, and
+        is displayed separately."""
+        assert set(BENCHMARK_LOCK_CITATIONS) == FORBIDDEN_AUTO_TUNE_KEYS - {
+            "embedding.model_name"
+        }
 
     def test_no_override_rule_touches_forbidden_keys(self):
         for rule in RULES:

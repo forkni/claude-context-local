@@ -64,15 +64,20 @@ GLSL_EXTENSIONS = frozenset(
 # Benchmark-validated keys the probe must NEVER auto-tune (see the guardrail
 # static test).  Each was pinned by an A/B on this repo's golden set — a probe
 # has no golden set on arbitrary projects, so these stay human decisions:
-# fusion weights/rrf_k saturated; centrality_alpha 0.0 replicated;
-# single_pass kills recall; hop1_reserved_slots ADR-0013; bm25_reserved_slots
-# rejected; query_expansion ADR-0012 closed FAIL; bm25_tokenizer is
-# INDEX_VERSION 4; multi_hop tuned.
+# fusion weights/rrf_k/bm25_k1/bm25_b saturated; bm25_use_stopwords A/B'd;
+# centrality_alpha 0.0 replicated; single_pass kills recall; hop1_reserved_slots
+# ADR-0013; bm25_reserved_slots rejected; query_expansion ADR-0012 closed FAIL;
+# bm25_tokenizer is INDEX_VERSION 4; multi_hop tuned. See BENCHMARK_LOCK_CITATIONS
+# below for the per-key citation (ADR-0022) shown in start_mcp_server.cmd's
+# ":tuned_parameters" menu.
 FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
     {
         "search_mode.bm25_weight",
         "search_mode.dense_weight",
         "search_mode.rrf_k_parameter",
+        "search_mode.bm25_k1",
+        "search_mode.bm25_b",
+        "search_mode.bm25_use_stopwords",
         "search_mode.bm25_tokenizer",
         "search_mode.bm25_reserved_slots",
         "graph_enhanced.centrality_alpha",
@@ -84,6 +89,30 @@ FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
         "embedding.model_name",  # routes to a different per-model index dir
     }
 )
+
+# Human-readable "why this is locked" citation for each FORBIDDEN_AUTO_TUNE_KEYS
+# entry, keyed identically — consumed by start_mcp_server.cmd's ":tuned_parameters"
+# menu (ADR-0022) so the Benchmark-Locked panel has no second hand-typed list to
+# drift out of sync with the frozenset above. "embedding.model_name" is
+# deliberately excluded: it is locked for index-routing safety (see the comment
+# on the frozenset), not a benchmark result, and is displayed separately under
+# that menu's "Observation only" section.
+BENCHMARK_LOCK_CITATIONS: dict[str, str] = {
+    "search_mode.bm25_weight": "ADR-0019 (intent-adaptive fusion rejected, static weights kept)",
+    "search_mode.dense_weight": "ADR-0019 (intent-adaptive fusion rejected, static weights kept)",
+    "search_mode.rrf_k_parameter": "fusion sweep saturated, do not re-sweep",
+    "search_mode.bm25_k1": "fusion sweep saturated",
+    "search_mode.bm25_b": "fusion sweep saturated",
+    "search_mode.bm25_use_stopwords": "A/B 2026-08-01: removing regresses recall@5/MRR",
+    "search_mode.bm25_tokenizer": "INDEX_VERSION 4 (identifier-preserving 'whole' tokenizer)",
+    "search_mode.bm25_reserved_slots": "rejected 2026-07-28 (9/9 sweep runs, no Q12 pool_hit)",
+    "graph_enhanced.centrality_alpha": "higher alphas cost recall (replicated)",
+    "reranker.single_pass": "kills recall; latency knob only, not quality",
+    "reranker.hop1_reserved_slots": "ADR-0013",
+    "query_expansion.enabled": "ADR-0012 re-eval closed 2026-08-02, stays disabled",
+    "multi_hop.expansion": "expansion_factor stays 0.5 (0.25 arm rejected 2026-08-02)",
+    "multi_hop.multi_hop_mode": "tuned; do not re-tune without a new A/B",
+}
 
 
 @dataclass(frozen=True)
