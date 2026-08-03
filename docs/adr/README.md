@@ -26,6 +26,8 @@ for avoiding re-litigating settled questions.
 | [0018](0018-retrieval-request-carries-effective-config.md) | `RetrievalRequest` carries the effective config; per-layer re-fetch removed | accepted | 2026-08-01 |
 | [0019](0019-reject-intent-adaptive-fusion-weights.md) | Reject intent-adaptive fusion weights (measured, replicated, removed) | accepted | 2026-08-01 |
 | [0020](0020-config-field-liveness-audit.md) | Config field liveness audit: wire the hardcoded, delete the orphaned | accepted | 2026-08-02 |
+| [0021](0021-benchmark-hash-seed-determinism.md) | Benchmark determinism: pin PYTHONHASHSEED, reject the GPU kernel pin | accepted | 2026-08-02 |
+| [0022](0022-config-field-spec-and-liveness-ratchet.md) | Config field spec table and liveness ratchet | accepted | 2026-08-02 |
 
 ## Adding a new ADR
 
