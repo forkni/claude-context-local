@@ -80,10 +80,10 @@ max_split_chars: int = field(
     default=3000,
     metadata=spec(
         range=(1000, 10000),
-        flat_alias="max_split_chars",   # explicit; None = no alias
-        env="CLAUDE_MAX_SPLIT_CHARS",   # explicit; None = not env-settable
-        mcp="chunking",                 # exposed by configure_chunking
-        reader="chunking/chunker.py",   # liveness anchor
+        flat_alias="max_split_chars",  # explicit; None = no alias
+        env="CLAUDE_MAX_SPLIT_CHARS",  # explicit; None = not env-settable
+        mcp="chunking",  # exposed by configure_chunking
+        reader="chunking/chunker.py",  # liveness anchor
     ),
 )
 ```
@@ -178,8 +178,15 @@ separately under the menu's "Observation only" section), replaces the eight hand
 `print()` calls with one derived loop:
 
 ```python
-[print(f'  {_k}:', getattr(getattr(cfg, _k.split('.')[0]), _k.split('.')[1]), '-', _cit[_k])
- for _k in sorted(_cit)]
+[
+    print(
+        f"  {_k}:",
+        getattr(getattr(cfg, _k.split(".")[0]), _k.split(".")[1]),
+        "-",
+        _cit[_k],
+    )
+    for _k in sorted(_cit)
+]
 ```
 
 A unit test (`test_benchmark_lock_citations_match_forbidden_keys`) pins
