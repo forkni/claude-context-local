@@ -23,6 +23,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   New `canon_B1`: MRR 0.8249 (63q), a small delta from the pre-change canon (0.7942) — see the
   ADR for the full breakdown and two surfaced-but-unrelated bugs (a non-atomic `clear_index()`
   and a legacy-Windows console crash in `rich`'s progress bar) found while verifying this change.
+- **Duplicated `HybridSearcher` construction extracted; two per-project config bugs fixed** —
+  `get_searcher` and `_check_auto_reindex` each hand-built an identical searcher with 11-12
+  kwargs; both now call a shared `build_hybrid_searcher` helper (pure refactor, the four
+  deliberate divergences between the two call sites are preserved). Two real bugs found along
+  the way: server startup never bound the config layer to the active project, so a project's
+  `search_overrides.json` (ADR-0014) was silently not merged after every restart until an
+  explicit `switch_project`/`index_directory` call — fixed in `initialize_server_state`. That fix
+  would have turned a second, pre-existing bug from occasional into permanent: `save_config`
+  wrote its result back to the *global* config file unfiltered, promoting any active project's
+  overrides into global config — fixed by subtracting the overrides-layer keys before writing.
+  Also: the two false `construction_baked=True` flags on `bm25_weight`/`dense_weight` (they
+  resolve live per `search()` call, not at construction) are corrected, eliminating a needless
+  searcher reset + reranker-model reload on every weight-arm benchmark run; the orphaned
+  `_switch_active_model` helper (dead since `4ec7627` removed its only caller) is deleted; and
+  the three `SearchConfig`-mutating benchmark probe scripts move onto the `arm_overrides` seam.
+- **SSCG canon re-pinned to `canon_C3`** (ADR-0024) — the searcher-construction dedup and
+  config-metadata fixes above edit indexed source, so the canon is re-measured:
+  MRR 0.8348 (63q, up from `canon_B1`'s 0.8249) / 0.6816 (131q expanded). Also corrects a
+  standing mislabel: the previously-published `0.8502` F-via-similar figure was the
+  whole-63-query aggregate, not a 9-query F-category mean — the true F-only mean is **0.8519**.
+  Five user-facing docs (`CLAUDE.md`, `README.md`, `docs/BENCHMARKS.md`,
+  `docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md`, `docs/VERSION_HISTORY.md`) still cited the
+  pre-`canon_B1` figure (`0.7987`) — none had been updated when `canon_B1` landed — and are
+  updated directly to `canon_C3`. See `evaluation/CANON_20260803.md` for full numbers.
 
 ---
 

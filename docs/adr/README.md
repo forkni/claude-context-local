@@ -29,6 +29,7 @@ for avoiding re-litigating settled questions.
 | [0021](0021-benchmark-hash-seed-determinism.md) | Benchmark determinism: pin PYTHONHASHSEED, reject the GPU kernel pin | accepted | 2026-08-02 |
 | [0022](0022-config-field-spec-and-liveness-ratchet.md) | Config field spec table and liveness ratchet | accepted | 2026-08-02 |
 | [0023](0023-benchmark-routes-through-orchestrator.md) | Route the SSCG benchmark through `SearchOrchestrator` | accepted | 2026-08-02 |
+| [0024](0024-repin-sscg-canon-post-c3.md) | Re-pin the SSCG canon after the C3 searcher-construction / config-metadata fixes | accepted | 2026-08-03 |
 
 ## Adding a new ADR
 

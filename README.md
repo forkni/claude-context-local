@@ -440,23 +440,26 @@ claude-context-local/
 
 ## Benchmark Results
 
-### Latest Validation (2026-08-01/02, hybrid-only, k=10)
+### Latest Validation (2026-08-03, hybrid-only, k=10)
 
-Provenance: `evaluation/BASELINE_20260801.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`), taken after the MCP SDK v2 migration and ADR-0018/ADR-0019 (intent-adaptive-weights rejection). Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
+Provenance: `evaluation/CANON_20260803.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`), taken after the C3 searcher-construction dedup and config-metadata fixes (ADR-0024). Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
 
 | Dataset | Queries | MRR | Recall@5 | Recall@10 | NDCG@5 | pool_hit_rate |
 |---|---|---|---|---|---|---|
-| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.7987** (μ, n=3) | 0.6170 | 0.7700 | 0.6394 | 1.0000 |
-| Expanded (`golden_dataset_expanded.json`, non-D, post H-promotion) | 131 | **0.659** (0.6591 / 0.6587, n=2) | 0.636 | 0.765 | 0.600 | ~0.96 |
-| F-via-similar (anchor-chunk view, F-category) | 9 | **0.8502** | — | file_recall@5 0.8034 | 0.6561 | 1.0000 |
+| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8348** (`canon_C3`, 0 flips r1/r2) | 0.6755 | 0.7919 | 0.6939 | 1.0000 |
+| Expanded (`golden_dataset_expanded.json`, non-D, post H-promotion) | 131 | **0.6816** (`canon_C3`, 0 flips r1/r2) | 0.6619 | 0.7744 | 0.6363 | 0.9771 |
+| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.8907** | 0.6784 | 0.7942 | 0.7064 | 1.0000 |
+| F-via-similar (F-category only, 9 queries) | 9 | **0.8519** | — | file_recall@5 0.8370 | — | — |
 
-Run-to-run noise band is **±0.02 MRR**, measured directly via a same-code control (two 94-query runs on unchanged code landed 0.701 and 0.683). Treat any delta smaller than that as noise.
+Run-to-run noise band is **±0.02 MRR**, measured directly via a same-code control (two 94-query runs on unchanged code landed 0.701 and 0.683). Treat any delta smaller than that as noise. Note the two F-via-similar rows above: the whole-63-query aggregate (0.8907) and the true F-category-only mean (0.8519) are different numbers over different query sets — a prior generation of this table published only the whole-aggregate figure under a "9-query" caption; both are shown now to avoid repeating that.
 
 **Comparability breaks** — do not read the numbers above as a trend against older figures in this repo's history:
 
+- ADR-0023 (`canon_B1`, 2026-08-02, mrr 0.8249) routed the harness through `SearchOrchestrator.run()` instead of a direct `HybridSearcher.search()` call — not comparable to anything measured before it.
+- ADR-0024 (`canon_C3`, this table) re-pins after the C3 searcher-construction dedup and config-metadata fixes; see `evaluation/CANON_20260803.md` for the full delta against `canon_B1`.
 - The 2026-07-28 golden-dataset repair (`6df36db`) changed scoring for 3-part `split_block` chunks; nothing measured before that commit is comparable to what's measured after.
-- The 2026-08-02 H-category promotion grew the expanded set 108→145 queries (94→131 non-D) by adding 37 commit-mined bug-localization queries; the pre-promotion 94-query MRR (0.6815) and the post-promotion 131-query MRR (0.659) describe different datasets, not a regression — H queries are harder by construction (single-file, ≤2 golds).
-- `0.797` in the historical table below (2026-06-08, 13 queries) predates the golden-dataset repair, the H-promotion, and the SDK v2 migration; kept only for continuity.
+- The 2026-08-02 H-category promotion grew the expanded set 108→145 queries (94→131 non-D) by adding 37 commit-mined bug-localization queries; the pre-promotion 94-query MRR (0.6815) and the post-promotion 131-query MRR (0.6816) describe different datasets that happen to land close together at this generation — H queries are harder by construction (single-file, ≤2 golds), so treat the two figures as separate measurements, not a before/after comparison.
+- `0.797` in the historical table below (2026-06-08, 13 queries) predates the golden-dataset repair, the H-promotion, the SDK v2 migration, and both ADR-0023/ADR-0024; kept only for continuity.
 
 ### Live MCP pipeline eval (k=7, orchestrator + multi-hop, 2026-08-01)
 
