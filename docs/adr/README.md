@@ -28,6 +28,7 @@ for avoiding re-litigating settled questions.
 | [0020](0020-config-field-liveness-audit.md) | Config field liveness audit: wire the hardcoded, delete the orphaned | accepted | 2026-08-02 |
 | [0021](0021-benchmark-hash-seed-determinism.md) | Benchmark determinism: pin PYTHONHASHSEED, reject the GPU kernel pin | accepted | 2026-08-02 |
 | [0022](0022-config-field-spec-and-liveness-ratchet.md) | Config field spec table and liveness ratchet | accepted | 2026-08-02 |
+| [0023](0023-benchmark-routes-through-orchestrator.md) | Route the SSCG benchmark through `SearchOrchestrator` | accepted | 2026-08-02 |
 
 ## Adding a new ADR
 

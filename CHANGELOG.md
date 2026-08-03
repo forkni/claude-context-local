@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **SSCG benchmark harness routes through `SearchOrchestrator.run()`** (ADR-0023) —
+  `run_sscg_benchmark.py` previously called `HybridSearcher.search()` directly, one layer
+  below the path the MCP `search_code` tool actually serves, forcing two hand-written replays
+  of production logic (`_apply_centrality_stage`, ADR-0019's intent-weight replay). The harness
+  now calls the real `SearchOrchestrator.run()` (intent classification pinned off for this arm;
+  a later arm measures it on), with `max_context_tokens: 0` to bypass Block H's presentation-
+  layer truncation so MRR keeps meaning "over a ranked list of k". `--with-centrality` /
+  `--centrality-alpha` CLI flags are removed — centrality scoring is now unconditional and
+  config-driven like every other knob, matching what every published canon already measured.
+  New `canon_B1`: MRR 0.8249 (63q), a small delta from the pre-change canon (0.7942) — see the
+  ADR for the full breakdown and two surfaced-but-unrelated bugs (a non-atomic `clear_index()`
+  and a legacy-Windows console crash in `rich`'s progress bar) found while verifying this change.
+
 ---
 
 ## [0.23.0] - 2026-08-02
