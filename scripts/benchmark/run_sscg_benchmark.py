@@ -422,15 +422,22 @@ def _maybe_reset_for_construction_overrides(
     """Drop the cached HybridSearcher when construction-baked params are overridden.
 
     ``search_factory.get_searcher()`` caches the searcher in server state, and
-    bm25/dense weights, rrf_k, the reranker document budgets, and the listwise
-    reranker dtype are all baked in at construction — without this reset, a
-    ``--sweep`` silently reuses the first iteration's params for every
-    subsequent config (Blocker B). The six-argument ``None``-check this used
-    to be hand-written as is now derived from ``arm_overrides.requires_rebuild``,
+    rrf_k, the reranker document budgets, and the listwise reranker dtype are
+    baked in at construction — without this reset, a ``--sweep`` silently
+    reuses the first iteration's params for every subsequent config
+    (Blocker B). The decision is derived from ``arm_overrides.requires_rebuild``,
     which reads the same ``spec(construction_baked=True)`` flag (ADR-0022) that
     every other seam caller reads — one source of truth for "which fields are
     baked in at construction" instead of a second, hand-maintained one that
     could silently drift from it.
+
+    bm25_weight/dense_weight are accepted here for backward-compatible call
+    sites but are NOT construction-baked (Phase 2a, ADR-0018 follow-on):
+    ``HybridSearcher`` takes no weight parameters and resolves both live from
+    the effective config on every ``search()`` call
+    (``hybrid_searcher.py:731-739``) — so touching only these two no longer
+    triggers a reset, and a ``--sweep`` over ``SWEEP_CONFIGS`` (bm25/dense
+    weight arms) stops paying a spurious searcher reset + reranker reload.
     """
     touched = _non_none_overrides(
         {

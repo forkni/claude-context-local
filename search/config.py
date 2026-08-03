@@ -231,6 +231,11 @@ class SearchModeConfig:
     )
 
     # Hybrid Search Weights
+    #
+    # NOT construction_baked: HybridSearcher.__init__ takes no weight
+    # parameters. Both fields are read live from effective_config on every
+    # search() call (hybrid_searcher.py:731-739), so mutating them on the
+    # live config takes effect on the next call — no searcher rebuild needed.
     bm25_weight: float = field(
         default=0.35,
         metadata=spec(
@@ -238,7 +243,6 @@ class SearchModeConfig:
             flat_alias="bm25_weight",
             env="CLAUDE_BM25_WEIGHT",
             reader="search/hybrid_searcher.py",
-            construction_baked=True,
         ),
     )
     dense_weight: float = field(
@@ -248,7 +252,6 @@ class SearchModeConfig:
             flat_alias="dense_weight",
             env="CLAUDE_DENSE_WEIGHT",
             reader="search/hybrid_searcher.py",
-            construction_baked=True,
         ),
     )
 

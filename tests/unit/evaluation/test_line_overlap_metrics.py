@@ -676,8 +676,11 @@ class TestApplyRerankerDtypeOverride:
 
 class TestMaybeResetForConstructionOverrides:
     """Q4 Blocker-B fix: the cached searcher must be dropped whenever a
-    construction-baked param (bm25/dense weight, rrf_k) is overridden, so
-    each sweep iteration builds a searcher with its own fusion params."""
+    construction-baked param (rrf_k, reranker doc budgets/dtype) is
+    overridden, so each sweep iteration builds a searcher with its own
+    fusion params. bm25/dense weight are NOT construction-baked (Phase 2a,
+    ADR-0018 follow-on) — HybridSearcher resolves them live per search()
+    call, so overriding only those two must NOT reset the cached searcher."""
 
     def _call(self, monkeypatch, **kwargs):
         from unittest.mock import MagicMock
@@ -696,9 +699,11 @@ class TestMaybeResetForConstructionOverrides:
         )
         return state
 
-    def test_resets_when_weights_overridden(self, monkeypatch):
+    def test_no_reset_when_only_weights_overridden(self, monkeypatch):
+        """bm25_weight/dense_weight are live-read (Phase 2a) - touching only
+        these must not reset the cached searcher."""
         state = self._call(monkeypatch, bm25_weight=0.5, dense_weight=0.5)
-        state.reset_searcher.assert_called_once()
+        state.reset_searcher.assert_not_called()
 
     def test_resets_when_rrf_k_overridden(self, monkeypatch):
         state = self._call(monkeypatch, rrf_k=60)
@@ -715,9 +720,11 @@ class TestMaybeResetForConstructionOverrides:
         state = self._call(monkeypatch)
         state.reset_searcher.assert_not_called()
 
-    def test_reset_called_per_sweep_iteration(self, monkeypatch):
-        """Each run_single-style invocation with weights resets again — the
-        property that fixes Blocker B for --sweep loops."""
+    def test_no_reset_across_weight_sweep_iterations(self, monkeypatch):
+        """SWEEP_CONFIGS is a bm25/dense-weight-only sweep. Since neither
+        field is construction-baked (Phase 2a), no iteration should reset
+        the cached searcher — this is the fix's whole point: --sweep no
+        longer pays a spurious searcher reset + reranker reload per arm."""
         from unittest.mock import MagicMock
 
         from scripts.benchmark.run_sscg_benchmark import (
@@ -731,7 +738,7 @@ class TestMaybeResetForConstructionOverrides:
             _maybe_reset_for_construction_overrides(
                 sweep_cfg["bm25_weight"], sweep_cfg["dense_weight"], None
             )
-        assert state.reset_searcher.call_count == len(SWEEP_CONFIGS)
+        state.reset_searcher.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

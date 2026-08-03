@@ -132,8 +132,6 @@ def test_validate_overrides_rejects_unknown_section():
 @pytest.mark.parametrize(
     "key",
     [
-        "search_mode.bm25_weight",
-        "search_mode.dense_weight",
         "search_mode.rrf_k_parameter",
         "reranker.doc_max_chars",
         "reranker.listwise_doc_max_chars",
@@ -151,6 +149,11 @@ def test_requires_rebuild_true_for_construction_baked_fields(key):
         "search_mode.bm25_reserved_slots",
         "multi_hop.expansion",
         "reranker.hop1_reserved_slots",
+        # bm25_weight/dense_weight are resolved live per search() call
+        # (hybrid_searcher.py:731-739), not baked into HybridSearcher at
+        # construction - see Phase 2a, ADR-0018 follow-on.
+        "search_mode.bm25_weight",
+        "search_mode.dense_weight",
     ],
 )
 def test_requires_rebuild_false_for_live_fields(key):
@@ -181,8 +184,10 @@ def test_apply_overrides_mutates_in_place_same_object():
 
 def test_apply_overrides_returns_rebuild_flag():
     cfg = SearchConfig()
-    assert apply_overrides(cfg, {"search_mode.bm25_weight": 0.5}) is True
+    assert apply_overrides(cfg, {"search_mode.rrf_k_parameter": 100}) is True
     assert apply_overrides(cfg, {"reranker.top_k_candidates": 10}) is False
+    # bm25_weight/dense_weight are live-read, not construction_baked.
+    assert apply_overrides(cfg, {"search_mode.bm25_weight": 0.5}) is False
 
 
 def test_apply_overrides_no_sources_is_a_noop():

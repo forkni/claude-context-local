@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
+from search.config import SearchConfig
 from search.hybrid_searcher import HybridSearcher
 from utils.otel_attributes import ATTR_CAPTURE_QUERY
 
@@ -109,6 +110,61 @@ class TestHybridSearcher:
 
         # Verify dense indexing
         dense_mock.add_embeddings.assert_called_once()
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_weight_change_takes_effect_without_rebuild(self, mock_bm25, mock_dense):
+        """Direct proof that search_mode.bm25_weight/dense_weight are NOT
+        construction_baked (Phase 2a, ADR-0018 follow-on): HybridSearcher
+        takes no weight parameters at construction (hybrid_searcher.py:61-75)
+        - both are resolved live from effective_config on every search() call
+        (:731-739). Mutating the live config between two search() calls on
+        the SAME instance, with no rebuild in between, must change the
+        RetrievalRequest weights the second call is built with.
+        """
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(self.temp_dir)
+
+        # Mock indices as ready so search() reaches weight resolution.
+        mock_bm25.return_value.is_empty = False
+        dense_mock = mock_dense.return_value
+        dense_mock.index = Mock()
+        dense_mock.index.ntotal = 100
+
+        live_config = SearchConfig()
+        live_config.search_mode.bm25_weight = 0.35
+        live_config.search_mode.dense_weight = 0.65
+        # Force the single-hop branch so the patched _single_hop_search below
+        # is what actually resolves the request - multi-hop is enabled by
+        # default and would otherwise route through multi_hop_searcher instead.
+        live_config.multi_hop.enabled = False
+
+        captured_requests = []
+
+        def fake_single_hop(request, query_embedding=None):
+            captured_requests.append(request)
+            return []
+
+        with (
+            patch(
+                "search.hybrid_searcher._get_config_via_service_locator",
+                return_value=live_config,
+            ),
+            patch.object(searcher, "_single_hop_search", side_effect=fake_single_hop),
+        ):
+            searcher.search("test query", use_parallel=False)
+
+            # Mutate the live config in place - no HybridSearcher rebuild.
+            live_config.search_mode.bm25_weight = 0.9
+            live_config.search_mode.dense_weight = 0.1
+
+            searcher.search("test query", use_parallel=False)
+
+        assert len(captured_requests) == 2
+        assert captured_requests[0].bm25_weight == 0.35
+        assert captured_requests[0].dense_weight == 0.65
+        assert captured_requests[1].bm25_weight == 0.9
+        assert captured_requests[1].dense_weight == 0.1
 
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")

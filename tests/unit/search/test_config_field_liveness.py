@@ -72,17 +72,21 @@ def test_reader_files_mention_field_name():
 
 def test_construction_baked_fields_are_pinned():
     """Ratchet for spec(construction_baked=True) (Part 2/C1 of the ADR-0018
-    follow-on plan): the six fields read once into a collaborator (cached
+    follow-on plan): the four fields read once into a collaborator (cached
     HybridSearcher/reranker) at construction rather than live per search call
-    were identified by hand from run_sscg_benchmark.py's original
-    _maybe_reset_for_construction_overrides - pin the exact set so a silent
-    addition or removal shows up here instead of only as a stale benchmark
-    arm that silently didn't take effect.
+    - pin the exact set so a silent addition or removal shows up here instead
+    of only as a stale benchmark arm that silently didn't take effect.
+
+    search_mode.bm25_weight/dense_weight were removed from this set (Phase 2a,
+    ADR-0018 follow-on): HybridSearcher.__init__ takes no weight parameters -
+    both are read live from effective_config on every search() call
+    (hybrid_searcher.py:731-739), so the original six-field set (identified by
+    hand from run_sscg_benchmark.py's _maybe_reset_for_construction_overrides)
+    was wrong about those two. See test_weight_change_takes_effect_without_rebuild
+    for the direct liveness proof.
     """
     expected = frozenset(
         {
-            ("search_mode", "bm25_weight"),
-            ("search_mode", "dense_weight"),
             ("search_mode", "rrf_k_parameter"),
             ("reranker", "doc_max_chars"),
             ("reranker", "listwise_doc_max_chars"),
