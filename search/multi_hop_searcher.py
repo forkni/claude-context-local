@@ -490,6 +490,7 @@ class MultiHopSearcher:
                 k=k,
                 search_mode=search_mode,
                 hop1_reserved_slots=config.reranker.hop1_reserved_slots,
+                config=config,
             )
 
         timings["rerank"] = time.time() - rerank_start

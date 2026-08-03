@@ -215,7 +215,7 @@ class SearchExecutor:
             # the tail of HybridSearcher.search(); hop-1 seeds keep RRF order.
             if len(final_results) > 0 and not config.reranker.single_pass:
                 final_results = self.reranking_engine.apply_neural_reranking(
-                    query, final_results, k, context="search"
+                    query, final_results, k, context="search", config=config
                 )
             final_results = final_results[:k]
 

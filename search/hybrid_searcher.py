@@ -801,6 +801,7 @@ class HybridSearcher(BaseSearcher):
                     results=results,
                     k=k,
                     search_mode=search_mode,
+                    config=effective_config,
                 )
             elif (
                 effective_config.ego_graph.enabled
@@ -814,6 +815,7 @@ class HybridSearcher(BaseSearcher):
                     results=results,
                     k=len(results),  # Keep all results, just re-score and re-sort
                     search_mode=search_mode,
+                    config=effective_config,
                 )
 
             # Safety-net dedup for paths that bypass rerank_by_query (e.g.
@@ -1036,6 +1038,14 @@ class HybridSearcher(BaseSearcher):
 
         results = ResultFactory.from_similarity_results(similar_chunks)
 
+        # Resolve once, same as HybridSearcher.search(): the config given at
+        # construction, else the service-locator default (ADR-0018).
+        effective_config = (
+            self.config
+            if self.config is not None
+            else _get_config_via_service_locator()
+        )
+
         # Apply neural reranking if requested and available
         if rerank and results:
             ref_metadata = self.dense_index.get_chunk_by_id(chunk_id)
@@ -1052,7 +1062,11 @@ class HybridSearcher(BaseSearcher):
                 # with the neural relevance score.
                 similarity_by_id = {r.chunk_id: r.score for r in results}
                 reranked = self.reranking_engine.apply_neural_reranking(
-                    query_content, results, k, context="similarity"
+                    query_content,
+                    results,
+                    k,
+                    context="similarity",
+                    config=effective_config,
                 )
                 # Attach neural reranker_score to metadata; restore original vector
                 # similarity as .score so downstream formatters display it consistently.

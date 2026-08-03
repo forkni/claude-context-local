@@ -1204,6 +1204,83 @@ class TestSinglePassTailRerank:
         ]
 
 
+class TestConfigThreadedToReranker:
+    """C2 (docs/adr/0018): the config a caller passes to search() must be
+    what RerankingEngine actually acts on, not silently replaced by the
+    process-global singleton reranking_engine.rerank_by_query() re-fetches
+    internally when no config kwarg is threaded through.
+
+    Before this refactor rerank_by_query() had no config parameter at all,
+    so `call_args.kwargs["config"]` would KeyError — this assertion was
+    unwritable until search()'s call sites threaded the request-scoped
+    config through (search/hybrid_searcher.py:799, :812).
+    """
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_passed_config_reaches_reranking_engine_not_the_singleton(
+        self, mock_bm25, mock_dense
+    ):
+        from search.config import MultiHopConfig, RerankerConfig, SearchConfig
+        from search.reranker import SearchResult
+
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(tempfile.mkdtemp())
+        mock_bm25.return_value.is_empty = False
+        dense_index = Mock()
+        dense_index.ntotal = 100
+        mock_dense.return_value.index = dense_index
+
+        # The service-locator default (what a stale re-fetch would read) —
+        # deliberately a different top_k_candidates than the config passed
+        # to search(), so the two are distinguishable.
+        singleton_config = SearchConfig(
+            multi_hop=MultiHopConfig(enabled=False),
+            reranker=RerankerConfig(single_pass=True, top_k_candidates=11),
+        )
+        singleton_config.ego_graph.enabled = False
+        singleton_config.parent_retrieval.enabled = False
+
+        passed_config = SearchConfig(
+            multi_hop=MultiHopConfig(enabled=False),
+            reranker=RerankerConfig(single_pass=True, top_k_candidates=99),
+        )
+        passed_config.ego_graph.enabled = False
+        passed_config.parent_retrieval.enabled = False
+
+        results = [
+            SearchResult(
+                chunk_id="src/a.py:1-10:function:alpha", score=0.9, metadata={}
+            ),
+            SearchResult(
+                chunk_id="src/b.py:1-10:function:beta", score=0.8, metadata={}
+            ),
+        ]
+
+        engine = Mock()
+        engine.rerank_by_query.side_effect = lambda **kw: kw["results"][: kw["k"]]
+        searcher.reranking_engine = engine
+
+        with (
+            patch(
+                "search.hybrid_searcher._get_config_via_service_locator",
+                return_value=singleton_config,
+            ),
+            patch.object(searcher, "_single_hop_search", return_value=results),
+        ):
+            searcher.search("query", k=2, config=passed_config)
+
+        engine.rerank_by_query.assert_called_once()
+        # Identity, not just equal fields — proves the engine received the
+        # request-scoped object the caller passed rather than a value that
+        # happens to match it.
+        assert engine.rerank_by_query.call_args.kwargs["config"] is passed_config
+        assert (
+            engine.rerank_by_query.call_args.kwargs["config"].reranker.top_k_candidates
+            == 99
+        )
+
+
 class TestCaptureQueryText:
     """observability.capture_query_text gates ATTR_CAPTURE_QUERY on the
     search.hybrid span (:688-695 fails closed unless config opts in)."""

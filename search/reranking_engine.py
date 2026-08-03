@@ -300,6 +300,7 @@ class RerankingEngine:
         k: int,
         search_mode: str = SearchMode.HYBRID,
         hop1_reserved_slots: int = 0,
+        config: "SearchConfig | None" = None,
     ) -> list:
         """
         Re-rank results by sorted score, then apply neural reranking.
@@ -315,6 +316,11 @@ class RerankingEngine:
                 0 (default) is a no-op — only ``MultiHopSearcher.search``
                 passes a non-zero value; the ego-graph/parent-expansion tail
                 call sites stay byte-identical.
+            config: Optional pre-fetched SearchConfig snapshot — the effective
+                config for this request (see ADR-0018). Callers that already
+                hold one pass it through so the whole rerank pass reads a
+                single snapshot instead of re-fetching the process global;
+                fetched here if omitted.
 
         Returns:
             Top k results sorted by query relevance
@@ -329,7 +335,8 @@ class RerankingEngine:
         # Neural reranking (Quality First mode) — always re-check config for runtime
         # changes. Fetch once per pass (R1) and thread through both helpers instead
         # of each independently re-fetching (was 3 fetches/call, now 1).
-        config = get_search_config()
+        if config is None:
+            config = get_search_config()
         if hop1_reserved_slots > 0:
             sorted_results = self._apply_hop1_reserve(
                 sorted_results, config.reranker.top_k_candidates, hop1_reserved_slots
@@ -356,6 +363,7 @@ class RerankingEngine:
         results: list,
         k: int,
         context: str = "search",
+        config: "SearchConfig | None" = None,
     ) -> list:
         """
         Apply neural reranking with automatic lifecycle management.
@@ -368,6 +376,11 @@ class RerankingEngine:
             results: List of SearchResult objects to rerank
             k: Number of top results to return
             context: Context identifier for logging ("search" or "similarity")
+            config: Optional pre-fetched SearchConfig snapshot — the effective
+                config for this request (see ADR-0018). Callers that already
+                hold one pass it through so the whole rerank pass reads a
+                single snapshot instead of re-fetching the process global;
+                fetched here if omitted.
 
         Returns:
             Reranked results (or original results if neural reranking unavailable)
@@ -377,7 +390,8 @@ class RerankingEngine:
             return []
         self.last_candidate_ids = [r.chunk_id for r in results]
         # Fetch config once per pass (R1) and thread through both helpers.
-        config = get_search_config()
+        if config is None:
+            config = get_search_config()
         if not self._ensure_reranker(  # pragma: no mutate
             f"[RERANK-{context.upper()}]", config=config
         ):  # pragma: no mutate
