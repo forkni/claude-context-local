@@ -1,4 +1,4 @@
-"""Unit tests for _cleanup_previous_resources (mcp_server/resource_manager.py).
+"""Unit tests for mcp_server/resource_manager.py.
 
 _cleanup_previous_resources() is the routine every async index/switch/clear
 handler offloads via asyncio.to_thread before touching the next project's
@@ -7,11 +7,26 @@ in one component (e.g. a hung index_manager.close()) never blocks cleanup of
 the others. These tests cover the two properties that guarantee: the happy
 path invokes every dependency, and a raising early step doesn't stop later
 steps from running.
+
+_bind_active_project_overrides()/initialize_server_state() are covered
+separately (Phase 1c, ADR-0018 follow-on). Before this fix, server startup
+restored the active project (env var or persisted selection) on both
+branches but never bound search/config.py's ``_active_project_storage_dir``,
+so a restored project's search_overrides.json (ADR-0014) was silently not
+merged into effective config until an explicit switch_project or
+index_directory call. These tests assert the binding now happens on both
+restoration paths, and that a storage-lookup failure degrades gracefully
+instead of crashing startup.
 """
 
 from unittest.mock import MagicMock, patch
 
-from mcp_server.resource_manager import _cleanup_previous_resources
+from mcp_server.resource_manager import (
+    _bind_active_project_overrides,
+    _cleanup_previous_resources,
+    initialize_server_state,
+)
+from mcp_server.storage_manager import get_project_storage_dir
 
 
 def _make_fake_state() -> MagicMock:
@@ -89,3 +104,97 @@ def test_cleanup_previous_resources_isolates_component_failures():
     mock_reset_pool.assert_called_once()
     mock_release_gpu.assert_called_once_with(synchronize=False)
     mock_force_flush.assert_called_once()
+
+
+class TestBindActiveProjectOverrides:
+    """Unit tests for _bind_active_project_overrides (Phase 1c)."""
+
+    def test_happy_path_binds_storage_dir_and_invalidates_caches(self):
+        """The helper resolves the project's storage dir, binds it as the
+        active overrides layer, and drops the config caches that step 1 of
+        initialize_server_state populated before any project was bound."""
+        fake_storage_dir = MagicMock()
+
+        with (
+            patch(
+                "mcp_server.storage_manager.get_project_storage_dir",
+                return_value=fake_storage_dir,
+            ) as mock_get_dir,
+            patch("search.config.set_active_project_storage_dir") as mock_set_dir,
+            patch("mcp_server.state.invalidate_config_caches") as mock_invalidate,
+        ):
+            result = _bind_active_project_overrides("/some/project")
+
+        assert result is None
+        mock_get_dir.assert_called_once_with("/some/project")
+        mock_set_dir.assert_called_once_with(fake_storage_dir)
+        mock_invalidate.assert_called_once()
+
+    def test_storage_lookup_failure_is_swallowed(self):
+        """A raising project-storage lookup (e.g. an unregistered embedding
+        model) must not crash startup — the project still activates via
+        state.current_project/set_current_project, just without its
+        overrides layer bound, mirroring step 1's non-fatal config load."""
+        with (
+            patch(
+                "mcp_server.storage_manager.get_project_storage_dir",
+                side_effect=ValueError("unknown embedding model"),
+            ),
+            patch("search.config.set_active_project_storage_dir") as mock_set_dir,
+            patch("mcp_server.state.invalidate_config_caches") as mock_invalidate,
+        ):
+            result = _bind_active_project_overrides("/some/project")  # must not raise
+
+        assert result is None
+        mock_set_dir.assert_not_called()
+        mock_invalidate.assert_not_called()
+
+
+class TestInitializeServerStateBindsOverrides:
+    """Integration-style tests: after initialize_server_state restores the
+    active project — env var or persisted selection — search.config's
+    _active_project_storage_dir must be bound to that project's storage dir.
+    Before Phase 1c, neither restoration path bound it, so a restored
+    project's search_overrides.json (ADR-0014) was silently inactive until
+    an explicit switch_project/index_directory call.
+    """
+
+    def test_env_var_branch_binds_overrides(self, tmp_path, monkeypatch):
+        import search.config as config_module
+
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", None)
+
+        project_path = tmp_path / "env_project"
+        project_path.mkdir()
+        monkeypatch.setenv("CLAUDE_DEFAULT_PROJECT", str(project_path))
+
+        fake_config = MagicMock()
+        fake_config.embedding.model_name = "Qwen/Qwen3-Embedding-0.6B"
+        with patch(
+            "mcp_server.storage_manager.get_search_config", return_value=fake_config
+        ):
+            initialize_server_state()
+            expected_storage = get_project_storage_dir(str(project_path))
+
+        assert config_module.get_active_project_storage_dir() == str(expected_storage)
+
+    def test_persisted_selection_branch_binds_overrides(self, tmp_path, monkeypatch):
+        import search.config as config_module
+        from mcp_server.project_persistence import save_project_selection
+
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", None)
+        monkeypatch.delenv("CLAUDE_DEFAULT_PROJECT", raising=False)
+
+        project_path = tmp_path / "restored_project"
+        project_path.mkdir()
+        save_project_selection(str(project_path))
+
+        fake_config = MagicMock()
+        fake_config.embedding.model_name = "Qwen/Qwen3-Embedding-0.6B"
+        with patch(
+            "mcp_server.storage_manager.get_search_config", return_value=fake_config
+        ):
+            initialize_server_state()
+            expected_storage = get_project_storage_dir(str(project_path))
+
+        assert config_module.get_active_project_storage_dir() == str(expected_storage)
