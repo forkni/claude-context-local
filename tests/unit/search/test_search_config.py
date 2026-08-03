@@ -844,6 +844,78 @@ class TestProjectOverrides:
             "performance.max_chunking_workers",
         ]
 
+    def test_save_config_does_not_promote_override_into_global_file(
+        self, tmp_path, monkeypatch
+    ):
+        """save_config must not write the active project's overridden field
+        back into the global config file (Phase 1b, ADR-0018 follow-on).
+
+        Every load_config() -> mutate -> save_config() handler (e.g.
+        handle_configure_search_mode) would otherwise silently promote a
+        per-project override into the global file the moment any *other*
+        field is saved.
+        """
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        _write_overrides(storage, {"search_mode": {"bm25_weight": 0.9}})
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        manager = self._manager(tmp_path, {"search_mode": {"bm25_weight": 0.5}})
+        config = manager.load_config()
+        assert config.search_mode.bm25_weight == 0.9  # override applied in-memory
+
+        # Mutate an unrelated field and save, mirroring what a config-writing
+        # MCP handler does.
+        config.performance.max_chunking_workers = 99
+        manager.save_config(config)
+
+        on_disk = json.loads((tmp_path / "search_config.json").read_text())
+        assert on_disk["performance"]["max_chunking_workers"] == 99
+        # The override must NOT have been promoted into the global file --
+        # it keeps the global file's own pre-existing value.
+        assert on_disk["search_mode"]["bm25_weight"] == 0.5
+
+    def test_save_config_prunes_override_absent_from_global_file(
+        self, tmp_path, monkeypatch
+    ):
+        """When the global file never set the overridden field at all, saving
+        omits it entirely rather than writing the project-scoped value."""
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        _write_overrides(storage, {"search_mode": {"bm25_weight": 0.9}})
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        # Global file has a search_mode section but never sets bm25_weight.
+        manager = self._manager(tmp_path, {"search_mode": {"rrf_k_parameter": 60}})
+        config = manager.load_config()
+        assert config.search_mode.bm25_weight == 0.9
+
+        manager.save_config(config)
+
+        on_disk = json.loads((tmp_path / "search_config.json").read_text())
+        assert "bm25_weight" not in on_disk["search_mode"]
+
+    def test_save_config_unchanged_when_no_overrides_active(
+        self, tmp_path, monkeypatch
+    ):
+        """With no active project overrides, save_config behaves exactly as
+        before Phase 1b -- the pruning guard is a no-op."""
+        import search.config as config_module
+
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", None)
+
+        manager = self._manager(tmp_path, {"search_mode": {"bm25_weight": 0.5}})
+        config = manager.load_config()
+        assert manager.get_active_overrides_meta() is None
+
+        config.search_mode.bm25_weight = 0.42
+        manager.save_config(config)
+
+        on_disk = json.loads((tmp_path / "search_config.json").read_text())
+        assert on_disk["search_mode"]["bm25_weight"] == 0.42
+
 
 # ---------------------------------------------------------------------------
 # search_config.json.example must cover the full dataclass field surface --

@@ -1859,6 +1859,52 @@ class SearchConfigManager:
         """Convert environment variable string to boolean."""
         return value.lower() in ("true", "1", "yes", "on", "enabled")
 
+    def _read_global_config_dict(self) -> dict[str, Any]:
+        """Read ``self.config_file`` as a nested dict, ignoring project overrides
+        and env vars — i.e. exactly the "global layer" ``load_config`` starts from
+        before ``_deep_merge``-ing the overrides file in. Returns ``{}`` if the
+        file does not exist or fails to parse (same fallback ``load_config`` uses).
+        """
+        config_path = Path(self.config_file)
+        if not config_path.exists():
+            return {}
+        try:
+            with open(config_path) as f:
+                raw = json.load(f)
+        except Exception:  # noqa: BLE001 - parse-recovery, mirrors load_config
+            return {}
+        file_is_nested = any(
+            isinstance(v, dict) and k in SearchConfig._SUBCONFIG_NAMES
+            for k, v in raw.items()
+        )
+        return raw if file_is_nested else SearchConfig._flat_to_nested(raw)
+
+    def _prune_active_overrides(self, config_dict: dict[str, Any]) -> None:
+        """Strip the active project's overridden fields from *config_dict* in-place.
+
+        ``load_config`` deep-merges the active project's ``search_overrides.json``
+        (ADR-0014) into the returned config, so ``config`` — and therefore
+        ``config_dict`` — can carry values that only apply to that project.
+        Without this guard, every ``load_config()`` -> mutate -> ``save_config()``
+        handler (e.g. ``handle_configure_search_mode``) would silently promote
+        those project-scoped values into the global config file. Each overridden
+        field is restored to whatever the global file currently has on disk for
+        it, or omitted entirely if the global file never set it.
+        """
+        meta = self._active_overrides_meta
+        if not meta:
+            return
+        global_dict = self._read_global_config_dict()
+        for dotted in meta["keys"]:
+            section, _, field = dotted.partition(".")
+            if not field:
+                continue  # defensive: SearchConfig overrides are always "section.field"
+            global_section = global_dict.get(section)
+            if isinstance(global_section, dict) and field in global_section:
+                config_dict.setdefault(section, {})[field] = global_section[field]
+            else:
+                config_dict.get(section, {}).pop(field, None)
+
     def save_config(self, config: SearchConfig) -> None:
         """Save configuration to file with atomic write protection."""
         try:
@@ -1874,6 +1920,7 @@ class SearchConfigManager:
             Path(self.config_file).parent.mkdir(parents=True, exist_ok=True)
 
             config_dict = config.to_dict()  # Serialize BEFORE opening file
+            self._prune_active_overrides(config_dict)
             write_json_atomic(self.config_file, config_dict)
 
             self.logger.info(f"Saved search config to {self.config_file}")
