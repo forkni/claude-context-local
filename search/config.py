@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # Import DEFAULT_EDGE_WEIGHTS for ego-graph weighted BFS
 from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
@@ -1322,7 +1322,10 @@ def _derive_env_mapping(
             env_var = f.metadata.get("env")
             if env_var is None:
                 continue
-            mapping[env_var] = (f.metadata["flat_alias"], type_converters[f.type])
+            mapping[env_var] = (
+                f.metadata["flat_alias"],
+                type_converters[cast(type, f.type)],
+            )
     return mapping
 
 
