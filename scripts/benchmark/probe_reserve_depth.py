@@ -58,9 +58,12 @@ def load_query(dataset_path: Path, query_id: str) -> dict:
 
 def capture_fused_head(searcher, query: str, k: int) -> list[str]:
     """Run one hybrid search at reserve=0 and return the normalized fused pool."""
+    from evaluation.arm_overrides import apply_overrides
     from search.config import get_search_config
 
-    get_search_config().search_mode.bm25_reserved_slots = 0
+    # bm25_reserved_slots is not construction_baked - no reset needed on the
+    # returned flag (see evaluation.arm_overrides.requires_rebuild).
+    apply_overrides(get_search_config(), {"search_mode.bm25_reserved_slots": 0})
     engine = getattr(searcher, "reranking_engine", None)
     if engine is not None:
         engine.last_candidate_ids = None

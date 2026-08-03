@@ -279,7 +279,21 @@ def main() -> int:
         default=None,
         help=(
             "Override reranker.hop1_reserved_slots in the in-memory config for "
-            "this run (fix verification arm). Default: use config value."
+            "this run (fix verification arm). Default: use config value. "
+            "Sugar for --set reranker.hop1_reserved_slots=<value>."
+        ),
+    )
+    parser.add_argument(
+        "--set",
+        dest="set_overrides",
+        action="append",
+        metavar="section.field=value",
+        help=(
+            "Override an arbitrary SearchConfig field for this run, e.g. "
+            "'--set reranker.top_k_candidates=33'. Repeatable; later "
+            "duplicates win. Routed through evaluation.arm_overrides - value "
+            "is coerced to the field's declared type and validated against "
+            "its spec(range=...)/choices=... before anything is mutated."
         ),
     )
     args = parser.parse_args()
@@ -301,15 +315,36 @@ def main() -> int:
         print("ERROR: no queries selected", file=sys.stderr)
         return 2
 
+    from evaluation.arm_overrides import (
+        ArmOverrideError,
+        apply_overrides,
+        parse_set_flags,
+    )
+
+    try:
+        overrides = parse_set_flags(args.set_overrides)
+        if args.hop1_reserved_slots is not None:
+            overrides["reranker.hop1_reserved_slots"] = args.hop1_reserved_slots
+    except ArmOverrideError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
+
+    # Apply before constructing the searcher: this probe builds one searcher
+    # per run (no cached-searcher reset path), so any construction_baked
+    # field only takes effect if it is set first.
+    if overrides:
+        from search.config import get_search_config
+
+        try:
+            apply_overrides(get_search_config(), overrides)
+        except ArmOverrideError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 2
+        print(f"[OVERRIDE] {overrides}")
+
     from mcp_server.search_factory import get_searcher
 
     searcher = get_searcher(project_path=args.project_path)
-
-    if args.hop1_reserved_slots is not None:
-        from search.config import get_search_config
-
-        get_search_config().reranker.hop1_reserved_slots = args.hop1_reserved_slots
-        print(f"[OVERRIDE] hop1_reserved_slots={args.hop1_reserved_slots}")
 
     instr = Instrumentation(searcher)
     instr.install()

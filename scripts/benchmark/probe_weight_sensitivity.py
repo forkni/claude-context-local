@@ -103,15 +103,22 @@ def _load_queries(dataset_path: Path, category_filter: str | None) -> list[dict]
 
 
 def _set_weights(bm25_weight: float, dense_weight: float) -> None:
-    """Mutate the live in-memory config (same mechanism as run_sscg_benchmark.py).
+    """Mutate the live in-memory config via the arm_overrides seam.
 
-    No searcher reset needed — see the module docstring.
+    No searcher reset needed — bm25_weight/dense_weight are not
+    construction_baked (Phase 2a, ADR-0018 follow-on), so
+    ``apply_overrides`` always returns False here. See the module docstring.
     """
+    from evaluation.arm_overrides import apply_overrides
     from search.config import get_search_config
 
-    cfg = get_search_config()
-    cfg.search_mode.bm25_weight = bm25_weight
-    cfg.search_mode.dense_weight = dense_weight
+    apply_overrides(
+        get_search_config(),
+        {
+            "search_mode.bm25_weight": bm25_weight,
+            "search_mode.dense_weight": dense_weight,
+        },
+    )
 
 
 def _classify_intents(queries: list[dict]) -> dict[str, str]:
@@ -136,6 +143,20 @@ def main() -> int:
         help="Comma-separated category filter (default: all but D)",
     )
     parser.add_argument("--noise-band", type=float, default=NOISE_BAND)
+    parser.add_argument(
+        "--set",
+        dest="set_overrides",
+        action="append",
+        metavar="section.field=value",
+        help=(
+            "Override an arbitrary SearchConfig field for this run, held "
+            "constant across every weight combo, e.g. "
+            "'--set reranker.top_k_candidates=33'. Repeatable; later "
+            "duplicates win. Routed through evaluation.arm_overrides - value "
+            "is coerced to the field's declared type and validated against "
+            "its spec(range=...)/choices=... before anything is mutated."
+        ),
+    )
     args = parser.parse_args()
 
     dataset_path = Path(args.dataset)
@@ -150,7 +171,32 @@ def main() -> int:
         print("ERROR: no queries matched the filter", file=sys.stderr)
         return 2
 
+    from evaluation.arm_overrides import (
+        ArmOverrideError,
+        apply_overrides,
+        parse_set_flags,
+    )
+
+    try:
+        set_overrides = parse_set_flags(args.set_overrides)
+    except ArmOverrideError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
+
     from mcp_server.search_factory import get_searcher
+
+    # Apply --set before constructing the searcher: this probe builds one
+    # searcher for the whole sweep, so any construction_baked field it
+    # touches must be set before that point to take effect.
+    if set_overrides:
+        from search.config import get_search_config
+
+        try:
+            apply_overrides(get_search_config(), set_overrides)
+        except ArmOverrideError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            return 2
+        print(f"[OVERRIDE] {set_overrides}")
 
     try:
         searcher = get_searcher(project_path=args.project_path)
