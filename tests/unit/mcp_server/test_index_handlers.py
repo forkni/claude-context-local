@@ -382,67 +382,6 @@ class TestReleaseGpuMemory:
             _release_gpu_memory()  # Must not raise
 
 
-class TestSwitchActiveModel:
-    """Direct tests for _switch_active_model module-level helper."""
-
-    def _make_config(self):
-        cfg = __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock()
-        cfg.embedding.model_name = "old-model"
-        cfg.embedding.dimension = 768
-        return cfg
-
-    def test_saves_config_when_model_changes(self):
-        """Config is saved to disk when the model name differs from current."""
-        from unittest.mock import MagicMock, patch
-
-        from mcp_server.tools.index_handlers import _switch_active_model
-
-        mock_cfg = self._make_config()
-        mock_mgr = MagicMock()
-        mock_mgr.load_config.return_value = mock_cfg
-
-        with (
-            patch(
-                "mcp_server.tools.index_handlers.SearchConfigManager",
-                return_value=mock_mgr,
-            ),
-            patch(
-                "mcp_server.tools.index_handlers.MODEL_REGISTRY",
-                {"new-model": {"dimension": 512}},
-            ),
-            patch("mcp_server.tools.index_handlers.get_state"),
-            patch("mcp_server.tools.index_handlers._invalidate_config_caches"),
-        ):
-            _switch_active_model("new-model")
-
-        mock_mgr.save_config.assert_called_once()
-
-    def test_invalidates_caches(self):
-        """Cache invalidation helper is called after config update."""
-        from unittest.mock import MagicMock, patch
-
-        from mcp_server.tools.index_handlers import _switch_active_model
-
-        mock_cfg = self._make_config()
-        mock_mgr = MagicMock()
-        mock_mgr.load_config.return_value = mock_cfg
-
-        with (
-            patch(
-                "mcp_server.tools.index_handlers.SearchConfigManager",
-                return_value=mock_mgr,
-            ),
-            patch("mcp_server.tools.index_handlers.MODEL_REGISTRY", {}),
-            patch("mcp_server.tools.index_handlers.get_state"),
-            patch(
-                "mcp_server.tools.index_handlers._invalidate_config_caches"
-            ) as mock_inv,
-        ):
-            _switch_active_model("old-model")
-
-        mock_inv.assert_called_once()
-
-
 class TestHandlerChunkerOwnership:
     """Both handler sites must build their chunker via MultiLanguageChunker.for_project.
 

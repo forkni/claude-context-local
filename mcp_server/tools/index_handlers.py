@@ -28,11 +28,7 @@ from mcp_server.storage_manager import (
 from mcp_server.tools import responses
 from mcp_server.tools.decorators import error_handler, with_mutation_lock
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
-from search.config import (
-    MODEL_REGISTRY,
-    SearchConfigManager,
-    set_active_project_storage_dir,
-)
+from search.config import set_active_project_storage_dir
 from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
 from search.incremental_indexer import IncrementalIndexer
 
@@ -381,49 +377,6 @@ def _iter_project_model_dirs(project_path: Path) -> Iterator[Path]:
             if model_dir not in seen:
                 seen.add(model_dir)
                 yield model_dir
-
-
-# Module-level alias so existing tests can keep patching
-# ``mcp_server.tools.index_handlers._invalidate_config_caches``; the shared
-# implementation lives in mcp_server.state (also called by handle_switch_project).
-_invalidate_config_caches = invalidate_config_caches
-
-
-def _switch_active_model(model_name: str) -> None:
-    """Update the active embedding model in the persisted config and invalidate caches.
-
-    Loads the current config, sets ``embedding.model_name`` and the matching
-    ``embedding.dimension`` from :data:`MODEL_REGISTRY`, saves to disk only when
-    something changed, then calls :func:`_invalidate_config_caches` so the next
-    :func:`get_config` call returns fresh values.
-
-    Args:
-        model_name: Full HuggingFace model identifier to activate.
-    """
-    config_mgr = SearchConfigManager()
-    config = config_mgr.load_config()
-    new_dimension = config.embedding.dimension
-    if model_name in MODEL_REGISTRY:
-        model_cfg = MODEL_REGISTRY[model_name]
-        new_dimension = model_cfg.get("truncate_dim") or model_cfg["dimension"]
-
-    if (
-        config.embedding.model_name != model_name
-        or config.embedding.dimension != new_dimension
-    ):
-        config.embedding.model_name = model_name
-        # pyrefly: ignore [bad-assignment]
-        config.embedding.dimension = new_dimension
-        config_mgr.save_config(config)
-    else:
-        logger.info(
-            f"Config already set to {model_name} ({new_dimension}d), skipping save"
-        )
-        config.embedding.model_name = model_name
-        # pyrefly: ignore [bad-assignment]
-        config.embedding.dimension = new_dimension
-
-    _invalidate_config_caches()
 
 
 # ----------------------------------------------------------------------------
