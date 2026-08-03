@@ -77,6 +77,8 @@ _PROJECT_ROOT = _SCRIPT_DIR.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from evaluation import arm_overrides  # noqa: E402
+from evaluation.arm_overrides import ArmOverrideError  # noqa: E402
 from evaluation.metrics import (  # noqa: E402
     THRESHOLDS,
     aggregate_metrics,
@@ -151,26 +153,36 @@ def _setup_project(project_path: str) -> None:
         print("[WARN] Proceeding — project may already be loaded.", file=sys.stderr)
 
 
+def _non_none_overrides(pairs: dict[str, Any]) -> dict[str, Any]:
+    """Drop ``None``-valued entries.
+
+    The eleven ``_apply_*_override`` functions below share one contract:
+    only override the fields the caller actually passed a value for. Each
+    used to encode that as its own hand-written ``if X is None and Y is
+    None...: return`` guard; ``apply_overrides({})`` is already a no-op, so
+    filtering here is sufficient — expressed once instead of eleven times.
+    """
+    return {key: value for key, value in pairs.items() if value is not None}
+
+
 def _apply_weight_overrides(
     bm25_weight: float | None,
     dense_weight: float | None,
     search_mode: str | None,
 ) -> None:
     """Override BM25/dense weights in the in-memory search config singleton."""
-    if bm25_weight is None and dense_weight is None and search_mode is None:
+    overrides = _non_none_overrides(
+        {
+            "search_mode.bm25_weight": bm25_weight,
+            "search_mode.dense_weight": dense_weight,
+            "search_mode.default_mode": search_mode,
+        }
+    )
+    if not overrides:
         return
-    try:
-        from search.config import get_search_config
+    from search.config import get_search_config
 
-        cfg = get_search_config()
-        if bm25_weight is not None:
-            cfg.search_mode.bm25_weight = bm25_weight
-        if dense_weight is not None:
-            cfg.search_mode.dense_weight = dense_weight
-        if search_mode is not None:
-            cfg.search_mode.default_mode = search_mode
-    except Exception as e:
-        print(f"[WARN] Could not apply weight overrides: {e}", file=sys.stderr)
+    arm_overrides.apply_overrides(get_search_config(), overrides)
 
 
 def _apply_reranker_override(
@@ -185,18 +197,17 @@ def _apply_reranker_override(
     next search and hot-swaps the loaded model (cleanup + rebuild) when ``model_name``
     differs from what is currently loaded.
     """
-    if reranker_model is None and reranker_enabled is None:
+    overrides = _non_none_overrides(
+        {
+            "reranker.model_name": reranker_model,
+            "reranker.enabled": reranker_enabled,
+        }
+    )
+    if not overrides:
         return
-    try:
-        from search.config import get_search_config
+    from search.config import get_search_config
 
-        cfg = get_search_config()
-        if reranker_model is not None:
-            cfg.reranker.model_name = reranker_model
-        if reranker_enabled is not None:
-            cfg.reranker.enabled = reranker_enabled
-    except Exception as e:
-        print(f"[WARN] Could not apply reranker override: {e}", file=sys.stderr)
+    arm_overrides.apply_overrides(get_search_config(), overrides)
 
 
 def _apply_reranker_budget_override(top_k_candidates: int | None) -> None:
@@ -208,13 +219,11 @@ def _apply_reranker_budget_override(top_k_candidates: int | None) -> None:
     """
     if top_k_candidates is None:
         return
-    try:
-        from search.config import get_search_config
+    from search.config import get_search_config
 
-        cfg = get_search_config()
-        cfg.reranker.top_k_candidates = top_k_candidates
-    except Exception as e:
-        print(f"[WARN] Could not apply reranker budget override: {e}", file=sys.stderr)
+    arm_overrides.apply_overrides(
+        get_search_config(), {"reranker.top_k_candidates": top_k_candidates}
+    )
 
 
 def _apply_reranker_doc_max_chars_override(
@@ -229,21 +238,17 @@ def _apply_reranker_doc_max_chars_override(
     callers must reset the cached searcher afterwards for a same-model override
     to take effect (see ``_maybe_reset_for_construction_overrides``).
     """
-    if doc_max_chars is None and listwise_doc_max_chars is None:
+    overrides = _non_none_overrides(
+        {
+            "reranker.doc_max_chars": doc_max_chars,
+            "reranker.listwise_doc_max_chars": listwise_doc_max_chars,
+        }
+    )
+    if not overrides:
         return
-    try:
-        from search.config import get_search_config
+    from search.config import get_search_config
 
-        cfg = get_search_config()
-        if doc_max_chars is not None:
-            cfg.reranker.doc_max_chars = doc_max_chars
-        if listwise_doc_max_chars is not None:
-            cfg.reranker.listwise_doc_max_chars = listwise_doc_max_chars
-    except Exception as e:
-        print(
-            f"[WARN] Could not apply reranker doc-max-chars override: {e}",
-            file=sys.stderr,
-        )
+    arm_overrides.apply_overrides(get_search_config(), overrides)
 
 
 def _apply_reranker_dtype_override(reranker_dtype: str | None) -> None:
@@ -257,12 +262,11 @@ def _apply_reranker_dtype_override(reranker_dtype: str | None) -> None:
     """
     if reranker_dtype is None:
         return
-    try:
-        from search.config import get_search_config
+    from search.config import get_search_config
 
-        get_search_config().reranker.listwise_dtype = reranker_dtype
-    except Exception as e:
-        print(f"[WARN] Could not apply reranker dtype override: {e}", file=sys.stderr)
+    arm_overrides.apply_overrides(
+        get_search_config(), {"reranker.listwise_dtype": reranker_dtype}
+    )
 
 
 def _apply_reserved_slots_override(reserved_slots: int | None) -> None:
@@ -273,12 +277,11 @@ def _apply_reserved_slots_override(reserved_slots: int | None) -> None:
     """
     if reserved_slots is None:
         return
-    try:
-        from search.config import get_search_config
+    from search.config import get_search_config
 
-        get_search_config().search_mode.bm25_reserved_slots = reserved_slots
-    except Exception as e:
-        print(f"[WARN] Could not apply reserved-slots override: {e}", file=sys.stderr)
+    arm_overrides.apply_overrides(
+        get_search_config(), {"search_mode.bm25_reserved_slots": reserved_slots}
+    )
 
 
 def _apply_multi_hop_expansion_override(expansion: float | None) -> None:
@@ -289,14 +292,11 @@ def _apply_multi_hop_expansion_override(expansion: float | None) -> None:
     """
     if expansion is None:
         return
-    try:
-        from search.config import get_search_config
+    from search.config import get_search_config
 
-        get_search_config().multi_hop.expansion = expansion
-    except Exception as e:
-        print(
-            f"[WARN] Could not apply multi-hop expansion override: {e}", file=sys.stderr
-        )
+    arm_overrides.apply_overrides(
+        get_search_config(), {"multi_hop.expansion": expansion}
+    )
 
 
 def _apply_hop1_reserved_slots_override(reserved_slots: int | None) -> None:
@@ -307,15 +307,11 @@ def _apply_hop1_reserved_slots_override(reserved_slots: int | None) -> None:
     """
     if reserved_slots is None:
         return
-    try:
-        from search.config import get_search_config
+    from search.config import get_search_config
 
-        get_search_config().reranker.hop1_reserved_slots = reserved_slots
-    except Exception as e:
-        print(
-            f"[WARN] Could not apply hop1-reserved-slots override: {e}",
-            file=sys.stderr,
-        )
+    arm_overrides.apply_overrides(
+        get_search_config(), {"reranker.hop1_reserved_slots": reserved_slots}
+    )
 
 
 def _apply_query_expansion_override(enabled: bool) -> None:
@@ -326,12 +322,11 @@ def _apply_query_expansion_override(enabled: bool) -> None:
     """
     if not enabled:
         return
-    try:
-        from search.config import get_search_config
+    from search.config import get_search_config
 
-        get_search_config().query_expansion.enabled = True
-    except Exception as e:
-        print(f"[WARN] Could not apply query-expansion override: {e}", file=sys.stderr)
+    arm_overrides.apply_overrides(
+        get_search_config(), {"query_expansion.enabled": True}
+    )
 
 
 def _apply_ego_graph_overrides(
@@ -342,34 +337,46 @@ def _apply_ego_graph_overrides(
 ) -> None:
     """Override ego-graph knobs in the in-memory config singleton.
 
-    In-memory only, like ``_apply_query_expansion_override``. All four knobs
-    are read live per search — ``HybridSearcher.search()`` re-reads
-    ``effective_config.ego_graph`` on every call, and ``EgoGraphRetriever``
-    reads ``community_bounded`` / ``cross_community_penalty`` /
-    ``expansion_mode`` via getattr on the config it is handed — so no
-    searcher reset is needed between runs.
+    In-memory only, like ``_apply_query_expansion_override``. ``enabled`` and
+    ``expansion_mode`` are real ``EgoGraphConfig`` fields, read live per
+    search — ``HybridSearcher.search()`` re-reads ``effective_config.ego_graph``
+    on every call — so no searcher reset is needed between runs.
+
+    ``community_bounded``/``cross_community_penalty`` are pre-existing here
+    but are **not** declared ``EgoGraphConfig`` fields and are not read
+    anywhere in ``search/`` (confirmed by grep — likely vestigial from the
+    since-rejected community-merge experiment; see project memory
+    ``project_benchmark_noise_and_pool_hit``). Migrating this pair through
+    ``arm_overrides.apply_overrides`` would turn that silent no-op into a
+    hard ``ArmOverrideError`` ("unknown field"), a real behavior change this
+    refactor must not make — so they keep the original raw ``setattr``.
     """
-    if (
-        ego_graph is None
-        and community_bounded is None
-        and cross_community_penalty is None
-        and expansion_mode is None
-    ):
-        return
-    try:
+    if ego_graph is not None or expansion_mode is not None:
         from search.config import get_search_config
 
-        cfg = get_search_config()
-        if ego_graph is not None:
-            cfg.ego_graph.enabled = ego_graph == "on"
-        if community_bounded is not None:
-            cfg.ego_graph.community_bounded = community_bounded == "on"
-        if cross_community_penalty is not None:
-            cfg.ego_graph.cross_community_penalty = cross_community_penalty
-        if expansion_mode is not None:
-            cfg.ego_graph.expansion_mode = expansion_mode
-    except Exception as e:
-        print(f"[WARN] Could not apply ego-graph overrides: {e}", file=sys.stderr)
+        arm_overrides.apply_overrides(
+            get_search_config(),
+            _non_none_overrides(
+                {
+                    "ego_graph.enabled": ego_graph == "on"
+                    if ego_graph is not None
+                    else None,
+                    "ego_graph.expansion_mode": expansion_mode,
+                }
+            ),
+        )
+
+    if community_bounded is not None or cross_community_penalty is not None:
+        try:
+            from search.config import get_search_config
+
+            cfg = get_search_config()
+            if community_bounded is not None:
+                cfg.ego_graph.community_bounded = community_bounded == "on"
+            if cross_community_penalty is not None:
+                cfg.ego_graph.cross_community_penalty = cross_community_penalty
+        except Exception as e:
+            print(f"[WARN] Could not apply ego-graph overrides: {e}", file=sys.stderr)
 
 
 def _apply_rrf_k_override(rrf_k: int | None) -> None:
@@ -381,12 +388,27 @@ def _apply_rrf_k_override(rrf_k: int | None) -> None:
     """
     if rrf_k is None:
         return
-    try:
-        from search.config import get_search_config
+    from search.config import get_search_config
 
-        get_search_config().search_mode.rrf_k_parameter = rrf_k
+    arm_overrides.apply_overrides(
+        get_search_config(), {"search_mode.rrf_k_parameter": rrf_k}
+    )
+
+
+def _reset_cached_searcher() -> None:
+    """Drop the cached ``HybridSearcher`` in server state.
+
+    Shared by ``_maybe_reset_for_construction_overrides`` (the 32 named
+    flags) and ``run_single``'s ``--set`` handling — both need the same
+    reset once a construction-baked field has changed underneath a cached
+    searcher.
+    """
+    try:
+        from mcp_server.services import get_state
+
+        get_state().reset_searcher()
     except Exception as e:
-        print(f"[WARN] Could not apply rrf_k override: {e}", file=sys.stderr)
+        print(f"[WARN] Could not reset cached searcher: {e}", file=sys.stderr)
 
 
 def _maybe_reset_for_construction_overrides(
@@ -403,23 +425,25 @@ def _maybe_reset_for_construction_overrides(
     bm25/dense weights, rrf_k, the reranker document budgets, and the listwise
     reranker dtype are all baked in at construction — without this reset, a
     ``--sweep`` silently reuses the first iteration's params for every
-    subsequent config (Blocker B).
+    subsequent config (Blocker B). The six-argument ``None``-check this used
+    to be hand-written as is now derived from ``arm_overrides.requires_rebuild``,
+    which reads the same ``spec(construction_baked=True)`` flag (ADR-0022) that
+    every other seam caller reads — one source of truth for "which fields are
+    baked in at construction" instead of a second, hand-maintained one that
+    could silently drift from it.
     """
-    if (
-        bm25_weight is None
-        and dense_weight is None
-        and rrf_k is None
-        and doc_max_chars is None
-        and listwise_doc_max_chars is None
-        and reranker_dtype is None
-    ):
-        return
-    try:
-        from mcp_server.services import get_state
-
-        get_state().reset_searcher()
-    except Exception as e:
-        print(f"[WARN] Could not reset cached searcher: {e}", file=sys.stderr)
+    touched = _non_none_overrides(
+        {
+            "search_mode.bm25_weight": bm25_weight,
+            "search_mode.dense_weight": dense_weight,
+            "search_mode.rrf_k_parameter": rrf_k,
+            "reranker.doc_max_chars": doc_max_chars,
+            "reranker.listwise_doc_max_chars": listwise_doc_max_chars,
+            "reranker.listwise_dtype": reranker_dtype,
+        }
+    )
+    if arm_overrides.requires_rebuild(touched):
+        _reset_cached_searcher()
 
 
 class _EgoConfoundRecorder(logging.Handler):
@@ -1540,6 +1564,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run reranker comparison across predefined models (see RERANKER_SWEEP)",
     )
     parser.add_argument(
+        "--set",
+        dest="set_overrides",
+        action="append",
+        metavar="section.field=value",
+        help=(
+            "Override an arbitrary SearchConfig field for this run, e.g. "
+            "'--set reranker.top_k_candidates=33'. Repeatable; later "
+            "duplicates win. Routed through evaluation.arm_overrides — value "
+            "is coerced to the field's declared type and validated against "
+            "its spec(range=...)/choices=... before anything is mutated. "
+            "Sugar for the 32 named flags above where one exists; use this "
+            "for any field without a dedicated flag."
+        ),
+    )
+    parser.add_argument(
         "--compare",
         nargs="+",
         metavar="RESULT_JSON",
@@ -1585,6 +1624,7 @@ async def run_single(
     community_bounded: str | None = None,
     cross_community_penalty: float | None = None,
     expansion_mode: str | None = None,
+    set_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute one benchmark run and return the result dict."""
     _apply_weight_overrides(bm25_weight, dense_weight, search_mode)
@@ -1610,6 +1650,12 @@ async def run_single(
         reranker_listwise_doc_max_chars,
         reranker_dtype,
     )
+    if set_overrides:
+        from search.config import get_search_config
+
+        if arm_overrides.apply_overrides(get_search_config(), set_overrides):
+            _reset_cached_searcher()
+        print(f"  --set overrides: {set_overrides}")
 
     try:
         searcher = _get_searcher(project_path)
@@ -1851,7 +1897,15 @@ def main() -> None:
             "--project-path is required (or use --compare to compare saved results)"
         )
 
-    asyncio.run(main_async(args))
+    try:
+        asyncio.run(main_async(args))
+    except ArmOverrideError as exc:
+        # Only --set overrides raise this today (the 32 named flags are
+        # pre-validated by argparse choices=/type=) - surface it as a clean
+        # CLI error instead of a traceback, matching the --project-path
+        # check above.
+        print(f"[ERROR] Invalid override: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 async def main_async(args: argparse.Namespace) -> None:
@@ -1882,6 +1936,9 @@ async def main_async(args: argparse.Namespace) -> None:
     reranker_enabled = (
         None if args.reranker_enabled is None else args.reranker_enabled == "true"
     )
+    # Parse once, up front, so a malformed --set fails before any search run
+    # (and before any sweep iteration) rather than mid-sweep.
+    set_overrides = arm_overrides.parse_set_flags(args.set_overrides)
 
     # -----------------------------------------------------------------------
     # Reranker sweep mode: run predefined rerankers head-to-head
@@ -1918,6 +1975,7 @@ async def main_async(args: argparse.Namespace) -> None:
                 community_bounded=args.community_bounded,
                 cross_community_penalty=args.cross_community_penalty,
                 expansion_mode=args.expansion_mode,
+                set_overrides=set_overrides,
             )
             reranker_results.append(result)
 
@@ -1970,6 +2028,7 @@ async def main_async(args: argparse.Namespace) -> None:
                 community_bounded=args.community_bounded,
                 cross_community_penalty=args.cross_community_penalty,
                 expansion_mode=args.expansion_mode,
+                set_overrides=set_overrides,
             )
             sweep_results.append(result)
 
@@ -2016,6 +2075,7 @@ async def main_async(args: argparse.Namespace) -> None:
         community_bounded=args.community_bounded,
         cross_community_penalty=args.cross_community_penalty,
         expansion_mode=args.expansion_mode,
+        set_overrides=set_overrides,
     )
 
     # Print leaderboard (single row)

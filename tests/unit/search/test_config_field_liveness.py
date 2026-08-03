@@ -68,3 +68,41 @@ def test_reader_files_mention_field_name():
         "may no longer be live - see ADR-0020/ADR-0022):\n  "
         + "\n  ".join(missing_mentions)
     )
+
+
+def test_construction_baked_fields_are_pinned():
+    """Ratchet for spec(construction_baked=True) (Part 2/C1 of the ADR-0018
+    follow-on plan): the six fields read once into a collaborator (cached
+    HybridSearcher/reranker) at construction rather than live per search call
+    were identified by hand from run_sscg_benchmark.py's original
+    _maybe_reset_for_construction_overrides - pin the exact set so a silent
+    addition or removal shows up here instead of only as a stale benchmark
+    arm that silently didn't take effect.
+    """
+    expected = frozenset(
+        {
+            ("search_mode", "bm25_weight"),
+            ("search_mode", "dense_weight"),
+            ("search_mode", "rrf_k_parameter"),
+            ("reranker", "doc_max_chars"),
+            ("reranker", "listwise_doc_max_chars"),
+            ("reranker", "listwise_dtype"),
+        }
+    )
+    assert expected == SearchConfig._CONSTRUCTION_BAKED_FIELDS
+
+
+def test_construction_baked_fields_declare_a_reader():
+    """A construction_baked field with no reader would make requires_rebuild()
+    correct but unverifiable - reader= is what test_reader_files_mention_field_name
+    checks stays truthful, so construction_baked riding along on schema_only
+    would silently escape that check."""
+    unreadered = [
+        f"{cls_name}.{f.name}"
+        for cls_name, f in _iter_fields()
+        if f.metadata.get("construction_baked") and f.metadata.get("reader") is None
+    ]
+    assert not unreadered, (
+        "construction_baked=True field(s) with no reader=...:\n  "
+        + "\n  ".join(unreadered)
+    )

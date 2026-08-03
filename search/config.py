@@ -78,6 +78,7 @@ def spec(
     mcp: str | None = None,
     reader: str | None = None,
     schema_only: bool = False,
+    construction_baked: bool = False,
 ) -> dict[str, Any]:
     """Build a ``field(metadata=...)`` dict for one config field — the single
     declaration site for its validation rule, legacy/env alias, MCP exposure,
@@ -88,7 +89,12 @@ def spec(
     stays that way rather than acquiring one by convention.  ``reader`` names
     the production file whose behavior the field actually controls (checked
     by ``test_config_field_liveness.py``); ``schema_only=True`` is the escape
-    hatch for a field that has no single behavioral reader.
+    hatch for a field that has no single behavioral reader. ``construction_baked``
+    marks a field that is read once into a collaborator at construction time
+    (e.g. a cached ``HybridSearcher``/reranker instance) rather than live per
+    call — mutating it on the config singleton is a no-op until that
+    collaborator is rebuilt (see ``evaluation/arm_overrides.py``'s
+    ``requires_rebuild`` and Part 2 / C1 of the ADR-0018 follow-on plan).
     """
     meta: dict[str, Any] = {}
     if range is not None:
@@ -105,6 +111,8 @@ def spec(
         meta["reader"] = reader
     if schema_only:
         meta["schema_only"] = True
+    if construction_baked:
+        meta["construction_baked"] = True
     return meta
 
 
@@ -230,6 +238,7 @@ class SearchModeConfig:
             flat_alias="bm25_weight",
             env="CLAUDE_BM25_WEIGHT",
             reader="search/hybrid_searcher.py",
+            construction_baked=True,
         ),
     )
     dense_weight: float = field(
@@ -239,6 +248,7 @@ class SearchModeConfig:
             flat_alias="dense_weight",
             env="CLAUDE_DENSE_WEIGHT",
             reader="search/hybrid_searcher.py",
+            construction_baked=True,
         ),
     )
 
@@ -303,7 +313,9 @@ class SearchModeConfig:
     rrf_k_parameter: int = field(
         default=100,
         metadata=spec(
-            flat_alias="rrf_k_parameter", reader="mcp_server/search_factory.py"
+            flat_alias="rrf_k_parameter",
+            reader="mcp_server/search_factory.py",
+            construction_baked=True,
         ),
     )
 
@@ -655,6 +667,7 @@ class RerankerConfig:
             flat_alias="reranker_doc_max_chars",
             env="CLAUDE_RERANKER_DOC_MAX_CHARS",
             reader="search/reranking_engine.py",
+            construction_baked=True,
         ),
     )
     listwise_doc_max_chars: int = field(
@@ -670,6 +683,7 @@ class RerankerConfig:
             flat_alias="reranker_listwise_doc_max_chars",
             env="CLAUDE_RERANKER_LISTWISE_DOC_MAX_CHARS",
             reader="search/reranking_engine.py",
+            construction_baked=True,
         ),
     )
     listwise_dtype: str = field(
@@ -679,6 +693,7 @@ class RerankerConfig:
             flat_alias="reranker_listwise_dtype",
             env="CLAUDE_RERANKER_LISTWISE_DTYPE",
             reader="search/reranking_engine.py",
+            construction_baked=True,
         ),
     )  # JinaRerankerV3 only. Weight dtype for the
     # listwise reranker: "auto" (checkpoint default — bf16), "fp32", "bf16",
@@ -1343,6 +1358,29 @@ def _derive_mcp_field_names(section_cls: type, *mcp_tags: str) -> tuple[str, ...
     )
 
 
+def _derive_construction_baked_fields(
+    subconfig_types: dict[str, type],
+) -> frozenset[tuple[str, str]]:
+    """Derive the set of (section_name, field_name) pairs baked into a
+    collaborator at construction time from each field's ``spec(construction_baked=True)``.
+
+    Single declaration site per ADR-0022: a field states its own liveness
+    (read fresh every call vs. baked into e.g. a cached ``HybridSearcher``/
+    reranker at construction), rather than restating that domain knowledge in
+    a hand-written six-argument None-check (the original
+    ``_maybe_reset_for_construction_overrides`` in
+    ``scripts/benchmark/run_sscg_benchmark.py``). Used by
+    ``evaluation/arm_overrides.py``'s ``requires_rebuild`` to decide whether
+    an A/B arm's override needs a fresh searcher instead of a live mutation.
+    """
+    baked: set[tuple[str, str]] = set()
+    for section_name, section_cls in subconfig_types.items():
+        for f in dataclasses.fields(section_cls):
+            if f.metadata.get("construction_baked"):
+                baked.add((section_name, f.name))
+    return frozenset(baked)
+
+
 class SearchConfig:
     """Root configuration with nested sub-configs.
 
@@ -1472,6 +1510,16 @@ class SearchConfig:
     # is declared the same way, as PerformanceConfig.allow_ram_fallback's alias.
     _FLAT_KEY_ALIASES: dict[str, tuple[str, str]] = _derive_flat_key_aliases(
         _SUBCONFIG_TYPES
+    )
+
+    # (section_name, field_name) pairs baked into a collaborator (cached
+    # HybridSearcher / reranker) at construction time rather than read live
+    # per search call — mutating one on the config singleton is a no-op until
+    # that collaborator is rebuilt. Derived from each field's
+    # spec(construction_baked=True) — see ADR-0022 and
+    # evaluation/arm_overrides.py's requires_rebuild().
+    _CONSTRUCTION_BAKED_FIELDS: frozenset[tuple[str, str]] = (
+        _derive_construction_baked_fields(_SUBCONFIG_TYPES)
     )
 
     def to_dict(self) -> dict[str, Any]:
