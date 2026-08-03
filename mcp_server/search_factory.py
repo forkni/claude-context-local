@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from search.base_searcher import BaseSearcher
+    from search.hybrid_searcher import HybridSearcher
     from search.indexer import CodeIndexManager
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,55 @@ def get_index_manager(
     return state.index_manager
 
 
+def build_hybrid_searcher(
+    config,
+    project_storage: Path,
+    embedder,
+    *,
+    load_existing: bool = True,
+) -> "HybridSearcher":
+    """Construct a HybridSearcher from live config for a project's storage dir.
+
+    Shared by ``get_searcher`` (the cached-lookup path) and
+    ``search_handlers._check_auto_reindex`` (the auto-reindex path) — both
+    built the identical 12-kwarg construction inline before this extraction
+    (C3 of the ADR-0018 follow-on). Callers retain their own locking, caching,
+    and error-handling around this call; only the construction itself is
+    shared.
+
+    Args:
+        config: Effective SearchConfig (already resolved by the caller).
+        project_storage: Project's storage root (parent of ``index/``).
+        embedder: Embedder instance to wire into the searcher.
+        load_existing: Forwarded to HybridSearcher(...) — set False when the
+            caller is about to discard whatever is on disk (force-full
+            reindex), so the stale index isn't loaded only to be thrown away.
+
+    Returns:
+        A newly constructed HybridSearcher.
+    """
+    from search.hybrid_searcher import HybridSearcher
+    from search.storage_layout import project_id_from_model_dir_name
+
+    storage_dir = project_storage / "index"
+    project_id = project_id_from_model_dir_name(project_storage.name)
+
+    return HybridSearcher(
+        storage_dir=str(storage_dir),
+        embedder=embedder,
+        rrf_k=config.search_mode.rrf_k_parameter,
+        max_workers=config.performance.max_parallel_workers,
+        bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
+        bm25_use_stemming=config.search_mode.bm25_use_stemming,
+        bm25_tokenizer=config.search_mode.bm25_tokenizer,
+        bm25_k1=config.search_mode.bm25_k1,
+        bm25_b=config.search_mode.bm25_b,
+        project_id=project_id,
+        config=config,
+        load_existing=load_existing,
+    )
+
+
 def get_searcher(
     project_path: str | None = None,
     load_existing: bool = True,
@@ -100,9 +150,7 @@ def get_searcher(
     from search.config import get_search_config
     from search.dimension_validator import validate_embedder_index_compatibility
     from search.exceptions import DimensionMismatchError
-    from search.hybrid_searcher import HybridSearcher
     from search.searcher import IntelligentSearcher
-    from search.storage_layout import project_id_from_model_dir_name
 
     state = get_state()
 
@@ -134,9 +182,8 @@ def get_searcher(
                         # pyrefly: ignore [bad-argument-type]
                         new_project,
                     )
-                    storage_dir = project_storage / "index"
                     logger.info(
-                        f"[GET_SEARCHER] Using storage directory: {storage_dir}"
+                        f"[GET_SEARCHER] Using storage directory: {project_storage / 'index'}"
                     )
 
                     # Pre-validate dimension compatibility
@@ -151,21 +198,8 @@ def get_searcher(
                         state.searcher = None  # force re-init on next call
                         raise  # Let caller handle recovery
 
-                    project_id = project_id_from_model_dir_name(project_storage.name)
-
-                    new_searcher = HybridSearcher(
-                        storage_dir=str(storage_dir),
-                        embedder=embedder,
-                        rrf_k=config.search_mode.rrf_k_parameter,
-                        max_workers=config.performance.max_parallel_workers,
-                        bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
-                        bm25_use_stemming=config.search_mode.bm25_use_stemming,
-                        bm25_tokenizer=config.search_mode.bm25_tokenizer,
-                        bm25_k1=config.search_mode.bm25_k1,
-                        bm25_b=config.search_mode.bm25_b,
-                        project_id=project_id,
-                        config=config,
-                        load_existing=load_existing,
+                    new_searcher = build_hybrid_searcher(
+                        config, project_storage, embedder, load_existing=load_existing
                     )
                     # The HybridSearcher already loads existing indices during initialization
                     logger.info(

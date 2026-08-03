@@ -1750,7 +1750,7 @@
       "split": "test",
       "expected": [
         "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run",
-        "mcp_server/search_factory.py:method:get_searcher",
+        "mcp_server/search_factory.py:function:get_searcher",
         "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25",
         "search/hybrid_searcher.py:class:HybridSearcher",
         "search/hybrid_searcher.py:method:HybridSearcher._init_search_components",
@@ -1758,12 +1758,12 @@
       ],
       "expected_primary": [
         "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run",
-        "mcp_server/search_factory.py:method:get_searcher",
+        "mcp_server/search_factory.py:function:get_searcher",
         "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25"
       ],
       "relevance_grades": {
         "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run": 3,
-        "mcp_server/search_factory.py:method:get_searcher": 3,
+        "mcp_server/search_factory.py:function:get_searcher": 3,
         "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25": 3,
         "search/hybrid_searcher.py:class:HybridSearcher": 2,
         "search/hybrid_searcher.py:method:HybridSearcher._init_search_components": 2,

@@ -11,6 +11,7 @@ from chunking.multi_language_chunker import MultiLanguageChunker
 from mcp_server.guidance import add_system_message
 from mcp_server.model_pool_manager import get_embedder
 from mcp_server.search_factory import (
+    build_hybrid_searcher,
     get_index_manager,
     get_searcher,
 )
@@ -22,12 +23,10 @@ from mcp_server.tools.search_orchestrator import SearchOrchestrator
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import get_search_config
 from search.exceptions import DimensionMismatchError
-from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
 from search.metadata import MetadataStore
 from search.relationship_analyzer import RelationshipAnalyzer
-from search.storage_layout import project_id_from_model_dir_name
 
 
 logger = logging.getLogger(__name__)
@@ -164,21 +163,7 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
 
     config = get_config()
     if config.search_mode.enable_hybrid:
-        storage_dir = project_storage / "index"
-        project_id = project_id_from_model_dir_name(project_storage.name)
-        indexer = HybridSearcher(
-            storage_dir=str(storage_dir),
-            embedder=embedder,
-            rrf_k=config.search_mode.rrf_k_parameter,
-            max_workers=config.performance.max_parallel_workers,
-            bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
-            bm25_use_stemming=config.search_mode.bm25_use_stemming,
-            bm25_tokenizer=config.search_mode.bm25_tokenizer,
-            bm25_k1=config.search_mode.bm25_k1,
-            bm25_b=config.search_mode.bm25_b,
-            project_id=project_id,
-            config=config,
-        )
+        indexer = build_hybrid_searcher(config, project_storage, embedder)
         # Track project/model key eagerly (used by downstream get_searcher() routing).
         # Searcher bind is deferred until after auto_reindex_if_needed so we never
         # cache a HybridSearcher whose embedder was just nulled by clear_embedders().
