@@ -413,6 +413,8 @@ class _LspClient:
         # whenever the GC eventually collects self._proc, which surfaces as a
         # ResourceWarning/ExceptionGroup on some unrelated, later-running test.
         for stream in (self._proc.stdin, self._proc.stdout, self._proc.stderr):
+            if stream is None:
+                continue
             with contextlib.suppress(Exception):
                 stream.close()
 

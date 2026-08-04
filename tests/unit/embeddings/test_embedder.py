@@ -48,6 +48,21 @@ def _no_warmup_measure(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _stub_hub_existence_check():
+    """Stub the HF Hub existence check ModelLoader.load() makes on cache miss.
+
+    Whether it fires depends on this machine's real ~/.claude_code_search/models
+    state, not on anything these tests control -- warm locally, cold on CI (see
+    tests/conftest.py::_block_real_network).
+    """
+    with patch("huggingface_hub.model_info") as mock_info:
+        mock_info.return_value = MagicMock(
+            modelId="stub", library_name="sentence-transformers"
+        )
+        yield mock_info
+
+
 @pytest.mark.parametrize("model_name", supported_models)
 @_patch_model_loader_st
 @_patch_embedder_st

@@ -179,6 +179,35 @@ see "Fixed (Phase 10.8)" below):
   completeness check, per "Use subset validation for metadata" below — this passes regardless of
   which in-flight dataclass fields have landed yet.
 
+- **Fixed (Phase 10.9)**: the Phase 10.7/10.8 work above landed in commit `9ed2ed2` untested
+  against CI and broke it: the `_LspClient.close()` None-guard gap pyrefly had been silently
+  accepting became a real `missing-attribute` error once the `stream.close()` loop was added
+  (`Popen.stdin`/`stdout`/`stderr` are typed `IO[bytes] | None`) — fixed with an explicit
+  `if stream is None: continue` before the `contextlib.suppress(Exception)` close. Separately,
+  the new `_block_real_network` guard (Phase 10.8) converted a pre-existing latent
+  machine-dependence into 22 hard test failures: `ModelLoader.load()`
+  (`embeddings/model_loader.py`) and `JinaRerankerV3._load_or_fetch()`
+  (`search/neural_reranker.py`) both only reach HuggingFace when the on-disk model cache is
+  missing/invalid, so 21 tests in `tests/unit/embeddings/test_embedder.py` and 1 in
+  `tests/unit/search/test_jina_reranker_v3.py` passed silently on any developer machine with a
+  warm cache and failed only on CI's cold one — invisible locally, and CI's own
+  `--maxfail=20` run hid the true count (21+1) behind a reported 20. Fixed by adding a
+  file-scoped autouse `huggingface_hub.model_info` stub to `test_embedder.py` (42 of its 43
+  tests that patch `ModelLoader`'s `SentenceTransformer` were missing it) and the
+  already-established-elsewhere-in-the-file `AutoConfig.from_pretrained` patch to
+  `test_cleanup_releases_resources`.
+  **To reproduce a cold cache locally** (the only way to catch this failure class before
+  pushing — a warm dev cache structurally cannot see it), repoint the home dir the loaders
+  resolve their cache path from (`Path.home()`; there is no env-var override):
+
+  ```bash
+  USERPROFILE='C:\path\to\empty\tmp\dir' HOME='C:\path\to\empty\tmp\dir' \
+    ./scripts/test/run_tests.sh tests/unit/ -q -p no:randomly -n auto --dist loadfile
+  ```
+
+  Run this before pushing any change that touches model loading or `tests/conftest.py`'s
+  network guard.
+
 **Note**: Run `uv run pytest tests/ --ignore=tests/slow_integration -q` for the fast CI subset
 (excludes GPU-dependent slow tests, ~2 min).
 

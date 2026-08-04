@@ -176,8 +176,10 @@ class TestJinaRerankerV3:
         assert call_args[0][1] == ["ID: chunk_a\nchunk_a"]  # ID prefix + chunk_id
 
     @patch("transformers.AutoModel.from_pretrained")
-    def test_cleanup_releases_resources(self, mock_model_class):
+    @patch("transformers.AutoConfig.from_pretrained")
+    def test_cleanup_releases_resources(self, mock_config_class, mock_model_class):
         """Cleanup should release model and tokenizer."""
+        mock_config_class.return_value = MagicMock()
         mock_model_class.return_value = MagicMock()
 
         reranker = JinaRerankerV3()
