@@ -227,12 +227,9 @@ jobs:
         with:
           files: docs/ README.md CHANGELOG.md
         # Moved here from the old docs-validation.yml spelling job (paths-filtered,
-        # could never become a required check). NOT yet added to the failure loop
-        # below: the pin (@master -> @v1.49.0, commit 89e6411) has never actually
-        # run since it landed, and master may have drifted ahead of that release.
-        # Observe one clean run first, triage any findings into .typos.toml's
-        # [default.extend-words], then add "typos:${{ steps.typos.outcome }}" to
-        # the loop in a follow-up commit to make it blocking.
+        # could never become a required check). Ran clean on its first execution
+        # after the @master -> @v1.49.0 pin (run 30868713105, 2026-08-04), so it is
+        # now in the blocking loop below.
 
       - name: Aggregate lint results
         if: always()
@@ -241,11 +238,11 @@ jobs:
           for r in "ruff check:${{ steps.ruff_check.outcome }}" \
                    "ruff format:${{ steps.ruff_format.outcome }}" \
                    "pyrefly:${{ steps.pyrefly.outcome }}" \
-                   "pre-commit:${{ steps.precommit.outcome }}"; do
+                   "pre-commit:${{ steps.precommit.outcome }}" \
+                   "typos:${{ steps.typos.outcome }}"; do
             name="${r%%:*}"; out="${r##*:}"
             if [ "$out" != "success" ]; then echo "FAIL  $name"; fail=1; else echo "ok    $name"; fi
           done
-          echo "typos: ${{ steps.typos.outcome }} (observation-only, not yet blocking)"
           [ "$fail" -eq 0 ] || { echo "::error::one or more lint sub-checks failed"; exit 1; }
 
   all-gates-green:
