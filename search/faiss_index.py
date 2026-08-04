@@ -499,6 +499,14 @@ class FaissVectorIndex:
         self._index = None
         self._chunk_ids = []
 
+        # Close and release the mmap handle before unlinking its file, else
+        # a loaded storage keeps serving reconstruct() reads from a deleted
+        # file (and unlink() itself fails with WinError 32 on Windows while
+        # the handle is still open).
+        if self._mmap_storage is not None:
+            self._mmap_storage.close()
+            self._mmap_storage = None
+
         # Remove index files
         if self.index_path.exists():
             self.index_path.unlink()

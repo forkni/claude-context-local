@@ -401,6 +401,41 @@ class TestFaissVectorIndexClear:
             assert not index.index_path.exists()
             assert not index.chunk_id_path.exists()
 
+    def test_clear_releases_loaded_mmap_handle(self):
+        """Test that clear() closes and drops a loaded mmap storage.
+
+        Regression test: clear() used to unlink the mmap file without
+        closing the open mmap.mmap/file handle backing self._mmap_storage.
+        On Windows the unlink itself would fail (WinError 32, file in use);
+        on POSIX it would succeed but reconstruct() would keep serving
+        vectors from the now-deleted file via the still-open mapping.
+        """
+        from search.mmap_vectors import MmapVectorStorage
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index_path = Path(tmpdir) / "test.index"
+            index = FaissVectorIndex(index_path)
+            index.create(8, "flat")
+
+            rng = np.random.RandomState(42)
+            embeddings = rng.randn(3, 8).astype(np.float32)
+            chunk_ids = [f"chunk_{i}" for i in range(3)]
+            index.add(embeddings, chunk_ids)
+
+            # Directly populate the mmap file and load it into the index's
+            # storage slot the same way the >MMAP_THRESHOLD save path does
+            # (create() below threshold, so exercise the load explicitly).
+            mmap_storage = MmapVectorStorage(index._mmap_path, dimension=8)
+            mmap_storage.save(embeddings, chunk_ids)
+            index._mmap_storage = MmapVectorStorage(index._mmap_path, dimension=8)
+            assert index._mmap_storage.load()
+            assert index._mmap_storage.is_loaded
+
+            index.clear()
+
+            assert index._mmap_storage is None
+            assert not index._mmap_path.exists()
+
 
 class TestFaissVectorIndexBatchOperations:
     """Tests for batch operations."""
