@@ -1387,7 +1387,12 @@ class CodeEmbedder:
         self._logger.setLevel(logging.WARNING)
         try:
             with Progress(
-                SpinnerColumn(),
+                # spinner_name="line" - the default "dots" spinner renders
+                # Braille glyphs (U+2800+) that raise UnicodeEncodeError on a
+                # cp1252 Windows console; get_progress_console() does not set
+                # legacy_windows, so LegacyWindowsTerm rendering runs regardless.
+                # "line" is ASCII-only ('-', '\\', '|', '/').
+                SpinnerColumn(spinner_name="line"),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),
