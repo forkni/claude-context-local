@@ -43,6 +43,29 @@ class TestHybridSearcher:
             for i, doc_id in enumerate(self.doc_ids)
         }
 
+    def _stub_search_deps(self):
+        """Build a stub embedder + config that keep search() on the mocked
+        BM25/dense path without ever constructing a real CodeEmbedder or
+        loading the real jina-reranker-v3 cross-encoder.
+
+        Passing `embedder=` at HybridSearcher construction bypasses the lazy
+        `SearchExecutor.search_dense()` branch (search_executor.py:434) that
+        otherwise builds a real CodeEmbedder against real
+        ~/.claude_code_search/models on first use. Disabling
+        `config.reranker.enabled` and threading that config through
+        `_get_config_via_service_locator` (rather than letting it read the
+        real repo-root search_config.json) stops
+        RerankingEngine._ensure_reranker() from loading the real neural
+        reranker onto the GPU -- config threading (ADR-0018/C2) makes this a
+        single injection point for every rerank pass (hop-1, multi-hop
+        merge, and the single_pass tail).
+        """
+        embedder = Mock()
+        embedder.embed_query.return_value = np.random.rand(768)
+        config = SearchConfig()
+        config.reranker.enabled = False
+        return embedder, config
+
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")
     def test_initialization(self, mock_bm25, mock_dense):
@@ -204,7 +227,8 @@ class TestHybridSearcher:
         """Test sequential search execution."""
         # Setup mock for dense index
         mock_dense.return_value.index = None
-        searcher = HybridSearcher(self.temp_dir)
+        embedder, config = self._stub_search_deps()
+        searcher = HybridSearcher(self.temp_dir, embedder=embedder)
 
         # Mock indices as ready
         bm25_mock = mock_bm25.return_value
@@ -216,17 +240,16 @@ class TestHybridSearcher:
         dense_mock.index.ntotal = 100
         dense_mock.search.return_value = [("doc2", 0.9, {"type": "class"})]
 
-        # Mock embedder
-        with patch("embeddings.embedder.CodeEmbedder") as mock_embedder:
-            embedder_mock = mock_embedder.return_value
-            embedder_mock.embed_text.return_value = np.random.rand(768)
-
+        with patch(
+            "search.hybrid_searcher._get_config_via_service_locator",
+            return_value=config,
+        ):
             results = searcher.search("test query", k=5, use_parallel=False)
 
-            # Should get reranked results
-            assert isinstance(results, list)
-            bm25_mock.search.assert_called_once()
-            dense_mock.search.assert_called_once()
+        # Should get reranked results
+        assert isinstance(results, list)
+        bm25_mock.search.assert_called_once()
+        dense_mock.search.assert_called_once()
 
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")
@@ -234,7 +257,8 @@ class TestHybridSearcher:
         """Test parallel search execution."""
         # Setup mock for dense index
         mock_dense.return_value.index = None
-        searcher = HybridSearcher(self.temp_dir)
+        embedder, config = self._stub_search_deps()
+        searcher = HybridSearcher(self.temp_dir, embedder=embedder)
 
         # Mock indices as ready
         bm25_mock = mock_bm25.return_value
@@ -246,17 +270,16 @@ class TestHybridSearcher:
         dense_mock.index.ntotal = 100
         dense_mock.search.return_value = [("doc2", 0.9, {"type": "class"})]
 
-        # Mock embedder
-        with patch("embeddings.embedder.CodeEmbedder") as mock_embedder:
-            embedder_mock = mock_embedder.return_value
-            embedder_mock.embed_text.return_value = np.random.rand(768)
-
+        with patch(
+            "search.hybrid_searcher._get_config_via_service_locator",
+            return_value=config,
+        ):
             results = searcher.search("test query", k=5, use_parallel=True)
 
-            # Should get reranked results
-            assert isinstance(results, list)
-            bm25_mock.search.assert_called_once()
-            dense_mock.search.assert_called_once()
+        # Should get reranked results
+        assert isinstance(results, list)
+        bm25_mock.search.assert_called_once()
+        dense_mock.search.assert_called_once()
 
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")
@@ -264,7 +287,8 @@ class TestHybridSearcher:
         """Test search with filters."""
         # Setup mock for dense index
         mock_dense.return_value.index = None
-        searcher = HybridSearcher(self.temp_dir)
+        embedder, config = self._stub_search_deps()
+        searcher = HybridSearcher(self.temp_dir, embedder=embedder)
 
         # Mock indices as ready
         bm25_mock = mock_bm25.return_value
@@ -276,21 +300,20 @@ class TestHybridSearcher:
         dense_mock.index.ntotal = 100
         dense_mock.search.return_value = [("doc1", 0.9, {"language": "python"})]
 
-        # Mock embedder
-        with patch("embeddings.embedder.CodeEmbedder") as mock_embedder:
-            embedder_mock = mock_embedder.return_value
-            embedder_mock.embed_text.return_value = np.random.rand(768)
-
-            filters = {"language": "python"}
+        filters = {"language": "python"}
+        with patch(
+            "search.hybrid_searcher._get_config_via_service_locator",
+            return_value=config,
+        ):
             searcher.search("test query", k=5, use_parallel=False, filters=filters)
 
-            # Dense search should be called with filters
-            dense_mock.search.assert_called_once()
-            args, kwargs = dense_mock.search.call_args
-            if len(args) >= 3:
-                assert args[2] == filters
-            else:
-                assert kwargs.get("filters") == filters
+        # Dense search should be called with filters
+        dense_mock.search.assert_called_once()
+        args, kwargs = dense_mock.search.call_args
+        if len(args) >= 3:
+            assert args[2] == filters
+        else:
+            assert kwargs.get("filters") == filters
 
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")
@@ -298,7 +321,8 @@ class TestHybridSearcher:
         """Test search error handling."""
         # Setup mock for dense index
         mock_dense.return_value.index = None
-        searcher = HybridSearcher(self.temp_dir)
+        embedder, config = self._stub_search_deps()
+        searcher = HybridSearcher(self.temp_dir, embedder=embedder)
 
         # Mock indices as ready but with search errors
         bm25_mock = mock_bm25.return_value
@@ -311,7 +335,11 @@ class TestHybridSearcher:
         dense_mock.search.side_effect = Exception("Dense search failed")
 
         # Should handle errors gracefully
-        results = searcher.search("test query", k=5)
+        with patch(
+            "search.hybrid_searcher._get_config_via_service_locator",
+            return_value=config,
+        ):
+            results = searcher.search("test query", k=5)
         # Should return empty results when both searches fail
         assert results == []
 
@@ -402,7 +430,8 @@ class TestHybridSearcher:
         """Test performance tracking during searches."""
         # Setup mock for dense index
         mock_dense.return_value.index = None
-        searcher = HybridSearcher(self.temp_dir)
+        embedder, config = self._stub_search_deps()
+        searcher = HybridSearcher(self.temp_dir, embedder=embedder)
 
         # Mock indices as ready
         bm25_mock = mock_bm25.return_value
@@ -414,30 +443,29 @@ class TestHybridSearcher:
         dense_mock.index.ntotal = 100
         dense_mock.search.return_value = [("doc2", 0.9, {"type": "class"})]
 
-        # Mock embedder
-        with patch("embeddings.embedder.CodeEmbedder") as mock_embedder:
-            embedder_mock = mock_embedder.return_value
-            embedder_mock.embed_text.return_value = np.random.rand(768)
-
+        with patch(
+            "search.hybrid_searcher._get_config_via_service_locator",
+            return_value=config,
+        ):
             # Perform searches
             initial_searches = searcher.search_executor._search_stats["total_searches"]
             searcher.search("query 1", use_parallel=False)
             searcher.search("query 2", use_parallel=False)
 
-            # Stats should be updated
-            assert (
-                searcher.search_executor._search_stats["total_searches"]
-                == initial_searches + 2
+        # Stats should be updated
+        assert (
+            searcher.search_executor._search_stats["total_searches"]
+            == initial_searches + 2
+        )
+        # In mocked environment, times might be 0, so assert type + non-negative
+        # rather than a positivity threshold mocked I/O can't guarantee.
+        for key in ("bm25_time", "dense_time", "rerank_time"):
+            assert key in searcher.search_executor._search_stats
+            value = searcher.search_executor._search_stats[key]
+            assert isinstance(value, (int, float)), (
+                f"{key} should be a numeric duration, got {type(value)}"
             )
-            # In mocked environment, times might be 0, so assert type + non-negative
-            # rather than a positivity threshold mocked I/O can't guarantee.
-            for key in ("bm25_time", "dense_time", "rerank_time"):
-                assert key in searcher.search_executor._search_stats
-                value = searcher.search_executor._search_stats[key]
-                assert isinstance(value, (int, float)), (
-                    f"{key} should be a numeric duration, got {type(value)}"
-                )
-                assert value >= 0
+            assert value >= 0
 
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")
@@ -585,7 +613,8 @@ class TestHybridSearcher:
         """Test that multi-hop expansion uses batched search."""
         # Setup mock for dense index
         mock_dense.return_value.index = None
-        searcher = HybridSearcher(self.temp_dir)
+        embedder, config = self._stub_search_deps()
+        searcher = HybridSearcher(self.temp_dir, embedder=embedder)
 
         # Enable multi-hop in config
         searcher.enable_multi_hop = True
@@ -614,19 +643,18 @@ class TestHybridSearcher:
         }
         dense_mock.get_similar_chunks_batched.return_value = batched_results
 
-        # Mock embedder
-        with patch("embeddings.embedder.CodeEmbedder") as mock_embedder:
-            embedder_mock = mock_embedder.return_value
-            embedder_mock.embed_text.return_value = np.random.rand(768)
-
+        with patch(
+            "search.hybrid_searcher._get_config_via_service_locator",
+            return_value=config,
+        ):
             # Perform search with multi-hop enabled
             results = searcher.search("test query", k=5, use_parallel=False)
 
-            # Verify batched search was called
-            dense_mock.get_similar_chunks_batched.assert_called()
+        # Verify batched search was called
+        dense_mock.get_similar_chunks_batched.assert_called()
 
-            # Results should include multi-hop discoveries
-            assert isinstance(results, list)
+        # Results should include multi-hop discoveries
+        assert isinstance(results, list)
 
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")

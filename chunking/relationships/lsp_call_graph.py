@@ -407,6 +407,14 @@ class _LspClient:
             self._eof = True
             self._cond.notify_all()
         self._reader_thread.join(timeout=2)
+        self._stderr_thread.join(timeout=2)
+        # subprocess.Popen never closes stdin/stdout/stderr itself -- wait()/kill()
+        # only reap the process. Left open, these FileIO objects are only closed
+        # whenever the GC eventually collects self._proc, which surfaces as a
+        # ResourceWarning/ExceptionGroup on some unrelated, later-running test.
+        for stream in (self._proc.stdin, self._proc.stdout, self._proc.stderr):
+            with contextlib.suppress(Exception):
+                stream.close()
 
     def _on_deadline(self) -> None:
         """Watchdog fired: aggregate budget exceeded — force-kill."""

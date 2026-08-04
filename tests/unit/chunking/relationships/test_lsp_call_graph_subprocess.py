@@ -128,6 +128,13 @@ class TestLspClientEchoLifecycle:
             client.close()
 
         assert _wait_until(lambda: client._proc.poll() is not None)
+        # Regression: close() used to leave stdin/stdout/stderr open, so the
+        # underlying FileIO objects were only reaped whenever the GC next ran
+        # -- surfacing as a ResourceWarning/ExceptionGroup on some unrelated,
+        # later-running test rather than here.
+        assert client._proc.stdin.closed
+        assert client._proc.stdout.closed
+        assert client._proc.stderr.closed
 
 
 # ---------------------------------------------------------------------------

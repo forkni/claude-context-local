@@ -3,31 +3,158 @@
 ## Overview
 
 This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic
-search system. The project maintains a professional test suite with 3,100+ passing tests
+search system. The project maintains a professional test suite with 5,600+ passing tests
 organized into clear categories for effective quality assurance.
 
 ### Current Test Status
 
-✅ **Full suite green in one process** (re-measured 2026-07-26, honest baseline — Phase 5 of
-the test-suite hardening campaign):
+✅ **Full suite green in one process** (re-measured 2026-08-04, deferred test-suite-quality pass —
+see "Fixed (Phase 10.8)" below):
 
-- **Unit Tests**: 3,377 tests (`tests/unit/`)
+- **Unit Tests**: **5,644 passed, 1 skipped** (`tests/unit/`), ~100s serial / ~52s with
+  `--parallel` (`-n auto --dist loadfile`, matching CI)
   - Chunking (incl. relationships): includes `test_call_edge_resolver.py`,
     `test_call_graph_config.py`, `test_libcst_call_graph.py`,
     `test_lsp_call_graph.py` (1 POSIX skip)
   - Embeddings, Graph, Merkle, Search, MCP Server, Evaluation, Benchmark, Utils, Tools
-- **Fast Integration + Integration Tests**: included in the full-suite total below
-- **Slow Integration Tests**: included in the full-suite total below
-- **Total**: `pytest tests/` (single process, no `--ignore`) — **3,592 passed, 7 skipped, 0 failed**
-  in 478.55s, deterministic (`-p no:randomly`) and randomized order both clean. Branch coverage on
-  this run: **82.02%** (vs. the `fail_under = 77` gate — see Coverage Requirements below).
-- **Known issue**: one intermittent, low-frequency failure has been observed in
+- **Fast Integration Tests**: **102 passed** (`tests/fast_integration/`), ~19s
+- **Integration Tests**: **16 passed** (`tests/integration/`); 3 pre-existing failures
+  (`test_full_index_injects_real_call_edges`, `test_index_full_span_via_mcp_handler`,
+  `test_search_span_hierarchy_via_mcp_handlers`) reproduce identically on the pre-Phase-10.8
+  baseline too (isolated with `git stash push -- pyproject.toml`) — unrelated to this pass, not
+  fixed here
+- **Slow Integration Tests**: not re-measured in this pass — see Notes below on why this tier is
+  excluded from routine runs
+- **Total**: not re-measured as a single `pytest tests/` process this pass; the combined
+  **3,592 passed ... 478.55s** figure this section previously carried predates the Phase 10.5–10.8
+  fixes and is now self-contradictory with the unit-tier count alone — removed rather than left
+  stale. Use the per-tier numbers above; branch coverage was last measured at **82.02%** on
+  2026-07-26 (vs. the `fail_under = 77` gate — see Coverage Requirements below) and has not been
+  re-run since.
+- **Resolved (Phase 10.2)**: the intermittent failure previously tracked here in
   `tests/unit/search/test_index_write_stage.py::TestInjectCallEdgesResolverSelection::test_none_resolvers_falls_back_to_default_pair`
-  (~1 in 3–4 full `tests/unit/` runs under `-p no:randomly`; passes in isolation every time). It
-  matches the known global-singleton-reset gap (`ModelPoolManager` / `JobRegistry` / intent-classifier
-  caches not reset between tests) and is tracked for a root-cause fix in the next hardening phase,
-  validated against a 20-consecutive-green-run gate. It is **not** currently reproducible from a
-  fixed seed — treat it as a known flake under active investigation, not a silenced failure.
+  did not reproduce once across 22+ randomized whole-suite runs during the Phase 10 hardening
+  pass, including a dedicated 10-run whole-suite loop (`detect_flaky_tests.sh --suite-loop`).
+  Phase 10.4's fix to `_reset_singleton_state()` (unconditional imports, closing the path where
+  a renamed symbol would silently degrade the reset to a no-op instead of failing the run) is
+  the plausible incidental fix — it matches the singleton-reset root cause this note originally
+  suspected. Closed as resolved rather than left open; the seed-replay tooling
+  (`detect_flaky_tests.sh --suite-loop`) stays available if it resurfaces.
+- **Fixed (Phase 10.5)**: `_no_real_storage_pollution` previously diffed a shared directory
+  listing (`~/.claude_code_search/{projects,merkle,graphs}`) before/after each test to catch
+  production code that bypasses `get_storage_dir()`'s `CODE_SEARCH_STORAGE` redirection. That
+  design had no notion of *which process* wrote a file — a live code-search MCP server was
+  found to be concurrently auto-reindexing this repo while the suite ran, and its writes (real
+  deployed project-hash + model-slug filenames, mtime-confirmed mid-run) were attributed to
+  whichever unrelated test's teardown happened to straddle the write. Replaced with a
+  process-local write ledger: a session-scoped fixture wraps `builtins.open` (write modes
+  only), `os.replace`, `os.rename`, and `Path.mkdir`, recording any target that resolves under
+  the real `~/.claude_code_search` together with its call stack; `_no_real_storage_pollution`
+  now asserts on that ledger (cleared per test) instead of the directory diff. Immune to writes
+  from other processes on the machine, and a leak now names its own call site instead of a bare
+  filename. Also closed a related bypass: `mock_snapshot_manager_for_unit_tests` patched
+  `merkle.snapshot_manager.SnapshotManager` at its definition-module attribute while its
+  docstring claimed this was "sufficient for all imports" — five eager importers
+  (`search/incremental_indexer.py`, `search/index_write_stage.py`,
+  `mcp_server/tools/status_handlers.py`, `merkle/change_detector.py`, `merkle/__init__.py`)
+  bind the class at import time and never saw the patch. Now patches
+  `SnapshotManager.__init__` directly, which every holder shares regardless of import style;
+  docstring corrected to state what is actually patched.
+  The new ledger immediately surfaced a genuine, previously-invisible production leak:
+  `search/search_executor.py`'s `search_dense()` read `Path.home() / ".claude_code_search" /
+  "models"` directly instead of going through `get_storage_dir()`. The old diff-based guard
+  missed it because `Path.mkdir(parents=True, exist_ok=True)` on an already-existing real
+  directory (`~/.claude_code_search/models`, which genuinely exists from real deployment
+  usage) produces no new directory-listing entry to diff against — the new ledger records the
+  call regardless of whether the target pre-existed. Fixed by routing through
+  `get_storage_dir()` with the same try/except fallback pattern already used by
+  `SnapshotManager.__init__`, so the cache dir now honors `CODE_SEARCH_STORAGE` under test.
+  Verified clean: seeds `1059340664` and `3422619523` (both originally failing with real-storage
+  writes) now replay with zero such failures. Wall-clock overhead of wrapping `builtins.open`
+  measured directly (seed `777002`, `tests/unit/`, one shared outlier test deselected — see
+  below): 111.43s wrapped vs. 114.70s with the wrap disabled — the unwrapped run was not
+  faster, and the ~3% spread is inside the same collection-count noise band documented for
+  Phase 10.6 (5639 vs. 5643 collected items at nominally the same seed). No measurable
+  overhead; `builtins.open` stays wrapped alongside `os.replace`/`os.rename`/`Path.mkdir`.
+- **Investigated and closed (Phase 10.6)**: a 5-failure run under `--randomly-seed=811371831`
+  (`test_index_sync.py` / `test_hybrid_search.py`, all sharing one signature — an explicit
+  attribute set on a `MagicMock` not visible to production code at read time) did not reproduce
+  across 4 consecutive full-suite replays under the same nominal seed (5,625 collected / 0
+  failed each time, vs. the original run's 5,620 collected / 5 failed — a stable 5-item
+  collection-count delta). `pytest-randomly`'s seed controls `random.shuffle()` over the
+  *collected* item list; it does not make collection itself stable across runs.
+  `tests/unit/evaluation/test_golden_set_guard.py` builds its ~2,213-case parametrize list
+  (`_all_golden_id_cases()`) by reading four `evaluation/*golden*.json` files live at collection
+  time — the same files this repo's benchmark scripts (`scripts/benchmark/merge_h_queries.py`,
+  `scripts/benchmark/mine_commit_queries.py`) write to as part of routine golden-set
+  maintenance (`git log` shows commits to those exact files, e.g. `988f1f9`, from this same
+  session window). A concurrent edit to any of those files between the original run and a
+  replay shifts the collected count, desynchronizing the shuffle from that point on even under
+  an identical `--randomly-seed`. Same failure class as 10.5: an out-of-band process on the
+  machine mutating shared state the suite reads without isolation, misattributed as an in-suite
+  ordering bug. `search/index_sync.py` and `search/hybrid_searcher.py` are unmodified and clean
+  (behaving per ADR-0025); no production or test-mock change was made. Re-open only if the exact
+  signature recurs *and* `evaluation/*golden*.json` is confirmed unchanged across the run pair.
+- **Fixed (Phase 10.7)**: gate batch 3/5 hit a new signature —
+  `test_resolve_bounded_when_server_hangs` failed with `ExceptionGroup: multiple unraisable
+  exception warnings (6 sub-exceptions)` (all `ResourceWarning: unclosed file <_io.FileIO ...>`)
+  under `--randomly-seed=1552417537`. Neither an isolated file replay nor a full-suite replay at
+  that exact seed reproduced it — confirming the GC-timing-dependent misattribution this repo's
+  `pyproject.toml` `filterwarnings` comment already predicted: a leaked handle surfaces on
+  whichever unrelated test happens to be running when the interpreter reaps it, not on the test
+  that leaked it (`test_name_resolution.py`, the file that comment names as a prior victim,
+  contains no subprocess/file-handle code of its own). Root cause:
+  `_LspClient.close()` (`chunking/relationships/lsp_call_graph.py`) waited on / killed the
+  subprocess and joined the reader thread, but never closed `self._proc.stdin`/`stdout`/`stderr`
+  or joined `self._stderr_thread` — `subprocess.Popen` does not close its pipe `FileIO` objects on
+  `wait()`/`kill()`, only via an explicit `.close()` or its own `__exit__`. Fixed by closing all
+  three streams (`contextlib.suppress`-wrapped) and joining `_stderr_thread` in `close()`.
+  Regression: `test_initialize_and_close_leaves_no_process` now asserts `.closed` on all three
+  streams after `close()`. Verified with `-W error::ResourceWarning` (escalating the
+  normally-ignored warning class back to a hard failure): both LSP test files clean, plus two full
+  `tests/unit/` runs (one ordered via `-p no:randomly`, one randomly-ordered) both clean at 5,644
+  passed / 1 skipped. No evidence found of the second leak site the same `pyproject.toml` comment
+  names (`chunking/languages/glsl.py:745`) — current source at that file has zero `open()`/file-handle
+  calls, so that half of the original claim could not be located and may already be stale.
+  `ignore::ResourceWarning` stays in `pyproject.toml` as defense-in-depth against a leak elsewhere
+  in the dependency tree, not because a known first-party leak remains.
+- **Fixed (Phase 10.8)**: a deferred-work note claimed "six `tests/unit/` tests run 6–7s vs a <1s
+  budget" and "none are integrity gaps." Diagnosis found the second half wrong: those six
+  `tests/unit/search/test_hybrid_search.py::TestHybridSearcher` tests were slow because
+  `HybridSearcher` was constructed with no `embedder=`, so `search_dense()`'s lazy-embedder branch
+  (`search/search_executor.py`) built a **real** `CodeEmbedder` and a real `jina-reranker-v3`
+  cross-encoder on the GPU — live HTTPS to `huggingface.co`, a GPU model load, and (per the
+  Phase 10.5 write-ledger) a write into real `~/.claude_code_search` home storage, every run. Fixed
+  by constructing `HybridSearcher` with an explicit stub embedder and a test-owned
+  `SearchConfig(reranker.enabled=False)` (`_stub_search_deps()` helper, reusing the
+  `_get_config_via_service_locator` patch pattern `test_weight_change_takes_effect_without_rebuild`
+  already established) instead of the after-the-fact `patch("embeddings.embedder.CodeEmbedder")`
+  that never touched the reranker's separate load path.
+  `test_search_dense_creates_embedder_lazily_when_none` is untouched — it deliberately exercises
+  that branch and still does.
+  Added a function-scoped autouse guard in `tests/conftest.py`
+  (`_block_network_and_real_model_downloads` et al.) so this class of bug fails fast instead of
+  silently degrading a `<1s` unit test into multi-second live network/GPU I/O: sets
+  `HF_HUB_OFFLINE`/`TRANSFORMERS_OFFLINE` and patches `socket.socket.connect` to raise on any
+  non-loopback address, naming the actual call site in the error. `tests/slow_integration/` is
+  exempted by path (it legitimately downloads real models); an individual test can opt out with
+  `@pytest.mark.allow_network`.
+  Separately, escalated `pyproject.toml`'s `filterwarnings` from a blanket ignore-everything list
+  to `"error"` first with scoped third-party re-ignores (`torch.*`/`transformers.*`/
+  `huggingface_hub.*`/the FAISS SWIG pattern/`ResourceWarning`, the last per Phase 10.7 above) —
+  first-party `DeprecationWarning`/`PendingDeprecationWarning`/`UserWarning` now fail the test that
+  raises them instead of vanishing. An `-o filterwarnings=always` inventory across the full unit
+  tier first confirmed the blast radius was zero pre-existing warnings of those classes (only the
+  15 `ResourceWarning`s Phase 10.7 later traced and fixed), so this was a pure policy change with
+  no cleanup debt attached.
+  Also deleted `tests/conftest.py`'s `pytest_configure` hook: its 9 `addinivalue_line("markers",
+  ...)` calls were byte-identical duplicates of `pyproject.toml`'s list (the file `--strict-markers`
+  actually reads — `asyncio` was declared there only), and its `warnings.filterwarnings(".*builtin
+  type.*")` call duplicated both this file's module-level block and the ini entry above.
+  Finally, added an opt-in `--parallel` flag to `scripts/test/run_tests.sh` that injects the same
+  `-n auto --dist loadfile` `branch-protection.yml` (`74d0a40`) already uses in CI — serial stays
+  the default so `-x`/`--pdb`/per-test output are unaffected; `--parallel tests/unit/` reproduces
+  the same 5,644/1-skipped pass count in roughly half the wall-clock.
 - **Correction (Phase 5.1):** `test_result_to_dict` in `tests/unit/search/test_incremental_indexer.py`
   originally asserted `IncrementalIndexResult.to_dict()` by exact-equality, including the
   `call_edges_injected` / `call_edge_resolvers` fields added by the in-flight call-graph-injection
@@ -206,7 +333,7 @@ tests/
 │   ├── glsl_project/         # GLSL shader samples
 │   ├── multi_language/       # Multi-language test files
 │   └── python_project/       # Python project samples
-├── unit/                     # Unit tests (~3,040 tests; see CI for current count)
+├── unit/                     # Unit tests (5,644 passed, 1 skipped as of 2026-08-04; see CI for current count)
 │   ├── test_bm25_index.py    # BM25 index functionality
 │   ├── test_bm25_population.py # BM25 document population
 │   ├── test_embedder.py      # Embedding generation
@@ -263,7 +390,7 @@ tests/
 ### Basic Test Execution
 
 ```bash
-# Run all tests (3,100+ tests; use --ignore=tests/slow_integration/ for CI speed)
+# Run all tests (5,600+ tests; use --ignore=tests/slow_integration/ for CI speed)
 pytest tests/
 
 # Run with verbose output
@@ -456,20 +583,30 @@ The test suite uses a 4-tier system optimized for CI/CD performance:
 
 | Tier | Location | Count | Execution Time | Purpose |
 | ------ | ---------- | ------- | ---------------- | --------- |
-| **Unit** | `tests/unit/` | 3,377 tests | < 1s per test (~126s total) | Component isolation testing |
-| **Fast Integration** | `tests/fast_integration/` | see full-suite total | < 5s per test | Quick workflow validation |
-| **Integration** | `tests/integration/` | 6 files | up to ~15s per test | Real-component E2E (no model downloads, so still fast enough for CI) |
+| **Unit** | `tests/unit/` | 5,644 passed, 1 skipped | < 1s per test (~100s total serial / ~52s with `--parallel`) | Component isolation testing |
+| **Fast Integration** | `tests/fast_integration/` | 102 passed | < 5s per test | Quick workflow validation |
+| **Integration** | `tests/integration/` | 6 files, 16 passed | up to ~15s per test | Real-component E2E (no model downloads, so still fast enough for CI) |
 | **Slow Integration** | `tests/slow_integration/` | see full-suite total | > 10s per test | Comprehensive end-to-end (real model downloads) |
 
 Kept as a 4th tier rather than folded into `fast_integration/` (Phase 6 decision — see the >5s
 durations table below: every `tests/integration/` file has at least one test over the 5s tier
 budget).
 
-Measured 2026-07-26: `pytest tests/` (all tiers, one process) — 3,592 passed, 7 skipped, 0 failed,
-478.55s total. See Current Test Status above for the per-run coverage and known-flake note.
+The unit tier's `<1s` budget is not enforced by a timing assertion — nothing fails a test purely
+for running long. It is enforced indirectly by the `tests/conftest.py` network and storage guards
+(Phase 10.8's `_block_network_and_real_model_downloads`, Phase 10.5's `_no_real_storage_pollution`
+write ledger): the dominant way a unit test silently balloons past the budget is by reaching real
+network I/O, a real model load, or real disk storage instead of a mock, and those guards now fail
+that test outright rather than letting it pass slowly.
 
-**Tests over 5s** (`--durations=0`, 2026-07-26 — tier-placement input for the collection-surface
-hygiene phase):
+Unit/fast_integration/integration counts above re-measured 2026-08-04 (Phase 10.8). No combined
+`pytest tests/` (all tiers, one process) figure is carried here anymore — the previous "3,592
+passed ... 478.55s" measurement predates the Phase 10.5–10.8 fixes and would understate the
+current unit-tier count alone; re-measure per-tier as needed rather than trusting a stale total.
+
+**Tests over 5s** (unit-tier row re-measured 2026-08-04 via `--durations=0`, Phase 10.8;
+integration/slow_integration rows carried over from the 2026-07-26 baseline, not re-measured this
+pass):
 
 | Duration | Test | Current tier |
 | ---------- | ------ | --------------- |
@@ -479,18 +616,18 @@ hygiene phase):
 | 13.26s | `test_hybrid_search_integration.py::...test_hybrid_search_returns_results` | slow_integration |
 | 10.32s | `test_hybrid_search_integration.py::...test_index_persistence` | slow_integration |
 | 9.26s | `test_multi_hop_flow.py::...test_multi_hop_basic_functionality` | slow_integration |
-| 8.83s | `test_mcp_server.py::...test_mcp_server_can_import_as_first_module` | unit |
-| 7.19s | `test_hybrid_search.py::...test_weight_optimization` | unit |
 | 6.87s | `test_mcp_indexing.py::...test_incremental_indexing_mcp_path` | slow_integration |
-| 6.84s | `test_hybrid_search.py::...test_performance_tracking` | unit |
-| 6.82s | `test_hybrid_search.py::...test_sequential_search` | unit |
 | 6.62s | `test_auto_reindex_fixes.py::...test_uses_config_default_when_not_specified` | integration |
-| 6.60s | `test_hybrid_search.py::...test_search_with_filters` | unit |
 | 6.54s | `test_retrieval_evaluation.py::...test_bm25_file_hit[RQ01]` | slow_integration |
-| 6.45s | `test_hybrid_search.py::...test_parallel_search` | unit |
-| 6.31s | `test_hybrid_search.py::...test_multi_hop_uses_batched_search` | unit |
 | 6.05s | `test_observability_e2e.py::test_index_full_span_via_mcp_handler` | integration |
 | 5.89s | `test_phase_implementations.py::test_phase2_symbol_hash_cache` | integration |
+| 5.16s | `test_logging_setup.py::...test_run_index_directory_configures_logging_before_first_log` | unit |
+
+The seven unit-tier rows previously listed here (`test_mcp_server_can_import_as_first_module` at
+8.83s down to `test_multi_hop_uses_batched_search` at 6.31s) are gone: `test_weight_optimization`
+no longer exists, and the other six were the `test_hybrid_search.py::TestHybridSearcher` tests
+fixed under Phase 10.8 above — their multi-second runtime was the real-model-load bug, not
+inherent test cost. Only one unit test now exceeds the 5s mark.
 
 All 6 `tests/integration/` files have at least one sub-15s test — none are candidates for folding
 into `tests/fast_integration/` (< 5s) outright; kept as a documented 4th tier per Phase 6 (table

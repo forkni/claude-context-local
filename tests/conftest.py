@@ -14,10 +14,13 @@ warnings.filterwarnings(
     category=DeprecationWarning,
 )
 
-import hashlib  # noqa: E402
+import builtins  # noqa: E402
+import os  # noqa: E402
 import shutil  # noqa: E402
+import socket  # noqa: E402
 import sys  # noqa: E402
 import tempfile  # noqa: E402
+import traceback  # noqa: E402
 from collections.abc import Generator  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Any  # noqa: E402
@@ -65,28 +68,6 @@ except ImportError:
     SAMPLE_AUTH_MODULE = SAMPLE_DATABASE_MODULE = SAMPLE_API_MODULE = (
         SAMPLE_UTILS_MODULE
     ) = None
-
-
-def pytest_configure(config: Any) -> None:
-    """Configure pytest with custom markers."""
-    import warnings
-
-    # Suppress FAISS SWIG warnings at import time (before pytest filterwarnings apply)
-    warnings.filterwarnings(
-        "ignore", message=".*builtin type.*", category=DeprecationWarning
-    )
-
-    config.addinivalue_line("markers", "unit: Unit tests")
-    config.addinivalue_line("markers", "integration: Integration tests")
-    config.addinivalue_line("markers", "slow: Slow running tests")
-    config.addinivalue_line("markers", "mcp: MCP server related tests")
-    config.addinivalue_line("markers", "embeddings: Embedding generation tests")
-    config.addinivalue_line("markers", "chunking: Code chunking tests")
-    config.addinivalue_line("markers", "search: Search functionality tests")
-    config.addinivalue_line(
-        "markers", "gpu: Requires CUDA device (skipped when absent)"
-    )
-    config.addinivalue_line("markers", "e2e: Full end-to-end workflow")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -203,40 +184,28 @@ def _reset_singleton_state() -> None:
     module globals and lru_cache'd loaders, and the RAM-fallback override is a
     module global by design (see its own docstring for why it must NOT be
     cleared by ApplicationState.reset() itself).
+
+    Phase 10 (test-suite hardening): imports are unconditional, not wrapped in
+    ``except ImportError: pass``. All four modules are hard dependencies of
+    this suite — under randomized test order, a renamed symbol here would
+    otherwise silently degrade to "reset nothing" instead of failing the run,
+    which is exactly the class of integrity gap Phase 10 closes.
     """
-    try:
-        from mcp_server.model_pool_manager import reset_pool_manager
+    from mcp_server.model_pool_manager import reset_pool_manager
+    from mcp_server.tools.job_registry import reset_job_registry
+    from search.config import set_indexing_ram_fallback_override
+    from search.intent_classifier import (
+        _ANCHOR_EMBEDDINGS_CACHE,
+        _load_anchor_config,
+        _load_intent_rules,
+    )
 
-        reset_pool_manager()
-    except ImportError:
-        pass  # Module might not be available in some tests
-
-    try:
-        from mcp_server.tools.job_registry import reset_job_registry
-
-        reset_job_registry()
-    except ImportError:
-        pass  # Module might not be available in some tests
-
-    try:
-        from search.intent_classifier import (
-            _ANCHOR_EMBEDDINGS_CACHE,
-            _load_anchor_config,
-            _load_intent_rules,
-        )
-
-        _ANCHOR_EMBEDDINGS_CACHE.clear()
-        _load_anchor_config.cache_clear()
-        _load_intent_rules.cache_clear()
-    except ImportError:
-        pass  # Module might not be available in some tests
-
-    try:
-        from search.config import set_indexing_ram_fallback_override
-
-        set_indexing_ram_fallback_override(None)
-    except ImportError:
-        pass  # Module might not be available in some tests
+    reset_pool_manager()
+    reset_job_registry()
+    _ANCHOR_EMBEDDINGS_CACHE.clear()
+    _load_anchor_config.cache_clear()
+    _load_intent_rules.cache_clear()
+    set_indexing_ram_fallback_override(None)
 
 
 @pytest.fixture(autouse=True)
@@ -270,6 +239,34 @@ def reset_global_state() -> Generator[None, None, None]:
     _reset_singleton_state()
 
     yield
+
+    # Fail loudly, and attribute correctly, if this test leaked a background
+    # job (asyncio.create_task via JobRegistry.track_background_task) that
+    # it never awaited. _reset_singleton_state() above gave this test a
+    # *fresh* registry, so anything still pending here was created during
+    # this test only -- cancelling it silently (as reset_job_registry()
+    # does for its own, best-effort reasons) would let it keep running past
+    # this point and touch real resources during a later, unrelated test's
+    # mocked window instead. That's a real leak this project hit (2026-08-03):
+    # an orphaned background-index task constructed a real, unmocked
+    # SnapshotManager and wrote to real home storage during a completely
+    # unrelated later test. Naming the actual offending test here, instead
+    # of letting the write surface as someone else's storage-pollution
+    # failure, is the fix -- see TestIndexDirectoryAsyncJob in
+    # test_index_handlers.py for the "await the task before the patch
+    # context exits" pattern the leaking test needs to adopt.
+    from mcp_server.tools.job_registry import get_job_registry
+
+    _leaked_jobs = get_job_registry()._background_tasks
+    if _leaked_jobs:
+        for _task in _leaked_jobs:
+            _task.cancel()
+        pytest.fail(
+            f"{len(_leaked_jobs)} background job(s) were still running at "
+            "test teardown -- await the task explicitly before the test "
+            "ends instead of leaving it to finish (and touch real "
+            "resources) after the test's own mocks have gone out of scope."
+        )
 
     # Cleanup after test if needed
     _reset_singleton_state()
@@ -340,35 +337,191 @@ def _redirect_test_storage(
     mp.undo()
 
 
+# Real (unpatched) home directory, captured at module-import time — i.e.
+# before any test/fixture has a chance to monkeypatch Path.home(). All
+# comparisons below use this frozen value, never a live Path.home() call, so a
+# test that legitimately redirects Path.home() to its own tmp_path (e.g.
+# TestSnapshotManagerStorageDir.test_default_without_storage_manager_falls_back
+# in tests/unit/merkle/test_merkle.py) is correctly seen as writing to *its*
+# fake home, not the real one.
+_REAL_HOME = Path.home()
+_REAL_STORAGE_ROOT = (_REAL_HOME / ".claude_code_search").resolve()
+
+# Process-local ledger of writes that resolved under _REAL_STORAGE_ROOT.
+# Populated by the wrapped primitives _install_real_storage_write_ledger
+# installs for the whole session; drained per-test by _no_real_storage_pollution.
+_real_storage_write_ledger: list[dict[str, str]] = []
+
+
+def _record_if_real_storage(target: "str | Path") -> None:
+    """Append a ledger entry if *target* resolves under real home storage."""
+    try:
+        resolved = Path(target).resolve()
+    except (OSError, ValueError, RuntimeError):
+        return
+    try:
+        resolved.relative_to(_REAL_STORAGE_ROOT)
+    except ValueError:
+        return
+    _real_storage_write_ledger.append(
+        {"path": str(resolved), "stack": "".join(traceback.format_stack()[:-2])}
+    )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _install_real_storage_write_ledger() -> Generator[None, None, None]:
+    """Wrap this process's write primitives to attribute real-storage writes correctly.
+
+    Phase 10.5 (test-suite hardening): the previous design
+    (_no_real_storage_pollution, below) diffed a directory listing of
+    ~/.claude_code_search/{projects,merkle,graphs} before/after each test. That
+    has no notion of *which process* wrote a file — during this campaign, a
+    live code-search MCP server was found to be concurrently auto-reindexing
+    this very repo while the suite ran. Its writes (real deployed
+    project-hash + model-slug filenames the autouse test project-id mock can
+    never produce, landing in the real ~/.claude_code_search/merkle/, mtime-
+    confirmed mid-run) were attributed to whichever unrelated test's teardown
+    happened to straddle the write — one external write could surface as 1-3
+    consecutive failures on completely innocent tests.
+
+    This instead wraps the actual write primitives *this process* uses —
+    builtins.open (write modes only), os.replace, os.rename, and Path.mkdir —
+    which covers every atomic-write path in this repo (see
+    utils/atomic_io.write_json_atomic: open(tmp, "w") then os.replace(tmp,
+    path)) plus the unconditional mkdir in SnapshotManager.__init__ and
+    CodeGraphStorage's default storage_dir (the case this guard originally
+    existed for — CodeGraphStorage reads Path.home() directly and bypasses
+    get_storage_dir(), see _redirect_test_storage's docstring above). Any call
+    whose target resolves under the real ~/.claude_code_search is recorded in
+    _real_storage_write_ledger with a stack trace: a leak now names its own
+    call site instead of a bare filename, and a write by some *other* process
+    on the machine never passes through these wrappers at all, so it can no
+    longer be misattributed to this process's tests.
+    """
+    real_open = builtins.open
+    real_replace = os.replace
+    real_rename = os.rename
+    real_mkdir = Path.mkdir
+
+    def _wrapped_open(file, mode="r", *args: Any, **kwargs: Any):
+        if isinstance(mode, str) and any(c in mode for c in "wax+"):
+            _record_if_real_storage(file)
+        return real_open(file, mode, *args, **kwargs)
+
+    def _wrapped_replace(src, dst, *args: Any, **kwargs: Any):
+        _record_if_real_storage(dst)
+        return real_replace(src, dst, *args, **kwargs)
+
+    def _wrapped_rename(src, dst, *args: Any, **kwargs: Any):
+        _record_if_real_storage(dst)
+        return real_rename(src, dst, *args, **kwargs)
+
+    def _wrapped_mkdir(self, *args: Any, **kwargs: Any):
+        _record_if_real_storage(self)
+        return real_mkdir(self, *args, **kwargs)
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(builtins, "open", _wrapped_open)
+    mp.setattr(os, "replace", _wrapped_replace)
+    mp.setattr(os, "rename", _wrapped_rename)
+    mp.setattr(Path, "mkdir", _wrapped_mkdir)
+    yield
+    mp.undo()
+
+
+_REAL_SOCKET_CONNECT = socket.socket.connect
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _guarded_socket_connect(self: socket.socket, address: Any) -> Any:
+    """Block outbound connections to anything but loopback.
+
+    AF_UNIX/AF_PIPE-style addresses are plain strings (a filesystem path),
+    not a (host, port) tuple, and are never network egress — pass those
+    through untouched.
+    """
+    host = address[0] if isinstance(address, tuple) and address else None
+    if host is not None and host not in _LOOPBACK_HOSTS:
+        raise RuntimeError(
+            f"Blocked outbound network connection to {address!r}. "
+            "tests/unit and tests/fast_integration must not reach the real "
+            "network (HF Hub, PyPI, ...) -- inject a stub client/embedder "
+            "instead of relying on a lazy real-model construction path (see "
+            "TestHybridSearcher._stub_search_deps in "
+            "tests/unit/search/test_hybrid_search.py for the pattern), or "
+            "mark the test @pytest.mark.allow_network if it legitimately "
+            "needs the network (tests/slow_integration/ downloads real "
+            "models and is already exempt by path)."
+        )
+    return _REAL_SOCKET_CONNECT(self, address)
+
+
+@pytest.fixture(autouse=True)
+def _block_real_network(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail loudly, at the exact call site, instead of silently reaching the
+    real network.
+
+    Phase 11 (test-suite hardening): item 1's real finding was that a
+    forgotten embedder/reranker stub in tests/unit/search/test_hybrid_search.py
+    made real HTTPS calls to huggingface.co and loaded a real GPU model — a
+    slow, easy-to-miss failure mode that only ever showed up as "this test is
+    mysteriously taking 60s". This turns any future recurrence (in this file
+    or anywhere else in tests/unit or tests/fast_integration) into an
+    immediate, unambiguous RuntimeError naming the actual call site.
+
+    Sets HF_HUB_OFFLINE/TRANSFORMERS_OFFLINE so huggingface_hub/transformers
+    fail fast on their own cache-miss path, and patches
+    socket.socket.connect as a backstop for every other client (requests,
+    urllib3, raw sockets). Loopback connections (local test servers, pipes)
+    are unaffected.
+
+    tests/slow_integration/ legitimately downloads real models, so it is
+    exempted by path, matching this file's existing pattern (see
+    mock_snapshot_manager_for_unit_tests above). Any other test that needs
+    the real network can opt out with @pytest.mark.allow_network.
+
+    Function-scoped rather than session-scoped (departing from a stricter
+    read of the original plan) so the per-test opt-out marker/path check
+    below can actually take effect — a session-scoped fixture only runs its
+    setup once, before pytest knows which specific test is about to run.
+    """
+    test_path = normalize_path(str(request.fspath))
+    if "tests/slow_integration/" in test_path:
+        return
+    if request.node.get_closest_marker("allow_network") is not None:
+        return
+
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+    monkeypatch.setattr(socket.socket, "connect", _guarded_socket_connect)
+
+
 @pytest.fixture(autouse=True)
 def _no_real_storage_pollution() -> Generator[None, None, None]:
-    """Fail loudly if a test writes to real home storage.
+    """Fail loudly if THIS test wrote to real home storage.
 
-    Phase 8 (test-suite hardening): promoted from
-    tests/unit/mcp_server/conftest.py to apply to every test, not just
-    tests/unit/mcp_server/ — now that _redirect_test_storage (above) redirects
-    CODE_SEARCH_STORAGE for the whole session, this is the safety net for
-    anything that bypasses it (e.g. CodeGraphStorage's default storage_dir,
-    which reads Path.home() directly — see the note above).
+    Phase 8: promoted from tests/unit/mcp_server/conftest.py to apply to every
+    test. Phase 10.5: reads the process-local write ledger populated by
+    _install_real_storage_write_ledger instead of diffing a shared directory
+    listing — see that fixture's docstring for why the old diff-based design
+    misattributed a concurrent external process's writes to unrelated tests.
 
-    Snapshots ~/.claude_code_search/{projects,merkle,graphs} before the test and
-    after; any new entry added during the test triggers an assertion failure.
-    Tests that legitimately need real storage should patch/monkeypatch it
-    explicitly rather than relying on an exemption here.
+    Clears the ledger before the test body runs so only this test's own
+    writes are in scope, then asserts it is still empty after teardown,
+    printing the recorded call site(s) on failure. Tests that legitimately
+    need real storage should patch/monkeypatch it explicitly rather than
+    relying on an exemption here.
     """
-    home_storage = Path.home() / ".claude_code_search"
-    watched = [home_storage / sub for sub in ("projects", "merkle", "graphs")]
-    before = {d: (set(d.iterdir()) if d.exists() else set()) for d in watched}
+    _real_storage_write_ledger.clear()
     yield
-    after = {d: (set(d.iterdir()) if d.exists() else set()) for d in watched}
-    leaked = {
-        d.name: sorted(p.name for p in (after[d] - before[d]))
-        for d in watched
-        if after[d] - before[d]
-    }
+    leaked = list(_real_storage_write_ledger)
+    _real_storage_write_ledger.clear()
     assert not leaked, (
         "test wrote to real home storage — patch the storage writers or use "
-        f"monkeypatch: {leaked}"
+        "monkeypatch. Call site(s):\n"
+        + "\n---\n".join(f"{e['path']}:\n{e['stack']}" for e in leaked)
     )
 
 
@@ -509,41 +662,69 @@ def snapshot_manager(tmp_path: Path) -> Generator[Any, None, None]:
 def mock_snapshot_manager_for_unit_tests(
     tmp_path: Path, request
 ) -> Generator[Any, None, None]:
-    """Mock SnapshotManager globally for unit tests to prevent production pollution.
+    """Redirect every bare SnapshotManager() default in unit tests to tmp_path.
 
-    Only applies to tests in tests/unit/ directory.
-    Integration tests may need real SnapshotManager behavior.
+    Only applies to tests in tests/unit/ directory. Integration tests may need
+    real SnapshotManager behavior.
 
-    Patches multiple import locations to catch all uses.
+    Phase 10.5 (test-suite hardening): previously patched
+    "merkle.snapshot_manager.SnapshotManager" — the *definition module's*
+    attribute — with a docstring claiming this was "sufficient for all
+    imports". It was not: five production modules
+    (search/incremental_indexer.py, search/index_write_stage.py,
+    mcp_server/tools/status_handlers.py, merkle/change_detector.py,
+    merkle/__init__.py, plus this test suite's own tests/unit/merkle/
+    test_merkle.py) do `from merkle.snapshot_manager import SnapshotManager`
+    at their own import time, binding their own local name to the class
+    object before this fixture ever runs — patching the definition module's
+    attribute afterwards never reaches those bindings. This was latent rather
+    than a live leak because CODE_SEARCH_STORAGE (see _redirect_test_storage
+    above) already redirects SnapshotManager's own default resolution.
+
+    Patches SnapshotManager.__init__ itself — a class-level attribute shared
+    by every one of those bindings, since they all still point at the same
+    class object — so a bare SnapshotManager() call (what every production
+    call site above actually does; see the grep in TESTING_GUIDE.md's Phase
+    10 record) gets this test's tmp_path regardless of which module
+    constructed it. Explicit storage_dir= callers are left untouched, so
+    tests that build their own SnapshotManager against a directory they
+    inspect afterwards keep working unchanged.
+
+    Exemption: tests/unit/merkle/test_merkle.py's TestSnapshotManagerStorageDir
+    calls bare SnapshotManager() specifically to exercise the class's *own*
+    default-resolution logic (the get_storage_dir() branch and the
+    Path.home() fallback branch) — forcing storage_dir there would defeat
+    the test. Those two tests already protect themselves against real-home
+    pollution independently (faking mcp_server.storage_manager / monkeypatching
+    Path.home()), so this fixture skips that one file rather than patching
+    it and immediately un-patching around those tests.
+
+    This fixture's yielded value has no consumers (nothing requests it by
+    name via fixture injection) — its internals are free to change.
     """
-    from unittest.mock import Mock, patch
+    from unittest.mock import patch
+
+    from merkle.snapshot_manager import SnapshotManager
 
     # Only apply to unit tests (handle both Unix and Windows path separators)
     test_path = normalize_path(str(request.fspath))
     if "tests/unit" not in test_path:
         yield
         return
+    if test_path.endswith("tests/unit/merkle/test_merkle.py"):
+        yield
+        return
 
-    # Create mock instance that uses tmp_path
-    mock_instance = Mock()
-    mock_instance.storage_dir = tmp_path / "merkle"
-    mock_instance.has_snapshot.return_value = False
-    mock_instance.get_snapshot_age.return_value = None
-    mock_instance.save_snapshot.return_value = None
-    mock_instance.delete_snapshot.return_value = None
-    mock_instance.delete_all_snapshots.return_value = 0
-    mock_instance.load_snapshot.return_value = None
-    # hash() is randomized per-process (PYTHONHASHSEED), so two workers -- or
-    # two runs of the same test -- would compute different IDs for the same
-    # path. Use hashlib.sha256 for a genuinely stable ID across processes.
-    mock_instance.get_project_id.side_effect = lambda path: (
-        f"test_{hashlib.sha256(str(path).encode()).hexdigest()[:8]}"
-    )
+    default_storage_dir = tmp_path / "merkle"
+    real_init = SnapshotManager.__init__
 
-    # Patch at definition point (sufficient for all imports)
-    with patch("merkle.snapshot_manager.SnapshotManager") as mock_def:
-        mock_def.return_value = mock_instance
-        yield mock_instance
+    def _redirected_init(self: Any, storage_dir: Path | None = None) -> None:
+        if storage_dir is None:
+            storage_dir = default_storage_dir
+        real_init(self, storage_dir=storage_dir)
+
+    with patch.object(SnapshotManager, "__init__", _redirected_init):
+        yield
 
 
 # ============================================================================

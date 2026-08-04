@@ -738,10 +738,22 @@ class TestSnapshotManagerStorageDir:
 
         assert sm.storage_dir == fake_storage / "merkle"
 
-    def test_default_without_storage_manager_falls_back(self) -> None:
-        """If mcp_server.storage_manager can't be imported, falls back to ~/.claude_code_search/merkle."""
+    def test_default_without_storage_manager_falls_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If mcp_server.storage_manager can't be imported, falls back to ~/.claude_code_search/merkle.
+
+        Patches Path.home() to a tmp_path stand-in first — the real fallback
+        computes ``Path.home() / ".claude_code_search" / "merkle"`` and then
+        unconditionally ``mkdir(parents=True)``s it, so exercising this branch
+        against the real Path.home() creates real on-disk state every run
+        (the exact "production-directory pollution" smell the suite's own
+        _no_real_storage_pollution guard exists to catch — see AUDIT.md Step 7).
+        """
         import sys
         import types
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         # Replace mcp_server.storage_manager with a module whose get_storage_dir raises
         broken = types.ModuleType("mcp_server.storage_manager")
@@ -757,7 +769,7 @@ class TestSnapshotManagerStorageDir:
             else:
                 sys.modules["mcp_server.storage_manager"] = orig
 
-        expected = Path.home() / ".claude_code_search" / "merkle"
+        expected = tmp_path / ".claude_code_search" / "merkle"
         assert sm.storage_dir == expected
 
 

@@ -282,13 +282,32 @@ class TestModelLoader:
         assert "[CLEANUP SUCCESS]" in caplog.text
         assert "[RECOVERY SUCCESS]" in caplog.text
 
+    @patch("huggingface_hub.model_info")
     @patch("embeddings.model_loader.SentenceTransformer")
     @patch("embeddings.model_loader.torch")
     @patch("embeddings.model_loader.shutil")
     def test_load_corrupted_cache_delete_and_redownload(
-        self, mock_shutil, mock_torch, mock_st, model_loader, temp_cache_dir, caplog
+        self,
+        mock_shutil,
+        mock_torch,
+        mock_st,
+        mock_model_info,
+        model_loader,
+        temp_cache_dir,
+        caplog,
     ):
         """Test load with corrupted cache that requires deletion and redownload."""
+        # cache_valid stays False after the (mocked) delete-and-redownload
+        # recovery, so load() falls through to the HuggingFace-existence
+        # check (Step 2). Stub huggingface_hub.model_info at its real
+        # definition site -- model_loader.py imports it with a function-local
+        # `from huggingface_hub import model_info`, which resolves this
+        # attribute at call time -- so the test never reaches the real
+        # network (see tests/conftest.py::_block_real_network).
+        mock_model_info.return_value = Mock(
+            modelId="BAAI/bge-m3", library_name="sentence-transformers"
+        )
+
         # Setup cache manager to report corrupted cache
         cache_path = temp_cache_dir / "models--BAAI--bge-m3"
         model_loader._cache_manager.validate_cache = Mock(
@@ -447,9 +466,20 @@ class TestModelLoader:
         assert "[CACHE LOAD FAILED]" in caplog.text
         assert "[FALLBACK SUCCESS]" in caplog.text
 
+    @patch("huggingface_hub.model_info")
     @patch("embeddings.model_loader.SentenceTransformer")
-    def test_load_raises_on_all_failures(self, mock_st, model_loader):
+    def test_load_raises_on_all_failures(self, mock_st, mock_model_info, model_loader):
         """Test load raises RuntimeError when all recovery attempts fail."""
+        # cache_path_obj is None so the corrupted-cache branch is skipped
+        # entirely, but cache_valid is still False, so load() still reaches
+        # the HuggingFace-existence check (Step 2) before it ever gets to the
+        # (mocked, failing) SentenceTransformer construction. Stub
+        # huggingface_hub.model_info so that check never touches the real
+        # network (see tests/conftest.py::_block_real_network).
+        mock_model_info.return_value = Mock(
+            modelId="BAAI/bge-m3", library_name="sentence-transformers"
+        )
+
         # Setup cache manager to report invalid cache
         model_loader._cache_manager.validate_cache = Mock(
             return_value=(False, "Cache not found")

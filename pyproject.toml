@@ -439,13 +439,32 @@ markers = [
     "asyncio: Mark test as async (pytest-asyncio)",
     "gpu: Requires CUDA device (skipped when absent)",
     "e2e: Full end-to-end workflow",
+    "allow_network: Opt out of the tests/conftest.py real-network guard",
 ]
 filterwarnings = [
-    "ignore::DeprecationWarning",
-    "ignore::PendingDeprecationWarning",
-    "ignore::UserWarning",
+    # "error" must stay first: pytest registers ini filters top-to-bottom and
+    # each registration is prepended, so entries listed *after* this one end
+    # up checked *before* it (highest priority) -- making "error" the
+    # catch-all fallback rather than a blanket suppressor. First-party
+    # warnings raised anywhere in tests/unit now fail the test that raised
+    # them; only these third-party module patterns are re-ignored.
+    "error",
+    # Escalating to "error" also turns ResourceWarning into a failure, but
+    # pytest reports leaked-handle warnings via a separate GC-timing-dependent
+    # path (_pytest.unraisableexception) that surfaces on whichever unrelated
+    # test happens to be running when the interpreter reaps the leaked object,
+    # not the test that actually leaked (see tests/TESTING_GUIDE.md "Phase
+    # 10.7", which fixed the one confirmed leak -- unclosed LSP subprocess
+    # pipes in chunking/relationships/lsp_call_graph.py -- and found no
+    # evidence the second suspected site, chunking/languages/glsl.py:745, ever
+    # existed in current source). Kept as defense-in-depth against a leak
+    # elsewhere in the dependency tree, not because a known first-party leak
+    # remains.
+    "ignore::ResourceWarning",
+    "ignore::DeprecationWarning:torch.*",
+    "ignore::DeprecationWarning:transformers.*",
+    "ignore::DeprecationWarning:huggingface_hub.*",
     "ignore:.*builtin type.*:DeprecationWarning",
-    "ignore:Not enough free disk space.*:UserWarning:huggingface_hub",
 ]
 
 # ---------------------------------------------------------------------------

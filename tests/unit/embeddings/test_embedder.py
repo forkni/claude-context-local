@@ -24,6 +24,13 @@ supported_models = [m for m in MODEL_REGISTRY if "8B" not in m]
 # count at any site.
 _patch_embedder_st = patch("embeddings.embedder.SentenceTransformer")
 _patch_model_loader_st = patch("embeddings.model_loader.SentenceTransformer")
+# ModelLoader.load() falls through to a HuggingFace-existence check
+# (huggingface_hub.model_info) whenever the real on-disk cache for a model
+# is missing/invalid -- which depends on this machine's real
+# ~/.claude_code_search/models state, not on anything this test controls.
+# Stub it so the test never depends on, or reaches, the real network (see
+# tests/conftest.py::_block_real_network).
+_patch_model_info = patch("huggingface_hub.model_info")
 
 
 @pytest.fixture(autouse=True)
@@ -44,13 +51,18 @@ def _no_warmup_measure(monkeypatch):
 @pytest.mark.parametrize("model_name", supported_models)
 @_patch_model_loader_st
 @_patch_embedder_st
+@_patch_model_info
 def test_model_loading_and_embedding(
-    mock_sentence_transformer, mock_model_loader_st, model_name: str
+    mock_model_info, mock_sentence_transformer, mock_model_loader_st, model_name: str
 ):
     """
     Tests that each supported model can be loaded and can create embeddings
     of the correct dimension.
     """
+    mock_model_info.return_value = MagicMock(
+        modelId=model_name, library_name="sentence-transformers"
+    )
+
     # Get model config to determine expected dimension
     model_config = MODEL_REGISTRY.get(model_name, {})
     # Use truncate_dim if available (for MRL models), otherwise use dimension

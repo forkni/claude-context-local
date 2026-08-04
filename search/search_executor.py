@@ -414,8 +414,17 @@ class SearchExecutor:
 
                     from embeddings.embedder import CodeEmbedder
 
-                    # Use same cache directory as main embedder
-                    cache_dir = Path.home() / ".claude_code_search" / "models"
+                    # Use same cache directory as main embedder. Route through
+                    # get_storage_dir() so this honors CODE_SEARCH_STORAGE (test
+                    # redirection) instead of reading Path.home() directly --
+                    # see merkle/snapshot_manager.py's __init__ for the same
+                    # try/except fallback pattern.
+                    try:
+                        from mcp_server.storage_manager import get_storage_dir
+
+                        cache_dir = get_storage_dir() / "models"
+                    except Exception:  # noqa: BLE001 - resilience: fall back to default storage dir if import fails
+                        cache_dir = Path.home() / ".claude_code_search" / "models"
                     cache_dir.mkdir(parents=True, exist_ok=True)
                     self.embedder = CodeEmbedder(cache_dir=str(cache_dir))
                     self._logger.info(

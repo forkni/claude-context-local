@@ -121,6 +121,31 @@ class JobRegistry:
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
+    def cancel_pending(self) -> None:
+        """Cancel every still-running tracked task.
+
+        Test-only. A task started via ``track_background_task`` keeps
+        executing on the event loop even after this registry is replaced --
+        dropping the reference does not stop it. An orphaned task from one
+        test can then resume mid-coroutine during a later, unrelated test
+        and touch real resources (e.g. construct a real ``SnapshotManager``
+        after that later test's mocks are what's active, not the originating
+        test's), which is exactly the class of order-dependent leak Phase 10
+        closes. Call before discarding the registry singleton.
+
+        NOTE: an earlier version of this method additionally pumped the
+        event loop (``loop.run_until_complete(asyncio.gather(*tasks, ...))``)
+        to force the cancellation to land before returning. That made things
+        dramatically worse (1/10 -> 8/10 failing runs, with an unrelated
+        cascading ``NameError`` in a completely different test module) --
+        driving pytest-asyncio's per-test loop from outside its own
+        run/close cycle corrupts fixture teardown for other, unrelated
+        fixtures elsewhere in the same test. Do not reintroduce that without
+        first understanding why it cascades.
+        """
+        for task in self._background_tasks:
+            task.cancel()
+
 
 _registry: JobRegistry | None = None
 
@@ -134,6 +159,13 @@ def get_job_registry() -> JobRegistry:
 
 
 def reset_job_registry() -> None:
-    """Reset the singleton. Test-only: ensures no cross-test job leakage."""
+    """Reset the singleton. Test-only: ensures no cross-test job leakage.
+
+    Cancels any still-running tracked tasks first -- see
+    ``JobRegistry.cancel_pending`` for why dropping the reference alone is
+    not enough.
+    """
     global _registry
+    if _registry is not None:
+        _registry.cancel_pending()
     _registry = None
