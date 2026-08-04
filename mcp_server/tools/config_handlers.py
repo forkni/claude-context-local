@@ -67,14 +67,18 @@ _RERANKER_ECHO: tuple[str, ...] = _derive_mcp_field_names(
     RerankerConfig, "reranker", "reranker_echo"
 )
 
-_SEARCH_MODE_FIELDS: tuple[tuple[str, str], ...] = (
-    ("bm25_weight", "bm25_weight"),
-    ("dense_weight", "dense_weight"),
-)
+_SEARCH_MODE_FIELDS: tuple[tuple[str, str], ...] = tuple(
+    (name, name) for name in _derive_mcp_field_names(SearchModeConfig, "search_mode")
+)  # bm25_weight, dense_weight
 
+# Wire arg name differs from the field name; renaming it would break the
+# published tool schema.
 _PERFORMANCE_SEARCH_FIELDS: tuple[tuple[str, str], ...] = (
     ("enable_parallel", "use_parallel_search"),
 )
+
+# default_mode stays out of _SEARCH_MODE_FIELDS: it is set unconditionally
+# above (and drives enable_hybrid), not a skip-if-absent patch.
 
 
 def apply_config_patch(

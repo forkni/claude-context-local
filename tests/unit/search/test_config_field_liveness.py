@@ -110,3 +110,27 @@ def test_construction_baked_fields_declare_a_reader():
         "construction_baked=True field(s) with no reader=...:\n  "
         + "\n  ".join(unreadered)
     )
+
+
+def test_no_mcp_settable_field_is_construction_baked():
+    """Ratchet: spec(mcp=...) and spec(construction_baked=True) must never be
+    set together (see ADR-0027/mcp-field-derivation).
+
+    A field tagged mcp= is patched live onto the cached SearchConfig by an MCP
+    handler (see apply_config_patch); a field tagged construction_baked=True
+    is read once into a collaborator (cached HybridSearcher/reranker) at
+    construction, so mutating it on the config singleton is a no-op until
+    that collaborator is rebuilt. A field carrying both tags would silently
+    accept an MCP-set value that never takes effect - the handler must call
+    state.reset_searcher() (dropping construction_baked), or the field must
+    not be MCP-settable (dropping mcp=).
+    """
+    exposed = [
+        f"{cls_name}.{f.name}"
+        for cls_name, f in _iter_fields()
+        if f.metadata.get("mcp") and f.metadata.get("construction_baked")
+    ]
+    assert not exposed, (
+        "MCP-settable field(s) baked at construction - the handler must call "
+        "state.reset_searcher(), or drop the mcp= tag:\n  " + "\n  ".join(exposed)
+    )

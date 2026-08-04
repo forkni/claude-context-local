@@ -242,6 +242,7 @@ class SearchModeConfig:
             range=(0.0, 1.0),
             flat_alias="bm25_weight",
             env="CLAUDE_BM25_WEIGHT",
+            mcp="search_mode",
             reader="search/hybrid_searcher.py",
         ),
     )
@@ -251,6 +252,7 @@ class SearchModeConfig:
             range=(0.0, 1.0),
             flat_alias="dense_weight",
             env="CLAUDE_DENSE_WEIGHT",
+            mcp="search_mode",
             reader="search/hybrid_searcher.py",
         ),
     )
@@ -358,6 +360,7 @@ class PerformanceConfig:
         metadata=spec(
             flat_alias="use_parallel_search",
             env="CLAUDE_USE_PARALLEL",
+            mcp="performance_search",
             reader="mcp_server/tools/search_orchestrator.py",
         ),
     )
