@@ -283,6 +283,80 @@ class TestMetadataStoreTransactions:
             store2.close()
 
 
+class TestMetadataStoreReset:
+    """Tests for reset() -- returns to a fresh, empty state in place (ADR-0025)."""
+
+    def test_reset_closes_and_reopens_empty(self):
+        """reset() closes the underlying db, dropping the Windows file
+        handle, then lazily reopens against the same db_path on next access.
+
+        reset() does not itself delete data on disk -- true emptying only
+        happens when the caller (CodeIndexManager.preflight_clear) deletes
+        the underlying metadata.db file between reset() and the next open.
+        Without that external deletion, data committed before reset() is
+        still there afterward -- exactly what a fresh MetadataStore(db_path)
+        constructed at that same, non-empty path would also see.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            store = MetadataStore(db_path)
+            chunk_id = "file.py:1-10:function:foo"
+            store.set(chunk_id, 0, {"relative_path": "file.py"})
+            store.commit()
+            assert store.exists(chunk_id)
+
+            store.reset()
+
+            assert store._db is None
+            assert store.exists(chunk_id)
+            assert store.db_path == db_path
+            store.close()
+
+    def test_reset_drops_symbol_cache(self):
+        """reset() replaces _symbol_cache with a fresh SymbolHashCache."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            store = MetadataStore(Path(tmpdir) / "test.db")
+            chunk_id = "file.py:1-10:function:foo"
+            store.set(chunk_id, 0, {"relative_path": "file.py"})
+            old_cache = store._symbol_cache
+
+            store.reset()
+
+            assert store._symbol_cache is not old_cache
+            assert store._symbol_cache._total_symbols == 0
+            store.close()
+
+    def test_reset_field_completeness_against_fresh_instance(self):
+        """Highest-value regression test in the ADR-0025 plan: a future field
+        added to __init__ but forgotten in reset() must fail this test
+        immediately.
+
+        MetadataStore has exactly three fields (db_path, _db, _symbol_cache)
+        and is fully lazy via _ensure_open, so reset() should leave it
+        field-for-field equivalent to a fresh instance at the same path --
+        that equivalence is what licenses the whole clear-in-place design.
+        _symbol_cache is excluded from the value comparison because
+        SymbolHashCache has no __eq__ (two empty instances are never `==`
+        to each other), so we check its emptiness explicitly instead.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            fresh = MetadataStore(db_path)
+
+            cleared = MetadataStore(db_path)
+            cleared.set("file.py:1-10:function:foo", 0, {"relative_path": "file.py"})
+            cleared.commit()
+
+            cleared.reset()
+
+            assert vars(fresh).keys() == vars(cleared).keys()
+            assert fresh.db_path == cleared.db_path
+            assert cleared._symbol_cache._total_symbols == 0
+
+            fresh.close()
+            cleared.close()
+
+
 class TestMetadataStoreUtilities:
     """Tests for utility methods."""
 

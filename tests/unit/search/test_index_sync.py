@@ -275,40 +275,36 @@ class TestIndexSynchronizer:
             assert result == 3
 
     def test_clear_index_success(self):
-        """Test clearing both indices."""
-        # clear_index recreates indices using constructors
-        with (
-            patch("search.index_sync.BM25Index") as mock_bm25_class,
-            patch("search.index_sync.CodeIndexManager") as mock_dense_class,
-            patch("search.index_sync.shutil.rmtree"),
-            patch("search.index_sync.Path.exists", return_value=True),
-        ):
-            self.mock_dense_index.clear_index = MagicMock()
+        """Test clearing both indices in place (ADR-0025 -- no reconstruction)."""
+        self.synchronizer.clear_index()
 
-            # Execute clear
-            self.synchronizer.clear_index()
-
-            # Verify dense clear_index was called
-            self.mock_dense_index.clear_index.assert_called_once()
-            # Verify new instances were created
-            mock_bm25_class.assert_called_once()
-            mock_dense_class.assert_called_once()
+        self.mock_dense_index.preflight_clear.assert_called_once()
+        self.mock_bm25_index.clear.assert_called_once()
+        self.mock_dense_index.clear_index.assert_called_once()
+        # Identity is unchanged -- clear_index() never reassigns bm25_index/dense_index.
+        assert self.synchronizer.bm25_index is self.mock_bm25_index
+        assert self.synchronizer.dense_index is self.mock_dense_index
 
     def test_clear_index_with_storage_cleanup(self):
-        """Test clearing with storage directory cleanup."""
-        # Mock Path.exists and shutil.rmtree
-        with (
-            patch("search.index_sync.Path.exists", return_value=True),
-            patch("search.index_sync.shutil.rmtree") as mock_rmtree,
-        ):
-            self.mock_bm25_index.clear = MagicMock()
-            self.mock_dense_index.clear = MagicMock()
+        """Test clear_index runs the fail-fast probe before destroying any state.
 
-            # Execute clear
-            self.synchronizer.clear_index()
+        preflight_clear() must happen before bm25_index.clear() and
+        dense_index.clear_index() -- otherwise a locked metadata.db would only
+        abort after the BM25 directory was already gone, a half-clear with no
+        rollback.
+        """
+        call_order = []
+        self.mock_dense_index.preflight_clear.side_effect = lambda: call_order.append(
+            "preflight_clear"
+        )
+        self.mock_bm25_index.clear.side_effect = lambda: call_order.append("bm25.clear")
+        self.mock_dense_index.clear_index.side_effect = lambda: call_order.append(
+            "dense.clear_index"
+        )
 
-            # Verify rmtree was called
-            assert mock_rmtree.call_count >= 0  # May or may not cleanup
+        self.synchronizer.clear_index()
+
+        assert call_order == ["preflight_clear", "bm25.clear", "dense.clear_index"]
 
     def test_remove_files_single_file(self):
         """Test removing chunks for a single file (set-of-one)."""
@@ -389,12 +385,18 @@ class TestIndexSynchronizer:
         assert self.synchronizer.storage_dir == self.storage_dir
 
     def test_embedder_propagation_in_clear_index(self):
-        """Test that embedder is passed to CodeIndexManager during clear_index."""
-        # Create mock embedder
+        """Test the embedder stays reachable through dense_index across a clear.
+
+        Previously this was tested by asserting a reconstructed
+        CodeIndexManager received the embedder kwarg. Under ADR-0025,
+        clear_index() never reconstructs dense_index -- it clears the same
+        object in place -- so the embedder threaded through at construction
+        time is simply never touched.
+        """
         mock_embedder = MagicMock()
         mock_embedder.get_model_info.return_value = {"embedding_dimension": 1024}
+        self.mock_dense_index.embedder = mock_embedder
 
-        # Create synchronizer with embedder
         synchronizer_with_embedder = IndexSynchronizer(
             storage_dir=self.storage_dir,
             bm25_index=self.mock_bm25_index,
@@ -405,26 +407,14 @@ class TestIndexSynchronizer:
             embedder=mock_embedder,
         )
 
-        # Verify embedder is stored
         assert synchronizer_with_embedder.embedder == mock_embedder
 
-        # clear_index recreates indices with embedder
-        with (
-            patch("search.index_sync.BM25Index"),
-            patch("search.index_sync.CodeIndexManager") as mock_dense_class,
-            patch("search.index_sync.shutil.rmtree"),
-            patch("search.index_sync.Path.exists", return_value=True),
-        ):
-            self.mock_dense_index.clear_index = MagicMock()
+        synchronizer_with_embedder.clear_index()
 
-            # Execute clear
-            synchronizer_with_embedder.clear_index()
-
-            # Verify CodeIndexManager was called with embedder
-            mock_dense_class.assert_called_once()
-            call_kwargs = mock_dense_class.call_args[1]
-            assert "embedder" in call_kwargs
-            assert call_kwargs["embedder"] == mock_embedder
+        # ADR-0025: dense_index identity is stable across a clear, so the
+        # embedder it was constructed with is still reachable through it.
+        assert synchronizer_with_embedder.dense_index is self.mock_dense_index
+        assert synchronizer_with_embedder.dense_index.embedder is mock_embedder
 
     def test_embedder_none_allowed(self):
         """Test that IndexSynchronizer works with embedder=None for backward compatibility."""
@@ -442,23 +432,11 @@ class TestIndexSynchronizer:
         # Verify embedder is None
         assert synchronizer_no_embedder.embedder is None
 
-        # clear_index should still work (passes None to CodeIndexManager)
-        with (
-            patch("search.index_sync.BM25Index"),
-            patch("search.index_sync.CodeIndexManager") as mock_dense_class,
-            patch("search.index_sync.shutil.rmtree"),
-            patch("search.index_sync.Path.exists", return_value=True),
-        ):
-            self.mock_dense_index.clear_index = MagicMock()
+        # clear_index should still work with embedder=None -- nothing in the
+        # clear path touches self.embedder or dense_index.embedder at all.
+        synchronizer_no_embedder.clear_index()
 
-            # Execute clear
-            synchronizer_no_embedder.clear_index()
-
-            # Verify CodeIndexManager was called with embedder=None
-            mock_dense_class.assert_called_once()
-            call_kwargs = mock_dense_class.call_args[1]
-            assert "embedder" in call_kwargs
-            assert call_kwargs["embedder"] is None
+        assert synchronizer_no_embedder.dense_index is self.mock_dense_index
 
 
 class TestResyncIfDesynced:

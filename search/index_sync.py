@@ -5,12 +5,11 @@ of both BM25 and dense FAISS indices.
 """
 
 import logging
-import shutil
 from pathlib import Path
 from typing import Any
 
 from .bm25_index import BM25Index
-from .indexer import CodeIndexManager, probe_metadata_deletable
+from .indexer import CodeIndexManager
 from .tokenization import augment_bm25_document
 
 
@@ -324,7 +323,7 @@ class IndexSynchronizer:
 
     def clear_index(self) -> None:
         """
-        Clear both BM25 and dense indices.
+        Clear both BM25 and dense indices in place.
         Compatible with incremental indexer interface.
         """
         self._logger.info("Clearing hybrid indices")
@@ -334,72 +333,15 @@ class IndexSynchronizer:
             # destroying BM25 or FAISS state. Without this, a locked
             # metadata.db (caught later, inside CodeIndexManager.clear_index)
             # would only abort *after* the BM25 directory below was already
-            # gone — a half-clear with no rollback. Close the metadata store
-            # first so a lingering Python-side reference doesn't make the
-            # probe raise spuriously (mirrors CodeIndexManager.clear_index's
-            # own close-then-gc-then-probe sequence).
-            if self.dense_index is not None:
-                if (
-                    hasattr(self.dense_index, "_metadata_store")
-                    and self.dense_index._metadata_store is not None
-                ):
-                    self.dense_index._metadata_store.close()
-                    # pyrefly: ignore [bad-assignment]
-                    self.dense_index._metadata_store = None
+            # gone — a half-clear with no rollback.
+            self.dense_index.preflight_clear()
 
-                import gc
+            self.bm25_index.clear()
 
-                gc.collect()
-
-                probe_metadata_deletable(self.dense_index.metadata_path)
-
-            # DELETE BM25 files from disk FIRST
-            bm25_dir = self.storage_dir / "bm25"
-            if bm25_dir.exists():
-                shutil.rmtree(bm25_dir)
-                self._logger.info(f"Deleted BM25 directory: {bm25_dir}")
-
-            # Recreate empty BM25 index with same configuration
-            self.bm25_index = BM25Index(
-                str(self.storage_dir / "bm25"),
-                use_stopwords=self.bm25_use_stopwords,
-                use_stemming=self.bm25_use_stemming,
-                tokenizer=self.bm25_tokenizer,
-                k1=self.bm25_k1,
-                b=self.bm25_b,
-            )
-
-            # Clear dense index - MUST close metadata before recreating
-            if self.dense_index is not None:
-                self.dense_index.clear_index()
-
-                # CRITICAL: Close metadata store AGAIN (clear_index reopens it at the end)
-                # This prevents file lock [WinError 32] on Windows when creating new CodeIndexManager
-                if (
-                    hasattr(self.dense_index, "_metadata_store")
-                    and self.dense_index._metadata_store is not None
-                ):
-                    self.dense_index._metadata_store.close()
-                    self._logger.debug(
-                        "Closed old dense_index metadata store before recreation"
-                    )
-
-                # Release reference to allow garbage collection
-                # pyrefly: ignore [bad-assignment]
-                self.dense_index = None
-
-            # Force garbage collection to release file handles (Windows)
-            import gc
-
-            gc.collect()
-
-            # Recreate with clean state (preserve project_id, config, and embedder for dimension validation)
-            # NOW safe - old metadata store is closed and garbage collected
-            self.dense_index = CodeIndexManager(
-                str(self.storage_dir),
-                embedder=self.embedder,
-                project_id=self.project_id,
-            )
+            # preflight_clear() is idempotent (see probe_metadata_deletable's
+            # docstring) — clear_index() calling it again internally is a
+            # documented no-op, not redundant work.
+            self.dense_index.clear_index()
 
             self._logger.info("Successfully cleared hybrid indices")
         except Exception as e:

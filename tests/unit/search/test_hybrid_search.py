@@ -705,7 +705,7 @@ class TestHybridSearcher:
     def test_clear_index_clears_both_indices(
         self, mock_bm25_hs, mock_dense_hs, mock_bm25_sync, mock_dense_sync
     ):
-        """Test clear_index recreates both BM25 and dense indices."""
+        """Test clear_index clears both BM25 and dense indices in place (ADR-0025)."""
         # Setup mocks for HybridSearcher __init__
         mock_bm25_hs.return_value = Mock(name="BM25_1")
         mock_dense_instance_1 = Mock(name="Dense_1")
@@ -723,24 +723,51 @@ class TestHybridSearcher:
         original_bm25 = searcher.bm25_index
         original_dense = searcher.dense_index
 
-        # Setup mocks for clear_index (in IndexSynchronizer)
-        new_bm25 = Mock(name="BM25_2")
-        new_dense = Mock(name="Dense_2")
-        new_dense.metadata_store = Mock(name="MetadataStore")
-        mock_bm25_sync.return_value = new_bm25
-        mock_dense_sync.return_value = new_dense
-
         # Clear indices
         searcher.clear_index()
 
-        # Verify BM25 recreated (new instance)
-        assert searcher.bm25_index is not original_bm25
-        assert searcher.bm25_index is new_bm25
-
-        # Verify dense cleared and recreated
+        # ADR-0025: index object identity is stable across a clear -- no swap,
+        # no repair list. bm25_index.clear() and dense_index.clear_index() are
+        # called on the *same* objects instead of new ones being constructed.
+        original_dense.preflight_clear.assert_called_once()
+        original_bm25.clear.assert_called_once()
         original_dense.clear_index.assert_called_once()
-        assert searcher.dense_index is not original_dense
-        assert searcher.dense_index is new_dense
+        assert searcher.bm25_index is original_bm25
+        assert searcher.dense_index is original_dense
+
+    @patch("search.index_sync.CodeIndexManager")
+    @patch("search.index_sync.BM25Index")
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_clear_index_preserves_collaborator_identity(
+        self, mock_bm25_hs, mock_dense_hs, mock_bm25_sync, mock_dense_sync
+    ):
+        """ADR-0025 invariant: every collaborator that cached bm25_index/
+        dense_index at construction time still resolves to the *same*
+        objects after clear_index() -- search_executor, multi_hop_searcher
+        and reranking_engine included. This is the regression commit
+        db4c181 shipped without coverage: search_executor.bm25_index in
+        particular used to go stale after a resync because nothing repaired
+        it; under the stable-identity invariant there is nothing to repair.
+        """
+        mock_bm25_hs.return_value = Mock(name="BM25_1")
+        mock_dense_instance_1 = Mock(name="Dense_1")
+        mock_dense_instance_1.index = None
+        mock_dense_instance_1.metadata_path = Path(self.temp_dir) / "metadata.db"
+        mock_dense_hs.return_value = mock_dense_instance_1
+
+        searcher = HybridSearcher(self.temp_dir)
+
+        original_bm25 = searcher.bm25_index
+        original_dense = searcher.dense_index
+        original_metadata_store = searcher.reranking_engine.metadata_store
+
+        searcher.clear_index()
+
+        assert searcher.search_executor.bm25_index is original_bm25
+        assert searcher.search_executor.dense_index is original_dense
+        assert searcher.multi_hop_searcher.dense_index is original_dense
+        assert searcher.reranking_engine.metadata_store is original_metadata_store
 
     def teardown_method(self):
         """Clean up test fixtures."""

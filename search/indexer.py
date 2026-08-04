@@ -779,32 +779,41 @@ class CodeIndexManager:
 
         return is_valid, issues
 
-    def clear_index(self) -> None:
-        """Clear the entire index and metadata."""
-        # Close metadata store - do NOT reopen yet
-        if self._metadata_store is not None:
-            self._metadata_store.close()
-            # pyrefly: ignore [bad-assignment]
-            self._metadata_store = None
+    def preflight_clear(self) -> Path:
+        """Reset the metadata store in place, then verify metadata.db is
+        actually deletable before the caller destroys FAISS/graph state.
 
-        # Clear BatchOperations reference to prevent lingering file handles (Windows)
-        if hasattr(self, "_batch_ops") and self._batch_ops is not None:
-            self._batch_ops._metadata_store = None
+        ``MetadataStore.reset()`` closes the current SQLite handle
+        (releasing the Windows file lock) without replacing the
+        ``MetadataStore`` object -- identity stays stable per ADR-0025, so
+        no caller needs re-wiring (``_batch_ops._metadata_store`` still
+        points at the same, now-reset, instance).
 
-        # Force garbage collection to release file handles (Windows) BEFORE
-        # probing — a lingering Python-side reference is exactly what would
-        # otherwise make the probe below raise spuriously.
+        Force garbage collection runs before the probe because a lingering
+        Python-side reference is exactly what would otherwise make it raise
+        spuriously.
+
+        Idempotent and safe to call twice in one clear chain -- see
+        ``probe_metadata_deletable``'s own docstring.
+
+        Returns:
+            The path metadata.db now lives at post-probe.
+        """
+        self._metadata_store.reset()
+
         import gc
 
         gc.collect()
 
+        return probe_metadata_deletable(self.metadata_path)
+
+    def clear_index(self) -> None:
+        """Clear the entire index and metadata in place."""
         # Fail-fast probe: verify metadata.db is actually deletable BEFORE
         # destroying FAISS. A PermissionError here (e.g. a still-open Windows
         # handle) now aborts the clear as a no-op instead of leaving FAISS
-        # gone with metadata.db stranded and no rollback. See
-        # probe_metadata_deletable's docstring for why this is idempotent
-        # with IndexSynchronizer.clear_index()'s own preflight call.
-        metadata_deleting_path = probe_metadata_deletable(self.metadata_path)
+        # gone with metadata.db stranded and no rollback.
+        metadata_deleting_path = self.preflight_clear()
 
         # Clear FAISS index (includes GPU cleanup if needed) — only reached
         # once metadata.db has been proven deletable.
@@ -855,20 +864,6 @@ class CodeIndexManager:
                 self._logger.warning(
                     f"Could not delete legacy community file {legacy}: {e}"
                 )
-
-        # Reinitialize metadata store AFTER deletion
-        self._metadata_store = MetadataStore(self.metadata_path)
-
-        # Re-wire BatchOperations to the new store — it was nulled out above
-        # to release the Windows file handle, but remove_files() (the
-        # true-incremental deletion/modification path) reads
-        # self._batch_ops._metadata_store directly. Leaving it None here
-        # means the *next* incremental call after any clear_index() crashes
-        # with "'NoneType' object has no attribute 'get'", which gets caught
-        # by incremental_index()'s blanket except and silently falls back to
-        # a full reindex, masking true incremental behavior entirely.
-        if hasattr(self, "_batch_ops") and self._batch_ops is not None:
-            self._batch_ops._metadata_store = self._metadata_store
 
         self._logger.info("Index cleared")
 

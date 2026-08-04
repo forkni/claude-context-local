@@ -1254,64 +1254,19 @@ class HybridSearcher(BaseSearcher):
             raise
 
     def clear_index(self) -> None:
-        """Clear both BM25 and dense indices. Delegates to IndexSynchronizer."""
-        # CRITICAL: Close all metadata references BEFORE clearing to prevent reopening
-        # The reranking_engine holds a reference to the same MetadataStore object.
-        # If we don't close it, any access to reranking_engine.metadata_store.get()
-        # will trigger _ensure_open() and REOPEN the database, preventing file deletion.
-        if (
-            hasattr(self, "reranking_engine")
-            and self.reranking_engine is not None
-            and hasattr(self.reranking_engine, "metadata_store")
-            and self.reranking_engine.metadata_store is not None
-        ):
-            self.reranking_engine.metadata_store.close()
-            self._logger.debug("Closed reranking_engine metadata store before clear")
-
-        # Now safe to clear
+        """Clear both BM25 and dense indices in place. Delegates to IndexSynchronizer."""
+        # Index object identity is stable across a clear (ADR-0025) — bm25_index,
+        # dense_index, search_executor, multi_hop_searcher, reranking_engine and
+        # graph_storage all keep pointing at the same, now-emptied, objects.
+        # Nothing here needs re-wiring.
         self.index_sync.clear_index()
 
-        # Sync modified index references back
-        self.bm25_index = self.index_sync.bm25_index
-        self.dense_index = self.index_sync.dense_index
-        # Update reranking_engine's metadata_store reference to NEW store
-        if hasattr(self, "reranking_engine") and self.reranking_engine is not None:
-            self.reranking_engine.metadata_store = self.dense_index.metadata_store
-
-        # Update SearchExecutor references to new indices
-        self.search_executor.bm25_index = self.bm25_index
-        self.search_executor.dense_index = self.dense_index
-
-        # Update MultiHopSearcher reference to new dense index
-        self.multi_hop_searcher.dense_index = self.dense_index
-
-        # Update graph_storage reference to match new dense_index (prevents stale references).
-        # NOTE: must be an explicit `is not None` check, not truthiness — GraphIntegration
-        # defines __len__ (node count) but not __bool__, so a freshly-cleared, still-empty
-        # graph is falsy and would silently skip this re-sync, leaving self._graph/_graph_storage
-        # pointed at the orphaned pre-clear storage object for the rest of the reindex.
-        if hasattr(self.dense_index, "_graph") and self.dense_index._graph is not None:
-            self._graph_storage = self.dense_index._graph.storage
-            self._graph = GraphIntegration.from_storage(self._graph_storage)
-            # Re-wire the other two consumers bound at __init__ time
-            # (_init_graph_components:337, :215-216). Without this they keep
-            # pointing at the old, emptied CodeGraphStorage for the rest of
-            # the process's life — silently zeroing ego-graph expansion and
-            # degrading graph/hybrid multi-hop search until a restart.
-            # ego_graph_retriever is reconstructed rather than patched in
-            # place: EgoGraphRetriever.__init__ also builds a GraphView that
-            # holds its own storage reference, so patching only `.graph`
-            # would leave the PPR path reading the stale object. Rebuilding
-            # also drops _centrality_scores, computed against the pre-clear
-            # graph and re-injected per request anyway.
-            if self._graph_storage is not None:
-                self.ego_graph_retriever = EgoGraphRetriever(self._graph_storage)
-            else:
-                self.ego_graph_retriever = None
-            self.multi_hop_searcher.graph_storage = self._graph_storage
-            self._logger.debug(
-                "[CLEAR] Updated graph_storage reference after clear_index()"
-            )
+        # Ego-graph centrality scores are a snapshot computed against the
+        # pre-clear graph and must be dropped explicitly — previously this
+        # happened only incidentally, as a side effect of ego_graph_retriever
+        # being rebuilt from scratch on every clear.
+        if self.ego_graph_retriever is not None:
+            self.ego_graph_retriever.set_centrality_scores({})
 
         # Evict the metadata cache: stale entries (including cached-None lookups)
         # from before the clear would otherwise survive and return wrong results

@@ -337,6 +337,20 @@ class MetadataStore:
             self._db.close()
             self._db = None
 
+    def reset(self) -> None:
+        """Reset to a fresh, empty state at the same ``db_path``, in place.
+
+        Closes the current connection (releasing its SQLite handle, same as
+        ``close()``) and replaces the symbol cache. This is field-for-field
+        identical to constructing a new ``MetadataStore(self.db_path)`` --
+        the class has exactly three fields (``db_path``, ``_db``,
+        ``_symbol_cache``) and is fully lazy via ``_ensure_open`` -- so
+        callers keep the same object identity per ADR-0025 instead of
+        swapping in a new one.
+        """
+        self.close()
+        self._symbol_cache = SymbolHashCache()
+
     # Utility Methods (moved from CodeIndexManager)
 
     @staticmethod
