@@ -25,12 +25,15 @@ grader's own suggested ID (mcp_server/server.py:decorated_definition:app_lifespa
 
 Excluded from promotion: H002, H010, H011, H014, H018, H019, H024-H026,
 H031, H036-H038, H040, H042 (identical duplicate of H041), H043, H044,
-H046-H047, H051, H053, H055, H057-H061, H069-H070 -- either graded
-pool_miss/invalid across both rounds, or (H035, H060, H061, H068 specifically)
-found in top-10 in round 1 but dropped to pool_miss in round 2 against the
-*same* live index -- a reranker batch-composition non-determinism, not a
-retrieval failure worth promoting into a fixed-membership golden set on a
-single run's luck.
+H046-H047, H051, H053, H055, H057-H059, H069-H070 -- graded pool_miss/invalid
+across both original rounds. H035/H060/H061/H068 were held back at the time
+for a different reason (round 1 top-10, round 2 pool_miss against the same
+index) attributed to reranker batch-composition non-determinism -- ADR-0021
+(2026-08-02) found and fixed the actual cause (`PYTHONHASHSEED` set-iteration
+order, not bf16 rounding) and pinned it, making that flip-based exclusion
+rationale void. See `H_QUERIES_TOPUP_20260804` below for the re-grade under
+the pin: 2 of the 4 promote, 2 are rejected on query-quality/gold grounds
+unrelated to determinism.
 """
 
 import json
@@ -281,6 +284,51 @@ H_QUERIES: dict[str, tuple[str, list[str], str]] = {
     ),
 }
 
+# Re-grade of H035/H060/H061/H068 under the ADR-0021 PYTHONHASHSEED=0 pin
+# (scripts/benchmark/grade_candidate_queries.py --candidates
+# benchmark_results/h_candidates_paraphrased.json --only H035,H060,H061,H068,
+# 2026-08-04). Under the pin the four are no longer flip-prone -- each is a
+# stable, reproducible result -- so the gate becomes query quality + a
+# defensible gold, not round agreement:
+#
+# - H035: stable POOL_MISS. Query and gold are both clean (verified against
+#   search/index_write_stage.py:58-196 -- IndexWriteStage.run clears the GPU
+#   cache and returns early on embed_error exactly as described). Promoted
+#   as-is: a genuine, reproducible retrieval failure is real signal, not
+#   noise -- excluding every hard case would bias the benchmark upward.
+# - H068: rank=9 in-pool against its original intended gold
+#   (CodeIndexManager.get_similar_chunks), but that gold is wrong -- commit
+#   06501b66 (the commit this query was mined from) added
+#   get_similar_chunks_batched, not get_similar_chunks, and
+#   multi_hop_searcher.py (the only production caller matching "during
+#   multi-hop search" in the query text) calls the batched method. Corrected
+#   gold ranks 2. Same stale-intended-ID pattern as H012/H067 above.
+# - H060: stable POOL_MISS, rejected. "fix incremental-indexing tests broken
+#   by an API signature mismatch and a performance regression" describes
+#   test-level symptoms of the source commit, not any behavior of the
+#   intended gold (CodeIndexManager.save_index) -- commit-narrative label
+#   noise, same shape flagged for H070.
+# - H061: stable POOL_MISS, rejected. Intended gold
+#   (resource_manager.py:initialize_server_state) does not do GPU-memory
+#   tier management -- initialize_server_state's own docstring lists config
+#   sync, default-project restore, model-pool init, and deferred cleanup;
+#   the actual VRAM-tier logic is search/vram_manager.py:VRAMTierManager,
+#   which occupies pool ranks 1-3. Gold is not defensible, and the query
+#   text ("validated against benchmark runs") is commit-narrative rather
+#   than behavior-describing, so not eligible for a gold correction either.
+H_QUERIES_TOPUP_20260804: dict[str, tuple[str, list[str], str]] = {
+    "H035": (
+        "free the GPU memory cache before returning early on an embedding failure during index writing",
+        ["search/index_write_stage.py:method:IndexWriteStage.run"],
+        "test",
+    ),
+    "H068": (
+        "batch multiple vector-similarity lookups into a single FAISS call during multi-hop search to shave latency",
+        ["search/indexer.py:method:CodeIndexManager.get_similar_chunks_batched"],
+        "test",
+    ),
+}
+
 CHANGELOG_ENTRY = {
     "date": "2026-08-02",
     "change": (
@@ -305,6 +353,29 @@ CHANGELOG_ENTRY = {
     ),
 }
 
+CHANGELOG_ENTRY_TOPUP_20260804 = {
+    "date": "2026-08-04",
+    "change": (
+        "Re-graded H035/H060/H061/H068 under the ADR-0021 PYTHONHASHSEED=0 "
+        "determinism pin (scripts/benchmark/grade_candidate_queries.py "
+        "--candidates benchmark_results/h_candidates_paraphrased.json --only "
+        "H035,H060,H061,H068), superseding the 2026-08-02 bf16-non-determinism "
+        "exclusion rationale for these four IDs (ADR-0021 showed the actual "
+        "cause was PYTHONHASHSEED set-iteration order). Promoted H035 as a "
+        "stable, reproducible pool_miss with a clean query and a verified "
+        "gold -- a genuine hard case, not noise. Promoted H068 with its "
+        "intended gold corrected from CodeIndexManager.get_similar_chunks to "
+        "CodeIndexManager.get_similar_chunks_batched (the method commit "
+        "06501b66 actually added, and the one multi_hop_searcher.py calls; "
+        "same stale-intended-ID pattern as H012/H067). Rejected H060 "
+        "(commit-narrative query text describing test-fix symptoms, not any "
+        "behavior of its gold) and H061 (gold does not perform the "
+        "GPU-memory-tier-management the query describes; that logic lives in "
+        "search/vram_manager.py:VRAMTierManager instead). Splits: both new "
+        "queries assigned test."
+    ),
+}
+
 
 def main() -> None:
     data = json.loads(EXPANDED.read_text(encoding="utf-8"))
@@ -312,19 +383,20 @@ def main() -> None:
     queries = data["queries"]
 
     existing_ids = {q["id"] for q in queries}
-    clash = existing_ids & set(H_QUERIES)
+    to_merge = H_QUERIES_TOPUP_20260804
+    clash = existing_ids & set(to_merge)
     if clash:
         sys.exit(
             f"Refusing to merge: IDs already present in expanded dataset: {sorted(clash)}"
         )
 
-    for qid, (_text, golds, split) in H_QUERIES.items():
+    for qid, (_text, golds, split) in to_merge.items():
         if split not in ("train", "val", "test"):
             sys.exit(f"{qid}: invalid split {split!r}")
         if len(golds) != len(set(golds)):
             sys.exit(f"{qid}: duplicate gold chunk_ids in {golds}")
 
-    for qid, (text, golds, split) in H_QUERIES.items():
+    for qid, (text, golds, split) in to_merge.items():
         grades = dict.fromkeys(golds, 3)
         queries.append(
             {
@@ -339,18 +411,15 @@ def main() -> None:
         )
 
     meta["total_queries"] = len(queries)
-    meta["labeled_by"] += (
-        ", Claude Sonnet 5 (H001-H067 subset, commit-mined bug-fix expansion)"
-    )
-    meta.setdefault("categories", {})["H"] = "Bug-fix Localization (commit-mined)"
+    meta["labeled_by"] += ", Claude Sonnet 5 (H035/H068 top-up, ADR-0021 re-grade)"
     split_counts = Counter(q["split"] for q in queries)
     meta["splits"] = {
         "train": split_counts["train"],
         "val": split_counts["val"],
         "test": split_counts["test"],
-        "note": meta["splits"].get("note", "") + " H: train 25/val 6/test 6.",
+        "note": meta["splits"].get("note", "") + " H top-up: +2 test (H035, H068).",
     }
-    meta.setdefault("changelog", []).append(CHANGELOG_ENTRY)
+    meta.setdefault("changelog", []).append(CHANGELOG_ENTRY_TOPUP_20260804)
 
     EXPANDED.write_text(
         json.dumps(data, indent=2, ensure_ascii=False) + "\n",
@@ -358,7 +427,7 @@ def main() -> None:
         newline="\r\n",
     )
     print(
-        f"Wrote {EXPANDED.name}: {len(H_QUERIES)} new H queries, total {meta['total_queries']}."
+        f"Wrote {EXPANDED.name}: {len(to_merge)} new H queries, total {meta['total_queries']}."
     )
     print(
         f"Splits: train={split_counts['train']} val={split_counts['val']} test={split_counts['test']}"

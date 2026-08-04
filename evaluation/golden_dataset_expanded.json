@@ -2,13 +2,13 @@
   "_meta": {
     "description": "SSCG golden dataset for automated retrieval benchmarking",
     "source": "benchmark_results/sscg_evaluation/ground_truth.md",
-    "labeled_by": "Claude Sonnet 4.5 (Q01-Q35), Claude Opus 4.8 (Q36-Q67), Claude Fable 5 (Q100-Q133, hard-query expansion), Claude Sonnet 5 (H001-H067 subset, commit-mined bug-fix expansion)",
+    "labeled_by": "Claude Sonnet 4.5 (Q01-Q35), Claude Opus 4.8 (Q36-Q67), Claude Fable 5 (Q100-Q133, hard-query expansion), Claude Sonnet 5 (H001-H067 subset, commit-mined bug-fix expansion), Claude Sonnet 5 (H035/H068 top-up, ADR-0021 re-grade)",
     "labeled_date": "2026-06-24",
     "normalization": "Chunk IDs have line-range portions stripped (e.g., 'file.py:10-20:type:name' -> 'file.py:type:name') for stability across code churn",
     "relevance_scale": "0=not_relevant, 1=marginal, 2=relevant, 3=highly_relevant",
     "expected": "chunk IDs with label >= 2 (used for Recall@k, NDCG@k)",
     "expected_primary": "chunk IDs with label == 3 (used for MRR)",
-    "total_queries": 145,
+    "total_queries": 147,
     "categories": {
       "A": "Small Function Discovery",
       "B": "Sibling Context (paired operations)",
@@ -21,8 +21,8 @@
     "splits": {
       "train": 86,
       "val": 28,
-      "test": 31,
-      "note": "Stratified by category: A=9/3/3, B=8/3/3, C=10/3/3, D=8/3/3, E=4/2/3, F=4/2/3. Category D excluded from run_sscg_benchmark.py by default (searcher cannot traverse call graph); include with --category D. H: train 25/val 6/test 6."
+      "test": 33,
+      "note": "Stratified by category: A=9/3/3, B=8/3/3, C=10/3/3, D=8/3/3, E=4/2/3, F=4/2/3. Category D excluded from run_sscg_benchmark.py by default (searcher cannot traverse call graph); include with --category D. H: train 25/val 6/test 6. H top-up: +2 test (H035, H068)."
     },
     "baseline_metrics": {
       "mrr": 0.73,
@@ -173,6 +173,10 @@
       {
         "date": "2026-08-04",
         "change": "H064: retargeted after ADR-0025 (commit fde9a44) collapsed HybridSearcher.clear_index from a 65-line implementation to a 4-line delegator to IndexSynchronizer.clear_index, moving the BM25-files-per-model rmtree logic the query describes into BM25Index.clear (search/bm25_index.py:456-458, reached via IndexSynchronizer.clear_index at index_sync.py:336). The old sole gold (HybridSearcher.clear_index) no longer contains the behaviour the query asks to change. expected_primary retargeted grade-3 to BM25Index.clear (owns the rmtree); IndexSynchronizer.clear_index added at grade 2 (sequencer deciding what gets cleared); HybridSearcher.clear_index kept at grade 1 (legitimate entry point). Comparability break vs. the pre-refactor canon: H064 moves from one gold to three."
+      },
+      {
+        "date": "2026-08-04",
+        "change": "Re-graded H035/H060/H061/H068 under the ADR-0021 PYTHONHASHSEED=0 determinism pin (scripts/benchmark/grade_candidate_queries.py --candidates benchmark_results/h_candidates_paraphrased.json --only H035,H060,H061,H068), superseding the 2026-08-02 bf16-non-determinism exclusion rationale for these four IDs (ADR-0021 showed the actual cause was PYTHONHASHSEED set-iteration order). Promoted H035 as a stable, reproducible pool_miss with a clean query and a verified gold -- a genuine hard case, not noise. Promoted H068 with its intended gold corrected from CodeIndexManager.get_similar_chunks to CodeIndexManager.get_similar_chunks_batched (the method commit 06501b66 actually added, and the one multi_hop_searcher.py calls; same stale-intended-ID pattern as H012/H067). Rejected H060 (commit-narrative query text describing test-fix symptoms, not any behavior of its gold) and H061 (gold does not perform the GPU-memory-tier-management the query describes; that logic lives in search/vram_manager.py:VRAMTierManager instead). Splits: both new queries assigned test."
       }
     ]
   },
@@ -3219,6 +3223,36 @@
       "relevance_grades": {
         "mcp_server/server.py:decorated_definition:app_lifespan": 3,
         "mcp_server/server.py:function:run_stdio_server": 3
+      }
+    },
+    {
+      "id": "H035",
+      "query": "free the GPU memory cache before returning early on an embedding failure during index writing",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "search/index_write_stage.py:method:IndexWriteStage.run"
+      ],
+      "expected_primary": [
+        "search/index_write_stage.py:method:IndexWriteStage.run"
+      ],
+      "relevance_grades": {
+        "search/index_write_stage.py:method:IndexWriteStage.run": 3
+      }
+    },
+    {
+      "id": "H068",
+      "query": "batch multiple vector-similarity lookups into a single FAISS call during multi-hop search to shave latency",
+      "category": "H",
+      "split": "test",
+      "expected": [
+        "search/indexer.py:method:CodeIndexManager.get_similar_chunks_batched"
+      ],
+      "expected_primary": [
+        "search/indexer.py:method:CodeIndexManager.get_similar_chunks_batched"
+      ],
+      "relevance_grades": {
+        "search/indexer.py:method:CodeIndexManager.get_similar_chunks_batched": 3
       }
     }
   ]

@@ -47,6 +47,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md`, `docs/VERSION_HISTORY.md`) still cited the
   pre-`canon_B1` figure (`0.7987`) — none had been updated when `canon_B1` landed — and are
   updated directly to `canon_C3`. See `evaluation/CANON_20260803.md` for full numbers.
+- **SSCG canon re-pinned to `canon_d1`/`canon_d2`** — 34 commits landed on top of `canon_C3`
+  (ADR-0025 index-clearing rework, two new relationship extractors in `e99ecef`, `ImpactReport`
+  consolidation), none of which changed retrieval mechanics but all of which touch indexed
+  corpus and/or graph edges feeding multi-hop expansion. `canon_d1` (code drift only, captured
+  pre-dataset-edit): MRR 0.8339 (63q, down 0.0009 from `canon_C3`, inside the ±0.02 noise band) /
+  0.6654 (131q, down 0.0162, describing the same 145-query dataset `canon_C3` measured) / 0.8915
+  whole-aggregate F-view (F-only mean 0.8519, unchanged). Also re-graded four previously-excluded
+  commit-mined candidates (H035/H060/H061/H068) under the ADR-0021 determinism pin, since the
+  bf16-non-determinism rationale their exclusion cited was disproven by that ADR: H035 promoted
+  as a genuine, reproducible hard case (stable `POOL_MISS`) and H068 promoted with a corrected
+  gold (its originally-mined gold predated the batched method the query actually describes);
+  H060/H061 stay excluded on query-quality/gold-defensibility grounds, unrelated to determinism.
+  `canon_d2` (dataset change only, 145→147 queries / 131→133 non-D post top-up): MRR 0.6591 — a further
+  −0.0063 from promoting two queries that were excluded specifically for being hard, not a
+  retrieval regression (0 flips, same code/index as `canon_d1`). Also fixes a mislabeled
+  `file_recall@5` in the F-category-only benchmark row (it was the whole-aggregate figure) and
+  corrects a split-count citation (train/val/test figures previously cited full-file counts
+  including the out-of-scope category D; the actually-scored counts are smaller). Five
+  user-facing docs updated to the new figures. See `evaluation/CANON_20260804.md` for full
+  numbers, the per-category/per-split breakdown, and the frontier disposition
+  (`evaluation/CATEGORY_G_DESCOPE_20260804.md` for the Category G descope).
 
 ---
 
