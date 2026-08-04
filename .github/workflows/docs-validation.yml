@@ -42,8 +42,11 @@ jobs:
             --no-progress
             --exclude-path _archive
             --exclude-path .venv
-            --exclude-mail
             '**/*.md'
+        # --exclude-mail was removed here: lychee v2 renamed it to --include-mail
+        # (inverted, default false), so mailto: links are excluded by default
+        # already and the old v1 flag is now a hard CLI error (exit 2), which
+        # continue-on-error below was silently swallowing as a green job.
         continue-on-error: true
         # Deliberately non-blocking: link checking is network-dependent and
         # legitimately flaky (rate limits, transient DNS/host issues), unlike
