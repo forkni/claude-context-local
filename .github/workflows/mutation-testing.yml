@@ -33,10 +33,14 @@ on:
           - search/centrality_ranker.py
           - search/reranking_engine.py
 
+permissions:
+  contents: read
+
 jobs:
   mutation-test:
     name: Mutation Testing — ${{ github.event.inputs.target || 'all' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 120
 
     steps:
       - name: Checkout code

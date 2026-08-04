@@ -13,6 +13,9 @@ on:
       - 'README.md'
       - 'CHANGELOG.md'
 
+permissions:
+  contents: read
+
 jobs:
   markdown-lint:
     name: Markdown Linting
