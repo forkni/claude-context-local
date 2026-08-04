@@ -1,0 +1,36 @@
+version: 2
+updates:
+  # GitHub Actions — SHA-pinned refs (see .github/workflows/*.yml); dependabot
+  # updates the pin + the trailing version comment together.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Python deps — "uv" (not "pip") so uv.lock gets refreshed, not just pyproject.toml.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      dev-tooling:
+        patterns:
+          - "ruff"
+          - "pyrefly"
+          - "pre-commit"
+          - "pytest*"
+          - "mutmut"
+          - "cosmic-ray"
+    ignore:
+      # Deliberate ceilings recorded in pyproject.toml — see the inline comments
+      # there for the specific incompatibility/CVE each one is pinned against.
+      - dependency-name: "torch"
+        versions: [">=2.9.0"]
+      - dependency-name: "tree-sitter"
+        versions: [">=0.26"]
+      - dependency-name: "transformers"
+        versions: [">=6"]
