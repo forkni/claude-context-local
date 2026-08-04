@@ -593,6 +593,17 @@ async def _run_query(
         "include_context": True,
         "max_context_tokens": 0,
     }
+    # The B1 (ADR-0023) intent-off pin (main():~1939) mutates a single
+    # mtime-cached SearchConfig singleton once, at startup. get_search_config()
+    # does an unconditional stat() on every call (search/config.py:1682-1689),
+    # so any config-file write during the run -- e.g. a concurrent MCP server
+    # process reading/writing the same project's search_config.json -- silently
+    # reloads from disk and undoes the pin for the rest of the process. Re-assert
+    # per query so an external write can't flip intent back on mid-run. Revisit
+    # this when a future arm deliberately measures intent turned on.
+    from search.config import get_search_config
+
+    get_search_config().intent.enabled = False
     response = await orchestrator.run(arguments)
     latency_ms = (time.perf_counter() - start) * 1000.0
 
@@ -602,7 +613,16 @@ async def _run_query(
         getattr(searcher, "dense_index", None), "metadata_store", None
     )
     results: list[Any] = []
-    for formatted in response.get("results") or []:
+    # A find_similar_code-style redirect (SearchOrchestrator's intent-based
+    # PlanRedirect can still route here if the pin above ever fails to hold)
+    # returns {"reference_chunk", "similar_chunks"} instead of {"results"} --
+    # reading only "results" silently produced retrieved=[] with no error or
+    # log (observed: all 9 category-F queries went empty in one 131q round).
+    # Fall back to "similar_chunks" so a redirect is scored, not dropped.
+    formatted_list = response.get("results")
+    if formatted_list is None:
+        formatted_list = response.get("similar_chunks") or []
+    for formatted in formatted_list:
         chunk_id = formatted.get("chunk_id", "")
         entry = metadata_store.get(chunk_id) if metadata_store is not None else None
         metadata = (entry or {}).get("metadata", {}) or {}
