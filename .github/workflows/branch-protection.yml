@@ -122,6 +122,7 @@ jobs:
           uv run pytest tests/ -v --tb=short --maxfail=20 -rs \
             --ignore=tests/slow_integration/ \
             -m "not slow" \
+            -n auto --dist loadfile \
             --junitxml=test-results/junit.xml \
             --cov --cov-branch --cov-report=term-missing --cov-report=xml
         # --cov-fail-under intentionally omitted here: [tool.coverage.report]
@@ -133,6 +134,15 @@ jobs:
         # must still be imported (its 2 fast tests stay on this gate); only the 2
         # @pytest.mark.slow model-loading tests in that file (184s/173s) are dropped.
         # They still run nightly (see nightly.yml) and in any local full-suite run.
+        # -n auto --dist loadfile: parallelizes across CPU cores. `loadfile` (not the
+        # default `load`) keeps each test module on a single worker — required because
+        # tests/integration/test_observability_e2e.py has a module-scoped autouse
+        # fixture over global otel tracer-provider state, and pytest-randomly (active,
+        # see pyproject.toml) would otherwise let per-test distribution race it across
+        # workers. --maxfail becomes approximate under xdist (each worker reports
+        # independently); pytest-cov's combine step adds a few seconds.
+        # Verified locally: `-m "not slow" -n auto --dist loadfile` reports
+        # 5726 passed, 2 skipped == the 5728 serial baseline exactly, no dropped tests.
 
       - name: Slow-integration collection guard
         # tests/slow_integration/ is excluded from the run above (real model
