@@ -1,0 +1,42 @@
+name: Nightly
+
+# Minimal nightly workflow: currently just the Windows test leg (this project
+# is Windows-primary but the blocking PR gate in branch-protection.yml only
+# runs ubuntu-latest). Deliberately scoped down for now — a lock-refresh
+# canary, pip-audit, a full tests/slow_integration run, and a lychee link
+# check are deferred to a follow-up pass rather than bundled in here.
+#
+# schedule: only fires from the repo's default branch (main), so this job
+# explicitly checks out development to actually test the branch that matters.
+
+on:
+  schedule:
+    - cron: '0 7 * * *'  # 07:00 UTC daily
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test-windows:
+    name: Test Suite (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout development
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          ref: development
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
+        with:
+          python-version: '3.11'
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --extra test --extra callgraph --extra otel --extra gpu
+
+      - name: Run tests
+        run: uv run pytest tests/ --ignore=tests/slow_integration -q --no-cov
