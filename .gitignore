@@ -180,6 +180,10 @@ ENV/
 env.bak/
 venv.bak/
 
+# Repo-local uv cache (installer sets UV_CACHE_DIR here so hardlinks work --
+# see install-windows.cmd; cache and .venv must share a volume)
+.uv-cache/
+
 # Spyder project settings
 .spyderproject
 .spyproject

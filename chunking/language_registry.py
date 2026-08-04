@@ -99,6 +99,7 @@ DEFAULT_IGNORED_DIRS: set[str] = {
     # Scratch/temp dirs — not build output, but shouldn't be indexed either
     "tmp",
     "temp",
+    ".uv-cache",  # repo-local uv package cache (see install-windows.cmd)
 }
 
 

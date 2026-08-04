@@ -88,6 +88,35 @@ verify-installation.cmd
 - ✅ **Comprehensive Verification**: Built-in testing with verify-installation.cmd
 - ✅ **Windows Optimized**: Specifically designed for Windows environments
 
+#### Installer Menu Options
+
+`install-windows.cmd` presents a menu on every run:
+
+| Option | Installs | Use when |
+|--------|----------|----------|
+| [1] Auto-Install | Runtime deps only (CUDA or CPU build, auto-detected) | First-time setup, end users |
+| [2] CPU-Only Installation | Runtime deps only, CPU build | No NVIDIA GPU |
+| [3] Update/Repair Existing Installation | Runtime deps only | Refresh an existing venv |
+| [4] Developer Install/Repair | Runtime **plus all extras** (`test`, `dev`, `callgraph`, `otel`, `gpu`, `lsp`) | Contributing code — needed for `pytest`, `ruff`, `pyrefly`, `pip-audit`, and the test runner scripts under `scripts/test/` |
+| [5] Clear Stale Snapshots/Indexes | — | Repair tool for indexing issues |
+| [6] Verify Installation Status | — | Sanity check an existing install |
+
+Options [1]-[3] and [5]-[6] are unchanged from before; [4] is new and is the supported way to get
+a venv that can run this repo's own test suite and lint gate (see `tests/TESTING_GUIDE.md`).
+
+#### uv Cache Location
+
+The installer points `uv`'s package cache at `.uv-cache/` inside the project directory rather
+than uv's machine-wide default (`%LOCALAPPDATA%\uv\cache`). This matters because uv installs
+packages via NTFS hardlinks when the cache and the target `.venv` are on the **same volume** —
+if they're on different drives (e.g. a machine-wide cache on `C:` with the project on `D:` or
+`F:`), hardlinking silently falls back to a full byte-copy of every wheel on every sync, which
+can turn a normally-instant `uv sync` into a multi-minute operation for the full dependency set.
+
+`.uv-cache/` is git-ignored and excluded from semantic indexing automatically. The first install
+after a fresh clone populates it (one-time cost, same as populating any cache); every sync after
+that hardlinks and is fast. It's safe to delete at any time — uv repopulates it as needed.
+
 ### Alternative Platforms
 
 For macOS and Linux support, please use the cross-platform version at [FarhanAliRaza/claude-context-local](https://github.com/FarhanAliRaza/claude-context-local), which this project was forked from.

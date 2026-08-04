@@ -15,6 +15,14 @@ pushd "%PROJECT_DIR%" || (
     exit /b 1
 )
 
+REM uv cache must share a volume with .venv -- NTFS hardlinks cannot span
+REM volumes (e.g. cache on C:, venv on F:), which silently degrades every
+REM sync to a full byte-copy of the wheel set instead of a hardlink.
+set "UV_CACHE_DIR=%PROJECT_DIR%.uv-cache"
+
+REM Default: runtime deps only. Option [4] (Developer Install) overrides.
+set "UV_EXTRA_FLAGS="
+
 echo Step 1: System Detection...
 echo.
 
@@ -78,21 +86,23 @@ if "!CUDA_AVAILABLE!"=="1" (
 )
 echo [2] CPU-Only Installation ^(No GPU acceleration^)
 echo [3] Update/Repair Existing Installation
-echo [4] Clear Stale Snapshots/Indexes ^(Repair Tool^)
-echo [5] Verify Installation Status
-echo [6] Exit
+echo [4] Developer Install/Repair ^(all extras: test, dev, callgraph, otel, gpu, lsp^)
+echo [5] Clear Stale Snapshots/Indexes ^(Repair Tool^)
+echo [6] Verify Installation Status
+echo [7] Exit
 echo.
 set "choice="
-set /p choice="Select option (1-6): "
+set /p choice="Select option (1-7): "
 
 if "!choice!"=="1" goto auto_install
 if "!choice!"=="2" goto cpu_install
 if "!choice!"=="3" goto update_install
-if "!choice!"=="4" goto run_repair_tool
-if "!choice!"=="5" goto verify_install
-if "!choice!"=="6" exit /b 0
+if "!choice!"=="4" goto dev_install
+if "!choice!"=="5" goto run_repair_tool
+if "!choice!"=="6" goto verify_install
+if "!choice!"=="7" exit /b 0
 
-echo [ERROR] Invalid choice. Please select 1-6.
+echo [ERROR] Invalid choice. Please select 1-7.
 pause
 goto menu
 
@@ -120,7 +130,7 @@ echo.
 echo === Update/Repair Installation ===
 call :setup_environment
 echo [INFO] Updating all dependencies...
-.venv\Scripts\uv.exe sync
+.venv\Scripts\uv.exe sync %UV_EXTRA_FLAGS%
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Update failed
     pause
@@ -129,6 +139,15 @@ if %ERRORLEVEL% neq 0 (
 echo [OK] Update completed
 call :verify_installation
 goto end
+
+:dev_install
+echo.
+echo === Developer Install/Repair ^(all extras^) ===
+echo [INFO] Installs test, dev, callgraph, otel, gpu, and lsp extras on top of runtime deps.
+set "UV_EXTRA_FLAGS=--all-extras"
+call :setup_environment
+call :install_remaining_deps
+goto installation_complete
 
 :verify_install
 echo.
@@ -407,7 +426,7 @@ REM EmbeddingGemma is now supported in transformers 5.0+ (no preview needed)
 
 
 echo [INFO] Installing all project dependencies...
-".venv\Scripts\uv.exe" sync
+".venv\Scripts\uv.exe" sync %UV_EXTRA_FLAGS%
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Dependency installation failed
     pause

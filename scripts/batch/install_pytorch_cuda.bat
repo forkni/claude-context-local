@@ -1,6 +1,11 @@
 @echo off
 setlocal
 pushd "%~dp0..\.." || (echo ERROR: Failed to change directory & exit /b 1)
+
+REM uv cache must share a volume with .venv -- NTFS hardlinks cannot span
+REM volumes, which silently degrades every sync to a full byte-copy.
+set "UV_CACHE_DIR=%CD%\.uv-cache"
+
 echo =================================================
 echo claude-context-local: PyTorch CUDA Installation Script
 echo Resolves PyTorch+CUDA and Transformers Issues
@@ -27,15 +32,7 @@ if %ERRORLEVEL% neq 0 (
 )
 echo [OK] UV installed successfully
 
-echo Step 3: Installing transformers preview for EmbeddingGemma support...
-echo   This fixes the gemma3_text architecture issue...
-.venv\Scripts\python.exe -m pip install git+https://github.com/huggingface/transformers@v4.56.0-Embedding-Gemma-preview
-if %ERRORLEVEL% neq 0 (
-    echo [WARNING] Transformers preview installation failed - continuing with standard version
-)
-echo [OK] Transformers with EmbeddingGemma support
-
-echo Step 4: Installing all dependencies with UV (includes PyTorch CUDA)...
+echo Step 3: Installing all dependencies with UV (includes PyTorch CUDA)...
 echo   UV provides superior dependency resolution for ML packages...
 .venv\Scripts\uv.exe sync
 if %ERRORLEVEL% neq 0 (
@@ -50,7 +47,7 @@ if %ERRORLEVEL% neq 0 (
 )
 echo [OK] All dependencies installed with UV
 
-echo Step 5: Testing the original dependency issue fix...
+echo Step 4: Testing the original dependency issue fix...
 echo   Testing importlib.metadata version detection (was returning None)...
 .venv\Scripts\python.exe -c "from importlib.metadata import version; print('[OK] torch version via metadata:', version('torch')); print('[OK] transformers version:', version('transformers'))"
 if %ERRORLEVEL% neq 0 (
