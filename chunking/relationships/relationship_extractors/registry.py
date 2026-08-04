@@ -45,6 +45,9 @@ from chunking.relationships.relationship_extractors.enum_extractor import (
 from chunking.relationships.relationship_extractors.exception_extractor import (
     ExceptionExtractor,
 )
+from chunking.relationships.relationship_extractors.global_extractor import (
+    GlobalUsageExtractor,
+)
 from chunking.relationships.relationship_extractors.implements_extractor import (
     ImplementsExtractor,
 )
@@ -59,6 +62,9 @@ from chunking.relationships.relationship_extractors.instantiation_extractor impo
 )
 from chunking.relationships.relationship_extractors.override_extractor import (
     OverrideExtractor,
+)
+from chunking.relationships.relationship_extractors.type_assertion_extractor import (
+    TypeAssertionExtractor,
 )
 from chunking.relationships.relationship_extractors.type_extractor import (
     TypeAnnotationExtractor,
@@ -115,6 +121,12 @@ RELATIONSHIP_EXTRACTORS: list[ExtractorSpec] = [
     ),
     ExtractorSpec(
         "context_manager", lambda c: ContextManagerExtractor(), entity_tracking=True
+    ),
+    ExtractorSpec(
+        "global_usage", lambda c: GlobalUsageExtractor(), entity_tracking=True
+    ),
+    ExtractorSpec(
+        "type_assertion", lambda c: TypeAssertionExtractor(), entity_tracking=True
     ),
 ]
 

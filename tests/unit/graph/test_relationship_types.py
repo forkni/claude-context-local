@@ -335,7 +335,7 @@ def test_get_relationship_field_mapping():
 
     # Check structure
     assert isinstance(mapping, dict)
-    assert len(mapping) == 21
+    assert len(mapping) == 19
 
     # Check specific mappings
     assert mapping["inherits"] == ("parent_classes", "child_classes")
@@ -343,8 +343,18 @@ def test_get_relationship_field_mapping():
     assert mapping["calls"] == ("direct_callers", None)
     assert mapping["raises"] == ("exceptions_raised", "exception_handlers")
 
-    # Check all relationship types are covered
+    # assigns_to/reads_from are deliberately unmapped: no extractor ever emits
+    # them, and their mapping was directionally backwards. They remain
+    # RelationshipType enum members (vocabulary + priority groups) so that a
+    # stray GLSL dict carrying either string still round-trips through
+    # RelationshipType(...) instead of raising ValueError. See the note in
+    # relationship_types.py next to get_relationship_field_mapping().
+    unmapped_by_design = {"assigns_to", "reads_from"}
+
+    # Check all other relationship types are covered
     for rel_type in RelationshipType:
+        if rel_type.value in unmapped_by_design:
+            continue
         assert rel_type.value in mapping
 
 

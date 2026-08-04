@@ -2460,16 +2460,16 @@ The `find_connections` tool now returns **Phase 1.4 entity tracking relationship
 
 - `DEFINES_CONSTANT` - Module-level constant definitions (e.g., `TIMEOUT = 30`)
 - `DEFINES_ENUM_MEMBER` - Enum member definitions (e.g., `Status.ACTIVE = 1`)
-- `DEFINES_CLASS_ATTR` - Class attribute definitions (planned)
-- `DEFINES_FIELD` - Dataclass field definitions (planned)
+- `DEFINES_CLASS_ATTR` - Class attribute definitions
+- `DEFINES_FIELD` - Dataclass field definitions
 
 **Priority 5 - References**:
 
 - `USES_CONSTANT` - Constant usage in functions/methods
 - `USES_DEFAULT` - Default parameter value references
-- `USES_GLOBAL` - Global statement usage (planned)
-- `ASSERTS_TYPE` - isinstance() type assertions (planned)
-- `USES_CONTEXT_MANAGER` - Context manager usage (planned)
+- `USES_GLOBAL` - Global/nonlocal statement usage (requires `enable_entity_tracking`)
+- `ASSERTS_TYPE` - isinstance()/issubclass() type assertions (requires `enable_entity_tracking`)
+- `USES_CONTEXT_MANAGER` - Context manager usage (requires `enable_entity_tracking`)
 
 ### How It Works
 

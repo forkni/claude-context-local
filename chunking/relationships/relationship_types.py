@@ -419,17 +419,19 @@ def get_relationship_field_mapping() -> dict[str, tuple]:
         "instantiates": ("instantiates", "instantiated_by"),
         "implements": ("implements_protocols", "protocol_implementations"),
         "overrides": ("overrides_methods", "overridden_by"),
-        # KNOWN GAP (found 2026-08-03): assigns_to, reads_from, uses_global, and
-        # asserts_type below have no producing extractor anywhere in
-        # chunking/relationships/relationship_extractors/ — grepping
-        # RelationshipType.ASSIGNS_TO/.READS_FROM/.USES_GLOBAL/.ASSERTS_TYPE across
-        # chunking/ finds zero call sites that construct an edge of these types. Their
-        # ImpactReport fields are wired up correctly (find_connections'
-        # relationship_types filter accepts these names) but will never return data
-        # until either a real extractor is written or these four are pruned from this
-        # mapping. See docs/MCP_TOOLS_REFERENCE.md's relationship-types note.
-        "assigns_to": ("assigned_by", None),  # Reverse lookup for attributes
-        "reads_from": ("read_by", None),  # Reverse lookup for attributes
+        # NOTE: ASSIGNS_TO and READS_FROM are deliberately NOT mapped here (found
+        # 2026-08-03, resolved 2026-08-04). They remain RelationshipType enum members
+        # (and stay in get_priority_groups()) so the GLSL tree-sitter path's dynamic
+        # RelationshipType(rel["relationship_type"]) conversion
+        # (chunking/multi_language_chunker.py's _extract_glsl_phase3_relationships)
+        # can't turn a stray edge of either type into a silently-swallowed ValueError.
+        # But no extractor emits them, and adding one is a deliberate non-goal: unlike
+        # uses_global/asserts_type below, attribute assignment/access is the
+        # highest-frequency construct in Python — extracting it would flood the graph
+        # with low-signal edges. The mapping was also backwards
+        # ("assigns_to": ("assigned_by", None) put a passive reverse-lookup name in
+        # the forward slot), evidence the design was never finished. If this changes,
+        # add real "assigns_to"/"reads_from" entries here plus a real extractor.
         # Entity tracking enhancements (Priority 4-5)
         "defines_constant": ("defines_constants", "constant_definitions"),
         "defines_enum_member": ("defines_enum_members", "enum_member_definitions"),

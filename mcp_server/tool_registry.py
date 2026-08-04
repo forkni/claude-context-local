@@ -700,7 +700,7 @@ resolution no-ops unless the `[lsp]` extra is installed.""",
                 "relationship_types": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": 'Filter to only include specific relationship types (e.g., ["inherits", "imports", "decorates"]). If not provided, all relationship types are included. Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, assigns_to, reads_from, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager. Note: assigns_to, reads_from, uses_global, and asserts_type are accepted but never populated — no extractor currently emits those edge types.',
+                    "description": 'Filter to only include specific relationship types (e.g., ["inherits", "imports", "decorates"]). If not provided, all relationship types are included. Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager. Note: uses_global and asserts_type require entity tracking (enable_entity_tracking, default True) and a reindex to populate on an existing index.',
                 },
                 "output_format": {
                     "type": "string",

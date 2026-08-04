@@ -1,9 +1,10 @@
 """
-Unit tests for entity tracking extractors (Priority 1).
+Unit tests for entity tracking extractors (Priority 1 & 4-5).
 
-Tests ConstantExtractor, EnumMemberExtractor, and DefaultParameterExtractor
-to ensure they correctly identify and track constants, enum members, and
-default parameter values.
+Tests ConstantExtractor, EnumMemberExtractor, DefaultParameterExtractor,
+GlobalUsageExtractor, and TypeAssertionExtractor to ensure they correctly
+identify and track constants, enum members, default parameter values,
+global/nonlocal declarations, and isinstance/issubclass type assertions.
 """
 
 import pytest
@@ -16,6 +17,12 @@ from chunking.relationships.relationship_extractors.default_param_extractor impo
 )
 from chunking.relationships.relationship_extractors.enum_extractor import (
     EnumMemberExtractor,
+)
+from chunking.relationships.relationship_extractors.global_extractor import (
+    GlobalUsageExtractor,
+)
+from chunking.relationships.relationship_extractors.type_assertion_extractor import (
+    TypeAssertionExtractor,
 )
 from chunking.relationships.relationship_types import RelationshipType
 
@@ -460,6 +467,166 @@ async def fetch(timeout=DEFAULT_TIMEOUT):
 
         assert len(edges) == 1
         assert edges[0].target_name == "DEFAULT_TIMEOUT"
+
+
+class TestGlobalUsageExtractor:
+    """Test GlobalUsageExtractor functionality."""
+
+    @pytest.fixture
+    def extractor(self):
+        """Create GlobalUsageExtractor instance."""
+        return GlobalUsageExtractor()
+
+    @pytest.fixture
+    def chunk_metadata(self):
+        """Create test chunk metadata."""
+        return {
+            "chunk_id": "test.py:1-10:function:increment",
+            "chunk_type": "function",
+            "file_path": "test.py",
+        }
+
+    def test_global_statement(self, extractor, chunk_metadata):
+        """Test extracting a single `global` declaration."""
+        code = """
+def increment():
+    global counter
+    counter += 1
+"""
+        edges = extractor.extract(code, chunk_metadata)
+
+        assert len(edges) == 1
+        assert edges[0].target_name == "counter"
+        assert edges[0].relationship_type == RelationshipType.USES_GLOBAL
+        assert edges[0].metadata["scope"] == "global"
+
+    def test_multiple_names_in_one_statement(self, extractor, chunk_metadata):
+        """Test a single `global` statement declaring multiple names."""
+        code = """
+def reset():
+    global counter, total
+    counter = 0
+    total = 0
+"""
+        edges = extractor.extract(code, chunk_metadata)
+
+        assert len(edges) == 2
+        target_names = {e.target_name for e in edges}
+        assert target_names == {"counter", "total"}
+        assert all(e.metadata["scope"] == "global" for e in edges)
+
+    def test_nonlocal_statement(self, extractor, chunk_metadata):
+        """Test extracting a `nonlocal` declaration from a closure."""
+        code = """
+def outer():
+    x = 0
+    def inner():
+        nonlocal x
+        x += 1
+    return inner
+"""
+        edges = extractor.extract(code, chunk_metadata)
+
+        assert len(edges) == 1
+        assert edges[0].target_name == "x"
+        assert edges[0].relationship_type == RelationshipType.USES_GLOBAL
+        assert edges[0].metadata["scope"] == "nonlocal"
+
+    def test_no_global_no_edges(self, extractor, chunk_metadata):
+        """Test that ordinary functions with no global/nonlocal produce no edges."""
+        code = """
+def add(a, b):
+    return a + b
+"""
+        edges = extractor.extract(code, chunk_metadata)
+
+        assert len(edges) == 0
+
+
+class TestTypeAssertionExtractor:
+    """Test TypeAssertionExtractor functionality."""
+
+    @pytest.fixture
+    def extractor(self):
+        """Create TypeAssertionExtractor instance."""
+        return TypeAssertionExtractor()
+
+    @pytest.fixture
+    def chunk_metadata(self):
+        """Create test chunk metadata."""
+        return {
+            "chunk_id": "test.py:1-10:function:process",
+            "chunk_type": "function",
+            "file_path": "test.py",
+        }
+
+    def test_isinstance_assertion(self, extractor, chunk_metadata):
+        """Test extracting a single-type isinstance assertion."""
+        code = """
+def process(x):
+    assert isinstance(x, Handler)
+"""
+        edges = extractor.extract(code, chunk_metadata)
+
+        assert len(edges) == 1
+        assert edges[0].target_name == "Handler"
+        assert edges[0].relationship_type == RelationshipType.ASSERTS_TYPE
+        assert edges[0].metadata["assertion_func"] == "isinstance"
+
+    def test_issubclass_assertion(self, extractor, chunk_metadata):
+        """Test extracting an issubclass assertion."""
+        code = """
+def register(cls):
+    assert issubclass(cls, BaseHandler)
+"""
+        edges = extractor.extract(code, chunk_metadata)
+
+        assert len(edges) == 1
+        assert edges[0].target_name == "BaseHandler"
+        assert edges[0].metadata["assertion_func"] == "issubclass"
+
+    def test_tuple_of_types(self, extractor, chunk_metadata):
+        """Test isinstance with a tuple of types."""
+        code = """
+def process(x):
+    assert isinstance(x, (Handler, FallbackHandler))
+"""
+        edges = extractor.extract(code, chunk_metadata)
+
+        assert len(edges) == 2
+        target_names = {e.target_name for e in edges}
+        assert target_names == {"Handler", "FallbackHandler"}
+
+    def test_qualified_type(self, extractor, chunk_metadata):
+        """Test isinstance with a dotted/qualified type name."""
+        code = """
+def process(x):
+    assert isinstance(x, module.Handler)
+"""
+        edges = extractor.extract(code, chunk_metadata)
+
+        assert len(edges) == 1
+        assert edges[0].target_name == "module.Handler"
+
+    def test_builtin_type_skipped(self, extractor, chunk_metadata):
+        """Test that builtin types (str, int, ...) are not tracked."""
+        code = """
+def process(x):
+    assert isinstance(x, str)
+"""
+        edges = extractor.extract(code, chunk_metadata)
+
+        assert len(edges) == 0
+
+    def test_non_assertion_call_skipped(self, extractor, chunk_metadata):
+        """Test that asserts unrelated to isinstance/issubclass are ignored."""
+        code = """
+def process(x):
+    assert x > 0
+"""
+        edges = extractor.extract(code, chunk_metadata)
+
+        assert len(edges) == 0
 
 
 # Integration test for all extractors
