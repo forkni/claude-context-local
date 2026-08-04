@@ -1135,18 +1135,17 @@ class HybridSearcher(BaseSearcher):
         return self.index_sync.validate_index_sync()
 
     def resync_bm25_from_dense(self) -> int:
-        """Rebuild BM25 index from dense index metadata. Delegates to IndexSynchronizer."""
-        count = self.index_sync.resync_bm25_from_dense()
-        # Sync modified bm25_index reference back
-        self.bm25_index = self.index_sync.bm25_index
-        return count
+        """Rebuild BM25 index from dense index metadata. Delegates to IndexSynchronizer.
+
+        bm25_index keeps its identity across a resync (ADR-0025) -- no
+        write-back needed, so every collaborator that cached it (in
+        particular search_executor.bm25_index) sees the resynced corpus.
+        """
+        return self.index_sync.resync_bm25_from_dense()
 
     def resync_if_desynced(self, log_prefix: str = "INCREMENTAL") -> tuple[bool, int]:
         """Auto-sync BM25 if >10% desync detected. Delegates to IndexSynchronizer."""
-        result = self.index_sync.resync_if_desynced(log_prefix)
-        # Sync modified bm25_index reference back (resync rebuilds the BM25 ref)
-        self.bm25_index = self.index_sync.bm25_index
-        return result
+        return self.index_sync.resync_if_desynced(log_prefix)
 
     def load_indices(self) -> bool:
         """Load both BM25 and dense indices. Delegates to IndexSynchronizer."""

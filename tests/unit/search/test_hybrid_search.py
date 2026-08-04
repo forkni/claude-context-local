@@ -612,15 +612,21 @@ class TestHybridSearcher:
             # Results should include multi-hop discoveries
             assert isinstance(results, list)
 
-    @patch("search.index_sync.BM25Index")
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")
-    def test_resync_bm25_from_dense_success(
-        self, mock_bm25_hs, mock_dense, mock_bm25_sync
-    ):
-        """Test successful BM25 resync from dense metadata."""
+    def test_resync_bm25_from_dense_success(self, mock_bm25_hs, mock_dense):
+        """Test successful BM25 resync from dense metadata.
+
+        Resync rebuilds the corpus in place (ADR-0025) -- bm25_index keeps
+        its identity, so this asserts clear()/index_documents()/save() on
+        the same instance searcher.bm25_index already points to, and that
+        search_executor.bm25_index (cached once at construction) sees it too
+        with no write-back.
+        """
         # Setup mock for dense index
         mock_dense.return_value.index = None
+        bm25_mock = mock_bm25_hs.return_value
+        bm25_mock.size = 3
         searcher = HybridSearcher(self.temp_dir)
 
         # Setup dense index with chunk IDs and metadata
@@ -638,18 +644,16 @@ class TestHybridSearcher:
         searcher.dense_index = dense_mock
         searcher.index_sync.dense_index = dense_mock
 
-        # Mock BM25Index for the rebuild (new instance created in resync)
-        new_bm25_mock = Mock()
-        new_bm25_mock.size = 3
-        mock_bm25_sync.return_value = new_bm25_mock
-
         # Call resync
         count = searcher.resync_bm25_from_dense()
 
-        # Verify
+        # Verify the existing bm25_index was cleared and re-indexed in place
         assert count == 3
-        new_bm25_mock.index_documents.assert_called_once()
-        new_bm25_mock.save.assert_called_once()
+        bm25_mock.clear.assert_called_once()
+        bm25_mock.index_documents.assert_called_once()
+        bm25_mock.save.assert_called_once()
+        assert searcher.bm25_index is bm25_mock
+        assert searcher.search_executor.bm25_index is bm25_mock
 
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")
@@ -667,14 +671,15 @@ class TestHybridSearcher:
 
         assert count == 0
 
-    @patch("search.index_sync.BM25Index")
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")
     def test_resync_bm25_from_dense_no_content_in_metadata(
-        self, mock_bm25_hs, mock_dense, mock_bm25_sync
+        self, mock_bm25_hs, mock_dense
     ):
         """Test resync handles chunks with missing content gracefully."""
         mock_dense.return_value.index = None
+        bm25_mock = mock_bm25_hs.return_value
+        bm25_mock.size = 1  # Only 1 chunk has valid content
         searcher = HybridSearcher(self.temp_dir)
 
         dense_mock = mock_dense.return_value
@@ -687,11 +692,6 @@ class TestHybridSearcher:
         )
         searcher.dense_index = dense_mock
         searcher.index_sync.dense_index = dense_mock
-
-        # Mock BM25Index for rebuild (in index_sync)
-        new_bm25_mock = Mock()
-        new_bm25_mock.size = 1  # Only 1 chunk has valid content
-        mock_bm25_sync.return_value = new_bm25_mock
 
         count = searcher.resync_bm25_from_dense()
 

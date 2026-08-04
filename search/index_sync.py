@@ -281,15 +281,12 @@ class IndexSynchronizer:
 
         self._logger.info(f"[RESYNC] Found {len(documents)} documents to sync")
 
-        # Rebuild BM25 index
-        self.bm25_index = BM25Index(
-            str(self.storage_dir / "bm25"),
-            use_stopwords=self.bm25_use_stopwords,
-            use_stemming=self.bm25_use_stemming,
-            tokenizer=self.bm25_tokenizer,
-            k1=self.bm25_k1,
-            b=self.bm25_b,
-        )
+        # Rebuild the BM25 corpus in place (ADR-0025) -- bm25_index keeps its
+        # identity, so every collaborator that cached it at construction time
+        # (in particular search_executor.bm25_index, which nothing used to
+        # repair after a resync) sees the resynced corpus without a
+        # write-back.
+        self.bm25_index.clear()
         self.bm25_index.index_documents(documents, doc_ids, metadata)
         self.bm25_index.save()
 

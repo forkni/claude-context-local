@@ -202,7 +202,12 @@ class TestIndexSynchronizer:
         assert "Duplicate chunk_ids" not in caplog.text
 
     def test_resync_bm25_from_dense_success(self):
-        """Test successful BM25 resync from dense metadata."""
+        """Test successful BM25 resync from dense metadata.
+
+        Resync rebuilds the corpus in place (ADR-0025) -- self.bm25_index
+        keeps its identity, so this asserts clear()/index_documents()/save()
+        on the same mock instead of a BM25Index reconstruction.
+        """
         # Configure mock - uses chunk_ids property
         self.mock_dense_index.chunk_ids = ["chunk1", "chunk2"]
         self.mock_dense_index.metadata_store = MagicMock()
@@ -210,21 +215,17 @@ class TestIndexSynchronizer:
             {"metadata": {"bm25_text": "def test(): pass", "file": "test.py"}},
             {"metadata": {"bm25_text": "class Test: pass", "file": "test.py"}},
         ]
+        self.mock_bm25_index.size = 2
 
-        # Mock BM25Index constructor and methods
-        with patch("search.index_sync.BM25Index") as mock_bm25_class:
-            mock_new_bm25 = MagicMock()
-            mock_new_bm25.size = 2
-            mock_bm25_class.return_value = mock_new_bm25
+        # Execute resync
+        result = self.synchronizer.resync_bm25_from_dense()
 
-            # Execute resync
-            result = self.synchronizer.resync_bm25_from_dense()
-
-            # Verify BM25 was recreated and indexed
-            mock_bm25_class.assert_called_once()
-            mock_new_bm25.index_documents.assert_called_once()
-            mock_new_bm25.save.assert_called_once()
-            assert result == 2  # 2 chunks resynced
+        # Verify the existing bm25_index was cleared and re-indexed in place
+        self.mock_bm25_index.clear.assert_called_once()
+        self.mock_bm25_index.index_documents.assert_called_once()
+        self.mock_bm25_index.save.assert_called_once()
+        assert self.synchronizer.bm25_index is self.mock_bm25_index
+        assert result == 2  # 2 chunks resynced
 
     def test_resync_bm25_from_dense_empty_dense(self):
         """Test resync when dense index is empty."""
@@ -256,23 +257,19 @@ class TestIndexSynchronizer:
         self.mock_dense_index.chunk_ids = ["chunk1", "chunk2", "chunk3_empty"]
         self.mock_dense_index.metadata_store = MagicMock()
         self.mock_dense_index.metadata_store.get.side_effect = _metadata_by_id.get
+        self.mock_bm25_index.size = 3
 
-        with patch("search.index_sync.BM25Index") as mock_bm25_class:
-            mock_new_bm25 = MagicMock()
-            mock_new_bm25.size = 3
-            mock_bm25_class.return_value = mock_new_bm25
+        result = self.synchronizer.resync_bm25_from_dense()
 
-            result = self.synchronizer.resync_bm25_from_dense()
-
-            # Must index ALL 3 doc_ids (including the empty-content one)
-            call_args = mock_new_bm25.index_documents.call_args
-            assert call_args is not None, "index_documents was never called"
-            actual_doc_ids = call_args[0][1]  # positional arg 1 = doc_ids list
-            assert actual_doc_ids == ["chunk1", "chunk2", "chunk3_empty"], (
-                f"Expected all 3 chunk_ids, got {actual_doc_ids}. "
-                "resync_bm25_from_dense is dropping empty-content chunks."
-            )
-            assert result == 3
+        # Must index ALL 3 doc_ids (including the empty-content one)
+        call_args = self.mock_bm25_index.index_documents.call_args
+        assert call_args is not None, "index_documents was never called"
+        actual_doc_ids = call_args[0][1]  # positional arg 1 = doc_ids list
+        assert actual_doc_ids == ["chunk1", "chunk2", "chunk3_empty"], (
+            f"Expected all 3 chunk_ids, got {actual_doc_ids}. "
+            "resync_bm25_from_dense is dropping empty-content chunks."
+        )
+        assert result == 3
 
     def test_clear_index_success(self):
         """Test clearing both indices in place (ADR-0025 -- no reconstruction)."""
@@ -490,13 +487,9 @@ class TestResyncIfDesynced:
             {"metadata": {"bm25_text": "def a(): pass"}},
             {"metadata": {"bm25_text": "def b(): pass"}},
         ]
+        self.bm25.size = 2
 
-        with patch("search.index_sync.BM25Index") as mock_bm25_cls:
-            mock_new_bm25 = MagicMock()
-            mock_new_bm25.size = 2
-            mock_bm25_cls.return_value = mock_new_bm25
-
-            resynced, count = self.sync.resync_if_desynced("TEST")
+        resynced, count = self.sync.resync_if_desynced("TEST")
 
         assert resynced is True
         assert count == 2
