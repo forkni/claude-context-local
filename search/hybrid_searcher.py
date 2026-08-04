@@ -24,10 +24,7 @@ except ImportError:
     torch = None
 
 from graph.graph_storage import CodeGraphStorage
-from mcp_server.utils.config_helpers import (
-    get_config_via_service_locator as _get_config_via_service_locator,
-)
-from search.config import SearchMode
+from search.config import SearchMode, get_search_config
 from search.graph_integration import GraphIntegration
 from utils.observability import traced_block
 from utils.otel_attributes import (
@@ -710,11 +707,8 @@ class HybridSearcher(BaseSearcher):
                     return []
 
             # Check if multi-hop search is enabled
-            # Use ServiceLocator helper instead of inline import
             # Allow config override (for ego-graph settings from MCP)
-            effective_config = (
-                config if config is not None else _get_config_via_service_locator()
-            )
+            effective_config = config if config is not None else get_search_config()
 
             if effective_config.observability.capture_query_text:
                 span.set_attribute(ATTR_CAPTURE_QUERY, query)
@@ -1035,11 +1029,9 @@ class HybridSearcher(BaseSearcher):
         results = ResultFactory.from_similarity_results(similar_chunks)
 
         # Resolve once, same as HybridSearcher.search(): the config given at
-        # construction, else the service-locator default (ADR-0018).
+        # construction, else the repo-wide default from get_search_config() (ADR-0018).
         effective_config = (
-            self.config
-            if self.config is not None
-            else _get_config_via_service_locator()
+            self.config if self.config is not None else get_search_config()
         )
 
         # Apply neural reranking if requested and available
@@ -1092,11 +1084,10 @@ class HybridSearcher(BaseSearcher):
 
         # No per-call config here (this reports aggregate stats, not one
         # request) — resolve the same way HybridSearcher.search() does: the
-        # config given at construction, else the service-locator default.
+        # config given at construction, else the repo-wide default from
+        # get_search_config().
         effective_config = (
-            self.config
-            if self.config is not None
-            else _get_config_via_service_locator()
+            self.config if self.config is not None else get_search_config()
         )
 
         return {

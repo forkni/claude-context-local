@@ -142,7 +142,7 @@ see "Fixed (Phase 10.8)" below):
   Phase 10.5 write-ledger) a write into real `~/.claude_code_search` home storage, every run. Fixed
   by constructing `HybridSearcher` with an explicit stub embedder and a test-owned
   `SearchConfig(reranker.enabled=False)` (`_stub_search_deps()` helper, reusing the
-  `_get_config_via_service_locator` patch pattern `test_weight_change_takes_effect_without_rebuild`
+  `get_search_config` patch pattern `test_weight_change_takes_effect_without_rebuild`
   already established) instead of the after-the-fact `patch("embeddings.embedder.CodeEmbedder")`
   that never touched the reranker's separate load path.
   `test_search_dense_creates_embedder_lazily_when_none` is untouched — it deliberately exercises

@@ -53,7 +53,7 @@ class TestHybridSearcher:
         otherwise builds a real CodeEmbedder against real
         ~/.claude_code_search/models on first use. Disabling
         `config.reranker.enabled` and threading that config through
-        `_get_config_via_service_locator` (rather than letting it read the
+        `get_search_config` (rather than letting it read the
         real repo-root search_config.json) stops
         RerankingEngine._ensure_reranker() from loading the real neural
         reranker onto the GPU -- config threading (ADR-0018/C2) makes this a
@@ -187,7 +187,7 @@ class TestHybridSearcher:
 
         with (
             patch(
-                "search.hybrid_searcher._get_config_via_service_locator",
+                "search.hybrid_searcher.get_search_config",
                 return_value=live_config,
             ),
             patch.object(searcher, "_single_hop_search", side_effect=fake_single_hop),
@@ -241,7 +241,7 @@ class TestHybridSearcher:
         dense_mock.search.return_value = [("doc2", 0.9, {"type": "class"})]
 
         with patch(
-            "search.hybrid_searcher._get_config_via_service_locator",
+            "search.hybrid_searcher.get_search_config",
             return_value=config,
         ):
             results = searcher.search("test query", k=5, use_parallel=False)
@@ -271,7 +271,7 @@ class TestHybridSearcher:
         dense_mock.search.return_value = [("doc2", 0.9, {"type": "class"})]
 
         with patch(
-            "search.hybrid_searcher._get_config_via_service_locator",
+            "search.hybrid_searcher.get_search_config",
             return_value=config,
         ):
             results = searcher.search("test query", k=5, use_parallel=True)
@@ -302,7 +302,7 @@ class TestHybridSearcher:
 
         filters = {"language": "python"}
         with patch(
-            "search.hybrid_searcher._get_config_via_service_locator",
+            "search.hybrid_searcher.get_search_config",
             return_value=config,
         ):
             searcher.search("test query", k=5, use_parallel=False, filters=filters)
@@ -336,7 +336,7 @@ class TestHybridSearcher:
 
         # Should handle errors gracefully
         with patch(
-            "search.hybrid_searcher._get_config_via_service_locator",
+            "search.hybrid_searcher.get_search_config",
             return_value=config,
         ):
             results = searcher.search("test query", k=5)
@@ -444,7 +444,7 @@ class TestHybridSearcher:
         dense_mock.search.return_value = [("doc2", 0.9, {"type": "class"})]
 
         with patch(
-            "search.hybrid_searcher._get_config_via_service_locator",
+            "search.hybrid_searcher.get_search_config",
             return_value=config,
         ):
             # Perform searches
@@ -644,7 +644,7 @@ class TestHybridSearcher:
         dense_mock.get_similar_chunks_batched.return_value = batched_results
 
         with patch(
-            "search.hybrid_searcher._get_config_via_service_locator",
+            "search.hybrid_searcher.get_search_config",
             return_value=config,
         ):
             # Perform search with multi-hop enabled
@@ -1076,9 +1076,7 @@ def test_search_accepts_per_call_weights(mock_bm25, mock_dense):
         exec_mock = Mock(return_value=[])
         searcher.search_executor.execute_single_hop = exec_mock
 
-        with patch(
-            "search.hybrid_searcher._get_config_via_service_locator"
-        ) as mock_cfg:
+        with patch("search.hybrid_searcher.get_search_config") as mock_cfg:
             cfg = Mock()
             cfg.multi_hop.enabled = False
             cfg.ego_graph.enabled = False
@@ -1117,9 +1115,7 @@ def test_intent_weights_reach_the_leg_via_multihop(mock_bm25, mock_dense):
         leg = Mock(return_value=[])
         searcher.search_executor.execute_single_hop = leg
 
-        with patch(
-            "search.hybrid_searcher._get_config_via_service_locator"
-        ) as mock_cfg:
+        with patch("search.hybrid_searcher.get_search_config") as mock_cfg:
             cfg = Mock()
             cfg.multi_hop.enabled = True
             cfg.multi_hop.hop_count = 2
@@ -1200,7 +1196,7 @@ class TestSearchTailDedup:
         )
         with (
             patch(
-                "search.hybrid_searcher._get_config_via_service_locator",
+                "search.hybrid_searcher.get_search_config",
                 return_value=config,
             ),
             patch.object(
@@ -1223,7 +1219,7 @@ class TestSearchTailDedup:
         )
         with (
             patch(
-                "search.hybrid_searcher._get_config_via_service_locator",
+                "search.hybrid_searcher.get_search_config",
                 return_value=config,
             ),
             patch.object(
@@ -1296,7 +1292,7 @@ class TestSinglePassTailRerank:
         searcher.reranking_engine = engine
         with (
             patch(
-                "search.hybrid_searcher._get_config_via_service_locator",
+                "search.hybrid_searcher.get_search_config",
                 return_value=config,
             ),
             patch.object(searcher, "_single_hop_search", return_value=self._results()),
@@ -1322,7 +1318,7 @@ class TestSinglePassTailRerank:
         searcher.reranking_engine = engine
         with (
             patch(
-                "search.hybrid_searcher._get_config_via_service_locator",
+                "search.hybrid_searcher.get_search_config",
                 return_value=config,
             ),
             patch.object(searcher, "_single_hop_search", return_value=self._results()),
@@ -1396,7 +1392,7 @@ class TestConfigThreadedToReranker:
 
         with (
             patch(
-                "search.hybrid_searcher._get_config_via_service_locator",
+                "search.hybrid_searcher.get_search_config",
                 return_value=singleton_config,
             ),
             patch.object(searcher, "_single_hop_search", return_value=results),
@@ -1450,7 +1446,7 @@ class TestCaptureQueryText:
 
         with (
             patch(
-                "search.hybrid_searcher._get_config_via_service_locator",
+                "search.hybrid_searcher.get_search_config",
                 return_value=config,
             ),
             patch.object(searcher, "_single_hop_search", return_value=[]),

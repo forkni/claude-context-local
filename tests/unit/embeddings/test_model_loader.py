@@ -100,7 +100,7 @@ class TestModelLoader:
         assert dtype is None
 
     @patch("embeddings.model_loader.torch")
-    @patch("embeddings.model_loader._get_config_via_service_locator")
+    @patch("embeddings.model_loader.get_search_config")
     def test_get_torch_dtype_cpu(self, mock_config_func, mock_torch, model_loader):
         """Test dtype selection for CPU."""
         mock_torch.cuda.is_available.return_value = False
@@ -108,7 +108,7 @@ class TestModelLoader:
         assert dtype is None
 
     @patch("embeddings.model_loader.torch")
-    @patch("embeddings.model_loader._get_config_via_service_locator")
+    @patch("embeddings.model_loader.get_search_config")
     def test_get_torch_dtype_fp16_disabled(
         self, mock_config_func, mock_torch, model_loader
     ):
@@ -124,7 +124,7 @@ class TestModelLoader:
         assert dtype is None
 
     @patch("embeddings.model_loader.torch")
-    @patch("embeddings.model_loader._get_config_via_service_locator")
+    @patch("embeddings.model_loader.get_search_config")
     def test_get_torch_dtype_fp16_enabled(
         self, mock_config_func, mock_torch, model_loader
     ):
@@ -143,7 +143,7 @@ class TestModelLoader:
         assert dtype == "mock_fp16"
 
     @patch("embeddings.model_loader.torch")
-    @patch("embeddings.model_loader._get_config_via_service_locator")
+    @patch("embeddings.model_loader.get_search_config")
     def test_get_torch_dtype_bf16_supported(
         self, mock_config_func, mock_torch, model_loader
     ):

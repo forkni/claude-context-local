@@ -31,11 +31,11 @@ from embeddings.chunk_metadata import ChunkMetadata
 from embeddings.model_cache import ModelCacheManager
 from embeddings.model_loader import ModelLoader
 from embeddings.query_cache import QueryEmbeddingCache
-from mcp_server.utils.config_helpers import (
-    get_config_via_service_locator as _get_config_via_service_locator,
-)
 from search.config import (
     get_indexing_ram_fallback_override as _get_ram_fallback_override,
+)
+from search.config import (
+    get_search_config,
 )
 from search.exceptions import VRAMExhaustedError
 from search.filters import normalize_path
@@ -295,7 +295,7 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
         if override is not None:
             allow_fallback = override
         else:
-            config = _get_config_via_service_locator()
+            config = get_search_config()
             allow_fallback = bool(config and config.performance.allow_ram_fallback)
         if allow_fallback:
             logging.getLogger(__name__).info(
@@ -528,7 +528,7 @@ class CodeEmbedder:
         # This must be called before any CUDA allocations
         # Try to get fraction from config, fallback to 0.90
         try:
-            config = _get_config_via_service_locator()
+            config = get_search_config()
             if config and config.performance:
                 fraction = config.performance.vram_limit_fraction
             else:
@@ -927,9 +927,8 @@ class CodeEmbedder:
         # Prepare clean content without fabricated headers
         content_parts = []
 
-        # Get configuration via ServiceLocator
         try:
-            config = _get_config_via_service_locator()
+            config = get_search_config()
             enable_import_ctx = config.embedding.enable_import_context
             enable_class_ctx = config.embedding.enable_class_context
             max_import_lines = config.embedding.max_import_lines
@@ -1269,7 +1268,7 @@ class CodeEmbedder:
         # allocated VRAM since CodeEmbedder.__init__, which would otherwise let us
         # overcommit and trigger Windows WDDM shared-memory spillover.
         try:
-            _embed_cfg = _get_config_via_service_locator()
+            _embed_cfg = get_search_config()
             if _embed_cfg and _embed_cfg.performance:
                 set_vram_limit(_embed_cfg.performance.vram_limit_fraction)
         except (RuntimeError, AttributeError) as _cap_err:
@@ -1279,8 +1278,7 @@ class CodeEmbedder:
 
         # Load batch size from config if not explicitly provided
         if batch_size is None:
-            # Use ServiceLocator helper instead of inline import
-            config = _get_config_via_service_locator()
+            config = get_search_config()
 
             # Try dynamic GPU-based batch size first
             if (

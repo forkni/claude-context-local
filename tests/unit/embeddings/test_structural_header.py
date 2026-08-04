@@ -89,9 +89,7 @@ class TestStructuralHeaderContextInjection:
         def mock_get_config():
             return mock_config
 
-        monkeypatch.setattr(
-            "embeddings.embedder._get_config_via_service_locator", mock_get_config
-        )
+        monkeypatch.setattr("embeddings.embedder.get_search_config", mock_get_config)
 
         chunk = CodeChunk(
             content="def test():\n    pass",
@@ -194,9 +192,7 @@ class TestStructuralHeaderContextInjection:
         def mock_get_config():
             return mock_config
 
-        monkeypatch.setattr(
-            "embeddings.embedder._get_config_via_service_locator", mock_get_config
-        )
+        monkeypatch.setattr("embeddings.embedder.get_search_config", mock_get_config)
 
         chunk = CodeChunk(
             content="def process(self):\n    pass",

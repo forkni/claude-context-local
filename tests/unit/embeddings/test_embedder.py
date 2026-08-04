@@ -918,7 +918,7 @@ class TestSetVramLimitEffective:
         m.cuda.memory_allocated.return_value = int(us_gb * 1024**3)
         return m
 
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     @patch("embeddings.embedder.torch")
     def test_no_external_pressure(self, mock_torch, mock_cfg):
         """GPU is idle: effective fraction equals the requested fraction."""
@@ -940,7 +940,7 @@ class TestSetVramLimitEffective:
         # With no external pressure physical_cap == user_cap → effective == r
         assert 0.79 <= eff <= 0.81, f"expected ~0.80, got {eff:.4f}"
 
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     @patch("embeddings.embedder.torch")
     def test_other_process_holds_10gb_bug_scenario(self, mock_torch, mock_cfg):
         """Bug scenario: other process holds 10 GB on a 24 GB GPU.
@@ -969,7 +969,7 @@ class TestSetVramLimitEffective:
         cap_gb = eff * 24
         assert cap_gb + 10 <= 24.05, f"Would spill: cap={cap_gb:.1f} + other=10 > 24 GB"
 
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     @patch("embeddings.embedder.torch")
     def test_reapplication_mid_run(self, mock_torch, mock_cfg):
         """Re-application while our process already holds 6 GB, others hold 4 GB."""
@@ -993,7 +993,7 @@ class TestSetVramLimitEffective:
         # Cap must not be below what we already hold
         assert eff * 24 >= 6 - 0.1
 
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     @patch("embeddings.embedder.torch")
     def test_clamp_when_physical_cap_below_current_usage(self, mock_torch, mock_cfg):
         """GPU under heavy external pressure: cap is forced up to us_b, warning logged."""
@@ -1015,7 +1015,7 @@ class TestSetVramLimitEffective:
         # physical_cap = 12+2-4.8 = 9.2 < us=12 → clamped to us → eff = 12/24 = 0.5
         assert 0.49 <= eff <= 0.51, f"expected ~0.50, got {eff:.4f}"
 
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     @patch("embeddings.embedder.torch")
     def test_allow_ram_fallback_skips_limit(self, mock_torch, mock_cfg):
         """When allow_ram_fallback=True, set_per_process_memory_fraction is NOT called."""
@@ -1041,7 +1041,7 @@ class TestSetVramLimitEffective:
         result = set_vram_limit(0.8)
         assert result is False
 
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     @patch("embeddings.embedder.torch")
     def test_set_per_process_raises_returns_false(self, mock_torch, mock_cfg):
         """Returns False and logs a warning when set_per_process_memory_fraction raises."""
@@ -1061,7 +1061,7 @@ class TestSetVramLimitEffective:
         result = set_vram_limit(0.8)
         assert result is False
 
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     @patch("embeddings.embedder.torch")
     def test_idempotent_same_inputs(self, mock_torch, mock_cfg):
         """Two back-to-back calls with identical inputs produce the same effective fraction."""
@@ -1089,7 +1089,7 @@ class TestSetVramLimitEffective:
     # `_get_ram_fallback_override` alias before reading config.
 
     @patch("embeddings.embedder._get_ram_fallback_override")
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     @patch("embeddings.embedder.torch")
     def test_override_false_forces_cap_over_config_true(
         self, mock_torch, mock_cfg, mock_override
@@ -1119,7 +1119,7 @@ class TestSetVramLimitEffective:
         mock_torch.cuda.set_per_process_memory_fraction.assert_called_once()
 
     @patch("embeddings.embedder._get_ram_fallback_override")
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     @patch("embeddings.embedder.torch")
     def test_override_true_skips_cap_over_config_false(
         self, mock_torch, mock_cfg, mock_override
@@ -1141,7 +1141,7 @@ class TestSetVramLimitEffective:
         mock_torch.cuda.set_per_process_memory_fraction.assert_not_called()
 
     @patch("embeddings.embedder._get_ram_fallback_override")
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     @patch("embeddings.embedder.torch")
     def test_override_none_defers_to_config(self, mock_torch, mock_cfg, mock_override):
         """override=None defers to the persisted config (here: skip the cap)."""
@@ -1557,7 +1557,7 @@ class TestContextExtraction:
 
     @_patch_model_loader_st
     @_patch_embedder_st
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     def test_create_embedding_content_with_context(
         self,
         mock_config_getter,
@@ -1624,7 +1624,7 @@ class TestContextExtraction:
 
     @_patch_model_loader_st
     @_patch_embedder_st
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     def test_create_embedding_content_context_disabled(
         self,
         mock_config_getter,
@@ -1718,7 +1718,7 @@ class TestOomRecoveryBackoff:
         return chunks
 
     @patch("embeddings.embedder.torch")
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     def test_bfcarena_oom_triggers_halve_and_retry(self, mock_get_cfg, mock_torch):
         """BFCArena OOM → batch halved → all chunks embedded successfully."""
         from embeddings.embedder import CodeEmbedder
@@ -1772,7 +1772,7 @@ class TestOomRecoveryBackoff:
         assert any("OOM_RECOVERY" in w for w in warn_calls)
 
     @patch("embeddings.embedder.torch")
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     def test_classic_cuda_oom_still_caught(self, mock_get_cfg, mock_torch):
         """Classic 'out of memory' RuntimeError is also caught and triggers halving."""
         from embeddings.embedder import CodeEmbedder
@@ -1820,7 +1820,7 @@ class TestOomRecoveryBackoff:
         assert len(results) == 4
 
     @patch("embeddings.embedder.torch")
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     def test_batch_size_reduced_persists_for_subsequent_batches(
         self, mock_get_cfg, mock_torch
     ):
@@ -1875,7 +1875,7 @@ class TestOomRecoveryBackoff:
         assert all(s == 2 for s in batch_sizes_seen[1:])  # all retries use 2
 
     @patch("embeddings.embedder.torch")
-    @patch("embeddings.embedder._get_config_via_service_locator")
+    @patch("embeddings.embedder.get_search_config")
     def test_non_oom_runtime_error_propagates(self, mock_get_cfg, mock_torch):
         """A RuntimeError whose message is not OOM-related must propagate, not trigger halving."""
         from embeddings.embedder import CodeEmbedder

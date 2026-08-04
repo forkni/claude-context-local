@@ -29,7 +29,7 @@ def _make_embedder_with_mock_loader() -> tuple[CodeEmbedder, MagicMock]:
         patch("embeddings.embedder.ModelLoader") as mock_loader,
         patch("embeddings.embedder.ModelCacheManager"),
         patch("embeddings.embedder.set_vram_limit"),
-        patch("embeddings.embedder._get_config_via_service_locator", return_value=None),
+        patch("embeddings.embedder.get_search_config", return_value=None),
     ):
         mock_loader.return_value = fake_loader
         emb = CodeEmbedder(model_name="BAAI/bge-m3")
