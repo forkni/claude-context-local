@@ -36,12 +36,14 @@ class TestMultiHopSearchFlow:
     """Integration tests for multi-hop semantic search."""
 
     @pytest.fixture(scope="class")
-    def test_project_path(self):
+    @classmethod
+    def test_project_path(cls):
         """Path to the test Python project."""
         return Path(__file__).parent.parent / "test_data" / "python_project"
 
     @pytest.fixture(scope="class")
-    def indexed_hybrid_searcher(self, test_project_path, tmp_path_factory):
+    @classmethod
+    def indexed_hybrid_searcher(cls, test_project_path, tmp_path_factory):
         """Create indexed hybrid searcher once for the whole class."""
         # Create temp storage using tmp_path_factory for class scope
         tmp_path = tmp_path_factory.mktemp("multi_hop_test")

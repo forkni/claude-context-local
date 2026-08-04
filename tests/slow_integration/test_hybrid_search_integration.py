@@ -33,7 +33,8 @@ class TestHybridSearchIntegration:
     """Integration tests for hybrid search system."""
 
     @pytest.fixture(autouse=True, scope="class")
-    def mock_embedder(self):
+    @classmethod
+    def mock_embedder(cls):
         """Mock SentenceTransformer to prevent model downloads for all tests."""
 
         def mock_encode(
@@ -60,7 +61,8 @@ class TestHybridSearchIntegration:
             yield mock_st
 
     @pytest.fixture(scope="class")
-    def indexed_hybrid_environment(self, tmp_path_factory):
+    @classmethod
+    def indexed_hybrid_environment(cls, tmp_path_factory):
         """Create indexed environment once per class with pre-indexed data."""
         # Create temp directories using tmp_path_factory for class scope
         tmp_path = tmp_path_factory.mktemp("hybrid_search_test")
@@ -71,7 +73,7 @@ class TestHybridSearchIntegration:
         storage_dir.mkdir(parents=True)
 
         # Create test files
-        self._create_test_files_in_dir(project_dir)
+        cls._create_test_files_in_dir(project_dir)
 
         # Initialize components ONCE for the whole class
         try:

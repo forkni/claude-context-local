@@ -233,7 +233,8 @@ class TestRetrievalEvaluation:
     """End-to-end retrieval evaluation using frozen sample codebase."""
 
     @pytest.fixture(scope="class")
-    def indexed_environment(self, tmp_path_factory):
+    @classmethod
+    def indexed_environment(cls, tmp_path_factory):
         """Build the full BM25 + FAISS index once for all tests in this class.
 
         Steps:

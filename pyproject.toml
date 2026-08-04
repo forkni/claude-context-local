@@ -481,6 +481,7 @@ source = [
     "mcp_server",
     "merkle",
     "search",
+    "tools",
     "utils",
     "evaluation",
 ]
