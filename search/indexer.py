@@ -917,15 +917,13 @@ class CodeIndexManager:
         """Close database connections without deleting index files.
 
         Idempotent: safe to call multiple times.  Closes the MetadataStore
-        and clears the BatchOperations reference so no dangling file handles
-        remain.  Does not touch the FAISS index or graph storage.
+        connection, releasing its file handle.  Identity stays stable per
+        ADR-0025 -- the object is not replaced, so it lazily reopens on the
+        next access and ``_batch_ops._metadata_store`` needs no re-wiring.
+        Does not touch the FAISS index or graph storage.
         """
-        if self._metadata_store is not None:
+        if hasattr(self, "_metadata_store"):
             self._metadata_store.close()
-            # pyrefly: ignore [bad-assignment]
-            self._metadata_store = None
-        if hasattr(self, "_batch_ops") and self._batch_ops is not None:
-            self._batch_ops._metadata_store = None
 
     def __del__(self) -> None:
         """Cleanup when object is destroyed."""

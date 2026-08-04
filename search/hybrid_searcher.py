@@ -400,12 +400,8 @@ class HybridSearcher(BaseSearcher):
 
     def close_metadata_connections(self) -> None:
         """Close all metadata store connections to release file locks."""
-        if (
-            self.dense_index is not None
-            and hasattr(self.dense_index, "_metadata_store")
-            and self.dense_index._metadata_store is not None
-        ):
-            self.dense_index._metadata_store.close()
+        if self.dense_index is not None:
+            self.dense_index.close()
             self._logger.debug("Closed dense_index metadata store")
 
     def shutdown(self) -> None:

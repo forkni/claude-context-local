@@ -67,6 +67,22 @@ class TestHybridSearcher:
 
     @patch("search.hybrid_searcher.CodeIndexManager")
     @patch("search.hybrid_searcher.BM25Index")
+    def test_close_metadata_connections_delegates_to_dense_index_close(
+        self, mock_bm25, mock_dense
+    ):
+        """close_metadata_connections collapses to dense_index.close()
+        (ADR-0025) -- it used to reach past the public property into
+        dense_index._metadata_store.close() directly.
+        """
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(self.temp_dir)
+
+        searcher.close_metadata_connections()
+
+        searcher.dense_index.close.assert_called_once()
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
     def test_is_ready_property(self, mock_bm25, mock_dense):
         """Test is_ready property."""
         # Setup mock for dense index
