@@ -215,24 +215,32 @@ class TestIntentClassifierBasicDetection:
         assert decision.suggested_params.get("k") == 10
         assert decision.suggested_params.get("search_mode") == "hybrid"
 
-    def test_suggested_params_local_k(self, classifier):
-        """Test that LOCAL queries suggest k=5 for symbol lookups."""
+    def test_suggested_params_local_no_k(self, classifier):
+        """LOCAL queries suggest search_mode only -- no k.
+
+        A k=5 suggestion used to be written here but was never read: the
+        orchestrator's k-bump redirect is gated on intent == GLOBAL only, so
+        LOCAL's suggested k was unreachable by construction. Removed
+        2026-08-03.
+        """
         decision = classifier.classify("where is QueryRouter")
         assert decision.intent == QueryIntent.LOCAL, (
             f"Precondition failed: intent={decision.intent}, expected LOCAL"
         )
-        # k=5 per intent_classifier.py line 783 (wider pool for graph-isolated symbols)
-        assert decision.suggested_params.get("k") == 5
+        assert "k" not in decision.suggested_params
         assert decision.suggested_params.get("search_mode") == "hybrid"
 
     def test_suggested_params_navigational_symbol(self, classifier):
-        """Test that NAVIGATIONAL queries extract symbol name."""
+        """Test that NAVIGATIONAL queries extract symbol name.
+
+        No "tool" key -- it was written but never read (removed 2026-08-03).
+        """
         decision = classifier.classify("what calls handle_search_code")
         assert decision.intent == QueryIntent.NAVIGATIONAL, (
             f"Precondition failed: intent={decision.intent}, expected NAVIGATIONAL"
         )
         assert decision.suggested_params.get("symbol_name") == "handle_search_code"
-        assert decision.suggested_params.get("tool") == "find_connections"
+        assert "tool" not in decision.suggested_params
 
     # ===== Symbol Extraction Tests =====
 
@@ -510,7 +518,7 @@ class TestPathTracingIntent:
         assert decision.confidence >= 0.3
         assert decision.suggested_params.get("source") == "login"
         assert decision.suggested_params.get("target") == "database"
-        assert decision.suggested_params.get("tool") == "find_path"
+        assert "tool" not in decision.suggested_params
 
     def test_how_does_connect(self, classifier):
         """Test PATH_TRACING intent for 'how does X connect to Y' queries."""
@@ -549,7 +557,7 @@ class TestSimilarityIntent:
         decision = classifier.classify("find code similar to QueryRouter")
         assert decision.intent == QueryIntent.SIMILARITY
         assert decision.confidence >= 0.3
-        assert decision.suggested_params.get("tool") == "find_similar_code"
+        assert "tool" not in decision.suggested_params
         assert decision.suggested_params.get("symbol_name") == "QueryRouter"
 
     def test_patterns_like(self, classifier):

@@ -576,9 +576,10 @@ class IntentClassifier:
             params["search_mode"] = SearchMode.HYBRID
 
         elif intent == QueryIntent.LOCAL:
-            # Suggest k=5 for symbol lookups (reverted from k=4 in commit 1802322)
-            # Wider pool helps graph-isolated symbols that can't benefit from multi-hop
-            params["k"] = 5
+            # search_mode only -- suggested k is not set here. A k=5 suggestion
+            # used to be written but was never read: the orchestrator's k-bump
+            # redirect is gated on intent == GLOBAL only (search_orchestrator.py),
+            # so LOCAL's k was unreachable by construction. Removed 2026-08-03.
             params["search_mode"] = SearchMode.HYBRID
 
         elif intent == QueryIntent.NAVIGATIONAL:
@@ -586,7 +587,6 @@ class IntentClassifier:
             symbol_name = self._extract_symbol_from_query(query)
             if symbol_name:
                 params["symbol_name"] = symbol_name
-                params["tool"] = "find_connections"
             # Suggest relationship_types filter for specific relationship queries
             rel_types = self._detect_relationship_types(query)
             if rel_types:
@@ -598,14 +598,12 @@ class IntentClassifier:
             if source and target:
                 params["source"] = source
                 params["target"] = target
-                params["tool"] = "find_path"
 
         elif intent == QueryIntent.SIMILARITY:
             # Extract reference symbol for find_similar_code
             reference = self._extract_symbol_from_query(query)
             if reference:
                 params["symbol_name"] = reference
-                params["tool"] = "find_similar_code"
 
         elif intent == QueryIntent.CONTEXTUAL:
             # Suggest ego_graph for broader context
