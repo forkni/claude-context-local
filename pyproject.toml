@@ -181,8 +181,12 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # pyjwt>=2.13.0            # Fixes CVE-2026-32597 (2.12.0), 4× CVEs (2.13.0: 48522/48524/48525/48526)
 # python-multipart>=0.0.32 # Fixes CVE-2026-24486, CVE-2026-40347, CVE-2026-42561, CVE-2026-53538, CVE-2026-53539, CVE-2026-53540 (DoS)
 # requests>=2.34.2         # Fixes CVE-2026-25645 (predictable tempfile name)
-# setuptools>=83.0.0       # Fixes CVE-2026-59890 (MANIFEST.in path traversal); enforced via [build-system].requires
-#                          # (not a runtime dependency — uv doesn't seed setuptools into .venv at all as of 2026-07-25)
+# setuptools>=83.0.0       # Fixes CVE-2026-59890 (MANIFEST.in path traversal); enforced via [build-system].requires.
+#                          # Also present in uv.lock as a transitive dep (torch python_full_version>=3.12,
+#                          # triton on linux) — [build-system].requires does not constrain the lock, so that
+#                          # entry floated to 82.0.1 until bumped 2026-08-04 via `uv lock --upgrade-package
+#                          # setuptools`. This is the entry GitHub's Dependabot alerts flag (manifest uv.lock),
+#                          # not the build-system one.
 # urllib3>=2.7.0           # Fixes CVE-2026-44431 (cross-origin redirect), CVE-2026-44432 (decompression)
 # uv>=0.11.24              # Fixes GHSA-4gg8-gxpx-9rph (0.11.15, malicious-wheel path traversal), GHSA-pjjw-68hj-v9mw (0.11.6, arbitrary file deletion via RECORD entries)
 # werkzeug>=3.1.4          # Fixes CVE-2025-66221 (Windows device name handling)
@@ -209,6 +213,17 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 #   weights_only bypass and DoS CVEs are not reachable via this project's model-loading path.
 #   Re-check upstream (pytorch/pytorch) each cycle for a fix to the inductor regression that would
 #   unblock the <2.9.0 ceiling.
+#
+#   2026-08-04: GitHub Dependabot alerts for CVE-2025-2999/GHSA-vgrw-7cvw-pwgx (2.9.1),
+#   CVE-2025-3001+CVE-2026-24747/GHSA-qfhq-4f3w-5fph (2.10.0), and CVE-2025-3000/GHSA-rrmf-rvhw-rf47
+#   (2.13.0) dismissed as tolerable_risk, in addition to being blocked by the <2.9.0 ceiling above.
+#   torch is pinned via [tool.uv.sources] to the explicit "pytorch-cu128" index for
+#   sys_platform in {linux, win32}, and that index tops out at 2.11.0 (verified via
+#   https://download.pytorch.org/whl/cu128/torch/ — PyPI itself has 2.13.0, the index does not).
+#   The 2.13.0 fix is therefore unobtainable on this platform even ignoring the <2.9.0 ceiling —
+#   Dependabot's automated security-update job for torch fails every run
+#   (dependency_file_not_resolvable) for exactly this reason. Reopen when BOTH: (a) the pinned
+#   cu128 index publishes >=2.13.0, and (b) the inductor regression above is fixed upstream.
 #
 # Resolved 2026-08-04: aiohttp CVE-2026-59881/69243 (3.14.2), CVE-2026-69244 (3.14.3) via
 #   aiohttp>=3.14.3. cryptography CVE-2026-69247 via cryptography>=50.0.0 (confirmed >=3.9
