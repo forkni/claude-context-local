@@ -541,6 +541,52 @@ def _attach_ego_confound_recorder() -> _EgoConfoundRecorder:
     return recorder
 
 
+class _IntentSignalRecorder(logging.Handler):
+    """Capture the GLOBAL-intent suggested_k bump from log records (B1b).
+
+    ``SearchOrchestrator.run()`` returns no plan/intent metadata to its
+    caller, so -- same technique as ``_EgoConfoundRecorder`` -- this listens
+    to the ``mcp_server.tools.search_orchestrator`` logger instead of editing
+    that contract. ``SearchPlanner.plan()`` logs
+    ``"[INTENT] Increasing k from {k} to {suggested_k} for GLOBAL query"``
+    only when it actually bumps k (``suggested_k > k``); at the harness's
+    canonical ``k=10``, ``_extract_suggested_params`` hardcodes
+    ``suggested_k=10`` for GLOBAL, so ``10 > 10`` never fires and this
+    recorder is structurally silent in the k=10 canon arms (recorded as a
+    known instrument limit, not fixed here). The loop resets this recorder
+    before every query.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.INFO)
+        self.k_bump: tuple[int, int] | None = None
+
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = record.getMessage()
+        if not msg.startswith("[INTENT] Increasing k from "):
+            return
+        try:
+            rest = msg[len("[INTENT] Increasing k from ") :]
+            from_str, rest2 = rest.split(" to ", 1)
+            to_str = rest2.split(" for ", 1)[0]
+            self.k_bump = (int(from_str), int(to_str))
+        except (ValueError, IndexError):
+            pass
+
+    def reset(self) -> None:
+        self.k_bump = None
+
+
+def _attach_intent_signal_recorder() -> _IntentSignalRecorder:
+    """Attach an ``_IntentSignalRecorder`` to the search-orchestrator logger."""
+    orch_logger = logging.getLogger("mcp_server.tools.search_orchestrator")
+    recorder = _IntentSignalRecorder()
+    orch_logger.addHandler(recorder)
+    if orch_logger.getEffectiveLevel() > logging.INFO:
+        orch_logger.setLevel(logging.INFO)
+    return recorder
+
+
 def _instrument_rerank_calls(searcher: Any) -> list[tuple[int | None, int]]:
     """Wrap ``reranking_engine.rerank_by_query`` to record (k_arg, pool_size).
 
@@ -592,7 +638,8 @@ async def _run_query(
     query: str,
     k: int,
     search_mode: str | None = None,
-) -> tuple[list[Any], float]:
+    pin_intent_off: bool = True,
+) -> tuple[list[Any], float, str | None]:
     """Execute a single query through ``SearchOrchestrator.run()`` (ADR-0023).
 
     Routes through the same pipeline the MCP ``search_code`` tool serves,
@@ -606,9 +653,10 @@ async def _run_query(
     (its guard is ``> 0``), so the full ranked list survives — matching what
     ``HybridSearcher.search()`` returned before. ``search_mode`` is always
     passed as a concrete string, never bare ``"auto"``, so intent-based mode
-    re-derivation can't silently change what is measured (with intent pinned
-    off for this arm it would be a no-op anyway, but this keeps the harness
-    correct if a future arm flips intent back on).
+    re-derivation can't silently change what is measured when intent is
+    pinned off; the B1b arm (``pin_intent_off=False``) deliberately measures
+    the intent layer instead, so that guarantee is scoped to this arm's mode
+    argument only, not to intent-driven redirects/k adjustments.
 
     ``run()`` returns thin formatted dicts (``result_view._format_search_results``)
     with no ``metadata`` field, so each result is rehydrated from the shared
@@ -628,6 +676,17 @@ async def _run_query(
             ``orchestrator``.
         search_mode: Threaded into the ``run()`` arguments dict. ``None``
             defaults to ``"hybrid"`` (matches the prior harness default).
+        pin_intent_off: Re-assert ``intent.enabled = False`` before this call
+            (see the comment below). ``run_single`` passes ``False`` (B1b)
+            when the arm's overrides already set ``intent.enabled`` via
+            ``arm_overrides.apply_overrides`` — otherwise this per-query
+            re-pin would silently undo the arm's override every query.
+
+    Returns:
+        ``(results, latency_ms, redirect_kind)``. ``redirect_kind`` is
+        ``"find_path"`` or ``"find_similar"`` when ``SearchOrchestrator.run()``
+        served a ``PlanRedirect`` instead of ordinary ``search_code`` results
+        (B1b), else ``None``.
     """
     start = time.perf_counter()
     arguments: dict[str, Any] = {
@@ -643,11 +702,13 @@ async def _run_query(
     # so any config-file write during the run -- e.g. a concurrent MCP server
     # process reading/writing the same project's search_config.json -- silently
     # reloads from disk and undoes the pin for the rest of the process. Re-assert
-    # per query so an external write can't flip intent back on mid-run. Revisit
-    # this when a future arm deliberately measures intent turned on.
+    # per query so an external write can't flip intent back on mid-run --
+    # UNLESS the B1b arm already turned intent on via arm_overrides, in which
+    # case re-asserting False here would defeat the arm (pin_intent_off=False).
     from search.config import get_search_config
 
-    get_search_config().intent.enabled = False
+    if pin_intent_off:
+        get_search_config().intent.enabled = False
     response = await orchestrator.run(arguments)
     latency_ms = (time.perf_counter() - start) * 1000.0
 
@@ -657,15 +718,28 @@ async def _run_query(
         getattr(searcher, "dense_index", None), "metadata_store", None
     )
     results: list[Any] = []
+    redirect_kind: str | None = None
     # A find_similar_code-style redirect (SearchOrchestrator's intent-based
-    # PlanRedirect can still route here if the pin above ever fails to hold)
-    # returns {"reference_chunk", "similar_chunks"} instead of {"results"} --
-    # reading only "results" silently produced retrieved=[] with no error or
-    # log (observed: all 9 category-F queries went empty in one 131q round).
-    # Fall back to "similar_chunks" so a redirect is scored, not dropped.
+    # PlanRedirect can still route here if the pin above ever fails to hold,
+    # or deliberately when the B1b arm turns intent on) returns
+    # {"reference_chunk", "similar_chunks"} instead of {"results"} -- reading
+    # only "results" silently produced retrieved=[] with no error or log
+    # (observed: all 9 category-F queries went empty in one 131q round). Fall
+    # back to "similar_chunks" so a redirect is scored, not dropped.
     formatted_list = response.get("results")
     if formatted_list is None:
-        formatted_list = response.get("similar_chunks") or []
+        formatted_list = response.get("similar_chunks")
+        if formatted_list is not None:
+            redirect_kind = "find_similar"
+        elif "path_found" in response:
+            # handle_find_path's response shape (B1b): a source->target node
+            # path, not a ranked chunk list -- nothing here is comparable to
+            # golden chunk IDs, so this query legitimately contributes 0 to
+            # "mrr" (unchanged, comparable to the existing canon chain).
+            # "mrr_excl_redirect" (run_single) is the fair comparison that
+            # drops find_path-redirected queries instead of zero-scoring them.
+            redirect_kind = "find_path"
+        formatted_list = formatted_list or []
     for formatted in formatted_list:
         chunk_id = formatted.get("chunk_id", "")
         entry = metadata_store.get(chunk_id) if metadata_store is not None else None
@@ -678,7 +752,7 @@ async def _run_query(
                 source=formatted.get("source", "unknown"),
             )
         )
-    return results, latency_ms
+    return results, latency_ms, redirect_kind
 
 
 def _extract_ranges_from_results(
@@ -877,6 +951,8 @@ async def run_benchmark(
     confound_recorder: "_EgoConfoundRecorder | None" = None,
     rerank_calls: list[tuple[int | None, int]] | None = None,
     community_lookup: dict[str, Any] | None = None,
+    intent_pinned_by_arm: bool = False,
+    intent_signal_recorder: "_IntentSignalRecorder | None" = None,
 ) -> tuple[list[dict[str, Any]], list[float]]:
     """Run all queries and return (per_query_results, latencies).
 
@@ -923,6 +999,17 @@ async def run_benchmark(
             ``file_recall_strict`` / ``file_recall_expanded`` (both at the
             run's k), plus the secondary ``mrr_community_credit`` when the
             index contains community chunks (omitted otherwise — N/A, not 0.0).
+        intent_pinned_by_arm: B1b — True when the current arm's overrides set
+            ``intent.enabled`` (``run_single`` checks ``"intent.enabled" in
+            overrides``), so ``_run_query``'s per-query intent-off re-pin must
+            be skipped (``pin_intent_off=False``) or it would silently undo
+            the arm's override every query.
+        intent_signal_recorder: Shared recorder from
+            ``_attach_intent_signal_recorder``; when provided, each per-query
+            row gains a ``"suggested_k_mismatch"`` dict whenever
+            ``SearchPlanner.plan()`` logged a GLOBAL-intent k bump for that
+            query (see ``_IntentSignalRecorder`` for why this is silent at
+            the harness's canonical k=10).
 
     Every successful query also gains ``file_recall@{5,10}`` /
     ``file_acc@{5,10}`` (SweRank max-pool rollup of the ordinary chunk-level
@@ -973,6 +1060,8 @@ async def run_benchmark(
             confound_recorder.reset()
         if rerank_calls is not None:
             rerank_calls.clear()
+        if intent_signal_recorder is not None:
+            intent_signal_recorder.reset()
 
         anchor = (
             item.get("anchor_chunk_id") if f_via_similar and category == "F" else None
@@ -989,15 +1078,25 @@ async def run_benchmark(
                     exclude_same_file=item.get("similar_exclude_same_file", False),
                 )
                 latency_ms = (time.perf_counter() - start) * 1000.0
+                redirect_kind = None
             else:
-                raw_results, latency_ms = await _run_query(
+                raw_results, latency_ms, redirect_kind = await _run_query(
                     orchestrator,
                     searcher,
                     query,
                     k=k,
                     search_mode=search_mode,
+                    pin_intent_off=not intent_pinned_by_arm,
                 )
             latencies.append(latency_ms)
+
+            # B1b: GLOBAL-intent k-bump signal (suggested_k != requested k),
+            # captured via _IntentSignalRecorder -- see its docstring for why
+            # this is structurally silent at the harness's canonical k=10.
+            suggested_k_mismatch: dict[str, int] | None = None
+            if intent_signal_recorder is not None and intent_signal_recorder.k_bump:
+                from_k, to_k = intent_signal_recorder.k_bump
+                suggested_k_mismatch = {"requested_k": from_k, "suggested_k": to_k}
 
             # Confound signals for this query (0f): the ego-gated secondary
             # rerank pass is the hybrid_searcher default-path call with
@@ -1177,6 +1276,12 @@ async def run_benchmark(
                     **({"f_via_similar": True} if anchor else {}),
                     **({"containment_credits": containment} if containment else {}),
                     **({"confounds": confounds} if confounds else {}),
+                    **({"redirect_kind": redirect_kind} if redirect_kind else {}),
+                    **(
+                        {"suggested_k_mismatch": suggested_k_mismatch}
+                        if suggested_k_mismatch
+                        else {}
+                    ),
                     **metrics,
                     **file_rollup_metrics,
                     **file_metrics,
@@ -1692,6 +1797,11 @@ async def run_single(
     overrides = dict(overrides)
     legacy_ego = overrides.pop(_LEGACY_EGO_KEY, {})
 
+    # B1b (ADR-0023): an arm that sets intent.enabled must survive
+    # _run_query's per-query intent-off re-pin, or the arm's own override
+    # would be silently undone on every query.
+    intent_pinned_by_arm = "intent.enabled" in overrides
+
     from search.config import get_search_config
 
     cfg = get_search_config()
@@ -1753,6 +1863,8 @@ async def run_single(
     # Confound instrumentation (0f)
     confound_recorder = _attach_ego_confound_recorder()
     rerank_calls = _instrument_rerank_calls(searcher)
+    # B1b intent-signal instrumentation
+    intent_signal_recorder = _attach_intent_signal_recorder()
 
     # Build line-range lookup for line-overlap metrics (one-time scan of MetadataStore)
     line_lookup = _build_line_lookup(searcher)
@@ -1775,14 +1887,52 @@ async def run_single(
         confound_recorder=confound_recorder,
         rerank_calls=rerank_calls,
         community_lookup=community_lookup,
+        intent_pinned_by_arm=intent_pinned_by_arm,
+        intent_signal_recorder=intent_signal_recorder,
     )
 
-    # Detach the recorder so repeated run_single calls (sweeps) don't stack handlers
+    # Detach the recorders so repeated run_single calls (sweeps) don't stack handlers
     logging.getLogger("search.ego_graph_retriever").removeHandler(confound_recorder)
+    logging.getLogger("mcp_server.tools.search_orchestrator").removeHandler(
+        intent_signal_recorder
+    )
 
     dataset_thresholds = dataset.get("thresholds") or {}
     agg = aggregate_metrics(per_query, thresholds=dataset_thresholds)
     avg_lat = round(mean(latencies), 1) if latencies else 0.0
+
+    # B1b (ADR-0023): find_path redirects can't be scored against golden
+    # chunk IDs (a path result has no ranked chunk list), so they silently
+    # scored 0 in the published `mrr`. Report both: `mrr` stays comparable to
+    # the whole canon chain, `mrr_excl_redirect` excludes only `find_path`
+    # redirects. `find_similar` redirects stay in `mrr` unmodified -- they're
+    # already fairly scored via the existing similar_chunks fallback.
+    redirect_ids = [q["id"] for q in per_query if q.get("redirect_kind") == "find_path"]
+    if agg and per_query:
+        non_redirect_mrr = [
+            float(q.get("mrr", 0.0))
+            for q in per_query
+            if q.get("redirect_kind") != "find_path"
+        ]
+        agg["mrr_excl_redirect"] = (
+            round(mean(non_redirect_mrr), 4) if non_redirect_mrr else 0.0
+        )
+        agg["redirect_rate"] = round(len(redirect_ids) / len(per_query), 4)
+        if redirect_ids:
+            print(
+                f"\n  Redirects: {len(redirect_ids)}/{len(per_query)} queries "
+                f"({agg['redirect_rate']:.1%}) resolved via find_path; "
+                f"mrr={agg['mrr']:.4f} mrr_excl_redirect={agg['mrr_excl_redirect']:.4f}"
+            )
+
+    # B1b: GLOBAL-intent suggested_k mismatches (see _IntentSignalRecorder --
+    # structurally silent at the harness's canonical k=10).
+    k_mismatches = [q for q in per_query if q.get("suggested_k_mismatch")]
+    if k_mismatches:
+        print(
+            f"  Intent k-bumps: {len(k_mismatches)}/{len(per_query)} queries "
+            "had suggested_k != requested_k"
+        )
 
     # Confound summary (0f): an A1 null result is only interpretable if we
     # know the gated machinery actually fired ("penalty useless" vs "penalty
@@ -1836,6 +1986,7 @@ async def run_single(
         "avg_latency_ms": avg_lat,
         "config_metadata": config_metadata,
         **({"confound_summary": confound_summary} if confound_summary else {}),
+        **({"redirect_ids": redirect_ids} if redirect_ids else {}),
         **(
             {"community_stats": community_lookup["stats"]}
             if community_lookup.get("stats")
