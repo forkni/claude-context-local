@@ -396,34 +396,40 @@ class TestPhase3RelationshipExtraction:
         result = report.to_dict()
         assert isinstance(result, dict)
 
-        # ImpactReport always carries every Phase 3 field (dataclass default
-        # factories in search/types.py), but to_dict() intentionally omits
-        # falsy/empty ones from the serialized payload ("omitting empty
-        # fields") to keep MCP responses lean. So check presence on the
-        # dataclass itself, not the (deliberately sparse) dict.
-        assert hasattr(report, "parent_classes")
-        assert hasattr(report, "child_classes")
-        assert hasattr(report, "uses_types")
-        assert hasattr(report, "used_as_type_in")
-        assert hasattr(report, "imports")
-        assert hasattr(report, "imported_by")
+        # ImpactReport.relationships holds every Phase 3 bucket the graph
+        # engine tracks (search/relationship_analyzer.py's
+        # _build_graph_relationships initializes one list per field in
+        # get_relationship_field_mapping()), but to_dict() intentionally
+        # omits falsy/empty ones from the serialized payload ("omitting
+        # empty fields") to keep MCP responses lean. So check presence via
+        # relationships, not the (deliberately sparse) dict.
+        assert isinstance(report.relationships.get("parent_classes", []), list)
+        assert isinstance(report.relationships.get("child_classes", []), list)
+        assert isinstance(report.relationships.get("uses_types", []), list)
+        assert isinstance(report.relationships.get("used_as_type_in", []), list)
+        assert isinstance(report.relationships.get("imports", []), list)
+        assert isinstance(report.relationships.get("imported_by", []), list)
 
         print(f"\nfind_connections output for {chunk_id}:")
-        print(f"  parent_classes: {len(report.parent_classes)}")
-        print(f"  child_classes: {len(report.child_classes)}")
-        print(f"  uses_types: {len(report.uses_types)}")
-        print(f"  used_as_type_in: {len(report.used_as_type_in)}")
-        print(f"  imports: {len(report.imports)}")
-        print(f"  imported_by: {len(report.imported_by)}")
+        print(
+            f"  parent_classes: {len(report.relationships.get('parent_classes', []))}"
+        )
+        print(f"  child_classes: {len(report.relationships.get('child_classes', []))}")
+        print(f"  uses_types: {len(report.relationships.get('uses_types', []))}")
+        print(
+            f"  used_as_type_in: {len(report.relationships.get('used_as_type_in', []))}"
+        )
+        print(f"  imports: {len(report.relationships.get('imports', []))}")
+        print(f"  imported_by: {len(report.relationships.get('imported_by', []))}")
 
         # At least one Phase 3 field should have data
         total_phase3 = (
-            len(report.parent_classes)
-            + len(report.child_classes)
-            + len(report.uses_types)
-            + len(report.used_as_type_in)
-            + len(report.imports)
-            + len(report.imported_by)
+            len(report.relationships.get("parent_classes", []))
+            + len(report.relationships.get("child_classes", []))
+            + len(report.relationships.get("uses_types", []))
+            + len(report.relationships.get("used_as_type_in", []))
+            + len(report.relationships.get("imports", []))
+            + len(report.relationships.get("imported_by", []))
         )
 
         assert total_phase3 > 0, (
@@ -471,8 +477,9 @@ class TestPhase3RelationshipExtraction:
         report = analyzer.analyze_impact(chunk_id=chunk_id)
 
         # Check uses_types field
-        if len(report.uses_types) > 0:
-            type_rel = report.uses_types[0]
+        uses_types = report.relationships.get("uses_types", [])
+        if len(uses_types) > 0:
+            type_rel = uses_types[0]
 
             # Verify structure
             assert "chunk_id" in type_rel
@@ -760,36 +767,46 @@ class TestPriority2RelationshipExtraction:
         result = report.to_dict()
         assert isinstance(result, dict)
 
-        # ImpactReport always carries every Priority 2 field (dataclass
-        # default factories in search/types.py), but to_dict() intentionally
-        # omits falsy/empty ones from the serialized payload ("omitting
-        # empty fields") to keep MCP responses lean. So check presence on
-        # the dataclass itself, not the (deliberately sparse) dict.
-        assert hasattr(report, "decorates"), "decorates field missing from ImpactReport"
-        assert hasattr(report, "decorated_by"), (
-            "decorated_by field missing from ImpactReport"
+        # ImpactReport.relationships holds every Priority 2 bucket the graph
+        # engine tracks, but to_dict() intentionally omits falsy/empty ones
+        # from the serialized payload ("omitting empty fields") to keep MCP
+        # responses lean. So check presence via relationships, not the
+        # (deliberately sparse) to_dict() output.
+        assert isinstance(report.relationships.get("decorates", []), list), (
+            "decorates bucket missing from ImpactReport.relationships"
         )
-        assert hasattr(report, "exceptions_raised"), (
-            "exceptions_raised field missing from ImpactReport"
+        assert isinstance(report.relationships.get("decorated_by", []), list), (
+            "decorated_by bucket missing from ImpactReport.relationships"
         )
-        assert hasattr(report, "exception_handlers"), (
-            "exception_handlers field missing from ImpactReport"
+        assert isinstance(report.relationships.get("exceptions_raised", []), list), (
+            "exceptions_raised bucket missing from ImpactReport.relationships"
         )
-        assert hasattr(report, "exceptions_caught"), (
-            "exceptions_caught field missing from ImpactReport"
+        assert isinstance(report.relationships.get("exception_handlers", []), list), (
+            "exception_handlers bucket missing from ImpactReport.relationships"
         )
-        assert hasattr(report, "instantiates"), (
-            "instantiates field missing from ImpactReport"
+        assert isinstance(report.relationships.get("exceptions_caught", []), list), (
+            "exceptions_caught bucket missing from ImpactReport.relationships"
         )
-        assert hasattr(report, "instantiated_by"), (
-            "instantiated_by field missing from ImpactReport"
+        assert isinstance(report.relationships.get("instantiates", []), list), (
+            "instantiates bucket missing from ImpactReport.relationships"
+        )
+        assert isinstance(report.relationships.get("instantiated_by", []), list), (
+            "instantiated_by bucket missing from ImpactReport.relationships"
         )
 
         print(f"\nfind_connections Priority 2 fields for {chunk_id}:")
-        print(f"  decorates: {len(report.decorates)}")
-        print(f"  decorated_by: {len(report.decorated_by)}")
-        print(f"  exceptions_raised: {len(report.exceptions_raised)}")
-        print(f"  exception_handlers: {len(report.exception_handlers)}")
-        print(f"  exceptions_caught: {len(report.exceptions_caught)}")
-        print(f"  instantiates: {len(report.instantiates)}")
-        print(f"  instantiated_by: {len(report.instantiated_by)}")
+        print(f"  decorates: {len(report.relationships.get('decorates', []))}")
+        print(f"  decorated_by: {len(report.relationships.get('decorated_by', []))}")
+        print(
+            f"  exceptions_raised: {len(report.relationships.get('exceptions_raised', []))}"
+        )
+        print(
+            f"  exception_handlers: {len(report.relationships.get('exception_handlers', []))}"
+        )
+        print(
+            f"  exceptions_caught: {len(report.relationships.get('exceptions_caught', []))}"
+        )
+        print(f"  instantiates: {len(report.relationships.get('instantiates', []))}")
+        print(
+            f"  instantiated_by: {len(report.relationships.get('instantiated_by', []))}"
+        )
