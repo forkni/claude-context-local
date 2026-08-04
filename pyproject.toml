@@ -111,7 +111,7 @@ dev = [
     "pyrefly>=1.1.1",
     "mutmut>=2.5.1",  # Phase 4.2: mutation testing; run periodically, not per-commit (Linux CI only)
     "cosmic-ray>=8.4",  # Phase 4.2: mutation testing; local cross-platform runner
-    "gitpython>=3.1.55",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
+    "gitpython>=3.1.57",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
 ]
 profile = [
     "snoop>=0.6.0",
