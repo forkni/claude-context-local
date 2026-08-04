@@ -469,7 +469,10 @@ source = [
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 81  # Ratcheted 2026-07-26: 82.59% measured at 3594 passing tests, full suite incl. slow_integration (branch coverage)
+fail_under = 81  # Ratcheted 2026-08-03: 83.52% measured at 5723 passing tests, CI-shaped suite
+# (tests/ --ignore=tests/slow_integration, --extra test --extra callgraph --extra otel --extra gpu,
+# branch coverage) — this is a coarse soft-floor tripwire; the real per-PR gate is Codecov's
+# `patch` target in codecov.yml (blocking on changed-line coverage, not this whole-repo number).
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
