@@ -117,11 +117,14 @@ def inject_call_edges(
 
             resolvers.append(
                 LibCSTResolver(
-                    use_pyproject_toml=getattr(cg_cfg, "use_pyproject_toml", False)
+                    use_pyproject_toml=(
+                        cg_cfg.use_pyproject_toml if cg_cfg is not None else False
+                    )
                 )
             )
             resolver_names.append("libcst")
-        # Stage 3 — basedpyright LSP resolver (opt-in, highest accuracy):
+        # Stage 3 — basedpyright LSP resolver (requested by default; no-ops
+        # unless the [lsp] extra is installed, highest accuracy):
         if cg_cfg is not None and cg_cfg.lsp_enabled:
             from chunking.relationships.lsp_call_graph import LSPResolver
 
@@ -143,7 +146,7 @@ def inject_call_edges(
         )
 
         # Apply min_confidence floor — discard edges below the threshold.
-        min_conf: float = getattr(cg_cfg, "min_confidence", 0.0) if cg_cfg else 0.0
+        min_conf: float = cg_cfg.min_confidence if cg_cfg else 0.0
         if min_conf > 0.0:
             before = len(merged)
             merged = {k: v for k, v in merged.items() if v.confidence >= min_conf}

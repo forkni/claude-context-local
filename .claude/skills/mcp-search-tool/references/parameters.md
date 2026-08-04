@@ -33,20 +33,24 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 | `chunk_type` | — | Filter by structure type (see below) |
 | `include_context` | true | Include similar chunks and relationships |
 | `auto_reindex` | true | Auto-reindex if index is stale |
-| `max_age_minutes` | schema **5**, effective varies | If omitted, the server falls back to `performance.max_index_age_minutes` (`search_orchestrator.py:233`), not the schema's 5 — dataclass factory default is 5.0, the shipped `search_config.json.example` sets 30.0, and this machine's local config sets 60.0. Pass the value explicitly if you need a specific staleness window. |
+| `max_age_minutes` | schema **5**, effective **30** | If omitted, the server falls back to `config.performance.max_index_age_minutes` (`SearchPlanner.plan` in `mcp_server/tools/search_orchestrator.py`), not the schema's 5 — dataclass factory default is 5.0, and both the shipped `search_config.json.example` and this machine's local config set 30.0. Pass the value explicitly if you need a specific staleness window. |
 | `ego_graph_enabled` | false | Enable k-hop graph expansion for neighbors |
 | `ego_graph_k_hops` | 2 | Graph traversal depth (range 1-5) |
 | `ego_graph_max_neighbors_per_hop` | 10 | Max neighbors per hop (range 1-50) |
 | `include_parent` | false | Also retrieve enclosing class when matching methods |
-| `output_format` | schema `"compact"`, effective `"ultra"` | If omitted, the server uses `config.output.format` (`mcp_server/server.py:323-326`), which ships as **`"ultra"`** (`search/config.py:299-301`, for 45-55% token reduction). Pass `output_format="compact"` or `"verbose"` explicitly to override. |
+| `output_format` | schema `"compact"`, effective `"ultra"` | If omitted, `handle_call_tool` (`mcp_server/server.py`) falls back to `config.output.format`, which ships as **`"ultra"`** (`OutputConfig.format` in `search/config.py`, for 45-55% token reduction). Pass `output_format="compact"` or `"verbose"` explicitly to override. |
 | `max_context_tokens` | 0 (no cap) | Token-budget cap to prevent context overflow |
 
-**chunk_type values (13):** "function", "class", "method", "module", "module_preamble", "decorated_definition", "interface", "enum", "struct", "type",
-"merged", "split_block", "community"
+**chunk_type values (12):** "function", "class", "method", "module", "module_preamble", "decorated_definition", "interface", "enum", "struct", "type",
+"merged", "split_block"
 
-**Result fields (always):** `chunk_id`, `kind`, `score`, `blended_score`, `centrality`, `source`
+**Result fields (always):** `file`, `lines`, `kind`, `score`, `chunk_id`, `source` (`_format_search_results` in `mcp_server/tools/result_view.py`).
 
-**Result fields (optional):** `complexity_score`, `graph`, `reranker_score`, `summary`
+**Present whenever the project has an indexed call graph** (on by default — `GraphEnhancedConfig.centrality_annotation`/`centrality_reranking` in
+`search/config.py`): `centrality`, `blended_score` (with the default `centrality_alpha=0.0`, `blended_score` is numerically identical to `score`).
+
+**Result fields (optional):** `name` (chunk has a name), `summary` (module chunks with a docstring), `reranker_score` (neural reranking ran),
+`complexity_score` (functions with a computed score).
 
 **Source values:** `"search"` (direct lexical/dense match), `"multi_hop"` (always-on semantic expansion of initial hits), `"graph_hop"` (always-on
 call/import graph expansion of initial hits), `"ego_graph"` (opt-in k-hop neighbors via `ego_graph_enabled=true`). See

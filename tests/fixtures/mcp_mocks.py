@@ -42,22 +42,16 @@ def make_hybrid_searcher_mock(
 
 def make_intent_decision_mock(
     intent_value: str = "local",
-    bm25: float = 0.3,
-    dense: float = 0.7,
     *,
     confidence: float = 0.95,
 ) -> Mock:
-    """Build a Mock shaped like IntentDecision with the given intent + weights."""
+    """Build a Mock shaped like IntentDecision with the given intent."""
     decision = Mock()
     decision.intent = Mock()
     decision.intent.value = intent_value
     decision.confidence = confidence
     decision.reason = "test"
-    decision.suggested_params = {
-        "bm25_weight": bm25,
-        "dense_weight": dense,
-        "search_mode": "hybrid",
-    }
+    decision.suggested_params = {"search_mode": "hybrid"}
     return decision
 
 
@@ -68,6 +62,7 @@ def make_app_config_mock() -> Mock:
     app_cfg.intent.semantic_enabled = False
     app_cfg.intent.confidence_threshold = 0.0
     app_cfg.intent.log_classifications = False
+    app_cfg.intent.default_intent = "HYBRID"
     app_cfg.performance.use_parallel_search = False
     app_cfg.performance.max_index_age_minutes = 5.0
     app_cfg.search_mode.default_max_context_tokens = 0

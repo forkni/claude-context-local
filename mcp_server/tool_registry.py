@@ -71,8 +71,8 @@ RETURNS:
 - query: the query string that was executed
 - results: ranked list of chunks, each with chunk_id, file, lines, kind
   (function/class/method/module/...), score, and — when available — name,
-  reranker_score, complexity_score, summary (module/community docstring
-  preview), source ("ego_graph" for expanded graph-neighbor results)
+  reranker_score, complexity_score, summary (module docstring preview),
+  source ("ego_graph" for expanded graph-neighbor results)
 - subgraph_nodes / subgraph_edges: present when a result subgraph is serialized
 - system_message: routing/reindex guidance for the calling model""",
         "input_schema": {
@@ -128,9 +128,8 @@ RETURNS:
                         "type",
                         "merged",
                         "split_block",
-                        "community",
                     ],
-                    "description": "Filter by code structure type (function, class, method, module, module_preamble, decorated_definition, interface, enum, struct, type, merged, split_block, community), or None for all",
+                    "description": "Filter by code structure type (function, class, method, module, module_preamble, decorated_definition, interface, enum, struct, type, merged, split_block), or None for all",
                 },
                 "include_context": {
                     "type": "boolean",
@@ -237,12 +236,12 @@ RETURNS:
                 "include_dirs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": 'Only index files in these directories (e.g., ["src/", "lib/"]). Uses path prefix matching. Immutable after project creation.',
+                    "description": 'Only index files in these directories (e.g., ["src/", "lib/"]). Uses path prefix matching. Omit to reuse the stored value from project creation; pass a new list to replace it wholesale (not merged), or [] to clear it. Changing this on an existing project forces a full (non-incremental) reindex.',
                 },
                 "exclude_dirs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": 'Exclude these directories from indexing (e.g., ["tests/", "vendor/"]). Uses path prefix matching. Immutable after project creation.',
+                    "description": 'Exclude these directories from indexing (e.g., ["tests/", "vendor/"]). Uses path prefix matching. Omit to reuse the stored value from project creation; pass a new list to replace it wholesale (not merged) — always include every directory you still want excluded — or [] to clear it. Changing this on an existing project forces a full (non-incremental) reindex.',
                 },
                 "output_format": {
                     "type": "string",
@@ -281,8 +280,12 @@ RETURNS:
                 },
                 "k": {
                     "type": "integer",
-                    "default": 4,
-                    "description": "Number of similar chunks to return (default: 4)",
+                    "description": "Number of similar chunks to return (default: the configured search_mode.default_k)",
+                },
+                "exclude_same_file": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Set true when you want cross-file analogues (sibling implementations in other files) — the reference chunk's own-file neighbors often dominate the top ranks. Leave false when you want neighbors within the reference chunk's own file (e.g. other methods of the same class).",
                 },
                 "output_format": {
                     "type": "string",
@@ -666,10 +669,11 @@ RETURNS:
 
 CALL-GRAPH ACCURACY:
 The call edges are produced by a layered resolver pipeline:
-  AST (0.5/0.7) → pyan (0.75) → libcst (0.90) → LSP (0.98, opt-in)
+  AST (0.5/0.7) → pyan (0.75) → libcst (0.90) → LSP (0.98)
 Higher-confidence resolvers upgrade lower-confidence edges for the same pair.
 Install `pip install -e ".[callgraph]"` to enable pyan3 + LibCST resolvers.
-Enable `lsp_enabled=true` in call_graph config for basedpyright LSP resolution.""",
+`lsp_enabled` is requested by default in call_graph config; basedpyright LSP
+resolution no-ops unless the `[lsp]` extra is installed.""",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -696,7 +700,7 @@ Enable `lsp_enabled=true` in call_graph config for basedpyright LSP resolution."
                 "relationship_types": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": 'Filter to only include specific relationship types (e.g., ["inherits", "imports", "decorates"]). If not provided, all relationship types are included. Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, assigns_to, reads_from, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager.',
+                    "description": 'Filter to only include specific relationship types (e.g., ["inherits", "imports", "decorates"]). If not provided, all relationship types are included. Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager. Note: uses_global and asserts_type require entity tracking (enable_entity_tracking, default True) and a reindex to populate on an existing index.',
                 },
                 "output_format": {
                     "type": "string",
@@ -769,7 +773,7 @@ RETURNS:
 
 Args:
     enabled: Enable/disable neural reranking (default: True)
-    model_name: Cross-encoder model to use (default: BAAI/bge-reranker-v2-m3)
+    model_name: Cross-encoder model to use (default: Alibaba-NLP/gte-reranker-modernbert-base)
     top_k_candidates: Number of candidates to rerank (default: 30)
 
 NOTE: this changes global server config (one active setting at a time). On the
@@ -807,19 +811,15 @@ RETURNS:
         },
     },
     "configure_chunking": {
-        "description": """Configure code chunking, splitting, and community-detection parameters. Changes are persisted to config; re-index the project to apply them to existing chunks.
+        "description": """Configure code chunking and splitting parameters. Changes are persisted to config; re-index the project to apply them to existing chunks.
 
 WHEN TO USE:
 - Tuning chunk granularity (max_chunk_lines, max_split_chars, sizing_mode) for
   a codebase with unusually large or small functions
-- Disabling community detection or file/community summaries to speed up
-  indexing on very large repos
+- Disabling file summaries to speed up indexing on very large repos
 
 Each field's factory default and valid range are documented on its own schema
-property below (see this tool's input schema). min_chunk_tokens (factory
-default 50) and max_merged_tokens (factory default 400) are not exposed as
-parameters of this tool, but both remain configurable via search_config.json
-(the shipped example sets max_merged_tokens=1000). Live values currently in
+property below (see this tool's input schema). Live values currently in
 effect may differ from factory defaults — check get_search_config_status.
 
 NOTE: this changes global server config (one active setting at a time). On the
@@ -831,31 +831,6 @@ RETURNS:
         "input_schema": {
             "type": "object",
             "properties": {
-                "enable_community_detection": {
-                    "type": "boolean",
-                    "description": "Enable/disable community detection",
-                },
-                "enable_community_merge": {
-                    "type": "boolean",
-                    "description": "Enable/disable community-based remerge (full index only)",
-                },
-                "community_resolution": {
-                    "type": "number",
-                    "description": "Resolution parameter for Louvain community detection (higher = more communities)",
-                    "minimum": 0.1,
-                    "maximum": 2.0,
-                },
-                "max_phantom_degree": {
-                    "type": "integer",
-                    "description": "Skip phantom nodes with >N callers to reduce graph noise (prevents builtins from creating O(N²) edges)",
-                    "minimum": 1,
-                    "maximum": 1000,
-                },
-                "token_estimation": {
-                    "type": "string",
-                    "enum": ["whitespace", "tiktoken"],
-                    "description": "Token estimation method - 'whitespace' (fast) or 'tiktoken' (accurate)",
-                },
                 "enable_large_node_splitting": {
                     "type": "boolean",
                     "description": "Enable/disable AST block splitting for large functions",
@@ -881,10 +856,6 @@ RETURNS:
                     "type": "boolean",
                     "description": "Enable/disable file-level module summary chunks (A2 feature)",
                 },
-                "enable_community_summaries": {
-                    "type": "boolean",
-                    "description": "Enable/disable community-level summary chunks (B1 feature)",
-                },
                 "sizing_mode": {
                     "type": "string",
                     "enum": ["fixed", "adaptive"],
@@ -907,6 +878,10 @@ RETURNS:
                     "description": "Cyclomatic complexity ceiling for Cv normalization — functions above this are treated as maximally complex",
                     "minimum": 5,
                     "maximum": 100,
+                },
+                "glsl_filter_td_prefix": {
+                    "type": "boolean",
+                    "description": "Filter TouchDesigner's TD-prefixed shader-include builtins (TDPanelSize, TDOutputSwizzle, ...) out of GLSL call-graph metadata. Disable for non-TouchDesigner GLSL projects where a real user-defined symbol might start with 'TD'.",
                 },
                 "output_format": {
                     "type": "string",
@@ -940,7 +915,7 @@ def build_tool_list(include_advanced: bool | None = None) -> list[Tool]:
             Tool(
                 name=name,
                 description=meta["description"],
-                inputSchema=meta["input_schema"],
+                input_schema=meta["input_schema"],
             )
         )
     return tools

@@ -125,7 +125,7 @@ def _format_search_results(results: list) -> list[dict]:
         # containing a hostile docstring could still relay prompt-injection-like
         # text to the calling LLM as part of a search result; no content
         # filtering is applied here today.
-        if result.metadata.get("chunk_type") in ("module", "community"):
+        if result.metadata.get("chunk_type") == "module":
             doc = result.metadata.get("docstring", "")
             if doc:
                 item["summary"] = doc[:200]

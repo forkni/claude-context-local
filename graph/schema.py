@@ -35,7 +35,7 @@ NODE_ATTR_IS_TARGET_NAME: str = "is_target_name"  # True on placeholder symbol n
 NODE_ATTR_IS_CALL_TARGET: str = "is_call_target"  # True on unresolved call-target nodes
 
 # Special value of NODE_ATTR_TYPE for placeholder nodes (unresolved call/symbol targets).
-# Used by community_detector and callee queries to filter real chunk nodes from phantoms.
+# Used by callee queries to filter real chunk nodes from phantoms.
 NODE_TYPE_SYMBOL_NAME: str = "symbol_name"
 
 # ---------------------------------------------------------------------------
@@ -52,7 +52,7 @@ EDGE_ATTR_IS_RESOLVED: str = (
     "is_resolved"  # True when target was resolved to a chunk_id
 )
 EDGE_ATTR_WEIGHT: str = (
-    "weight"  # edge weight used in community-detection collapsed graph
+    "weight"  # edge weight used in the benchmark's collapsed call-graph analysis
 )
 
 # ---------------------------------------------------------------------------

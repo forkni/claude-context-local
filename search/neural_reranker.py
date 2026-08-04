@@ -25,7 +25,7 @@ RERANKER_MODELS = {
 }
 
 # Generative rerankers (auto-detected by model name)
-GENERATIVE_RERANKERS = {"Qwen/Qwen3-Reranker-0.6B", "Qwen/Qwen3-Reranker-4B"}
+GENERATIVE_RERANKERS = {"Qwen/Qwen3-Reranker-0.6B"}
 
 # Jina v3 rerankers (listwise architecture)
 JINA_V3_RERANKERS = {"jinaai/jina-reranker-v3"}
@@ -44,16 +44,62 @@ def _resolve_single_token_id(tokenizer: "AutoModel", text: str) -> int:
     Raises:
         RuntimeError: If text cannot be resolved to a single token
     """
+    # Official Qwen3-Reranker recipe resolves yes/no via a direct vocabulary
+    # lookup (convert_tokens_to_ids), not encode(); prefer that exact lookup
+    # and fall back to encode()-based variants for tokenizers whose raw vocab
+    # entry differs (e.g. a leading-space or sentencepiece marker form).
+    direct_id = tokenizer.convert_tokens_to_ids(text)
+    if direct_id is not None and direct_id != tokenizer.unk_token_id:
+        return direct_id
     for variant in [text, f" {text}"]:
         ids = tokenizer.encode(variant, add_special_tokens=False)
         if len(ids) == 1:
             return ids[0]
     raise RuntimeError(
-        f"Cannot resolve '{text}' to a single token. "
-        f"Got {len(ids)} tokens for '{text}' and ' {text}'. "
+        f"Cannot resolve '{text}' to a single token via convert_tokens_to_ids "
+        f"or encode() variants ('{text}', ' {text}'). "
         f"Tokenizer: {type(tokenizer).__name__}. "
         f"Verify the model supports single-token Yes/No classification."
     )
+
+
+def _build_rerank_document(candidate, max_chars: int) -> str:
+    """Full chunk text with structural context, capped to the reranker's budget.
+
+    Fallback chain, highest fidelity first: ``bm25_text`` (full raw chunk
+    source, persisted per-chunk so ``resync_bm25_from_dense`` can rebuild BM25
+    from dense authority — see ``hybrid_searcher.py``) -> ``content_preview``
+    (legacy ≤200-char snippet) -> ``chunk_id`` (last resort when metadata is
+    entirely empty). Deliberately skips ``metadata["content"]``: on BM25-won
+    candidates that key holds the path/symbol-*augmented* BM25 document (see
+    ``search/tokenization.py:augment_bm25_document``), not clean source, and
+    it is absent on dense-won and expansion candidates.
+
+    Prepends ``ID: {chunk_id}\\n`` so both reranker classes see the same
+    structural context (file path + symbol name) that helps distinguish
+    methods from their containing classes.
+
+    Args:
+        candidate: SearchResult with ``.chunk_id`` and ``.metadata``
+        max_chars: Maximum length of the document body (header excluded)
+
+    Returns:
+        ``"ID: {chunk_id}\\n{body}"``, body truncated to ``max_chars``
+
+    Note: the ``ID:`` header is prepended *after* truncation, so it is never
+    counted against ``max_chars`` — the real per-document payload handed to
+    the reranker is ``max_chars`` plus header length. Harmless at today's
+    values, but any future packed-sequence budget arithmetic (see
+    ``JinaRerankerV3.__init__`` and ADR-0011) should account for it.
+    """
+    body = candidate.metadata.get("bm25_text") or candidate.metadata.get(
+        "content_preview", ""
+    )
+    if not body:
+        body = candidate.chunk_id
+    if len(body) > max_chars:
+        body = body[:max_chars]
+    return f"ID: {candidate.chunk_id}\n{body}"
 
 
 class BaseReranker(abc.ABC):
@@ -220,10 +266,15 @@ class NeuralReranker(BaseReranker):
         Args:
             query: The search query
             candidates: List of SearchResult objects from RRF
-            top_k: Number of results to return after reranking
+            top_k: Unused for scoring — kept for BaseReranker signature parity
+                (see JinaRerankerV3.rerank's docstring for why). ``model.predict``
+                already scores every candidate in one call (batch_size only
+                controls internal batching, not an early exit), so truncating
+                to top_k here first would only starve rerank_by_query's
+                dedupe_split_blocks backfill for free.
 
         Returns:
-            Reranked list of SearchResult objects with reranker_score in metadata
+            Full ranked list of SearchResult objects with reranker_score in metadata
         """
         if not candidates:
             return []
@@ -256,7 +307,7 @@ class NeuralReranker(BaseReranker):
         scored_candidates.sort(key=lambda x: x[1], reverse=True)
 
         results = []
-        for candidate, score in scored_candidates[:top_k]:
+        for candidate, score in scored_candidates:
             self._apply_rerank_score(candidate, score)
             results.append(candidate)
 
@@ -386,6 +437,8 @@ class GenerativeReranker(BaseReranker):
         model_name: str = "Qwen/Qwen3-Reranker-0.6B",
         device: str | None = None,
         instruction: str | None = None,
+        batch_size: int = 16,
+        doc_max_chars: int = 4000,
     ):
         """Initialize GenerativeReranker with lazy loading.
 
@@ -394,12 +447,32 @@ class GenerativeReranker(BaseReranker):
             device: Device to run on ('cuda', 'cpu', or None for auto-detect)
             instruction: Task instruction inserted into the official Qwen3-Reranker
                 <Instruct> field (Qwen3-Reranker is "Instruction Aware" per the model's
-                technical report). Defaults to a generic code-retrieval instruction.
+                technical report). ``None`` uses the default code-retrieval instruction;
+                pass ``""`` explicitly to send an empty instruction.
+            batch_size: Number of prompts per forward pass. Chunking keeps the
+                logits tensor bounded regardless of candidate-pool size (see rerank()).
+            doc_max_chars: Maximum document body length fed to the prompt (see
+                ``_build_rerank_document``). Pointwise architecture — cost scales
+                with ``batch_size * doc_max_chars`` per forward pass, so this can
+                afford a larger budget than the listwise ``JinaRerankerV3``.
         """
         self.model_name = model_name
-        self.instruction = instruction or _QWEN_RERANK_DEFAULT_INSTRUCTION
+        self.instruction = (
+            instruction if instruction is not None else _QWEN_RERANK_DEFAULT_INSTRUCTION
+        )
+        self.batch_size = batch_size
+        self.doc_max_chars = doc_max_chars
         self._model = None
         self._tokenizer = None
+        # Resolved once in _ensure_loaded() and reused by rerank()'s autocast call so
+        # the weight dtype and the autocast compute dtype never disagree (autocast's
+        # CUDA default is float16, which would silently undo a bf16 weight load).
+        self._autocast_dtype: torch.dtype | None = None
+        # Incremented on every fallback-to-original-order path (OOM/RuntimeError/
+        # ValueError during inference, or unresolvable yes/no token). A benchmark run
+        # with fallback_count > 0 produced RRF-order results for at least one batch and
+        # must be discarded — see rerank()'s except block.
+        self.fallback_count = 0
         # Serializes the tokenize+forward inference region — this class has no
         # _load_lock (its lazy load via _ensure_loaded() is unguarded, a pre-existing
         # gap out of scope here); _infer_lock still prevents concurrent callers from
@@ -427,15 +500,39 @@ class GenerativeReranker(BaseReranker):
             self._logger.info(f"Loading generative reranker: {self.model_name}")
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
+            # bfloat16 is Qwen3's native training dtype; fp16 can overflow at 4B.
+            # Resolved once and reused by rerank()'s autocast call (see __init__).
+            if self.device == "cuda":
+                self._autocast_dtype = (
+                    torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+                )
+            else:
+                self._autocast_dtype = torch.float32
+
             self._tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name, trust_remote_code=True
             )
+            # Qwen's own reference implementation left-pads so the last sequence
+            # position is the last real token for every row (see rerank()'s
+            # logits_to_keep=1 read of logits[:, -1, :]).
+            self._tokenizer.padding_side = "left"
+            # Truncate from the left (start) of the tokenized prompt so the
+            # assistant suffix (<|im_end|>...<think>...) that logits[:, -1, :]
+            # reads always survives — right truncation would eat it whenever a
+            # prompt exceeds max_length.
+            self._tokenizer.truncation_side = "left"
+
+            load_kwargs = {
+                "torch_dtype": self._autocast_dtype,
+                "trust_remote_code": True,
+            }
             self._model = AutoModelForCausalLM.from_pretrained(
-                self.model_name,
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                trust_remote_code=True,
+                self.model_name, **load_kwargs
             ).to(self.device)
-            self._logger.info(f"Generative reranker loaded on {self.device}")
+            self._logger.info(
+                f"Generative reranker loaded on {self.device} "
+                f"(dtype={self._autocast_dtype})"
+            )
 
     @property
     def model(self) -> "AutoModel":
@@ -481,6 +578,7 @@ class GenerativeReranker(BaseReranker):
             yes_token_id = _resolve_single_token_id(tokenizer, "yes")
             no_token_id = _resolve_single_token_id(tokenizer, "no")
         except RuntimeError as e:
+            self.fallback_count += 1
             self._logger.error(
                 f"Token resolution failed: {e}. Returning candidates in original order."
             )
@@ -495,9 +593,7 @@ class GenerativeReranker(BaseReranker):
         # (chat-wrapped <Instruct>/<Query>/<Document> fields; see module-level constants).
         prompts = []
         for candidate in candidates:
-            content = candidate.metadata.get("content_preview", "")
-            if not content:
-                content = candidate.chunk_id
+            content = _build_rerank_document(candidate, self.doc_max_chars)
             prompt = (
                 f"{_QWEN_RERANK_SYSTEM_PREFIX}"
                 f"<Instruct>: {self.instruction}\n<Query>: {query}\n<Document>: {content}"
@@ -507,39 +603,50 @@ class GenerativeReranker(BaseReranker):
 
         # Batched inference with graceful fallback. _infer_lock covers the whole
         # tokenize->forward region: the fast-tokenizer borrow happens in the
-        # tokenizer(...) call itself, not just the model forward pass.
+        # tokenizer(...) call itself, not just the model forward pass. Chunked into
+        # self.batch_size-sized groups so the logits tensor stays bounded regardless
+        # of candidate-pool size or max_length (top_k_candidates=30 at 4B would
+        # otherwise produce a single [30, max_length, vocab] multi-GiB forward pass
+        # on top of ~8 GB of weights).
+        scores: list[float] = []
         try:
             with self._infer_lock:
-                inputs = tokenizer(
-                    prompts,
-                    return_tensors="pt",
-                    padding=True,
-                    truncation=True,
-                    max_length=512,
-                ).to(self.device)
+                for start in range(0, len(prompts), self.batch_size):
+                    batch_prompts = prompts[start : start + self.batch_size]
+                    inputs = tokenizer(
+                        batch_prompts,
+                        return_tensors="pt",
+                        padding=True,
+                        truncation=True,
+                        max_length=2048,
+                    ).to(self.device)
 
-                with torch.no_grad():
-                    if self.device == "cuda":
-                        with torch.autocast(device_type="cuda"):
-                            outputs = model(**inputs)
-                    else:
-                        outputs = model(**inputs)
+                    with torch.no_grad():
+                        autocast_kwargs = {"device_type": "cuda"}
+                        if self._autocast_dtype is not None:
+                            autocast_kwargs["dtype"] = self._autocast_dtype
+                        if self.device == "cuda":
+                            with torch.autocast(**autocast_kwargs):
+                                outputs = model(**inputs, logits_to_keep=1)
+                        else:
+                            outputs = model(**inputs, logits_to_keep=1)
 
-                    # Find last real token position per sequence using attention_mask
-                    # attention_mask is 1 for real tokens, 0 for padding
-                    # Sum along seq dim gives count of real tokens; subtract 1 for 0-indexed
-                    last_token_indices = inputs["attention_mask"].sum(dim=1) - 1
+                        # With left padding + logits_to_keep=1, position -1 is the last
+                        # real token for every row (Qwen's own reference implementation
+                        # relies on the same invariant). Shrinks the logits tensor from
+                        # [B, seq, vocab] to [B, 1, vocab] — arithmetically identical to
+                        # the attention_mask-indexed lookup this replaces, just bounded.
+                        last_logits = outputs.logits[:, -1, :]
 
-                    # Extract logits at last-token positions: shape [batch, vocab_size]
-                    batch_indices = torch.arange(len(prompts), device=self.device)
-                    last_logits = outputs.logits[batch_indices, last_token_indices, :]
-
-                    # Softmax over [yes, no] token logits to get P(Yes)
-                    yn_logits = last_logits[:, [yes_token_id, no_token_id]]
-                    probs = torch.softmax(yn_logits, dim=1)
-                    scores = probs[:, 0].cpu().tolist()  # P(Yes) for each candidate
+                        # Softmax over [yes, no] token logits to get P(Yes)
+                        yn_logits = last_logits[:, [yes_token_id, no_token_id]]
+                        probs = torch.softmax(yn_logits, dim=1)
+                        scores.extend(
+                            probs[:, 0].cpu().tolist()
+                        )  # P(Yes) per candidate
 
         except (torch.cuda.OutOfMemoryError, RuntimeError, ValueError) as e:
+            self.fallback_count += 1
             self._logger.error(
                 f"Batched inference failed ({type(e).__name__}): {e}. "
                 "Returning candidates in original order."
@@ -588,32 +695,92 @@ class GenerativeReranker(BaseReranker):
 class JinaRerankerV3(BaseReranker):
     """Jina v3 listwise reranker with 'last but not late' interaction.
 
-    This reranker processes all documents together in a single context window,
-    using a novel architecture for more accurate relevance scoring.
-    CoIR benchmark: 70.64 (code retrieval optimized).
+    This reranker processes ALL candidates together in one shared context
+    window (a single forward pass with full cross-document attention), scoring
+    each document's embedding-marker position against the query's own
+    embedding-marker position via cosine similarity of projected embeddings
+    (arXiv 2509.25085v4 sec 3.1-3.2). The underlying model builds the prompt
+    itself (``format_docs_prompts_func``, incl. its special embedding-marker
+    tokens); this class must never construct that sandwich prompt by hand.
 
-    Performance:
-        - VRAM: ~1.5GB
-        - Latency: ~200-400ms (processes all docs together)
-        - Listwise: Up to 64 documents in 131K context
+    Performance (measured at doc_max_chars=1000, SSCG gate run, 30-candidate
+    pool, RTX 4090):
+        - VRAM: ~13.2GB peak (reserved-memory ratchet across a session —
+          see the ``empty_cache()`` policy note in ``rerank()``'s ``finally``)
+        - Latency: ~4000ms/query at 30 candidates x ~1000-char documents
+        - Listwise: released code uses ``block_size=125`` docs/forward pass;
+          our 30-candidate pool fits in a single block/forward pass. Context-
+          window occupancy is not the binding constraint though — raising
+          doc_max_chars to 4000 measured peak_vram_reserved_gb 27.66 on this
+          24GB card (WDDM spill to host RAM, no OOM) and ~3x latency with
+          42-45/96 queries stalling past 8s. See
+          docs/adr/0011-listwise-reranker-doc-cap.md.
 
     Example:
         >>> reranker = JinaRerankerV3()
         >>> results = reranker.rerank("authentication functions", candidates, top_k=10)
     """
 
+    #: Accepted ``dtype`` values -> torch dtype ("auto" = checkpoint default, bf16).
+    DTYPE_MAP: dict[str, "str | torch.dtype"] = {
+        "auto": "auto",
+        "fp32": torch.float32,
+        "bf16": torch.bfloat16,
+        "fp16": torch.float16,
+    }
+
     def __init__(
         self,
         model_name: str = "jinaai/jina-reranker-v3",
         device: str | None = None,
+        doc_max_chars: int = 1000,
+        dtype: str = "auto",
     ):
         """Initialize JinaRerankerV3 with lazy loading.
 
         Args:
             model_name: HuggingFace model ID for Jina reranker
             device: Device to run on ('cuda', 'cpu', or None for auto-detect)
+            dtype: Weight dtype — "auto" (checkpoint default, bf16), "fp32",
+                "bf16", or "fp16". bf16 listwise scoring is run-to-run
+                non-deterministic at ranking boundaries (context-dependent
+                scores + reduced mantissa); "fp32" doubles reranker VRAM
+                (~2.4 GB for the 0.6B model) in exchange for reproducible
+                scores.
+            doc_max_chars: Maximum document body length per candidate (see
+                ``_build_rerank_document``). Listwise architecture — ALL
+                candidates share one context window, so cost does scale with
+                ``top_k_candidates * doc_max_chars``. Context-window
+                occupancy alone looks safe raising this to 4000 — the
+                30-doc shared context only grows ~5.4K -> ~8.8K tokens of
+                the 131K window, and 0% of docs hit the model's own
+                2048-token per-doc ceiling at either cap — but that is not
+                the binding resource: attention activation memory scales
+                O(n^2) in the packed sequence length, and the paper's own
+                Table 5 lists an "Effective Sequence Length" of 8,192 as a
+                figure distinct from the 131K Context Length — the ~8.8K
+                estimate at 4000 already crosses that tighter, governing
+                budget while looking safe against the window alone. A
+                4-run SSCG sweep at
+                4000 measured peak_vram_reserved_gb 27.66 on a 24GB card (a
+                WDDM shared-memory spill to host RAM — no OOM raised) with
+                42-45/96 queries stalling past 8s (max 354.9s) and every
+                quality metric flat-to-negative within the noise floor. See
+                docs/adr/0011-listwise-reranker-doc-cap.md. 1000 chars
+                truncates 45.7% of chunks in this index (40.3% of
+                characters retained); 4000 truncates only 6.3% but is not
+                worth the cost above. Aligned with
+                ``GenerativeReranker.doc_max_chars`` in neither value nor
+                rationale — that budget is pointwise and stays at 4000.
         """
+        if dtype not in self.DTYPE_MAP:
+            raise ValueError(
+                f"Unsupported reranker dtype {dtype!r}; "
+                f"expected one of {sorted(self.DTYPE_MAP)}"
+            )
         self.model_name = model_name
+        self.doc_max_chars = doc_max_chars
+        self.dtype = dtype
         self._model = None
         self._logger = logging.getLogger(__name__)
         self._load_lock = threading.Lock()
@@ -678,15 +845,20 @@ class JinaRerankerV3(BaseReranker):
             )
 
         def _load_config(local_files_only: bool) -> AutoConfig:
-            cfg = AutoConfig.from_pretrained(
+            # Checkpoint ships no lm_head tensor (verified: 312 safetensors keys,
+            # zero lm_head.*) — leave tie_word_embeddings at its config default
+            # (True) so transformers satisfies lm_head from the tied embedding
+            # instead of allocating+randomly-initializing an untied 151936x1024
+            # Linear (152M params ~= 311MB bf16, wasted since forward() replaces
+            # lm_head with nn.Identity() anyway and never reads it). Untying was
+            # previously believed to suppress the "lm_head.weight | MISSING" LOAD
+            # REPORT; it does not — that report is a stdout print, silenced by
+            # _load_model()'s redirect_stdout below regardless of tying.
+            return AutoConfig.from_pretrained(
                 self.model_name,
                 trust_remote_code=True,
                 local_files_only=local_files_only,
             )
-            # Jina v3 replaces lm_head with nn.Identity(); disabling weight
-            # tying prevents the LOAD REPORT "lm_head.weight | MISSING" warning
-            cfg.tie_word_embeddings = False
-            return cfg
 
         try:
             config = _load_config(local_only)
@@ -708,15 +880,17 @@ class JinaRerankerV3(BaseReranker):
                     return AutoModel.from_pretrained(
                         self.model_name,
                         config=cfg,
-                        dtype="auto",  # Jina's custom parameter
+                        dtype=self.DTYPE_MAP[self.dtype],  # Jina's custom parameter
                         trust_remote_code=True,
                         local_files_only=local_files_only,
                     )
                 except TypeError:
-                    # dtype="auto" is Jina-specific; retry without it on older transformers
+                    # dtype is Jina-specific; retry without it on older
+                    # transformers (a non-"auto" request is re-applied via the
+                    # explicit .to(dtype) cast after loading).
                     self._logger.warning(
-                        f"dtype='auto' not supported (transformers {_tf.__version__}), "
-                        "retrying without it"
+                        f"dtype={self.dtype!r} not supported "
+                        f"(transformers {_tf.__version__}), retrying without it"
                     )
                     return AutoModel.from_pretrained(
                         self.model_name,
@@ -737,6 +911,11 @@ class JinaRerankerV3(BaseReranker):
             config = _load_config(False)
             self._model = _load_model(config, False)
 
+        if self.dtype != "auto":
+            # Cast on CPU before the device move so the requested dtype holds
+            # even when the TypeError fallback above dropped the load-time
+            # dtype kwarg (no-op when from_pretrained already honored it).
+            self._model = self._model.to(self.DTYPE_MAP[self.dtype])
         self._model = self._model.to(self.device)  # Move to GPU if available
         self._model.eval()
 
@@ -780,10 +959,18 @@ class JinaRerankerV3(BaseReranker):
         Args:
             query: The search query
             candidates: List of SearchResult objects
-            top_k: Number of results to return after reranking
+            top_k: Unused for the model call — kept for BaseReranker signature
+                parity with NeuralReranker/GenerativeReranker. Jina scores every
+                candidate in the same forward pass regardless (listwise), so
+                the full ranked list is returned; callers already slice to the
+                final k downstream (search_executor._run_rerank's own callers,
+                rerank_by_query's ``[:k]``) and rerank_by_query's
+                dedupe_split_blocks needs the full ranked list to backfill
+                collapsed split_block fragments — truncating here first would
+                starve that backfill.
 
         Returns:
-            Reranked list of SearchResult objects with reranker_score
+            Full ranked list of SearchResult objects with reranker_score
 
         Raises:
             RuntimeError: If model inference fails (OOM or other error)
@@ -792,22 +979,32 @@ class JinaRerankerV3(BaseReranker):
             return []
 
         # Extract document texts for Jina API
-        documents = []
-        for candidate in candidates:
-            content = candidate.metadata.get("content_preview", "")
-            if not content:
-                content = candidate.chunk_id
+        documents = [
+            _build_rerank_document(candidate, self.doc_max_chars)
+            for candidate in candidates
+        ]
 
-            # Prepend chunk_id to provide structural context (file path, symbol name)
-            # This helps distinguish methods from their containing classes
-            content = f"ID: {candidate.chunk_id}\n{content}"
-            documents.append(content)
-
-        # Call Jina's native rerank method (listwise) with error handling
+        # Call Jina's native rerank method (listwise) with error handling.
+        # top_n=None returns every candidate ranked (see docstring above).
+        # max_doc_length/max_query_length passed explicitly rather than
+        # relying on jina's defaults (2048/512) — our doc_max_chars (chars)
+        # is the binding truncation on this corpus; measured mean ~3.4
+        # chars/token means even doc_max_chars=4000 stays well under 2048
+        # tokens (0% of documents hit that ceiling at any cap tested). That
+        # only rules out the per-doc token ceiling as the limit, though —
+        # it does NOT mean 4000 is safe: attention activation memory scales
+        # O(n^2) in the packed sequence and empirically spills VRAM well
+        # before this ceiling (docs/adr/0011-listwise-reranker-doc-cap.md).
         model = self.model  # resolve (lazy load under _load_lock) before _infer_lock
         try:
             with self._infer_lock, torch.no_grad():
-                jina_results = model.rerank(query, documents, top_n=top_k)
+                jina_results = model.rerank(
+                    query,
+                    documents,
+                    top_n=None,
+                    max_doc_length=2048,
+                    max_query_length=512,
+                )
         except torch.cuda.OutOfMemoryError as e:
             self._logger.error(f"CUDA OOM during reranking: {e}")
             raise RuntimeError(f"Insufficient GPU memory for reranking: {e}") from e
@@ -872,7 +1069,13 @@ class JinaRerankerV3(BaseReranker):
 
 
 def create_reranker(
-    model_name: str, device: str | None = None, batch_size: int = 16
+    model_name: str,
+    device: str | None = None,
+    batch_size: int = 16,
+    instruction: str | None = None,
+    doc_max_chars: int = 4000,
+    listwise_doc_max_chars: int = 1000,
+    listwise_dtype: str = "auto",
 ) -> "NeuralReranker | GenerativeReranker | JinaRerankerV3":
     """Factory function to create appropriate reranker based on model name.
 
@@ -883,7 +1086,24 @@ def create_reranker(
     Args:
         model_name: HuggingFace model ID for reranker
         device: Device to run on ('cuda', 'cpu', or None for auto-detect)
-        batch_size: Batch size for inference (only used for NeuralReranker)
+        batch_size: Batch size for inference (NeuralReranker and GenerativeReranker;
+            JinaRerankerV3 does its own internal batching)
+        instruction: Only used for GenerativeReranker — see its docstring.
+        doc_max_chars: Only used for GenerativeReranker (pointwise — cost scales
+            with batch_size, so it can afford a larger per-document budget).
+        listwise_doc_max_chars: Only used for JinaRerankerV3 (listwise — ALL
+            candidates share one context window, so cost is O(n^2) in the
+            packed sequence via attention activation memory). Raising this
+            from 1000 to 4000 clears the context-window and per-doc-token
+            checks fine, but a 4-run SSCG sweep at 4000 measured
+            peak_vram_reserved_gb 27.66 on a 24GB card (WDDM spill, no OOM),
+            42-45/96 queries stalling past 8s, and no quality gain outside
+            the noise floor — see
+            docs/adr/0011-listwise-reranker-doc-cap.md. Not aligned with
+            ``doc_max_chars`` above by default; the two budgets are
+            independent on purpose.
+        listwise_dtype: Only used for JinaRerankerV3 — weight dtype ("auto",
+            "fp32", "bf16", "fp16"); see ``JinaRerankerV3.__init__``.
 
     Returns:
         NeuralReranker, GenerativeReranker, or JinaRerankerV3 instance
@@ -894,7 +1114,18 @@ def create_reranker(
         >>> reranker = create_reranker("BAAI/bge-reranker-v2-m3")   # Returns NeuralReranker
     """
     if model_name in GENERATIVE_RERANKERS:
-        return GenerativeReranker(model_name, device)  # No batch_size parameter
+        return GenerativeReranker(
+            model_name,
+            device,
+            instruction=instruction,
+            batch_size=batch_size,
+            doc_max_chars=doc_max_chars,
+        )
     if model_name in JINA_V3_RERANKERS:
-        return JinaRerankerV3(model_name, device)  # Listwise reranker
+        return JinaRerankerV3(
+            model_name,
+            device,
+            doc_max_chars=listwise_doc_max_chars,
+            dtype=listwise_dtype,
+        )  # Listwise reranker
     return NeuralReranker(model_name, device, batch_size)

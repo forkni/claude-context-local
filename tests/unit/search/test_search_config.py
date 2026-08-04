@@ -461,3 +461,538 @@ def test_reranker_single_pass_default_and_flat_alias():
 
     restored = SearchConfig.from_dict(config.to_dict())
     assert restored.reranker.single_pass is True
+
+
+def test_reranker_instruction_default_and_flat_alias():
+    """Defaults to ''; flat key maps into the nested schema and round-trips.
+
+    Only GenerativeReranker reads this field — see search/neural_reranker.py.
+    """
+    assert RerankerConfig().instruction == ""
+
+    config = SearchConfig.from_dict({"reranker_instruction": "custom instruction"})
+    assert config.reranker.instruction == "custom instruction"
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.reranker.instruction == "custom instruction"
+
+
+def test_reranker_instruction_env_override(tmp_path):
+    """CLAUDE_RERANKER_INSTRUCTION must override the nested config value."""
+    from search.config import SearchConfigManager
+
+    config_file = tmp_path / "search_config.json"
+    config_file.write_text(json.dumps({"reranker": {"instruction": ""}}))
+
+    with patch.dict(os.environ, {"CLAUDE_RERANKER_INSTRUCTION": "env instruction"}):
+        manager = SearchConfigManager(config_file=str(config_file))
+        config = manager.load_config()
+
+    assert config.reranker.instruction == "env instruction"
+
+
+def test_reranker_doc_max_chars_default_and_flat_alias():
+    """Defaults to 4000 (GenerativeReranker's pointwise budget); flat key round-trips."""
+    assert RerankerConfig().doc_max_chars == 4000
+
+    config = SearchConfig.from_dict({"reranker_doc_max_chars": 2500})
+    assert config.reranker.doc_max_chars == 2500
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.reranker.doc_max_chars == 2500
+
+
+def test_reranker_listwise_doc_max_chars_default_and_flat_alias():
+    """Defaults to 1000 (JinaRerankerV3's shared-context budget); flat key round-trips."""
+    assert RerankerConfig().listwise_doc_max_chars == 1000
+
+    config = SearchConfig.from_dict({"reranker_listwise_doc_max_chars": 500})
+    assert config.reranker.listwise_doc_max_chars == 500
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.reranker.listwise_doc_max_chars == 500
+
+
+def test_reranker_listwise_dtype_default_and_flat_alias():
+    """Defaults to "auto" (checkpoint bf16 — zero behavior change); flat key
+    round-trips. "fp32" is the opt-in determinism setting."""
+    assert RerankerConfig().listwise_dtype == "auto"
+
+    config = SearchConfig.from_dict({"reranker_listwise_dtype": "fp32"})
+    assert config.reranker.listwise_dtype == "fp32"
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.reranker.listwise_dtype == "fp32"
+
+
+def test_reranker_listwise_dtype_choices_validation():
+    """listwise_dtype carries a choices spec for validate_field_value."""
+    from search.config import validate_field_value
+
+    assert validate_field_value(RerankerConfig, "listwise_dtype", "fp32") is None
+    error = validate_field_value(RerankerConfig, "listwise_dtype", "float64")
+    assert error is not None and "listwise_dtype" in error
+
+
+def test_query_expansion_defaults():
+    """QueryExpansionConfig defaults: opt-in, BM25-only, 2 concepts, 0.5 discount."""
+    from search.config import QueryExpansionConfig
+
+    cfg = QueryExpansionConfig()
+    assert cfg.enabled is False
+    assert cfg.variants_path == ""
+    assert cfg.max_variants == 2
+    assert cfg.variant_weight_discount == 0.5
+    assert cfg.apply_to_bm25 is True
+    assert cfg.apply_to_dense is False
+
+
+def test_query_expansion_flat_aliases_and_roundtrip():
+    """Flat keys map into the nested query_expansion sub-config and round-trip."""
+    config = SearchConfig.from_dict(
+        {
+            "query_expansion_enabled": True,
+            "query_expansion_max_variants": 3,
+            "query_expansion_weight_discount": 0.25,
+            "query_expansion_apply_to_dense": True,
+        }
+    )
+    assert config.query_expansion.enabled is True
+    assert config.query_expansion.max_variants == 3
+    assert config.query_expansion.variant_weight_discount == 0.25
+    assert config.query_expansion.apply_to_dense is True
+
+    restored = SearchConfig.from_dict(config.to_dict())
+    assert restored.query_expansion.enabled is True
+    assert restored.query_expansion.max_variants == 3
+    assert restored.query_expansion.variant_weight_discount == 0.25
+    assert restored.query_expansion.apply_to_dense is True
+
+
+def test_query_expansion_in_to_dict():
+    """to_dict() serializes the query_expansion sub-config automatically."""
+    config_dict = SearchConfig().to_dict()
+    assert "query_expansion" in config_dict
+    assert config_dict["query_expansion"]["enabled"] is False
+
+
+def test_reranker_doc_max_chars_env_override(tmp_path):
+    """CLAUDE_RERANKER_DOC_MAX_CHARS must override the nested config value."""
+    from search.config import SearchConfigManager
+
+    config_file = tmp_path / "search_config.json"
+    config_file.write_text(json.dumps({"reranker": {"doc_max_chars": 4000}}))
+
+    with patch.dict(os.environ, {"CLAUDE_RERANKER_DOC_MAX_CHARS": "3000"}):
+        manager = SearchConfigManager(config_file=str(config_file))
+        config = manager.load_config()
+
+    assert config.reranker.doc_max_chars == 3000
+
+
+def test_reranker_listwise_doc_max_chars_env_override(tmp_path):
+    """CLAUDE_RERANKER_LISTWISE_DOC_MAX_CHARS must override the nested config value."""
+    from search.config import SearchConfigManager
+
+    config_file = tmp_path / "search_config.json"
+    config_file.write_text(json.dumps({"reranker": {"listwise_doc_max_chars": 1000}}))
+
+    with patch.dict(os.environ, {"CLAUDE_RERANKER_LISTWISE_DOC_MAX_CHARS": "750"}):
+        manager = SearchConfigManager(config_file=str(config_file))
+        config = manager.load_config()
+
+    assert config.reranker.listwise_doc_max_chars == 750
+
+
+def test_reranker_listwise_dtype_env_override(tmp_path):
+    """CLAUDE_RERANKER_LISTWISE_DTYPE must override the nested config value."""
+    from search.config import SearchConfigManager
+
+    config_file = tmp_path / "search_config.json"
+    config_file.write_text(json.dumps({"reranker": {"listwise_dtype": "auto"}}))
+
+    with patch.dict(os.environ, {"CLAUDE_RERANKER_LISTWISE_DTYPE": "fp32"}):
+        manager = SearchConfigManager(config_file=str(config_file))
+        config = manager.load_config()
+
+    assert config.reranker.listwise_dtype == "fp32"
+
+
+# ---------------------------------------------------------------------------
+# Per-project overrides layer (ADR-0014): search_overrides.json in the active
+# project's storage dir is deep-merged over the global file; env still wins.
+# ---------------------------------------------------------------------------
+
+
+def _write_overrides(storage_dir, overrides, **extra):
+    """Write a search_overrides.json into *storage_dir* and return its path."""
+    from search.config import PROJECT_OVERRIDES_FILENAME
+
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "probe_version": "1",
+        "generated_at": "2026-07-29T00:00:00",
+        "overrides": overrides,
+        "reasons": {},
+        "observations": [],
+    }
+    payload.update(extra)
+    path = storage_dir / PROJECT_OVERRIDES_FILENAME
+    path.write_text(json.dumps(payload))
+    return path
+
+
+class TestProjectOverrides:
+    """search_overrides.json merge layer in SearchConfigManager.load_config."""
+
+    def _manager(self, tmp_path, global_config=None):
+        config_file = tmp_path / "search_config.json"
+        config_file.write_text(json.dumps(global_config or {}))
+        from search.config import SearchConfigManager
+
+        return SearchConfigManager(config_file=str(config_file))
+
+    def test_no_active_project_is_baseline(self, tmp_path, monkeypatch):
+        """With no active project dir, load_config behaves exactly as before."""
+        import search.config as config_module
+
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", None)
+        manager = self._manager(tmp_path, {"performance": {"max_chunking_workers": 10}})
+        config = manager.load_config()
+
+        assert config.performance.max_chunking_workers == 10
+        assert manager.get_active_overrides_meta() is None
+
+    def test_overrides_merge_over_global_file(self, tmp_path, monkeypatch):
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        _write_overrides(
+            storage,
+            {
+                "performance": {"max_chunking_workers": 12},
+                "reranker": {"batch_size": 8},
+            },
+        )
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        manager = self._manager(tmp_path, {"performance": {"max_chunking_workers": 8}})
+        config = manager.load_config()
+
+        assert config.performance.max_chunking_workers == 12
+        assert config.reranker.batch_size == 8
+        # Untouched sibling fields keep their global/default values
+        assert config.performance.use_parallel_search is True
+
+    def test_env_wins_over_project_overrides(self, tmp_path, monkeypatch):
+        """Precedence: env > per-project overrides > global file > defaults."""
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        _write_overrides(storage, {"performance": {"max_chunking_workers": 12}})
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        with patch.dict(os.environ, {"CLAUDE_MAX_CHUNKING_WORKERS": "3"}):
+            config = self._manager(tmp_path).load_config()
+
+        assert config.performance.max_chunking_workers == 3
+
+    def test_overrides_meta_provenance(self, tmp_path, monkeypatch):
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        path = _write_overrides(
+            storage,
+            {
+                "performance": {"max_chunking_workers": 12},
+                "reranker": {"batch_size": 8},
+            },
+        )
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        meta = self._manager(tmp_path).get_active_overrides_meta()
+
+        assert meta is not None
+        assert meta["path"] == str(path)
+        assert meta["probe_version"] == "1"
+        assert meta["generated_at"] == "2026-07-29T00:00:00"
+        assert meta["keys"] == [
+            "performance.max_chunking_workers",
+            "reranker.batch_size",
+        ]
+
+    def test_hand_edit_hot_reloads_without_new_manager(self, tmp_path, monkeypatch):
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        path = _write_overrides(storage, {"performance": {"max_chunking_workers": 12}})
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        manager = self._manager(tmp_path)
+        assert manager.load_config().performance.max_chunking_workers == 12
+
+        _write_overrides(storage, {"performance": {"max_chunking_workers": 6}})
+        # Force a distinct mtime — same-second writes can otherwise collide.
+        os.utime(path, (os.path.getmtime(path) + 10, os.path.getmtime(path) + 10))
+
+        assert manager.load_config().performance.max_chunking_workers == 6
+
+    def test_project_switch_invalidates_cache(self, tmp_path, monkeypatch):
+        """Changing the active storage dir applies the new project's overrides."""
+        import search.config as config_module
+
+        storage_a = tmp_path / "project_a"
+        storage_b = tmp_path / "project_b"
+        _write_overrides(storage_a, {"performance": {"max_chunking_workers": 12}})
+        _write_overrides(storage_b, {"performance": {"max_chunking_workers": 2}})
+
+        monkeypatch.setattr(
+            config_module, "_active_project_storage_dir", str(storage_a)
+        )
+        manager = self._manager(tmp_path)
+        assert manager.load_config().performance.max_chunking_workers == 12
+
+        config_module.set_active_project_storage_dir(storage_b)
+        assert manager.load_config().performance.max_chunking_workers == 2
+
+        # Detaching drops the layer entirely (back to global/defaults).
+        config_module.set_active_project_storage_dir(None)
+        assert manager.load_config().performance.max_chunking_workers != 2
+
+    def test_env_escape_hatch_disables_layer(self, tmp_path, monkeypatch):
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        _write_overrides(storage, {"performance": {"max_chunking_workers": 12}})
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        with patch.dict(os.environ, {"CLAUDE_DISABLE_PROJECT_OVERRIDES": "1"}):
+            manager = self._manager(tmp_path)
+            config = manager.load_config()
+            meta = manager.get_active_overrides_meta()
+
+        assert config.performance.max_chunking_workers == 8  # dataclass default
+        assert meta is None
+
+    def test_global_flag_escape_hatch_and_no_self_enable(self, tmp_path, monkeypatch):
+        """performance.enable_project_overrides=false in the GLOBAL file disables
+        the layer, and the overrides file cannot re-enable itself."""
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        _write_overrides(
+            storage,
+            {
+                "performance": {
+                    "max_chunking_workers": 12,
+                    "enable_project_overrides": True,
+                }
+            },
+        )
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        manager = self._manager(
+            tmp_path, {"performance": {"enable_project_overrides": False}}
+        )
+
+        assert manager.load_config().performance.max_chunking_workers == 8
+        assert manager.get_active_overrides_meta() is None
+
+    def test_malformed_overrides_file_recovered(self, tmp_path, monkeypatch):
+        """Malformed overrides JSON: warn + skip the layer, global config loads."""
+        import search.config as config_module
+        from search.config import PROJECT_OVERRIDES_FILENAME
+
+        storage = tmp_path / "project_storage"
+        storage.mkdir()
+        (storage / PROJECT_OVERRIDES_FILENAME).write_text("{not valid json")
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        manager = self._manager(tmp_path, {"performance": {"max_chunking_workers": 10}})
+
+        assert manager.load_config().performance.max_chunking_workers == 10
+        assert manager.get_active_overrides_meta() is None
+
+    def test_overrides_wrong_type_recovered(self, tmp_path, monkeypatch):
+        """'overrides' being a non-object skips the layer instead of crashing."""
+        import search.config as config_module
+        from search.config import PROJECT_OVERRIDES_FILENAME
+
+        storage = tmp_path / "project_storage"
+        storage.mkdir()
+        (storage / PROJECT_OVERRIDES_FILENAME).write_text(
+            json.dumps({"probe_version": "1", "overrides": ["not", "a", "dict"]})
+        )
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        manager = self._manager(tmp_path)
+        manager.load_config()
+
+        assert manager.get_active_overrides_meta() is None
+
+    def test_dotted_keys_flattening(self):
+        from search.config import _dotted_keys
+
+        assert _dotted_keys(
+            {
+                "performance": {"max_chunking_workers": 12, "enable_fp16": True},
+                "output": {},
+            }
+        ) == [
+            "output",
+            "performance.enable_fp16",
+            "performance.max_chunking_workers",
+        ]
+
+    def test_save_config_does_not_promote_override_into_global_file(
+        self, tmp_path, monkeypatch
+    ):
+        """save_config must not write the active project's overridden field
+        back into the global config file (Phase 1b, ADR-0018 follow-on).
+
+        Every load_config() -> mutate -> save_config() handler (e.g.
+        handle_configure_search_mode) would otherwise silently promote a
+        per-project override into the global file the moment any *other*
+        field is saved.
+        """
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        _write_overrides(storage, {"search_mode": {"bm25_weight": 0.9}})
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        manager = self._manager(tmp_path, {"search_mode": {"bm25_weight": 0.5}})
+        config = manager.load_config()
+        assert config.search_mode.bm25_weight == 0.9  # override applied in-memory
+
+        # Mutate an unrelated field and save, mirroring what a config-writing
+        # MCP handler does.
+        config.performance.max_chunking_workers = 99
+        manager.save_config(config)
+
+        on_disk = json.loads((tmp_path / "search_config.json").read_text())
+        assert on_disk["performance"]["max_chunking_workers"] == 99
+        # The override must NOT have been promoted into the global file --
+        # it keeps the global file's own pre-existing value.
+        assert on_disk["search_mode"]["bm25_weight"] == 0.5
+
+    def test_save_config_prunes_override_absent_from_global_file(
+        self, tmp_path, monkeypatch
+    ):
+        """When the global file never set the overridden field at all, saving
+        omits it entirely rather than writing the project-scoped value."""
+        import search.config as config_module
+
+        storage = tmp_path / "project_storage"
+        _write_overrides(storage, {"search_mode": {"bm25_weight": 0.9}})
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", str(storage))
+
+        # Global file has a search_mode section but never sets bm25_weight.
+        manager = self._manager(tmp_path, {"search_mode": {"rrf_k_parameter": 60}})
+        config = manager.load_config()
+        assert config.search_mode.bm25_weight == 0.9
+
+        manager.save_config(config)
+
+        on_disk = json.loads((tmp_path / "search_config.json").read_text())
+        assert "bm25_weight" not in on_disk["search_mode"]
+
+    def test_save_config_unchanged_when_no_overrides_active(
+        self, tmp_path, monkeypatch
+    ):
+        """With no active project overrides, save_config behaves exactly as
+        before Phase 1b -- the pruning guard is a no-op."""
+        import search.config as config_module
+
+        monkeypatch.setattr(config_module, "_active_project_storage_dir", None)
+
+        manager = self._manager(tmp_path, {"search_mode": {"bm25_weight": 0.5}})
+        config = manager.load_config()
+        assert manager.get_active_overrides_meta() is None
+
+        config.search_mode.bm25_weight = 0.42
+        manager.save_config(config)
+
+        on_disk = json.loads((tmp_path / "search_config.json").read_text())
+        assert on_disk["search_mode"]["bm25_weight"] == 0.42
+
+
+# ---------------------------------------------------------------------------
+# search_config.json.example must cover the full dataclass field surface --
+# commit 84046622 claimed this but nothing enforced it, which is exactly how
+# the missing performance.enable_project_overrides key went unnoticed.
+# ---------------------------------------------------------------------------
+
+
+# The two model fields are deliberately allowed to diverge in value between
+# the dataclass default and search_config.json.example (ADR-0022 / Phase 2):
+# .example is the portable template for arbitrary hardware, the dataclass
+# default targets this workstation. Key presence is still required for both.
+_MODEL_VALUE_EXEMPT_FIELDS = {
+    ("embedding", "model_name"),
+    ("reranker", "model_name"),
+}
+
+
+def test_example_config_covers_full_dataclass_surface():
+    """search_config.json.example's keys and values must match the dataclass
+    surface exactly, apart from the two model fields' values.
+
+    Bidirectional (ADR-0022): a stray/renamed key in the example survives a
+    one-directional 'missing' check just as easily as a field silently
+    dropped from the example would -- the same class of gap that let
+    'performance.enable_project_overrides' go missing from the shipped
+    template despite being a real, load-bearing field. Value parity guards
+    against the dataclass defaults quietly drifting away from the documented
+    template (the exact divergence Phase 2 found and fixed for 19 fields).
+    """
+    import dataclasses
+    import json
+
+    from search.config import SearchConfig
+    from search.config_paths import _REPO_ROOT
+
+    example_path = _REPO_ROOT / "search_config.json.example"
+    assert example_path.exists(), f"missing {example_path}"
+
+    example = json.loads(example_path.read_text())
+
+    # Every declared sub-config must have a top-level section in the example.
+    assert set(SearchConfig._SUBCONFIG_FIELDS) == set(example.keys()), (
+        "search_config.json.example top-level sections don't match "
+        "SearchConfig._SUBCONFIG_FIELDS"
+    )
+
+    default_config = SearchConfig()
+    value_mismatches = []
+
+    for section_name in SearchConfig._SUBCONFIG_FIELDS:
+        subconfig_type = SearchConfig._SUBCONFIG_TYPES[section_name]
+        field_names = {f.name for f in dataclasses.fields(subconfig_type)}
+        example_keys = set(example[section_name].keys())
+
+        missing = field_names - example_keys
+        stray = example_keys - field_names
+        assert not missing and not stray, (
+            f"search_config.json.example['{section_name}'] keys diverge from "
+            f"{subconfig_type.__name__}'s fields -- missing {sorted(missing)}, "
+            f"stray (renamed/removed?) {sorted(stray)}"
+        )
+
+        default_section = getattr(default_config, section_name)
+        for field_name in field_names:
+            if (section_name, field_name) in _MODEL_VALUE_EXEMPT_FIELDS:
+                continue
+            default_value = getattr(default_section, field_name)
+            example_value = example[section_name][field_name]
+            if default_value != example_value:
+                value_mismatches.append(
+                    f"  {section_name}.{field_name}: dataclass default "
+                    f"{default_value!r} != example {example_value!r}"
+                )
+
+    assert not value_mismatches, (
+        "search_config.json.example value(s) diverge from the dataclass "
+        "default (see ADR-0022 / Phase 2 default alignment):\n"
+        + "\n".join(value_mismatches)
+    )

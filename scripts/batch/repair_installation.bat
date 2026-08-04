@@ -5,6 +5,10 @@ REM Installation Repair Script - Fixes common installation issues
 title Claude Context Installation Repair
 pushd "%~dp0..\.." || (echo ERROR: Failed to change directory & exit /b 1)
 
+REM uv cache must share a volume with .venv -- NTFS hardlinks cannot span
+REM volumes, which silently degrades every sync to a full byte-copy.
+set "UV_CACHE_DIR=%CD%\.uv-cache"
+
 echo ========================================
 echo Claude Context Installation Repair Tool
 echo ========================================

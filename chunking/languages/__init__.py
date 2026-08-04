@@ -3,8 +3,8 @@
 This package contains chunker implementations for different programming languages.
 Each language has its own module with a LanguageChunker subclass.
 
-Supported languages (9 total):
-- Python (.py) - also available via AST-based chunker (chunking/python_ast_chunker.py)
+Supported languages (9 total, all via tree-sitter):
+- Python (.py)
 - JavaScript (.js)
 - TypeScript (.ts, .tsx)
 - Go (.go)
@@ -14,7 +14,8 @@ Supported languages (9 total):
 - C# (.cs)
 - GLSL (.glsl, .frag, .vert, .comp, .geom, .tesc, .tese, .glslinc)
 
-Note: Python also has a separate AST-based chunker (chunking/python_ast_chunker.py)
+Note: chunking/python_ast_chunker.py holds only the shared CodeChunk dataclass,
+not a separate Python chunking path.
 """
 
 from .base import LanguageChunker, TreeSitterChunk

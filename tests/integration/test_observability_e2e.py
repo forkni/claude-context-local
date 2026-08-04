@@ -15,9 +15,7 @@ from __future__ import annotations
 import pytest
 
 
-opentelemetry = pytest.importorskip(
-    "opentelemetry", reason="opentelemetry not installed"
-)
+pytest.importorskip("opentelemetry.sdk", reason="opentelemetry-sdk not installed")
 
 from opentelemetry import trace as otel_trace  # noqa: E402
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource  # noqa: E402

@@ -1,4 +1,6 @@
 {
+  "acc@10": 0.0,
+  "acc@5": 0.0,
   "hit": false,
   "hit@7": false,
   "mrr": 0.0,

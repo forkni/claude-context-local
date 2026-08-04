@@ -7,8 +7,30 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
+from search.config import SearchConfig
 from search.multi_hop_searcher import MultiHopSearcher
 from search.reranker import SearchResult
+from search.types import RetrievalRequest
+
+
+def _request(query="test query", k=2, search_mode="hybrid", config=None, filters=None):
+    """Build a RetrievalRequest for MultiHopSearcher.search tests.
+
+    config defaults to a bare MagicMock — search() no longer calls
+    _get_config_via_service_locator() itself, so a test that used to patch
+    that function now sets up its config Mock and hands it here instead.
+    """
+    return RetrievalRequest(
+        query=query,
+        k=k,
+        search_mode=search_mode,
+        bm25_weight=0.35,
+        dense_weight=0.65,
+        min_bm25_score=0.0,
+        use_parallel=True,
+        filters=filters,
+        config=config if config is not None else MagicMock(),
+    )
 
 
 class TestMultiHopSearcher:
@@ -235,14 +257,11 @@ class TestMultiHopSearcher:
         # Verify no metadata lookups occurred
         self.mock_dense_index.get_chunk_by_id.assert_not_called()
 
-    @patch("search.multi_hop_searcher._get_config_via_service_locator")
-    def test_search_single_hop(self, mock_config):
+    def test_search_single_hop(self):
         """Test multi-hop search with hops=1 (no expansion)."""
-        # Mock config
         config = MagicMock()
         config.multi_hop.initial_k_multiplier = 2.0
         config.reranker.single_pass = False
-        mock_config.return_value = config
 
         # Mock single-hop search results
         initial_results = [
@@ -253,7 +272,8 @@ class TestMultiHopSearcher:
 
         # Perform search
         results = self.searcher.search(
-            query="test query", k=2, search_mode="hybrid", hops=1
+            _request(query="test query", k=2, search_mode="hybrid", config=config),
+            hops=1,
         )
 
         # Should return initial results directly (no expansion or reranking)
@@ -262,14 +282,11 @@ class TestMultiHopSearcher:
         self.mock_dense_index.get_similar_chunks_batched.assert_not_called()
         self.mock_reranking_engine.rerank_by_query.assert_not_called()
 
-    @patch("search.multi_hop_searcher._get_config_via_service_locator")
-    def test_search_multi_hop(self, mock_config):
+    def test_search_multi_hop(self):
         """Test multi-hop search with expansion and reranking."""
-        # Mock config
         config = MagicMock()
         config.multi_hop.initial_k_multiplier = 2.0
         config.reranker.single_pass = False
-        mock_config.return_value = config
 
         # Mock query embedding
         query_emb = np.array([1.0, 0.0, 0.0])
@@ -298,9 +315,7 @@ class TestMultiHopSearcher:
 
         # Perform search
         results = self.searcher.search(
-            query="test query",
-            k=2,
-            search_mode="hybrid",
+            _request(query="test query", k=2, search_mode="hybrid", config=config),
             hops=2,
             expansion_factor=0.3,
         )
@@ -311,14 +326,80 @@ class TestMultiHopSearcher:
         self.mock_dense_index.get_similar_chunks_batched.assert_called_once()
         self.mock_reranking_engine.rerank_by_query.assert_called_once()
 
-    @patch("search.multi_hop_searcher._get_config_via_service_locator")
-    def test_search_multi_hop_single_pass_skips_rerank(self, mock_config):
+    def test_search_multi_hop_tags_hop1_rank(self):
+        """Hop-1 survivors get metadata["hop1_rank"] = 1-based rank, so a
+        downstream rerank-window reserve can identify them after the merged
+        pool's score-scale sort (:270 in reranking_engine.py) reorders them
+        away from hop-1 order."""
+        config = MagicMock()
+        config.multi_hop.initial_k_multiplier = 2.0
+        config.reranker.single_pass = False
+
+        query_emb = np.array([1.0, 0.0, 0.0])
+        self.mock_embedder.embed_query.return_value = query_emb
+
+        initial_results = [
+            SearchResult(chunk_id="chunk1", score=0.9, metadata={}),
+            SearchResult(chunk_id="chunk2", score=0.8, metadata={}),
+        ]
+        self.mock_single_hop_callback.return_value = initial_results
+
+        batched_results = {
+            "chunk1": [("chunk3", 0.7, {"file": "test.py"})],
+            "chunk2": [("chunk4", 0.6, {"file": "test.py"})],
+        }
+        self.mock_dense_index.get_similar_chunks_batched.return_value = batched_results
+        self.mock_reranking_engine.rerank_by_query.return_value = initial_results
+
+        self.searcher.search(
+            _request(query="test query", k=2, search_mode="hybrid", config=config),
+            hops=2,
+            expansion_factor=0.3,
+        )
+
+        assert initial_results[0].metadata["hop1_rank"] == 1
+        assert initial_results[1].metadata["hop1_rank"] == 2
+
+    def test_search_multi_hop_threads_hop1_reserved_slots(self):
+        """The merge-pool rerank call passes config.reranker.hop1_reserved_slots
+        through to RerankingEngine.rerank_by_query — the only call site that
+        does (ego-tail calls in HybridSearcher keep the parameter's 0 default)."""
+        config = MagicMock()
+        config.multi_hop.initial_k_multiplier = 2.0
+        config.reranker.single_pass = False
+        config.reranker.hop1_reserved_slots = 5
+
+        query_emb = np.array([1.0, 0.0, 0.0])
+        self.mock_embedder.embed_query.return_value = query_emb
+
+        initial_results = [
+            SearchResult(chunk_id="chunk1", score=0.9, metadata={}),
+            SearchResult(chunk_id="chunk2", score=0.8, metadata={}),
+        ]
+        self.mock_single_hop_callback.return_value = initial_results
+
+        batched_results = {
+            "chunk1": [("chunk3", 0.7, {"file": "test.py"})],
+            "chunk2": [("chunk4", 0.6, {"file": "test.py"})],
+        }
+        self.mock_dense_index.get_similar_chunks_batched.return_value = batched_results
+        self.mock_reranking_engine.rerank_by_query.return_value = initial_results
+
+        self.searcher.search(
+            _request(query="test query", k=2, search_mode="hybrid", config=config),
+            hops=2,
+            expansion_factor=0.3,
+        )
+
+        call_kwargs = self.mock_reranking_engine.rerank_by_query.call_args.kwargs
+        assert call_kwargs["hop1_reserved_slots"] == 5
+
+    def test_search_multi_hop_single_pass_skips_rerank(self):
         """Q3 single_pass: merge keeps fusion/expansion score order and
         truncates to k without calling the neural reranker."""
         config = MagicMock()
         config.multi_hop.initial_k_multiplier = 2.0
         config.reranker.single_pass = True
-        mock_config.return_value = config
 
         query_emb = np.array([1.0, 0.0, 0.0])
         self.mock_embedder.embed_query.return_value = query_emb
@@ -336,9 +417,7 @@ class TestMultiHopSearcher:
         self.mock_dense_index.get_similar_chunks_batched.return_value = batched_results
 
         results = self.searcher.search(
-            query="test query",
-            k=2,
-            search_mode="hybrid",
+            _request(query="test query", k=2, search_mode="hybrid", config=config),
             hops=2,
             expansion_factor=0.3,
         )
@@ -349,20 +428,19 @@ class TestMultiHopSearcher:
         assert scores == sorted(scores, reverse=True)
         assert results[0].chunk_id == "chunk1"
 
-    @patch("search.multi_hop_searcher._get_config_via_service_locator")
-    def test_search_no_initial_results(self, mock_config):
+    def test_search_no_initial_results(self):
         """Test multi-hop search when no initial results found."""
-        # Mock config
         config = MagicMock()
         config.multi_hop.initial_k_multiplier = 2.0
         config.reranker.single_pass = False
-        mock_config.return_value = config
 
         # Mock empty initial results
         self.mock_single_hop_callback.return_value = []
 
         # Perform search
-        results = self.searcher.search(query="test query", k=5, hops=2)
+        results = self.searcher.search(
+            _request(query="test query", k=5, config=config), hops=2
+        )
 
         # Should return empty list
         assert results == []
@@ -371,14 +449,11 @@ class TestMultiHopSearcher:
         self.mock_dense_index.get_similar_chunks_batched.assert_not_called()
         self.mock_reranking_engine.rerank_by_query.assert_not_called()
 
-    @patch("search.multi_hop_searcher._get_config_via_service_locator")
-    def test_search_embedding_cache(self, mock_config):
+    def test_search_embedding_cache(self):
         """Test that query embedding is cached for reuse."""
-        # Mock config
         config = MagicMock()
         config.multi_hop.initial_k_multiplier = 2.0
         config.reranker.single_pass = False
-        mock_config.return_value = config
 
         # Mock query embedding
         query_emb = np.array([1.0, 0.0, 0.0])
@@ -391,7 +466,10 @@ class TestMultiHopSearcher:
         self.mock_single_hop_callback.return_value = initial_results
 
         # Perform search with semantic mode
-        self.searcher.search(query="test query", k=2, search_mode="semantic", hops=1)
+        self.searcher.search(
+            _request(query="test query", k=2, search_mode="semantic", config=config),
+            hops=1,
+        )
 
         # Verify embedding was computed once
         self.mock_embedder.embed_query.assert_called_once_with("test query")
@@ -403,26 +481,24 @@ class TestMultiHopSearcher:
 
     def test_search_bm25_mode_no_embedding(self):
         """Test that BM25 mode doesn't compute embeddings."""
-        # Mock config
-        with patch(
-            "search.multi_hop_searcher._get_config_via_service_locator"
-        ) as mock_config:
-            config = MagicMock()
-            config.multi_hop.initial_k_multiplier = 2.0
-            config.reranker.single_pass = False
-            mock_config.return_value = config
+        config = MagicMock()
+        config.multi_hop.initial_k_multiplier = 2.0
+        config.reranker.single_pass = False
 
-            # Mock initial results
-            initial_results = [
-                SearchResult(chunk_id="chunk1", score=0.9, metadata={}),
-            ]
-            self.mock_single_hop_callback.return_value = initial_results
+        # Mock initial results
+        initial_results = [
+            SearchResult(chunk_id="chunk1", score=0.9, metadata={}),
+        ]
+        self.mock_single_hop_callback.return_value = initial_results
 
-            # Perform search with BM25 mode
-            self.searcher.search(query="test query", k=2, search_mode="bm25", hops=1)
+        # Perform search with BM25 mode
+        self.searcher.search(
+            _request(query="test query", k=2, search_mode="bm25", config=config),
+            hops=1,
+        )
 
-            # Verify no embedding was computed
-            self.mock_embedder.embed_query.assert_not_called()
+        # Verify no embedding was computed
+        self.mock_embedder.embed_query.assert_not_called()
 
     # Phase 3 Tests: Graph-based expansion
 
@@ -570,14 +646,12 @@ class TestMultiHopSearcher:
         assert all_results["src/b.py:20-30:function:bar"].source == "graph_hop"
         assert all_results["src/c.py:40-50:function:baz"].source == "multi_hop"
 
-    @patch("search.multi_hop_searcher._get_config_via_service_locator")
-    def test_search_dispatches_graph_mode(self, mock_config):
+    def test_search_dispatches_graph_mode(self):
         """Test search() dispatches to graph expansion when mode is 'graph'."""
-        mock_multi_hop_config = MagicMock()
-        mock_multi_hop_config.initial_k_multiplier = 2.0
-        mock_multi_hop_config.multi_hop_mode = "graph"
-        mock_config.return_value.multi_hop = mock_multi_hop_config
-        mock_config.return_value.reranker.single_pass = False
+        config = MagicMock()
+        config.multi_hop.initial_k_multiplier = 2.0
+        config.multi_hop.multi_hop_mode = "graph"
+        config.reranker.single_pass = False
 
         # Provide initial results from hop 1
         self.mock_single_hop_callback.return_value = [
@@ -598,7 +672,7 @@ class TestMultiHopSearcher:
             kwargs["results"]
         )
 
-        self.searcher.search(query="test", k=5, hops=2)
+        self.searcher.search(_request(query="test", k=5, config=config), hops=2)
 
         # Verify graph_storage.get_neighbors was called (graph mode)
         self.mock_graph_storage.get_neighbors.assert_called()
@@ -700,8 +774,14 @@ class TestIntentAdaptiveWeights:
         with patch.object(self.searcher, "_graph_expand") as mock_expand:
             mock_expand.return_value = {}  # timings dict
 
-            # Search with custom edge_weights
-            self.searcher.search(query="test", k=5, hops=2, edge_weights=custom_weights)
+            # Search with custom edge_weights (real config: multi_hop_mode
+            # defaults to "hybrid", which dispatches through _hybrid_expand
+            # into _graph_expand — the method under test here)
+            self.searcher.search(
+                _request(query="test", k=5, config=SearchConfig()),
+                hops=2,
+                edge_weights=custom_weights,
+            )
 
             # Verify _graph_expand was called with edge_weights
             assert mock_expand.called

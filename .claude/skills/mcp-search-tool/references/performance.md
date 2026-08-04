@@ -2,7 +2,7 @@
 
 ## Latest Validation (2026-07-26/27, post-Q2-sweep, `top_k_candidates=30`, F2LLM-v2-0.6B + jina-reranker-v3, RTX 4090 24GB)
 
-Current-config benchmark headline, run **after** the Q2 sweep retuned `RerankerConfig.top_k_candidates` (`search/config.py:281`) from 50 to **30**
+Current-config benchmark headline, run **after** the Q2 sweep retuned `RerankerConfig.top_k_candidates` (`search/config.py`) from 50 to **30**
 (quality-neutral within ±0.025, 32% faster). These runs used this machine's locally deployed models (`codefuse-ai/F2LLM-v2-0.6B` embedder +
 `jinaai/jina-reranker-v3` reranker per `search_config.json`) — not the shipped code defaults (`BAAI/bge-m3` +
 `Alibaba-NLP/gte-reranker-modernbert-base`); treat these numbers as validation of the *tuning*, not a claim about out-of-the-box behavior on a fresh
@@ -81,7 +81,7 @@ All thresholds pass: MRR ≥ 0.50 ✓ | Recall@5 ≥ 0.55 ✓ | Hit@5 ≥ 0.80 �
 
 Note: the 2026-06-08 13-query baseline (MRR 0.797) used a smaller query set; numbers not directly comparable to this 63-query run.
 
-## DSPy Agent Eval (2026-06-26, 77-query dataset, 4-tool, 18 test queries)
+## DSPy Agent Eval (historical — subsystem removed, ADR-0016; 2026-06-26, 77-query dataset, 4-tool, 18 test queries)
 
 Full 4-tool harness (search_code, find_connections, find_path, find_similar_code) against the 18-query held-out test split (A–F coverage). Prior
 baselines used 2 tools — those were an eval artifact; this is the corrected reference.
@@ -219,5 +219,5 @@ high LR (0.852) confirms the search is surfacing the correct file regions.
 - **Why k=7 over k=5:** targets may rank 6–7 on complex or multi-target queries. The `golden_dataset.recommended_k=7` reflects this.
 - **Rank-1 reliability:** all modes have P@1 ≈ 0.69 (MRR 0.797 — not all primaries rank first). Always scan all k results before concluding.
 - **When rank-1 is most reliable:** exact symbol lookup, small function discovery ("get X", "validate Y").
-- **When you must scan all results:** class overview, sibling pairs ("encode and decode", "save and load"), queries where module/community summary
+- **When you must scan all results:** class overview, sibling pairs ("encode and decode", "save and load"), queries where module summary
   chunks may surface.

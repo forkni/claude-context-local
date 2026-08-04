@@ -180,6 +180,10 @@ ENV/
 env.bak/
 venv.bak/
 
+# Repo-local uv cache (installer sets UV_CACHE_DIR here so hardlinks work --
+# see install-windows.cmd; cache and .venv must share a volume)
+.uv-cache/
+
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -277,7 +281,6 @@ docs/*
 !docs/VSCODE_SETUP.md
 !docs/VERSION_HISTORY.md
 !docs/OBSERVABILITY.md
-!docs/DSPY_SETUP.md
 
 # Development-only documentation (local-only)
 # - AUTOMATED_GIT_WORKFLOW.md (Claude orchestration guide - development only)
@@ -339,7 +342,6 @@ tests/integration/test_token_efficiency_workflow.py
 tests/integration/test_graph_search.py
 
 # Local development test files
-tests/fast_integration/test_mmap_cleanup.py
 tests/toon_format_test_results.txt
 tests/toon_format_understanding_test.md
 

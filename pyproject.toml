@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-context-local"
-version = "0.22.0"
+version = "0.23.0"
 description = "Local semantic code search for Claude Code (MCP) using FAISS, hybrid BM25+semantic search, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -28,17 +28,16 @@ keywords = [
     "python",
 ]
 dependencies = [
-    "aiohttp>=3.14.1",  # Security: Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1)
-    "cryptography>=46.0.7",  # Security: PYSEC-2026-35/36 (DNS name-constraint bypass, buffer overflow). Defer GHSA-537c (OpenSSL wheel, needs 48.x major bump).
-    "einops>=0.8.0",  # Required for CodeRankEmbed model
+    "aiohttp>=3.14.3",  # Security: Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1); CVE-2026-59881 (3.14.2); CVE-2026-69243 (3.14.2); CVE-2026-69244 (3.14.3)
+    "cryptography>=50.0.0",  # Security: PYSEC-2026-35/36 (DNS name-constraint bypass, buffer overflow); CVE-2026-69247 (50.0.0). Defer GHSA-537c (OpenSSL wheel, needs 48.x major bump).
     "faiss-cpu>=1.14.3",
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
     "huggingface-hub>=1.3.0",  # transformers>=5.3.0 requires >=1.3.0,<2
     "idna>=3.15",  # Security: CVE-2026-45409
-    "mcp>=1.28.1,<2",  # <2: mcp v2 (beta 2026-06-30) has breaking changes. Security: 1.28.1 fixes CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin validation)
+    "mcp>=2,<3",  # v2: migrated to the SDK v2 API (decorator->constructor-kwarg handlers, see ADR-0017). Security: carries forward 1.28.1's CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin validation) fixes
     "msgpack>=1.2.1",  # Security: GHSA-6v7p-g79w-8964 (SEGV on repeated unpack after error)
     "networkx>=3.0",  # Required for graph storage and community detection
-    "nltk>=3.9.4",  # Security: Fixes CVE-2025-14009 (path traversal in downloader). CVE-2026-12243 (incomplete fix, path traversal) has no release yet -- see "Deferred (no upstream fix)" block below
+    "nltk>=3.10.0",  # Security: Fixes CVE-2025-14009 (path traversal in downloader), CVE-2026-54293 (URL-encoded path traversal in nltk.data.load()), and takes 3.9.4 out of CVE-2026-12243's affected range
     "psutil>=7.2.1",
     "pydantic-settings>=2.14.2",  # Security: GHSA-4xgf-cpjx-pc3j (symlink follow in secrets_dir)
     "pygments>=2.20.0",  # Security: CVE-2026-4539 (ReDoS in AdlLexer)
@@ -53,7 +52,7 @@ dependencies = [
     "starlette>=1.3.1",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
     "tiktoken>=0.12.0",
     "torch>=2.8.0,<2.9.0",  # 2.9.x breaks ModernBERT torch.compile (template conflict)
-    "transformers>=5.3.0,<6",  # Security: >=5.3.0 fixes CVE-2026-4372 (config.json RCE) & CVE-2026-1839 (Trainer RCE); <6 pre-major. Drops the old <4.58 optimum-onnx cap -- see [onnx] extra note below.
+    "transformers>=5.3.0,<6",  # Security: >=5.3.0 fixes CVE-2026-4372 (config.json RCE) & CVE-2026-1839 (Trainer RCE); <6 pre-major.
     "tree-sitter>=0.25.0,<0.26",  # ABI: no tree-sitter-* grammar package supports the 0.26 ABI yet (max on PyPI is 0.25.0); loading grammars raises OverflowError under 0.26
     "tree-sitter-c>=0.24.2",
     "tree-sitter-c-sharp>=0.23.5",
@@ -65,7 +64,6 @@ dependencies = [
     "tree-sitter-rust>=0.24.2",
     "tree-sitter-typescript>=0.23.2",
     "urllib3>=2.7.0",  # Security: CVE-2026-44431/44432 (redirect + over-decompression)
-    "dspy>=3.2.1",
 ]
 
 classifiers = [
@@ -111,27 +109,13 @@ dev = [
     "pyrefly>=1.1.1",
     "mutmut>=2.5.1",  # Phase 4.2: mutation testing; run periodically, not per-commit (Linux CI only)
     "cosmic-ray>=8.4",  # Phase 4.2: mutation testing; local cross-platform runner
-    "gitpython>=3.1.55",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
+    "gitpython>=3.1.57",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
+    "deptry>=0.25.1",  # /deps-audit Phase 1.7: dependency-usage hygiene check; declared to match what summarize_audit.py installs into this venv
 ]
-profile = [
-    "snoop>=0.6.0",
-    "py-heat>=0.0.6",
-]
-# onnx = ["optimum[onnxruntime-gpu]>=1.25.0"]  # TEMPORARILY REMOVED (2026-07-03)
-# ONNX conversion/runtime backend is unsupported for now: optimum[onnxruntime-gpu]
-# caps transformers<4.52 even at its latest release, which is incompatible with the
-# transformers>=5.3.0 security upgrade above (fixes CVE-2026-4372/CVE-2026-1839).
-# The ONNX code paths (embeddings/onnx_loader.py, embeddings/onnx_wrapper.py,
-# tools/convert_onnx.py) are untouched and dormant (search/config.py use_onnx=False
-# by default; optimum imports are lazy + ImportError-guarded with a PyTorch fallback).
-# Restore this extra once optimum ships transformers-5 compatibility.
-# See tools/convert_onnx.py for standalone conversion usage (requires manual
-# `pip install optimum[onnxruntime-gpu]` against a pinned transformers<5 env).
 gpu = [
     # nvidia-ml-py (pynvml): NVML bindings for device-level GPU memory reporting.
-    # Used by _get_nvml_used_bytes() (model_loader.py) and _check_vram_status()
-    # on the ONNX path (#53/#56).  Separate from the onnx extra so PyTorch-path
-    # users can also get accurate VRAM readings without the ONNX runtime.
+    # Used by mcp_server/tools/status_handlers.py's get_memory_status MCP tool
+    # (gated only on torch.cuda.is_available(), no ONNX condition).
     # Install: uv pip install -e .[gpu]
     "nvidia-ml-py>=12.535.77",
 ]
@@ -156,18 +140,30 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-07-26 (pip-audit — the 2026-07-25 gitpython>=3.1.55 bump was declared in
-#             pyproject.toml/uv.lock but never installed into .venv; GitPython 3.1.50 stayed
-#             live with all 8 CVEs until this audit re-synced it to 3.1.56. Also dropped
-#             tree-sitter-java: a declared runtime dependency with no LANGUAGE_SPECS/
-#             EXT_TO_LANGUAGE entry, kept alive only by scripts/verify_installation.py
-#             asserting its presence. Remaining: diskcache/sqlitedict/nltk, no upstream
-#             fix — see "Deferred (no upstream fix)" block below.)
+# Last audit: 2026-08-04 (`/deps-audit` — 169 packages, pip check clean. Found aiohttp 3.14.1
+#             (CVE-2026-59881, CVE-2026-69243, CVE-2026-69244; fix 3.14.3), cryptography 49.0.0
+#             (CVE-2026-69247; fix 50.0.0), and confirmed the venv's installed gitpython had
+#             already drifted ahead to 3.1.57 without the declared floor being raised to match
+#             — same record/reality drift class as the 2026-07-25/26 GitPython incident, this
+#             time in the other direction. Also flagged via GitHub code-scanning alerts (superset
+#             of pip-audit): lycheeverse/lychee-action pinned to v1.10.0 in
+#             .github/workflows/docs-validation.yml, GHSA-65rg-554r-9j5x, fixed 2.0.2 (bumped
+#             separately, not a Python dependency). Remaining: diskcache/sqlitedict/torch, no
+#             upstream fix — see "Deferred (no upstream fix)" block below.)
+#
+# Previous audit: 2026-07-30 (pip-audit — default PyPI service cannot resolve local-version wheels
+#             (torch 2.8.0+cu128) and silently skip_reason's them out of every report; re-ran with
+#             `-s osv` and found torch carries 8 CVEs, now tracked below. Also found nltk 3.10.0
+#             is a real fix for CVE-2026-54293 (confirmed via OSV affected-range query) and that
+#             the system `uv` on PATH had drifted to 0.9.26 (2 open CVEs) despite the >=0.11.24
+#             tracking comment below — same record/reality drift class as the 2026-07-25/26
+#             GitPython incident. Remaining: diskcache/sqlitedict/torch, no upstream fix — see
+#             "Deferred (no upstream fix)" block below.)
 #
 # Direct dependency security updates:
-# mcp>=1.28.1,<2       # Fixes CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin); <2 guards against mcp v2 breaking changes (beta 2026-06-30)
-# nltk>=3.9.4          # Fixes CVE-2025-14009 (path traversal in zipfile.extractall)
-# aiohttp>=3.14.1      # Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1)
+# mcp>=2,<3            # Fixes CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin), carried forward from 1.28.1; migrated to SDK v2 API (ADR-0017)
+# nltk>=3.10.0         # Fixes CVE-2025-14009 (path traversal in zipfile.extractall), CVE-2026-54293 (URL-encoded path traversal in nltk.data.load())
+# aiohttp>=3.14.3      # Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1); CVE-2026-59881/69243 (3.14.2); CVE-2026-69244 (3.14.3)
 # python-dotenv>=1.2.2 # Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)
 # starlette>=1.3.1     # Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
 # transformers>=5.3.0,<6 # Fixes CVE-2026-4372 (config.json RCE, 5.3.0), CVE-2026-1839 (Trainer RCE, 5.0.0)
@@ -175,7 +171,7 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 #
 # Transitive dependency security updates:
 # click>=8.3.3             # Fixes CVE-2026-7246 (command injection in click.edit())
-# cryptography>=46.0.7     # Fixes CVE-2026-34073 (46.0.6 DNS name-constraint), CVE-2026-39892 (46.0.7 buffer overflow)
+# cryptography>=50.0.0     # Fixes CVE-2026-34073 (46.0.6 DNS name-constraint), CVE-2026-39892 (46.0.7 buffer overflow), CVE-2026-69247 (50.0.0)
 # idna>=3.18               # Fixes CVE-2026-45409 (incomplete fix of CVE-2024-3651, DoS in idna.encode)
 # msgpack>=1.2.1           # Fixes GHSA-6v7p-g79w-8964 (repeated unpacker SEGV)
 # pip>=26.1.2              # Fixes CVE-2025-8869, CVE-2026-1703, CVE-2026-3219, CVE-2026-6357, CVE-2026-8643
@@ -188,7 +184,7 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # setuptools>=83.0.0       # Fixes CVE-2026-59890 (MANIFEST.in path traversal); enforced via [build-system].requires
 #                          # (not a runtime dependency — uv doesn't seed setuptools into .venv at all as of 2026-07-25)
 # urllib3>=2.7.0           # Fixes CVE-2026-44431 (cross-origin redirect), CVE-2026-44432 (decompression)
-# uv>=0.11.24              # Fixes GHSA-4gg8-gxpx-9rph (0.11.15, malicious-wheel path traversal)
+# uv>=0.11.24              # Fixes GHSA-4gg8-gxpx-9rph (0.11.15, malicious-wheel path traversal), GHSA-pjjw-68hj-v9mw (0.11.6, arbitrary file deletion via RECORD entries)
 # werkzeug>=3.1.4          # Fixes CVE-2025-66221 (Windows device name handling)
 # wheel>=0.46.3            # Fixes CVE-2026-24049 (path traversal in unpack)
 #
@@ -196,13 +192,47 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # * transformers PYSEC-2025-217 (X-CLIP checkpoint-conversion RCE) — no fix; not applicable (no X-CLIP conversion use)
 # * transformers PYSEC-2026-2290 / CVE-2026-5241 (LightGlue model-load RCE) — no fix; not applicable (no LightGlue use)
 # * diskcache CVE-2025-69872, sqlitedict CVE-2024-35515 (pickle RCE) — no upstream fix; sqlitedict mitigated via JSON serialization (metadata.py)
-# * nltk CVE-2026-12243 (path traversal, incomplete fix of CVE-2025-14009) — no upstream fix as of nltk 3.10.0
-#   (checked 2026-07-26: no changelog/advisory confirms a fix; OSV still reports fix_versions=[]);
-#   no untrusted NLTK data paths in this project — the only calls are nltk.data.find("corpora/stopwords")
-#   and nltk.download("stopwords", quiet=True) with hardcoded literals (search/bm25_index.py:33,35).
-#   Related: GHSA-p4gq-832x-fm9v / CVE-2026-54293 (same nltk.data.load() path-traversal class) not yet
-#   seen in pip-audit's OSV feed — watch for it.
+# * nltk CVE-2026-12243 (path traversal, incomplete fix of CVE-2025-14009) — still no upstream fix as
+#   of nltk 3.10.0 (OSV: fix_versions=[]); no untrusted NLTK data paths in this project — the only
+#   calls are nltk.data.find("corpora/stopwords") and nltk.download("stopwords", quiet=True) with
+#   hardcoded literals (search/bm25_index.py:33,35).
 # * pyjwt PYSEC-2025-183 (disputed weak encryption) — no upstream fix
+# * torch 2.8.0+cu128, 8 CVEs — pip-audit's default PyPI service silently skip_reason's local-version
+#   wheels like this one; only visible via `pip-audit -s osv`. CVE-2025-55551/-55552/-55554 (DoS,
+#   fixed 2.9.0), CVE-2025-2999 (fixed 2.9.1), CVE-2025-3000 (fixed 2.13.0), CVE-2025-3001 +
+#   CVE-2026-24747 (weights_only unpickler bypass via crafted .pth, CVSS 8.8, fixed 2.10.0),
+#   CVE-2026-4538 (no fix). The <2.9.0 ceiling above is intentional (ModernBERT
+#   @torch.compile(dynamic=True) hits a torch.inductor AssertionError on 2.9.x/Windows — see
+#   commit b68cfff8) and blocks every one of these fixes. Mitigation: local-only tool, no
+#   internet-exposed API; models are loaded from official HuggingFace repos over HTTPS as
+#   safetensors (embeddings/model_loader.py), never as untrusted .pth/pickle checkpoints — the
+#   weights_only bypass and DoS CVEs are not reachable via this project's model-loading path.
+#   Re-check upstream (pytorch/pytorch) each cycle for a fix to the inductor regression that would
+#   unblock the <2.9.0 ceiling.
+#
+# Resolved 2026-08-04: aiohttp CVE-2026-59881/69243 (3.14.2), CVE-2026-69244 (3.14.3) via
+#   aiohttp>=3.14.3. cryptography CVE-2026-69247 via cryptography>=50.0.0 (confirmed >=3.9
+#   Python-compatible on PyPI). gitpython floor raised >=3.1.55 -> >=3.1.57 to match the venv,
+#   which had already drifted ahead to 3.1.57 with 0 live CVEs (record/reality drift, this time
+#   the record trailing reality rather than the reverse). lycheeverse/lychee-action bumped
+#   v1.10.0 -> v2.9.0 in .github/workflows/docs-validation.yml (GHSA-65rg-554r-9j5x; GitHub
+#   Actions ecosystem, not a Python dependency). Also repaired CI red on `development` (see
+#   commit "fix: repair CI red on development") and closed 4 Dependabot PRs superseded by this
+#   commit (#46 cryptography, #47 nltk [already applied], #48 gitpython, #49 aiohttp). Tested:
+#   full unit suite green (5644 passed, 1 skipped), pyrefly 0 errors, pip-audit clean except the
+#   documented no-fix sqlitedict finding.
+#
+# Resolved 2026-07-30: nltk CVE-2026-54293 (URL-encoded path traversal in nltk.data.load()) via
+#   nltk>=3.10.0 (confirmed fixed by OSV affected-range query: [0, 3.10.0); 3.10.0 itself reports
+#   zero vulnerabilities). system uv 0.9.26 -> 0.12.0, closing GHSA-4gg8-gxpx-9rph and
+#   GHSA-pjjw-68hj-v9mw (drift: the >=0.11.24 tracking comment above was already satisfied once,
+#   per the 2026-07-26 entry below, but that copy lived only in .venv/Scripts and was lost in a
+#   subsequent venv rebuild — same drift class as GitPython below, now fixed at the system-Python
+#   level instead so it survives future venv rebuilds). Diagnosed but deferred: torch
+#   2.8.0+cu128's 8 CVEs, invisible to pip-audit's default service — see "Deferred" block above;
+#   also patched tools/summarize_audit.py to surface skip_reason entries and merge an `-s osv`
+#   pass so this class of gap can't recur silently. Tested: CUDA verified intact, pip check clean,
+#   full unit suite green.
 #
 # Resolved 2026-07-25: gitpython CVE set (8 argument-injection advisories: GHSA-2f96-g7mh-g2hx,
 #   GHSA-v396-v7q4-x2qj, GHSA-956x-8gvw-wg5v, GHSA-3rp5-jjmw-4wv2, GHSA-fjr4-x663-mwxc,
@@ -379,11 +409,10 @@ replace-imports-with-any = [
     "tree_sitter_c_sharp", "tree_sitter_glsl",
     "rank_bm25", "rank_bm25.*",
     "tiktoken",
-    "onnxruntime", "onnxruntime.*",
     "networkx", "networkx.*",
-    "optimum", "optimum.*",
     "snoop", "py_heat",
     "pyan", "pyan.*",
+    "litellm", "litellm.*",
 ]
 
 [[tool.pyrefly.sub-config]]
@@ -433,13 +462,32 @@ markers = [
     "asyncio: Mark test as async (pytest-asyncio)",
     "gpu: Requires CUDA device (skipped when absent)",
     "e2e: Full end-to-end workflow",
+    "allow_network: Opt out of the tests/conftest.py real-network guard",
 ]
 filterwarnings = [
-    "ignore::DeprecationWarning",
-    "ignore::PendingDeprecationWarning",
-    "ignore::UserWarning",
+    # "error" must stay first: pytest registers ini filters top-to-bottom and
+    # each registration is prepended, so entries listed *after* this one end
+    # up checked *before* it (highest priority) -- making "error" the
+    # catch-all fallback rather than a blanket suppressor. First-party
+    # warnings raised anywhere in tests/unit now fail the test that raised
+    # them; only these third-party module patterns are re-ignored.
+    "error",
+    # Escalating to "error" also turns ResourceWarning into a failure, but
+    # pytest reports leaked-handle warnings via a separate GC-timing-dependent
+    # path (_pytest.unraisableexception) that surfaces on whichever unrelated
+    # test happens to be running when the interpreter reaps the leaked object,
+    # not the test that actually leaked (see tests/TESTING_GUIDE.md "Phase
+    # 10.7", which fixed the one confirmed leak -- unclosed LSP subprocess
+    # pipes in chunking/relationships/lsp_call_graph.py -- and found no
+    # evidence the second suspected site, chunking/languages/glsl.py:745, ever
+    # existed in current source). Kept as defense-in-depth against a leak
+    # elsewhere in the dependency tree, not because a known first-party leak
+    # remains.
+    "ignore::ResourceWarning",
+    "ignore::DeprecationWarning:torch.*",
+    "ignore::DeprecationWarning:transformers.*",
+    "ignore::DeprecationWarning:huggingface_hub.*",
     "ignore:.*builtin type.*:DeprecationWarning",
-    "ignore:Not enough free disk space.*:UserWarning:huggingface_hub",
 ]
 
 # ---------------------------------------------------------------------------
@@ -456,6 +504,7 @@ source = [
     "mcp_server",
     "merkle",
     "search",
+    "tools",
     "utils",
     "evaluation",
 ]
@@ -463,7 +512,17 @@ source = [
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 81  # Ratcheted 2026-07-26: 82.59% measured at 3594 passing tests, full suite incl. slow_integration (branch coverage)
+fail_under = 73  # Re-baselined 2026-08-04: 75.03% measured at 5762 passed, 1 skipped, 3
+# pre-existing failures (unrelated to coverage scope, see tests/TESTING_GUIDE.md), CI-shaped
+# suite (tests/ --ignore=tests/slow_integration, --extra test --extra callgraph --extra otel
+# --extra gpu, branch coverage). Dropped from the prior 83.52%/fail_under=81 baseline because
+# that measurement predates "tools" being added to source= above (Phase 11.3): 7 of the 9
+# tools/ files are untested CLI/batch scripts at 0% coverage (~4.5k lines), honestly dragging
+# the aggregate down now that they are actually counted instead of silently excluded. This is
+# a coarse soft-floor tripwire; the real per-PR gate is Codecov's `patch` target in
+# codecov.yml (blocking on changed-line coverage, not this whole-repo number) — codecov.yml
+# also excludes tools/** from that gate, so this whole-repo floor is the only place tools/'s
+# coverage is tracked at all.
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",

@@ -1,0 +1,28 @@
+{
+  "acc@10": 0.6667,
+  "acc@5": 0.6667,
+  "hard_negative_intrusion_count": 2,
+  "hard_negative_intrusion_rate": 0.5,
+  "hit_rate@5": 0.6667,
+  "hit_rate@7": 0.6667,
+  "mrr": 0.6667,
+  "ndcg@10": 0.6667,
+  "ndcg@5": 0.6667,
+  "pass_fail": {
+    "hit_rate@5": "FAIL",
+    "mrr": "PASS",
+    "recall@5": "FAIL"
+  },
+  "precision@1": 0.6667,
+  "precision@10": 0.6667,
+  "precision@5": 0.6667,
+  "recall@1": 0.6667,
+  "recall@10": 0.6667,
+  "recall@20": 0.6667,
+  "recall@5": 0.6667,
+  "recall@50": 0.6667,
+  "recall@7": 0.6667,
+  "success_count": 2,
+  "success_count@7": 2,
+  "total_queries": 3
+}

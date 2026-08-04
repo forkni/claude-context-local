@@ -4,7 +4,7 @@ Verifies that get_model_info:
   - Prefers the new `get_embedding_dimension` method (sentence-transformers >=5)
     so the FutureWarning is never emitted.
   - Falls back to `get_sentence_embedding_dimension` when only the old name is
-    present (ONNXEmbeddingModel, older ST versions).
+    present (older sentence-transformers versions).
 
 Uses plain classes rather than MagicMock so that `hasattr` behaves correctly
 (MagicMock auto-creates attributes for any name, masking the branch under test).
@@ -37,7 +37,7 @@ class _NewApiModel:
 
 
 class _OldApiModel:
-    """Simulates ONNXEmbeddingModel / older ST with only the old method name."""
+    """Simulates an older sentence-transformers version with only the old method name."""
 
     device = "cpu"
     max_seq_length = 256
@@ -74,9 +74,6 @@ def _make_bare_embedder(model_name: str = "test-model") -> CodeEmbedder:
     fake_loader.model_vram_usage = {}
 
     with (
-        patch(
-            "embeddings.model_loader.ModelLoader._should_use_onnx", return_value=False
-        ),
         patch("embeddings.embedder.ModelLoader") as mock_loader,
         patch("embeddings.embedder.ModelCacheManager"),
         patch("embeddings.embedder.set_vram_limit"),
@@ -108,8 +105,8 @@ class TestGetModelInfoDimension:
         assert info["status"] == "loaded"
         assert info["model_name"] == "test-model"
 
-    def test_falls_back_to_old_api_for_onnx(self):
-        """ONNX wrapper (old name only) still works without raising AttributeError."""
+    def test_falls_back_to_old_api_for_legacy_model(self):
+        """Legacy model (old name only) still works without raising AttributeError."""
         emb = _make_bare_embedder()
         emb._model = _OldApiModel()  # type: ignore[assignment]
 

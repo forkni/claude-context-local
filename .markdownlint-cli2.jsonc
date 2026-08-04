@@ -8,17 +8,14 @@
     "node_modules",
     ".venv",
     "benchmark_results",
-    "logs"
+    "logs",
+    ".claude/Charlie_DOC.md"
   ],
 
   // Rule configuration
   "config": {
-    // MD013: Line length - increased to 150 chars
-    "MD013": {
-      "line_length": 150,
-      "tables": false,
-      "code_blocks": false
-    },
+    // MD013: Line length - disabled (prose readability doesn't depend on hard wraps)
+    "MD013": false,
 
     // MD022: Headings surrounded by blank lines
     "MD022": true,

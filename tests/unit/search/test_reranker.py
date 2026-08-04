@@ -98,6 +98,38 @@ class TestRRFReranker:
         rrf_scores = [r.metadata["rrf_score"] for r in results]
         assert rrf_scores == sorted(rrf_scores, reverse=True)
 
+    def test_three_list_weighted_fusion(self):
+        """N>2 lists fuse with per-list weights (query-expansion variant legs).
+
+        A doc unique to the discounted third list must score below a doc at
+        the same rank in a full-weight list, and shared docs accumulate
+        contributions from every list they appear in.
+        """
+        variant_results = [
+            SearchResult("doc5", 0.9, {"type": "function"}, "bm25_variant", 1),
+            SearchResult("doc1", 0.6, {"type": "function"}, "bm25_variant", 2),
+        ]
+
+        results = self.reranker.rerank(
+            [self.bm25_results, self.dense_results, variant_results],
+            weights=[0.35, 0.65, 0.175],  # variant = bm25 * 0.5 discount
+            max_results=10,
+        )
+
+        by_id = {r.chunk_id: r.metadata["rrf_score"] for r in results}
+        # All docs from all three lists are present
+        assert set(by_id) == {"doc1", "doc2", "doc3", "doc4", "doc5"}
+        # doc1 appears in all three lists; doc5 only in the discounted leg.
+        # Exact contributions (k=100, weights normalized by sum=1.175):
+        w = [0.35 / 1.175, 0.65 / 1.175, 0.175 / 1.175]
+        expected_doc1 = w[0] / 101 + w[1] / 103 + w[2] / 102
+        expected_doc5 = w[2] / 101
+        assert abs(by_id["doc1"] - expected_doc1) < 1e-9
+        assert abs(by_id["doc5"] - expected_doc5) < 1e-9
+        # Rank-1 in the discounted leg scores below rank-1 in either full leg
+        assert by_id["doc5"] < w[0] / 101
+        assert by_id["doc5"] < w[1] / 101
+
     def test_weight_normalization(self):
         """Test that weights are properly normalized."""
         # Test with unnormalized weights

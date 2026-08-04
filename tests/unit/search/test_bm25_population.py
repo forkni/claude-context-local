@@ -32,6 +32,7 @@ def test_bm25_population():
         import numpy as np
 
         from embeddings.embedder import EmbeddingResult
+        from search.config import MultiHopConfig, SearchConfig
         from search.hybrid_searcher import HybridSearcher
 
         # Initialize HybridSearcher
@@ -125,9 +126,21 @@ def test_bm25_population():
 
         # Test search functionality. Query for a topic word unique to
         # test_chunk_2 ("caching") so BM25 has a discriminative term to match.
+        # Uses search_mode="bm25" with an isolated SearchConfig (multi-hop
+        # disabled) rather than "hybrid": this test's job is to verify BM25
+        # population/retrieval, not RRF fusion quality, and hybrid mode would
+        # let two things it doesn't control decide the outcome -- the ambient
+        # ServiceLocator config (search() falls back to it whenever no
+        # explicit `config=` is passed, so results would depend on whatever
+        # search_config.json happens to be on disk) and dense_weight=0.65 of
+        # the ranking coming from these documents' literally random,
+        # query-uncorrelated embeddings (np.random.rand above).
         print("[TEST] Testing search functionality...")
         assert searcher.is_ready, "Searcher should be ready before searching"
-        results = searcher.search("caching", k=3, search_mode="hybrid")
+        search_config = SearchConfig(multi_hop=MultiHopConfig(enabled=False))
+        results = searcher.search(
+            "caching", k=3, search_mode="bm25", config=search_config
+        )
         print(f"[TEST] Search returned {len(results)} results")
         for i, result in enumerate(results):
             print(

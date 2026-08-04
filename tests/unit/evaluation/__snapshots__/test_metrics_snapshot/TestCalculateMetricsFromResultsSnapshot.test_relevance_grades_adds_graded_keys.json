@@ -1,0 +1,21 @@
+{
+  "acc@10": 1.0,
+  "acc@5": 1.0,
+  "hard_negative_intrusion": true,
+  "hit": true,
+  "hit@7": true,
+  "mrr": 0.5,
+  "ndcg@10": 0.6934264036172708,
+  "ndcg@10_graded": 0.6806060567602009,
+  "ndcg@5": 0.6934264036172708,
+  "ndcg@5_graded": 0.6806060567602009,
+  "precision@1": 0.0,
+  "precision@10": 0.2,
+  "precision@5": 0.4,
+  "recall@1": 0.0,
+  "recall@10": 1.0,
+  "recall@20": 1.0,
+  "recall@5": 1.0,
+  "recall@50": 1.0,
+  "recall@7": 1.0
+}

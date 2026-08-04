@@ -2,7 +2,7 @@
 Subgraph extraction for SSCG (Structural-Semantic Code Graph) integration.
 
 Extracts induced subgraphs over search result chunk_ids from the code graph,
-preserving typed edges, topological ordering, and community context.
+preserving typed edges and topological ordering.
 
 Based on research:
 - RepoGraph (ICLR 2025): Ego-graph retrieval with topological ordering
@@ -11,11 +11,9 @@ Based on research:
 """
 
 import logging
-from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from search.chunk_id import normalize as _normalize_chunk_id
 from search.graph_view import GraphView
 
 
@@ -34,7 +32,6 @@ class SubgraphNode:
     name: str
     kind: str  # function, class, method, module...
     file: str
-    community_id: int | None = None
     centrality: float | None = None
     is_search_result: bool = True  # False for ego-graph neighbors
 
@@ -57,22 +54,18 @@ class SubgraphResult:
     nodes: list[SubgraphNode]
     edges: list[SubgraphEdge]
     topology_order: list[str]
-    communities: dict[int, dict] | None = None
 
     def to_dict(self) -> dict:
         """Compact JSON serialization (JSON Graph Format inspired).
 
         Returns:
-            dict with nodes, edges, topology_order, optional communities
+            dict with nodes, edges, topology_order
         """
-        result: dict[str, Any] = {
+        return {
             "nodes": [self._node_dict(n) for n in self.nodes],
             "edges": [self._edge_dict(e) for e in self.edges],
             "topology_order": self.topology_order,
         }
-        if self.communities:
-            result["communities"] = self.communities
-        return result
 
     def _node_dict(self, n: SubgraphNode) -> dict[str, Any]:
         """Serialize a node, omitting optional empty fields."""
@@ -82,8 +75,6 @@ class SubgraphResult:
             "kind": n.kind,
             "file": n.file,
         }
-        if n.community_id is not None:
-            d["community"] = n.community_id
         if n.centrality is not None:
             d["centrality"] = round(n.centrality, 4)
         if not n.is_search_result:
@@ -266,14 +257,10 @@ class SubgraphExtractor:
         )  # includes search results + ego neighbors if present
         topology_order = self._build_topology_order(all_ids)
 
-        # Annotate nodes with community IDs and generate labels
-        communities = self._annotate_communities(nodes)
-
         return SubgraphResult(
             nodes=nodes,
             edges=edges,
             topology_order=topology_order,
-            communities=communities if communities else None,
         )
 
     def _build_topology_order(self, chunk_ids: list[str]) -> list[str]:
@@ -289,66 +276,3 @@ class SubgraphExtractor:
             Topologically sorted list of chunk_ids
         """
         return self._gv.induced_topology(chunk_ids)
-
-    def _annotate_communities(self, nodes: list[SubgraphNode]) -> dict[int, dict]:
-        """Load community map and annotate nodes with community IDs.
-
-        Args:
-            nodes: List of SubgraphNode to annotate
-
-        Returns:
-            dict mapping community_id -> {label, count}
-        """
-        community_map = self.graph_storage.load_community_map()
-        if not community_map:
-            return {}
-
-        communities: dict[int, list[str]] = {}
-        for node in nodes:
-            cid = community_map.get(node.chunk_id)
-            if cid is not None:
-                node.community_id = cid
-                communities.setdefault(cid, []).append(node.chunk_id)
-
-        # Generate heuristic labels from most common directory per community
-        labels = self._generate_community_labels(communities)
-
-        return {
-            cid: {"label": labels.get(cid, f"cluster_{cid}"), "count": len(members)}
-            for cid, members in communities.items()
-        }
-
-    def _generate_community_labels(
-        self, communities: dict[int, list[str]]
-    ) -> dict[int, str]:
-        """Generate heuristic community labels from most common directory prefix.
-
-        Args:
-            communities: dict mapping community_id -> list of chunk_ids
-
-        Returns:
-            dict mapping community_id -> label string
-        """
-        labels = {}
-        for cid, chunk_ids in communities.items():
-            dirs = []
-            for chunk_id in chunk_ids:
-                # Extract file path from chunk_id via the chunk_id module
-                # (handles Windows backslashes, format: "file.py:lines:type:name")
-                parts = _normalize_chunk_id(chunk_id).split(":")
-                if parts:
-                    file_path = parts[0]
-                    path_parts = file_path.split("/")
-                    # Use parent directory as label component
-                    if len(path_parts) > 1:
-                        dirs.append(path_parts[-2])
-                    elif path_parts:
-                        dirs.append(path_parts[0])
-
-            if dirs:
-                # Most common directory becomes the label
-                most_common = Counter(dirs).most_common(1)
-                if most_common:
-                    labels[cid] = most_common[0][0]
-
-        return labels

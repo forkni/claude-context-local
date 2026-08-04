@@ -22,15 +22,14 @@ from tests.fixtures.mcp_mocks import (
 async def test_handle_search_code_does_not_mutate_config_singleton():
     """handle_search_code must not write to the SearchConfig singleton.
 
-    Exercises all 5 mutation-prone code paths:
+    Exercises all 4 mutation-prone code paths:
     - ego_graph settings (ego_graph_enabled=True)
     - intent-adaptive ego threshold
     - parent_retrieval (include_parent=True)
     - intent edge weights (local intent → INTENT_EDGE_WEIGHT_PROFILES["local"])
-    - bm25/dense weight override (via suggested_params)
     """
     mock_searcher = make_hybrid_searcher_mock()
-    intent_decision = make_intent_decision_mock("local", bm25=0.7, dense=0.3)
+    intent_decision = make_intent_decision_mock("local")
 
     # Capture the real singleton before the call.
     # After Phases B-C, get_search_config lives in search_orchestrator (used by _execute).

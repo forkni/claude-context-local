@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import MagicMock, Mock, patch
 
+from search.ego_graph_retriever import EgoGraphRetriever
 from search.graph_integration import GraphIntegration
 from search.hybrid_searcher import HybridSearcher
 from search.indexer import CodeIndexManager
@@ -57,65 +58,52 @@ class TestGraphSaveDuringReindex(TestCase):
         mock_searcher.reranking_engine = None
         mock_searcher.search_executor = Mock()
         mock_searcher.multi_hop_searcher = Mock()
-        mock_searcher._graph_storage = Mock()  # Old (pre-clear) reference
+        old_graph_storage = Mock()  # Old (pre-clear) reference
+        mock_searcher._graph_storage = old_graph_storage
+        mock_searcher.multi_hop_searcher.graph_storage = old_graph_storage
+        mock_searcher.ego_graph_retriever = EgoGraphRetriever(old_graph_storage)
         mock_searcher._metadata_cache = {}  # Added by BaseSearcher.__init__; cleared by clear_index()
         return mock_searcher
 
-    def test_clear_index_resyncs_when_new_graph_is_empty(self):
-        """clear_index() must re-sync graph_storage/_graph even when the freshly
-        cleared graph has zero nodes.
+    def test_clear_index_preserves_graph_identity_and_resets_centrality(self):
+        """clear_index() must not re-wire any graph reference (ADR-0025).
 
-        Regression test for the __len__-without-__bool__ trap: GraphIntegration
-        defines __len__ (node count) but no __bool__, so Python falls back to
-        `len(obj) != 0` for `bool(obj)`. A guard written as
-        `if self.dense_index._graph:` is therefore False immediately after a
-        full-reindex clear (0 nodes), silently skipping the re-sync and leaving
-        self._graph/_graph_storage pointed at the stale pre-clear object for the
-        rest of the reindex — which throws away 100% of that reindex's resolver
-        edges. The fix uses an explicit `is not None` check instead.
+        This supersedes the old empty-vs-nonempty pair of regression tests for
+        the __len__-without-__bool__ trap: that bug lived in a re-sync branch
+        (`if self.dense_index._graph:` after reconstructing dense_index) which
+        no longer exists. Under the stable-identity invariant, clear_index()
+        never reconstructs dense_index or its graph — GraphIntegration.clear()
+        and CodeGraphStorage.clear() empty them in place — so
+        _graph/_graph_storage/ego_graph_retriever/multi_hop_searcher.graph_storage
+        are the *same* objects before and after a clear, node count and
+        truthiness notwithstanding, and there is nothing left to get wrong by
+        checking it.
+
+        The one piece of state that genuinely needs invalidating — ego-graph
+        centrality scores, a snapshot of the pre-clear graph — is now reset
+        explicitly instead of incidentally via object reconstruction.
         """
         mock_graph_storage = Mock()
-        mock_graph_integration = self._make_mock_graph_integration(
+        mock_dense_index = Mock(spec=CodeIndexManager)
+        mock_dense_index._graph = self._make_mock_graph_integration(
             mock_graph_storage, node_count=0
         )
-        # Sanity: confirm the mock actually reproduces the falsy-when-empty
-        # behavior being tested against — if this assertion ever fails, the
-        # test below would silently stop covering the bug.
-        self.assertFalse(mock_graph_integration)
-
-        mock_dense_index = Mock(spec=CodeIndexManager)
-        mock_dense_index._graph = mock_graph_integration
         mock_searcher = self._make_mock_searcher(mock_dense_index)
+        mock_searcher._graph = GraphIntegration.from_storage(mock_graph_storage)
+        old_graph_storage = mock_searcher._graph_storage
+        old_graph = mock_searcher._graph
+        old_ego_graph_retriever = mock_searcher.ego_graph_retriever
+        old_ego_graph_retriever.set_centrality_scores({"some_chunk": 0.9})
 
         HybridSearcher.clear_index(mock_searcher)
 
-        self.assertIs(mock_searcher._graph_storage, mock_graph_storage)
-        # The re-sync must have rebuilt _graph via GraphIntegration.from_storage
-        # (a real instance, not the mock) wrapping the same storage object.
-        self.assertIsInstance(mock_searcher._graph, GraphIntegration)
-        self.assertIs(mock_searcher._graph.storage, mock_graph_storage)
-
-    def test_clear_index_resyncs_when_new_graph_is_nonempty(self):
-        """Same re-sync must also happen when the new graph already has nodes.
-
-        Pins the branch the original test covered, so a fix for the empty-graph
-        case above can't accidentally regress this one.
-        """
-        mock_graph_storage = Mock()
-        mock_graph_integration = self._make_mock_graph_integration(
-            mock_graph_storage, node_count=100
-        )
-        self.assertTrue(mock_graph_integration)
-
-        mock_dense_index = Mock(spec=CodeIndexManager)
-        mock_dense_index._graph = mock_graph_integration
-        mock_searcher = self._make_mock_searcher(mock_dense_index)
-
-        HybridSearcher.clear_index(mock_searcher)
-
-        self.assertIs(mock_searcher._graph_storage, mock_graph_storage)
-        self.assertIsInstance(mock_searcher._graph, GraphIntegration)
-        self.assertIs(mock_searcher._graph.storage, mock_graph_storage)
+        # Identity is unchanged — clear_index() no longer touches any of these.
+        self.assertIs(mock_searcher._graph_storage, old_graph_storage)
+        self.assertIs(mock_searcher._graph, old_graph)
+        self.assertIs(mock_searcher.ego_graph_retriever, old_ego_graph_retriever)
+        self.assertIs(mock_searcher.multi_hop_searcher.graph_storage, old_graph_storage)
+        # Cache invalidation is explicit now, not incidental to a rebuild.
+        self.assertEqual(mock_searcher.ego_graph_retriever._centrality_scores, {})
 
     @patch("search.graph_integration.CodeGraphStorage")
     @patch("search.graph_integration.GRAPH_STORAGE_AVAILABLE", True)

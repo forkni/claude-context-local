@@ -88,7 +88,6 @@ def mock_graph_storage():
     )  # boundary edge (external)
 
     storage.graph = g
-    storage.load_community_map.return_value = {}
     storage.project_root = None  # Explicitly set to None for tests
 
     return storage
@@ -270,7 +269,6 @@ def test_serialization_format():
             name="bar",
             kind="function",
             file="b.py",
-            community_id=0,
             centrality=0.042,
         ),
     ]
@@ -304,11 +302,9 @@ def test_serialization_format():
     assert node0["name"] == "foo"
     assert node0["kind"] == "function"
     assert node0["file"] == "a.py"
-    assert "community" not in node0  # Optional field omitted
 
     # Verify second node (with optional fields)
     node1 = data["nodes"][1]
-    assert node1["community"] == 0
     assert node1["centrality"] == 0.042
 
     # Verify edge

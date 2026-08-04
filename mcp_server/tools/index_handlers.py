@@ -17,6 +17,7 @@ from mcp_server.search_factory import (
     get_searcher,
 )
 from mcp_server.services import get_config, get_state
+from mcp_server.state import invalidate_config_caches
 from mcp_server.storage_manager import (
     get_canonical_project_info,
     get_project_storage_dir,
@@ -27,10 +28,7 @@ from mcp_server.storage_manager import (
 from mcp_server.tools import responses
 from mcp_server.tools.decorators import error_handler, with_mutation_lock
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
-from search.config import (
-    MODEL_REGISTRY,
-    SearchConfigManager,
-)
+from search.config import set_active_project_storage_dir
 from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
 from search.incremental_indexer import IncrementalIndexer
 
@@ -163,8 +161,8 @@ def _run_indexing(
         "chunks_added": result.chunks_added,
         "time_taken": round(elapsed, 2),
         # Propagated so _build_index_response can turn a caught indexing
-        # exception (e.g. PermissionError during force-full pre-clear) into a
-        # hard failure instead of reporting success with zeroed counts.
+        # exception (e.g. PermissionError during CodeIndexManager.clear_index())
+        # into a hard failure instead of reporting success with zeroed counts.
         # Named indexing_succeeded/indexing_error (not success/error) — this is
         # an internal transport dict, not a client-facing response envelope;
         # "success"/"error" keys are reserved for mcp_server.tools.responses
@@ -173,6 +171,10 @@ def _run_indexing(
         "indexing_error": result.error,
         "call_edges_injected": result.call_edges_injected,
         "call_edge_resolvers": result.call_edge_resolvers,
+        # Pass-1 auto-tuning probe summary (ADR-0014); None unless _full_index
+        # ran with an active project storage dir. getattr-guarded so a mocked
+        # result object without the field cannot break the transport dict.
+        "probe_summary": getattr(result, "probe_summary", None),
     }
 
 
@@ -217,7 +219,7 @@ def _build_index_response(
             "Full reindex added 0 chunks. This is never a legitimate outcome "
             "for a non-empty project — the index may be left in a partially "
             "cleared state (a common cause is another process, e.g. a running "
-            "MCP server, holding metadata.db open during the pre-clear).",
+            "MCP server, holding metadata.db open during clear_index()).",
             project=str(directory_path),
             mode="full",
         )
@@ -246,6 +248,10 @@ def _build_index_response(
         call_edge_resolvers=list(r["call_edge_resolvers"])
         if r.get("call_edge_resolvers")
         else None,
+        # Auto-tuning probe (ADR-0014): override keys + reasons the full
+        # reindex just wrote to search_overrides.json. None (omitted) on
+        # incremental runs and when the probe is disabled.
+        probe_summary=r.get("probe_summary") or None,
     )
     return response
 
@@ -261,8 +267,9 @@ def _purge_index_dir(
     orphaning the ``metadata.db`` WAL/SHM sidecars (routinely full-size, not
     a crash-only edge case) and a legacy ``metadata_symbol_cache.json``.
 
-    ``index_dir`` is a model's ``index/`` directory; the call-graph and
-    community-detection files live one level up, in its parent.
+    ``index_dir`` is a model's ``index/`` directory; the call-graph files
+    (and any legacy ``*_communities.json`` left by a pre-removal index)
+    live one level up, in its parent.
 
     Args:
         index_dir: The model's ``index/`` directory to purge.
@@ -275,14 +282,29 @@ def _purge_index_dir(
     Returns:
         ``(deleted, failed)``: names of the files/directories actually
         deleted, and names that raised ``OSError`` and are still on disk
-        (relative to ``index_dir``, except call-graph/community files which
-        are bare filenames from the parent directory). A non-empty ``failed``
+        (relative to ``index_dir``, except call-graph/legacy-community files
+        which are bare filenames from the parent directory). A non-empty ``failed``
         means the purge left a half-cleared index — callers that need this to
         be a hard failure (as opposed to the previous behaviour of only
         logging a warning) must check it explicitly.
+
+    Raises:
+        ValueError: if ``index_dir`` resolves outside the storage root. This
+            guard previously lived only on the now-deleted
+            ``_clear_index_files_before_create`` — a helper that had zero
+            production callers (its sole call site was removed as collateral
+            damage in an unrelated multi-model-routing refactor) and so never
+            actually protected this, the real destructive path (it
+            ``shutil.rmtree``s ``bm25/`` and unlinks a parent-directory glob).
     """
     import glob
     import shutil
+
+    storage_root = get_storage_dir().resolve()
+    if not index_dir.resolve().is_relative_to(storage_root):
+        raise ValueError(
+            f"_purge_index_dir refused: {index_dir} is outside storage root {storage_root}"
+        )
 
     deleted: list[str] = []
     failed: list[str] = []
@@ -331,34 +353,6 @@ def _purge_index_dir(
     return deleted, failed
 
 
-def _clear_index_files_before_create(index_dir: Path) -> None:
-    """Clear index files before creating a new HybridSearcher.
-
-    This is needed for force_full reindex to avoid file locks on Windows.
-    When MCP server is running and holds references to metadata.db, deleting
-    files before creating the new HybridSearcher prevents WinError 32.
-
-    Args:
-        index_dir: Directory containing index files to clear
-    """
-    from mcp_server.storage_manager import get_storage_dir
-
-    storage_root = get_storage_dir().resolve()
-    if not index_dir.resolve().is_relative_to(storage_root):
-        raise ValueError(
-            f"_clear_index_files_before_create refused: {index_dir} is outside "
-            f"storage root {storage_root}"
-        )
-
-    logger.info(
-        f"[PRE-CLEAR] Deleting index files before HybridSearcher creation: {index_dir}"
-    )
-    deleted, failed = _purge_index_dir(index_dir, keep_chunk_cache=True)
-    logger.info(f"[PRE-CLEAR] Deleted: {deleted}")
-    if failed:
-        logger.warning(f"[PRE-CLEAR] Failed to delete (still on disk): {failed}")
-
-
 def _release_gpu_memory() -> None:
     """Release GPU memory. Thin alias for :func:`search.gpu_monitor.release_gpu_memory`."""
     from search.gpu_monitor import release_gpu_memory
@@ -383,61 +377,6 @@ def _iter_project_model_dirs(project_path: Path) -> Iterator[Path]:
             if model_dir not in seen:
                 seen.add(model_dir)
                 yield model_dir
-
-
-def _invalidate_config_caches() -> None:
-    """Invalidate all process-wide config caches after a model switch.
-
-    Must be called after writing an updated config to disk so that the next
-    :func:`get_config` call reads the new values instead of returning stale ones.
-    Clears two caches in order:
-
-    1. ``search.config._config_manager`` (module-level singleton) — the real cache.
-    2. ``state.reset_for_model_switch()`` (clears embedders, index_manager, searcher)
-    """
-    from search import config as config_module
-
-    config_module._config_manager = None
-
-    state = get_state()
-    state.reset_for_model_switch()
-
-
-def _switch_active_model(model_name: str) -> None:
-    """Update the active embedding model in the persisted config and invalidate caches.
-
-    Loads the current config, sets ``embedding.model_name`` and the matching
-    ``embedding.dimension`` from :data:`MODEL_REGISTRY`, saves to disk only when
-    something changed, then calls :func:`_invalidate_config_caches` so the next
-    :func:`get_config` call returns fresh values.
-
-    Args:
-        model_name: Full HuggingFace model identifier to activate.
-    """
-    config_mgr = SearchConfigManager()
-    config = config_mgr.load_config()
-    new_dimension = config.embedding.dimension
-    if model_name in MODEL_REGISTRY:
-        model_cfg = MODEL_REGISTRY[model_name]
-        new_dimension = model_cfg.get("truncate_dim") or model_cfg["dimension"]
-
-    if (
-        config.embedding.model_name != model_name
-        or config.embedding.dimension != new_dimension
-    ):
-        config.embedding.model_name = model_name
-        # pyrefly: ignore [bad-assignment]
-        config.embedding.dimension = new_dimension
-        config_mgr.save_config(config)
-    else:
-        logger.info(
-            f"Config already set to {model_name} ({new_dimension}d), skipping save"
-        )
-        config.embedding.model_name = model_name
-        # pyrefly: ignore [bad-assignment]
-        config.embedding.dimension = new_dimension
-
-    _invalidate_config_caches()
 
 
 # ----------------------------------------------------------------------------
@@ -868,6 +807,13 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
     # Set as current project (using setter for proper cross-module sync)
     set_current_project(str(directory_path))
 
+    # Point the config layer at this project's storage dir so its
+    # search_overrides.json (ADR-0014) applies to this run — index_directory
+    # without a prior switch_project must still pick up the right file — then
+    # drop config-derived caches built against the previous project's overrides.
+    set_active_project_storage_dir(get_project_storage_dir(str(directory_path)))
+    invalidate_config_caches()
+
     # Temporarily disable allow_ram_fallback during indexing for performance
     with temporary_ram_fallback_off() as original_value:
         if original_value:
@@ -915,7 +861,13 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
 
             def _setup_and_run():
                 _embedder = get_embedder()
-                _searcher = get_searcher(_dir)
+                # load_existing=_incremental (#reindex-log-audit-2026-07-30):
+                # for a force-full reindex (_incremental=False) this searcher
+                # is about to be released and rebuilt by
+                # IncrementalIndexer._release_and_verify_resources() before any
+                # search happens, so loading the stale on-disk BM25 index here
+                # only costs time and logs spurious mismatch warnings.
+                _searcher = get_searcher(_dir, load_existing=_incremental)
                 _indexer = _searcher if _enable_hybrid else get_index_manager(_dir)
                 return _run_indexing(
                     _indexer,
@@ -928,6 +880,36 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
                 )
 
             result = await asyncio.to_thread(_setup_and_run)
+
+            # Auto-tuning probe pass 2 (ADR-0014): append report-only
+            # observations derived from the just-persisted stats.json.
+            # Gated on pass 1 having run (probe_summary set) so it fires
+            # exactly when this run was a probed full reindex — including an
+            # incremental call that fell back to full internally — and never
+            # on a plain incremental pass or when the probe is disabled.
+            if result.get("probe_summary") and result.get("indexing_succeeded"):
+
+                def _post_build_probe() -> dict[str, Any] | None:
+                    try:
+                        from search.index_probe import probe_post_build
+
+                        stats_path = index_dir / "stats.json"
+                        stats = (
+                            json.loads(stats_path.read_text())
+                            if stats_path.exists()
+                            else {}
+                        )
+                        return probe_post_build(project_dir, stats)
+                    except Exception as e:  # noqa: BLE001 - probe isolation: tuning must never break indexing
+                        logger.warning(f"[INDEX_PROBE] Pass 2 failed: {e}")
+                        return None
+
+                pass2_summary = await asyncio.to_thread(_post_build_probe)
+                from search.index_probe import merged_probe_summary
+
+                result["probe_summary"] = merged_probe_summary(
+                    result["probe_summary"], pass2_summary
+                )
 
             # Build response (using helper)
             return _build_index_response(

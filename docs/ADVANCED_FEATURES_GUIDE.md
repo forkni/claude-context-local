@@ -38,7 +38,7 @@ Complete guide to advanced features in claude-context-local MCP server.
 **Mode Selection** (v0.9.0+): Controlled via `multi_hop_mode` parameter
 
 | Mode | Expansion Method | Use Case |
-|------|-----------------|----------|
+| ------ | ----------------- | ---------- |
 | `"hybrid"` (default) | Graph neighbors first, then semantic similarity | Best quality — structurally relevant + semantically similar |
 | `"graph"` | Code graph neighbors only (`calls`, `inherits`, `imports`) via **weighted BFS** | When structural dependencies matter most |
 | `"semantic"` | FAISS similarity only (legacy) | Pure semantic matching |
@@ -68,7 +68,9 @@ set CLAUDE_ENABLE_MULTI_HOP=false
 - **Enabled** (default): +25-35ms average overhead, 93% of queries benefit from expanded context
 - **Disabled**: No overhead, but misses 93% of interconnected code relationships
 
-**Note**: `search_code()` automatically uses multi-hop when enabled - no API changes needed. When filters (`file_pattern`, `chunk_type`) are specified, they are applied to both initial results AND expanded results to maintain consistency.
+**Note**: `search_code()` automatically uses multi-hop when enabled - no API changes needed. When
+filters (`file_pattern`, `chunk_type`) are specified, they are applied to both initial results
+AND expanded results to maintain consistency.
 
 ### Internal Architecture (v0.5.16)
 
@@ -127,7 +129,6 @@ When a project is indexed with a `project_id`, `search_code()` automatically inc
 
 ---
 
-
 ## Per-Model Index Storage
 
 **Feature**: Automatic per-model index management enabling instant model switching
@@ -176,7 +177,7 @@ When a project is indexed with a `project_id`, `search_code()` automatically inc
 ### Performance Benefits
 
 | Scenario | Before | After | Improvement |
-|----------|--------|-------|-------------|
+| ---------- | -------- | ------- | ------------- |
 | First model switch | 30-60s | 30-60s | Same (indexing required) |
 | Return to previous model | 30-60s | <150ms | **98% faster** |
 | Model comparison workflow | 50-90s | <1s | **99% faster** |
@@ -195,10 +196,10 @@ When a project is indexed with a `project_id`, `search_code()` automatically inc
 
 ### Parameters
 
-| Parameter | Tools | Type | Description |
-|-----------|-------|------|-------------|
-| `include_dirs` | search_code | array | Only search in these directories |
-| `exclude_dirs` | search_code, find_connections | array | Exclude from search |
+| Parameter       | Tools                         | Type  | Description                              |
+|-----------------|-------------------------------|-------|------------------------------------------|
+| `include_dirs`  | search_code                   | array | Only search in these directories         |
+| `exclude_dirs`  | search_code, find_connections | array | Exclude from search                      |
 
 ### Path Matching
 
@@ -293,7 +294,7 @@ When filters change during incremental indexing:
 - **Fix**: Corrected field names in `index_handlers.py` and `incremental_indexer.py`
 - **Result**: Consistent filter persistence across all models during multi-model indexing
 
-**Files**: `mcp_server/index_handlers.py`, `mcp_server/search_handlers.py`, `search/filter_engine.py`, `search/filters.py`
+**Files**: `mcp_server/tools/index_handlers.py`, `mcp_server/tools/search_handlers.py`, `search/filter_engine.py`, `search/filters.py`
 
 ---
 
@@ -336,7 +337,7 @@ When filters change during incremental indexing:
 ### Related Files
 
 | File | Purpose |
-|------|---------|
+| ------ | --------- |
 | `mcp_server/project_persistence.py` | Save/load functions |
 | `scripts/get_current_project.py` | Display helper for batch menu |
 | `start_mcp_server.cmd` | Shows current project in Runtime Status |
@@ -352,32 +353,33 @@ set CLAUDE_DEFAULT_PROJECT=C:\Projects\MyProject
 
 ## Model Selection Guide
 
-### Available Models (6 total)
+### Available Models (4 total)
+
+`nomic-ai/CodeRankEmbed` and `Alibaba-NLP/gte-modernbert-base` were removed from `MODEL_REGISTRY`
+in v0.23.0 (`24f6b8c`) — a deployed config pinned to either now fails to load until repointed.
 
 | Model | Type | Dimensions | VRAM | Best For |
-|-------|------|------------|------|----------|
+| ------- | ------ | ------------ | ------ | ---------- |
 | **BGE-M3** ⭐ | General | 1024 | 1–1.5 GB | **Default**, hybrid search support |
 | **EmbeddingGemma-300m** | General | 768 | ~1.2 GB | Lightweight, low-VRAM systems |
 | **Qwen3-0.6B** | General | 1024 | 2.3 GB | Long-context (32k), MRL support |
 | **F2LLM-v2-0.6B** | General | 1024 | 2.2 GB | Best retrieval ordering (MTEB avg 66.47) |
-| **CodeRankEmbed** | Code | 768 | 0.5–0.6 GB | Code-specific retrieval (CSN: 77.9 MRR) |
-| **GTE-ModernBERT-base** | Code | 768 | 0.28 GB | Lightest option, code-optimized (CoIR: 79.31 NDCG@10) |
 
 ### Switching Models
 
 **Environment Variable Examples:**
 
 ```bash
-# General-purpose (recommended)
+# General-purpose (recommended, default)
 set CLAUDE_EMBEDDING_MODEL=BAAI/bge-m3
 
-# Code-specific
-set CLAUDE_EMBEDDING_MODEL=nomic-ai/CodeRankEmbed
-
-# High efficiency
+# High efficiency, long-context
 set CLAUDE_EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
 
-# Default (fast)
+# Best retrieval ordering
+set CLAUDE_EMBEDDING_MODEL=codefuse-ai/F2LLM-v2-0.6B
+
+# Lightest, low-VRAM
 set CLAUDE_EMBEDDING_MODEL=google/embeddinggemma-300m
 ```
 
@@ -399,18 +401,13 @@ start_mcp_server.bat → 3 (Search Config) → 4 (Select Model)
 
 **For Code Projects:**
 
-- ✅ **CodeRankEmbed** - Code-specific retrieval (CSN: 77.9 MRR, CoIR: 60.1 NDCG@10), 2GB VRAM
+- ✅ **F2LLM-v2-0.6B** - Best retrieval ordering measured on this repo's own benchmark (MRR +0.026 vs Qwen3-0.6B), 2.2GB VRAM
 - ✅ **BGE-M3** - General-purpose with hybrid search support, 1-1.5GB VRAM
 
 **For General Text/Documents:**
 
 - ✅ **Qwen3-0.6B** - Best value, high efficiency, 2.3GB VRAM
 - ✅ **BGE-M3** - Production baseline, 1-1.5GB VRAM
-
-### Detailed Research
-
-- **Code models**: `docs/Researches/CODE_SPECIFIC_EMBEDDING_MODELS.md`
-- **General models**: `docs/Researches/GENERAL_PURPOSE_EMBEDDING_MODELS.md`
 
 ---
 
@@ -434,7 +431,7 @@ Qwen3 embedding models support two advanced features for improved code retrieval
 **Two modes available**:
 
 | Mode | Format | When to Use |
-|------|--------|-------------|
+| --- | --- | --- |
 | **custom** (default) | `"Instruct: Retrieve source code implementations matching the query\nQuery: {query}"` | Code search (recommended) |
 | **prompt_name** | Uses model's built-in generic prompt | General-purpose retrieval |
 
@@ -495,7 +492,7 @@ python tools/benchmark_instructions.py --model Qwen/Qwen3-Embedding-0.6B
 **Performance**:
 
 | Dimension | Storage | Quality Drop | Use Case |
-|-----------|---------|--------------|----------|
+| ----------- | --------- | -------------- | ---------- |
 | 2560 (full) | 100% | 0% | Maximum quality |
 | **1024** (default) | **50%** | **~1.47%** | Best balance (matches 0.6B storage) |
 | 512 | 25% | ~3% | Extreme storage constraints |
@@ -512,7 +509,7 @@ python tools/benchmark_instructions.py --model Qwen/Qwen3-Embedding-0.6B
 # Sentence-transformers truncates embeddings during model instantiation
 model = SentenceTransformer(
     "Qwen/Qwen3-Embedding-0.6B",
-    truncate_dim=1024  # Output 1024d instead of 2560d
+    truncate_dim=1024,  # Output 1024d instead of 2560d
 )
 
 # All embeddings automatically truncated
@@ -568,7 +565,7 @@ MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["instruction_mode"] = "prompt_name"
 
 - Passed to `SentenceTransformer` constructor as `truncate_dim` parameter
 - Applied during model loading (before any embedding generation)
-- Works with all sentence-transformers backends (PyTorch, ONNX)
+- Works with the sentence-transformers PyTorch backend
 
 ### References
 
@@ -611,7 +608,7 @@ All parameters are configured in `search_config.json` under the `embedding` sect
 ```
 
 | Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
+| ----------- | ------ | --------- | ------------- |
 | `enable_import_context` | bool | `true` | Include import statements for functions |
 | `enable_class_context` | bool | `true` | Include parent class signature for methods |
 | `max_import_lines` | int | `10` | Maximum import lines to extract |
@@ -627,6 +624,7 @@ When indexing a standalone function, the system extracts up to `max_import_lines
 # Original code in file
 import numpy as np
 from sklearn.model_selection import train_test_split
+
 
 def prepare_dataset(data):
     X_train, X_test = train_test_split(data)
@@ -712,15 +710,17 @@ class DataProcessor:
 
 ### Overview
 
-The VRAM Tier Management system automatically detects available GPU memory and recommends optimal configurations for models and features. This ensures the system runs efficiently regardless of hardware capabilities.
+The VRAM Tier Management system automatically detects available GPU memory and recommends
+optimal configurations for models and features. This ensures the system runs efficiently
+regardless of hardware capabilities.
 
 ### 4 VRAM Tiers
 
 | Tier | VRAM Range | Default Models | Features Enabled |
-|------|------------|----------------|------------------|
+| ------ | ------------ | ---------------- | ------------------ |
 | **Minimal** | <6GB | EmbeddingGemma-300m (fallback) | Single-model only, no neural reranking |
-| **Laptop** | 6-10GB | EmbeddingGemma or BGE-M3 | Single-model; 6 models selectable |
-| **Desktop** | 10-18GB | BGE-M3 (default) | Single-model; 6 models selectable |
+| **Laptop** | 6-10GB | EmbeddingGemma or BGE-M3 | Single-model; 4 models selectable |
+| **Desktop** | 10-18GB | BGE-M3 (default) | Single-model; 4 models selectable |
 | **Workstation** | 18GB+ | Any model | Single-model; all features available |
 
 ### Automatic Configuration
@@ -761,7 +761,7 @@ There is no automatic tier-detection field in this response — use `total_vram_
 ### GPU Memory Lifecycle (v0.5.17+ Lazy Loading)
 
 | Stage | VRAM Usage | Notes |
-|-------|------------|-------|
+| ------- | ------------ | ------- |
 | **Startup** | 0 MB | Lazy loading enabled, models not loaded |
 | **First search** | 8-15s latency | 5-10s one-time model loading + 3-5s search |
 | **After first search** | ~1–2.3 GB | Single model loaded (varies by model; BGE-M3 ~1.07 GB) |
@@ -773,7 +773,7 @@ There is no automatic tier-detection field in this response — use `total_vram_
 The system automatically adjusts batch sizes based on VRAM tier:
 
 | Tier | Embedding Batch Size | Indexing Speed |
-|------|---------------------|----------------|
+| ------ | --------------------- | ---------------- |
 | Minimal (<6GB) | 8-16 | Conservative |
 | Laptop (6-10GB) | 32-64 | Balanced |
 | Desktop (10-18GB) | 64-128 | Fast |
@@ -792,11 +792,11 @@ set CLAUDE_RERANKER_ENABLED=false
 
 ### Implementation Details
 
-**File**: `embeddings/vram_manager.py`
+**File**: `search/vram_manager.py` (`VRAMTierManager`)
 
 **Test Coverage**: 42 unit tests
 
-**See also**: `docs/MODEL_MIGRATION_GUIDE.md` for model selection guidance
+**See also**: [Model Selection Guide](#model-selection-guide) above
 
 ---
 
@@ -812,12 +812,14 @@ set CLAUDE_RERANKER_ENABLED=false
 
 ### Overview
 
-Neural reranking uses a cross-encoder model to re-score initial search results, improving ranking quality by 15-25%. The reranker analyzes query-document pairs more deeply than embedding similarity alone.
+Neural reranking uses a cross-encoder model to re-score initial search results,
+improving ranking quality by 15-25%. The reranker analyzes query-document pairs
+more deeply than embedding similarity alone.
 
 ### Configuration Parameters
 
 | Parameter | Default | Description |
-|-----------|---------|-------------|
+| ----------- | --------- | ------------- |
 | `enabled` | `True` | Enable/disable neural reranking |
 | `model_name` | `"Alibaba-NLP/gte-reranker-modernbert-base"` | HuggingFace model path |
 | `top_k_candidates` | `30` | Number of candidates to rerank |
@@ -878,7 +880,7 @@ cfg.reranker = RerankerConfig(
     enabled=True,
     model_name="Alibaba-NLP/gte-reranker-modernbert-base",
     top_k_candidates=100,
-    batch_size=32
+    batch_size=32,
 )
 
 mgr.save_config(cfg)
@@ -909,13 +911,12 @@ mgr.save_config(cfg)
 
 ### Benchmark Results
 
-From `tools/benchmark_models.py`:
-
-| Query Type | With Reranking | Without Reranking | Improvement |
-|------------|---------------|-------------------|-------------|
-| Semantic queries | 0.85 MRR | 0.78 MRR | +9% |
-| Keyword queries | 0.92 MRR | 0.90 MRR | +2% |
-| Mixed queries | 0.83 MRR | 0.79 MRR | +5% |
+Neural reranking improves ranking quality by 15-25% (see the Highlights table in
+[README.md](../README.md)). The per-query-type table formerly here cited
+`tools/benchmark_models.py`, which has since moved to `_archive/BENCHMARKING/` (excluded from
+the index) with no run date recorded — it's been removed rather than carried forward unlabeled.
+Current provenance-stamped figures live in [Benchmark Results](../README.md#benchmark-results)
+and `evaluation/BASELINE_20260801.md`.
 
 **Implementation**: `search/neural_reranker.py`, `search/reranking_engine.py`
 
@@ -1011,12 +1012,12 @@ Traditional hash-based project identification breaks when drive letters change, 
 
 ### Implementation Details
 
-**4 Utility Functions** (`search/filters.py`, `mcp_server/utils/path_utils.py`):
+**4 Utility Functions** (`search/filters.py`, `utils/path_utils.py`):
 
 1. `compute_drive_agnostic_hash(path)` - Hash without drive letter
 2. `compute_legacy_hash(path)` - Traditional full-path hash
 3. `get_effective_filters()` - Resolve default + user filters
-4. `normalize_path_filters()` - Normalize path separators
+4. `normalize_path(path)` - Normalize path separators to forward slashes
 
 **Storage**: Merkle snapshots include drive-agnostic project IDs
 
@@ -1055,7 +1056,9 @@ Traditional hash-based project identification breaks when drive letters change, 
 
 ### Overview
 
-Progress bars provide visual feedback during the two longest indexing phases: file chunking and embedding generation. This improves user experience by showing real-time progress instead of silent processing.
+Progress bars provide visual feedback during the two longest indexing phases: file
+chunking and embedding generation. This improves user experience by showing real-time
+progress instead of silent processing.
 
 ### Two Progress Bars
 
@@ -1170,9 +1173,12 @@ Embedding... 100% (1/1 batches)
 
 ### Overview
 
-The query cache stores embedding vectors for recently searched queries, eliminating redundant encoding operations. When a query is searched multiple times, the cached embedding is reused instead of re-computing it.
+The query cache stores embedding vectors for recently searched queries, eliminating redundant
+encoding operations. When a query is searched multiple times, the cached embedding is reused
+instead of re-computing it.
 
-**Enhancement (v0.8.6)**: Added TTL (time-to-live) support with automatic expiration after 300 seconds (5 minutes) to prevent serving stale embeddings after model changes.
+**Enhancement (v0.8.6)**: Added TTL (time-to-live) support with automatic expiration
+after 300 seconds (5 minutes) to prevent serving stale embeddings after model changes.
 
 ### How It Works
 
@@ -1209,7 +1215,7 @@ set CLAUDE_QUERY_CACHE_SIZE=0
 ### Performance Benefits
 
 | Scenario | Without Cache | With Cache | Savings |
-|----------|--------------|------------|---------|
+| ---------- | -------------- | ------------ | --------- |
 | Repeated exact query | 50-100ms encoding | 0ms (instant) | 100% |
 | Similar queries | 50-100ms each | 0ms if cached | Up to 100% |
 | Bulk operations | 100+ encodings | First time only | 99%+ |
@@ -1226,7 +1232,9 @@ embedder.embed_query("test query")
 print(f"Cache size: {embedder._query_cache_size}")
 print(f"Cache hits: {embedder._cache_hits}")
 print(f"Cache misses: {embedder._cache_misses}")
-print(f"Hit rate: {embedder._cache_hits / (embedder._cache_hits + embedder._cache_misses) * 100:.1f}%")
+print(
+    f"Hit rate: {embedder._cache_hits / (embedder._cache_hits + embedder._cache_misses) * 100:.1f}%"
+)
 ```
 
 ### Cache Invalidation
@@ -1289,7 +1297,9 @@ print(f"Hit rate: {embedder._cache_hits / (embedder._cache_hits + embedder._cach
 
 ### Overview
 
-The system includes comprehensive timing instrumentation for identifying performance bottlenecks and validating optimization strategies. Five critical search operations are instrumented with automatic timing measurement and logging.
+The system includes comprehensive timing instrumentation for identifying performance
+bottlenecks and validating optimization strategies. Five critical search operations are
+instrumented with automatic timing measurement and logging.
 
 ### Timing Infrastructure
 
@@ -1311,7 +1321,7 @@ The system includes comprehensive timing instrumentation for identifying perform
 Five critical search functions include timing instrumentation:
 
 | Function | Module | Purpose | Typical Duration |
-|----------|--------|---------|------------------|
+| ---------- | -------- | --------- | ------------------ |
 | `embed_query` | `embeddings/embedder.py` | Query embedding generation | 40-60ms (first), 0ms (cached) |
 | `search_bm25` | `search/search_executor.py` | Sparse keyword search | 3-15ms |
 | `search_dense` | `search/search_executor.py` | Dense vector search | 50-100ms |
@@ -1407,10 +1417,12 @@ export CLAUDE_LOG_LEVEL=INFO
 ```python
 from utils.timing import timed
 
+
 @timed("my_operation")
 def my_function():
     # Your code
     pass
+
 
 # Logs: [TIMING] my_operation: Xms
 ```
@@ -1467,7 +1479,9 @@ print(f"Operation took {t['elapsed_ms']:.2f}ms")
 
 ### Overview
 
-Symbol ID Lookups enable direct, unambiguous code retrieval without semantic search overhead. When you have a `chunk_id` from previous search results, you can use it for instant O(1) lookup.
+Symbol ID Lookups enable direct, unambiguous code retrieval without semantic search
+overhead. When you have a `chunk_id` from previous search results, you can use it for
+instant O(1) lookup.
 
 **Chunk ID Format**: `"file.py:start-end:type:name"`
 
@@ -1580,7 +1594,9 @@ When `search_code()` returns results, the system message suggests using `chunk_i
 
 ### Overview
 
-AI Guidance Messages provide intelligent, context-aware suggestions automatically added to MCP tool responses. These messages help AI agents discover optimal tool workflows without hardcoded logic.
+AI Guidance Messages provide intelligent, context-aware suggestions automatically added to
+MCP tool responses. These messages help AI agents discover optimal tool workflows without
+hardcoded logic.
 
 **Key Principle**: Non-intrusive - messages appear in separate `system_message` field, not mixed with main results.
 
@@ -1729,7 +1745,7 @@ When Claude Code receives `system_message` in MCP responses, follow these action
 **2. Impact Severity Responses**
 
 | Severity | Action |
-|----------|--------|
+| ---------- | -------- |
 | **LOW** (0-2 callers) | Safe to proceed with modifications |
 | **MEDIUM** (3-7 callers) | Review listed callers before changing signatures |
 | **HIGH** (8+ callers) | Ask user for confirmation before any breaking changes |
@@ -1785,7 +1801,7 @@ The `find_connections` tool discovers all code connected to a target symbol thro
 In addition to call relationships, `find_connections` now returns **Phase 3 relationship types**:
 
 | Field | Description | Example |
-|-------|-------------|---------|
+| ------- | ------------- | --------- |
 | `parent_classes` | Classes/traits this code inherits from | `["BaseModel", "Serializable"]` |
 | `child_classes` | Classes/traits that inherit from this code | `["AdminUser", "GuestUser"]` |
 | `uses_types` | Types used in annotations or field declarations | `["str", "int", "User"]` |
@@ -1992,7 +2008,7 @@ In addition to call relationships, `find_connections` now returns **Phase 3 rela
 ### Impact Severity Levels
 
 | Severity | Direct Callers | Total Connected | Recommendation |
-|----------|----------------|-----------------|----------------|
+| ---------- | ---------------- | ----------------- | ---------------- |
 | **Low** | 0-2 | 0-2 | Safe to modify |
 | **Medium** | 3-7 | 3-10 | Review callers before modification |
 | **High** | 8+ | 11+ | Careful analysis required, consider backward compatibility |
@@ -2073,7 +2089,9 @@ graph TD
 - **Python**: ✅ Full support (AST call extraction)
 - **Other languages**: Partial (similar code only, no graph traversal)
 
-**Re-indexing**: Projects indexed before v0.5.3 need re-indexing for call graph support. Projects indexed before v0.14.0 need re-indexing to pick up layered resolver edges (`resolver_source`, `resolver_confidence` provenance).
+**Re-indexing**: Projects indexed before v0.5.3 need re-indexing for call graph support.
+Projects indexed before v0.14.0 need re-indexing to pick up layered resolver edges
+(`resolver_source`, `resolver_confidence` provenance).
 
 ### Implementation Details
 
@@ -2125,7 +2143,8 @@ Results include context-aware guidance based on impact severity:
 
 Call graph resolution improves the accuracy of `find_connections` by correctly identifying method call targets. Without resolution, calls like `self.method()` or `obj.method()` cannot be traced to their actual definitions.
 
-**Problem Solved**: Prior to v0.5.12, method calls produced false positives and missed connections because the system couldn't determine which class owned a method.
+**Problem Solved**: Prior to v0.5.12, method calls produced false positives and missed
+connections because the system couldn't determine which class owned a method.
 
 ### v0.14.0 — Layered Resolver Pipeline
 
@@ -2134,7 +2153,7 @@ v0.14.0 introduced a pluggable `CallEdgeResolver` protocol with confidence-prece
 **Confidence Ladder**:
 
 | Resolver | Confidence | Requires | Notes |
-|----------|-----------|----------|-------|
+| ---------- | ----------- | ---------- | ------- |
 | In-house AST (intra-file) | 0.5 | nothing | Always-on |
 | In-house AST (cross-file) | 0.7 | nothing | Always-on |
 | pyan3 | 0.75 | `pip install -e ".[callgraph]"` | GPL-2.0, optional |
@@ -2168,7 +2187,7 @@ v0.14.0 introduced a pluggable `CallEdgeResolver` protocol with confidence-prece
 **Accuracy Progression**:
 
 | Version | Resolution | Accuracy | Coverage |
-|---------|------------|----------|----------|
+| --------- | ------------ | ---------- | ---------- |
 | v0.5.11 | None | ~50% | Basic function calls only |
 | v0.5.12 | Self/super + qualified IDs | ~70% | + Method calls within classes |
 | v0.5.13 | + Type annotations | ~80% | + Typed parameter method calls |
@@ -2184,9 +2203,11 @@ v0.14.0 introduced a pluggable `CallEdgeResolver` protocol with confidence-prece
 # Old: "method_name" (ambiguous if multiple classes have same method)
 # New: "ClassName.method_name" (unambiguous)
 
+
 class UserService:
     def get_user(self, id):  # chunk_id: "service.py:5-10:method:UserService.get_user"
         pass
+
 
 class AdminService:
     def get_user(self, id):  # chunk_id: "service.py:15-20:method:AdminService.get_user"
@@ -2198,9 +2219,9 @@ class AdminService:
 ```python
 class DataProcessor:
     def process(self):
-        self.validate()     # → "DataProcessor.validate"
-        self._transform()   # → "DataProcessor._transform"
-        super().cleanup()   # → "BaseProcessor.cleanup" (parent class)
+        self.validate()  # → "DataProcessor.validate"
+        self._transform()  # → "DataProcessor._transform"
+        super().cleanup()  # → "BaseProcessor.cleanup" (parent class)
 ```
 
 ### Phase 2: Type Annotation Resolution (v0.5.13)
@@ -2209,17 +2230,18 @@ class DataProcessor:
 
 ```python
 def process_order(order: Order, payment: PaymentGateway):
-    order.validate()           # → "Order.validate"
-    payment.charge(amount)     # → "PaymentGateway.charge"
+    order.validate()  # → "Order.validate"
+    payment.charge(amount)  # → "PaymentGateway.charge"
+
 
 def handle_user(user: Optional[User]):
-    user.notify()              # → "User.notify" (extracts from Optional)
+    user.notify()  # → "User.notify" (extracts from Optional)
 ```
 
 **Supported Annotation Types**:
 
 | Annotation | Example | Resolution |
-|------------|---------|------------|
+| ------------ | --------- | ------------ |
 | Simple | `x: MyClass` | `MyClass` |
 | Optional | `x: Optional[MyClass]` | `MyClass` |
 | List/Set | `x: List[Item]` | `Item` |
@@ -2240,19 +2262,19 @@ def handle_user(user: Optional[User]):
 ```python
 def process_data():
     extractor = ExceptionExtractor()  # Track assignment
-    extractor.extract()               # → "ExceptionExtractor.extract"
+    extractor.extract()  # → "ExceptionExtractor.extract"
 
-    with ResourceManager() as mgr:    # Track context manager
-        mgr.cleanup()                  # → "ResourceManager.cleanup"
+    with ResourceManager() as mgr:  # Track context manager
+        mgr.cleanup()  # → "ResourceManager.cleanup"
 
-    if (handler := ErrorHandler()):   # Track walrus operator
-        handler.handle()               # → "ErrorHandler.handle"
+    if handler := ErrorHandler():  # Track walrus operator
+        handler.handle()  # → "ErrorHandler.handle"
 ```
 
 **Supported Assignment Patterns**:
 
 | Pattern | Example | Resolution |
-|---------|---------|------------|
+| --------- | --------- | ------------ |
 | Constructor | `x = MyClass()` | `MyClass` |
 | Qualified | `x = module.MyClass()` | `MyClass` |
 | Annotated | `x: MyClass = value` | `MyClass` |
@@ -2265,12 +2287,12 @@ def process_data():
 ```python
 class Service:
     def __init__(self):
-        self.repo = UserRepository()    # Track self.repo
-        self.cache = RedisCache()       # Track self.cache
+        self.repo = UserRepository()  # Track self.repo
+        self.cache = RedisCache()  # Track self.cache
 
     def get_user(self, id):
-        cached = self.cache.get(id)     # → "RedisCache.get"
-        user = self.repo.find(id)       # → "UserRepository.find"
+        cached = self.cache.get(id)  # → "RedisCache.get"
+        user = self.repo.find(id)  # → "UserRepository.find"
 ```
 
 **Priority Order**: When multiple sources provide type info:
@@ -2297,18 +2319,19 @@ class Service:
 from handlers import ErrorHandler
 from utils import Logger as L
 
-def process():
-    handler = ErrorHandler()      # Import tracking + assignment
-    handler.handle()              # → "ErrorHandler.handle"
 
-    L.configure()                 # Aliased import
+def process():
+    handler = ErrorHandler()  # Import tracking + assignment
+    handler.handle()  # → "ErrorHandler.handle"
+
+    L.configure()  # Aliased import
     # → "Logger.configure" (resolves alias to original)
 ```
 
 **Supported Import Patterns**:
 
 | Pattern | Example | Resolution |
-|---------|---------|------------|
+| --------- | --------- | ------------ |
 | Simple | `from x import Y` | `Y` → `x.Y` |
 | Aliased | `from x import Y as Z` | `Z` → `Y` (original name) |
 | Relative | `from . import helper` | `helper` → `.helper` |
@@ -2425,7 +2448,7 @@ Entity tracking enables precise discovery of how constants, enums, and default p
 The `find_connections` tool now returns **Phase 1.4 entity tracking relationships**:
 
 | Field | Description | Example |
-|-------|-------------|---------|
+| ------- | ------------- | --------- |
 | `defines_constants` | Module-level constant definitions | `[{"target_name": "TIMEOUT", "line": 15}]` |
 | `uses_constants` | Constant usage in functions/methods | `[{"target_name": "TIMEOUT", "line": 42}]` |
 | `defines_enum_members` | Enum member definitions | `[{"target_name": "Status.ACTIVE", "line": 8}]` |
@@ -2437,16 +2460,16 @@ The `find_connections` tool now returns **Phase 1.4 entity tracking relationship
 
 - `DEFINES_CONSTANT` - Module-level constant definitions (e.g., `TIMEOUT = 30`)
 - `DEFINES_ENUM_MEMBER` - Enum member definitions (e.g., `Status.ACTIVE = 1`)
-- `DEFINES_CLASS_ATTR` - Class attribute definitions (planned)
-- `DEFINES_FIELD` - Dataclass field definitions (planned)
+- `DEFINES_CLASS_ATTR` - Class attribute definitions
+- `DEFINES_FIELD` - Dataclass field definitions
 
 **Priority 5 - References**:
 
 - `USES_CONSTANT` - Constant usage in functions/methods
 - `USES_DEFAULT` - Default parameter value references
-- `USES_GLOBAL` - Global statement usage (planned)
-- `ASSERTS_TYPE` - isinstance() type assertions (planned)
-- `USES_CONTEXT_MANAGER` - Context manager usage (planned)
+- `USES_GLOBAL` - Global/nonlocal statement usage (requires `enable_entity_tracking`)
+- `ASSERTS_TYPE` - isinstance()/issubclass() type assertions (requires `enable_entity_tracking`)
+- `USES_CONTEXT_MANAGER` - Context manager usage (requires `enable_entity_tracking`)
 
 ### How It Works
 
@@ -2673,7 +2696,7 @@ Incremental indexing only processes **changed files**, leaving unchanged files d
 ### When Full Re-index is Still Needed
 
 | Scenario | Auto-Sync Sufficient | Full Re-index Needed |
-|----------|---------------------|---------------------|
+| ---------- | --------------------- | --------------------- |
 | New files added | ✅ | ❌ |
 | Files modified | ✅ | ❌ |
 | Files removed | ✅ | ❌ |
@@ -2722,7 +2745,7 @@ Incremental indexing only processes **changed files**, leaving unchanged files d
 **Complexity Thresholds**:
 
 | CC Range | Complexity | Recommendation |
-|----------|------------|----------------|
+| ---------- | ------------ | ---------------- |
 | 1-5 | Low | Simple, easy to test |
 | 6-10 | Moderate | Acceptable complexity |
 | 11-20 | High | Consider refactoring |
@@ -2869,23 +2892,23 @@ Ego-graph expansion automatically retrieves graph neighbors (callers, callees, r
 # Basic ego-graph expansion (2-hop, max 10 neighbors per hop)
 search_code(
     "authentication handler",
-    ego_graph_enabled=True     # Enable expansion
+    ego_graph_enabled=True,  # Enable expansion
 )
 
 # Custom configuration
 search_code(
     "database connection",
     ego_graph_enabled=True,
-    ego_graph_k_hops=1,        # Only direct neighbors
-    ego_graph_max_neighbors_per_hop=20  # Allow more neighbors
+    ego_graph_k_hops=1,  # Only direct neighbors
+    ego_graph_max_neighbors_per_hop=20,  # Allow more neighbors
 )
 
 # Deep traversal
 search_code(
     "request processing",
     ego_graph_enabled=True,
-    ego_graph_k_hops=3,        # 3-hop traversal
-    ego_graph_max_neighbors_per_hop=15
+    ego_graph_k_hops=3,  # 3-hop traversal
+    ego_graph_max_neighbors_per_hop=15,
 )
 ```
 
@@ -2921,9 +2944,9 @@ When ego-graph expansion is enabled, **stdlib and third-party imports are automa
 **Example Classification**:
 
 ```python
-import os                      # → stdlib (filtered)
-from typing import List        # → stdlib (filtered)
-import numpy as np             # → third_party (filtered)
+import os  # → stdlib (filtered)
+from typing import List  # → stdlib (filtered)
+import numpy as np  # → third_party (filtered)
 from .local_module import foo  # → local (included)
 from graph.storage import Bar  # → local (included if in project)
 ```
@@ -2967,7 +2990,7 @@ Query: "incremental indexing file change detection"
 ### vs Multi-Hop Search
 
 | Feature | Multi-Hop | Ego-Graph |
-|---------|-----------|-----------|
+| --------- | ----------- | ----------- |
 | **Enabled** | Default ON | Default OFF (opt-in) |
 | **Discovery Method** | Semantic similarity | Graph structure (calls, imports) |
 | **Use Case** | Related concepts | Code dependencies |
@@ -3058,7 +3081,9 @@ search_code("API endpoint", ego_graph_enabled=True, ego_graph_k_hops=1)
 
 ```python
 # Large classes with many dependencies
-search_code("DatabaseManager class", ego_graph_enabled=True, ego_graph_max_neighbors_per_hop=20)
+search_code(
+    "DatabaseManager class", ego_graph_enabled=True, ego_graph_max_neighbors_per_hop=20
+)
 ```
 
 **4. Combine with Filters**
@@ -3114,21 +3139,14 @@ Parent-child retrieval automatically includes enclosing class context when searc
 search_code(
     "validate user data",
     chunk_type="method",
-    include_parent=True     # Enable parent retrieval
+    include_parent=True,  # Enable parent retrieval
 )
 
 # Search for authentication methods with class context
-search_code(
-    "authentication methods",
-    include_parent=True
-)
+search_code("authentication methods", include_parent=True)
 
 # Combine with filters
-search_code(
-    "database query methods",
-    include_parent=True,
-    exclude_dirs=["tests/"]
-)
+search_code("database query methods", include_parent=True, exclude_dirs=["tests/"])
 ```
 
 **Parameters**:
@@ -3156,7 +3174,7 @@ Query: "validate user input methods"
 ### vs Ego-Graph Expansion
 
 | Feature | Parent-Child | Ego-Graph |
-|---------|--------------|-----------|
+| --------- | -------------- | ----------- |
 | **Enabled** | Default OFF (opt-in) | Default OFF (opt-in) |
 | **Discovery Method** | Direct parent lookup (metadata) | Graph traversal (calls, imports) |
 | **Use Case** | Method context | Code dependencies |
@@ -3254,11 +3272,7 @@ search_code("database methods", include_parent=True, exclude_dirs=["tests/"])
 
 ```python
 # Method + class + graph neighbors
-search_code(
-    "authentication method",
-    include_parent=True,
-    ego_graph_enabled=True
-)
+search_code("authentication method", include_parent=True, ego_graph_enabled=True)
 # Returns: method + parent class + callers + callees
 ```
 
@@ -3282,9 +3296,9 @@ search_code(
 
 ### Overview
 
-The Structural-Semantic Code Graph (SSCG) is a comprehensive 5-phase integration based on 4 research papers: RepoGraph (ICLR 2025), SOG (USENIX Security '24), GRACE, and Microsoft GraphRAG. It combines structural code relationships with semantic search for superior code understanding.
+The Structural-Semantic Code Graph (SSCG) is a comprehensive 4-phase integration based on 4 research papers: RepoGraph (ICLR 2025), SOG (USENIX Security '24), GRACE, and Microsoft GraphRAG. It combines structural code relationships with semantic search for superior code understanding.
 
-### Five Phases
+### Four Phases
 
 **Phase 1: Subgraph Extraction**
 
@@ -3305,12 +3319,7 @@ The Structural-Semantic Code Graph (SSCG) is a comprehensive 5-phase integration
 - `CentralityRanker` class with annotate/rerank modes
 - See [Centrality Reranking](#centrality-reranking-v090) section below
 
-**Phase 4: Community Context Surfacing**
-
-- Community ID annotation on subgraph nodes
-- Heuristic label generation from dominant symbols
-
-**Phase 5: Ego-Graph Structure Preservation**
+**Phase 4: Ego-Graph Structure Preservation**
 
 - Structured ego-graph retrieval with edge preservation
 - `EgoGraphData` dataclass for formatted output
@@ -3346,7 +3355,11 @@ PageRank-based centrality scoring is blended with semantic search scores to boos
 blended_score = centrality × alpha + semantic_score × (1 - alpha)
 ```
 
-Where `alpha = 0.3` (30% centrality, 70% semantic).
+Where `alpha` is `GraphEnhancedConfig.centrality_alpha` (`search/config.py`), **default `0.0`**
+(pure semantic score, no centrality blend) as of a 2026-07-26 SSCG sweep — recall fell
+monotonically with alpha on both golden sets (R@5 −0.027 at 0.2, −0.038 at 0.3, replicated) with
+no MRR gain. The query-aware boost suite in `CentralityRanker.rerank()` stays active regardless
+of alpha; raise alpha only if you've re-validated it against your own corpus.
 
 **PageRank Calculation**: Standard PageRank algorithm on the code graph with all 21 relationship types as edges.
 
@@ -3359,11 +3372,14 @@ When centrality reranking is active, search results include:
 
 ### Effect
 
-A utility function called by 50 other functions gets a centrality boost over an isolated helper, improving ranking for queries like "core data processing functions".
+A utility function called by 50 other functions gets a centrality boost over an
+isolated helper, improving ranking for queries like "core data processing functions".
 
 ### Configuration
 
-Centrality reranking is **always-on** when graph data is available. No configuration needed.
+Centrality *annotation* and the blended-score *rerank pass* (`centrality_annotation`,
+`centrality_reranking`) are always-on when graph data is available. The blend *weight*
+(`centrality_alpha`) is configurable and defaults to `0.0` — see above.
 
 ### Status
 
@@ -3382,7 +3398,7 @@ Automatically adjusts graph traversal edge weights based on query intent classif
 The system classifies queries into 7 categories:
 
 | Intent | Keyword Examples | Use Case |
-|--------|------------------|----------|
+| -------- | ------------------ | ---------- |
 | `local` | "where is", "which file", "find definition" | Focus on direct relationships, suppress cross-file imports |
 | `global` | "how does", "what is", "explain" | Boost cross-file connections for holistic understanding |
 | `navigational` | "find callers", "who uses" | Prioritize call chains |
@@ -3452,7 +3468,7 @@ Synthetic `chunk_type="module"` chunks generated per file with 2+ real chunks. T
 Module chunks are demoted to prevent inappropriate displacement of real code:
 
 | Query Type | Demotion Factor | Effect |
-|------------|-----------------|--------|
+| ------------ | ----------------- | -------- |
 | "class" queries | **0.82x** | Strong demotion |
 | Entity queries | **0.85x** | Moderate demotion |
 | General queries | **0.90x** | Mild demotion |
@@ -3465,47 +3481,6 @@ Module chunks are demoted to prevent inappropriate displacement of real code:
 ### Configuration
 
 Toggle via `configure_chunking(enable_file_summaries=True)` (default: enabled).
-
----
-
-## B1: Community-Level Summary Chunks (v0.9.0+)
-
-### Overview
-
-Synthetic `chunk_type="community"` chunks generated per community (via Louvain community detection) with 2+ members. These summary chunks group related code that shares thematic connections, improving GLOBAL query recall.
-
-### How It Works
-
-**Community Detection**: Louvain algorithm on the code graph groups related chunks into communities.
-
-**Generation**: For each community with 2+ members:
-
-1. Aggregate community metadata: dominant directory, classes/functions in community
-2. Identify hub function (largest chunk)
-3. Generate summary text with community ID, symbols, imports
-4. Create synthetic CodeChunk with `chunk_type="community"`, `chunk_id` format: `__community__/{label}:0-0:community:{label}`
-
-**Content Example**:
-
-```
-# Community: search_graph_analysis | 8 members
-# Dominant directory: search/
-# Classes: CentralityRanker, GraphQueryEngine
-# Functions: calculate_pagerank, extract_subgraph
-# Hub function: CentralityRanker.rerank_by_centrality
-```
-
-### Demotion Tuning (3-tier)
-
-Same demotion factors as A2 (0.82x-0.90x) to prevent inappropriate displacement.
-
-### Requires
-
-Full reindex to compute community structure (not available in incremental mode).
-
-### Configuration
-
-Toggle via `configure_chunking(enable_community_summaries=True)` (default: enabled).
 
 ---
 

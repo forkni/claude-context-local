@@ -544,3 +544,90 @@ class TestImpactReportCallerConfidence(TestCase):
         report = self._make_report(stale_chunk_count=3)
         d = report.to_dict()
         self.assertEqual(d["stale_chunk_count"], 3)
+
+
+# The 23 relationship-bucket names ImpactReport.to_dict() emits today, in
+# today's order. This is the byte-identity gate for the ImpactReport
+# consolidation refactor: step 1 (23 fields -> one `relationships` dict) must
+# not change this list or its order; step 2 (populate the dropped buckets)
+# appends to it rather than reordering it.
+_RELATIONSHIP_FIELDS_TODAY = [
+    "parent_classes",
+    "child_classes",
+    "uses_types",
+    "used_as_type_in",
+    "imports",
+    "imported_by",
+    "decorates",
+    "decorated_by",
+    "exceptions_raised",
+    "exception_handlers",
+    "exceptions_caught",
+    "instantiates",
+    "instantiated_by",
+    "defines_constants",
+    "uses_constants",
+    "defines_enum_members",
+    "uses_defaults",
+    "defines_class_attrs",
+    "class_attr_definitions",
+    "defines_fields",
+    "field_definitions",
+    "uses_context_managers",
+    "context_manager_usages",
+]
+
+
+class TestImpactReportToDictKeyOrder(TestCase):
+    """Characterization test for ImpactReport.to_dict()'s wire shape.
+
+    mcp_server/output_formatter.py serializes to_dict()'s result to JSON
+    text, so key insertion order is observable in the MCP wire output even
+    though dict equality is not. This pins today's exact key set and order
+    so the ImpactReport consolidation refactor (23 fields -> one
+    `relationships` dict) can be verified byte-identical.
+    """
+
+    def _make_report(self, **kwargs):
+        from search.types import ImpactReport
+
+        defaults = {
+            "symbol": {"name": "test"},
+            "chunk_id": "src/test.py:function:test",
+            "direct_callers": [],
+            "indirect_callers": [],
+            "similar_code": [],
+            "total_impacted": 0,
+            "unique_files": set(),
+            "dependency_graph": {},
+        }
+        defaults.update(kwargs)
+        return ImpactReport(**defaults)
+
+    def test_all_relationship_fields_populated_key_order(self):
+        """Every relationship bucket non-empty -> to_dict() emits them in
+        this exact order, after the fixed symbol/chunk_id/total_impacted/
+        file_count prefix.
+        """
+        relationships = {
+            name: [{"chunk_id": "x"}] for name in _RELATIONSHIP_FIELDS_TODAY
+        }
+        report = self._make_report(relationships=relationships)
+        d = report.to_dict()
+
+        expected_order = [
+            "symbol",
+            "chunk_id",
+            "total_impacted",
+            "file_count",
+            *_RELATIONSHIP_FIELDS_TODAY,
+        ]
+        self.assertEqual(list(d.keys()), expected_order)
+
+    def test_empty_relationship_fields_omitted(self):
+        """omit-empty: none of the 23 relationship keys appear when none of
+        the buckets have data.
+        """
+        report = self._make_report()
+        d = report.to_dict()
+        self.assertFalse(set(_RELATIONSHIP_FIELDS_TODAY) & d.keys())

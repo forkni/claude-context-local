@@ -42,6 +42,9 @@ class IncrementalIndexResult:
     bm25_resync_count: int = 0
     call_edges_injected: int = 0
     call_edge_resolvers: tuple[str, ...] = ()
+    # Pass-1 auto-tuning probe summary (ADR-0014). Attached by _full_index
+    # after the write stage returns; always None on incremental passes.
+    probe_summary: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary.
@@ -83,7 +86,7 @@ class IndexWriteStage:
         """Embed, index, snapshot, BM25-sync, and GPU-clear for a full index pass.
 
         Args:
-            all_chunks: Final chunk list after community remerge and summary injection.
+            all_chunks: Final chunk list after summary injection.
             project_name: Name used to key the snapshot and embedding metadata.
             dag: Merkle DAG built during this index pass.
             all_files: All files discovered by the DAG walker.
@@ -155,7 +158,7 @@ class IndexWriteStage:
         if project_path:
             injection_stats = self._inject_call_edges(project_path)
 
-        # Save snapshot (reset cumulative_changed_files on full index pass)
+        # Save snapshot
         metadata = self._build_metadata(
             project_name=project_name,
             all_files=all_files,
@@ -163,7 +166,6 @@ class IndexWriteStage:
             total_chunks=chunks_added,
             is_full=True,
             repo_profile=repo_profile,
-            cumulative_changed_files=0,
         )
         self._snapshot_manager.save_snapshot(dag, metadata)
 
@@ -209,8 +211,8 @@ class IndexWriteStage:
         ``Mock``.
 
         Thin wrapper over ``embeddings.chunk_cache.resolve_chunk_cache`` —
-        shared with the incremental and community-refresh embed sites so all
-        three resolve a cache the same fail-soft way.
+        shared with the incremental embed site so both resolve a cache the
+        same fail-soft way.
         """
         return resolve_chunk_cache(self._indexer.storage_dir, self._embedder)
 

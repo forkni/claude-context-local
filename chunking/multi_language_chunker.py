@@ -76,8 +76,9 @@ class MultiLanguageChunker:
         self.root_path = root_path
         self.enable_entity_tracking = enable_entity_tracking
         self.relation_filter = relation_filter
-        # Use AST chunker for Python (chunking/python_ast_chunker.py — more mature).
-        # Use tree-sitter for all other languages.
+        # All languages, including Python, route through tree-sitter.
+        # chunking/python_ast_chunker.py holds only the shared CodeChunk
+        # dataclass — it is not a separate Python chunking path.
         self.tree_sitter_chunker = TreeSitterChunker()
 
         # Initialize directory filter for index-time filtering

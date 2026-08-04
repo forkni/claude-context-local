@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import gc
 import logging
+import os
 import tempfile
 import time
 import traceback
-from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -27,17 +27,12 @@ from utils.otel_attributes import (
     ATTR_INDEX_TYPE,
     ATTR_PROJECT_ID,
 )
-from utils.path_utils import normalize_path
 from utils.timing import timed
 
-from .community_refresh_stage import CommunityRefreshStage
-from .community_stage import CommunityStage
-from .config import get_search_config
-from .graph_integration import GraphIntegration
+from .config import get_active_project_storage_dir, get_search_config
 from .index_write_stage import IncrementalIndexResult, IndexWriteStage
 from .indexer import CodeIndexManager as Indexer
 from .parallel_chunker import ParallelChunker
-from .storage_layout import project_id_from_index_dir
 from .summary_stage import SummaryStage
 
 
@@ -122,11 +117,6 @@ class IncrementalIndexer:
             max_workers=self.max_chunking_workers,
         )
         self._summary_stage = SummaryStage()
-        self._community_stage = CommunityStage(
-            build_graph_fn=self._build_temp_graph,
-            regenerate_ids_fn=self._regenerate_chunk_ids,
-            summary_stage=self._summary_stage,
-        )
         self._build_write_pipeline()
         self.repo_profile: RepoProfile | None = None  # Set during _full_index
 
@@ -134,8 +124,8 @@ class IncrementalIndexer:
         """(Re)build the resource-bound write pipeline.
 
         Call from __init__ and again immediately after _release_and_verify_resources()
-        so IndexWriteStage is always bound to the current self.embedder / self.indexer
-        — never to released objects.
+        so IndexWriteStage is always bound to the current self.embedder /
+        self.indexer — never to released objects.
         """
         self._index_write_stage = IndexWriteStage(
             embedder=self.embedder,
@@ -143,11 +133,6 @@ class IncrementalIndexer:
             snapshot_manager=self.snapshot_manager,
             build_metadata_fn=self._build_snapshot_metadata,
             clear_gpu_fn=self._clear_gpu_cache,
-        )
-        self._community_refresh_stage = CommunityRefreshStage(
-            embedder=self.embedder,
-            indexer=self.indexer,
-            summary_stage=self._summary_stage,
         )
 
     def _chunk_files_parallel(
@@ -249,13 +234,6 @@ class IncrementalIndexer:
             logger.info(f"Detecting changes in {project_name}")
             changes, current_dag = self.detect_changes(project_path)
 
-            # Loaded once and shared with _check_community_drift below so a
-            # no-change pass and a changed pass agree on prior drift state
-            # (previously each read the snapshot independently, and the
-            # no-change branch dropped the cumulative fields entirely).
-            _prev_meta = self.snapshot_manager.load_metadata(project_path)
-            _prev_meta_dict = _prev_meta if isinstance(_prev_meta, dict) else {}
-
             if not changes.has_changes():
                 logger.info(f"No changes detected in {project_name}")
                 # Even with no changes, save current statistics
@@ -269,16 +247,6 @@ class IncrementalIndexer:
                     supported_files=supported_files,
                     total_chunks=total_chunks,
                     is_full=False,
-                    # Carry the drift accumulator forward unchanged — dropping
-                    # these on a no-change pass previously reset the drift
-                    # tracking silently, making the next promotion decision
-                    # depend on whether an intervening no-op run had occurred.
-                    cumulative_changed_files=_prev_meta_dict.get(
-                        "cumulative_changed_files", 0
-                    ),
-                    cumulative_changed_paths=_prev_meta_dict.get(
-                        "cumulative_changed_paths", []
-                    ),
                 )
                 self.snapshot_manager.save_snapshot(current_dag, metadata)
 
@@ -289,23 +257,6 @@ class IncrementalIndexer:
                 f"Changes detected - Added: {len(changes.added)}, "
                 f"Removed: {len(changes.removed)}, Modified: {len(changes.modified)}"
             )
-            _config = get_search_config()
-            _should_refresh_communities = (
-                _config.chunking.enable_community_summaries
-                and _config.chunking.enable_incremental_community_summaries
-            )
-            _drift_result, _new_cumulative, _new_cumulative_paths = (
-                self._check_community_drift(
-                    project_path,
-                    project_name,
-                    changes,
-                    start_time,
-                    _should_refresh_communities,
-                    _prev_meta_dict,
-                )
-            )
-            if _drift_result is not None:
-                return _drift_result
 
             # Process changes
             chunks_removed = self._remove_old_chunks(changes, project_name)
@@ -315,21 +266,11 @@ class IncrementalIndexer:
 
             chunks_added = self._add_new_chunks(changes, project_path, project_name)
 
-            # ========== Community summary refresh (approximate, below redetect threshold) ==========
-            if _should_refresh_communities:
-                try:
-                    self._community_refresh_stage.run(changes, project_name)
-                except Exception as e:  # noqa: BLE001 - resilience: community summary refresh non-fatal, indexing continues
-                    logger.warning(
-                        f"[INCR_COMM] Community summary refresh failed (non-fatal): {e}",
-                        exc_info=True,
-                    )
-            # ========== END Community summary refresh ==========
-
             # Validate index consistency after operations
-            if hasattr(self.indexer, "validate_index_consistency"):
+            _consistency_target = self._consistency_target()
+            if _consistency_target is not None:
                 logger.info("[INCREMENTAL] Validating index consistency...")
-                is_valid, issues = self.indexer.validate_index_consistency()
+                is_valid, issues = _consistency_target.validate_index_consistency()
                 if not is_valid:
                     logger.error(
                         f"[INCREMENTAL] Index validation failed with {len(issues)} issues. "
@@ -357,8 +298,6 @@ class IncrementalIndexer:
                 files_added=len(changes.added),
                 files_removed=len(changes.removed),
                 files_modified=len(changes.modified),
-                cumulative_changed_files=_new_cumulative,
-                cumulative_changed_paths=_new_cumulative_paths,
             )
             self.snapshot_manager.save_snapshot(current_dag, metadata)
 
@@ -460,80 +399,44 @@ class IncrementalIndexer:
             f"max_cc={_cached_profile.max_complexity}"
         )
 
-    def _check_community_drift(
-        self,
-        project_path: str,
-        project_name: str,
-        changes: FileChanges,
-        start_time: float,
-        should_refresh_communities: bool,
-        prev_meta_dict: dict[str, Any],
-    ) -> tuple[IncrementalIndexResult | None, int, list[str]]:
-        """Compute cumulative drift; promote to full reindex when threshold exceeded.
+    def _consistency_target(self) -> Any:
+        """Resolve the object that owns metadata_store + chunk_ids.
 
-        Drift is tracked as a *set* of distinct changed file paths, not a running
-        count of change events — re-editing the same file across many incremental
-        passes must not, by itself, approach the redetect threshold the way
-        summing per-pass change counts would.
-
-        Always returns the new cumulative state so the caller can include it in
-        snapshot metadata whether or not a promotion occurred.
-
-        Args:
-            prev_meta_dict: Previously loaded snapshot metadata (already loaded by
-                the caller — avoids a second disk read here).
-
-        Returns:
-            (None, new_cumulative_count, new_cumulative_paths) — continue with
-                incremental update; caller persists the cumulative state.
-            (full_index_result, new_cumulative_count, new_cumulative_paths) — drift
-                exceeded threshold; caller should immediately return
-                full_index_result. The full index itself resets the on-disk
-                cumulative state to zero, so the returned paths are unused by
-                the caller in this case.
+        self.indexer is a HybridSearcher in production (see
+        mcp_server/tools/index_handlers.py's "indexer: HybridSearcher or
+        CodeIndexManager" docstring) but a bare CodeIndexManager under most
+        tests; only CodeIndexManager defines validate_index_consistency, so
+        calling it unconditionally is dead code on the real path. Reuses the
+        dense_index accessor idiom already used for the same purpose in
+        index_write_stage.py's _inject_call_edges.
         """
-        _has_prior_tracking = "cumulative_changed_files" in prev_meta_dict
-        _prev_paths = {
-            normalize_path(p)
-            for p in prev_meta_dict.get("cumulative_changed_paths", [])
-        }
-        _this_paths = {
-            normalize_path(p)
-            for p in (*changes.added, *changes.modified, *changes.removed)
-        }
-        _new_paths = _prev_paths | _this_paths
-        _new_cumulative = len(_new_paths)
-        if should_refresh_communities and _has_prior_tracking:
-            _config = get_search_config()
-            _prev_supported = max(1, int(prev_meta_dict.get("supported_files", 1)))
-            _drift_fraction = _new_cumulative / _prev_supported
-            if (
-                _drift_fraction
-                > _config.chunking.incremental_community_redetect_threshold
-            ):
-                logger.info(
-                    f"[INCREMENTAL] Community drift {_drift_fraction:.0%} exceeds "
-                    f"threshold {_config.chunking.incremental_community_redetect_threshold:.0%}; "
-                    "promoting to full reindex for community redetection"
-                )
-                with traced_block(
-                    "index.full",
-                    **{ATTR_PROJECT_ID: project_name, ATTR_INDEX_TYPE: "full"},
-                ):
-                    _result = self._full_index(project_path, project_name, start_time)
-                # The pass really did rebuild everything, but the caller asked
-                # what *changed* — report the true change set from `changes`,
-                # not the full-rebuild file count. chunks_added/chunks_removed
-                # stay as-is (they describe real work done during the rebuild).
-                if _result.success:
-                    _result = replace(
-                        _result,
-                        files_added=len(changes.added),
-                        files_removed=len(changes.removed),
-                        files_modified=len(changes.modified),
-                    )
-                return (_result, _new_cumulative, [])
-        return None, _new_cumulative, sorted(_new_paths)
+        if hasattr(self.indexer, "validate_index_consistency"):
+            return self.indexer
+        return getattr(self.indexer, "dense_index", None)
+
+    _RECOVERY_MARKER_NAME = "index_recovery_failed.marker"
+
+    def _recovery_marker_path(self) -> Path | None:
+        """Resolve the recovery-marker path in the index storage directory.
+
+        IncrementalIndexer is constructed fresh per MCP request
+        (search_handlers.py, index_handlers.py), so a retry counter kept on
+        ``self`` resets every call and can never bound anything — a marker
+        file on disk is what actually survives across the request boundary
+        that previously produced 62 consecutive recovery attempts.
+
+        Reuses ``_consistency_target`` to resolve to a CodeIndexManager
+        regardless of whether ``self.indexer`` is a HybridSearcher
+        (production) or a bare CodeIndexManager (most tests).
+        """
+        target = self._consistency_target()
+        storage_dir = getattr(target, "storage_dir", None)
+        if not isinstance(storage_dir, (str, os.PathLike)):
+            # None (no target resolved) or an unconfigured test double
+            # (e.g. a bare Mock() with no storage_dir set) — either way
+            # there is no real directory to write a marker into.
+            return None
+        return Path(storage_dir) / self._RECOVERY_MARKER_NAME
 
     def _attempt_recovery(
         self,
@@ -544,6 +447,12 @@ class IncrementalIndexer:
     ) -> IncrementalIndexResult:
         """Attempt recovery via full re-index after failure.
 
+        Bounded by a marker file (see ``_recovery_marker_path``): if a prior
+        recovery attempt already failed, this returns an error immediately
+        instead of retrying clear_index()/full-index again, since the
+        underlying cause (e.g. a held file handle) will not have changed on
+        its own.
+
         Args:
             original_error: Description of the original failure
             project_path: Path to the project
@@ -553,18 +462,52 @@ class IncrementalIndexer:
         Returns:
             IncrementalIndexResult from recovery attempt or error result
         """
+        marker_path = self._recovery_marker_path()
+        if marker_path is not None and marker_path.exists():
+            error = (
+                f"Recovery already failed previously ({marker_path.name} "
+                "present) and was not retried automatically. Call "
+                "cleanup_resources to release any held file handles, then "
+                "retry indexing; a successful recovery removes the marker."
+            )
+            logger.error(error)
+            return self._zero_result(start_time, success=False, error=error)
+
         logger.warning(f"Attempting recovery via full re-index: {original_error}")
         try:
             self.indexer.clear_index()
-            return self._full_index(project_path, project_name, start_time)
+            result = self._full_index(project_path, project_name, start_time)
         except Exception as recovery_error:  # noqa: BLE001 - api-boundary: recovery failure converted to structured error result
             logger.error(f"Recovery failed: {recovery_error}")
             logger.error(traceback.format_exc())
+            if marker_path is not None:
+                try:
+                    marker_path.parent.mkdir(parents=True, exist_ok=True)
+                    marker_path.write_text(
+                        f"Original: {original_error}\nRecovery: {recovery_error}\n"
+                        f"Timestamp: {time.time()}\n",
+                        encoding="utf-8",
+                    )
+                except OSError as marker_error:  # noqa: BLE001 - best-effort: marker write failure must not mask the real error below
+                    logger.warning(f"Could not write recovery marker: {marker_error}")
             return self._zero_result(
                 start_time,
                 success=False,
-                error=f"Original: {original_error}, Recovery: {recovery_error}",
+                error=(
+                    f"Original: {original_error}, Recovery: {recovery_error}. "
+                    "Call cleanup_resources to release held file handles "
+                    "before retrying."
+                ),
             )
+        else:
+            if marker_path is not None and marker_path.exists():
+                try:
+                    marker_path.unlink()
+                except OSError as marker_error:  # noqa: BLE001 - best-effort: stale marker cleanup, not fatal to a successful recovery
+                    logger.warning(
+                        f"Recovery succeeded but could not clear stale marker: {marker_error}"
+                    )
+            return result
 
     def _release_and_verify_resources(self, project_path: str) -> None:
         """Mandatory resource release and verification before full reindex.
@@ -683,8 +626,14 @@ class IncrementalIndexer:
         if hasattr(self.indexer, "_is_shutdown") and self.indexer._is_shutdown:
             from mcp_server.search_factory import get_searcher
 
+            # load_existing=False (#reindex-log-audit-2026-07-30): this searcher
+            # is a write-only target for the force-full reindex about to run —
+            # _full_index() calls clear_index()/clear_hybrid_indices() on it
+            # moments later, so loading the stale on-disk BM25 index here would
+            # only cost time and log spurious version/tokenizer mismatch
+            # warnings for data that is about to be discarded.
             # pyrefly: ignore [bad-assignment]
-            self.indexer = get_searcher(project_path)
+            self.indexer = get_searcher(project_path, load_existing=False)
             logger.info("[FULL_INDEX] Fresh indexer/searcher acquired for reindex")
         else:
             logger.debug(
@@ -782,6 +731,30 @@ class IncrementalIndexer:
             self.repo_profile = repo_profile
             # ========== END Repository Profiling ==========
 
+            # ========== Auto-Tuning Probe: Pass 1 (ADR-0014) ==========
+            # Writes <project_storage_dir>/search_overrides.json BEFORE the
+            # get_search_config() call below, so this very run already sees
+            # the merged overrides. Wired only here in _full_index —
+            # incremental reindexes never re-probe, and an existing overrides
+            # file keeps applying untouched. Storage dir comes from the
+            # config layer's active-project seam (set by the MCP handlers);
+            # when unset (CLI/tests), the probe is skipped entirely.
+            probe_summary = None
+            probe_storage = get_active_project_storage_dir()
+            if probe_storage:
+                try:
+                    from .index_probe import probe_pre_chunking
+
+                    probe_summary = probe_pre_chunking(
+                        probe_storage,
+                        supported_files,
+                        repo_profile,
+                        embedding_model=getattr(self.embedder, "model_name", None),
+                    )
+                except Exception as e:  # noqa: BLE001 - probe isolation: tuning must never break indexing
+                    logger.warning(f"[INDEX_PROBE] Pass 1 failed: {e}")
+            # ========== END Auto-Tuning Probe ==========
+
             # Collect all chunks first, then embed in a single pass for efficiency
             # Use parallel chunking for improved performance
             logger.info(
@@ -795,12 +768,20 @@ class IncrementalIndexer:
             # ParallelChunker._log_chunking_summary.
             logger.info(f"Total chunks collected: {len(all_chunks)}")
 
-            # Stage 1: community detection, summarisation, remerge
+            # Stage 1: file-level module summaries
             config = get_search_config()
-            all_chunks = self._community_stage.run(all_chunks, project_path, config)
+            if config.chunking.enable_file_summaries and all_chunks:
+                module_summaries = self._summary_stage.generate_module_summaries(
+                    all_chunks
+                )
+                if module_summaries:
+                    all_chunks.extend(module_summaries)
+                    logger.info(
+                        f"[FILE_SUMMARIES] Appended {len(module_summaries)} module summaries"
+                    )
 
-            # Stage 2: embed, index, snapshot, BM25, GPU
-            return self._index_write_stage.run(
+            # Stage 2: embed, index, call-edge injection, snapshot, BM25, GPU
+            result = self._index_write_stage.run(
                 all_chunks,
                 project_name,
                 dag,
@@ -810,9 +791,38 @@ class IncrementalIndexer:
                 self.repo_profile,
                 project_path=project_path,
             )
+            result.probe_summary = probe_summary
+
+            _consistency_target = self._consistency_target()
+            if _consistency_target is not None:
+                is_valid, issues = _consistency_target.validate_index_consistency()
+                if not is_valid:
+                    logger.error(
+                        f"[FULL_INDEX] Index inconsistent after full index: {issues}"
+                    )
+                    result.success = False
+                    result.error = (
+                        f"Index inconsistent after full index "
+                        f"({len(issues)} issues): {issues}"
+                    )
+            return result
 
         except Exception as e:
             logger.error(f"Full indexing failed: {e}", exc_info=True)
+            # (#reindex-log-audit-2026-07-30) The searcher acquired above (see
+            # _release_and_verify_resources) was built with load_existing=False,
+            # so if this failure happened after construction but before
+            # clear_hybrid_indices()/rebuild completed, state.searcher is an
+            # empty write-only instance. Null it — same one-line invalidation
+            # search_factory.get_searcher() already does for
+            # DimensionMismatchError — so the next call rebuilds from disk
+            # instead of returning an empty cached searcher.
+            try:
+                from mcp_server.services import get_state
+
+                get_state().searcher = None
+            except Exception:  # noqa: BLE001 - best-effort cache invalidation, never mask the original failure
+                pass
             return self._zero_result(start_time, success=False, error=str(e))
 
     def _get_total_chunks(self) -> int:
@@ -841,109 +851,6 @@ class IncrementalIndexer:
             List of supported file paths
         """
         return [f for f in all_files if self._is_supported_file(project_path, f)]
-
-    def _build_temp_graph(self, chunks: list[CodeChunk]) -> GraphIntegration:
-        """Build temporary graph from chunks for community detection.
-
-        Creates a GraphIntegration instance and builds the NetworkX graph
-        from unmerged chunks WITHOUT embeddings. Used for pre-embedding
-        community detection in two-pass chunking flow.
-
-        Args:
-            chunks: List of CodeChunk objects with chunk_id, calls, relationships
-
-        Returns:
-            GraphIntegration instance with populated NetworkX graph
-
-        Reference:
-            search/graph_integration.py:build_graph_from_chunks()
-        """
-        # Create temporary GraphIntegration with project ID
-        # Use indexer's storage directory for graph storage
-        storage_dir = (
-            Path(self.indexer.storage_dir)
-            if hasattr(self.indexer, "storage_dir")
-            else Path(tempfile.mkdtemp(prefix="temp_graph_"))
-        )
-
-        project_id = (
-            project_id_from_index_dir(storage_dir)
-            if storage_dir.exists()
-            else "temp_community_graph"
-        )
-
-        graph_integration = GraphIntegration(
-            project_id=project_id, storage_dir=storage_dir
-        )
-
-        # Build graph from chunks (NetworkX DiGraph API)
-        graph_integration.build_graph_from_chunks(chunks)
-
-        logger.info(
-            f"[COMMUNITY_MERGE] Built temporary graph: {graph_integration.node_count} nodes"
-        )
-
-        return graph_integration
-
-    def _regenerate_chunk_ids(
-        self, chunks: list[CodeChunk], project_path: str
-    ) -> list[CodeChunk]:
-        """Regenerate proper chunk_ids after community-based remerge.
-
-        After remerging chunks with community boundaries, line numbers change
-        and chunk_ids become invalid. This method regenerates chunk_ids with
-        correct line ranges and proper format.
-
-        Format: {relative_path}:{start_line}-{end_line}:{chunk_type}:{name}
-
-        Args:
-            chunks: List of CodeChunk objects after remerge
-            project_path: Root project directory for computing relative paths
-
-        Returns:
-            List of CodeChunk with regenerated chunk_ids
-
-        Example:
-            src/auth.py:10-50:function:login
-            src/models.py:5-120:class:User
-            src/utils.py:15-45:method:Database.connect
-        """
-        from dataclasses import replace
-
-        result = []
-        project_root = Path(project_path)
-
-        for chunk in chunks:
-            # Compute relative path
-            if chunk.relative_path:
-                rel_path = chunk.relative_path
-            else:
-                chunk_path = Path(chunk.file_path)
-                try:
-                    rel_path = str(chunk_path.relative_to(project_root))
-                except ValueError:
-                    # If relative_to fails, use the filename
-                    rel_path = chunk_path.name
-
-            # Normalize path separators to forward slash
-            normalized_path = normalize_path(str(rel_path))
-
-            # Build chunk_id: path:lines:type:name
-            chunk_id = f"{normalized_path}:{chunk.start_line}-{chunk.end_line}:{chunk.chunk_type}"
-
-            # Add qualified name if available
-            if chunk.parent_name and chunk.name:
-                chunk_id += f":{chunk.parent_name}.{chunk.name}"
-            elif chunk.name:
-                chunk_id += f":{chunk.name}"
-
-            # Create new chunk with regenerated ID
-            new_chunk = replace(chunk, chunk_id=chunk_id)
-            result.append(new_chunk)
-
-        logger.info(f"[COMMUNITY_MERGE] Regenerated chunk_ids for {len(result)} chunks")
-
-        return result
 
     def _build_snapshot_metadata(
         self,
@@ -1074,13 +981,6 @@ class IncrementalIndexer:
             f"[INCREMENTAL] Chunking {len(supported_files)} files (parallel={'enabled' if self.enable_parallel_chunking else 'disabled'})"
         )
         chunks_to_embed = self._chunk_files_parallel(project_path, supported_files)
-
-        # ========== Community Summaries (B1) — INCREMENTAL MODE SKIP ==========
-        # NOTE: Community summaries require community_map, which is only generated
-        # during full indexing (with community detection). Incremental mode cannot
-        # generate community summaries since it doesn't have access to the full
-        # project graph or community_map. Re-index fully to generate community summaries.
-        # ========== END Community Summaries Skip Explanation ==========
 
         # ========== File-Level Module Summaries (A2) ==========
         config = get_search_config()

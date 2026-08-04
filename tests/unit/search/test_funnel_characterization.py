@@ -42,7 +42,12 @@ import numpy as np
 import pytest
 
 from search.chunk_id import dedupe_results
-from search.config import EgoGraphConfig, GraphEnhancedConfig, ParentRetrievalConfig
+from search.config import (
+    EgoGraphConfig,
+    GraphEnhancedConfig,
+    ParentRetrievalConfig,
+    SearchMode,
+)
 from search.graph_scoring_stage import GraphScoringStage
 from search.hybrid_searcher import HybridSearcher
 from search.indexer import CodeIndexManager
@@ -50,6 +55,7 @@ from search.multi_hop_searcher import MultiHopSearcher
 from search.reranker import SearchResult
 from search.reranking_engine import RerankingEngine
 from search.search_executor import SearchExecutor
+from search.types import RetrievalRequest
 
 
 # ---------------------------------------------------------------------------
@@ -86,18 +92,52 @@ def executor():
     )
 
 
-def _cfg(top_k_candidates=30, single_pass=False, bm25_reserved_slots=0):
+def _cfg(
+    top_k_candidates=30, single_pass=False, bm25_reserved_slots=0, hop1_reserved_slots=0
+):
     cfg = Mock()
     cfg.reranker.top_k_candidates = top_k_candidates
     cfg.reranker.single_pass = single_pass
+    cfg.reranker.hop1_reserved_slots = hop1_reserved_slots
     cfg.search_mode.bm25_reserved_slots = bm25_reserved_slots
+    cfg.query_expansion.enabled = False  # Mock attrs are truthy by default
     return cfg
+
+
+def _request(
+    query="q",
+    k=4,
+    search_mode=SearchMode.HYBRID,
+    use_parallel=True,
+    filters=None,
+    config=None,
+    bm25_weight=0.35,
+    dense_weight=0.65,
+    min_bm25_score=0.0,
+):
+    """Build a RetrievalRequest for execute_single_hop funnel-width tests.
+
+    config defaults to _cfg() (rather than a real SearchConfig) so these
+    tests keep asserting against the same explicit knob values they always
+    have — execute_single_hop reads everything off request.config now, there
+    is no more get_search_config() import in search_executor.py to patch.
+    """
+    return RetrievalRequest(
+        query=query,
+        k=k,
+        search_mode=search_mode,
+        bm25_weight=bm25_weight,
+        dense_weight=dense_weight,
+        min_bm25_score=min_bm25_score,
+        use_parallel=use_parallel,
+        filters=filters,
+        config=config if config is not None else _cfg(),
+    )
 
 
 def test_hybrid_widen_uses_reranker_budget_floor(executor):
     """search_k = max(reranker_budget, k*5); budget wins when k*5 < budget."""
-    with patch("search.search_executor.get_search_config", return_value=_cfg()):
-        executor.execute_single_hop("q", k=4, use_parallel=False)
+    executor.execute_single_hop(_request(k=4, use_parallel=False))
 
     assert executor.bm25_index.search.call_args[0][1] == 30
     assert executor.dense_index.search.call_args[0][1] == 30
@@ -105,8 +145,7 @@ def test_hybrid_widen_uses_reranker_budget_floor(executor):
 
 def test_hybrid_widen_uses_k5_when_larger_than_budget(executor):
     """search_k = max(reranker_budget, k*5); k*5 wins once k is large enough."""
-    with patch("search.search_executor.get_search_config", return_value=_cfg()):
-        executor.execute_single_hop("q", k=8, use_parallel=False)
+    executor.execute_single_hop(_request(k=8, use_parallel=False))
 
     assert executor.bm25_index.search.call_args[0][1] == 40
     assert executor.dense_index.search.call_args[0][1] == 40
@@ -117,8 +156,7 @@ def test_fusion_k_uses_reranker_budget_floor(executor):
     executor.reranker.rerank_simple.return_value = [
         SearchResult(chunk_id="x", score=1.0, metadata={})
     ]
-    with patch("search.search_executor.get_search_config", return_value=_cfg()):
-        executor.execute_single_hop("q", k=4, use_parallel=False)
+    executor.execute_single_hop(_request(k=4, use_parallel=False))
 
     assert executor.reranker.rerank_simple.call_args.kwargs["max_results"] == 30
 
@@ -219,6 +257,25 @@ def test_faiss_search_capped_by_ntotal_when_smaller():
 # ---------------------------------------------------------------------------
 
 
+def _mh_request(query="q", k=4, config=None, filters=None):
+    """Build a RetrievalRequest for MultiHopSearcher.search tests.
+
+    config defaults to a bare Mock (rather than _cfg()) since these tests
+    exercise multi_hop-specific knobs that _cfg() doesn't set.
+    """
+    return RetrievalRequest(
+        query=query,
+        k=k,
+        search_mode=SearchMode.HYBRID,
+        bm25_weight=0.35,
+        dense_weight=0.65,
+        min_bm25_score=0.0,
+        use_parallel=True,
+        filters=filters,
+        config=config if config is not None else Mock(),
+    )
+
+
 def test_multihop_widens_initial_k_by_multiplier():
     """initial_k = int(k * initial_k_multiplier) (multi_hop_searcher.py:400)."""
     cfg = Mock()
@@ -232,12 +289,10 @@ def test_multihop_widens_initial_k_by_multiplier():
         logger=logging.getLogger("test"),
     )
 
-    with patch(
-        "search.multi_hop_searcher._get_config_via_service_locator", return_value=cfg
-    ):
-        searcher.search("q", k=4, hops=1)
+    searcher.search(_mh_request(k=4, config=cfg), hops=1)
 
-    assert callback.call_args.kwargs["k"] == 8
+    req = callback.call_args.args[0]
+    assert req.k == 8
 
 
 def test_multihop_single_pass_tail_sorts_and_slices_without_reranker():
@@ -267,10 +322,7 @@ def test_multihop_single_pass_tail_sorts_and_slices_without_reranker():
         side_effect=lambda all_results, **_: all_results
     )
 
-    with patch(
-        "search.multi_hop_searcher._get_config_via_service_locator", return_value=cfg
-    ):
-        results = searcher.search("q", k=1, hops=2, filters=None)
+    results = searcher.search(_mh_request(k=1, config=cfg, filters=None), hops=2)
 
     reranking_engine.rerank_by_query.assert_not_called()
     assert [r.chunk_id for r in results] == ["b"]
@@ -295,6 +347,95 @@ def test_rerank_slice_caps_at_top_k_candidates():
 
     passed_candidates = engine.neural_reranker.rerank.call_args[0][1]
     assert len(passed_candidates) == 30
+
+
+def test_hop1_reserve_default_zero_is_identical_window():
+    """hop1_reserved_slots=0 (default) must reproduce the exact pre-existing
+    window — no reserve logic runs at all (multi-hop pool flooding fix,
+    docs/adr/0013-hop1-reserve-at-final-pool.md)."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)  # skip neural rerank branch
+    cfg = _cfg(top_k_candidates=5, hop1_reserved_slots=0)
+    # 10 candidates: only the top 5 by score should ever reach the reranker,
+    # even though a lower-scored candidate is tagged hop1_rank=1.
+    candidates = [
+        SearchResult(chunk_id=f"c{i}", score=float(9 - i), metadata={})
+        for i in range(10)
+    ]
+    candidates[9].metadata["hop1_rank"] = 1  # lowest score, best hop1 rank
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query("q", candidates, k=5)
+
+    assert [r.chunk_id for r in out] == ["c0", "c1", "c2", "c3", "c4"]
+
+
+def test_hop1_reserve_promotes_tagged_candidate_into_window():
+    """hop1_reserved_slots > 0 promotes the best-hop1-ranked candidate from
+    outside the top_k_candidates window back into it, evicting the window's
+    worst-scored entry (order otherwise irrelevant — the reranker re-scores
+    the whole window)."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)  # skip neural rerank branch
+    cfg = _cfg(top_k_candidates=5, hop1_reserved_slots=1)
+    candidates = [
+        SearchResult(chunk_id=f"c{i}", score=float(9 - i), metadata={})
+        for i in range(10)
+    ]
+    candidates[9].metadata["hop1_rank"] = (
+        1  # score 0.0, would be cut without the reserve
+    )
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query("q", candidates, k=5, hop1_reserved_slots=1)
+
+    out_ids = {r.chunk_id for r in out}
+    assert "c9" in out_ids
+    assert "c4" not in out_ids  # evicted to make room
+    assert len(out) == 5
+
+
+def test_hop1_reserve_noop_when_pool_within_window():
+    """No-op when the merged pool doesn't exceed top_k_candidates — nothing
+    to reserve room for."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)  # skip neural rerank branch
+    cfg = _cfg(top_k_candidates=30, hop1_reserved_slots=3)
+    candidates = [
+        SearchResult(chunk_id=f"c{i}", score=float(9 - i), metadata={})
+        for i in range(10)
+    ]
+    candidates[9].metadata["hop1_rank"] = 1
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query("q", candidates, k=5, hop1_reserved_slots=3)
+
+    assert [r.chunk_id for r in out] == ["c0", "c1", "c2", "c3", "c4"]
+
+
+def test_hop1_reserve_ego_tail_call_site_unaffected():
+    """rerank_by_query's hop1_reserved_slots parameter defaults to 0 — calls
+    that don't pass it explicitly (the ego-graph/parent-expansion tail in
+    HybridSearcher) are byte-identical even when the config value is
+    non-zero, because the config is only read for top_k_candidates unless
+    the caller opts in via the argument."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)  # skip neural rerank branch
+    # Config has a non-zero knob value, but the caller (simulating the
+    # ego-tail call sites) doesn't pass hop1_reserved_slots.
+    cfg = _cfg(top_k_candidates=5, hop1_reserved_slots=3)
+    candidates = [
+        SearchResult(chunk_id=f"c{i}", score=float(9 - i), metadata={})
+        for i in range(10)
+    ]
+    candidates[9].metadata["hop1_rank"] = 1
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query(
+            "q", candidates, k=5
+        )  # no hop1_reserved_slots kwarg
+
+    assert [r.chunk_id for r in out] == ["c0", "c1", "c2", "c3", "c4"]
 
 
 def test_dedupe_split_blocks_can_return_fewer_than_k():
@@ -374,6 +515,48 @@ def test_parent_cap_only_expands_first_max_results_to_expand():
 
     requested = {c.args[0] for c in searcher.dense_index.get_chunk_by_id.call_args_list}
     assert requested == {"parent0", "parent1", "parent2", "parent3"}
+
+
+def test_include_parent_content_false_strips_content_from_parent_metadata():
+    """include_parent_content=False strips `content` before ResultFactory builds
+    the parent SearchResult, but leaves other metadata keys intact."""
+    searcher = _bare_hybrid_searcher()
+    searcher.dense_index.get_chunk_by_id.return_value = {
+        "content": "full parent source",
+        "file_path": "foo.py",
+    }
+    results = [
+        SearchResult(chunk_id="r0", score=1.0, metadata={"parent_chunk_id": "parent0"})
+    ]
+    config = ParentRetrievalConfig(enabled=True, include_parent_content=False)
+
+    combined = searcher._apply_parent_expansion(
+        results, config, max_results_to_expand=4
+    )
+
+    parent_result = next(r for r in combined if r.chunk_id == "parent0")
+    assert "content" not in parent_result.metadata
+    assert parent_result.metadata["file_path"] == "foo.py"
+
+
+def test_include_parent_content_true_keeps_content_in_parent_metadata():
+    """include_parent_content=True (default) is unchanged: content stays attached."""
+    searcher = _bare_hybrid_searcher()
+    searcher.dense_index.get_chunk_by_id.return_value = {
+        "content": "full parent source",
+        "file_path": "foo.py",
+    }
+    results = [
+        SearchResult(chunk_id="r0", score=1.0, metadata={"parent_chunk_id": "parent0"})
+    ]
+    config = ParentRetrievalConfig(enabled=True)
+
+    combined = searcher._apply_parent_expansion(
+        results, config, max_results_to_expand=4
+    )
+
+    parent_result = next(r for r in combined if r.chunk_id == "parent0")
+    assert parent_result.metadata["content"] == "full parent source"
 
 
 # ---------------------------------------------------------------------------

@@ -153,12 +153,24 @@ class BatchOperations:
             import traceback
 
             self._logger.error(traceback.format_exc())
-            # Don't leave index in corrupted state - if rebuild fails, clear it
+            # Don't leave index in corrupted state - if rebuild fails, clear it.
+            # clear_index_callback() can itself raise now that clear_index()
+            # fails fast on a locked metadata.db (see search/indexer.py). If
+            # it did and we let that exception propagate here, the bare
+            # `raise` below would never run, silently swapping the reported
+            # cause: the caller would see the clear failure instead of the
+            # original batch-removal failure that triggered this handler.
+            # Log and swallow it instead so the original exception survives.
             self._logger.warning(
                 "Batch removal failed, clearing index to prevent corruption"
             )
             if clear_index_callback:
-                clear_index_callback()
+                try:
+                    clear_index_callback()
+                except Exception as clear_error:  # noqa: BLE001 - deliberately swallowed: see comment above, original failure must still propagate
+                    self._logger.error(
+                        f"Failed to clear index after batch removal failure: {clear_error}"
+                    )
             raise
 
     def _rebuild_index_without(

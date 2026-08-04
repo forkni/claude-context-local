@@ -650,10 +650,37 @@ class TestApplyRrfKOverride:
         assert calls == []
 
 
+class TestApplyRerankerDtypeOverride:
+    """--reranker-dtype must mutate the in-memory config; None is a strict no-op."""
+
+    def _apply(self, value):
+        from scripts.benchmark.run_sscg_benchmark import _apply_reranker_dtype_override
+
+        return _apply_reranker_dtype_override(value)
+
+    def test_sets_listwise_dtype_on_config(self, monkeypatch):
+        from search.config import SearchConfig
+
+        cfg = SearchConfig()
+        assert cfg.reranker.listwise_dtype == "auto"  # deployed default
+        monkeypatch.setattr("search.config.get_search_config", lambda: cfg)
+        self._apply("fp32")
+        assert cfg.reranker.listwise_dtype == "fp32"
+
+    def test_none_is_noop(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr("search.config.get_search_config", lambda: calls.append(1))
+        self._apply(None)
+        assert calls == []
+
+
 class TestMaybeResetForConstructionOverrides:
     """Q4 Blocker-B fix: the cached searcher must be dropped whenever a
-    construction-baked param (bm25/dense weight, rrf_k) is overridden, so
-    each sweep iteration builds a searcher with its own fusion params."""
+    construction-baked param (rrf_k, reranker doc budgets/dtype) is
+    overridden, so each sweep iteration builds a searcher with its own
+    fusion params. bm25/dense weight are NOT construction-baked (Phase 2a,
+    ADR-0018 follow-on) — HybridSearcher resolves them live per search()
+    call, so overriding only those two must NOT reset the cached searcher."""
 
     def _call(self, monkeypatch, **kwargs):
         from unittest.mock import MagicMock
@@ -668,24 +695,36 @@ class TestMaybeResetForConstructionOverrides:
             kwargs.get("bm25_weight"),
             kwargs.get("dense_weight"),
             kwargs.get("rrf_k"),
+            reranker_dtype=kwargs.get("reranker_dtype"),
         )
         return state
 
-    def test_resets_when_weights_overridden(self, monkeypatch):
+    def test_no_reset_when_only_weights_overridden(self, monkeypatch):
+        """bm25_weight/dense_weight are live-read (Phase 2a) - touching only
+        these must not reset the cached searcher."""
         state = self._call(monkeypatch, bm25_weight=0.5, dense_weight=0.5)
-        state.reset_searcher.assert_called_once()
+        state.reset_searcher.assert_not_called()
 
     def test_resets_when_rrf_k_overridden(self, monkeypatch):
         state = self._call(monkeypatch, rrf_k=60)
+        state.reset_searcher.assert_called_once()
+
+    def test_resets_when_reranker_dtype_overridden(self, monkeypatch):
+        """A dtype-only override MUST reset the cached searcher —
+        _ensure_reranker's swap branch reloads only on model_name change, so
+        without the reset --reranker-dtype fp32 silently keeps the bf16 model."""
+        state = self._call(monkeypatch, reranker_dtype="fp32")
         state.reset_searcher.assert_called_once()
 
     def test_no_reset_without_construction_overrides(self, monkeypatch):
         state = self._call(monkeypatch)
         state.reset_searcher.assert_not_called()
 
-    def test_reset_called_per_sweep_iteration(self, monkeypatch):
-        """Each run_single-style invocation with weights resets again — the
-        property that fixes Blocker B for --sweep loops."""
+    def test_no_reset_across_weight_sweep_iterations(self, monkeypatch):
+        """SWEEP_CONFIGS is a bm25/dense-weight-only sweep. Since neither
+        field is construction-baked (Phase 2a), no iteration should reset
+        the cached searcher — this is the fix's whole point: --sweep no
+        longer pays a spurious searcher reset + reranker reload per arm."""
         from unittest.mock import MagicMock
 
         from scripts.benchmark.run_sscg_benchmark import (
@@ -699,143 +738,14 @@ class TestMaybeResetForConstructionOverrides:
             _maybe_reset_for_construction_overrides(
                 sweep_cfg["bm25_weight"], sweep_cfg["dense_weight"], None
             )
-        assert state.reset_searcher.call_count == len(SWEEP_CONFIGS)
+        state.reset_searcher.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# _apply_centrality_stage  (Q4-stretch: --with-centrality / --centrality-alpha)
+# _apply_centrality_stage was deleted under ADR-0023 (B1): routing
+# run_sscg_benchmark.py through SearchOrchestrator.run() means
+# GraphScoringStage now runs unconditionally, config-driven, inside every
+# query's own scoring stage — there is no separate hand-replay stage left
+# to test. See scripts/benchmark/run_sscg_benchmark.py's _run_query
+# docstring.
 # ---------------------------------------------------------------------------
-
-
-class TestApplyCentralityStage:
-    """Q4-stretch runner glue (Blocker A): replays the production
-    GraphScoringStage over benchmark SearchResults. The stage's reordered
-    dicts must map back onto the raw SearchResult objects by chunk_id, the
-    alpha override must land on a *copy* of the graph config, and any stage
-    failure must degrade to the raw result order."""
-
-    class _FakeResult:
-        def __init__(self, chunk_id, score=1.0):
-            self.chunk_id = chunk_id
-            self.score = score
-            self.metadata = {
-                "relative_path": "f.py",
-                "start_line": 1,
-                "end_line": 2,
-                "chunk_type": "function",
-            }
-
-    def _run(self, monkeypatch, raw, stage_output, alpha=None, raise_exc=None):
-        from scripts.benchmark.run_sscg_benchmark import _apply_centrality_stage
-
-        captured = {}
-
-        def fake_run(
-            self_stage, query, intent, k, formatted, index_manager, searcher, graph_cfg
-        ):
-            captured["graph_cfg"] = graph_cfg
-            captured["intent"] = intent
-            captured["k"] = k
-            captured["index_manager"] = index_manager
-            if raise_exc is not None:
-                raise raise_exc
-            return stage_output, None
-
-        monkeypatch.setattr(
-            "search.graph_scoring_stage.GraphScoringStage.run", fake_run
-        )
-
-        class _Searcher:
-            dense_index = object()
-
-        out = _apply_centrality_stage(_Searcher(), "query", raw, 7, alpha)
-        return out, captured
-
-    def test_reorders_results_to_stage_order(self, monkeypatch):
-        raw = [self._FakeResult("a"), self._FakeResult("b"), self._FakeResult("c")]
-        stage_output = [{"chunk_id": "c"}, {"chunk_id": "a"}, {"chunk_id": "b"}]
-        out, captured = self._run(monkeypatch, raw, stage_output)
-        assert [r.chunk_id for r in out] == ["c", "a", "b"]
-        assert out[0] is raw[2]  # original objects, not copies
-        assert captured["k"] == 7
-        assert captured["intent"] is None
-
-    def test_alpha_override_lands_on_config_copy(self, monkeypatch):
-        from search.config import get_search_config
-
-        raw = [self._FakeResult("a")]
-        out, captured = self._run(monkeypatch, raw, [{"chunk_id": "a"}], alpha=0.3)
-        cfg = captured["graph_cfg"]
-        assert cfg.centrality_alpha == 0.3
-        assert cfg.centrality_annotation is True
-        assert cfg.centrality_reranking is True
-        # Must be a deepcopy — the live singleton keeps its own alpha
-        assert cfg is not get_search_config().graph_enhanced
-
-    def test_none_alpha_uses_config_default(self, monkeypatch):
-        from search.config import get_search_config
-
-        raw = [self._FakeResult("a")]
-        out, captured = self._run(monkeypatch, raw, [{"chunk_id": "a"}], alpha=None)
-        assert (
-            captured["graph_cfg"].centrality_alpha
-            == get_search_config().graph_enhanced.centrality_alpha
-        )
-
-    def test_index_manager_is_dense_index(self, monkeypatch):
-        """Mirrors SearcherView: HybridSearcher exposes the CodeIndexManager
-        as .dense_index — that object must reach the stage."""
-        from scripts.benchmark.run_sscg_benchmark import _apply_centrality_stage
-
-        captured = {}
-
-        def fake_run(
-            self_stage, query, intent, k, formatted, index_manager, searcher, graph_cfg
-        ):
-            captured["index_manager"] = index_manager
-            return formatted, None
-
-        monkeypatch.setattr(
-            "search.graph_scoring_stage.GraphScoringStage.run", fake_run
-        )
-        sentinel = object()
-
-        class _Searcher:
-            dense_index = sentinel
-
-        _apply_centrality_stage(_Searcher(), "q", [self._FakeResult("a")], 7, None)
-        assert captured["index_manager"] is sentinel
-
-    def test_empty_results_skip_stage(self, monkeypatch):
-        called = []
-        monkeypatch.setattr(
-            "search.graph_scoring_stage.GraphScoringStage.run",
-            lambda *a, **kw: called.append(1),
-        )
-        from scripts.benchmark.run_sscg_benchmark import _apply_centrality_stage
-
-        assert _apply_centrality_stage(object(), "q", [], 7, 0.2) == []
-        assert called == []
-
-    def test_stage_failure_falls_back_to_raw_order(self, monkeypatch, capsys):
-        raw = [self._FakeResult("a"), self._FakeResult("b")]
-        out, _ = self._run(
-            monkeypatch, raw, None, raise_exc=RuntimeError("graph unavailable")
-        )
-        assert out is raw
-        assert "Centrality stage failed" in capsys.readouterr().err
-
-    def test_duplicate_chunk_ids_consumed_in_order(self, monkeypatch):
-        """split_block fragments share a chunk_id pre-dedup — each stage dict
-        must claim a distinct SearchResult, in original order."""
-        raw = [self._FakeResult("dup"), self._FakeResult("dup"), self._FakeResult("x")]
-        stage_output = [{"chunk_id": "x"}, {"chunk_id": "dup"}, {"chunk_id": "dup"}]
-        out, _ = self._run(monkeypatch, raw, stage_output)
-        assert [r.chunk_id for r in out] == ["x", "dup", "dup"]
-        assert out[1] is raw[0] and out[2] is raw[1]
-
-    def test_items_dropped_by_stage_cap_are_dropped(self, monkeypatch):
-        raw = [self._FakeResult("a"), self._FakeResult("b"), self._FakeResult("c")]
-        stage_output = [{"chunk_id": "b"}]  # stage capped the rest
-        out, _ = self._run(monkeypatch, raw, stage_output)
-        assert [r.chunk_id for r in out] == ["b"]

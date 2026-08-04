@@ -192,7 +192,6 @@ class TestIndexWriteStageOrdering:
 
         call_kwargs = build_metadata_fn.call_args.kwargs
         assert call_kwargs["is_full"] is True
-        assert call_kwargs["cumulative_changed_files"] == 0
         assert call_kwargs["project_name"] == "proj"
 
     def test_embedding_metadata_updated(self):

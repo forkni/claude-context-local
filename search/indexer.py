@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
@@ -31,6 +32,46 @@ from search.faiss_index import FaissVectorIndex
 from search.filters import FilterEngine
 from search.graph_integration import GraphIntegration
 from search.metadata import MetadataStore
+
+
+def probe_metadata_deletable(metadata_path: Path) -> Path:
+    """Rename metadata.db out of the way as a fail-fast deletability probe.
+
+    ``clear_index`` previously deleted BM25 and FAISS state first and only
+    discovered a locked ``metadata.db`` (a live SQLite handle on Windows) on
+    the last, bare ``unlink()`` — leaving the index half-destroyed with no
+    rollback. ``os.replace`` succeeds against far more Windows lock states
+    than ``unlink`` and, on failure, raises before anything else has been
+    touched, so the caller can treat the whole clear as a no-op.
+
+    Idempotent and safe to call twice in one clear chain: IndexSynchronizer.
+    clear_index() runs it before deleting the BM25 directory, and
+    CodeIndexManager.clear_index() (its eventual callee, and also reachable
+    directly from other callers such as BatchOperations' clear_index_callback)
+    runs it again before touching FAISS. The second call is a no-op — it
+    finds the already-renamed ``.deleting`` sibling and returns it unchanged.
+
+    Args:
+        metadata_path: Path to metadata.db.
+
+    Returns:
+        The path metadata.db now lives at — either the renamed
+        ``<metadata_path>.deleting`` sibling, or ``metadata_path`` itself if
+        there was nothing on disk to rename. Callers should unlink whatever
+        path is returned (guarded by ``.exists()``) as the real delete step.
+
+    Raises:
+        OSError: If metadata.db exists but cannot be renamed (e.g. a
+            lingering open handle) — the signal that the whole clear must
+            abort before BM25 or FAISS state is destroyed.
+    """
+    deleting_path = Path(str(metadata_path) + ".deleting")
+    if deleting_path.exists():
+        return deleting_path
+    if not metadata_path.exists():
+        return metadata_path
+    os.replace(metadata_path, deleting_path)
+    return deleting_path
 
 
 class CodeIndexManager:
@@ -320,9 +361,21 @@ class CodeIndexManager:
         return None
 
     def get_similar_chunks(
-        self, chunk_id: str, k: int = 5
+        self, chunk_id: str, k: int = 5, exclude_same_file: bool = False
     ) -> list[tuple[str, float, dict[str, Any]]]:
-        """Find chunks similar to a given chunk via symbol hash cache (O(1) lookup)."""
+        """Find chunks similar to a given chunk via symbol hash cache (O(1) lookup).
+
+        Args:
+            chunk_id: The anchor chunk to find neighbors of.
+            k: Number of similar chunks to return.
+            exclude_same_file: Drop candidates from the anchor's own file
+                (``relative_path`` match). Caller-supplied intent only — whether
+                same-file siblings or cross-file analogues are wanted cannot be
+                decided from the anchor alone (see
+                evaluation/SIMILAR_DIVERSITY_20260728.md). Not offered on
+                ``get_similar_chunks_batched``: its only production caller is
+                multi-hop semantic expansion, which carries no such intent.
+        """
         # MetadataStore.get() now handles hash cache lookup + variant fallback internally
         metadata_entry = self.metadata_store.get(chunk_id)
 
@@ -335,6 +388,19 @@ class CodeIndexManager:
 
         # Get the embedding for this chunk
         embedding = self._faiss_index.reconstruct(index_id)
+
+        if exclude_same_file:
+            # Same-file neighbors can dominate the top ranks (5-8 of top-10 for
+            # most anchors), so a k+1 fetch would under-return. Overfetch 3x
+            # (the depth the diversity probe validated), then filter.
+            anchor_path = metadata_entry["metadata"].get("relative_path")
+            search_k = min(k * 3 + 1, self.index.ntotal)
+            results = self.search(embedding, search_k)
+            return [
+                (cid, sim, meta)
+                for cid, sim, meta in results
+                if cid != chunk_id and meta.get("relative_path") != anchor_path
+            ][:k]
 
         # Search for similar chunks (excluding the original)
         results = self.search(embedding, k + 1)
@@ -713,25 +779,45 @@ class CodeIndexManager:
 
         return is_valid, issues
 
-    def clear_index(self) -> None:
-        """Clear the entire index and metadata."""
-        # Close metadata store - do NOT reopen yet
-        if self._metadata_store is not None:
-            self._metadata_store.close()
-            # pyrefly: ignore [bad-assignment]
-            self._metadata_store = None
+    def preflight_clear(self) -> Path:
+        """Reset the metadata store in place, then verify metadata.db is
+        actually deletable before the caller destroys FAISS/graph state.
 
-        # Clear BatchOperations reference to prevent lingering file handles (Windows)
-        if hasattr(self, "_batch_ops") and self._batch_ops is not None:
-            self._batch_ops._metadata_store = None
+        ``MetadataStore.reset()`` closes the current SQLite handle
+        (releasing the Windows file lock) without replacing the
+        ``MetadataStore`` object -- identity stays stable per ADR-0025, so
+        no caller needs re-wiring (``_batch_ops._metadata_store`` still
+        points at the same, now-reset, instance).
 
-        # Clear FAISS index (includes GPU cleanup if needed)
-        self._faiss_index.clear()
+        Force garbage collection runs before the probe because a lingering
+        Python-side reference is exactly what would otherwise make it raise
+        spuriously.
 
-        # Force garbage collection to release file handles (Windows)
+        Idempotent and safe to call twice in one clear chain -- see
+        ``probe_metadata_deletable``'s own docstring.
+
+        Returns:
+            The path metadata.db now lives at post-probe.
+        """
+        self._metadata_store.reset()
+
         import gc
 
         gc.collect()
+
+        return probe_metadata_deletable(self.metadata_path)
+
+    def clear_index(self) -> None:
+        """Clear the entire index and metadata in place."""
+        # Fail-fast probe: verify metadata.db is actually deletable BEFORE
+        # destroying FAISS. A PermissionError here (e.g. a still-open Windows
+        # handle) now aborts the clear as a no-op instead of leaving FAISS
+        # gone with metadata.db stranded and no rollback.
+        metadata_deleting_path = self.preflight_clear()
+
+        # Clear FAISS index (includes GPU cleanup if needed) — only reached
+        # once metadata.db has been proven deletable.
+        self._faiss_index.clear()
 
         # Remove additional files - NOW safe because store is closed.
         # metadata.db-wal/-shm are not a defensive nicety: SQLite routinely
@@ -750,7 +836,7 @@ class CodeIndexManager:
         # (handle_clear_index) drops the cache itself, independently, via its
         # own file purge — it never calls this method.
         for file_path in [
-            self.metadata_path,
+            metadata_deleting_path,
             Path(str(self.metadata_path) + "-wal"),
             Path(str(self.metadata_path) + "-shm"),
             self.stats_path,
@@ -762,19 +848,22 @@ class CodeIndexManager:
         # Clear call graph via integration layer
         self._graph.clear()
 
-        # Reinitialize metadata store AFTER deletion
-        self._metadata_store = MetadataStore(self.metadata_path)
-
-        # Re-wire BatchOperations to the new store — it was nulled out above
-        # to release the Windows file handle, but remove_files() (the
-        # true-incremental deletion/modification path) reads
-        # self._batch_ops._metadata_store directly. Leaving it None here
-        # means the *next* incremental call after any clear_index() crashes
-        # with "'NoneType' object has no attribute 'get'", which gets caught
-        # by incremental_index()'s blanket except and silently falls back to
-        # a full reindex, masking true incremental behavior entirely.
-        if hasattr(self, "_batch_ops") and self._batch_ops is not None:
-            self._batch_ops._metadata_store = self._metadata_store
+        # Legacy debris: *_communities.json was written by the community
+        # subsystem removed in ADR-0015. Nothing reads it anymore, but nothing
+        # was purging it either — its would-be purger, _clear_index_files_
+        # before_create (mcp_server/tools/index_handlers.py), lost its only
+        # call site as collateral damage in an unrelated multi-model-routing
+        # refactor and has had zero production callers since. Sweep it here
+        # instead: this is the single place every full clear (force-full
+        # reindex, corruption recovery, or an all-chunks-removed rebuild)
+        # actually goes through.
+        for legacy in self.storage_dir.parent.glob("*_communities.json"):
+            try:
+                legacy.unlink()
+            except OSError as e:
+                self._logger.warning(
+                    f"Could not delete legacy community file {legacy}: {e}"
+                )
 
         self._logger.info("Index cleared")
 
@@ -828,15 +917,13 @@ class CodeIndexManager:
         """Close database connections without deleting index files.
 
         Idempotent: safe to call multiple times.  Closes the MetadataStore
-        and clears the BatchOperations reference so no dangling file handles
-        remain.  Does not touch the FAISS index or graph storage.
+        connection, releasing its file handle.  Identity stays stable per
+        ADR-0025 -- the object is not replaced, so it lazily reopens on the
+        next access and ``_batch_ops._metadata_store`` needs no re-wiring.
+        Does not touch the FAISS index or graph storage.
         """
-        if self._metadata_store is not None:
+        if hasattr(self, "_metadata_store"):
             self._metadata_store.close()
-            # pyrefly: ignore [bad-assignment]
-            self._metadata_store = None
-        if hasattr(self, "_batch_ops") and self._batch_ops is not None:
-            self._batch_ops._metadata_store = None
 
     def __del__(self) -> None:
         """Cleanup when object is destroyed."""

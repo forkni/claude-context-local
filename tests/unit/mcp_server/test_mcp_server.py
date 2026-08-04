@@ -255,6 +255,48 @@ class TestToolHandlers:
         assert result["multi_hop_expansion"] == 0.3
 
     @pytest.mark.asyncio
+    @patch("search.config.get_config_manager")
+    @patch("mcp_server.tools.status_handlers.get_config")
+    async def test_get_search_config_includes_project_overrides_fields(
+        self, mock_get_search_config, mock_get_config_manager
+    ):
+        """Config status surfaces per-project overrides provenance (ADR-0014)."""
+        from mcp_server.tool_handlers import handle_get_search_config_status
+
+        mock_get_search_config.return_value = MagicMock()
+
+        # Active overrides: meta dict flows through to the response fields.
+        mock_manager = MagicMock()
+        mock_manager.get_active_overrides_meta.return_value = {
+            "path": "/storage/proj_abc/search_overrides.json",
+            "probe_version": "1",
+            "generated_at": "2026-07-29T00:00:00",
+            "keys": ["performance.max_chunking_workers"],
+        }
+        mock_get_config_manager.return_value = mock_manager
+
+        result = await handle_get_search_config_status({})
+
+        assert result["project_overrides_active"] is True
+        assert (
+            result["project_overrides_path"]
+            == "/storage/proj_abc/search_overrides.json"
+        )
+        assert result["project_overrides_probe_version"] == "1"
+        assert result["project_overrides_generated_at"] == "2026-07-29T00:00:00"
+        assert result["project_overrides_keys"] == ["performance.max_chunking_workers"]
+
+        # Inactive overrides: fields present but null/empty.
+        mock_manager.get_active_overrides_meta.return_value = None
+        result = await handle_get_search_config_status({})
+
+        assert result["project_overrides_active"] is False
+        assert result["project_overrides_path"] is None
+        assert result["project_overrides_probe_version"] is None
+        assert result["project_overrides_generated_at"] is None
+        assert result["project_overrides_keys"] == []
+
+    @pytest.mark.asyncio
     @patch("mcp_server.tools.status_handlers.get_state")
     async def test_list_embedding_models_includes_vram(self, mock_get_state):
         """Verify list_embedding_models includes vram_gb field."""

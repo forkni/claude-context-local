@@ -12,11 +12,11 @@ class TestCallGraphConfig:
         cfg = CallGraphConfig()
         assert cfg.resolvers == ["pyan", "libcst"]
 
-    def test_default_lsp_disabled(self) -> None:
+    def test_default_lsp_enabled(self) -> None:
         from search.config import CallGraphConfig
 
         cfg = CallGraphConfig()
-        assert cfg.lsp_enabled is False
+        assert cfg.lsp_enabled is True
         assert cfg.lsp_timeout_seconds == 30.0
 
     def test_custom_resolvers(self) -> None:
@@ -88,10 +88,10 @@ class TestCallGraphConfig:
         cfg = CallGraphConfig(use_pyproject_toml=True)
         assert cfg.use_pyproject_toml is True
 
-    def test_min_confidence_default_zero(self) -> None:
+    def test_min_confidence_default(self) -> None:
         from search.config import CallGraphConfig
 
-        assert CallGraphConfig().min_confidence == 0.0
+        assert CallGraphConfig().min_confidence == pytest.approx(0.65)
 
     def test_min_confidence_custom(self) -> None:
         from search.config import CallGraphConfig

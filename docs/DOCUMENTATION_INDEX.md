@@ -4,15 +4,32 @@ Complete navigation hub for claude-context-local documentation.
 
 ## 📚 Quick Navigation
 
-- [Getting Started](#getting-started)
-- [Core Guides](#core-guides)
-- [Advanced Features](#advanced-features)
-- [MCP Integration](#mcp-integration)
-- [Development Tools](#development-tools)
-- [Git Automation](#git-automation)
-- [Testing & Validation](#testing--validation)
-- [Technical Implementation](#technical-implementation)
-- [Version History](#version-history)
+- [Documentation Index](#documentation-index)
+  - [📚 Quick Navigation](#-quick-navigation)
+  - [Getting Started](#getting-started)
+  - [Core Guides](#core-guides)
+  - [Advanced Features](#advanced-features)
+  - [Architecture Decision Records](#architecture-decision-records)
+  - [MCP Integration](#mcp-integration)
+    - [Transport Options](#transport-options)
+  - [Development Tools](#development-tools)
+    - [Interactive Scripts](#interactive-scripts)
+    - [Batch Files](#batch-files)
+  - [Git Automation](#git-automation)
+    - [Git Scripts](#git-scripts)
+  - [Testing \& Validation](#testing--validation)
+    - [Testing Tools (scripts/test/)](#testing-tools-scriptstest)
+  - [Technical Implementation](#technical-implementation)
+    - [Architecture Files](#architecture-files)
+  - [Version History](#version-history)
+    - [Key Versions](#key-versions)
+  - [Related Projects](#related-projects)
+    - [Multi-Project Documentation](#multi-project-documentation)
+  - [Additional Resources](#additional-resources)
+    - [Archive](#archive)
+    - [Slash Commands (.claude/commands/)](#slash-commands-claudecommands)
+    - [Custom Skills (.claude/skills/)](#custom-skills-claudeskills)
+  - [Navigation Tips](#navigation-tips)
 
 ---
 
@@ -21,7 +38,7 @@ Complete navigation hub for claude-context-local documentation.
 Essential documentation for setup and initial use.
 
 | Document | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | **[INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md)** | Complete installation process for Windows |
 | **[CLAUDE_DESKTOP_SETUP.md](CLAUDE_DESKTOP_SETUP.md)** | Connect the MCP server to the Claude Desktop app (via `mcp-remote` bridge) |
 | **[LOCAL_LLM_GUIDE.md](LOCAL_LLM_GUIDE.md)** | Use local LLMs via LM Studio instead of Anthropic API |
@@ -35,7 +52,7 @@ Essential documentation for setup and initial use.
 Fundamental documentation for daily use.
 
 | Document | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | **[MCP_TOOLS_REFERENCE.md](MCP_TOOLS_REFERENCE.md)** | Complete API reference for all 18 MCP tools |
 | **[HYBRID_SEARCH_CONFIGURATION_GUIDE.md](HYBRID_SEARCH_CONFIGURATION_GUIDE.md)** | Search modes configuration (hybrid/semantic/BM25/auto) |
 | **[BENCHMARKS.md](BENCHMARKS.md)** | Performance benchmarks: SSCG retrieval (MRR/Recall/NDCG/line-overlap), token efficiency, caller recall |
@@ -47,13 +64,25 @@ Fundamental documentation for daily use.
 Comprehensive guides for advanced functionality.
 
 | Document | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | **[ADVANCED_FEATURES_GUIDE.md](ADVANCED_FEATURES_GUIDE.md)** | **Complete guide to all advanced features** |
 | - Multi-Hop Search | Discover interconnected code relationships (93% queries benefit) |
 | - Graph-Enhanced Search | Call relationship tracking for Python code |
 | - Per-Model Index Storage | Instant model switching <150ms |
-| - Model Selection Guide | Complete model comparison tables (6 models) |
+| - Model Selection Guide | Complete model comparison tables (4 models) |
 | - Neural Reranking | Cross-encoder reranker (Alibaba-NLP/gte-reranker-modernbert-base) |
+
+---
+
+## Architecture Decision Records
+
+Design decisions and their rationale — accepted, rejected, and superseded — under `docs/adr/`.
+
+| Document | Description |
+| ---------- | ------------- |
+| **[docs/adr/README.md](adr/README.md)** | Index of all 20 ADRs (number, title, status, date) |
+
+Notable recent decisions: ADR-0014 (per-project search config overrides), ADR-0015 (community subsystem removed), ADR-0016 (DSPy eval subsystem removed), ADR-0017 (MCP SDK v2 adoption), ADR-0018 (`RetrievalRequest` carries effective config), ADR-0019 (intent-adaptive fusion weights rejected), ADR-0020 (config field liveness audit).
 
 ---
 
@@ -82,7 +111,7 @@ Interactive scripts and batch files.
 ### Interactive Scripts
 
 | Script | Purpose |
-|--------|---------|
+| -------- | --------- |
 | `tools/batch_index.py` | Universal indexing (new/incremental/force) |
 | `tools/cleanup_orphaned_projects.py` | Remove orphaned test projects |
 | `tools/cleanup_stale_snapshots.py` | Interactive snapshot cleanup |
@@ -90,7 +119,7 @@ Interactive scripts and batch files.
 ### Batch Files
 
 | Script | Purpose |
-|--------|---------|
+| -------- | --------- |
 | `start_mcp_server.cmd` | Main launcher (8 options: Quick Start, Project Management, Search Config, Advanced) |
 | `scripts/batch/start_mcp_sse.bat` | SSE transport (port 8765) |
 | `scripts/batch/start_mcp_sse_cli.bat` | CLI SSE transport (port 8766) |
@@ -105,7 +134,7 @@ Interactive scripts and batch files.
 Git workflow automation and safety.
 
 | Document | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | **[auto-git-workflow SKILL.md](../.claude/skills/auto-git-workflow/SKILL.md)** | Step-by-step git workflow rule book for Claude Code |
 | **[GIT_WORKFLOW.md](GIT_WORKFLOW.md)** | Troubleshooting and advanced operations |
 | **[PRE_COMMIT_HOOKS.md](PRE_COMMIT_HOOKS.md)** | Pre-commit hook configuration |
@@ -117,7 +146,7 @@ Git workflow automation and safety.
 - **Shell scripts (.sh)**: `scripts/git/` - the only supported workflow scripts, run via Git Bash
 
 | Script | Purpose |
-|--------|---------|
+| -------- | --------- |
 | `commit_enhanced.sh` | Enhanced commits with validation |
 | `merge_with_validation.sh` | Merge with comprehensive validation |
 | `check_lint.sh` | Lint validation (ruff) |
@@ -139,7 +168,7 @@ Test suite documentation and validation reports.
 
 | Document | Description |
 |----------|-------------|
-| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (3,359 unit tests · 103 fast_integration · 22 integration · 93 slow_integration) |
+| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (5,540 unit tests · 102 fast_integration · 19 integration · 108 slow_integration) |
 | **[tests/README.md](../tests/README.md)** | Test suite organization and best practices |
 
 ### Testing Tools (scripts/test/)
@@ -164,6 +193,7 @@ Detailed technical documentation.
 | Document | Description |
 |----------|-------------|
 | **[CALL_GRAPH_TUNING.md](CALL_GRAPH_TUNING.md)** | pyan3 + LibCST + LSP API reference, confidence tiers, `min_confidence` recipes, §6.4 LSP diagnostics counters |
+| **[OBSERVABILITY.md](OBSERVABILITY.md)** | Opt-in OTel tracing (`traced_block` / `@timed` spans) across the search and index pipeline; export to Jaeger, Tempo, or any OTLP collector |
 
 ### Architecture Files
 
@@ -172,7 +202,7 @@ Detailed technical documentation.
   - `query_cache.py` - LRU cache with TTL for query embeddings (v0.8.6+)
 - `chunking/relationships/` - Call graph extraction and relationship tracking
   - `resolvers/` - Type, import, and assignment resolvers
-- `graph/` - Graph storage, queries & community detection
+- `graph/` - Graph storage & queries
 - `mcp_server/` - MCP tool implementations (18 tools)
 - `merkle/` - Incremental indexing (snapshot management)
 - `search/` - FAISS + BM25 hybrid search
@@ -185,17 +215,18 @@ Detailed technical documentation.
 
 | Document | Description |
 |----------|-------------|
-| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.22.0 |
+| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.23.0 |
 
 ### Key Versions
 
+- **v0.23.0** (2026-08-02): MCP Python SDK v1→v2 migration, community-detection + DSPy-eval + ONNX subsystems removed, per-project config overrides (ADR-0014), `exclude_same_file`, richer evaluation metrics, config field liveness audit (ADR-0020); three models dropped from the registries (breaking)
 - **v0.22.0** (2026-07-27): GLSL indexing parity, persistent chunk embedding cache (43× reindex speedup), BM25 path-token augmentation (`INDEX_VERSION` 4), widened retrieval funnel, `mcp-search-tool` skill reinstated
 - **v0.21.0** (2026-07-23): MCP-server hardening, default embedder corrected to `BAAI/bge-m3` in docs, Qwen3-reranker fix
 - **v0.20.1** (2026-07-02): Intent-classifier verification-term routing fix (Q12)
 - **v0.20.0** (2026-06-30): Codecov CI integration, Campaign-2 Tier-1 behavior-preserving refactors, 3,100 tests
 - **v0.19.0** (2026-06-27): Multi-model routing removed; `configure_query_routing` MCP tool deleted; **18 tools** (down from 19); `MODEL_REGISTRY` pruned 7→5 models; launcher display values corrected (BM25/Dense 0.35/0.65, reranker gain +15-25%)
 - **v0.18.0** (2026-06-26): `source_order_output` default `True→False` (results now in relevance order); MCP-pipeline eval MRR 0.700→0.8278; `run_mcp_pipeline_eval.py` script added
-- **v0.17.0** (2026-06-24): DSPy/GEPA agent-eval harness, `ClaudeCodeLM` subscription backend, `search_config.json.example` `default_k` 4→7 (MRR +0.093, Recall@7 +0.122; dataclass factory default remains 4), CVE remediation 53→5, Batch 3/4/5 perf+fixes, 2,853 tests
+- **v0.17.0** (2026-06-24): DSPy/GEPA agent-eval harness (removed in v0.23.0, ADR-0016 — superseded by `run_mcp_pipeline_eval.py`), `ClaudeCodeLM` subscription backend, `search_config.json.example` `default_k` 4→7 (MRR +0.093, Recall@7 +0.122; dataclass factory default remains 4), CVE remediation 53→5, Batch 3/4/5 perf+fixes, 2,853 tests
 - **v0.16.0** (2026-06-11): code-review hardening — 30 correctness/concurrency fixes (Batch 1/2A/2B); thread-safe MCP server, MultiDiGraph call graph, atomic writes, 2,533 tests
 - **v0.15.0** (2026-06-03): LSP resolver repair (0 → 938 edges), resolver precision tuning, `min_confidence`/`use_pyproject_toml` config knobs, `docs/CALL_GRAPH_TUNING.md`, 2,495 tests
 - **v0.14.0** (2026-06-03): Layered call-graph resolver pipeline (AST→pyan→LibCST→LSP), optional `[callgraph]`/`[lsp]` extras, `find_connections` bidirectional callees + `resolver_source`/`resolver_confidence` provenance
@@ -259,10 +290,8 @@ Detailed technical documentation.
 
 ### Slash Commands (.claude/commands/)
 
-- `/auto-git-workflow` - Automated commit→merge→push workflow
-- `/create-pr` - Create pull request with template
-- `/run-merge` - Merge branches with validation
-- `/validate-changes` - Pre-commit validation
+- `/auto-git-workflow-cmd` - State-aware interactive git menu (commit, push, sync, merge, PR, undo, release)
+- `/deps-audit` - Practical dependency audit for Python/ML projects
 
 ### Custom Skills (.claude/skills/)
 
@@ -279,4 +308,4 @@ Detailed technical documentation.
 
 ---
 
-**Last Updated**: 2026-07-27 (v0.22.0 — GLSL indexing parity, persistent chunk embedding cache, BM25 path-token augmentation; 3,359 unit tests)
+**Last Updated**: 2026-08-02 (v0.23.0 — MCP SDK v2 migration, community/DSPy/ONNX subsystems removed, config field liveness audit (ADR-0020); 5,540 unit tests)

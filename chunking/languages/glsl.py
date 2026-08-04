@@ -429,7 +429,7 @@ class GLSLChunker(LanguageChunker):
         Adding `declaration` to splittable_node_types (1a) makes every
         one-line `uniform mat4 uModel;` its own chunk, and nothing ever
         merges small siblings back together for GLSL (`chunk_parsed` never
-        calls `_greedy_merge_small_chunks`). Every other splittable node
+        merges small siblings at all). Every other splittable node
         type (function_definition, struct_specifier, preproc_*, ...) keeps
         the base behavior unchanged; only `declaration` is gated here:
 

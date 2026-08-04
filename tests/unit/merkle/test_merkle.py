@@ -192,6 +192,37 @@ class TestMerkleDAG(TestCase):
             f"{[f for f in all_files if 'logs' in f]}"
         )
 
+    def test_tmp_directory_is_ignored(self):
+        """tmp/ (and temp/) hold scratch files, not source — they must be excluded so
+        a force reindex doesn't sweep them into the index (issue: gitignored tmp/
+        chunks polluting retrieval pools)."""
+        self.create_test_files()
+
+        (self.test_path / "tmp").mkdir()
+        (self.test_path / "tmp" / "scratch.py").write_text("scratch = 1")
+        (self.test_path / "temp").mkdir()
+        (self.test_path / "temp" / "scratch2.py").write_text("scratch2 = 2")
+
+        dag = MerkleDAG(self.temp_dir)
+        dag.build()
+
+        all_files = dag.get_all_files()
+
+        tmp_prefixes = ("tmp/", "tmp\\")
+        temp_prefixes = ("temp/", "temp\\")
+        leaked_tmp = [f for f in all_files if f.startswith(tmp_prefixes)]
+        leaked_temp = [f for f in all_files if f.startswith(temp_prefixes)]
+
+        assert not leaked_tmp, (
+            f"tmp/ should be excluded from DAG, but found: {leaked_tmp}"
+        )
+        assert not leaked_temp, (
+            f"temp/ should be excluded from DAG, but found: {leaked_temp}"
+        )
+
+        # Regular files are unaffected
+        assert "README.md" in all_files
+
     def test_dag_serialization(self):
         """Test DAG to/from dict conversion."""
         self.create_test_files()
@@ -707,10 +738,22 @@ class TestSnapshotManagerStorageDir:
 
         assert sm.storage_dir == fake_storage / "merkle"
 
-    def test_default_without_storage_manager_falls_back(self) -> None:
-        """If mcp_server.storage_manager can't be imported, falls back to ~/.claude_code_search/merkle."""
+    def test_default_without_storage_manager_falls_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If mcp_server.storage_manager can't be imported, falls back to ~/.claude_code_search/merkle.
+
+        Patches Path.home() to a tmp_path stand-in first — the real fallback
+        computes ``Path.home() / ".claude_code_search" / "merkle"`` and then
+        unconditionally ``mkdir(parents=True)``s it, so exercising this branch
+        against the real Path.home() creates real on-disk state every run
+        (the exact "production-directory pollution" smell the suite's own
+        _no_real_storage_pollution guard exists to catch — see AUDIT.md Step 7).
+        """
         import sys
         import types
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         # Replace mcp_server.storage_manager with a module whose get_storage_dir raises
         broken = types.ModuleType("mcp_server.storage_manager")
@@ -726,7 +769,7 @@ class TestSnapshotManagerStorageDir:
             else:
                 sys.modules["mcp_server.storage_manager"] = orig
 
-        expected = Path.home() / ".claude_code_search" / "merkle"
+        expected = tmp_path / ".claude_code_search" / "merkle"
         assert sm.storage_dir == expected
 
 

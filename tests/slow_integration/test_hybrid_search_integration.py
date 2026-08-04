@@ -33,7 +33,8 @@ class TestHybridSearchIntegration:
     """Integration tests for hybrid search system."""
 
     @pytest.fixture(autouse=True, scope="class")
-    def mock_embedder(self):
+    @classmethod
+    def mock_embedder(cls):
         """Mock SentenceTransformer to prevent model downloads for all tests."""
 
         def mock_encode(
@@ -51,19 +52,17 @@ class TestHybridSearchIntegration:
         with patch("embeddings.model_loader.SentenceTransformer") as mock_st:
             mock_model = MagicMock()
             mock_model.encode.side_effect = mock_encode
-            mock_model._vram_gb = 0.0  # else MagicMock() > 0 comparison in _get_model_vram_gb raises TypeError
-            # else MagicMock auto-vivifies both `.ort_model` (making _is_onnx wrongly
-            # True) and `[0].auto_model.config` (a fake HF config with hasattr()==True
-            # on every attribute), so _extract_hf_config() "succeeds" with garbage and
-            # estimate_activation_gb_from_config() then compares MagicMock attributes
-            # with '>' and raises TypeError.
-            del mock_model.ort_model
+            # else MagicMock auto-vivifies `[0].auto_model.config` (a fake HF config
+            # with hasattr()==True on every attribute), so _extract_hf_config()
+            # "succeeds" with garbage and estimate_activation_gb_from_config() then
+            # compares MagicMock attributes with '>' and raises TypeError.
             mock_model.__getitem__.side_effect = IndexError
             mock_st.return_value = mock_model
             yield mock_st
 
     @pytest.fixture(scope="class")
-    def indexed_hybrid_environment(self, tmp_path_factory):
+    @classmethod
+    def indexed_hybrid_environment(cls, tmp_path_factory):
         """Create indexed environment once per class with pre-indexed data."""
         # Create temp directories using tmp_path_factory for class scope
         tmp_path = tmp_path_factory.mktemp("hybrid_search_test")
@@ -74,7 +73,7 @@ class TestHybridSearchIntegration:
         storage_dir.mkdir(parents=True)
 
         # Create test files
-        self._create_test_files_in_dir(project_dir)
+        cls._create_test_files_in_dir(project_dir)
 
         # Initialize components ONCE for the whole class
         try:
@@ -83,9 +82,7 @@ class TestHybridSearchIntegration:
                 None
             )  # Prevent cleanup from destroying model_loader in tests
             chunker = MultiLanguageChunker(str(project_dir))
-            hybrid_searcher = HybridSearcher(
-                storage_dir=str(storage_dir), bm25_weight=0.4, dense_weight=0.6
-            )
+            hybrid_searcher = HybridSearcher(storage_dir=str(storage_dir))
             incremental_indexer = IncrementalIndexer(
                 indexer=hybrid_searcher,
                 embedder=embedder,
@@ -243,9 +240,7 @@ class DatabaseConnection:
             chunker = MultiLanguageChunker(str(project_dir))
 
             # Initialize hybrid searcher
-            hybrid_searcher = HybridSearcher(
-                storage_dir=str(storage_dir), bm25_weight=0.4, dense_weight=0.6
-            )
+            hybrid_searcher = HybridSearcher(storage_dir=str(storage_dir))
 
             # Initialize incremental indexer
             # This should work with HybridSearcher as indexer
@@ -517,8 +512,6 @@ class DatabaseConnection:
         # Create new searcher instance
         new_searcher = HybridSearcher(
             storage_dir=str(indexed_hybrid_environment["storage_dir"]),
-            bm25_weight=0.4,
-            dense_weight=0.6,
         )
 
         # Load indices
@@ -611,27 +604,13 @@ def validate_item(item):
         )
         assert result.success, "Indexing must succeed"
 
-        # Test weight adjustment
-        original_bm25_weight = indexed_hybrid_environment["hybrid_searcher"].bm25_weight
-        original_dense_weight = indexed_hybrid_environment[
-            "hybrid_searcher"
-        ].dense_weight
-
-        # Change weights
-        indexed_hybrid_environment["hybrid_searcher"].bm25_weight = 0.8
-        indexed_hybrid_environment["hybrid_searcher"].dense_weight = 0.2
-
-        # Search should still work
+        # Weights are resolved per-call now (C2 removed the instance-level
+        # bm25_weight/dense_weight fields — see ADR-0018); an explicit
+        # per-call override is the only way left to change them.
         results = indexed_hybrid_environment["hybrid_searcher"].search(
-            "user authentication", k=3
+            "user authentication", k=3, bm25_weight=0.8, dense_weight=0.2
         )
         assert len(results) > 0, "Search should work with different weights"
-
-        # Restore weights
-        indexed_hybrid_environment["hybrid_searcher"].bm25_weight = original_bm25_weight
-        indexed_hybrid_environment[
-            "hybrid_searcher"
-        ].dense_weight = original_dense_weight
 
     def test_error_handling(self, indexed_hybrid_environment):
         """Test error handling in hybrid search system."""
@@ -742,13 +721,15 @@ class TestHybridSearchConfigIntegration:
 
         searcher = HybridSearcher(
             storage_dir=str(self.temp_dir / "indices"),
-            bm25_weight=config.search_mode.bm25_weight,
-            dense_weight=config.search_mode.dense_weight,
+            config=config,
             rrf_k=config.search_mode.rrf_k_parameter,
         )
 
-        assert searcher.bm25_weight == 0.7
-        assert searcher.dense_weight == 0.3
+        # C2 removed the instance-level bm25_weight/dense_weight fields —
+        # HybridSearcher now stores whatever SearchConfig it was given
+        # (self.config) instead of copying the weights onto its own attrs.
+        assert searcher.config.search_mode.bm25_weight == 0.7
+        assert searcher.config.search_mode.dense_weight == 0.3
         assert searcher.reranker.k == 50
 
     def teardown_method(self):

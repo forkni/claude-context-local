@@ -230,8 +230,7 @@ def _wrap_model_encode(model_cls: type) -> None:
 def _install_layer3_embedding_split() -> None:
     """Wrap CodeEmbedder.create_embedding_content (CPU, per-chunk) and patch
     the loaded model's .encode() (GPU) the first time embed_chunks resolves
-    the model — the concrete model class (SentenceTransformer vs an ONNX
-    wrapper) isn't known until then.
+    the model — the concrete model class isn't known until then.
     """
     import embeddings.embedder as embedder_mod
 
@@ -287,7 +286,6 @@ def _install_patches(enable_hybrid: bool) -> None:
     import chunking.repo_profiler as repo_profiler_mod
     import merkle.merkle_dag as merkle_dag_mod
     import merkle.snapshot_manager as snapshot_manager_mod
-    import search.community_stage as community_stage_mod
     import search.hybrid_searcher as hybrid_searcher_mod
     import search.index_write_stage as write_stage_mod
     import search.indexer as indexer_mod
@@ -318,9 +316,6 @@ def _install_patches(enable_hybrid: bool) -> None:
     _timed_wrap(
         parallel_chunker_mod.ParallelChunker, "chunk_files", "phase5_chunk_files"
     )
-
-    # Phase 6 — community detection + summaries.
-    _timed_wrap(community_stage_mod.CommunityStage, "run", "phase6_community_stage")
 
     # Phase 7 — embedding (Layer 1 total + Layer 3 CPU/GPU split).
     _install_layer3_embedding_split()
@@ -385,7 +380,6 @@ _TOP_LEVEL_PHASES = [
     "phase3_merkle_build",
     "phase4_profile_repository",
     "phase5_chunk_files",
-    "phase6_community_stage",
     "phase7_embed_chunks",
     "phase8_add_embeddings",
     "phase9_inject_call_edges",

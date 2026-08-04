@@ -162,8 +162,52 @@ class TestIndexSynchronizer:
         # Should return False
         assert result is False
 
+    def test_validate_index_sync_duplicate_ids_logs_warning_but_stays_synced(
+        self, caplog
+    ):
+        """Fix 4: equal bm25/dense counts can still hide a colliding chunk_id
+        (one metadata write silently upserting over another, as happened with
+        the community-summary chunk_id collision). validate_index_sync must
+        name the cause via a log warning, but must NOT flip synced to False --
+        resync_if_desynced only rebuilds BM25 from dense and cannot repair a
+        duplicate id, so flipping it here would just churn without fixing
+        anything (see graph/community_summarizer.py's chunk_id fix for the
+        actual repair)."""
+        import logging
+
+        self.mock_bm25_index._doc_ids = ["id1", "id2", "id2"]  # id2 duplicated
+        self.mock_dense_index.ntotal = 3
+
+        with caplog.at_level(logging.WARNING):
+            result = self.synchronizer.validate_index_sync()
+
+        # Counts are equal, so this must still report synced.
+        assert result is True
+        assert "Duplicate chunk_ids" in caplog.text
+        assert "3 total" in caplog.text
+        assert "2 unique" in caplog.text
+
+    def test_validate_index_sync_no_duplicates_no_warning(self, caplog):
+        """No false positives: unique ids with equal counts logs no duplicate
+        warning at all."""
+        import logging
+
+        self.mock_bm25_index._doc_ids = ["id1", "id2", "id3"]
+        self.mock_dense_index.ntotal = 3
+
+        with caplog.at_level(logging.WARNING):
+            result = self.synchronizer.validate_index_sync()
+
+        assert result is True
+        assert "Duplicate chunk_ids" not in caplog.text
+
     def test_resync_bm25_from_dense_success(self):
-        """Test successful BM25 resync from dense metadata."""
+        """Test successful BM25 resync from dense metadata.
+
+        Resync rebuilds the corpus in place (ADR-0025) -- self.bm25_index
+        keeps its identity, so this asserts clear()/index_documents()/save()
+        on the same mock instead of a BM25Index reconstruction.
+        """
         # Configure mock - uses chunk_ids property
         self.mock_dense_index.chunk_ids = ["chunk1", "chunk2"]
         self.mock_dense_index.metadata_store = MagicMock()
@@ -171,21 +215,17 @@ class TestIndexSynchronizer:
             {"metadata": {"bm25_text": "def test(): pass", "file": "test.py"}},
             {"metadata": {"bm25_text": "class Test: pass", "file": "test.py"}},
         ]
+        self.mock_bm25_index.size = 2
 
-        # Mock BM25Index constructor and methods
-        with patch("search.index_sync.BM25Index") as mock_bm25_class:
-            mock_new_bm25 = MagicMock()
-            mock_new_bm25.size = 2
-            mock_bm25_class.return_value = mock_new_bm25
+        # Execute resync
+        result = self.synchronizer.resync_bm25_from_dense()
 
-            # Execute resync
-            result = self.synchronizer.resync_bm25_from_dense()
-
-            # Verify BM25 was recreated and indexed
-            mock_bm25_class.assert_called_once()
-            mock_new_bm25.index_documents.assert_called_once()
-            mock_new_bm25.save.assert_called_once()
-            assert result == 2  # 2 chunks resynced
+        # Verify the existing bm25_index was cleared and re-indexed in place
+        self.mock_bm25_index.clear.assert_called_once()
+        self.mock_bm25_index.index_documents.assert_called_once()
+        self.mock_bm25_index.save.assert_called_once()
+        assert self.synchronizer.bm25_index is self.mock_bm25_index
+        assert result == 2  # 2 chunks resynced
 
     def test_resync_bm25_from_dense_empty_dense(self):
         """Test resync when dense index is empty."""
@@ -217,59 +257,51 @@ class TestIndexSynchronizer:
         self.mock_dense_index.chunk_ids = ["chunk1", "chunk2", "chunk3_empty"]
         self.mock_dense_index.metadata_store = MagicMock()
         self.mock_dense_index.metadata_store.get.side_effect = _metadata_by_id.get
+        self.mock_bm25_index.size = 3
 
-        with patch("search.index_sync.BM25Index") as mock_bm25_class:
-            mock_new_bm25 = MagicMock()
-            mock_new_bm25.size = 3
-            mock_bm25_class.return_value = mock_new_bm25
+        result = self.synchronizer.resync_bm25_from_dense()
 
-            result = self.synchronizer.resync_bm25_from_dense()
-
-            # Must index ALL 3 doc_ids (including the empty-content one)
-            call_args = mock_new_bm25.index_documents.call_args
-            assert call_args is not None, "index_documents was never called"
-            actual_doc_ids = call_args[0][1]  # positional arg 1 = doc_ids list
-            assert actual_doc_ids == ["chunk1", "chunk2", "chunk3_empty"], (
-                f"Expected all 3 chunk_ids, got {actual_doc_ids}. "
-                "resync_bm25_from_dense is dropping empty-content chunks."
-            )
-            assert result == 3
+        # Must index ALL 3 doc_ids (including the empty-content one)
+        call_args = self.mock_bm25_index.index_documents.call_args
+        assert call_args is not None, "index_documents was never called"
+        actual_doc_ids = call_args[0][1]  # positional arg 1 = doc_ids list
+        assert actual_doc_ids == ["chunk1", "chunk2", "chunk3_empty"], (
+            f"Expected all 3 chunk_ids, got {actual_doc_ids}. "
+            "resync_bm25_from_dense is dropping empty-content chunks."
+        )
+        assert result == 3
 
     def test_clear_index_success(self):
-        """Test clearing both indices."""
-        # clear_index recreates indices using constructors
-        with (
-            patch("search.index_sync.BM25Index") as mock_bm25_class,
-            patch("search.index_sync.CodeIndexManager") as mock_dense_class,
-            patch("search.index_sync.shutil.rmtree"),
-            patch("search.index_sync.Path.exists", return_value=True),
-        ):
-            self.mock_dense_index.clear_index = MagicMock()
+        """Test clearing both indices in place (ADR-0025 -- no reconstruction)."""
+        self.synchronizer.clear_index()
 
-            # Execute clear
-            self.synchronizer.clear_index()
-
-            # Verify dense clear_index was called
-            self.mock_dense_index.clear_index.assert_called_once()
-            # Verify new instances were created
-            mock_bm25_class.assert_called_once()
-            mock_dense_class.assert_called_once()
+        self.mock_dense_index.preflight_clear.assert_called_once()
+        self.mock_bm25_index.clear.assert_called_once()
+        self.mock_dense_index.clear_index.assert_called_once()
+        # Identity is unchanged -- clear_index() never reassigns bm25_index/dense_index.
+        assert self.synchronizer.bm25_index is self.mock_bm25_index
+        assert self.synchronizer.dense_index is self.mock_dense_index
 
     def test_clear_index_with_storage_cleanup(self):
-        """Test clearing with storage directory cleanup."""
-        # Mock Path.exists and shutil.rmtree
-        with (
-            patch("search.index_sync.Path.exists", return_value=True),
-            patch("search.index_sync.shutil.rmtree") as mock_rmtree,
-        ):
-            self.mock_bm25_index.clear = MagicMock()
-            self.mock_dense_index.clear = MagicMock()
+        """Test clear_index runs the fail-fast probe before destroying any state.
 
-            # Execute clear
-            self.synchronizer.clear_index()
+        preflight_clear() must happen before bm25_index.clear() and
+        dense_index.clear_index() -- otherwise a locked metadata.db would only
+        abort after the BM25 directory was already gone, a half-clear with no
+        rollback.
+        """
+        call_order = []
+        self.mock_dense_index.preflight_clear.side_effect = lambda: call_order.append(
+            "preflight_clear"
+        )
+        self.mock_bm25_index.clear.side_effect = lambda: call_order.append("bm25.clear")
+        self.mock_dense_index.clear_index.side_effect = lambda: call_order.append(
+            "dense.clear_index"
+        )
 
-            # Verify rmtree was called
-            assert mock_rmtree.call_count >= 0  # May or may not cleanup
+        self.synchronizer.clear_index()
+
+        assert call_order == ["preflight_clear", "bm25.clear", "dense.clear_index"]
 
     def test_remove_files_single_file(self):
         """Test removing chunks for a single file (set-of-one)."""
@@ -350,12 +382,18 @@ class TestIndexSynchronizer:
         assert self.synchronizer.storage_dir == self.storage_dir
 
     def test_embedder_propagation_in_clear_index(self):
-        """Test that embedder is passed to CodeIndexManager during clear_index."""
-        # Create mock embedder
+        """Test the embedder stays reachable through dense_index across a clear.
+
+        Previously this was tested by asserting a reconstructed
+        CodeIndexManager received the embedder kwarg. Under ADR-0025,
+        clear_index() never reconstructs dense_index -- it clears the same
+        object in place -- so the embedder threaded through at construction
+        time is simply never touched.
+        """
         mock_embedder = MagicMock()
         mock_embedder.get_model_info.return_value = {"embedding_dimension": 1024}
+        self.mock_dense_index.embedder = mock_embedder
 
-        # Create synchronizer with embedder
         synchronizer_with_embedder = IndexSynchronizer(
             storage_dir=self.storage_dir,
             bm25_index=self.mock_bm25_index,
@@ -366,26 +404,14 @@ class TestIndexSynchronizer:
             embedder=mock_embedder,
         )
 
-        # Verify embedder is stored
         assert synchronizer_with_embedder.embedder == mock_embedder
 
-        # clear_index recreates indices with embedder
-        with (
-            patch("search.index_sync.BM25Index"),
-            patch("search.index_sync.CodeIndexManager") as mock_dense_class,
-            patch("search.index_sync.shutil.rmtree"),
-            patch("search.index_sync.Path.exists", return_value=True),
-        ):
-            self.mock_dense_index.clear_index = MagicMock()
+        synchronizer_with_embedder.clear_index()
 
-            # Execute clear
-            synchronizer_with_embedder.clear_index()
-
-            # Verify CodeIndexManager was called with embedder
-            mock_dense_class.assert_called_once()
-            call_kwargs = mock_dense_class.call_args[1]
-            assert "embedder" in call_kwargs
-            assert call_kwargs["embedder"] == mock_embedder
+        # ADR-0025: dense_index identity is stable across a clear, so the
+        # embedder it was constructed with is still reachable through it.
+        assert synchronizer_with_embedder.dense_index is self.mock_dense_index
+        assert synchronizer_with_embedder.dense_index.embedder is mock_embedder
 
     def test_embedder_none_allowed(self):
         """Test that IndexSynchronizer works with embedder=None for backward compatibility."""
@@ -403,23 +429,11 @@ class TestIndexSynchronizer:
         # Verify embedder is None
         assert synchronizer_no_embedder.embedder is None
 
-        # clear_index should still work (passes None to CodeIndexManager)
-        with (
-            patch("search.index_sync.BM25Index"),
-            patch("search.index_sync.CodeIndexManager") as mock_dense_class,
-            patch("search.index_sync.shutil.rmtree"),
-            patch("search.index_sync.Path.exists", return_value=True),
-        ):
-            self.mock_dense_index.clear_index = MagicMock()
+        # clear_index should still work with embedder=None -- nothing in the
+        # clear path touches self.embedder or dense_index.embedder at all.
+        synchronizer_no_embedder.clear_index()
 
-            # Execute clear
-            synchronizer_no_embedder.clear_index()
-
-            # Verify CodeIndexManager was called with embedder=None
-            mock_dense_class.assert_called_once()
-            call_kwargs = mock_dense_class.call_args[1]
-            assert "embedder" in call_kwargs
-            assert call_kwargs["embedder"] is None
+        assert synchronizer_no_embedder.dense_index is self.mock_dense_index
 
 
 class TestResyncIfDesynced:
@@ -473,13 +487,9 @@ class TestResyncIfDesynced:
             {"metadata": {"bm25_text": "def a(): pass"}},
             {"metadata": {"bm25_text": "def b(): pass"}},
         ]
+        self.bm25.size = 2
 
-        with patch("search.index_sync.BM25Index") as mock_bm25_cls:
-            mock_new_bm25 = MagicMock()
-            mock_new_bm25.size = 2
-            mock_bm25_cls.return_value = mock_new_bm25
-
-            resynced, count = self.sync.resync_if_desynced("TEST")
+        resynced, count = self.sync.resync_if_desynced("TEST")
 
         assert resynced is True
         assert count == 2

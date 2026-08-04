@@ -1,4 +1,6 @@
 {
+  "acc@10": 0.5,
+  "acc@5": 0.5,
   "hit_rate@5": 0.5,
   "hit_rate@7": 0.5,
   "mrr": 0.5,
@@ -14,9 +16,9 @@
   "precision@5": 0.5,
   "recall@1": 0.5,
   "recall@10": 0.5,
-  "recall@20": 0.0,
+  "recall@20": 0.5,
   "recall@5": 0.5,
-  "recall@50": 0.0,
+  "recall@50": 0.5,
   "recall@7": 0.5,
   "success_count": 1,
   "success_count@7": 1,

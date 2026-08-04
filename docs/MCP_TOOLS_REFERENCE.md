@@ -18,15 +18,15 @@ set. This keeps the advertised tool count small without removing the capability.
 18 tools remain callable directly regardless of the `list_tools` filter.
 
 | Tool | Priority | Purpose | Parameters |
-|------|----------|---------|------------|
+| ------ | ---------- | --------- | ------------ |
 | **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=4 (schema default; `search_config.json.example` sets the effective default to 7), search_mode="hybrid", file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0 |
 | **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types |
 | **find_path** | 🟡 **IMPACT** | Trace shortest path between code entities in relationship graph | source OR source_chunk_id, target OR target_chunk_id, edge_types, max_hops=10 |
-| **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), project_name, incremental=True |
-| **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=4 |
+| **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), project_name, incremental=True, wait=True, include_dirs, exclude_dirs |
+| **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=4, exclude_same_file=False (set true for cross-file analogues — sibling implementations in other files; leave false for neighbors within the reference chunk's own file, e.g. other methods of the same class) |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.35, dense_weight=0.65, enable_parallel=True |
 | configure_reranking | Config | Configure neural reranker settings (BGE OR Jina v3, runtime configurable) | enabled, model_name, top_k_candidates=30 |
-| configure_chunking | Config | Configure code chunking settings | enable_community_detection, enable_community_merge, community_resolution, token_estimation, enable_large_node_splitting, max_chunk_lines, split_size_method, max_split_chars, enable_file_summaries, enable_community_summaries |
+| configure_chunking | Config | Configure code chunking settings | enable_large_node_splitting, max_chunk_lines, split_size_method, max_split_chars, enable_file_summaries, sizing_mode |
 | get_search_config_status | Config | View current configuration | *(no parameters)* |
 | get_index_status | Status | Check index health & model info | *(no parameters)* |
 | get_memory_status | Monitor | Check RAM/VRAM usage | *(no parameters)* |
@@ -47,25 +47,33 @@ interleave a mutation with each other's reads — but the state itself is still 
 switching the project/model from one client switches it for every client. Avoid running
 these calls concurrently against unrelated projects from multiple clients.
 
+**`index_directory`'s `include_dirs`/`exclude_dirs` replace, not merge.** Omitting either
+parameter reuses the list stored from project creation. Passing a new list **replaces the
+stored list wholesale** — it does not merge with it — so always re-pass every directory you
+still want filtered, or the omitted ones become indexable again. Passing `[]` clears the
+filter explicitly. Any change to the effective filters (including the implicit "add one more
+excluded dir") is detected against the stored snapshot and **forces a full, non-incremental
+reindex** even if `incremental=True` was requested — `batch_index.py` prints the effective
+filters before indexing starts so you can confirm the full list took effect.
+
 ---
 
 ## Filter Parameters for search_code
 
 | Parameter | Type | Description | Valid Values |
-|-----------|------|-------------|--------------|
+| ----------- | ------ | ------------- | -------------- |
 | **file_pattern** | string | Substring match on file path | Any string (e.g., "auth", "test_", "utils/") |
 | **include_dirs** | array | Only search in these directories (prefix match) | `["src/", "lib/"]` |
 | **exclude_dirs** | array | Exclude from search (prefix match) | `["tests/", "vendor/", "node_modules/"]` |
-| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"module_preamble"`, `"community"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"`, `"merged"`, `"split_block"` |
+| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"module_preamble"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"`, `"merged"`, `"split_block"` |
 
 **Synthetic Summary Chunk Types (v0.9.0+)**:
 
 - `"module"`: File-level module summary chunks (A2 feature). Synthetic chunks generated per file with 2+ real chunks, containing file path, module name, classes, functions, key methods, imports, and docstring excerpts. Improves GLOBAL query recall.
-- `"community"`: Community-level summary chunks (B1 feature). Synthetic chunks generated per community (via Louvain detection) with 2+ members, containing community ID, dominant directory, classes/functions in the community, hub function, and imports. Improves GLOBAL query recall.
 
 **Chunking Chunk Types (v0.8.4+)**:
 
-- `"merged"`: Community-merged chunks created by community detection. Multiple related code blocks merged together for better semantic context (e.g., related helper functions merged with main class).
+- `"merged"`: Sibling chunks combined by `LanguageChunker._create_merged_chunk`. Multiple related code blocks merged together for better semantic context (e.g., related helper functions merged with main class).
 - `"module_preamble"`: Real (non-synthetic) top-of-file statements — import-time side effects, module-level constants/config, `if __name__ == "__main__":` guards — that sit between chunked functions/classes but have no chunkable ancestor node type. Unlike `"module"`, this contains the actual verbatim source with real line numbers, and is never subject to synthetic-chunk demotion/exclusion.
 - `"split_block"`: Large function blocks split at AST boundaries when exceeding `max_chunk_lines` (default: 100 lines). Enables better granularity for very large functions.
 
@@ -105,10 +113,17 @@ find_connections(chunk_id="...", relationship_types=["imports"])
 # Returns: Only imports/imported_by populated
 
 # Get multiple specific types
-find_connections(symbol_name="MyClass", relationship_types=["inherits", "imports", "decorates"])
+find_connections(
+    symbol_name="MyClass", relationship_types=["inherits", "imports", "decorates"]
+)
 ```
 
-**Valid relationship types**: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
+**Valid relationship types**: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
+
+**Note**: `uses_global` and `asserts_type` require entity tracking
+(`enable_entity_tracking`, default `True`) and populate only after the index is (re)built
+with it enabled — a stale index built before these extractors existed returns no data for
+either filter until reindexed.
 
 ### Filter Examples
 
@@ -136,7 +151,7 @@ find_connections(symbol_name="MyClass", relationship_types=["inherits", "imports
 **Examples**:
 
 | Query | Filter | Expected Result |
-|-------|--------|-----------------|
+| ------- | -------- | ----------------- |
 | `"test"` | `indexer` | ❌ 0 results (query too generic) |
 | `"index directory embedding"` | `indexer` | ✅ Results from indexer files |
 | `"search implementation"` | `hybrid` | ✅ Results from hybrid_searcher.py |
@@ -157,7 +172,7 @@ find_connections(symbol_name="MyClass", relationship_types=["inherits", "imports
 **Purpose**: Automatically retrieve graph neighbors (callers, callees, related code) for search results to provide richer context beyond semantic similarity.
 
 | Parameter | Type | Default | Range | Description |
-|-----------|------|---------|-------|-------------|
+| ----------- | ------ | --------- | ------- | ------------- |
 | `ego_graph_enabled` | boolean | false | - | Enable k-hop neighbor expansion from call graph |
 | `ego_graph_k_hops` | integer | 2 | 1-5 | Graph traversal depth (1=direct neighbors, 2=neighbors of neighbors) |
 | `ego_graph_max_neighbors_per_hop` | integer | 10 | 1-50 | Limit neighbors per hop to prevent explosion |
@@ -182,7 +197,12 @@ search_code("authentication handler", ego_graph_enabled=True)
 search_code("database connection", ego_graph_enabled=True, ego_graph_k_hops=1)
 
 # Deep expansion with more neighbors
-search_code("request processing", ego_graph_enabled=True, ego_graph_k_hops=3, ego_graph_max_neighbors_per_hop=20)
+search_code(
+    "request processing",
+    ego_graph_enabled=True,
+    ego_graph_k_hops=3,
+    ego_graph_max_neighbors_per_hop=20,
+)
 ```
 
 ### Performance Characteristics
@@ -271,7 +291,7 @@ Parent chunks are marked in results with:
 The `search_code` tool returns results with the following fields:
 
 | Field | Type | Always Present | Description |
-|-------|------|----------------|-------------|
+| ------- | ------ | ---------------- | ------------- |
 | `chunk_id` | string | ✅ | Unique identifier (format: `"file:lines:type:name"`) |
 | `kind` | string | ✅ | Chunk type (`function`, `class`, `method`, etc.) |
 | `score` | float | ✅ | Relevance score (0.0-1.0, rounded to 2 decimals) |
@@ -310,7 +330,7 @@ All 18 MCP tools support configurable output formatting via the `output_format` 
 ### Available Formats
 
 | Format | Token Reduction | Use Case | Description |
-|--------|----------------|----------|-------------|
+| -------- | ---------------- | ---------- | ------------- |
 | **verbose** | 0% (baseline) | Debugging, backward compatibility | Verbose JSON with indent=2, all fields included |
 | **compact** | 30-40% | Default, recommended | Omits empty fields, no indentation, removes redundant data |
 | **ultra** | 45-55% | Large result sets, bandwidth-constrained | Tabular arrays with header-declared fields |
@@ -399,8 +419,8 @@ Ultra format optimizes token usage by declaring field names once in a header, th
    # Reconstruct object
    object1 = {
        "chunk_id": row1[0],  # "auth.py:10-25:function:login"
-       "kind": row1[1],       # "function"
-       "score": row1[2]       # 0.95
+       "kind": row1[1],  # "function"
+       "score": row1[2],  # 0.95
    }
    ```
 
@@ -461,7 +481,7 @@ Notice:
 **Test Query**: `find_connections` with 5 callers + 10 similar_code results
 
 | Format | Characters | Estimated Tokens | Reduction |
-|--------|-----------|------------------|-----------|
+| -------- | ----------- | ------------------ | ----------- |
 | JSON | 3,259 | ~814 | 0% (baseline) |
 | Compact | 2,167 | ~541 | 33.5% |
 | TOON | 1,877 | ~469 | 42.4% |
@@ -519,28 +539,23 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 
 **Parameters**:
 
-- `enable_community_detection` (bool): Detect code communities for better chunking (default: True)
-- `enable_community_merge` (bool): Use communities for chunk remerging — full re-index only (default: False)
-- `community_resolution` (float): Louvain algorithm resolution parameter (0.1-2.0, default: 1.5)
-- `token_estimation` (str): Token estimation method - "whitespace" (fast) or "tiktoken" (accurate, default: "whitespace")
 - `enable_large_node_splitting` (bool): Enable AST block splitting for large functions (default: True)
 - `max_chunk_lines` (int): Maximum lines per chunk before splitting at AST boundaries (10-1000, default: 100)
 - `split_size_method` (str): Size method for splitting - "lines" or "characters" (default: "characters")
 - `max_split_chars` (int): Maximum characters per split chunk (1000-10000, default: 1600)
 - `enable_file_summaries` (bool): Generate file-level module summary chunks (A2 feature, default: True)
-- `enable_community_summaries` (bool): Generate community-level summary chunks (B1 feature, default: True)
 - `sizing_mode` (str): Chunk sizing algorithm - "fixed" or "adaptive" (repo-profiled P75 + complexity, default: "fixed")
 - `adaptive_multiplier_max` (float): T_max multiplier for low-complexity functions (1.0-2.0, default: 1.3)
 - `adaptive_multiplier_min` (float): T_min multiplier for high-complexity functions (0.1-1.0, default: 0.5)
 - `max_complexity_cap` (int): Cyclomatic complexity ceiling for normalization (5-100, default: 30)
 
-**Note**: `min_chunk_tokens` (50) and `max_merged_tokens` (400) are optimal defaults and not exposed for configuration. Re-index project to apply changes.
+**Note**: Re-index project to apply changes.
 
 ### Commands
 
 ```
 /configure_chunking --enable_large_node_splitting true --max_split_chars 1600
-/configure_chunking --enable_community_detection true --sizing_mode adaptive
+/configure_chunking --sizing_mode adaptive
 /get_search_config_status  # View current chunking settings
 ```
 
@@ -552,7 +567,7 @@ Configured via `search_config.json` or the `start_mcp_server.cmd` UI (Search Con
 
 ### Source-Position Reranking (`OutputConfig.source_order_output`, default: False)
 
-After retrieval, results emit in **relevance order** (centrality-reranked blended_score descending) by default. Module/community summary chunks are demoted to the tail for non-GLOBAL queries. `reranker_score` is preserved per-row for optional consumer re-sort.
+After retrieval, results emit in **relevance order** (centrality-reranked blended_score descending) by default. Module summary chunks are demoted to the tail for non-GLOBAL queries. `reranker_score` is preserved per-row for optional consumer re-sort.
 
 Set `source_order_output=true` to restore **DOS-RAG file/line ordering**: results from the same file are grouped and sorted by start line, with `[... N lines omitted ...]` gap indicators between non-contiguous chunks. Useful when feeding chunks verbatim to a long-context LLM that benefits from reading code in document order.
 
@@ -563,7 +578,7 @@ Set `source_order_output=true` to restore **DOS-RAG file/line ordering**: result
 High-centrality chunks (base classes, utility functions, heavily-imported modules) receive an additive score boost based on their PageRank centrality. This compensates for the sign-rank bottleneck proved by the LIMIT paper (DeepMind, ICLR 2026) — single-vector retrieval systematically under-ranks high-connectivity nodes.
 
 | Field | Default | Description |
-|-------|---------|-------------|
+| ------- | --------- | ------------- |
 | `centrality_bm25_boost` | `True` | Enable adaptive boost |
 | `centrality_boost_threshold` | `0.02` | Centrality score minimum to trigger boost |
 | `centrality_boost_factor` | `5.0` | Multiplier: `boost = centrality × factor` |
@@ -574,7 +589,7 @@ High-centrality chunks (base classes, utility functions, heavily-imported module
 At index time, every chunk is tagged with its file role via `_classify_file_role()`. Role tags flow into `CentralityRanker.rerank()` for query-aware demotion:
 
 | Role | Demotion (default query) | Boost (role-specific query) |
-|------|--------------------------|-----------------------------|
+| ------ | -------------------------- | ----------------------------- |
 | `src` | — (baseline) | — |
 | `test` | 0.85× | 1.15× when query contains test keywords |
 | `doc` | 0.80× | — (no boost when doc intent detected) |
@@ -585,7 +600,7 @@ At index time, every chunk is tagged with its file role via `_classify_file_role
 ## Performance Metrics
 
 | Metric | Traditional Reading | Semantic Search (First) | Semantic Search (Cached) | Improvement |
-|--------|---------------------|-------------------------|--------------------------|-------------|
+| -------- | --------------------- | ------------------------- | -------------------------- | ------------- |
 | Tokens | 5,600 | 400 | 400 | 93% reduction |
 | Speed | 30-60s | 8-15s (includes 5-10s model load) | 3-5s | 2-3x faster |
 | VRAM | 0 MB | 0 MB → 1.5-5.3 GB (on-demand) | 1.5-5.3 GB | Lazy loading |
@@ -621,6 +636,9 @@ At index time, every chunk is tagged with its file role via `_classify_file_role
 
 # Find similar code
 /find_similar_code "auth.py:15-42:function:login"
+
+# Find similar code in OTHER files only (cross-file analogues)
+/find_similar_code "auth.py:15-42:function:login" exclude_same_file=true
 
 # Configure search
 /configure_search_mode "hybrid" 0.35 0.65
@@ -705,7 +723,7 @@ At index time, every chunk is tagged with its file role via `_classify_file_role
 ### Performance Impact
 
 | Metric | Value | Notes |
-|--------|-------|-------|
+| -------- | ------- | ------- |
 | **VRAM freed** | Returns to 0 MB | Baseline state |
 | **Operation time** | 1-2s | Fast cleanup |
 | **Next search** | +5-10s delay | One-time model reload |
@@ -871,7 +889,7 @@ Server startup:              0 MB VRAM (lazy loading)
 **Additional Output Fields**:
 
 | Field | Description | Output Format |
-|-------|-------------|---------------|
+| ------- | ------------- | --------------- |
 | `parent_classes` | Classes this class inherits from | Name-only (may include chunk_id if resolved) |
 | `child_classes` | Classes that inherit from this class | Full chunk details |
 | `uses_types` | Types used in this function/method | Name-only (type names) |
@@ -1001,7 +1019,7 @@ Server startup:              0 MB VRAM (lazy loading)
 **Resolution Features**:
 
 | Version | Feature | Accuracy |
-|---------|---------|----------|
+| --------- | --------- | ---------- |
 | v0.5.12 | Qualified chunk_ids + self/super resolution | ~70% |
 | v0.5.13 | + Type annotation resolution | ~80% |
 | v0.5.14 | + Assignment tracking | ~85-90% |
@@ -1016,6 +1034,7 @@ class UserService:
     def get_user(self, id):  # chunk_id: "service.py:5-10:method:UserService.get_user"
         pass
 
+
 class AdminService:
     def get_user(self, id):  # chunk_id: "service.py:15-20:method:AdminService.get_user"
         pass
@@ -1026,16 +1045,16 @@ class AdminService:
 ```python
 class DataProcessor:
     def process(self):
-        self.validate()     # Resolves to "DataProcessor.validate"
-        super().cleanup()   # Resolves to "BaseProcessor.cleanup"
+        self.validate()  # Resolves to "DataProcessor.validate"
+        super().cleanup()  # Resolves to "BaseProcessor.cleanup"
 ```
 
 **Type Annotation Resolution** (v0.5.13):
 
 ```python
 def process_order(order: Order, payment: PaymentGateway):
-    order.validate()           # Resolves to "Order.validate"
-    payment.charge(amount)     # Resolves to "PaymentGateway.charge"
+    order.validate()  # Resolves to "Order.validate"
+    payment.charge(amount)  # Resolves to "PaymentGateway.charge"
 ```
 
 **Example - Finding Method Callers**:
@@ -1175,7 +1194,7 @@ def process_order(order: Order, payment: PaymentGateway):
 ## Troubleshooting
 
 | Issue | Solution |
-|-------|----------|
+| ------- | ---------- |
 | "Model not found" | Run `scripts\powershell\hf_auth.ps1` |
 | "Index stale" | Use `auto_reindex=True` (default) |
 | "Slow searches" | Check `/get_memory_status`, run `/cleanup_resources` |

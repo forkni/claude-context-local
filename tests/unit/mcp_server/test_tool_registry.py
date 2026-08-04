@@ -1,5 +1,7 @@
 """Unit tests for the low-level MCP tool registry (mcp_server/tool_registry.py)."""
 
+import dataclasses
+
 import pytest
 
 from mcp_server.tool_registry import (
@@ -7,6 +9,18 @@ from mcp_server.tool_registry import (
     TOOL_REGISTRY,
     _advanced_tools_enabled,
     build_tool_list,
+)
+from mcp_server.tools.config_handlers import (
+    _CHUNKING_FIELDS,
+    _PERFORMANCE_SEARCH_FIELDS,
+    _RERANKER_FIELDS,
+    _SEARCH_MODE_FIELDS,
+)
+from search.config import (
+    ChunkingConfig,
+    PerformanceConfig,
+    RerankerConfig,
+    SearchModeConfig,
 )
 
 
@@ -73,4 +87,50 @@ class TestBuildToolList:
         for tool in tools:
             assert tool.name in TOOL_REGISTRY
             assert tool.description == TOOL_REGISTRY[tool.name]["description"]
-            assert tool.inputSchema == TOOL_REGISTRY[tool.name]["input_schema"]
+            assert tool.input_schema == TOOL_REGISTRY[tool.name]["input_schema"]
+
+
+def _field_metadata(section_cls, field_name):
+    for f in dataclasses.fields(section_cls):
+        if f.name == field_name:
+            return f.metadata
+    raise KeyError(f"{section_cls.__name__} has no field {field_name!r}")
+
+
+class TestConfigToolSchemaMatchesFieldSpec:
+    """A configure_* tool's hand-typed input_schema min/max/enum is a second,
+    independent representation of the same bound already declared on the
+    field's ``spec(range=...)``/``spec(choices=...)`` metadata (ADR-0022).
+    Nothing enforced agreement between the two until this test.
+    """
+
+    @pytest.mark.parametrize(
+        "tool_name,section_cls,field_map",
+        [
+            ("configure_chunking", ChunkingConfig, _CHUNKING_FIELDS),
+            ("configure_reranking", RerankerConfig, _RERANKER_FIELDS),
+            ("configure_search_mode", SearchModeConfig, _SEARCH_MODE_FIELDS),
+            ("configure_search_mode", PerformanceConfig, _PERFORMANCE_SEARCH_FIELDS),
+        ],
+    )
+    def test_numeric_and_choice_bounds_match(self, tool_name, section_cls, field_map):
+        properties = TOOL_REGISTRY[tool_name]["input_schema"]["properties"]
+        for arg_key, attr in field_map:
+            schema_prop = properties[arg_key]
+            metadata = _field_metadata(section_cls, attr)
+
+            # Bidirectional: a schema bound with no spec range (or vice versa)
+            # is itself a divergence, not just a mismatched pair of bounds.
+            schema_bound = (schema_prop.get("minimum"), schema_prop.get("maximum"))
+            expected_bound = metadata.get("range", (None, None))
+            assert schema_bound == expected_bound, (
+                f"{tool_name}.{arg_key} schema bound {schema_bound} diverges from "
+                f"{section_cls.__name__}.{attr}'s spec(range={metadata.get('range')})"
+            )
+
+            schema_enum = schema_prop.get("enum")
+            expected_enum = list(metadata["choices"]) if "choices" in metadata else None
+            assert schema_enum == expected_enum, (
+                f"{tool_name}.{arg_key} schema enum {schema_enum} diverges from "
+                f"{section_cls.__name__}.{attr}'s spec(choices={metadata.get('choices')})"
+            )

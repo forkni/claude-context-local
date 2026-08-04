@@ -30,12 +30,10 @@ This guide covers the complete installation process for the Claude Context MCP s
   - EmbeddingGemma model: ~1.2 GB
   - Qwen3-0.6B model: ~2.3 GB (long-context, MRL support)
   - F2LLM-v2-0.6B model: ~2.2 GB (best retrieval ordering, opt-in)
-  - CodeRankEmbed model: ~0.6 GB (code-specific, CSN: 77.9 MRR)
-  - GTE-ModernBERT-base model: ~0.28 GB (lightest, code-optimized)
   - PyTorch with CUDA: ~2.4 GB
   - Dependencies and cache: ~500 MB
 - **Memory**: 4GB RAM minimum, 8GB+ recommended
-- **GPU** (optional): NVIDIA GPU with CUDA 11.8+ or 12.x support
+- **GPU** (optional): NVIDIA GPU with CUDA 12.8 (primary) or CUDA 12.4 (fallback) support
   - **Startup VRAM (v0.5.17+)**: 0 MB (lazy loading enabled)
   - **After first search**: 1.5-2 GB VRAM (single embedding model, plus ~2GB for the neural reranker if enabled)
   - Single-model mode: 2-4 GB VRAM total
@@ -89,6 +87,35 @@ verify-installation.cmd
 - ✅ **Path Verification**: Validates MCP server paths and detects configuration errors
 - ✅ **Comprehensive Verification**: Built-in testing with verify-installation.cmd
 - ✅ **Windows Optimized**: Specifically designed for Windows environments
+
+#### Installer Menu Options
+
+`install-windows.cmd` presents a menu on every run:
+
+| Option | Installs | Use when |
+|--------|----------|----------|
+| [1] Auto-Install | Runtime deps only (CUDA or CPU build, auto-detected) | First-time setup, end users |
+| [2] CPU-Only Installation | Runtime deps only, CPU build | No NVIDIA GPU |
+| [3] Update/Repair Existing Installation | Runtime deps only | Refresh an existing venv |
+| [4] Developer Install/Repair | Runtime **plus all extras** (`test`, `dev`, `callgraph`, `otel`, `gpu`, `lsp`) | Contributing code — needed for `pytest`, `ruff`, `pyrefly`, `pip-audit`, and the test runner scripts under `scripts/test/` |
+| [5] Clear Stale Snapshots/Indexes | — | Repair tool for indexing issues |
+| [6] Verify Installation Status | — | Sanity check an existing install |
+
+Options [1]-[3] and [5]-[6] are unchanged from before; [4] is new and is the supported way to get
+a venv that can run this repo's own test suite and lint gate (see `tests/TESTING_GUIDE.md`).
+
+#### uv Cache Location
+
+The installer points `uv`'s package cache at `.uv-cache/` inside the project directory rather
+than uv's machine-wide default (`%LOCALAPPDATA%\uv\cache`). This matters because uv installs
+packages via NTFS hardlinks when the cache and the target `.venv` are on the **same volume** —
+if they're on different drives (e.g. a machine-wide cache on `C:` with the project on `D:` or
+`F:`), hardlinking silently falls back to a full byte-copy of every wheel on every sync, which
+can turn a normally-instant `uv sync` into a multi-minute operation for the full dependency set.
+
+`.uv-cache/` is git-ignored and excluded from semantic indexing automatically. The first install
+after a fresh clone populates it (one-time cost, same as populating any cache); every sync after
+that hardlinks and is fast. It's safe to delete at any time — uv repopulates it as needed.
 
 ### Alternative Platforms
 
@@ -458,7 +485,7 @@ pip install -e ".[test]"
 ### UV vs pip Comparison
 
 | Feature | UV | pip |
-|---------|----|----|
+| --------- | ---- | ---- |
 | Dependency Resolution | Advanced SAT solver | Basic backtracking |
 | Installation Speed | Fast (parallel) | Slower (sequential) |
 | Cache Management | Efficient | Basic |
@@ -469,14 +496,13 @@ pip install -e ".[test]"
 
 ### Version Requirements
 
-- **Minimum PyTorch**: 2.6.0+
+- **Required range**: `torch>=2.8.0,<2.9.0` — pinned in `pyproject.toml`, installed automatically by `uv sync`
 - **Reason**:
-  - BGE-M3 model requires PyTorch 2.6.0+ for security fixes and stability
-  - EmbeddingGemma requires transformers >= 4.51.3, which needs PyTorch >= 2.4.0
-  - PyTorch 2.6.0 only provides cu118 builds (no cu121 available)
-- **CUDA Compatibility**: cu118 builds work with CUDA 11.8, 12.x systems
+  - BGE-M3 (default model) needs PyTorch >= 2.6.0; EmbeddingGemma-300m needs >= 2.4.0 (transformers >= 4.51.3) — `>=2.8.0` covers both floors
+  - The `<2.9.0` ceiling is intentional: PyTorch 2.9.x breaks GTE-ModernBERT's `torch.compile(dynamic=True)` on Windows — see `docs/PYTORCH_COMPATIBILITY.md` for the full rationale and deferred-CVE tracking
+- **CUDA Compatibility**: `pyproject.toml` pins an explicit `cu128` wheel index (default; required for RTX 50-series, also works on older Ampere/Ada cards) with a `cu124` index kept as a manual fallback for older drivers
 - **Compatible Versions**:
-  - PyTorch: 2.6.0+
+  - PyTorch: `>=2.8.0,<2.9.0`
   - transformers: 4.51.3+ (4.56.0-Embedding-Gemma-preview for EmbeddingGemma)
   - sentence-transformers: 5.1.0+
 
@@ -485,8 +511,8 @@ pip install -e ".[test]"
 #### UV Method (Recommended)
 
 ```bash
-# Windows - CUDA 11.8 build (compatible with CUDA 12.x)
-uv pip install torch>=2.6.0 torchvision torchaudio --python .venv\Scripts\python.exe --index-url https://download.pytorch.org/whl/cu118
+# uv resolves torch via the pinned pytorch-cu128 index automatically -- no extra flags needed
+uv sync
 ```
 
 > **Note**: This project only uses `torch` directly. `torchvision` and `torchaudio` are included for PyTorch ecosystem compatibility but are not actively used by the codebase.
@@ -494,16 +520,17 @@ uv pip install torch>=2.6.0 torchvision torchaudio --python .venv\Scripts\python
 #### pip Method (Fallback)
 
 ```bash
-# CUDA 11.8 build (compatible with CUDA 12.x)
-pip install torch>=2.6.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# CUDA 12.8 build (primary index)
+pip install "torch>=2.8.0,<2.9.0" torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 ```
 
 ### CUDA Index URLs
 
-- **CUDA 11.8**: `https://download.pytorch.org/whl/cu118` (recommended, works with CUDA 11.8+ and 12.x)
+- **CUDA 12.8**: `https://download.pytorch.org/whl/cu128` (default; required for RTX 50-series, backward compatible with older Ampere/Ada cards)
+- **CUDA 12.4**: `https://download.pytorch.org/whl/cu124` (fallback for systems with an older driver that can't satisfy `cu128`)
 - **CPU only**: `https://download.pytorch.org/whl/cpu`
 
-> **Note**: PyTorch 2.6.0 only provides cu118 builds. The cu118 build is fully compatible with CUDA 12.x systems due to backward compatibility.
+> **Note**: See `docs/PYTORCH_COMPATIBILITY.md` for the full CUDA index configuration, the `<2.9.0` ceiling rationale, and troubleshooting steps.
 
 ## Verification & Testing
 
@@ -558,7 +585,7 @@ After installation, validate that all critical dependencies meet minimum version
 .venv\Scripts\python.exe -m utils.version_check
 
 # Expected output:
-# [OK] torch==2.8.0+cu118
+# [OK] torch==2.8.0+cu128
 # [OK] transformers==4.47.1
 # [OK] sentence-transformers==3.4.1
 # [OK] numpy==2.2.4
@@ -569,7 +596,7 @@ After installation, validate that all critical dependencies meet minimum version
 **What Gets Validated:**
 
 | Package | Minimum Version | Purpose |
-|---------|----------------|---------|
+| --------- | ---------------- | --------- |
 | torch | >=2.8.0 | Core deep learning framework |
 | transformers | >=4.30.0 | Hugging Face model support |
 | sentence-transformers | >=2.2.0 | Semantic embedding models |
@@ -578,7 +605,7 @@ After installation, validate that all critical dependencies meet minimum version
 
 **Features:**
 
-- Handles CUDA build metadata (e.g., `2.8.0+cu118` correctly compared)
+- Handles CUDA build metadata (e.g., `2.8.0+cu128` correctly compared)
 - ASCII-safe output compatible with Windows console
 - Clear error messages with upgrade instructions
 - Validates at startup to catch environment issues early
@@ -834,8 +861,8 @@ These utilities are interactive and will show you what will be deleted before pr
 **Solution**:
 
 ```bash
-# Ensure PyTorch >= 2.6.0
-uv pip install --upgrade torch>=2.6.0 --index-url https://download.pytorch.org/whl/cu118
+# Ensure PyTorch is within the pinned range (>=2.8.0,<2.9.0)
+uv pip install --upgrade "torch>=2.8.0,<2.9.0" --index-url https://download.pytorch.org/whl/cu128
 ```
 
 **Cause**: Old PyTorch version incompatible with newer transformers
@@ -969,6 +996,7 @@ If you still experience connection issues, disable QuickEdit mode in Windows con
 # Add before mcp.run() in mcp_server/server.py
 if platform.system() == "Windows" and transport == "sse":
     import asyncio
+
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 ```
 
@@ -1081,8 +1109,8 @@ Two new settings are available to manage GPU memory allocation on systems with l
 **Recommended Configurations**:
 
 | GPU VRAM | Configuration | Notes |
-|----------|---------------|-------|
-| **8GB Laptop** | `allow_ram_fallback: false`, `onnx_gpu_mem_limit: true` | Spill-free with ORT cap |
+| ---------- | --------------- | ------- |
+| **8GB Laptop** | `allow_ram_fallback: false` | Spill-free, relies on the PyTorch VRAM cap below |
 | **10-12GB** | `vram_limit_fraction: 0.80` (default) | Balanced |
 | **16GB+** | `vram_limit_fraction: 0.85-0.90` | More headroom |
 | **24GB+** | `vram_limit_fraction: 0.90-0.95` | Maximum capacity |
@@ -1103,24 +1131,10 @@ which would otherwise trigger the WDDM driver to evict memory to shared system R
 (10–100× slower than dedicated VRAM). Check `[VRAM_LIMIT]` log lines for the
 requested vs. effective fraction and the per-process breakdown.
 
-**ONNX Runtime cap** (`onnx_gpu_mem_limit`, default `true`):
-
-When `use_onnx: true`, the embedding model runs via ORT's `CUDAExecutionProvider`,
-which has its own CUDA allocator that PyTorch's `set_per_process_memory_fraction`
-cannot govern. The `onnx_gpu_mem_limit` setting passes the same effective cap as
-ORT's `gpu_mem_limit` provider option at session creation, constraining the ORT
-arena directly. This is the primary spill-prevention mechanism on ONNX deployments.
-
-Check `[ONNX_VRAM]` log lines for the computed `gpu_mem_limit` and its breakdown.
-Disable (`onnx_gpu_mem_limit: false`) only for debugging — doing so re-exposes the
-ORT allocator to WDDM spillover when external processes hold VRAM.
-
 **When `allow_ram_fallback=true`**:
 
 - `vram_limit_fraction` is ignored for the *PyTorch* allocator (no PyTorch hard cap set)
-- `onnx_gpu_mem_limit` is **not** affected — the ORT cap still applies independently
 - PyTorch can use system RAM when VRAM is full (slower but won't OOM for PyTorch ops)
-- Previously recommended for 8 GB laptops; no longer necessary with `onnx_gpu_mem_limit: true`
 
 **Configuration File**: Settings are persisted in `search_config.json` under `performance` section.
 
@@ -1141,7 +1155,7 @@ ORT allocator to WDDM spillover when external processes hold VRAM.
 #### Search Performance
 
 | Phase | VRAM | Time | What's Happening |
-|-------|------|------|------------------|
+| ------- | ------ | ------ | ------------------ |
 | Server startup | 0 MB | 3-5s | Fast startup, no models |
 | First search (cold) | 0 MB → 1.5-5.3 GB | 8-15s | 5-10s model load + 3-5s search |
 | Subsequent searches (warm) | 1.5-5.3 GB | 3-5s | Models cached, instant search |
@@ -1188,8 +1202,8 @@ Startup (server starts):              0 MB VRAM (lazy loading)
 
 1. **CUDA Setup**
    - Install NVIDIA drivers (latest)
-   - Verify CUDA toolkit compatibility (11.8+ or 12.x)
-   - Use cu118 PyTorch builds (compatible with CUDA 11.8+ and 12.x)
+   - Verify CUDA toolkit compatibility (CUDA 12.8 primary, CUDA 12.4 fallback)
+   - Use cu128 PyTorch builds (fall back to cu124 on older drivers)
 
 2. **Memory Management**
    - Monitor GPU memory usage during indexing

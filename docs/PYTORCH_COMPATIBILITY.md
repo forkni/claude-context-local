@@ -12,50 +12,69 @@ This document explains PyTorch version requirements and compatibility for claude
 - **PyTorch 2.4.0+** - Minimum for EmbeddingGemma-300m
 - **transformers >= 4.51.3** - Required for EmbeddingGemma support
 
-These floors apply to the current 6-model registry (BGE-M3, EmbeddingGemma-300m,
-Qwen3-0.6B, F2LLM-v2-0.6B, CodeRankEmbed, GTE-ModernBERT-base) — none of the
-models added since this guide was written raise the minimum versions above.
+These floors apply to the current 4-model registry (BGE-M3, EmbeddingGemma-300m,
+Qwen3-0.6B, F2LLM-v2-0.6B) — none of the models added since this guide was written
+raise the minimum versions above. (`CodeRankEmbed` and `GTE-ModernBERT-base` were
+removed from `MODEL_REGISTRY` in v0.23.0.)
 
-### Recommended Versions
+### Recommended (and Enforced) Versions
 
-- **PyTorch 2.6.0 - 2.8.x** - Fully tested and supported ✅
+- **PyTorch >=2.8.0, <2.9.0** - The only range installed by this project (see
+  "Why the `<2.9.0` Ceiling?" below). Fully tested and supported ✅
 
 ## CUDA Compatibility
 
-### PyTorch 2.6.0+ CUDA Support
+### CUDA Index Selection (`pyproject.toml`)
 
-PyTorch 2.6.0 and later only provide CUDA 11.8 builds (`cu118`), which are **fully backward and forward compatible** with:
+Unlike older PyTorch releases (which shipped a single `cu118` build compatible with all CUDA
+12.x drivers), this project pins `torch`/`torchvision`/`torchaudio` to an **explicit CUDA-12.8
+wheel index** via `[tool.uv.sources]`:
 
-- CUDA 11.7, 11.8
-- **CUDA 12.0, 12.1, 12.2, 12.3, 12.4, 12.6** (all CUDA 12.x versions)
+```toml
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
 
-### Why cu118 for CUDA 12.x?
+# Legacy CUDA 12.4 index (fallback for older systems)
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
 
-This is **intentional and correct**:
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+```
 
-- PyTorch no longer provides cu121, cu124, etc. builds
-- The cu118 build uses backward-compatible CUDA runtime
-- Your GPU driver's CUDA version (shown in nvidia-smi) is what matters
-- Driver CUDA 12.x can run PyTorch cu118 binaries without issues
+- **`cu128`** is the default and recommended index — required for RTX 50-series GPUs, and works
+  fine on older Ampere/Ada cards (RTX 30/40-series) too as long as the driver is new enough.
+- **`cu124`** is kept in the index list as a fallback for systems with an older NVIDIA driver
+  that can't satisfy `cu128`'s minimum driver requirement, but is not wired into
+  `[tool.uv.sources]` by default — switch to it manually if `cu128` install fails to detect your
+  GPU (see Troubleshooting below).
+- Your GPU driver's CUDA version (shown in `nvidia-smi`) must be >= the wheel's CUDA version;
+  newer drivers are backward compatible with older CUDA runtime wheels, not the reverse.
 
 ### Installation Examples
 
-**CUDA 12.1 System:**
+**Default (CUDA 12.8-capable driver):**
 
 ```batch
-# Correct installation (uses cu118)
-uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# uv resolves torch via the pinned pytorch-cu128 index automatically -- no extra needed
+uv sync
 
-# Result: PyTorch 2.7.1+cu118 (✅ Works perfectly with CUDA 12.1)
+# Result: PyTorch 2.8.x+cu128 (✅ Recommended)
 ```
 
-**CUDA 11.8 System:**
+**Older driver / cu128 unavailable:**
 
 ```batch
-# Uses cu118 (native support)
-uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# Fall back to the legacy cu124 index
+uv pip install torch==2.8.* torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
-# Result: PyTorch 2.7.1+cu118 (✅ Native support)
+# Result: PyTorch 2.8.x+cu124
 ```
 
 ## Version Constraints in pyproject.toml
@@ -65,52 +84,53 @@ uv pip install torch torchvision torchaudio --index-url https://download.pytorch
 ```toml
 [project]
 dependencies = [
-    "torch>=2.6.0",
+    "torch>=2.8.0,<2.9.0",
     "torchvision>=0.21.0",
     "torchaudio>=2.6.0",
 ]
 ```
 
-### Why `>=2.6.0` Instead of `==2.6.0`?
+### Why the `<2.9.0` Ceiling?
 
-- **Security updates**: Allows automatic security fixes (2.6.1, 2.7.0, 2.7.1)
-- **Bug fixes**: Minor version updates include important stability improvements
-- **API stability**: PyTorch maintains backward compatibility within major versions
-- **UV package manager**: Automatically selects the latest compatible version
+Unlike a typical floor-only constraint, `torch` is **capped** here — this is intentional, not an
+oversight (commit `b68cfff8`):
+
+- **PyTorch 2.9.x breaks GTE-ModernBERT on Windows**: ModernBERT's
+  `@torch.compile(dynamic=True)` decorator hits a `torch.inductor` `AssertionError` (a template
+  conflict in the compiled-graph cache) starting with PyTorch 2.9.0 on Windows.
+- **Security trade-off, tracked and accepted**: this ceiling blocks 5 fixed CVEs (all fixed at
+  `2.9.0`/`2.9.1`) plus 2 more requiring `2.10.0`/`2.13.0` — 8 CVEs total, deferred and mitigated
+  (local-only tool, HTTPS/safetensors-only model loads, no untrusted `.pth` ingestion). See
+  `audit_reports/deferred-cves-2026-07-30.md` and the `pyproject.toml` "Deferred (no upstream
+  fix)" tracking comment for full CVE-by-CVE detail.
+- **Re-check each cycle**: if pytorch/pytorch fixes the inductor regression on 2.9.x/Windows, the
+  ceiling can be raised, closing most of the deferred CVEs at once.
 
 ### Acceptable Versions
 
 | Version | Status | Notes |
-|---------|--------|-------|
+| --- | --- | --- |
 | 2.4.0-2.5.x | ⚠️ Works | Minimum for Gemma, but lacks BGE-M3 optimizations |
-| 2.6.0 | ✅ Recommended | First version with BGE-M3 security fixes |
-| 2.6.1 | ✅ Recommended | Security patches |
-| 2.7.0 | ✅ Recommended | Latest minor version |
-| 2.7.1 | ✅ Recommended | Latest patch (as of 2025-10-01) |
-| 3.0.0+ | ❓ Unknown | Not yet released; may require code changes |
+| 2.6.0-2.7.x | ⚠️ Works | Below the enforced floor; not installed by this project |
+| 2.8.0-2.8.x | ✅ Recommended | The only range `pyproject.toml` allows (`>=2.8.0,<2.9.0`) |
+| 2.9.0+ | ❌ Blocked | ModernBERT `torch.compile(dynamic=True)` inductor `AssertionError` on Windows |
 
 ## Installation Scenarios
 
-### Scenario 1: Fresh Installation on CUDA 12.1 System
+### Scenario 1: Fresh Installation on a CUDA 12.8-Capable System
 
 ```
-Detection: CUDA 12.1 detected
-Installation: PyTorch 2.7.1+cu118
+Detection: CUDA 12.8-capable driver
+Installation: PyTorch 2.8.x+cu128 (via the pinned pytorch-cu128 index)
 Result: ✅ FULLY COMPATIBLE
 ```
 
-**Why this works:**
-
-- CUDA 12.1 driver supports CUDA 11.8 runtime
-- PyTorch cu118 binaries run natively on CUDA 12.x drivers
-- No performance penalty
-
-### Scenario 2: Update from PyTorch 2.6.0 to 2.7.1
+### Scenario 2: Patch Update Within 2.8.x
 
 ```
-Before: PyTorch 2.6.0+cu118
-After: PyTorch 2.7.1+cu118
-Action: No index clearing required (same CUDA variant)
+Before: PyTorch 2.8.0+cu128
+After: PyTorch 2.8.x+cu128 (any later 2.8 patch)
+Action: No index clearing required (same CUDA variant, same <2.9.0 ceiling)
 Result: ✅ Seamless upgrade
 ```
 
@@ -124,23 +144,25 @@ Reason: Different embedding dimensions are incompatible
 
 ## Troubleshooting
 
-### "PyTorch 2.7.1 installed but expected 2.6.0"
+### "PyTorch 2.9.x got installed and things broke"
 
-**Status:** ✅ **This is normal and correct**
+**Status:** ⚠️ **This should not happen** — `pyproject.toml` pins `<2.9.0`
 
-- `pyproject.toml` specifies `>=2.6.0`
-- UV installs the latest compatible version (2.7.1)
-- 2.7.1 includes all 2.6.0 features plus improvements
-- **No action needed**
+- Check `uv.lock` and `.venv` haven't drifted from the declared constraint
+  (`uv sync` should always respect the ceiling)
+- If it did install, downgrade: `uv lock --upgrade-package torch` then `uv sync` (uv will select
+  the highest version satisfying `<2.9.0`)
+- 2.9.x triggers a `torch.inductor` `AssertionError` from GTE-ModernBERT's
+  `@torch.compile(dynamic=True)` decorator on Windows — this is the known, tracked reason for the
+  ceiling
 
-### "CUDA 11.8 installed but I have CUDA 12.1"
+### "CUDA 12.8 wheel installed but my driver only supports CUDA 12.4"
 
-**Status:** ✅ **This is correct**
+**Fix:** Switch to the legacy `cu124` index for this one dependency:
 
-- PyTorch 2.6.0+ only provides cu118 builds
-- cu118 binaries work with CUDA 12.x drivers
-- This is PyTorch's official recommendation
-- **No action needed**
+```batch
+.venv\Scripts\uv.exe pip install torch==2.8.* torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 --force-reinstall
+```
 
 ### "torch.cuda.is_available() returns False"
 
@@ -148,7 +170,7 @@ Reason: Different embedding dimensions are incompatible
 
 1. CPU-only PyTorch installed
 2. CUDA driver not installed
-3. Wrong PyTorch variant (cpu instead of cu118)
+3. Wrong PyTorch variant (cpu instead of cu128/cu124)
 
 **Fix:**
 
@@ -156,8 +178,8 @@ Reason: Different embedding dimensions are incompatible
 # Check current installation
 .venv\Scripts\python.exe -c "import torch; print(torch.__version__)"
 
-# If shows "2.7.1+cpu", reinstall with CUDA
-.venv\Scripts\uv.exe pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 --force-reinstall
+# If shows "2.8.x+cpu", reinstall with CUDA
+.venv\Scripts\uv.exe pip install torch==2.8.* torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
 ```
 
 ## Verification Commands
@@ -185,12 +207,15 @@ Reason: Different embedding dimensions are incompatible
 - PyTorch Install Guide: <https://pytorch.org/get-started/locally/>
 - CUDA Compatibility: <https://pytorch.org/get-started/previous-versions/>
 - BGE-M3 Requirements: <https://huggingface.co/BAAI/bge-m3>
+- Deferred torch CVEs: `audit_reports/deferred-cves-2026-07-30.md`
 
 ## Summary
 
-✅ **PyTorch 2.7.1+cu118 is the correct installation for CUDA 12.x systems**
-✅ **Version `>=2.6.0` in pyproject.toml is intentional**
-✅ **No index clearing needed when upgrading within same CUDA variant**
+✅ **PyTorch 2.8.x+cu128 (via the pinned `pytorch-cu128` index) is the correct installation**
+✅ **`torch>=2.8.0,<2.9.0` in pyproject.toml is intentional — the `<2.9.0` ceiling blocks a
+ModernBERT `torch.compile` inductor regression on Windows, and defers 8 known CVEs (see
+`audit_reports/deferred-cves-2026-07-30.md`)**
+✅ **No index clearing needed when upgrading within 2.8.x**
 ✅ **Always clear indexes when switching embedding models**
 
-**Last Updated:** 2025-10-01
+**Last Updated:** 2026-07-30

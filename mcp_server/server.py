@@ -1,12 +1,13 @@
 """Low-level MCP server for Claude Code integration.
 
-AUTO-GENERATED from FastMCP backup.
-DO NOT EDIT MANUALLY - regenerate with tools/build_lowlevel_server.py
-
-Migrated from FastMCP to official MCP SDK for:
+Built directly on the official MCP SDK's low-level `Server` (not FastMCP) for:
 - Explicit lifecycle management
 - Predictable state initialization
 - Better production reliability
+
+Handlers are registered via SDK v2's constructor-kwarg pattern
+(`Server(..., on_call_tool=handle_call_tool, ...)`) rather than v1's
+`@server.call_tool()` decorators — see ADR-0017.
 """
 
 import argparse
@@ -18,6 +19,7 @@ import logging
 import logging.handlers
 import os
 import platform
+import socket
 import sys
 import time
 from collections.abc import AsyncGenerator
@@ -33,14 +35,26 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 # Official MCP SDK imports
+from mcp.server import ServerRequestContext  # noqa: E402
 from mcp.server.lowlevel import Server  # noqa: E402
+from mcp.shared.exceptions import MCPError  # noqa: E402
 from mcp.types import (  # noqa: E402
+    INVALID_PARAMS,
+    CallToolRequestParams,
+    CallToolResult,
+    GetPromptRequestParams,
     GetPromptResult,
+    ListPromptsResult,
+    ListResourcesResult,
+    ListToolsResult,
+    PaginatedRequestParams,
     Prompt,
     PromptMessage,
+    ReadResourceRequestParams,
+    ReadResourceResult,
     Resource,
     TextContent,
-    Tool,
+    TextResourceContents,
 )
 
 # Project imports
@@ -187,6 +201,10 @@ def _configure_logging() -> None:
     # Suppress per-attempt DEBUG spam from the filelock library (bge-m3 blob
     # locks generate hundreds of lines per cold load; WARNING+ is sufficient).
     logging.getLogger("filelock").setLevel(logging.WARNING)
+    # Suppress empty TorchDynamo frame-trace dumps that land on every reindex
+    # (#reindex-log-audit-2026-07-30); tests/conftest.py silences this for the
+    # test session, this is the production counterpart.
+    logging.getLogger("torch._dynamo").setLevel(logging.WARNING)
 
 
 _configure_logging()
@@ -217,6 +235,66 @@ def _drop_benign_uvicorn_errors(record: logging.LogRecord) -> bool:
     """
     msg = record.getMessage()
     return not any(s in msg for s in _BENIGN_UVICORN_ERROR_SUBSTRINGS)
+
+
+def _find_port_conflict(host: str, port: int) -> str | None:
+    """Return a description of what's blocking (host, port), or None if free.
+
+    Probes every address `host` resolves to (e.g. "localhost" resolves to both
+    "::1" and "127.0.0.1" on this machine), matching what asyncio's
+    create_server() binds. Deliberately does NOT set SO_REUSEADDR on the probe
+    socket: on Windows that option lets a bind succeed against an
+    already-listening socket, which would mask the very conflict this function
+    exists to detect.
+    """
+    try:
+        addrinfos = socket.getaddrinfo(
+            host, port, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP
+        )
+    except socket.gaierror as exc:
+        return f"host {host!r} could not be resolved: {exc}"
+
+    for family, socktype, proto, _canonname, sockaddr in addrinfos:
+        probe = socket.socket(family, socktype, proto)
+        try:
+            probe.bind(sockaddr)
+        except OSError as exc:
+            return f"{sockaddr[0]}:{sockaddr[1]} is already in use ({exc})"
+        finally:
+            probe.close()
+    return None
+
+
+def _describe_port_owner(port: int) -> str:
+    """Best-effort description of the process listening on `port`.
+
+    Uses psutil (already a direct dependency) when available, matching the
+    established idiom in chunking/relationships/lsp_call_graph.py
+    (_kill_process_tree) and mcp_server/tools/status_handlers.py: import
+    inside the function, catch the specific psutil exceptions, and fall back
+    to a manual-lookup hint rather than raising.
+    """
+    try:
+        import psutil
+
+        for conn in psutil.net_connections(kind="tcp"):
+            if (
+                conn.laddr
+                and conn.laddr.port == port
+                and conn.status == psutil.CONN_LISTEN
+                and conn.pid
+            ):
+                try:
+                    proc = psutil.Process(conn.pid)
+                    return f"PID {conn.pid} ({proc.name()})"
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    return f"PID {conn.pid} (name unavailable)"
+    except Exception as exc:  # noqa: BLE001 - best-effort diagnostic, never block on it
+        logger.debug(f"Could not identify port owner via psutil: {exc}")
+
+    if platform.system() == "Windows":
+        return f"an unknown process (run: netstat -ano | findstr :{port})"
+    return f"an unknown process (run: lsof -i :{port})"
 
 
 # Multi-model pool configuration imported from search.config
@@ -263,11 +341,8 @@ def _get_server_version() -> str:
     try:
         return _pkg_version("claude-context-local")
     except PackageNotFoundError:
-        return "0.21.0"
+        return "0.23.0"
 
-
-# Create server instance
-server = Server("Code Search", version=_get_server_version())
 
 # Import tool registry
 from mcp_server.tool_registry import build_tool_list  # noqa: E402
@@ -276,14 +351,22 @@ from mcp_server.tool_registry import build_tool_list  # noqa: E402
 # ============================================================================
 # SERVER HANDLERS
 # ============================================================================
+#
+# SDK v2 handlers take a uniform (ctx, params) signature and are wired into
+# the server via constructor kwargs below (v1 used @server.*() decorators).
+# `ctx: ServerRequestContext` is unused by every handler here — none of them
+# need session/lifespan state beyond the module-level globals already
+# managed by resource_manager.py / search_factory.py — but the SDK dispatches
+# positionally, so it must still be accepted.
 
 
-@server.list_tools()
-async def handle_list_tools() -> list[Tool]:
+async def handle_list_tools(
+    ctx: ServerRequestContext, params: PaginatedRequestParams | None
+) -> ListToolsResult:
     """List all available tools."""
     tools = build_tool_list()
     logger.debug(f"Listing {len(tools)} tools")
-    return tools
+    return ListToolsResult(tools=tools)
 
 
 def _hash_arguments(arguments: dict[str, Any] | None) -> str:
@@ -301,9 +384,12 @@ def _hash_arguments(arguments: dict[str, Any] | None) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
 
 
-@server.call_tool()
-async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+async def handle_call_tool(
+    ctx: ServerRequestContext, params: CallToolRequestParams
+) -> CallToolResult:
     """Dispatch tool calls to appropriate handlers."""
+    name = params.name
+    arguments: dict[str, Any] = dict(params.arguments) if params.arguments else {}
     logger.info(f"[TOOL_CALL] {name}")
     _start = time.monotonic()
     _input_hash = _hash_arguments(arguments)
@@ -365,17 +451,13 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
             f"out_bytes={_out_bytes} status=ok"
         )
 
-        # Return both content (backward compat) and structuredContent (native JSON, no double encoding)
-        # MCP SDK 1.25.0+ supports structuredContent - clients can choose which to read.
-        # structuredContent is attached ONLY for verbose: compact/ultra clients (e.g. Claude Code UI)
+        # Return both content (backward compat) and structured_content (native JSON, no double encoding)
+        # structured_content is attached ONLY for verbose: compact/ultra clients (e.g. Claude Code UI)
         # pretty-print the dict regardless, making the response appear as full/indented output and
         # defeating the token-reduction goal. For compact/ultra the content text is canonical.
-        from mcp import types as mcp_types
-
-        # pyrefly: ignore [bad-return]
-        return mcp_types.CallToolResult(
+        return CallToolResult(
             content=[TextContent(type="text", text=result_text)],
-            structuredContent=(
+            structured_content=(
                 formatted_result
                 if output_format == "verbose" and isinstance(formatted_result, dict)
                 else None
@@ -407,7 +489,9 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
             f"out_bytes={len(_error_text.encode('utf-8'))} status=error "
             f"err_type={type(e).__name__}"
         )
-        return [TextContent(type="text", text=_error_text)]
+        return CallToolResult(
+            is_error=True, content=[TextContent(type="text", text=_error_text)]
+        )
 
 
 # ============================================================================
@@ -415,36 +499,46 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
 # ============================================================================
 
 
-@server.list_resources()
-async def handle_list_resources() -> list[Resource]:
+async def handle_list_resources(
+    ctx: ServerRequestContext, params: PaginatedRequestParams | None
+) -> ListResourcesResult:
     """List all available resources."""
-    return [
-        Resource(
-            uri="search://stats",
-            name="Search Statistics",
-            description="Detailed search index statistics",
-            mimeType="application/json",
-        )
-    ]
+    return ListResourcesResult(
+        resources=[
+            Resource(
+                uri="search://stats",
+                name="Search Statistics",
+                description="Detailed search index statistics",
+                mime_type="application/json",
+            )
+        ]
+    )
 
 
-# pyrefly: ignore [bad-argument-type]
-@server.read_resource()
-async def handle_read_resource(uri: str) -> str:
+async def handle_read_resource(
+    ctx: ServerRequestContext, params: ReadResourceRequestParams
+) -> ReadResourceResult:
     """Read a resource by URI."""
+    uri = params.uri
     logger.info(f"[RESOURCE_READ] {uri}")
 
     if uri == "search://stats":
         try:
             index_manager = get_index_manager()
             stats = index_manager.get_stats()
-            return json.dumps(stats, indent=2)
+            text = json.dumps(stats, indent=2)
         except Exception as e:  # noqa: BLE001 - api-boundary: convert to structured error response
-            return json.dumps(
+            text = json.dumps(
                 responses.error(f"Failed to get statistics: {str(e)}"), indent=2
             )
     else:
-        return json.dumps(responses.error(f"Unknown resource URI: {uri}"), indent=2)
+        text = json.dumps(responses.error(f"Unknown resource URI: {uri}"), indent=2)
+
+    return ReadResourceResult(
+        contents=[
+            TextResourceContents(uri=uri, mime_type="application/json", text=text)
+        ]
+    )
 
 
 # ============================================================================
@@ -452,22 +546,26 @@ async def handle_read_resource(uri: str) -> str:
 # ============================================================================
 
 
-@server.list_prompts()
-async def handle_list_prompts() -> list[Prompt]:
+async def handle_list_prompts(
+    ctx: ServerRequestContext, params: PaginatedRequestParams | None
+) -> ListPromptsResult:
     """List all available prompts."""
-    return [
-        Prompt(
-            name="search_help",
-            description="Get help on how to use the code search tools effectively",
-            arguments=[],
-        )
-    ]
+    return ListPromptsResult(
+        prompts=[
+            Prompt(
+                name="search_help",
+                description="Get help on how to use the code search tools effectively",
+                arguments=[],
+            )
+        ]
+    )
 
 
-# pyrefly: ignore [bad-argument-type]
-@server.get_prompt()
-async def handle_get_prompt(name: str, arguments: dict[str, str]) -> GetPromptResult:
+async def handle_get_prompt(
+    ctx: ServerRequestContext, params: GetPromptRequestParams
+) -> GetPromptResult:
     """Get a prompt by name."""
+    name = params.name
     logger.info(f"[PROMPT_GET] {name}")
 
     if name == "search_help":
@@ -511,7 +609,25 @@ For more information, see the project documentation.
             ],
         )
     else:
-        raise ValueError(f"Unknown prompt: {name}")
+        raise MCPError(INVALID_PARAMS, f"Unknown prompt: {name}")
+
+
+# ============================================================================
+# CREATE SERVER INSTANCE
+# ============================================================================
+# SDK v2 wires handlers in via constructor kwargs (v1 used @server.*()
+# decorators after the fact) — must come after every handle_* def above.
+
+server = Server(
+    "Code Search",
+    version=_get_server_version(),
+    on_list_tools=handle_list_tools,
+    on_call_tool=handle_call_tool,
+    on_list_resources=handle_list_resources,
+    on_read_resource=handle_read_resource,
+    on_list_prompts=handle_list_prompts,
+    on_get_prompt=handle_get_prompt,
+)
 
 
 # ============================================================================
@@ -584,6 +700,22 @@ if __name__ == "__main__":
             # Run the async function
             asyncio.run(run_stdio_server())
         elif args.transport == "http":
+            # Pre-flight port check: fail fast, before loading anything, instead
+            # of letting uvicorn discover the conflict after the embedding model
+            # has already been loaded and an "APPLICATION READY" banner logged.
+            # See ADR discussion / diagnose session 2026-08-01.
+            conflict = _find_port_conflict(args.host, args.port)
+            if conflict is not None:
+                owner = _describe_port_owner(args.port)
+                logger.error(
+                    f"Port {args.port} is already in use by {owner} on {args.host} "
+                    f"({conflict})."
+                )
+                logger.error(
+                    "Stop that process, or start this server with --port <other>."
+                )
+                sys.exit(3)
+
             # StreamableHTTP transport using Starlette + StreamableHTTPSessionManager + uvicorn
             import uvicorn
             from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -702,6 +834,7 @@ if __name__ == "__main__":
                     return JSONResponse({"error": str(e)}, status_code=500)
 
             # Starlette app with lifespan integration
+            @contextlib.asynccontextmanager
             async def app_lifespan(app: Any) -> AsyncGenerator[None, None]:
                 """Application lifecycle - initialize global state ONCE before accepting connections."""
                 logger.info("=" * 60)
@@ -729,14 +862,16 @@ if __name__ == "__main__":
                                 f"[INIT] Model pre-load failed (non-critical): {e}"
                             )
 
-                    logger.info("=" * 60)
-                    logger.info("APPLICATION READY - Accepting connections")
-                    if debug_mode:
-                        startup_duration = time.perf_counter() - _startup_time
-                        logger.info(
-                            f"[DEBUG] Startup completed in {startup_duration:.2f} seconds"
-                        )
-                    logger.info("=" * 60)
+                    logger.info(
+                        "[INIT] Global state initialized; binding HTTP socket..."
+                    )
+                    # NOTE: The "APPLICATION READY" banner is intentionally NOT logged
+                    # here. uvicorn calls this lifespan's startup() BEFORE it binds the
+                    # listening socket(s) (see uvicorn/server.py Server.startup()), so
+                    # logging readiness at this point would be a lie whenever the bind
+                    # subsequently fails (e.g. port already in use). The real banner is
+                    # logged by _ReadyAfterBindServer below, once the bind has actually
+                    # succeeded.
 
                     # Suppress noisy-but-benign uvicorn.error messages (disconnected
                     # clients, SSE streams cancelled at shutdown) — see
@@ -774,7 +909,6 @@ if __name__ == "__main__":
                 ),
             ]
 
-            # pyrefly: ignore [bad-argument-type]
             starlette_app = Starlette(routes=routes, lifespan=app_lifespan)
 
             # Top-level ASGI app: routes /mcp directly to StreamableHTTP before
@@ -808,7 +942,33 @@ if __name__ == "__main__":
                 log_level="info",
                 loop="asyncio",  # Force asyncio (fixes uvicorn 0.36+ regression)
             )
-            uvi_server = uvicorn.Server(config)
+
+            class _ReadyAfterBindServer(uvicorn.Server):
+                """uvicorn.Server that logs readiness only after the socket binds.
+
+                uvicorn's own Server.startup() runs the ASGI lifespan (our
+                app_lifespan, including the embedding-model preload) BEFORE it
+                attempts to bind the listening socket(s), and sys.exit(3)s if
+                the bind fails. Logging "APPLICATION READY" from inside the
+                lifespan therefore lies whenever the bind subsequently fails.
+                Overriding startup() to log after super().startup() returns
+                means the banner only appears once a live socket exists.
+                """
+
+                async def startup(
+                    self, sockets: list[socket.socket] | None = None
+                ) -> None:
+                    await super().startup(sockets=sockets)
+                    logger.info("=" * 60)
+                    logger.info("APPLICATION READY - Accepting connections")
+                    if debug_mode:
+                        startup_duration = time.perf_counter() - _startup_time
+                        logger.info(
+                            f"[DEBUG] Startup completed in {startup_duration:.2f} seconds"
+                        )
+                    logger.info("=" * 60)
+
+            uvi_server = _ReadyAfterBindServer(config)
 
             # Windows: Use SelectorEventLoop to prevent WinError 64
             # (uvicorn 0.36+ ignores asyncio.set_event_loop_policy when using uvicorn.run)

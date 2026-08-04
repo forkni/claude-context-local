@@ -691,6 +691,77 @@ async def test_handle_find_similar_code():
         assert result["similar_chunks"][0]["file"] == "file.py"
         assert result["similar_chunks"][0]["score"] == 0.95
 
+        # Default: exclude_same_file=False when the argument is omitted
+        mock_searcher_instance.find_similar_to_chunk.assert_called_once_with(
+            "ref_chunk_id", k=5, exclude_same_file=False
+        )
+
+
+@pytest.mark.asyncio
+async def test_handle_find_similar_code_exclude_same_file_passthrough():
+    """exclude_same_file=True is threaded through to find_similar_to_chunk."""
+    with (
+        patch("mcp_server.tools.search_handlers.get_searcher") as mock_searcher,
+        patch("mcp_server.tools.search_handlers.get_state") as mock_get_state,
+        patch("mcp_server.tools.decorators.get_state") as mock_dec_state,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
+
+        mock_searcher_instance = Mock()
+        mock_searcher_instance.find_similar_to_chunk.return_value = []
+        mock_searcher.return_value = mock_searcher_instance
+
+        result = await tool_handlers.handle_find_similar_code(
+            {"chunk_id": "ref_chunk_id", "k": 4, "exclude_same_file": True}
+        )
+
+        assert result["reference_chunk"] == "ref_chunk_id"
+        mock_searcher_instance.find_similar_to_chunk.assert_called_once_with(
+            "ref_chunk_id", k=4, exclude_same_file=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_handle_find_similar_code_default_k_from_config():
+    """Omitted k must fall back to search_mode.default_k, not a hardcoded 4.
+
+    The deployed config raised default_k to 7 as a deliberate recall
+    adjustment; the handler previously hardcoded ``arguments.get("k", 4)``
+    and silently never picked it up. Explicit-k callers are covered by the
+    passthrough tests above and stay byte-identical.
+    """
+    from search.config import SearchConfig
+
+    with (
+        patch("mcp_server.tools.search_handlers.get_searcher") as mock_searcher,
+        patch("mcp_server.tools.search_handlers.get_state") as mock_get_state,
+        patch("mcp_server.tools.decorators.get_state") as mock_dec_state,
+        patch(
+            "mcp_server.tools.search_handlers.get_search_config"
+        ) as mock_search_config,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
+
+        config = SearchConfig()
+        config.search_mode.default_k = 7
+        mock_search_config.return_value = config
+
+        mock_searcher_instance = Mock()
+        mock_searcher_instance.find_similar_to_chunk.return_value = []
+        mock_searcher.return_value = mock_searcher_instance
+
+        await tool_handlers.handle_find_similar_code({"chunk_id": "ref_chunk_id"})
+
+        mock_searcher_instance.find_similar_to_chunk.assert_called_once_with(
+            "ref_chunk_id", k=7, exclude_same_file=False
+        )
+
 
 # ============================================================================
 # COMPLEX TOOLS TESTS (Simplified - full integration testing elsewhere)
@@ -814,6 +885,7 @@ async def test_handle_search_code_hybrid_searcher_ready():
         mock_dec_state.return_value = mock_state
         mock_cm.return_value.get_search_mode_for_query.return_value = "hybrid"
         mock_cfg.return_value.performance.use_parallel_search = False
+        mock_cfg.return_value.intent.default_intent = "HYBRID"
         mock_ic.return_value.classify.return_value = Mock(
             intent=Mock(value="hybrid"),
             confidence=0.0,

@@ -119,7 +119,7 @@ class TestValidateEmbedderIndexCompatibility:
 
             embedder = Mock()
             embedder.get_model_info.return_value = {"embedding_dimension": 768}
-            embedder.model_name = "Alibaba-NLP/gte-modernbert-base"
+            embedder.model_name = "google/embeddinggemma-300m"
 
             is_valid, error = validate_embedder_index_compatibility(
                 embedder, project_dir, raise_on_mismatch=False
@@ -143,7 +143,7 @@ class TestValidateEmbedderIndexCompatibility:
 
             embedder = Mock()
             embedder.get_model_info.return_value = {"embedding_dimension": 768}
-            embedder.model_name = "Alibaba-NLP/gte-modernbert-base"
+            embedder.model_name = "google/embeddinggemma-300m"
 
             with pytest.raises(DimensionMismatchError) as exc_info:
                 validate_embedder_index_compatibility(
@@ -152,7 +152,7 @@ class TestValidateEmbedderIndexCompatibility:
 
             assert exc_info.value.embedder_dim == 768
             assert exc_info.value.index_dim == 1024
-            assert exc_info.value.embedder_model == "Alibaba-NLP/gte-modernbert-base"
+            assert exc_info.value.embedder_model == "google/embeddinggemma-300m"
             assert exc_info.value.index_model == "BAAI/bge-m3"
 
     def test_no_existing_index_passes(self):

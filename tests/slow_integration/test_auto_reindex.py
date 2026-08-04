@@ -57,15 +57,10 @@ def test_auto_reindex(mock_sentence_transformer, tmp_path):
     mock_model = MagicMock()
     mock_model.encode.side_effect = mock_encode
     mock_model.get_sentence_embedding_dimension.return_value = 768
-    mock_model._vram_gb = (
-        0.0  # else MagicMock() > 0 comparison in _get_model_vram_gb raises TypeError
-    )
-    # else MagicMock auto-vivifies both `.ort_model` (making _is_onnx wrongly
-    # True) and `[0].auto_model.config` (a fake HF config with hasattr()==True
-    # on every attribute), so _extract_hf_config() "succeeds" with garbage and
-    # estimate_activation_gb_from_config() then multiplies MagicMock attributes
-    # with '*' and raises TypeError.
-    del mock_model.ort_model
+    # else MagicMock auto-vivifies `[0].auto_model.config` (a fake HF config
+    # with hasattr()==True on every attribute), so _extract_hf_config()
+    # "succeeds" with garbage and estimate_activation_gb_from_config() then
+    # multiplies MagicMock attributes with '*' and raises TypeError.
     mock_model.__getitem__.side_effect = IndexError
     mock_sentence_transformer.return_value = mock_model
 

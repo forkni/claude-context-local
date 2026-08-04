@@ -465,42 +465,80 @@ The Mixed approach demonstrates that **MCP semantic search is production-ready**
 
 ## SSCG Retrieval Benchmark
 
-**Added**: v0.9.0 | **Last run**: 2026-06-08
+**Added**: v0.9.0 | **Last run**: 2026-08-03 (see provenance below)
 
 Measures end-to-end retrieval quality for `search_code` queries: how well the ranked results cover the labeled relevant chunks for each query.
 
 ### Dataset
 
-Golden dataset: `evaluation/golden_dataset.json` — 13 queries (Q01–Q35) across 4 categories:
+Golden datasets:
+
+- `evaluation/golden_dataset.json` — 77 queries across categories A–F (canonical; the tables below use the 63 non-D queries)
+- `evaluation/golden_dataset_expanded.json` — 145 queries (131 non-D after the 2026-08-02 H-category promotion, which added 37 commit-mined bug-localization queries)
+
+Categories:
+
 - **Category A** — Small function discovery (exact symbol lookup)
 - **Category B** — Sibling context (related functions / pairs)
 - **Category C** — Class overview (class + key methods)
-- **Category D** — Connection queries (callers, impact)
+- **Category D** — Connection queries (callers, impact) — excluded from the tables below
+- **Category E** — Cross-file / architectural queries
+- **Category F** — Similarity queries (`find_similar_to_chunk`)
+- **Category H** — Commit-mined bug-localization queries (expanded set only, added 2026-08-02)
 
-Relevance grades: 3 = primary target, 2 = expected, 1 = acceptable, 0 = distractor. Recall/MRR/NDCG are computed on grade ≥ 2 items; MRR uses grade = 3 items.
+Relevance grades: 3 = primary target, 2 = expected, 1 = acceptable/hard-negative, 0 = distractor. Recall/MRR/NDCG are computed on grade ≥ 2 items; MRR uses grade = 3 items.
 
 **Runner**: `scripts/benchmark/run_sscg_benchmark.py` (shell wrapper: `scripts/benchmark/run_benchmark.sh`)
 
-### Results (2026-06-08, k=10, neural reranker active)
+### Results (2026-08-03, hybrid-only, k=10)
+
+Provenance: `evaluation/CANON_20260803.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`), taken after the C3 searcher-construction dedup and config-metadata fixes (ADR-0024, `canon_C3`). Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
+
+| Dataset | Queries | MRR | Recall@5 | Recall@10 | NDCG@5 | pool_hit_rate |
+|---|---|---|---|---|---|---|
+| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8348** (`canon_C3`, 0 flips r1/r2) | 0.6755 | 0.7919 | 0.6939 | 1.0000 |
+| Expanded (`golden_dataset_expanded.json`, non-D, post H-promotion) | 131 | **0.6816** (`canon_C3`, 0 flips r1/r2) | 0.6619 | 0.7744 | 0.6363 | 0.9771 |
+| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.8907** | 0.6784 | 0.7942 | 0.7064 | 1.0000 |
+| F-via-similar (F-category only, 9 queries) | 9 | **0.8519** | — | file_recall@5 0.8370 | — | — |
+
+Run-to-run noise band is **±0.02 MRR**, measured directly via a same-code control (two 94-query runs on unchanged code landed 0.701 and 0.683). Treat any delta smaller than that as noise. Note the two F-via-similar rows above: the whole-63-query aggregate (0.8907) and the true F-category-only mean (0.8519) are different numbers over different query sets — a prior generation of this table published only the whole-aggregate figure under a "9-query" caption; both are shown now to avoid repeating that.
+
+**Comparability breaks** — do not read the numbers above as a trend against the historical table below:
+
+- ADR-0023 (`canon_B1`, 2026-08-02, mrr 0.8249) routed the harness through `SearchOrchestrator.run()` instead of a direct `HybridSearcher.search()` call — not comparable to anything measured before it.
+- ADR-0024 (`canon_C3`, this table) re-pins after the C3 searcher-construction dedup and config-metadata fixes; see `evaluation/CANON_20260803.md` for the full delta against `canon_B1`.
+- The 2026-07-28 golden-dataset repair (`6df36db`) changed scoring for 3-part `split_block` chunks; nothing measured before that commit is comparable to what's measured after.
+- The 2026-08-02 H-category promotion grew the expanded set 108→145 queries (94→131 non-D) by adding 37 commit-mined bug-localization queries; the pre-promotion 94-query MRR (0.6815) and the post-promotion 131-query MRR (0.6816) describe different datasets that happen to land close together at this generation — H queries are harder by construction (single-file, ≤2 golds), so treat the two figures as separate measurements, not a before/after comparison.
+- `0.797` in the historical table below (2026-06-08, 13 queries) predates the golden-dataset repair, the H-promotion, the SDK v2 migration, and both ADR-0023/ADR-0024; kept only for continuity.
+
+### Live MCP pipeline eval (k=7, orchestrator + multi-hop, 2026-08-01)
+
+`run_mcp_pipeline_eval.py --k 7`, categories A/B/C (n=45) — exercises the full multi-hop + ego-graph + reranker orchestrator path, not just the bare searcher:
+
+| MRR | Recall@7 | Hit@7 | NDCG@5 | Recall@5 |
+|---|---|---|---|---|
+| **0.9019** | **0.7741** | 97.8% | 0.7278 | 0.7122 |
+
+### Historical: 2026-06-08 mode comparison (13-query dataset, superseded)
+
+Kept for continuity only — do not compare against the tables above. No current per-mode (hybrid/semantic/bm25) A/B exists on the 2026-08-01 baseline; only hybrid was measured there.
 
 | Mode | MRR | Recall@5 | Recall@7 | Recall@10 | Hit@5 | NDCG@5 | Line Recall | Line Precision | Line IoU |
 |------|-----|----------|----------|-----------|-------|--------|-------------|----------------|----------|
-| **Hybrid** (default) | **0.797** | **0.689** | **0.736** | 0.770 | 13/13 (100%) | **0.717** | 0.852 | 0.267 | 0.304 |
-| **BM25** | **0.797** | **0.689** | 0.723 | **0.777** | 13/13 (100%) | **0.717** | 0.852 | 0.270 | 0.308 |
-| **Semantic** | **0.797** | 0.676 | 0.723 | 0.758 | 13/13 (100%) | 0.705 | 0.852 | 0.268 | 0.303 |
+| **Hybrid** (default) | 0.797 | 0.689 | 0.736 | 0.770 | 13/13 (100%) | 0.717 | 0.852 | 0.267 | 0.304 |
+| **BM25** | 0.797 | 0.689 | 0.723 | 0.777 | 13/13 (100%) | 0.717 | 0.852 | 0.270 | 0.308 |
+| **Semantic** | 0.797 | 0.676 | 0.723 | 0.758 | 13/13 (100%) | 0.705 | 0.852 | 0.268 | 0.303 |
 
-**Thresholds** (from `golden_dataset.json`): MRR ≥ 0.50 ✓ | Recall@5 ≥ 0.55 ✓ | Hit@5 ≥ 0.80 ✓
+**Line-overlap metrics** (LR/LP/LIoU, historical table only) — Chroma-style source-line coverage between retrieved chunks and the expected primary set:
 
-**Line-overlap metrics** (LR/LP/LIoU) — Chroma-style source-line coverage between retrieved chunks and the expected primary set:
 - **Line Recall (LR 0.852)**: 85% of expected source lines are present in the top-k retrieved chunks.
 - **Line Precision (LP 0.267)**: 27% of retrieved source lines are relevant; low LP is expected since chunks contain surrounding context beyond the target function/class.
 - **Line IoU (LIoU ~0.304)**: intersection / union; lower than LR due to context overhead in chunks.
 
 ### Key Findings
 
-- **Reranker-dominated**: the neural cross-encoder reranker normalises final ordering — all three modes reach the same MRR (0.797) and HR@5 (100%). BM25/dense weighting affects pre-rerank order only.
-- **Hybrid** best for comprehensive coverage (R@7 0.736); **BM25** highest raw R@10 (0.777) and fastest (~5ms).
 - **Recommended k**: 7 (`golden_dataset.recommended_k=7`). k=5 may miss targets ranked 6–7.
+- The reranker-dominated finding from the 2026-06-08 run (all three search modes converging to the same MRR post-rerank) has not been re-verified since — no current per-mode A/B exists on the 2026-08-01 baseline.
 
 ### Running the Benchmark
 

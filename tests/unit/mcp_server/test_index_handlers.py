@@ -77,28 +77,38 @@ class TestCheckFileAccessibility:
 
 
 # ---------------------------------------------------------------------------
-# _clear_index_files_before_create — path-safety assertion
+# _purge_index_dir — path-safety assertion
+#
+# This guard used to live only on _clear_index_files_before_create, a helper
+# that had zero production callers (its sole call site was removed as
+# collateral damage in an unrelated multi-model-routing refactor) and so
+# never actually protected anything. It has been migrated down to
+# _purge_index_dir itself — the real destructive path (shutil.rmtree of
+# bm25/, unlink of a parent-directory glob) — which had no path-containment
+# guard at all until now.
 # ---------------------------------------------------------------------------
 
 
-class TestClearIndexFilesBeforeCreate:
-    """Verify the storage-root assertion in _clear_index_files_before_create."""
+class TestPurgeIndexDirStorageRootGuard:
+    """Verify the storage-root assertion in _purge_index_dir."""
 
     def test_path_inside_storage_accepted(self, tmp_path: Path) -> None:
-        from mcp_server.tools.index_handlers import _clear_index_files_before_create
+        from mcp_server.tools.index_handlers import _purge_index_dir
 
         index_dir = tmp_path / "storage" / "projects" / "proj_abc_bge_512d" / "index"
         index_dir.mkdir(parents=True)
 
-        # Patch the module-level function so the in-function import picks it up
+        # Patch the name as bound in index_handlers' own namespace (module-level
+        # `from mcp_server.storage_manager import get_storage_dir`), not the
+        # origin module — the local binding is what _purge_index_dir calls.
         with patch(
-            "mcp_server.storage_manager.get_storage_dir",
+            "mcp_server.tools.index_handlers.get_storage_dir",
             return_value=tmp_path / "storage",
         ):
-            _clear_index_files_before_create(index_dir)
+            _purge_index_dir(index_dir, keep_chunk_cache=True)
 
     def test_path_outside_storage_raises(self, tmp_path: Path) -> None:
-        from mcp_server.tools.index_handlers import _clear_index_files_before_create
+        from mcp_server.tools.index_handlers import _purge_index_dir
 
         storage = tmp_path / "storage"
         storage.mkdir()
@@ -107,12 +117,12 @@ class TestClearIndexFilesBeforeCreate:
 
         with (
             patch(
-                "mcp_server.storage_manager.get_storage_dir",
+                "mcp_server.tools.index_handlers.get_storage_dir",
                 return_value=storage,
             ),
-            pytest.raises(ValueError, match="_clear_index_files_before_create refused"),
+            pytest.raises(ValueError, match="_purge_index_dir refused"),
         ):
-            _clear_index_files_before_create(bogus)
+            _purge_index_dir(bogus, keep_chunk_cache=True)
 
 
 class TestRunIndexingSuccessPropagation:
@@ -253,6 +263,56 @@ class TestRunIndexingSuccessPropagation:
         assert response.get("exclude_dirs") == ["_archive", "tests"]
         assert response.get("include_dirs") is None
 
+    def test_build_index_response_surfaces_probe_summary(self):
+        """A probed full reindex threads the pass-1/pass-2 probe summary
+        through to the MCP response so the caller can see what was
+        auto-tuned without opening search_overrides.json."""
+        from mcp_server.tools.index_handlers import _build_index_response
+
+        probe_summary = {
+            "stage": "pre_chunking",
+            "probe_version": "1",
+            "override_keys": ["embedding.batch_size"],
+            "reasons": {"embedding.batch_size": "vram_total_gb=24.0 -> 256"},
+            "observation_keys": [],
+        }
+        r = {
+            "files_added": 5,
+            "files_modified": 0,
+            "files_removed": 0,
+            "chunks_added": 42,
+            "time_taken": 1.0,
+            "indexing_succeeded": True,
+            "indexing_error": None,
+            "probe_summary": probe_summary,
+        }
+
+        response = _build_index_response([r], "/some/project", incremental=False)
+
+        assert response.get("success") is True
+        assert response.get("probe_summary") == probe_summary
+
+    def test_build_index_response_omits_probe_summary_when_absent(self):
+        """Incremental runs (and probe-disabled runs) carry no probe_summary —
+        responses.ok drops the None so the field never appears at all."""
+        from mcp_server.tools.index_handlers import _build_index_response
+
+        r = {
+            "files_added": 0,
+            "files_modified": 0,
+            "files_removed": 0,
+            "chunks_added": 0,
+            "time_taken": 0.05,
+            "indexing_succeeded": True,
+            "indexing_error": None,
+            "probe_summary": None,
+        }
+
+        response = _build_index_response([r], "/some/project", incremental=True)
+
+        assert response.get("success") is True
+        assert "probe_summary" not in response
+
 
 class TestPurgeIndexDirFailureReporting:
     """_purge_index_dir must report undeletable files via its return value,
@@ -261,10 +321,15 @@ class TestPurgeIndexDirFailureReporting:
     """
 
     def test_undeletable_file_reported_in_failed(self, tmp_path):
+        from mcp_server.storage_manager import get_storage_dir
         from mcp_server.tools.index_handlers import _purge_index_dir
 
-        index_dir = tmp_path / "index"
-        index_dir.mkdir()
+        # _purge_index_dir now asserts index_dir is under the storage root
+        # (a guard migrated in from the dead _clear_index_files_before_create),
+        # so build under the session-redirected storage dir rather than a raw
+        # tmp_path sibling of it.
+        index_dir = get_storage_dir() / "projects" / "proj_test" / "index"
+        index_dir.mkdir(parents=True)
         (index_dir / "code.index").write_text("data")
         (index_dir / "chunk_ids.pkl").write_text("data")
 
@@ -283,10 +348,11 @@ class TestPurgeIndexDirFailureReporting:
         assert "code.index" not in deleted
 
     def test_all_files_deletable_reports_empty_failed(self, tmp_path):
+        from mcp_server.storage_manager import get_storage_dir
         from mcp_server.tools.index_handlers import _purge_index_dir
 
-        index_dir = tmp_path / "index"
-        index_dir.mkdir()
+        index_dir = get_storage_dir() / "projects" / "proj_test2" / "index"
+        index_dir.mkdir(parents=True)
         (index_dir / "code.index").write_text("data")
 
         deleted, failed = _purge_index_dir(index_dir, keep_chunk_cache=True)
@@ -314,67 +380,6 @@ class TestReleaseGpuMemory:
 
         with patch("search.gpu_monitor.torch", None):
             _release_gpu_memory()  # Must not raise
-
-
-class TestSwitchActiveModel:
-    """Direct tests for _switch_active_model module-level helper."""
-
-    def _make_config(self):
-        cfg = __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock()
-        cfg.embedding.model_name = "old-model"
-        cfg.embedding.dimension = 768
-        return cfg
-
-    def test_saves_config_when_model_changes(self):
-        """Config is saved to disk when the model name differs from current."""
-        from unittest.mock import MagicMock, patch
-
-        from mcp_server.tools.index_handlers import _switch_active_model
-
-        mock_cfg = self._make_config()
-        mock_mgr = MagicMock()
-        mock_mgr.load_config.return_value = mock_cfg
-
-        with (
-            patch(
-                "mcp_server.tools.index_handlers.SearchConfigManager",
-                return_value=mock_mgr,
-            ),
-            patch(
-                "mcp_server.tools.index_handlers.MODEL_REGISTRY",
-                {"new-model": {"dimension": 512}},
-            ),
-            patch("mcp_server.tools.index_handlers.get_state"),
-            patch("mcp_server.tools.index_handlers._invalidate_config_caches"),
-        ):
-            _switch_active_model("new-model")
-
-        mock_mgr.save_config.assert_called_once()
-
-    def test_invalidates_caches(self):
-        """Cache invalidation helper is called after config update."""
-        from unittest.mock import MagicMock, patch
-
-        from mcp_server.tools.index_handlers import _switch_active_model
-
-        mock_cfg = self._make_config()
-        mock_mgr = MagicMock()
-        mock_mgr.load_config.return_value = mock_cfg
-
-        with (
-            patch(
-                "mcp_server.tools.index_handlers.SearchConfigManager",
-                return_value=mock_mgr,
-            ),
-            patch("mcp_server.tools.index_handlers.MODEL_REGISTRY", {}),
-            patch("mcp_server.tools.index_handlers.get_state"),
-            patch(
-                "mcp_server.tools.index_handlers._invalidate_config_caches"
-            ) as mock_inv,
-        ):
-            _switch_active_model("old-model")
-
-        mock_inv.assert_called_once()
 
 
 class TestHandlerChunkerOwnership:

@@ -4,6 +4,7 @@ import json
 import logging
 import pickle
 import re
+import shutil
 import string
 from collections import OrderedDict
 from pathlib import Path
@@ -434,6 +435,29 @@ class BM25Index:
         except Exception as e:
             self._logger.error(f"[BM25_INDEX] Failed to index documents: {e}")
             raise
+
+    def clear(self) -> None:
+        """Clear the index in place, resetting to a fresh, empty state.
+
+        Resets every mutable corpus field that init/load-failure/remove-
+        failure already reset together (``_bm25``, ``_documents``,
+        ``_doc_ids``, ``_tokenized_docs``, ``_metadata``) and recreates the
+        on-disk storage directory. Configuration fields (``storage_dir``,
+        ``tokenizer``, ``k1``, ``b``, ...) are untouched -- callers that used
+        to construct a fresh ``BM25Index(**same_config)`` get identical
+        state from this instead, per ADR-0025's index-identity invariant.
+        """
+        self._bm25 = None
+        self._documents = []
+        self._doc_ids = []
+        self._tokenized_docs = []
+        self._metadata = {}
+
+        if self.storage_dir.exists():
+            shutil.rmtree(self.storage_dir)
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
+
+        self._logger.info("BM25 index cleared")
 
     def search(
         self, query: str, k: int = 5, min_score: float = 0.0

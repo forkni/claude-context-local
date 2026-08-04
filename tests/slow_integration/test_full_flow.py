@@ -20,17 +20,20 @@ class TestFullSearchFlow:
     """Integration tests using real Python project files."""
 
     @pytest.fixture(scope="class")
-    def test_project_path(self):
+    @classmethod
+    def test_project_path(cls):
         """Path to the test Python project."""
         return Path(__file__).parent.parent / "test_data" / "python_project"
 
     @pytest.fixture(scope="class")
-    def multi_lang_project_path(self):
+    @classmethod
+    def multi_lang_project_path(cls):
         """Path to the multi-language test project."""
         return Path(__file__).parent.parent / "test_data" / "multi_language"
 
     @pytest.fixture(scope="class")
-    def indexed_project_data(self, test_project_path, tmp_path_factory):
+    @classmethod
+    def indexed_project_data(cls, test_project_path, tmp_path_factory):
         """Create indexed project data once for the whole class."""
         # Create storage directory using tmp_path_factory for class scope
         tmp_path = tmp_path_factory.mktemp("full_flow_test")
@@ -74,7 +77,8 @@ class TestFullSearchFlow:
         return storage_dir
 
     @pytest.fixture(scope="class")
-    def session_embedder(self):
+    @classmethod
+    def session_embedder(cls):
         """Real, session-scoped embedder.
 
         Only test_cross_file_search_patterns uses this -- semantic-content

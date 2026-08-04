@@ -123,23 +123,6 @@ class QueryIntent(Enum):
     HYBRID = "hybrid"  # Ambiguous/uncertain queries
 
 
-# Intent-driven BM25/Dense weight profiles
-# NOTE: ranking factor constants (type boosts, lifecycle set, name-overlap tiers) live in
-# search.ranking_policy, not here.  Migrate weight profiles there if a shared owner is needed.
-INTENT_WEIGHT_PROFILES: dict[QueryIntent, tuple[float, float]] = {
-    QueryIntent.LOCAL: (
-        0.35,
-        0.65,
-    ),  # (bm25, dense) - Semantic-dominant for symbol discovery (optimal via Step 1A/1B testing)
-    QueryIntent.GLOBAL: (0.3, 0.7),  # semantic understanding matters
-    QueryIntent.CONTEXTUAL: (0.3, 0.7),  # similar to GLOBAL
-    QueryIntent.NAVIGATIONAL: (0.5, 0.5),  # balanced for relationship tracing
-    QueryIntent.PATH_TRACING: (0.4, 0.6),
-    QueryIntent.SIMILARITY: (0.4, 0.6),
-    QueryIntent.HYBRID: (0.4, 0.6),  # default balanced
-}
-
-
 @dataclass
 class IntentDecision:
     """Result of intent classification decision."""
@@ -182,6 +165,7 @@ class IntentClassifier:
         embedder: "CodeEmbedder | None" = None,
         semantic_enabled: bool = False,
         semantic_weight: float = 0.3,
+        default_intent: QueryIntent | None = None,
     ) -> None:
         """Initialize intent classifier.
 
@@ -194,11 +178,17 @@ class IntentClassifier:
             semantic_enabled: Enable semantic anchor scoring (default False).
             semantic_weight: Weight for semantic scores in ensemble [0.0, 1.0].
                 Keyword weight = 1 - semantic_weight. Default 0.3 (keyword dominant).
+            default_intent: Intent to fall back to when no pattern matches or
+                confidence is below threshold. If None, uses the DEFAULT_INTENT
+                class constant (HYBRID).
         """
         self.confidence_threshold = (
             confidence_threshold
             if confidence_threshold is not None
             else self.CONFIDENCE_THRESHOLD
+        )
+        self.default_intent = (
+            default_intent if default_intent is not None else self.DEFAULT_INTENT
         )
         self.enable_logging = enable_logging
         self._embedder = embedder
@@ -266,9 +256,9 @@ class IntentClassifier:
         if not scores or max(scores.values()) == 0:
             # No patterns matched - use default
             decision = IntentDecision(
-                intent=self.DEFAULT_INTENT,
+                intent=self.default_intent,
                 confidence=0.0,
-                reason=f"No specific patterns matched - using default ({self.DEFAULT_INTENT.value})",
+                reason=f"No specific patterns matched - using default ({self.default_intent.value})",
                 scores=scores,
             )
         else:
@@ -283,9 +273,9 @@ class IntentClassifier:
             if confidence < confidence_threshold:
                 # Low confidence - use default (hybrid search)
                 decision = IntentDecision(
-                    intent=self.DEFAULT_INTENT,
+                    intent=self.default_intent,
                     confidence=confidence,
-                    reason=f"Low confidence ({confidence:.2f} < {confidence_threshold}) - using default ({self.DEFAULT_INTENT.value})",
+                    reason=f"Low confidence ({confidence:.2f} < {confidence_threshold}) - using default ({self.default_intent.value})",
                     scores=scores,
                 )
             else:
@@ -311,16 +301,6 @@ class IntentClassifier:
             )
             if scores:
                 logger.debug(f"[INTENT] Scores: {scores}")
-            # Log weight overrides for debugging Q12
-            if "bm25_weight" in decision.suggested_params:
-                bm25_w = decision.suggested_params["bm25_weight"]
-                dense_w = decision.suggested_params["dense_weight"]
-                profile_w = INTENT_WEIGHT_PROFILES.get(decision.intent, (None, None))
-                if (bm25_w, dense_w) != profile_w:
-                    logger.info(
-                        f"[INTENT] Weight override active: BM25={bm25_w}, Dense={dense_w} "
-                        f"(profile default would be {profile_w})"
-                    )
 
         return decision
 
@@ -514,7 +494,7 @@ class IntentClassifier:
             Intent key with highest precedence among tied intents.
         """
         if not scores:
-            return self.DEFAULT_INTENT.value
+            return self.default_intent.value
 
         max_score = max(scores.values())
         # Consider scores within 0.05 as tied (wider margin than QueryRouter)
@@ -526,7 +506,7 @@ class IntentClassifier:
                 return intent_key
 
         # Fallback (should not reach here)
-        return self.DEFAULT_INTENT.value
+        return self.default_intent.value
 
     def _detect_code_symbols(self, query: str) -> float:
         """Detect code symbols using Python naming conventions (case-sensitive).
@@ -596,27 +576,17 @@ class IntentClassifier:
             params["search_mode"] = SearchMode.HYBRID
 
         elif intent == QueryIntent.LOCAL:
-            # Suggest k=5 for symbol lookups (reverted from k=4 in commit 1802322)
-            # Wider pool helps graph-isolated symbols that can't benefit from multi-hop
-            params["k"] = 5
+            # search_mode only -- suggested k is not set here. A k=5 suggestion
+            # used to be written but was never read: the orchestrator's k-bump
+            # redirect is gated on intent == GLOBAL only (search_orchestrator.py),
+            # so LOCAL's k was unreachable by construction. Removed 2026-08-03.
             params["search_mode"] = SearchMode.HYBRID
-
-            # Existence-checking queries benefit from semantic-heavy weights.
-            # BM25 over-matches "index" and "exists" on internal implementation code,
-            # while semantic search better understands user intent for discovery queries.
-            query_lower = query.lower()
-            if any(
-                p in query_lower for p in ("check if", "is there", "exists for")
-            ) or re.search(r"^does\b.+\b(exist|have|support|contain)\b", query_lower):
-                params["bm25_weight"] = 0.35
-                params["dense_weight"] = 0.65
 
         elif intent == QueryIntent.NAVIGATIONAL:
             # Extract symbol name for find_connections redirect
             symbol_name = self._extract_symbol_from_query(query)
             if symbol_name:
                 params["symbol_name"] = symbol_name
-                params["tool"] = "find_connections"
             # Suggest relationship_types filter for specific relationship queries
             rel_types = self._detect_relationship_types(query)
             if rel_types:
@@ -628,14 +598,12 @@ class IntentClassifier:
             if source and target:
                 params["source"] = source
                 params["target"] = target
-                params["tool"] = "find_path"
 
         elif intent == QueryIntent.SIMILARITY:
             # Extract reference symbol for find_similar_code
             reference = self._extract_symbol_from_query(query)
             if reference:
                 params["symbol_name"] = reference
-                params["tool"] = "find_similar_code"
 
         elif intent == QueryIntent.CONTEXTUAL:
             # Suggest ego_graph for broader context
@@ -644,12 +612,6 @@ class IntentClassifier:
             symbol_name = self._extract_symbol_from_query(query)
             if symbol_name:
                 params["symbol_name"] = symbol_name
-
-        # Add weight suggestions from profile (don't overwrite intent-specific)
-        if intent in INTENT_WEIGHT_PROFILES and "bm25_weight" not in params:
-            bm25_w, dense_w = INTENT_WEIGHT_PROFILES[intent]
-            params["bm25_weight"] = bm25_w
-            params["dense_weight"] = dense_w
 
         return params
 

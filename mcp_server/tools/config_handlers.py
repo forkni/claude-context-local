@@ -11,6 +11,7 @@ from typing import Any
 from mcp_server.project_persistence import save_project_selection
 from mcp_server.resource_manager import _cleanup_previous_resources
 from mcp_server.services import get_state
+from mcp_server.state import invalidate_config_caches
 from mcp_server.storage_manager import (
     get_project_storage_dir,
     set_current_project,
@@ -20,10 +21,13 @@ from mcp_server.tools.decorators import error_handler, with_mutation_lock
 from search.config import (
     MODEL_REGISTRY,
     ChunkingConfig,
+    PerformanceConfig,
     RerankerConfig,
     SearchMode,
     SearchModeConfig,
+    _derive_mcp_field_names,
     get_config_manager,
+    set_active_project_storage_dir,
     validate_field_value,
 )
 
@@ -35,58 +39,41 @@ logger = logging.getLogger(__name__)
 # Field maps: (arg_key, attr_name) pairs for apply_config_patch.
 # Attribute names must match the real dataclass fields so that
 # validate_field_value can look up metadata from the spec class.
+#
+# _CHUNKING_FIELDS/_ECHO and _RERANKER_FIELDS/_ECHO are derived from each
+# field's spec(mcp=...) tag (see ADR-0022) — the settable/echo split is
+# declared once, on the field, instead of restated here.
 # ---------------------------------------------------------------------------
 
-_CHUNKING_FIELDS: tuple[tuple[str, str], ...] = (
-    ("enable_community_detection", "enable_community_detection"),
-    ("enable_community_merge", "enable_community_merge"),
-    ("community_resolution", "community_resolution"),
-    ("max_phantom_degree", "max_phantom_degree"),
-    ("token_estimation", "token_estimation"),
-    ("enable_large_node_splitting", "enable_large_node_splitting"),
-    ("max_chunk_lines", "max_chunk_lines"),
-    ("split_size_method", "split_size_method"),
-    ("max_split_chars", "max_split_chars"),
-    ("enable_file_summaries", "enable_file_summaries"),
-    ("enable_community_summaries", "enable_community_summaries"),
-    ("sizing_mode", "sizing_mode"),
-    ("adaptive_multiplier_max", "adaptive_multiplier_max"),
-    ("adaptive_multiplier_min", "adaptive_multiplier_min"),
-    ("max_complexity_cap", "max_complexity_cap"),
+_CHUNKING_FIELD_NAMES: tuple[str, ...] = _derive_mcp_field_names(
+    ChunkingConfig, "chunking"
+)
+_CHUNKING_FIELDS: tuple[tuple[str, str], ...] = tuple(
+    (name, name) for name in _CHUNKING_FIELD_NAMES
 )
 
 # Echo subset: the fields the response returns (curated; may include read-only fields).
-_CHUNKING_ECHO: tuple[str, ...] = (
-    "enable_community_detection",
-    "enable_community_merge",
-    "community_resolution",
-    "max_phantom_degree",
-    "token_estimation",
-    "enable_large_node_splitting",
-    "max_chunk_lines",
-    "split_size_method",
-    "max_split_chars",
-    "enable_file_summaries",
-    "enable_community_summaries",
-    "sizing_mode",
-    "adaptive_multiplier_max",
-    "adaptive_multiplier_min",
-    "max_complexity_cap",
-)
+_CHUNKING_ECHO: tuple[str, ...] = _CHUNKING_FIELD_NAMES
 
-_RERANKER_FIELDS: tuple[tuple[str, str], ...] = (
-    ("enabled", "enabled"),
-    ("model_name", "model_name"),
-    ("top_k_candidates", "top_k_candidates"),
+_RERANKER_SETTABLE_NAMES: tuple[str, ...] = _derive_mcp_field_names(
+    RerankerConfig, "reranker"
+)
+_RERANKER_FIELDS: tuple[tuple[str, str], ...] = tuple(
+    (name, name) for name in _RERANKER_SETTABLE_NAMES
 )
 
 # Echoes include non-settable fields (min_vram_gb, batch_size) — read from target after patch.
-_RERANKER_ECHO: tuple[str, ...] = (
-    "enabled",
-    "model_name",
-    "top_k_candidates",
-    "min_vram_gb",
-    "batch_size",
+_RERANKER_ECHO: tuple[str, ...] = _derive_mcp_field_names(
+    RerankerConfig, "reranker", "reranker_echo"
+)
+
+_SEARCH_MODE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("bm25_weight", "bm25_weight"),
+    ("dense_weight", "dense_weight"),
+)
+
+_PERFORMANCE_SEARCH_FIELDS: tuple[tuple[str, str], ...] = (
+    ("enable_parallel", "use_parallel_search"),
 )
 
 
@@ -142,6 +129,14 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
     project_dir = get_project_storage_dir(str(project_path))
     index_dir = project_dir / "index"
 
+    # Point the config layer at the new project's storage dir so its
+    # search_overrides.json (ADR-0014) is merged into subsequent config loads,
+    # then drop config-derived caches (the global file's mtime does not change
+    # on a project switch, so without this the old project's merged config —
+    # and the searcher built from it — would keep serving).
+    set_active_project_storage_dir(project_dir)
+    invalidate_config_caches()
+
     if not index_dir.exists() or not (index_dir / "code.index").exists():
         return responses.ok(
             success=True,
@@ -161,11 +156,14 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
 @error_handler("Configure search mode")
 @with_mutation_lock
 async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
-    """Configure search mode and parameters."""
+    """Configure search mode and parameters.
+
+    Unspecified fields (bm25_weight, dense_weight, enable_parallel) retain their
+    persisted values — only search_mode/enable_hybrid are unconditionally set from
+    this call; the rest are patched via apply_config_patch, matching
+    handle_configure_reranking/handle_configure_chunking's skip-if-absent pattern.
+    """
     search_mode = arguments.get("search_mode", SearchMode.HYBRID)
-    bm25_weight = arguments.get("bm25_weight", 0.35)
-    dense_weight = arguments.get("dense_weight", 0.65)
-    enable_parallel = arguments.get("enable_parallel", True)
 
     err = validate_field_value(SearchModeConfig, "default_mode", search_mode)
     if err:
@@ -179,9 +177,17 @@ async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
         SearchMode.HYBRID,
         SearchMode.AUTO,
     )
-    config.search_mode.bm25_weight = bm25_weight
-    config.search_mode.dense_weight = dense_weight
-    config.performance.use_parallel_search = enable_parallel
+    err = apply_config_patch(
+        config.search_mode, SearchModeConfig, arguments, _SEARCH_MODE_FIELDS
+    )
+    if err:
+        return responses.error(err)
+
+    err = apply_config_patch(
+        config.performance, PerformanceConfig, arguments, _PERFORMANCE_SEARCH_FIELDS
+    )
+    if err:
+        return responses.error(err)
 
     config_manager.save_config(config)
 
@@ -193,9 +199,9 @@ async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
         success=True,
         config={
             "search_mode": search_mode,
-            "bm25_weight": bm25_weight,
-            "dense_weight": dense_weight,
-            "enable_parallel": enable_parallel,
+            "bm25_weight": config.search_mode.bm25_weight,
+            "dense_weight": config.search_mode.dense_weight,
+            "enable_parallel": config.performance.use_parallel_search,
         },
     )
 
@@ -264,15 +270,12 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
 
     Valid values per field are enforced by ``ChunkingConfig`` field metadata
     (see ``search.config.validate_field_value``).  Exposed parameters:
-    enable_community_detection, enable_community_merge, community_resolution (0.1-2.0),
-    max_phantom_degree (1-1000), token_estimation ("whitespace"|"tiktoken"),
-    enable_large_node_splitting, max_chunk_lines, split_size_method ("lines"|"characters"),
-    max_split_chars (1000-10000), enable_file_summaries, enable_community_summaries,
+    enable_large_node_splitting, max_chunk_lines,
+    split_size_method ("lines"|"characters"),
+    max_split_chars (1000-10000), enable_file_summaries,
     sizing_mode ("fixed"|"adaptive"), adaptive_multiplier_max (1.0-2.0),
-    adaptive_multiplier_min (0.1-1.0), max_complexity_cap (5-100).
-
-    Note: min_chunk_tokens (50) and max_merged_tokens (400) are optimal defaults and
-    not exposed for user configuration.
+    adaptive_multiplier_min (0.1-1.0), max_complexity_cap (5-100),
+    glsl_filter_td_prefix (bool).
     """
     config_manager = get_config_manager()
     config = config_manager.load_config()

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # run_tests.sh - Run pytest using project virtual environment
-# Usage: ./scripts/test/run_tests.sh [pytest args...]
+# Usage: ./scripts/test/run_tests.sh [--parallel] [pytest args...]
 # Example: ./scripts/test/run_tests.sh tests/ -v --tb=short
+# Example: ./scripts/test/run_tests.sh --parallel tests/unit/ -q
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -17,6 +18,21 @@ else
     exit 1
 fi
 
+# --parallel is opt-in local/CI parity, not the default -- it strips itself
+# out of "$@" and injects the exact xdist flags branch-protection.yml uses
+# (-n auto --dist loadfile; loadfile keeps a module on one worker, required
+# because of module-scoped otel fixtures + pytest-randomly). Serial stays
+# the default so -x/--pdb/per-test output keep working unchanged.
+PARALLEL_ARGS=()
+ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" == "--parallel" ]]; then
+        PARALLEL_ARGS=("-n" "auto" "--dist" "loadfile")
+    else
+        ARGS+=("$arg")
+    fi
+done
+
 cd "$PROJECT_ROOT" || exit 1
 echo "[INFO] Using pytest: $PYTEST"
-exec "$PYTEST" "$@"
+exec "$PYTEST" "${PARALLEL_ARGS[@]}" "${ARGS[@]}"

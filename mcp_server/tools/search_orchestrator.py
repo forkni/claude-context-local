@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from mcp_server.search_factory import get_searcher
@@ -22,8 +22,6 @@ from mcp_server.services import get_config, get_state
 from mcp_server.tools import responses, result_view
 from mcp_server.tools.searcher_view import SearcherView
 from search.config import (
-    EgoGraphConfig,
-    ParentRetrievalConfig,
     SearchConfig,
     SearchMode,
     get_config_manager,
@@ -66,8 +64,6 @@ class SearchPlan:
     auto_reindex: bool
     max_age_minutes: float
     max_context_tokens: int
-    suggested_bm25: float | None
-    suggested_dense: float | None
     redirect: PlanRedirect | None = None
 
 
@@ -156,6 +152,7 @@ class SearchPlanner:
                 embedder=_intent_embedder,
                 semantic_enabled=config.intent.semantic_enabled,
                 semantic_weight=config.intent.semantic_weight,
+                default_intent=QueryIntent(config.intent.default_intent.lower()),
             )
             intent_decision = intent_classifier.classify(query)
 
@@ -238,13 +235,6 @@ class SearchPlanner:
             )
         )
 
-        # Intent-driven weight suggestions (applied in execute section)
-        suggested_bm25: float | None = None
-        suggested_dense: float | None = None
-        if intent_decision:
-            suggested_bm25 = intent_decision.suggested_params.get("bm25_weight")
-            suggested_dense = intent_decision.suggested_params.get("dense_weight")
-
         return SearchPlan(
             query=query,
             k=k,
@@ -264,8 +254,6 @@ class SearchPlanner:
             ),
             max_age_minutes=max_age_minutes,
             max_context_tokens=max_context_tokens,
-            suggested_bm25=suggested_bm25,
-            suggested_dense=suggested_dense,
             redirect=redirect,
         )
 
@@ -433,7 +421,9 @@ class SearchOrchestrator:
             return config_copy
 
         if isinstance(searcher, HybridSearcher) and plan.ego_graph_enabled:
-            mutable_config().ego_graph = EgoGraphConfig(
+            cfg = mutable_config()
+            cfg.ego_graph = replace(
+                cfg.ego_graph,
                 enabled=plan.ego_graph_enabled,
                 k_hops=plan.ego_graph_k_hops,
                 max_neighbors_per_hop=plan.ego_graph_max_neighbors,
@@ -469,24 +459,11 @@ class SearchOrchestrator:
             mutable_config().ego_graph.min_similarity_threshold = intent_threshold
 
         if isinstance(searcher, HybridSearcher) and plan.include_parent:
-            mutable_config().parent_retrieval = ParentRetrievalConfig(
-                enabled=plan.include_parent
+            cfg = mutable_config()
+            cfg.parent_retrieval = replace(
+                cfg.parent_retrieval, enabled=plan.include_parent
             )
             logger.info("[PARENT_RETRIEVAL] Enabled")
-
-        # Apply intent-driven weight overrides (per-request kwargs — no shared-state mutation)
-        # Use plan.suggested_bm25/dense — already computed by SearchPlanner (no re-derivation needed)
-        if (
-            isinstance(searcher, HybridSearcher)
-            and plan.suggested_bm25 is not None
-            and plan.suggested_dense is not None
-            and plan.intent_decision is not None
-        ):
-            logger.info(
-                f"[INTENT] Weight override for {plan.intent_decision.intent.value}: "
-                f"BM25={searcher.bm25_weight:.2f}→{plan.suggested_bm25:.2f}, "
-                f"Dense={searcher.dense_weight:.2f}→{plan.suggested_dense:.2f}"
-            )
 
         # Apply intent-driven edge weights for graph traversal (A1)
         if isinstance(searcher, HybridSearcher) and plan.intent_decision:
@@ -513,12 +490,10 @@ class SearchOrchestrator:
                 query=plan.query,
                 k=plan.k,
                 search_mode=actual_search_mode,
-                min_bm25_score=0.1,
+                min_bm25_score=effective_config.search_mode.min_bm25_score,
                 use_parallel=get_config().performance.use_parallel_search,
                 filters=filters if filters else None,
                 config=effective_config,
-                bm25_weight=plan.suggested_bm25,
-                dense_weight=plan.suggested_dense,
             )
         else:
             context_depth = 1 if plan.include_context else 0
@@ -554,15 +529,13 @@ class SearchOrchestrator:
         context-token-budget truncation (when plan.max_context_tokens > 0).
 
         ``source_order_output`` defaults to ``False`` (``OutputConfig``) so relevance
-        order from the neural reranker is respected by default; the getattr fallback
-        below mirrors that default rather than re-enabling the DOS-RAG override on a
-        malformed/partial config.
+        order from the neural reranker is respected by default.
         """
         if (
-            getattr(outcome.effective_config.output, "source_order_output", False)
+            outcome.effective_config.output.source_order_output
             and len(formatted_results) > 1
         ):
-            if getattr(outcome.effective_config.reranker, "enabled", False):
+            if outcome.effective_config.reranker.enabled:
                 logger.warning(
                     "[SOURCE_ORDER] source_order_output=True overrides the neural "
                     "reranker's ordering (reranker.enabled=True) — DOS-RAG file/line "
@@ -613,8 +586,6 @@ class SearchOrchestrator:
             response["subgraph_edges"] = subgraph_data["edges"]
             if subgraph_data.get("topology_order"):
                 response["subgraph_order"] = subgraph_data["topology_order"]
-            if subgraph_data.get("communities"):
-                response["subgraph_communities"] = subgraph_data["communities"]
 
         response = add_system_message(
             response, tool_name="search_code", query=plan.query, chunk_id=None

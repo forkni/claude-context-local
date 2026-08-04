@@ -24,9 +24,13 @@ supported_models = [m for m in MODEL_REGISTRY if "8B" not in m]
 # count at any site.
 _patch_embedder_st = patch("embeddings.embedder.SentenceTransformer")
 _patch_model_loader_st = patch("embeddings.model_loader.SentenceTransformer")
-_patch_no_onnx = patch(
-    "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-)
+# ModelLoader.load() falls through to a HuggingFace-existence check
+# (huggingface_hub.model_info) whenever the real on-disk cache for a model
+# is missing/invalid -- which depends on this machine's real
+# ~/.claude_code_search/models state, not on anything this test controls.
+# Stub it so the test never depends on, or reaches, the real network (see
+# tests/conftest.py::_block_real_network).
+_patch_model_info = patch("huggingface_hub.model_info")
 
 
 @pytest.fixture(autouse=True)
@@ -44,17 +48,36 @@ def _no_warmup_measure(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _stub_hub_existence_check():
+    """Stub the HF Hub existence check ModelLoader.load() makes on cache miss.
+
+    Whether it fires depends on this machine's real ~/.claude_code_search/models
+    state, not on anything these tests control -- warm locally, cold on CI (see
+    tests/conftest.py::_block_real_network).
+    """
+    with patch("huggingface_hub.model_info") as mock_info:
+        mock_info.return_value = MagicMock(
+            modelId="stub", library_name="sentence-transformers"
+        )
+        yield mock_info
+
+
 @pytest.mark.parametrize("model_name", supported_models)
-@_patch_no_onnx
 @_patch_model_loader_st
 @_patch_embedder_st
+@_patch_model_info
 def test_model_loading_and_embedding(
-    mock_sentence_transformer, mock_model_loader_st, model_name: str
+    mock_model_info, mock_sentence_transformer, mock_model_loader_st, model_name: str
 ):
     """
     Tests that each supported model can be loaded and can create embeddings
     of the correct dimension.
     """
+    mock_model_info.return_value = MagicMock(
+        modelId=model_name, library_name="sentence-transformers"
+    )
+
     # Get model config to determine expected dimension
     model_config = MODEL_REGISTRY.get(model_name, {})
     # Use truncate_dim if available (for MRL models), otherwise use dimension
@@ -126,10 +149,9 @@ def test_model_loading_and_embedding(
     except Exception as e:
         # No ImportError-as-skip branch here: sentence-transformers is a hard
         # dependency (already imported at module load, and mocked above via
-        # @patch), and ONNX loading is force-disabled for this test, so
-        # there is no legitimate "missing optional dependency" case left to
-        # skip on. An ImportError here means a real regression in the import
-        # chain, and should fail loudly like any other exception.
+        # @patch), so there is no legitimate "missing optional dependency"
+        # case left to skip on. An ImportError here means a real regression
+        # in the import chain, and should fail loudly like any other exception.
         pytest.fail(f"An unexpected error occurred while testing {model_name}: {e}")
 
 
@@ -203,7 +225,6 @@ def test_prefixing_logic(mock_sentence_transformer, mock_model_loader_st):
     del MODEL_REGISTRY["test/query-prefix-model"]
 
 
-@_patch_no_onnx
 @_patch_model_loader_st
 @_patch_embedder_st
 def test_query_cache_hits_and_misses(mock_sentence_transformer, mock_model_loader_st):
@@ -270,7 +291,6 @@ def test_query_cache_hits_and_misses(mock_sentence_transformer, mock_model_loade
     assert stats["cache_size"] == 2
 
 
-@_patch_no_onnx
 @_patch_model_loader_st
 @_patch_embedder_st
 def test_query_cache_lru_eviction(mock_sentence_transformer, mock_model_loader_st):
@@ -590,31 +610,40 @@ def test_query_cache_with_task_instruction(
     mock_sentence_transformer.return_value = mock_model
     mock_model_loader_st.return_value = mock_model  # Same mock for ModelLoader
 
-    # Use existing model with task_instruction (CodeRankEmbed)
-    embedder = CodeEmbedder(model_name="nomic-ai/CodeRankEmbed")
+    # Use a synthetic model with task_instruction (a generic feature, not tied
+    # to any specific registered model)
+    MODEL_REGISTRY["test/task-instruction-model"] = {
+        "dimension": 768,
+        "task_instruction": "Represent this query for searching relevant code",
+    }
+    try:
+        embedder = CodeEmbedder(model_name="test/task-instruction-model")
+        embedder._model = mock_model  # bypass ModelLoader's HF Hub existence check
 
-    query = "test query"
+        query = "test query"
 
-    # First call - should encode with task instruction
-    # (no warm-up encode; index 0 is the real query)
-    embedding1 = embedder.embed_query(query)
-    assert len(encoded_queries) == 1
-    assert encoded_queries[0].startswith(
-        "Represent this query for searching relevant code"
-    )
-    assert "test query" in encoded_queries[0]
+        # First call - should encode with task instruction
+        # (no warm-up encode; index 0 is the real query)
+        embedding1 = embedder.embed_query(query)
+        assert len(encoded_queries) == 1
+        assert encoded_queries[0].startswith(
+            "Represent this query for searching relevant code"
+        )
+        assert "test query" in encoded_queries[0]
 
-    # Second call - should hit cache
-    embedding2 = embedder.embed_query(query)
-    assert len(encoded_queries) == 1  # No new encode call
-    assert np.allclose(embedding1, embedding2)
+        # Second call - should hit cache
+        embedding2 = embedder.embed_query(query)
+        assert len(encoded_queries) == 1  # No new encode call
+        assert np.allclose(embedding1, embedding2)
 
-    stats = embedder.get_cache_stats()
-    assert stats["hits"] == 1
-    assert stats["misses"] == 1
+        stats = embedder.get_cache_stats()
+        assert stats["hits"] == 1
+        assert stats["misses"] == 1
+    finally:
+        # Clean up the temporary model
+        del MODEL_REGISTRY["test/task-instruction-model"]
 
 
-@_patch_no_onnx
 @_patch_model_loader_st
 @_patch_embedder_st
 def test_mrl_truncate_dim_support(mock_sentence_transformer, mock_model_loader_st):
@@ -662,7 +691,6 @@ def test_mrl_truncate_dim_support(mock_sentence_transformer, mock_model_loader_s
         )
 
 
-@_patch_no_onnx
 @_patch_model_loader_st
 @_patch_embedder_st
 def test_instruction_mode_custom(mock_sentence_transformer, mock_model_loader_st):
@@ -706,7 +734,6 @@ def test_instruction_mode_custom(mock_sentence_transformer, mock_model_loader_st
     assert "prompt_name" not in encode_kwargs
 
 
-@_patch_no_onnx
 @_patch_model_loader_st
 @_patch_embedder_st
 def test_instruction_mode_prompt_name(mock_sentence_transformer, mock_model_loader_st):
@@ -752,7 +779,6 @@ def test_instruction_mode_prompt_name(mock_sentence_transformer, mock_model_load
     MODEL_REGISTRY["Qwen/Qwen3-Embedding-0.6B"]["instruction_mode"] = "custom"
 
 
-@_patch_no_onnx
 @_patch_model_loader_st
 @_patch_embedder_st
 def test_instruction_mode_cache_keys(mock_sentence_transformer, mock_model_loader_st):
@@ -1136,8 +1162,8 @@ class TestSetVramLimitEffective:
 
 
 class TestComputeEffectiveVramCap:
-    """Tests for compute_effective_vram_cap() — the pure helper used by both
-    set_vram_limit (PyTorch cap) and onnx_loader (ORT gpu_mem_limit).
+    """Tests for compute_effective_vram_cap() — the pure helper used by
+    set_vram_limit (PyTorch cap).
     """
 
     @patch("embeddings.embedder.torch")
@@ -1658,204 +1684,6 @@ class TestContextExtraction:
         assert "def method(self):" in embedding_content
 
 
-class TestCalculateOptimalBatchSizeOrtCap:
-    """Tests for the ort_cap_gb parameter of calculate_optimal_batch_size().
-
-    Verifies that when an ORT arena cap is provided the batch sizer uses
-    ``min(free_gb, ort_cap - model_vram)`` as the available memory budget
-    rather than the full system-free figure.
-    """
-
-    @patch("embeddings.embedder.torch")
-    def test_ort_cap_constrains_available(self, mock_torch):
-        """ORT cap tighter than system free → available_gb clipped to cap remaining."""
-        from embeddings.embedder import calculate_optimal_batch_size
-
-        mock_torch.cuda.is_available.return_value = True
-        total_bytes = int(8 * 1024**3)
-        # System free after model load = 5.3 GB, but ORT cap was 5.0 GB and model
-        # already occupies 1.0 GB of that cap → ORT remaining = 4.0 GB.
-        mock_torch.cuda.mem_get_info.return_value = (int(5.3 * 1024**3), total_bytes)
-
-        # activation cost = 0.3 GB/item so batch without cap = floor(5.3*0.65*0.82/0.3)=9
-        # with ORT cap remaining = 4.0 GB: floor(4.0*0.65*0.82/0.3) = 7
-        result_without_cap = calculate_optimal_batch_size(
-            model_vram_gb=1.0,
-            activation_gb_per_item=0.3,
-            memory_fraction=0.65,
-            min_batch=1,
-            max_batch=64,
-        )
-        result_with_cap = calculate_optimal_batch_size(
-            model_vram_gb=1.0,
-            activation_gb_per_item=0.3,
-            memory_fraction=0.65,
-            min_batch=1,
-            max_batch=64,
-            ort_cap_gb=5.0,
-        )
-        assert result_with_cap < result_without_cap, (
-            f"ORT cap should lower batch size: with_cap={result_with_cap}, "
-            f"without_cap={result_without_cap}"
-        )
-
-    @patch("embeddings.embedder.torch")
-    def test_ort_cap_zero_leaves_behavior_unchanged(self, mock_torch):
-        """ort_cap_gb=0.0 (default) must not change available_gb."""
-        from embeddings.embedder import calculate_optimal_batch_size
-
-        mock_torch.cuda.is_available.return_value = True
-        total_bytes = int(24 * 1024**3)
-        mock_torch.cuda.mem_get_info.return_value = (int(16 * 1024**3), total_bytes)
-
-        r0 = calculate_optimal_batch_size(
-            model_vram_gb=2.0,
-            activation_gb_per_item=0.2,
-            memory_fraction=0.8,
-            min_batch=1,
-            max_batch=256,
-        )
-        r_explicit_zero = calculate_optimal_batch_size(
-            model_vram_gb=2.0,
-            activation_gb_per_item=0.2,
-            memory_fraction=0.8,
-            min_batch=1,
-            max_batch=256,
-            ort_cap_gb=0.0,
-        )
-        assert r0 == r_explicit_zero
-
-    @patch("embeddings.embedder.torch")
-    def test_ort_cap_larger_than_free_not_applied(self, mock_torch):
-        """ort_cap > system_free: cap is not the bottleneck, free_gb wins."""
-        from embeddings.embedder import calculate_optimal_batch_size
-
-        mock_torch.cuda.is_available.return_value = True
-        total_bytes = int(24 * 1024**3)
-        # free=4 GB, cap=20 GB → remaining=18 GB > 4 GB → free_gb is the limit
-        mock_torch.cuda.mem_get_info.return_value = (int(4 * 1024**3), total_bytes)
-
-        r_no_cap = calculate_optimal_batch_size(
-            model_vram_gb=2.0,
-            activation_gb_per_item=0.1,
-            memory_fraction=0.8,
-            min_batch=1,
-            max_batch=256,
-        )
-        r_large_cap = calculate_optimal_batch_size(
-            model_vram_gb=2.0,
-            activation_gb_per_item=0.1,
-            memory_fraction=0.8,
-            min_batch=1,
-            max_batch=256,
-            ort_cap_gb=20.0,
-        )
-        assert r_large_cap == r_no_cap
-
-
-class TestCalculateOptimalBatchSizeOnnxCap:
-    """Regression tests for the ONNX-specific BFCArena batch-size cap.
-
-    ORT BFCArena allocates large contiguous buffers per single op whose peak
-    does not scale linearly with batch.  When available_gb is small, the linear
-    per-item budget over-predicts the safe batch.  is_onnx=True enables a
-    tighter tiered cap keyed off available_gb.
-
-    Reproduces the exact OOM seen in production:
-      available≈4.6 GB, cost=0.264 GB/item → linear batch=9, ORT OOM, safe=4.
-    """
-
-    @patch("embeddings.embedder.torch")
-    def test_onnx_low_vram_caps_batch(self, mock_torch):
-        """is_onnx=True + available≈4.6 GB → batch capped to 4 (not 9)."""
-        from embeddings.embedder import calculate_optimal_batch_size
-
-        mock_torch.cuda.is_available.return_value = True
-        # ~8 GB GPU with only 4.6 GB free after multi-model + reranker load
-        total_bytes = int(8 * 1024**3)
-        free_bytes = int(4.6 * 1024**3)
-        mock_torch.cuda.mem_get_info.return_value = (free_bytes, total_bytes)
-
-        # Without is_onnx the linear formula gives 9: floor(4.6*0.65*0.82/0.264)=9
-        result_torch = calculate_optimal_batch_size(
-            activation_gb_per_item=0.264,
-            memory_fraction=0.65,
-            min_batch=4,
-            max_batch=32,
-            is_onnx=False,
-        )
-        # With is_onnx the BFCArena cap kicks in: available<5.5 → max_batch=4
-        result_onnx = calculate_optimal_batch_size(
-            activation_gb_per_item=0.264,
-            memory_fraction=0.65,
-            min_batch=4,
-            max_batch=32,
-            is_onnx=True,
-        )
-        assert result_torch >= 9, (
-            f"Torch path should give ≥9 without ONNX cap, got {result_torch}"
-        )
-        assert result_onnx <= 4, (
-            f"ONNX path must cap batch to ≤4 at available≈4.6 GB, got {result_onnx}"
-        )
-
-    @patch("embeddings.embedder.torch")
-    def test_onnx_cap_inert_on_roomy_gpu(self, mock_torch):
-        """is_onnx=True with available≥8 GB → same batch as is_onnx=False (no regression)."""
-        from embeddings.embedder import calculate_optimal_batch_size
-
-        mock_torch.cuda.is_available.return_value = True
-        total_bytes = int(24 * 1024**3)
-        free_bytes = int(14 * 1024**3)  # roomy: well above the 8 GB ONNX threshold
-        mock_torch.cuda.mem_get_info.return_value = (free_bytes, total_bytes)
-
-        result_torch = calculate_optimal_batch_size(
-            activation_gb_per_item=0.28,
-            memory_fraction=0.65,
-            min_batch=1,
-            max_batch=256,
-            is_onnx=False,
-        )
-        result_onnx = calculate_optimal_batch_size(
-            activation_gb_per_item=0.28,
-            memory_fraction=0.65,
-            min_batch=1,
-            max_batch=256,
-            is_onnx=True,
-        )
-        assert result_onnx == result_torch, (
-            f"ONNX cap must be inert on roomy GPU: onnx={result_onnx}, torch={result_torch}"
-        )
-
-    @patch("embeddings.embedder.torch")
-    def test_non_onnx_low_vram_unaffected(self, mock_torch):
-        """is_onnx=False on a tight GPU is unchanged by this fix."""
-        from embeddings.embedder import calculate_optimal_batch_size
-
-        mock_torch.cuda.is_available.return_value = True
-        total_bytes = int(8 * 1024**3)
-        free_bytes = int(4.6 * 1024**3)
-        mock_torch.cuda.mem_get_info.return_value = (free_bytes, total_bytes)
-
-        # Pre-fix and post-fix torch path must be identical (no regression)
-        before = calculate_optimal_batch_size(
-            activation_gb_per_item=0.264,
-            memory_fraction=0.65,
-            min_batch=4,
-            max_batch=32,
-            is_onnx=False,
-        )
-        after = calculate_optimal_batch_size(
-            activation_gb_per_item=0.264,
-            memory_fraction=0.65,
-            min_batch=4,
-            max_batch=32,
-        )  # is_onnx defaults to False
-        assert before == after, (
-            f"Non-ONNX path must be unchanged: before={before}, after={after}"
-        )
-
-
 class TestOomRecoveryBackoff:
     """Tests for Fix B: OOM-recovery backoff in embed_chunks().
 
@@ -2115,8 +1943,8 @@ class TestEstimateActivationDtypeAwareness:
         cfg_fp16 = self._make_config(torch_dtype="float16")
         cfg_fp32 = self._make_config(torch_dtype="float32")
 
-        est_fp16 = estimate_activation_gb_from_config(cfg_fp16, is_onnx=False)
-        est_fp32 = estimate_activation_gb_from_config(cfg_fp32, is_onnx=False)
+        est_fp16 = estimate_activation_gb_from_config(cfg_fp16)
+        est_fp32 = estimate_activation_gb_from_config(cfg_fp32)
 
         assert est_fp32 == pytest.approx(est_fp16 * 2, rel=1e-6)
 
@@ -2126,8 +1954,8 @@ class TestEstimateActivationDtypeAwareness:
         cfg_none = self._make_config(torch_dtype=None)
         cfg_fp16 = self._make_config(torch_dtype="float16")
 
-        est_none = estimate_activation_gb_from_config(cfg_none, is_onnx=False)
-        est_fp16 = estimate_activation_gb_from_config(cfg_fp16, is_onnx=False)
+        est_none = estimate_activation_gb_from_config(cfg_none)
+        est_fp16 = estimate_activation_gb_from_config(cfg_fp16)
 
         assert est_none == pytest.approx(est_fp16, rel=1e-6)
 
@@ -2151,10 +1979,6 @@ class TestEmbedQueriesBatch:
     """Tests for CodeEmbedder.embed_queries_batch."""
 
     _PATCHES = [
-        patch(
-            "embeddings.model_loader.ModelLoader._should_use_onnx",
-            new=lambda self: False,
-        ),
         patch("embeddings.model_loader.SentenceTransformer"),
         patch("embeddings.embedder.SentenceTransformer"),
     ]
@@ -2178,9 +2002,6 @@ class TestEmbedQueriesBatch:
         mock_model.device = "cpu"
         return mock_model
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_empty_input_returns_2d_zero_shape(self, mock_st, mock_loader_st):
@@ -2196,9 +2017,6 @@ class TestEmbedQueriesBatch:
         assert result.shape == (0, dim), f"Expected (0, {dim}), got {result.shape}"
         assert result.dtype == np.float32
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_single_query_shape(self, mock_st, mock_loader_st):
@@ -2214,9 +2032,6 @@ class TestEmbedQueriesBatch:
         assert result.shape == (1, dim), f"Expected (1, {dim}), got {result.shape}"
         assert result.dtype == np.float32
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_multi_query_shape(self, mock_st, mock_loader_st):
@@ -2273,9 +2088,6 @@ class TestCacheKeyInstructionMode:
         )
         assert k1 == k2
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_embed_query_and_batch_share_cache(self, mock_st, mock_loader_st):
@@ -2322,9 +2134,6 @@ class TestCacheKeyInstructionMode:
             "cached result must match original embedding"
         )
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_prompt_name_mode_does_not_collide_with_custom(
@@ -2561,9 +2370,6 @@ class TestEmbedChunksOrderPreservation:
             name=name,
         )
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_results_match_input_order_across_batches(
@@ -2620,9 +2426,6 @@ class TestEmbedChunksOrderPreservation:
             )
             assert result.chunk_id == CodeEmbedder._build_chunk_id(chunk)
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_empty_input_returns_empty_list(
@@ -2640,9 +2443,6 @@ class TestEmbedChunksOrderPreservation:
         # this class.
         assert embedder.embed_chunks([], batch_size=1) == []
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_largest_batch_encoded_first(
@@ -2710,9 +2510,6 @@ class TestEmbedChunksContentHashCache:
             name=name,
         )
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_partial_hit_encodes_only_misses_in_input_order(
@@ -2773,9 +2570,6 @@ class TestEmbedChunksContentHashCache:
             else:
                 assert result.embedding[0] == len(contents[i])
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_full_hit_skips_model_load_entirely(
@@ -2818,9 +2612,6 @@ class TestEmbedChunksContentHashCache:
         mock_model.encode.assert_not_called()
         mock_model_loader_st.assert_not_called()
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_same_content_different_path_different_key(
@@ -2854,9 +2645,6 @@ class TestEmbedChunksContentHashCache:
         key_b = ChunkEmbeddingCache.key_for(content_b)
         assert key_a != key_b
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_changed_import_block_changes_key_for_unchanged_chunk(
@@ -2912,9 +2700,6 @@ class TestEmbedChunksContentHashCache:
         assert content_before != content_after
         assert key_before != key_after
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_cache_none_is_byte_identical_to_no_cache_arg(
@@ -2956,9 +2741,6 @@ class TestEmbedChunksContentHashCache:
             assert r1.chunk_id == r2.chunk_id
             assert np.array_equal(r1.embedding, r2.embedding)
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_cache_get_raising_falls_back_to_normal_embed(
@@ -3008,9 +2790,6 @@ class TestEmbedChunksContentHashCache:
         broken_cache.put.assert_not_called()
         broken_cache.save.assert_not_called()
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_cache_full_pass_flag_forwarded_to_save(
@@ -3066,9 +2845,6 @@ class TestEmbedChunksContentHashCache:
         mock_cache.save.assert_called_once()
         assert mock_cache.save.call_args.kwargs == {"full_pass": True}
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_full_hit_logs_stats(
@@ -3109,9 +2885,6 @@ class TestEmbedChunksContentHashCache:
         assert "hits=3" in caplog.text
         assert "misses=0" in caplog.text
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_partial_hit_logs_stats_after_save(
@@ -3167,9 +2940,6 @@ class TestEmbedChunksContentHashCache:
 class TestGetEmbeddingProvenance:
     """get_embedding_provenance() must never depend on CodeEmbedder.device."""
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_stable_across_device_mutation(
@@ -3194,9 +2964,6 @@ class TestGetEmbeddingProvenance:
 
         assert before == after
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_format(self, mock_sentence_transformer, mock_model_loader_st):
@@ -3212,9 +2979,6 @@ class TestGetEmbeddingProvenance:
         assert "|dtype=" in provenance
         assert "|backend=" in provenance
 
-    @patch(
-        "embeddings.model_loader.ModelLoader._should_use_onnx", new=lambda self: False
-    )
     @_patch_model_loader_st
     @_patch_embedder_st
     def test_raises_after_cleanup(

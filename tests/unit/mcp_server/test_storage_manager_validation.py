@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from mcp_server.storage_manager import (
     STORAGE_SENTINEL,
     validate_storage_path,
@@ -76,8 +78,21 @@ class TestValidateStoragePath:
 class TestGetStorageDir:
     """Tests for get_storage_dir() with env-var handling."""
 
-    def _call(self, env_val: str | None, tmp_path: Path) -> Path:
-        """Call get_storage_dir() in isolation with a fresh state."""
+    def _call(
+        self,
+        env_val: str | None,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch | None = None,
+    ) -> Path:
+        """Call get_storage_dir() in isolation with a fresh state.
+
+        When the env var is unsafe, get_storage_dir() falls back to the real
+        ``Path.home() / ".claude_code_search"`` and unconditionally ``mkdir``s
+        it — a real-filesystem side effect unrelated to what this test is
+        actually verifying (that the unsafe path is refused). Callers that
+        exercise the unsafe branch must pass monkeypatch so Path.home() can
+        be redirected to tmp_path first.
+        """
         from mcp_server.storage_manager import get_storage_dir
 
         class _FakeState:
@@ -88,6 +103,9 @@ class TestGetStorageDir:
             env["CODE_SEARCH_STORAGE"] = env_val
         else:
             env.pop("CODE_SEARCH_STORAGE", None)
+
+        if monkeypatch is not None:
+            monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         with (
             patch("mcp_server.storage_manager.get_state", return_value=_FakeState()),
@@ -101,16 +119,22 @@ class TestGetStorageDir:
         assert result == storage
         assert result.exists()
 
-    def test_unsafe_env_var_falls_back_to_default(self, tmp_path: Path) -> None:
+    def test_unsafe_env_var_falls_back_to_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # Create a project-root-like directory with pyproject.toml
         proj = tmp_path / "myproject"
         proj.mkdir()
         (proj / "pyproject.toml").write_text("[project]")
 
-        result = self._call(str(proj), tmp_path)
+        result = self._call(str(proj), tmp_path, monkeypatch)
         # Must NOT use the project root
         assert result != proj
         assert "claude_code_search" in str(result)
+        # Must not have touched the real home dir — the fallback branch
+        # mkdir()s unconditionally, so without the Path.home() redirect
+        # above this test would create ~/.claude_code_search on every run.
+        assert result == tmp_path / ".claude_code_search"
 
     def test_sentinel_file_written_on_init(self, tmp_path: Path) -> None:
         storage = tmp_path / ".sentinel_test"

@@ -1,6 +1,6 @@
 ---
 name: mcp-search-tool
-description: "Guides semantic code search via the code-search MCP server. Use when searching for code definitions, callers, callees, dependencies, or tracing code flow in indexed projects. Provides correct workflows for search_code, find_connections, find_path, find_similar_code. Invoke /mcp-search-tool status to run a health check."
+description: "Guides semantic code search via the code-search MCP server. Use when searching for code definitions, callers, callees, dependencies, or tracing code flow in indexed projects — also when switching between indexed projects, verifying which project is active, or checking whether an index is stale before trusting results. Provides correct workflows for search_code, find_connections, find_path, find_similar_code, switch_project, index_directory. Invoke /mcp-search-tool status to run a health check."
 user-invocable: true
 argument-hint: "search query or 'status' for index health"
 # allowed-tools lists all 18 (10 core + 8 advanced: clear_index, delete_project,
@@ -10,7 +10,7 @@ argument-hint: "search query or 'status' for index health"
 # requires MCP_EXPOSE_ADVANCED_TOOLS=1 on the server process + reconnect. See "Tool Tiers" below.
 allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources"
 metadata:
-  version: 0.22.0
+  version: 0.23.0
   mcp-server: code-search
 ---
 
@@ -42,9 +42,13 @@ three current-config runs measured 0.9841 (62/63). Recommended operating k: **7*
 when correctness matters. Use `k=10` for architectural/global queries. See [references/performance.md](references/performance.md) for full results,
 including the broader 96-query set where pool-hit rate drops to ~97–98%.
 
-**DSPy agent eval (2026-06-26, 77-query dataset, 4-tool):** Recall@7=0.9046, MRR=0.8519, Hit@7=1.000, tool_sel=1.000 on the held-out test split (18
-queries, A–F coverage). Use all 4 tools: search_code, find_connections, find_path, find_similar_code. See
-[references/performance.md](references/performance.md).
+**Comparability note (2026-08-02):** the golden dataset has since grown 108→145 queries (94→131 non-D) via the H-category commit-mined promotion
+(commit `988f1f9`). The figures above predate that expansion and were measured on the pre-expansion 63/96-query sets — do not read them as directly
+comparable to any benchmark run against the 145-query set without re-checking dataset size and date.
+
+**DSPy agent eval (historical — subsystem removed, ADR-0016; 2026-06-26, 77-query dataset, 4-tool):** Recall@7=0.9046, MRR=0.8519, Hit@7=1.000,
+tool_sel=1.000 on the held-out test split (18 queries, A–F coverage). Use all 4 tools: search_code, find_connections, find_path, find_similar_code.
+See [references/performance.md](references/performance.md).
 
 ---
 
@@ -63,13 +67,15 @@ queries, so passing `k=7` explicitly is good defensive practice regardless of wh
 
 **Result Interpretation Workflow:**
 
-1. Call `code-search:search_code(query="<your query>", k=7, include_context=true)` — `include_context` fetches ego-graph/graph-hop neighbors inline
-   (more recall per call). Use `k=10` for architectural / global queries.
+1. Call `code-search:search_code(query="<your query>", k=7)`. Multi-hop and graph-hop expansion of the initial hits run **always-on**; pass
+   `ego_graph_enabled=true` for opt-in k-hop neighbor expansion. `include_context` has **no effect on the default `HybridSearcher` search path**
+   (`SearchOrchestrator._search` in `mcp_server/tools/search_orchestrator.py` only threads it through for a non-default searcher) — don't rely on it.
+   Use `k=10` for architectural / global queries.
 2. **Scan ALL k results** — results are pre-sorted in relevance order (centrality-reranked blended_score descending) under the server default;
-   module/community summary chunks appear at the tail for non-GLOBAL queries. Array position 0 is the highest blended_score result. The tool returns
-   **metadata rows** (chunk_id, type, name, scores, short snippet). Names + types + scores are enough to judge relevance — you do NOT need to refetch
-   bodies to "confirm". You may optionally re-sort by `reranker_score` for pure cross-encoder order, but doing so will **re-promote demoted summary
-   chunks** (see Gotchas).
+   module summary chunks appear at the tail for non-GLOBAL queries. Array position 0 is the highest blended_score result. The tool returns
+   **metadata rows** (`chunk_id`, `kind`, `name`, scores) — no code body. Names + kinds + scores are enough to judge relevance — you do NOT need to
+   refetch bodies to "confirm". You may optionally re-sort by `reranker_score` for pure cross-encoder order, but doing so will **re-promote demoted
+   summary chunks** (see Gotchas).
 3. **Issue a second search with alternate phrasings** only when the question is genuinely ambiguous about *which subsystem* should answer it — a
    **bare** generic-operation verb with no domain qualifier (e.g. "validate the input", "save the data", "load config") could plausibly map to
    unrelated implementations in several files, and that ambiguity is worth resolving with 2–3 diverse queries (synonyms, subsystem names, related
@@ -166,7 +172,7 @@ By default the server's `list_tools` advertises only the **10 core tools** below
 listed:
 
 1. **Check for an in-band alternative first** — only `configure_search_mode` has one:
-`search_code(search_mode="bm25"|"dense"|"hybrid")` sets the mode for that call without needing the advanced tool at all.
+`search_code(search_mode="bm25"|"semantic"|"hybrid"|"auto")` sets the mode for that call without needing the advanced tool at all.
 2. **If no in-band alternative exists**, tell the user the tool is unlisted and ask them to set
 `MCP_EXPOSE_ADVANCED_TOOLS=1` on the server process and reconnect (`/mcp` → Reconnect) — note this accepts the larger tool-surface accuracy cost the
 10-tool default exists to avoid.
@@ -200,66 +206,19 @@ Full purpose + in-band-alternative table for the 8 advanced tools (only `configu
 
 These are non-obvious traps from real session experience — not things the docs mention.
 
-**Results are pre-sorted by relevance (blended_score descending) under the server default (`source_order_output=false`, v0.18.0+).** Module/community
-summary chunks are demoted to the tail for non-GLOBAL queries. Array position 0 is now the highest blended_score result. If you need strict
-cross-encoder order, re-sort by `reranker_score`:
-
-```python
-ranked = sorted(results, key=lambda r: (r.get("reranker_score", 0), r.get("blended_score", 0)), reverse=True)
-```
-
-**Caveat:** re-sorting by `reranker_score` will re-promote demoted module/community summary chunks (e.g. a `module:hybrid_searcher` summary with
-reranker_score 0.94 lands at position 28 in the default order because blended_score factors in centrality; re-sorting elevates it back to position 0).
-Apply the re-sort deliberately when you specifically want pure cross-encoder ranking.
-
-**`search_code` returns metadata only — do NOT refetch chunk bodies.** Each result row contains `chunk_id`, `type`, `name`, `scores`, and a short
-snippet.  Names, types, and scores are sufficient to judge relevance; additional tool calls to fetch or "confirm" the body of each candidate waste
-call budget without improving precision.
-
-**`source="ego_graph"` items appear in the main results array.** When `ego_graph_enabled=true` (or when the live config has it on), expansion
-neighbors are interleaved with direct hits and carry their own `blended_score`. They count toward your top-k window. Don't filter them out before
-ranking — they are legitimate ranked candidates.
-
-**`ego_graph.enabled=True` in the live config even though the EgoGraphConfig dataclass default is `False`.** The server reads `search_config.json`,
-which ships with `"ego_graph": {"enabled": true}`. The Python default is irrelevant once the JSON is loaded. Verify with
-`get_search_config().ego_graph.enabled`.
-
-**`split_block` variants of the same function are one logical hit.** A long function chunked into `split_block` pieces (e.g.
-`file.py:10-40:split_block:fn` and `file.py:41-80:split_block:fn`) should count as one unique chunk in Recall/Hit metrics. Normalize and deduplicate
-by stripping the line-range portion: `file.py:10-40:type:name` → `file.py:type:name`. As of v0.12.1, split_block nodes carry full
-`uses_type`/`imports` relationship edges extracted from the method signature — `find_connections` will return these edges.
-
-**Call edges carry resolver provenance (v0.14.0+).** Every entry in `direct_callers` and `direct_callees` includes `resolver_source` (`"ast"` /
-`"pyan"` / `"libcst"` / `"lsp"`), `resolver_confidence` (0.5–0.98), and `confidence` tag (`"exact"` / `"recovered"` / `"ambiguous"`). Top-level
-`caller_confidence` / `callee_confidence` breakdowns show counts per tag. The confidence ladder (AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98)
-means edges are upgraded in-place to the highest-confidence resolver — `resolver_source: "lsp"` means basedpyright confirmed the call. Configure via
-`call_graph.min_confidence` (drops low-confidence edges) and see `docs/CALL_GRAPH_TUNING.md` for tuning recipes.
-
-**INCLUSION vs ORDERING — do not conflate (top-2 failure modes from GEPA eval).** Two rules that work together but are often confused:
-
-- **INCLUSION:** include *every* relevant chunk you surfaced, regardless of `kind`. A `decorated_definition` config/dataclass (`SearchModeConfig`,
-  `FileChanges`, etc.) that appeared in your results must appear in your answer if it is relevant to the question. The ordering rule below is about
-  ORDER ONLY — it never justifies *dropping* a chunk you judged relevant.
-- **ORDERING:** lead with the definition-level chunk (`class`/`method`/`function`) whose name most directly matches the question's core symbol.
-  `split_block`, `module`, and `decorated_definition` chunks often score higher due to compactness, but they must not outrank the canonical
-  definition. Put the canonical definition first; then include all remaining relevant chunks (including those fragments).
-
-For **connection/relationship queries** (find_connections output): emit EVERY returned edge target in `relevant_chunk_ids`, even cross-file ones. The
-named symbol is the question's *subject*, usually **not** in the relevant set — do **not** lead with it. Lead with the connection targets
-`find_connections` returned (the actual callers / callees / subclasses), highest `resolver_confidence` first. Do not prune based on file location or
-kind.
-
-**Community and module summary chunks are demoted to the tail on class-overview queries (v0.18.0+, `source_order_output=false` default).** They have
-IDs like `__community__/label:0-0:community:label` or `file.py:0-0:module:name`. Under the default ordering they appear at the end of the results
-array for non-GLOBAL queries — **don't mistake their low array position for low relevance; their reranker_score may be high.** If you need a summary
-chunk specifically, look at the tail of the result array, or filter with `chunk_type="community"` / `chunk_type="module"`. If
-`source_order_output=true` is set (DOS-RAG mode), they can still surface at rank-1 of their file group — use `chunk_type="function"` or
-`chunk_type="class"` to exclude them.
-
-**Unicode symbols crash on Windows cp1252 terminals.** `✓`/`✗` cause `UnicodeEncodeError` in any script that writes to stdout in a cmd/PowerShell
-window without UTF-8. Use plain ASCII (`PASS`/`FAIL`) or run with `PYTHONUTF8=1`.
-
-**Torch dynamo INFO logs spam stderr** when importing `search.hybrid_searcher`. Suppress with `2>nul` (Windows) or `2>/dev/null` (Linux/WSL).
+| Gotcha | What to do |
+|---|---|
+| Results are pre-sorted by `blended_score` descending under the server default (`source_order_output=false`, v0.18.0+); module summaries are demoted to the tail for non-GLOBAL queries | Array position 0 is already the best default-order match. For strict cross-encoder order instead, re-sort by `reranker_score` then `blended_score`: `sorted(results, key=lambda r: (r.get("reranker_score", 0), r.get("blended_score", 0)), reverse=True)`. **Caveat:** this re-promotes demoted summary chunks (e.g. a `module:hybrid_searcher` summary with `reranker_score=0.94` moves from position 28 to position 0) — apply it only when you specifically want pure cross-encoder ranking |
+| `search_code` returns metadata only — `file`, `lines`, `kind`, `score`, `chunk_id`, usually `name` — never a code body (full field list: [references/parameters.md](references/parameters.md)) | Don't spend extra calls "confirming" a candidate's body; names, kinds, and scores are sufficient to judge relevance |
+| `source="ego_graph"` neighbors are interleaved into the main results array (not returned separately) when `ego_graph_enabled=true`, and carry their own `blended_score` | Count them toward your top-k window; don't filter them out before ranking — they're legitimate ranked candidates |
+| The `EgoGraphConfig` dataclass defaults to `enabled=false`, but the deployed `search_config.json` ships `"ego_graph": {"enabled": true}` | The loaded JSON overrides the Python default — don't trust the dataclass default. Verify actual state with `get_search_config().ego_graph.enabled` |
+| `split_block` pieces of one long function (e.g. `file.py:10-40:split_block:fn` + `file.py:41-80:split_block:fn`) are one logical hit | Normalize/dedupe by stripping the line range (`file.py:10-40:type:name` → `file.py:type:name`) before counting unique chunks in Recall/Hit metrics. Since v0.12.1 they also carry full `uses_type`/`imports` edges, so `find_connections` returns these too |
+| Call edges carry resolver provenance (v0.14.0+): `resolver_source` (`"ast"`/`"pyan"`/`"libcst"`/`"lsp"`), `resolver_confidence` (0.5–0.98), `confidence` tag (`"exact"`/`"recovered"`/`"ambiguous"`) | Higher-confidence resolvers upgrade edges in place — `resolver_source: "lsp"` means basedpyright confirmed the call. Tune via `call_graph.min_confidence`; see `docs/CALL_GRAPH_TUNING.md` |
+| INCLUSION vs ORDERING are separate rules, often conflated (top-2 GEPA-eval failure modes, historical — subsystem removed, ADR-0016) | **INCLUSION:** every relevant chunk you surfaced must appear in your answer regardless of `kind` — ordering never justifies *dropping* one. **ORDERING:** lead with the definition-level chunk (`class`/`method`/`function`) whose name matches the question, even if a `split_block`/`module`/`decorated_definition` fragment scored higher; then include the rest |
+| For `find_connections` output, the symbol you searched for is the question's *subject*, usually not itself part of the relevant set | Lead with the actual connection targets (callers/callees/subclasses) it returned, highest `resolver_confidence` first — emit every returned edge target, even cross-file ones; don't prune by file location or kind |
+| Module summary chunks (`file.py:0-0:module:name`) are demoted to the tail on class-overview queries under the default ordering | Low array position ≠ low relevance — their `reranker_score` may be high. Filter with `chunk_type="module"` to find them directly, or `chunk_type="function"`/`"class"` to exclude them (also needed under `source_order_output=true`, where they can surface at rank-1 of their file group) |
+| Unicode `✓`/`✗` crash on Windows cp1252 terminals (`UnicodeEncodeError`) | Use plain ASCII (`PASS`/`FAIL`) or run with `PYTHONUTF8=1` |
+| Torch dynamo INFO logs spam stderr when importing `search.hybrid_searcher` | Suppress with `2>nul` (Windows) or `2>/dev/null` (Linux/WSL) |
 
 ---
 
@@ -286,10 +245,10 @@ active project is a common silent error — results look plausible but are from 
 | **No results** | 1. Check active project: `code-search:list_projects` → `code-search:switch_project` if needed. 2. Verify index not empty/stale: `code-search:get_index_status`. 3. If index is missing or stale: **rebuild with `code-search:index_directory(directory_path)`**. |
 | **Bad results / wrong project** | Run pre-flight checks above. If the project was recently changed, re-run `switch_project` to confirm. |
 | **Bad results (right project)** | Try different mode: hybrid → semantic → bm25. Add filters: `file_pattern`, `chunk_type`. Increase k |
-| **Wrong result at rank-1** | Scan all k results — answer likely at rank 2-4. Use `chunk_type` filter to exclude module/community summary chunks |
+| **Wrong result at rank-1** | Scan all k results — answer likely at rank 2-4. Use `chunk_type` filter to exclude module summary chunks |
 | **Too slow** | Use `search_mode="bm25"` for exact symbols (fastest). Check: `code-search:get_memory_status`. Free: `code-search:cleanup_resources` |
-| **Memory issues** | 1. `code-search:cleanup_resources` (core, always listed) — free indexes/models/GPU memory first. 2. For a lasting fix, switch to an embedding model lighter than the shipped default (`BAAI/bge-m3`; this machine's locally deployed default is `codefuse-ai/F2LLM-v2-0.6B` per `search_config.json`): `code-search:switch_embedding_model("google/embeddinggemma-300m")` (~1.2GB) or `code-search:switch_embedding_model("Alibaba-NLP/gte-modernbert-base")` (0.28GB, lightest) — **advanced tool, unlisted by default**; requires `MCP_EXPOSE_ADVANCED_TOOLS=1` + reconnect (see "Tool Tiers" below) |
-| **find_similar_code use-case** | Use when you have a seed chunk_id and want to find structural/semantic near-duplicates: sibling method overrides, parallel implementations across language backends, or copied-with-variation functions. Call `search_code` first to get the seed chunk_id, then `find_similar_code(chunk_id=...)`. Returns top-N similar chunks ranked by embedding similarity. |
+| **Memory issues** | 1. `code-search:cleanup_resources` (core, always listed) — free indexes/models/GPU memory first. 2. For a lasting fix, switch to the lightest of the 4 registered embedding models (`BAAI/bge-m3`, `Qwen/Qwen3-Embedding-0.6B`, `codefuse-ai/F2LLM-v2-0.6B`, `google/embeddinggemma-300m` — this machine's locally deployed default is `codefuse-ai/F2LLM-v2-0.6B` per `search_config.json`): `code-search:switch_embedding_model("google/embeddinggemma-300m")` (~1.2GB, lightest) — **advanced tool, unlisted by default**; requires `MCP_EXPOSE_ADVANCED_TOOLS=1` + reconnect (see "Tool Tiers" below) |
+| **find_similar_code use-case** | Use when you have a seed chunk_id and want to find structural/semantic near-duplicates: sibling method overrides, parallel implementations across language backends, or copied-with-variation functions. Call `search_code` first to get the seed chunk_id, then `find_similar_code(chunk_id=...)`. Returns top-N similar chunks ranked by embedding similarity. Pass `exclude_same_file=true` when you specifically want cross-file matches (e.g. parallel implementations in sibling files) — default is byte-identical results including same-file neighbors. |
 
 ---
 

@@ -747,6 +747,20 @@ class CodeGraphStorage:
         **primary** edge — the one with the highest resolver_confidence; "calls" is
         preferred on ties — preserving the single-dict contract for existing callers.
 
+        KNOWN LIMITATION (found 2026-08-03, not yet fixed): non-"calls" relationship
+        edges all default resolver_confidence to 0.0, so ties between them fall back to
+        insertion order — whichever extractor ran first in
+        chunking/relationships/relationship_extractors/registry.py's priority list wins.
+        GraphQueryEngine._traverse_outbound/_traverse_inbound (graph/graph_queries.py)
+        call this method WITHOUT relationship_type even when the caller passed a
+        relation_types filter, so a shadowed edge type is invisible to
+        find_connections(relationship_types=[...]) even though it exists in the graph
+        as its own parallel edge — confirmed for e.g. an "implements" edge to a target
+        also reached by a "uses_constant" edge (ALL_CAPS base-class names like "ABC"
+        trip both extractors). Fix direction: thread relation_types through to a keyed
+        get_edge_data() lookup per candidate type instead of collapsing to one primary
+        edge before filtering.
+
         Args:
             caller_id: Caller chunk ID (source node)
             callee_id: Callee chunk ID (target node)
@@ -943,15 +957,10 @@ class CodeGraphStorage:
             return False
 
     def clear(self) -> None:
-        """Clear all nodes and edges from the graph and remove the backing JSON files.
+        """Clear all nodes and edges from the graph and remove the backing JSON file.
 
         Deletes the on-disk call_graph.json so that subsequent CodeGraphStorage
         re-initialization does not reload stale phantom nodes from a previous index.
-        Also deletes the sibling communities.json (written by store_community_map) —
-        left behind here, it would otherwise survive a force-full reindex and get
-        read back by ego_graph_retriever/subgraph_extractor/community_refresh_stage
-        with the previous index's pre-remerge chunk_ids, the same phantom-node shape
-        the call_graph.json deletion above already guards against.
         """
         self.graph.clear()
         self._name_index.clear()
@@ -961,10 +970,6 @@ class CodeGraphStorage:
             self.logger.info("Cleared call graph (on-disk file deleted)")
         else:
             self.logger.info("Cleared call graph")
-        community_path = self.storage_dir / f"{self.project_id}_communities.json"
-        if community_path.exists():
-            community_path.unlink()
-            self.logger.info("Cleared community map (on-disk file deleted)")
 
     def remove_file_nodes(self, file_path: str) -> int:
         """Remove all graph nodes (and their incident edges) belonging to a file.
@@ -1041,30 +1046,6 @@ class CodeGraphStorage:
         # Normalize for cross-platform path consistency (#47).
         return normalize_path(chunk_id) in self.graph
 
-    def store_community_map(self, community_map: dict[str, int]) -> None:
-        """Persist community assignments to JSON file.
-
-        Args:
-            community_map: Dict mapping chunk_id -> community_id
-        """
-        community_path = self.storage_dir / f"{self.project_id}_communities.json"
-        write_json_atomic(community_path, community_map)
-        self.logger.info(
-            f"Stored {len(community_map)} community assignments to {community_path}"
-        )
-
-    def load_community_map(self) -> dict[str, int] | None:
-        """Load stored community assignments.
-
-        Returns:
-            Dict mapping chunk_id -> community_id, or None if not found
-        """
-        community_path = self.storage_dir / f"{self.project_id}_communities.json"
-        if community_path.exists():
-            with open(community_path) as f:
-                return json.load(f)
-        return None
-
     # pyrefly: ignore [missing-attribute]
     def get_graph(self) -> "nx.MultiDiGraph":
         """Expose raw NetworkX MultiDiGraph for external algorithms (e.g., PPR).
@@ -1073,17 +1054,3 @@ class CodeGraphStorage:
             The underlying NetworkX multi-directed graph.
         """
         return self.graph
-
-    def get_community_for_chunk(self, chunk_id: str) -> int | None:
-        """Get community ID for a specific chunk.
-
-        Args:
-            chunk_id: Chunk identifier
-
-        Returns:
-            Community ID (int) or None if not found
-        """
-        community_map = self.load_community_map()
-        if community_map:
-            return community_map.get(chunk_id)
-        return None

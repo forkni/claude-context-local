@@ -44,11 +44,16 @@ def main():
     )
     parser.add_argument(
         "--include-dirs",
-        help='Comma-separated directories to include (e.g., "src,lib"). Immutable after project creation.',
+        help='Comma-separated directories to include (e.g., "src,lib"). Omit to reuse '
+        "the stored list; passing this REPLACES it wholesale (not merged) and forces "
+        "a full reindex — always re-pass every directory you still want included.",
     )
     parser.add_argument(
         "--exclude-dirs",
-        help='Comma-separated directories to exclude (e.g., "tests,vendor"). Immutable after project creation.',
+        help='Comma-separated directories to exclude (e.g., "tests,vendor"). Omit to '
+        "reuse the stored list; passing this REPLACES it wholesale (not merged) and "
+        "forces a full reindex — always re-pass every directory you still want excluded, "
+        "or the omitted ones silently become indexable again.",
     )
 
     args = parser.parse_args()

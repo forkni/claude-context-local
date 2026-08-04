@@ -11,6 +11,7 @@ from chunking.multi_language_chunker import MultiLanguageChunker
 from mcp_server.guidance import add_system_message
 from mcp_server.model_pool_manager import get_embedder
 from mcp_server.search_factory import (
+    build_hybrid_searcher,
     get_index_manager,
     get_searcher,
 )
@@ -20,13 +21,12 @@ from mcp_server.tools import responses
 from mcp_server.tools.decorators import error_handler, require_indexed_project
 from mcp_server.tools.search_orchestrator import SearchOrchestrator
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
+from search.config import get_search_config
 from search.exceptions import DimensionMismatchError
-from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
 from search.metadata import MetadataStore
 from search.relationship_analyzer import RelationshipAnalyzer
-from search.storage_layout import project_id_from_model_dir_name
 
 
 logger = logging.getLogger(__name__)
@@ -163,23 +163,7 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
 
     config = get_config()
     if config.search_mode.enable_hybrid:
-        storage_dir = project_storage / "index"
-        project_id = project_id_from_model_dir_name(project_storage.name)
-        indexer = HybridSearcher(
-            storage_dir=str(storage_dir),
-            embedder=embedder,
-            bm25_weight=config.search_mode.bm25_weight,
-            dense_weight=config.search_mode.dense_weight,
-            rrf_k=config.search_mode.rrf_k_parameter,
-            max_workers=2,
-            bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
-            bm25_use_stemming=config.search_mode.bm25_use_stemming,
-            bm25_tokenizer=config.search_mode.bm25_tokenizer,
-            bm25_k1=config.search_mode.bm25_k1,
-            bm25_b=config.search_mode.bm25_b,
-            project_id=project_id,
-            config=config,
-        )
+        indexer = build_hybrid_searcher(config, project_storage, embedder)
         # Track project/model key eagerly (used by downstream get_searcher() routing).
         # Searcher bind is deferred until after auto_reindex_if_needed so we never
         # cache a HybridSearcher whose embedder was just nulled by clear_embedders().
@@ -320,7 +304,12 @@ async def handle_search_code(arguments: dict[str, Any]) -> dict:
 async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     """Find code chunks similar to a reference chunk."""
     chunk_id = arguments["chunk_id"]
-    k = arguments.get("k", 4)  # Align with default_k=4
+    # Default k from config (search_mode.default_k) — the deployed config
+    # raised default_k to 7 as a deliberate recall adjustment, and this
+    # handler's old hardcoded fallback (4) silently never picked it up.
+    # Explicit per-request k is passed through untouched.
+    k = arguments.get("k", get_search_config().search_mode.default_k)
+    exclude_same_file = arguments.get("exclude_same_file", False)
 
     # Normalize chunk_id path separators
     # Use CodeIndexManager's normalize_chunk_id for proper cross-platform handling
@@ -330,7 +319,9 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     # Offload blocking get_searcher + find_similar_to_chunk off the event loop.
     def _run_find_similar() -> list:
         _searcher = get_searcher()
-        return _searcher.find_similar_to_chunk(chunk_id, k=k)
+        return _searcher.find_similar_to_chunk(
+            chunk_id, k=k, exclude_same_file=exclude_same_file
+        )
 
     results = await asyncio.to_thread(_run_find_similar)
 

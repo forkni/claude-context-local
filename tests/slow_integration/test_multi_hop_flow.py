@@ -8,7 +8,27 @@ import pytest
 from chunking.multi_language_chunker import MultiLanguageChunker
 from search.config import MultiHopConfig, SearchConfig
 from search.hybrid_searcher import HybridSearcher
+from search.types import RetrievalRequest
 from tests.helpers.embeddings import create_test_embeddings
+
+
+def _mh_request(query, k, search_mode="hybrid", config=None):
+    """Build a RetrievalRequest for direct MultiHopSearcher.search() calls.
+
+    config defaults to a real SearchConfig() — these are integration tests
+    exercising the production multi-hop pipeline end-to-end, not mocks.
+    """
+    return RetrievalRequest(
+        query=query,
+        k=k,
+        search_mode=search_mode,
+        bm25_weight=0.35,
+        dense_weight=0.65,
+        min_bm25_score=0.0,
+        use_parallel=True,
+        filters=None,
+        config=config if config is not None else SearchConfig(),
+    )
 
 
 @pytest.mark.slow
@@ -16,12 +36,14 @@ class TestMultiHopSearchFlow:
     """Integration tests for multi-hop semantic search."""
 
     @pytest.fixture(scope="class")
-    def test_project_path(self):
+    @classmethod
+    def test_project_path(cls):
         """Path to the test Python project."""
         return Path(__file__).parent.parent / "test_data" / "python_project"
 
     @pytest.fixture(scope="class")
-    def indexed_hybrid_searcher(self, test_project_path, tmp_path_factory):
+    @classmethod
+    def indexed_hybrid_searcher(cls, test_project_path, tmp_path_factory):
         """Create indexed hybrid searcher once for the whole class."""
         # Create temp storage using tmp_path_factory for class scope
         tmp_path = tmp_path_factory.mktemp("multi_hop_test")
@@ -45,8 +67,6 @@ class TestMultiHopSearchFlow:
         hybrid_searcher = HybridSearcher(
             storage_dir=str(storage_dir),
             embedder=None,  # Don't need embedder for deterministic test
-            bm25_weight=0.4,
-            dense_weight=0.6,
         )
 
         # Index documents
@@ -84,7 +104,7 @@ class TestMultiHopSearchFlow:
 
         # Multi-hop search
         multi_hop_results = hybrid_searcher.multi_hop_searcher.search(
-            query=query, k=3, search_mode="hybrid", hops=2, expansion_factor=0.3
+            _mh_request(query, k=3), hops=2, expansion_factor=0.3
         )
 
         # Verify results
@@ -112,12 +132,12 @@ class TestMultiHopSearchFlow:
 
         # Low expansion
         low_expansion_results = hybrid_searcher.multi_hop_searcher.search(
-            query=query, k=k, hops=2, expansion_factor=0.2
+            _mh_request(query, k=k), hops=2, expansion_factor=0.2
         )
 
         # High expansion
         high_expansion_results = hybrid_searcher.multi_hop_searcher.search(
-            query=query, k=k, hops=2, expansion_factor=0.8
+            _mh_request(query, k=k), hops=2, expansion_factor=0.8
         )
 
         # Both should return results
@@ -139,17 +159,17 @@ class TestMultiHopSearchFlow:
 
         # 1 hop (should be same as regular search)
         results_1_hop = hybrid_searcher.multi_hop_searcher.search(
-            query=query, k=k, hops=1, expansion_factor=0.3
+            _mh_request(query, k=k), hops=1, expansion_factor=0.3
         )
 
         # 2 hops (default)
         results_2_hops = hybrid_searcher.multi_hop_searcher.search(
-            query=query, k=k, hops=2, expansion_factor=0.3
+            _mh_request(query, k=k), hops=2, expansion_factor=0.3
         )
 
         # 3 hops
         results_3_hops = hybrid_searcher.multi_hop_searcher.search(
-            query=query, k=k, hops=3, expansion_factor=0.3
+            _mh_request(query, k=k), hops=3, expansion_factor=0.3
         )
 
         # All should return results
@@ -187,7 +207,7 @@ class TestMultiHopSearchFlow:
 
         # Multi-hop search
         results = hybrid_searcher.multi_hop_searcher.search(
-            query="database query", k=5, hops=2, expansion_factor=0.5
+            _mh_request("database query", k=5), hops=2, expansion_factor=0.5
         )
 
         # Verify no duplicate chunk_ids
@@ -205,7 +225,9 @@ class TestMultiHopSearchFlow:
 
         # Multi-hop search
         results = hybrid_searcher.multi_hop_searcher.search(
-            query="user authentication validation", k=5, hops=2, expansion_factor=0.3
+            _mh_request("user authentication validation", k=5),
+            hops=2,
+            expansion_factor=0.3,
         )
 
         assert len(results) > 0

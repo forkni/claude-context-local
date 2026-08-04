@@ -4,10 +4,12 @@ import dataclasses
 import json
 import logging
 import os
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # Import DEFAULT_EDGE_WEIGHTS for ego-graph weighted BFS
 from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
@@ -15,14 +17,6 @@ from search.config_paths import resolve_config_path
 from utils.atomic_io import write_json_atomic
 
 
-# MODEL_REGISTRY convention for ONNX support:
-# - "onnx_supported": False  -> ONNX path is skipped in _should_use_onnx().
-#   Use this when the upstream pooling mode is not handled by
-#   embeddings/onnx_wrapper.py (which supports only "cls" and "mean").
-# - Key absent (or True)     -> ONNX path allowed, subject to other gates
-#   (trust_remote_code, performance.use_onnx, etc.).
-# New models with non-cls/mean pooling (lasttoken, weightedmean, etc.) MUST
-# set onnx_supported: False explicitly until onnx_wrapper.py gains support.
 MODEL_REGISTRY = {
     "google/embeddinggemma-300m": {
         "dimension": 768,
@@ -31,7 +25,6 @@ MODEL_REGISTRY = {
         "description": "Default model, fast and efficient",
         "vram_gb": "~1.2GB",  # 300M params @FP16 ≈0.6GB weights + buffers; original "4-8GB" was stale estimate
         "fallback_batch_size": 128,  # Used when dynamic sizing disabled
-        "onnx_pooling": "mean",  # Gemma uses mean pooling
     },
     "BAAI/bge-m3": {
         "dimension": 1024,
@@ -39,7 +32,6 @@ MODEL_REGISTRY = {
         "description": "Recommended upgrade, hybrid search support",
         "vram_gb": "1-1.5GB",  # Updated from "3-4GB" (actual measured: 1.07GB)
         "fallback_batch_size": 256,  # Used when dynamic sizing disabled
-        "onnx_pooling": "cls",  # BGE uses CLS pooling (confirmed by Optimum notebook)
     },
     "Qwen/Qwen3-Embedding-0.6B": {
         "dimension": 1024,
@@ -48,7 +40,6 @@ MODEL_REGISTRY = {
         "vram_gb": "2.3GB",
         "fallback_batch_size": 256,
         "vram_tier": "minimal",  # Usable on all GPUs
-        "onnx_pooling": "mean",  # Qwen3-Embedding uses mean pooling
         # Matryoshka Representation Learning (MRL) support
         "mrl_dimensions": [1024, 512, 256, 128, 64, 32],  # Supported MRL dimensions
         "truncate_dim": None,  # Optional: Set to reduce output dimension (e.g., 512)
@@ -57,28 +48,6 @@ MODEL_REGISTRY = {
         "query_instruction": "Instruct: Retrieve source code implementations matching the query\nQuery: ",
         "prompt_name": "query",  # Alternative: use model's built-in prompt (generic)
     },
-    # Code-specific models (optimized for Python, C++, and programming languages)
-    "nomic-ai/CodeRankEmbed": {
-        "dimension": 768,
-        "max_context": 8192,
-        "description": "Code-specific embedding model (CSN: 77.9 MRR, CoIR: 60.1 NDCG@10)",
-        "vram_gb": "0.5-0.6GB",  # Updated from "2GB" (actual measured: 0.52GB)
-        "fallback_batch_size": 128,
-        "model_type": "code-specific",
-        "task_instruction": "Represent this query for searching relevant code",  # Required query prefix
-        "trust_remote_code": True,
-        # Upstream pooling is CLS; `.get("onnx_pooling", "cls")` in model_loader
-        # defaults correctly. ONNX is blocked anyway via trust_remote_code=True.
-    },
-    "Alibaba-NLP/gte-modernbert-base": {
-        "dimension": 768,
-        "max_context": 8192,
-        "description": "Lightweight code-optimized model (CoIR: 79.31 NDCG@10, 144 docs/s throughput)",
-        "vram_gb": "0.28GB",
-        "fallback_batch_size": 256,
-        "model_type": "code-optimized",
-        "onnx_pooling": "cls",  # GTE-ModernBERT uses CLS pooling
-    },
     "codefuse-ai/F2LLM-v2-0.6B": {
         "dimension": 1024,
         "max_context": 40960,
@@ -86,7 +55,6 @@ MODEL_REGISTRY = {
         "vram_gb": "2.2GB",
         "fallback_batch_size": 256,
         "vram_tier": "minimal",  # Usable on all GPUs
-        "onnx_supported": False,  # Last-token (EOS) pooling not handled by onnx_wrapper
         # Instruction tuning for code retrieval (same "Instruct: ...\nQuery: "
         # template family as Qwen3-Embedding; documents are embedded raw)
         "instruction_mode": "custom",  # "custom" or "prompt_name"
@@ -101,27 +69,125 @@ MODEL_REGISTRY = {
 # of discovery quality and performance (+25-35ms overhead, 93%+ queries benefit)
 
 
+def spec(
+    *,
+    range: tuple[float, float] | None = None,
+    choices: tuple[str, ...] | None = None,
+    flat_alias: str | None = None,
+    env: str | None = None,
+    mcp: str | None = None,
+    reader: str | None = None,
+    schema_only: bool = False,
+    construction_baked: bool = False,
+) -> dict[str, Any]:
+    """Build a ``field(metadata=...)`` dict for one config field — the single
+    declaration site for its validation rule, legacy/env alias, MCP exposure,
+    and liveness anchor (see ADR-0022).
+
+    Every key is explicit and defaults to absent/``None`` — nothing here is
+    inferred from the field's name, so a field with no alias or no env var
+    stays that way rather than acquiring one by convention.  ``reader`` names
+    the production file whose behavior the field actually controls (checked
+    by ``test_config_field_liveness.py``); ``schema_only=True`` is the escape
+    hatch for a field that has no single behavioral reader. ``construction_baked``
+    marks a field that is read once into a collaborator at construction time
+    (e.g. a cached ``HybridSearcher``/reranker instance) rather than live per
+    call — mutating it on the config singleton is a no-op until that
+    collaborator is rebuilt (see ``evaluation/arm_overrides.py``'s
+    ``requires_rebuild`` and Part 2 / C1 of the ADR-0018 follow-on plan).
+    """
+    meta: dict[str, Any] = {}
+    if range is not None:
+        meta["range"] = range
+    if choices is not None:
+        meta["choices"] = choices
+    if flat_alias is not None:
+        meta["flat_alias"] = flat_alias
+    if env is not None:
+        meta["env"] = env
+    if mcp is not None:
+        meta["mcp"] = mcp
+    if reader is not None:
+        meta["reader"] = reader
+    if schema_only:
+        meta["schema_only"] = True
+    if construction_baked:
+        meta["construction_baked"] = True
+    return meta
+
+
 @dataclass
 class EmbeddingConfig:
     """Embedding model configuration (11 fields)."""
 
-    model_name: str = "BAAI/bge-m3"
-    dimension: int = 1024
-    batch_size: int = 128  # Dynamic based on model, see MODEL_REGISTRY
-    query_cache_size: int = 128  # LRU cache size for query embeddings
+    model_name: str = field(
+        default="BAAI/bge-m3",
+        metadata=spec(
+            flat_alias="embedding_model_name",
+            env="CLAUDE_EMBEDDING_MODEL",
+            reader="embeddings/model_loader.py",
+        ),
+    )
+    dimension: int = field(
+        default=1024,
+        metadata=spec(flat_alias="model_dimension", reader="embeddings/embedder.py"),
+    )
+    batch_size: int = field(
+        default=64,  # Dynamic based on model, see MODEL_REGISTRY
+        metadata=spec(
+            flat_alias="embedding_batch_size",
+            env="CLAUDE_EMBEDDING_BATCH_SIZE",
+            reader="embeddings/embedder.py",
+        ),
+    )
+    query_cache_size: int = field(
+        default=128,  # LRU cache size for query embeddings
+        metadata=spec(
+            flat_alias="query_cache_size",
+            env="CLAUDE_QUERY_CACHE_SIZE",
+            reader="embeddings/embedder.py",
+        ),
+    )
 
     # Context Enhancement Features (v0.8.0+)
-    enable_import_context: bool = True  # Include import statements in embeddings
-    enable_class_context: bool = True  # Include parent class signature for methods
-    max_import_lines: int = 10  # Maximum import lines to extract
-    max_class_signature_lines: int = 5  # Maximum lines for class signature
-    enable_structural_header: bool = (
-        True  # Prepend file path + chunk type + qualified name
+    enable_import_context: bool = field(
+        default=True,  # Include import statements in embeddings
+        metadata=spec(
+            flat_alias="enable_import_context", reader="embeddings/embedder.py"
+        ),
+    )
+    enable_class_context: bool = field(
+        default=True,  # Include parent class signature for methods
+        metadata=spec(
+            flat_alias="enable_class_context", reader="embeddings/embedder.py"
+        ),
+    )
+    max_import_lines: int = field(
+        default=25,  # Maximum import lines to extract
+        metadata=spec(flat_alias="max_import_lines", reader="embeddings/embedder.py"),
+    )
+    max_class_signature_lines: int = field(
+        default=20,  # Maximum lines for class signature
+        metadata=spec(
+            flat_alias="max_class_signature_lines", reader="embeddings/embedder.py"
+        ),
+    )
+    enable_structural_header: bool = field(
+        default=True,  # Prepend file path + chunk type + qualified name
+        metadata=spec(
+            flat_alias="enable_structural_header", reader="embeddings/embedder.py"
+        ),
     )
 
     # Persistent content-hash embedding cache (Round 3)
-    enable_chunk_cache: bool = True  # Skip GPU re-embedding for unchanged chunks
-    chunk_cache_max_entries: int = 0  # 0 = auto (max(2 * live_keys, 2_000), 32MB clamp)
+    enable_chunk_cache: bool = field(
+        default=True,  # Skip GPU re-embedding for unchanged chunks
+        metadata=spec(reader="embeddings/chunk_cache.py"),
+    )
+    chunk_cache_max_entries: int = field(
+        default=0,  # 0 = auto (max(2 * live_keys, 2_000), 32MB clamp)
+        metadata=spec(reader="embeddings/chunk_cache.py"),
+    )
 
 
 class SearchMode(StrEnum):
@@ -148,13 +214,46 @@ class SearchModeConfig:
     # is itself a valid str default since StrEnum subclasses str.
     default_mode: str = field(
         default=SearchMode.HYBRID,
-        metadata={"choices": tuple(m.value for m in SearchMode)},
+        metadata=spec(
+            choices=tuple(m.value for m in SearchMode),
+            flat_alias="default_search_mode",
+            env="CLAUDE_SEARCH_MODE",
+            reader="mcp_server/server.py",
+        ),
     )  # hybrid, semantic, bm25, auto
-    enable_hybrid: bool = True
+    enable_hybrid: bool = field(
+        default=True,
+        metadata=spec(
+            flat_alias="enable_hybrid_search",
+            env="CLAUDE_ENABLE_HYBRID",
+            reader="mcp_server/search_factory.py",
+        ),
+    )
 
     # Hybrid Search Weights
-    bm25_weight: float = 0.35
-    dense_weight: float = 0.65
+    #
+    # NOT construction_baked: HybridSearcher.__init__ takes no weight
+    # parameters. Both fields are read live from effective_config on every
+    # search() call (hybrid_searcher.py:731-739), so mutating them on the
+    # live config takes effect on the next call — no searcher rebuild needed.
+    bm25_weight: float = field(
+        default=0.35,
+        metadata=spec(
+            range=(0.0, 1.0),
+            flat_alias="bm25_weight",
+            env="CLAUDE_BM25_WEIGHT",
+            reader="search/hybrid_searcher.py",
+        ),
+    )
+    dense_weight: float = field(
+        default=0.65,
+        metadata=spec(
+            range=(0.0, 1.0),
+            flat_alias="dense_weight",
+            env="CLAUDE_DENSE_WEIGHT",
+            reader="search/hybrid_searcher.py",
+        ),
+    )
 
     # BM25 Configuration
     # Okapi BM25 scoring parameters (rank_bm25 defaults). k1 controls term-
@@ -162,10 +261,26 @@ class SearchModeConfig:
     # at query time — changing them takes effect on next load, no re-index
     # needed. (Replaces the dead ``bm25_k_parameter`` field, which was never
     # read by any scoring path.)
-    bm25_k1: float = 1.5
-    bm25_b: float = 0.75
-    bm25_use_stopwords: bool = True
-    bm25_use_stemming: bool = True  # Snowball stemmer for word normalization
+    bm25_k1: float = field(
+        default=1.5,
+        metadata=spec(flat_alias="bm25_k1", reader="search/index_sync.py"),
+    )
+    bm25_b: float = field(
+        default=0.75,
+        metadata=spec(flat_alias="bm25_b", reader="search/index_sync.py"),
+    )
+    bm25_use_stopwords: bool = field(
+        default=True,
+        metadata=spec(flat_alias="bm25_use_stopwords", reader="search/index_sync.py"),
+    )
+    bm25_use_stemming: bool = field(
+        default=True,  # Snowball stemmer for word normalization
+        metadata=spec(
+            flat_alias="bm25_use_stemming",
+            env="CLAUDE_BM25_USE_STEMMING",
+            reader="search/index_sync.py",
+        ),
+    )
     # Tokenizer variant (arXiv 2605.18561): "legacy" = destructive camel/snake
     # split + stemming; "whole" = identifiers kept intact, no stemming;
     # "additive" = whole identifiers + camel/snake sub-tokens. Changing this
@@ -174,7 +289,11 @@ class SearchModeConfig:
     # 96q/63q golden sets (BM25-standalone, bm25_tokenizer_ab.py 2026-07-26).
     bm25_tokenizer: str = field(
         default="whole",
-        metadata={"choices": ("legacy", "whole", "additive")},
+        metadata=spec(
+            choices=("legacy", "whole", "additive"),
+            flat_alias="bm25_tokenizer",
+            reader="search/index_sync.py",
+        ),
     )
     # Reserved fused-pool slots for BM25-unique candidates. Under weighted RRF
     # (bm25 0.35 / dense 0.65, rrf_k 100) the best BM25-unique candidate scores
@@ -182,79 +301,238 @@ class SearchModeConfig:
     # (see evaluation/POOL_MISS_DIAGNOSIS.md). N > 0 fills the last N pool
     # slots with the top BM25-only candidates so the neural reranker can judge
     # them. 0 = disabled (today's behavior).
-    bm25_reserved_slots: int = 0
-    min_bm25_score: float = 0.1
+    bm25_reserved_slots: int = field(
+        default=0,
+        metadata=spec(
+            flat_alias="bm25_reserved_slots", reader="search/search_executor.py"
+        ),
+    )
+    min_bm25_score: float = field(
+        default=0.1,
+        metadata=spec(flat_alias="min_bm25_score", reader="search/search_executor.py"),
+    )
 
     # Reranking Configuration
-    rrf_k_parameter: int = 100
-    enable_result_reranking: bool = True
+    rrf_k_parameter: int = field(
+        default=100,
+        metadata=spec(
+            flat_alias="rrf_k_parameter",
+            reader="mcp_server/search_factory.py",
+            construction_baked=True,
+        ),
+    )
 
     # Search Result Limits
-    default_k: int = (
-        4  # Reduced from 5: 0% result loss post-ego-fix + 20% token savings
+    default_k: int = field(
+        default=7,
+        metadata=spec(
+            range=(1, 50),
+            flat_alias="default_k",
+            env="CLAUDE_DEFAULT_K",
+            reader="mcp_server/tools/search_handlers.py",
+        ),
+    )  # SSCG MRR +0.093, R@7 +0.122 vs 4 (commit 447dc9a); aligned with
+    # find_similar_code's default (commit 730f67c)
+    max_k: int = field(
+        default=50,
+        metadata=spec(
+            flat_alias="max_k",
+            env="CLAUDE_MAX_K",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
     )
-    max_k: int = 50
 
     # Context budget (0 = unlimited)
-    default_max_context_tokens: int = 0
+    default_max_context_tokens: int = field(
+        default=0,
+        metadata=spec(reader="mcp_server/tools/search_orchestrator.py"),
+    )
 
 
 @dataclass
 class PerformanceConfig:
-    """GPU, parallelism, caching settings (17 fields)."""
+    """GPU, parallelism, caching settings (16 fields)."""
 
-    use_parallel_search: bool = True
-    max_parallel_workers: int = 2
+    use_parallel_search: bool = field(
+        default=True,
+        metadata=spec(
+            flat_alias="use_parallel_search",
+            env="CLAUDE_USE_PARALLEL",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
+    max_parallel_workers: int = field(
+        default=2,
+        metadata=spec(
+            flat_alias="max_parallel_workers", reader="mcp_server/search_factory.py"
+        ),
+    )
 
     # Parallel Chunking Configuration
-    enable_parallel_chunking: bool = True  # Enable parallel file chunking
-    max_chunking_workers: int = 4  # ThreadPoolExecutor workers for chunking
-    enable_entity_tracking: bool = (
-        False  # Enable P4-5 entity extractors (enums, defaults, context managers)
+    enable_parallel_chunking: bool = field(
+        default=True,  # Enable parallel file chunking
+        metadata=spec(
+            flat_alias="enable_parallel_chunking",
+            env="CLAUDE_ENABLE_PARALLEL_CHUNKING",
+            reader="search/incremental_indexer.py",
+        ),
+    )
+    max_chunking_workers: int = field(
+        default=8,  # ThreadPoolExecutor workers for chunking
+        metadata=spec(
+            flat_alias="max_chunking_workers",
+            env="CLAUDE_MAX_CHUNKING_WORKERS",
+            reader="search/incremental_indexer.py",
+        ),
+    )
+    enable_entity_tracking: bool = field(
+        default=True,  # Enable P4-5 entity extractors (enums, defaults, context managers)
+        metadata=spec(
+            flat_alias="enable_entity_tracking",
+            env="CLAUDE_ENABLE_ENTITY_TRACKING",
+            reader="chunking/multi_language_chunker.py",
+        ),
     )
 
     # GPU Configuration
-    prefer_gpu: bool = True
-    vram_limit_fraction: float = 0.80  # Hard VRAM ceiling (80% of dedicated)
-    allow_ram_fallback: bool = (
-        False  # Allow spillover to system RAM (slower but reliable)
+    prefer_gpu: bool = field(
+        default=True,
+        metadata=spec(
+            flat_alias="prefer_gpu",
+            env="CLAUDE_PREFER_GPU",
+            reader="embeddings/embedder.py",
+        ),
+    )
+    vram_limit_fraction: float = field(
+        default=0.80,  # Hard VRAM ceiling (80% of dedicated)
+        metadata=spec(reader="embeddings/embedder.py"),
+    )
+    allow_ram_fallback: bool = field(
+        default=True,  # Allow spillover to system RAM (slower but reliable); indexing
+        # overrides this locally via temporary_ram_fallback_off()
+        metadata=spec(
+            flat_alias="allow_shared_memory", reader="embeddings/embedder.py"
+        ),
     )
 
     # Precision Configuration (fp16/bf16 for faster inference)
-    enable_fp16: bool = True  # Enable fp16 for GPU (30-50% faster inference)
-    prefer_bf16: bool = True  # Prefer bf16 on Ampere+ GPUs (better accuracy than fp16)
+    enable_fp16: bool = field(
+        default=True,  # Enable fp16 for GPU (30-50% faster inference)
+        metadata=spec(
+            flat_alias="enable_fp16",
+            env="CLAUDE_ENABLE_FP16",
+            reader="embeddings/model_loader.py",
+        ),
+    )
+    prefer_bf16: bool = field(
+        default=True,  # Prefer bf16 on Ampere+ GPUs (better accuracy than fp16)
+        metadata=spec(
+            flat_alias="prefer_bf16",
+            env="CLAUDE_PREFER_BF16",
+            reader="embeddings/model_loader.py",
+        ),
+    )
 
     # Dynamic Batch Sizing (GPU-based optimization)
-    enable_dynamic_batch_size: bool = True  # Enable GPU-based auto-sizing
-    dynamic_batch_min: int = (
-        16  # Minimum batch size (lowered for fragmentation headroom)
+    enable_dynamic_batch_size: bool = field(
+        default=True,  # Enable GPU-based auto-sizing
+        metadata=spec(
+            flat_alias="enable_dynamic_batch_size",
+            env="CLAUDE_DYNAMIC_BATCH_ENABLED",
+            reader="embeddings/embedder.py",
+        ),
     )
-    dynamic_batch_max: int = 384  # Maximum batch size (safer for 8-16GB GPUs)
-
-    # ONNX Runtime inference (optional — requires uv pip install -e .[onnx])
-    use_onnx: bool = (
-        False  # When True, loads eligible models via ORTModelForFeatureExtraction
+    dynamic_batch_min: int = field(
+        default=16,  # Minimum batch size (lowered for fragmentation headroom)
+        metadata=spec(
+            flat_alias="dynamic_batch_min",
+            env="CLAUDE_DYNAMIC_BATCH_MIN",
+            reader="embeddings/embedder.py",
+        ),
     )
-    # Constrain ORT CUDAExecutionProvider arena (same formula as set_vram_limit()).
-    # Disable only for debugging — prevents WDDM spillover for ONNX sessions.
-    onnx_gpu_mem_limit: bool = True
+    dynamic_batch_max: int = field(
+        default=64,  # Maximum batch size (safer for 8-16GB GPUs)
+        metadata=spec(
+            flat_alias="dynamic_batch_max",
+            env="CLAUDE_DYNAMIC_BATCH_MAX",
+            reader="embeddings/embedder.py",
+        ),
+    )
 
     # Auto-reindexing
-    enable_auto_reindex: bool = True
-    max_index_age_minutes: float = 5.0
+    enable_auto_reindex: bool = field(
+        default=True,
+        metadata=spec(
+            flat_alias="enable_auto_reindex",
+            env="CLAUDE_AUTO_REINDEX",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
+    max_index_age_minutes: float = field(
+        default=30.0,
+        metadata=spec(
+            flat_alias="max_index_age_minutes",
+            env="CLAUDE_MAX_INDEX_AGE",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
+
+    # Per-project overrides layer (ADR-0014). Read from the GLOBAL config layer
+    # only (an overrides file cannot re-enable itself). Env escape hatch:
+    # CLAUDE_DISABLE_PROJECT_OVERRIDES.
+    enable_project_overrides: bool = field(
+        default=True,
+        metadata=spec(reader="search/index_probe.py"),
+    )
 
 
 @dataclass
 class MultiHopConfig:
     """Multi-hop search settings (6 fields)."""
 
-    enabled: bool = True
-    hop_count: int = 2  # Number of expansion hops
-    expansion: float = 0.3  # Expansion factor per hop
-    initial_k_multiplier: float = 2.0  # Multiplier for initial results (k * multiplier)
-    multi_hop_mode: str = "hybrid"  # "semantic" | "graph" | "hybrid"
-    edge_weights: dict[str, float] | None = (
-        None  # Intent-specific weights (None = DEFAULT_EDGE_WEIGHTS)
+    enabled: bool = field(
+        default=True,
+        metadata=spec(
+            flat_alias="enable_multi_hop",
+            env="CLAUDE_ENABLE_MULTI_HOP",
+            reader="search/hybrid_searcher.py",
+        ),
+    )
+    hop_count: int = field(
+        default=2,
+        metadata=spec(
+            range=(1, 3),
+            flat_alias="multi_hop_count",
+            env="CLAUDE_MULTI_HOP_COUNT",
+            reader="search/hybrid_searcher.py",
+        ),
+    )  # Number of expansion hops
+    expansion: float = field(
+        default=0.5,  # Expansion factor per hop (0.25 arm rejected 2026-08-02:
+        # replicated recall losses H034/H067; 0.5 stays)
+        metadata=spec(
+            flat_alias="multi_hop_expansion",
+            env="CLAUDE_MULTI_HOP_EXPANSION",
+            reader="search/hybrid_searcher.py",
+        ),
+    )
+    initial_k_multiplier: float = field(
+        default=2.0,  # Multiplier for initial results (k * multiplier)
+        metadata=spec(
+            flat_alias="multi_hop_initial_k_multiplier",
+            env="CLAUDE_MULTI_HOP_INITIAL_K_MULTIPLIER",
+            reader="search/multi_hop_searcher.py",
+        ),
+    )
+    multi_hop_mode: str = field(
+        default="hybrid",  # "semantic" | "graph" | "hybrid"
+        metadata=spec(
+            flat_alias="multi_hop_mode", reader="search/multi_hop_searcher.py"
+        ),
+    )
+    edge_weights: dict[str, float] | None = field(
+        default=None,  # Intent-specific weights (None = DEFAULT_EDGE_WEIGHTS)
+        metadata=spec(reader="search/hybrid_searcher.py"),
     )
 
 
@@ -262,120 +540,298 @@ class MultiHopConfig:
 class IntentConfig:
     """Intent classification settings (6 fields)."""
 
-    enabled: bool = True  # Enable intent classification for query routing
-    confidence_threshold: float = 0.35  # Minimum confidence for intent-specific routing
-    default_intent: str = "HYBRID"  # Default intent when confidence is low
-    log_classifications: bool = True  # Log intent classification decisions
-    semantic_enabled: bool = False  # Enable semantic anchor-embedding scoring (opt-in)
-    semantic_weight: float = 0.3  # Semantic score weight in ensemble (0.0-1.0)
+    enabled: bool = field(
+        default=True,  # Enable intent classification for query routing
+        metadata=spec(
+            flat_alias="intent_enabled",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
+    confidence_threshold: float = field(
+        default=0.4,  # Minimum confidence for intent-specific routing
+        metadata=spec(
+            flat_alias="intent_confidence_threshold",
+            reader="search/intent_classifier.py",
+        ),
+    )
+    default_intent: str = field(
+        default="HYBRID",  # Default intent when confidence is low
+        metadata=spec(
+            flat_alias="intent_default_intent", reader="search/intent_classifier.py"
+        ),
+    )
+    log_classifications: bool = field(
+        default=True,  # Log intent classification decisions
+        metadata=spec(
+            flat_alias="intent_log_classifications",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
+    semantic_enabled: bool = field(
+        default=True,  # Enable semantic anchor-embedding scoring
+        metadata=spec(
+            flat_alias="intent_semantic_enabled",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
+    semantic_weight: float = field(
+        default=0.3,  # Semantic score weight in ensemble (0.0-1.0)
+        metadata=spec(
+            flat_alias="intent_semantic_weight",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
 
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (7 fields)."""
+    """Neural reranker settings (12 fields)."""
 
-    enabled: bool = True  # Enabled by default (Quality First)
-    model_name: str = (
-        "Alibaba-NLP/gte-reranker-modernbert-base"  # Cross-encoder reranker model
+    enabled: bool = field(
+        default=True,  # Enabled by default (Quality First)
+        metadata=spec(
+            flat_alias="reranker_enabled",
+            env="CLAUDE_RERANKER_ENABLED",
+            mcp="reranker",
+            reader="search/reranking_engine.py",
+        ),
     )
-    top_k_candidates: int = 30  # Rerank top 30 from RRF (Q2 sweep 2026-07-26:
-    # 30 vs 50 quality-neutral within ±0.025 on both golden sets, -32% latency;
-    # listwise reranking saturates ≈30 candidates)
-    min_vram_gb: float = 2.0  # Auto-disable below this threshold (reranker uses ~1.5GB)
-    batch_size: int = 16  # Reranker inference batch size
-    dedupe_split_blocks: bool = (
-        True  # Collapse split_block fragments to one result before final truncation
+    model_name: str = field(
+        default="Alibaba-NLP/gte-reranker-modernbert-base",  # Cross-encoder reranker model
+        metadata=spec(
+            flat_alias="reranker_model_name",
+            env="CLAUDE_RERANKER_MODEL",
+            mcp="reranker",
+            reader="search/reranking_engine.py",
+        ),
     )
-    single_pass: bool = False  # Q3: skip hop-1 and multi-hop-merge neural rerank
-    # passes; run ONE listwise pass over the final merged pool (hop-1 + multi-hop
-    # + ego expansion) at the tail of HybridSearcher.search(). Trade-off: multi-hop
-    # expansion seeds degrade from neural-reranked to RRF-fusion order.
+    top_k_candidates: int = field(
+        default=30,  # Rerank top 30 from RRF (Q2 sweep 2026-07-26:
+        # 30 vs 50 quality-neutral within ±0.025 on both golden sets, -32% latency;
+        # listwise reranking saturates ≈30 candidates)
+        metadata=spec(
+            range=(5, 100),
+            flat_alias="reranker_top_k_candidates",
+            env="CLAUDE_RERANKER_TOP_K",
+            mcp="reranker",
+            reader="search/reranking_engine.py",
+        ),
+    )
+    min_vram_gb: float = field(
+        default=2.0,  # Auto-disable below this threshold (reranker uses ~1.5GB)
+        metadata=spec(
+            flat_alias="reranker_min_vram_gb",
+            env="CLAUDE_RERANKER_MIN_VRAM_GB",
+            mcp="reranker_echo",
+            reader="search/reranking_engine.py",
+        ),
+    )
+    batch_size: int = field(
+        default=16,  # Reranker inference batch size
+        metadata=spec(
+            flat_alias="reranker_batch_size",
+            env="CLAUDE_RERANKER_BATCH_SIZE",
+            mcp="reranker_echo",
+            reader="search/reranking_engine.py",
+        ),
+    )
+    dedupe_split_blocks: bool = field(
+        default=True,  # Collapse split_block fragments to one result before final truncation
+        metadata=spec(
+            flat_alias="reranker_dedupe_split_blocks",
+            env="CLAUDE_RERANKER_DEDUPE_SPLIT_BLOCKS",
+            reader="search/reranking_engine.py",
+        ),
+    )
+    single_pass: bool = field(
+        default=False,  # Q3: skip hop-1 and multi-hop-merge neural rerank
+        # passes; run ONE listwise pass over the final merged pool (hop-1 + multi-hop
+        # + ego expansion) at the tail of HybridSearcher.search(). Trade-off: multi-hop
+        # expansion seeds degrade from neural-reranked to RRF-fusion order.
+        metadata=spec(
+            flat_alias="reranker_single_pass",
+            env="CLAUDE_RERANKER_SINGLE_PASS",
+            reader="search/search_executor.py",
+        ),
+    )
+    instruction: str = field(
+        default="",  # GenerativeReranker only. Empty means "use the
+        # model's built-in code-retrieval default" (see GenerativeReranker docstring).
+        metadata=spec(
+            flat_alias="reranker_instruction",
+            env="CLAUDE_RERANKER_INSTRUCTION",
+            reader="search/reranking_engine.py",
+        ),
+    )
+    doc_max_chars: int = field(
+        default=4000,  # GenerativeReranker only (pointwise — cost scales
+        # with batch_size, so it can afford a larger per-document budget).
+        metadata=spec(
+            flat_alias="reranker_doc_max_chars",
+            env="CLAUDE_RERANKER_DOC_MAX_CHARS",
+            reader="search/reranking_engine.py",
+            construction_baked=True,
+        ),
+    )
+    listwise_doc_max_chars: int = field(
+        default=1000,  # JinaRerankerV3 only (listwise — ALL
+        # candidates share one context window, so cost is O(n^2) in the packed
+        # sequence length via attention activation memory — not context-window
+        # occupancy). A 4-run SSCG sweep at 4000 measured peak_vram_reserved_gb
+        # 27.66 on a 24GB card (WDDM shared-memory spill, no OOM raised — see
+        # allow_ram_fallback), 42-45/96 queries stalling past 8s (max 354.9s),
+        # and every quality metric flat-to-negative within the +/-0.02 MRR noise
+        # floor vs this default. See docs/adr/0011-listwise-reranker-doc-cap.md.
+        metadata=spec(
+            flat_alias="reranker_listwise_doc_max_chars",
+            env="CLAUDE_RERANKER_LISTWISE_DOC_MAX_CHARS",
+            reader="search/reranking_engine.py",
+            construction_baked=True,
+        ),
+    )
+    listwise_dtype: str = field(
+        default="auto",
+        metadata=spec(
+            choices=("auto", "fp32", "bf16", "fp16"),
+            flat_alias="reranker_listwise_dtype",
+            env="CLAUDE_RERANKER_LISTWISE_DTYPE",
+            reader="search/reranking_engine.py",
+            construction_baked=True,
+        ),
+    )  # JinaRerankerV3 only. Weight dtype for the
+    # listwise reranker: "auto" (checkpoint default — bf16), "fp32", "bf16",
+    # or "fp16". bf16 listwise scoring is run-to-run non-deterministic at
+    # ranking boundaries (4-5 golden queries flip between identical SSCG
+    # runs); "fp32" trades ~2x reranker VRAM (~2.4 GB for the 0.6B model)
+    # for reproducible scores. Construction-baked like listwise_doc_max_chars:
+    # _ensure_reranker() rebuilds only on model_name change, so a dtype-only
+    # config change needs a searcher reset to take effect (the SSCG
+    # benchmark's --reranker-dtype handles this via
+    # _maybe_reset_for_construction_overrides).
+    hop1_reserved_slots: int = field(
+        default=6,  # Reserve up to N hop-1-ranked candidates into
+        # the multi-hop rerank window (rerank_by_query) when hop-2 expansion pushes
+        # them out via score-scale incomparability at the top_k_candidates cut
+        # (hop-1 jina scores vs. raw cosine/0.0 expansion scores sorted together).
+        # 6 chosen by A/B sweep (N=5,6,8,9,10 probed; N>=8 starts evicting other
+        # golds' window slots as collateral damage; N=10 aggregate-regressed MRR
+        # on the 96q set). N=6: MRR flat within +/-0.02 noise on 96q and 63q,
+        # recall@20/recall@50/pool_hit_rate all positive on both, no latency cost.
+        # 0 disables (byte-identical to pre-fix behaviour). See
+        # docs/adr/0013-hop1-reserve-at-final-pool.md.
+        metadata=spec(
+            flat_alias="reranker_hop1_reserved_slots",
+            env="CLAUDE_RERANKER_HOP1_RESERVED_SLOTS",
+            reader="search/multi_hop_searcher.py",
+        ),
+    )
 
 
 @dataclass
 class OutputConfig:
     """MCP output formatting settings (4 fields)."""
 
-    format: str = (
-        "ultra"  # verbose, compact, ultra (default: ultra for 45-55% token reduction)
+    format: str = field(
+        default="ultra",  # verbose, compact, ultra (default: ultra for 45-55% token reduction)
+        metadata=spec(flat_alias="output_format", reader="mcp_server/server.py"),
     )
-    source_order_output: bool = False  # Emit results in relevance order (blended_score desc); set True to restore DOS-RAG file/line ordering
-    include_subgraph: bool = (
-        False  # Serialize ego_graph subgraph_* blocks into the response
+    source_order_output: bool = field(
+        default=False,  # Emit results in relevance order (blended_score desc); set True to restore DOS-RAG file/line ordering
+        metadata=spec(
+            flat_alias="source_order_output",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
     )
-    include_result_graph: bool = False  # Attach per-result `graph` dict to each result
+    include_subgraph: bool = field(
+        default=False,  # Serialize ego_graph subgraph_* blocks into the response
+        metadata=spec(
+            flat_alias="include_subgraph", reader="search/graph_scoring_stage.py"
+        ),
+    )
+    include_result_graph: bool = field(
+        default=False,  # Attach per-result `graph` dict to each result
+        metadata=spec(
+            flat_alias="include_result_graph",
+            reader="mcp_server/tools/search_orchestrator.py",
+        ),
+    )
 
 
 @dataclass
 class ChunkingConfig:
-    """Chunking algorithm settings (13 fields)."""
-
-    # Token size constraints for chunks
-    min_chunk_tokens: int = 50  # Minimum tokens before considering merge
-    max_merged_tokens: int = (
-        400  # Maximum tokens for merged chunk (research: 200-400 optimal)
-    )
-
-    # Community Detection settings (independent control restored)
-    enable_community_detection: bool = (
-        True  # Enable community detection via Louvain algorithm
-    )
-    enable_community_merge: bool = (
-        True  # Enable community-based remerge (full index only)
-    )
-    community_resolution: float = field(
-        default=1.0, metadata={"range": (0.1, 2.0)}
-    )  # Resolution parameter (higher = more/smaller communities)
-    max_phantom_degree: int = field(
-        default=20, metadata={"range": (1, 1000)}
-    )  # Skip phantom nodes with >N callers during community detection
+    """Chunking algorithm settings (10 fields)."""
 
     # Large function splitting (cAST paper: AST-aware splitting improves Recall@5 +66%)
-    enable_large_node_splitting: bool = True  # Split functions > max_chunk_lines
-    max_chunk_lines: int = 100  # Maximum lines before AST block splitting
-
-    # Token estimation method
-    token_estimation: str = field(
-        default="whitespace", metadata={"choices": ("whitespace", "tiktoken")}
-    )  # "whitespace" (fast) or "tiktoken" (accurate)
-
-    # Size method for chunking (Option A: character-based vs Option B: token-based)
-    size_method: str = "tokens"  # "tokens" (default) or "characters" (cAST paper)
+    enable_large_node_splitting: bool = field(
+        default=True,  # Split functions > max_chunk_lines
+        metadata=spec(
+            flat_alias="enable_large_node_splitting",
+            mcp="chunking",
+            reader="chunking/languages/base.py",
+        ),
+    )
+    max_chunk_lines: int = field(
+        default=100,  # Maximum lines before AST block splitting
+        metadata=spec(
+            range=(10, 1000),
+            flat_alias="max_chunk_lines",
+            mcp="chunking",
+            reader="chunking/languages/base.py",
+        ),
+    )
 
     # Splitting-specific configs (separate from merging)
     split_size_method: str = field(
-        default="characters", metadata={"choices": ("lines", "characters")}
+        default="characters",
+        metadata=spec(
+            choices=("lines", "characters"),
+            flat_alias="split_size_method",
+            mcp="chunking",
+            reader="chunking/languages/base.py",
+        ),
     )  # "lines" or "characters"
     max_split_chars: int = field(
-        default=1600, metadata={"range": (1000, 10000)}
-    )  # Character-based splitting (~400 tokens, optimal for retrieval)
+        default=3000,
+        metadata=spec(
+            range=(1000, 10000),
+            flat_alias="max_split_chars",
+            mcp="chunking",
+            reader="chunking/languages/base.py",
+        ),
+    )  # Character-based splitting (~750 tokens, optimal for retrieval)
 
     # File-level module summaries (A2: improve GLOBAL query recall)
-    enable_file_summaries: bool = True  # Generate module-summary chunks per file
-
-    # Community-level summaries (B1: thematic grouping via Louvain communities)
-    enable_community_summaries: bool = True  # Generate community-summary chunks
-
-    # Incremental community-summary refresh (subordinate to enable_community_summaries)
-    enable_incremental_community_summaries: bool = (
-        True  # Refresh stale community summaries on incremental index
-    )
-    incremental_community_redetect_threshold: float = (
-        0.3  # Cumulative changed-file fraction that triggers full redetect
+    enable_file_summaries: bool = field(
+        default=True,  # Generate module-summary chunks per file
+        metadata=spec(mcp="chunking", reader="search/incremental_indexer.py"),
     )
 
     # Adaptive chunk sizing (research: P75 baseline + complexity modulation)
     sizing_mode: str = field(
-        default="fixed", metadata={"choices": ("fixed", "adaptive")}
+        default="adaptive",
+        metadata=spec(
+            choices=("fixed", "adaptive"),
+            mcp="chunking",
+            reader="chunking/languages/base.py",
+        ),
     )  # "fixed" (static) or "adaptive" (repo-profiled)
     adaptive_multiplier_max: float = field(
-        default=1.3, metadata={"range": (1.0, 2.0)}
+        default=1.3,
+        metadata=spec(
+            range=(1.0, 2.0), mcp="chunking", reader="chunking/languages/base.py"
+        ),
     )  # T_max = P75_baseline × this (low-complexity)
     adaptive_multiplier_min: float = field(
-        default=0.5, metadata={"range": (0.1, 1.0)}
+        default=0.5,
+        metadata=spec(
+            range=(0.1, 1.0), mcp="chunking", reader="chunking/languages/base.py"
+        ),
     )  # T_min = P75_baseline × this (high-complexity)
     max_complexity_cap: int = field(
-        default=30, metadata={"range": (5, 100)}
+        default=30,
+        metadata=spec(
+            range=(5, 100), mcp="chunking", reader="chunking/languages/base.py"
+        ),
     )  # Cv normalization ceiling (CC >= cap → Cv = 1.0)
 
     # GLSL call-graph extraction (Phase 2b): filter TouchDesigner's TD-prefixed
@@ -383,91 +839,299 @@ class ChunkingConfig:
     # metadata["calls"] alongside the always-on GLSL builtin/type-constructor
     # filter. Disable for non-TouchDesigner GLSL projects where a real
     # user-defined symbol might start with "TD".
-    glsl_filter_td_prefix: bool = True
+    glsl_filter_td_prefix: bool = field(
+        default=True,
+        metadata=spec(mcp="chunking", reader="chunking/languages/glsl.py"),
+    )
 
 
 @dataclass
 class EgoGraphConfig:
     """Ego-graph retrieval settings (RepoGraph ICLR 2025)."""
 
-    enabled: bool = False  # Enable ego-graph expansion
-    k_hops: int = 1  # Number of hops (1=direct neighbors, reduces noise vs 2-hop)
-    max_neighbors_per_hop: int = (
-        5  # Max neighbors per hop (reduced from 10 to limit noise)
+    enabled: bool = field(
+        default=True,  # Enable ego-graph expansion
+        metadata=spec(
+            flat_alias="ego_graph_enabled", reader="search/hybrid_searcher.py"
+        ),
     )
-    relation_types: list | None = None  # Filter to specific relations (None = all)
-    include_anchor: bool = True  # Include original anchor nodes in results
-    deduplicate: bool = True  # Remove duplicate chunk_ids
+    k_hops: int = field(
+        default=2,
+        metadata=spec(
+            range=(1, 3),
+            flat_alias="ego_graph_k_hops",
+            reader="search/ego_graph_retriever.py",
+        ),
+    )  # Number of hops (1=direct neighbors, 2=include second-degree)
+    max_neighbors_per_hop: int = field(
+        default=10,  # Max neighbors per hop
+        metadata=spec(
+            flat_alias="ego_graph_max_neighbors_per_hop",
+            reader="search/ego_graph_retriever.py",
+        ),
+    )
+    relation_types: list | None = field(
+        default=None,  # Filter to specific relations (None = all)
+        metadata=spec(
+            flat_alias="ego_graph_relation_types",
+            reader="search/ego_graph_retriever.py",
+        ),
+    )
+    include_anchor: bool = field(
+        default=True,  # Include original anchor nodes in results
+        metadata=spec(
+            flat_alias="ego_graph_include_anchor",
+            reader="search/ego_graph_retriever.py",
+        ),
+    )
+    deduplicate: bool = field(
+        default=True,  # Remove duplicate chunk_ids
+        metadata=spec(
+            flat_alias="ego_graph_deduplicate", reader="search/ego_graph_retriever.py"
+        ),
+    )
     # RepoGraph relation filtering (Feature #5)
-    exclude_stdlib_imports: bool = True  # Filter stdlib from graph traversal
-    exclude_third_party_imports: bool = True  # Filter third-party from traversal
+    exclude_stdlib_imports: bool = field(
+        default=True,  # Filter stdlib from graph traversal
+        metadata=spec(reader="search/ego_graph_retriever.py"),
+    )
+    exclude_third_party_imports: bool = field(
+        default=True,  # Filter third-party from traversal
+        metadata=spec(reader="search/ego_graph_retriever.py"),
+    )
     # Weighted graph traversal
     edge_weights: dict[str, float] | None = field(
-        default_factory=lambda: DEFAULT_EDGE_WEIGHTS.copy()
+        default_factory=lambda: DEFAULT_EDGE_WEIGHTS.copy(),
+        metadata=spec(reader="search/ego_graph_retriever.py"),
     )  # Use weighted BFS by default (calls > imports priority)
-    # QW2: community-bounded expansion — prefer intra-community neighbors
-    community_bounded: bool = True  # Apply cross-community penalty when ranking
-    cross_community_penalty: float = (
-        0.6  # Score multiplier for cross-community neighbors
-    )
     # QW3: expansion mode — "bfs" (default) or "ppr" (Personalized PageRank)
-    expansion_mode: str = "bfs"  # "bfs" = k-hop BFS, "ppr" = Personalized PageRank
-    ppr_alpha: float = 0.85  # PPR damping factor (standard default)
+    expansion_mode: str = field(
+        default="bfs",
+        metadata=spec(choices=("bfs", "ppr"), reader="search/ego_graph_retriever.py"),
+    )  # "bfs" = k-hop BFS, "ppr" = Personalized PageRank
+    ppr_alpha: float = field(
+        default=0.85,  # PPR damping factor (standard default)
+        metadata=spec(reader="search/ego_graph_retriever.py"),
+    )
     # QW5: minimum cosine similarity threshold for ego-graph neighbor filtering
-    min_similarity_threshold: float = 0.15  # Neighbors below this are filtered out
+    min_similarity_threshold: float = field(
+        default=0.15,  # Neighbors below this are filtered out
+        metadata=spec(reader="search/ego_graph_retriever.py"),
+    )
 
 
 @dataclass
 class ParentRetrievalConfig:
     """Parent chunk retrieval settings for Match Small, Retrieve Big."""
 
-    enabled: bool = False  # Disabled — parents get score=0, no ranking value
-    include_parent_content: bool = True  # Include parent's full content
-    max_parents_per_result: int = 1  # Usually 1 (direct parent only)
+    enabled: bool = field(
+        default=False,  # Disabled — parents get score=0, no ranking value
+        metadata=spec(reader="search/hybrid_searcher.py"),
+    )
+    include_parent_content: bool = field(
+        default=True,  # Include parent's full content
+        metadata=spec(reader="search/hybrid_searcher.py"),
+    )
 
 
 @dataclass
 class GraphEnhancedConfig:
     """Graph-enhanced search settings."""
 
-    centrality_method: str = "pagerank"  # Centrality algorithm
+    centrality_method: str = field(
+        default="pagerank",  # Centrality algorithm
+        metadata=spec(
+            flat_alias="centrality_method", reader="search/graph_scoring_stage.py"
+        ),
+    )
     # Blending weight (0=semantic, 1=centrality). 0.0 per 2026-07-26 SSCG sweep:
     # recall falls monotonically with alpha on both golden sets (replicated
     # R@5 -0.027 at 0.2, -0.038 at 0.3 vs 0.0) with no MRR gain; the
     # query-aware boost suite in CentralityRanker.rerank() stays active.
-    centrality_alpha: float = 0.0
-    centrality_annotation: bool = True  # Always annotate centrality when graph exists
-    centrality_reranking: bool = True  # Always rerank by blended score
+    centrality_alpha: float = field(
+        default=0.0,
+        metadata=spec(
+            flat_alias="centrality_alpha", reader="search/graph_scoring_stage.py"
+        ),
+    )
+    centrality_annotation: bool = field(
+        default=True,  # Always annotate centrality when graph exists
+        metadata=spec(
+            flat_alias="centrality_annotation", reader="search/graph_scoring_stage.py"
+        ),
+    )
+    centrality_reranking: bool = field(
+        default=True,  # Always rerank by blended score
+        metadata=spec(
+            flat_alias="centrality_reranking", reader="search/graph_scoring_stage.py"
+        ),
+    )
     # Chunk-size normalization (penalize oversized chunks)
-    enable_size_normalization: bool = True  # Enable logarithmic size penalty
-    size_norm_target_lines: int = 200  # Target chunk size (no penalty below this)
-    size_norm_alpha: float = 0.1  # Penalty strength (higher = stronger penalty)
+    enable_size_normalization: bool = field(
+        default=True,  # Enable logarithmic size penalty
+        metadata=spec(
+            flat_alias="enable_size_normalization", reader="search/centrality_ranker.py"
+        ),
+    )
+    size_norm_target_lines: int = field(
+        default=200,  # Target chunk size (no penalty below this)
+        metadata=spec(
+            flat_alias="size_norm_target_lines", reader="search/centrality_ranker.py"
+        ),
+    )
+    size_norm_alpha: float = field(
+        default=0.1,  # Penalty strength (higher = stronger penalty)
+        metadata=spec(
+            flat_alias="size_norm_alpha", reader="search/centrality_ranker.py"
+        ),
+    )
     # Centrality-adaptive BM25 boost (LIMIT paper insight)
     # High-centrality chunks (utility functions, base classes) are exactly where
     # single-vector embeddings fail. Extra boost compensates for this limitation.
-    centrality_bm25_boost: bool = (
-        True  # Enable adaptive boost for high-centrality results
+    centrality_bm25_boost: bool = field(
+        default=True,  # Enable adaptive boost for high-centrality results
+        metadata=spec(
+            flat_alias="centrality_bm25_boost", reader="search/centrality_ranker.py"
+        ),
     )
-    centrality_boost_threshold: float = (
-        0.02  # Centrality score threshold to trigger boost
+    centrality_boost_threshold: float = field(
+        default=0.02,  # Centrality score threshold to trigger boost
+        metadata=spec(
+            flat_alias="centrality_boost_threshold",
+            reader="search/centrality_ranker.py",
+        ),
     )
-    centrality_boost_factor: float = 5.0  # Multiplier: boost = centrality * factor
-    centrality_boost_cap: float = 0.15  # Maximum boost added to blended_score
+    centrality_boost_factor: float = field(
+        default=5.0,  # Multiplier: boost = centrality * factor
+        metadata=spec(
+            flat_alias="centrality_boost_factor", reader="search/centrality_ranker.py"
+        ),
+    )
+    centrality_boost_cap: float = field(
+        default=0.15,  # Maximum boost added to blended_score
+        metadata=spec(
+            flat_alias="centrality_boost_cap", reader="search/centrality_ranker.py"
+        ),
+    )
     # Post-centrality result cap: total results kept = k * this multiplier
     # (k primary + (multiplier-1)*k graph/ego/parent context chunks)
-    max_results_multiplier: int = 8
+    max_results_multiplier: int = field(
+        default=8,
+        metadata=spec(
+            flat_alias="max_results_multiplier", reader="search/graph_scoring_stage.py"
+        ),
+    )
 
 
 @dataclass
 class ObservabilityConfig:
     """OTel tracing configuration (traces-only v1; metrics deferred to v2)."""
 
-    enabled: bool = False
-    service_name: str = "claude-context-local"
-    exporter: str = "otlp"  # otlp | console(->stderr) | none
-    otlp_endpoint: str = "http://localhost:4318"
-    sample_ratio: float = 1.0
-    capture_query_text: bool = False  # off by default (query text can be sensitive)
+    enabled: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="otel_enabled",
+            env="CLAUDE_OTEL_ENABLED",
+            reader="utils/observability.py",
+        ),
+    )
+    service_name: str = field(
+        default="claude-context-local",
+        metadata=spec(
+            flat_alias="otel_service_name",
+            reader="utils/observability.py",
+        ),
+    )
+    exporter: str = field(
+        default="otlp",
+        metadata=spec(
+            choices=("otlp", "console", "none"),
+            flat_alias="otel_exporter",
+            env="CLAUDE_OTEL_EXPORTER",
+            reader="utils/observability.py",
+        ),
+    )  # otlp | console(->stderr) | none
+    otlp_endpoint: str = field(
+        default="http://localhost:4318",
+        metadata=spec(
+            flat_alias="otel_endpoint",
+            env="CLAUDE_OTEL_ENDPOINT",
+            reader="utils/observability.py",
+        ),
+    )
+    sample_ratio: float = field(
+        default=1.0,
+        metadata=spec(
+            flat_alias="otel_sample_ratio",
+            env="CLAUDE_OTEL_SAMPLE",
+            reader="utils/observability.py",
+        ),
+    )
+    capture_query_text: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="otel_capture_query_text",
+            env="CLAUDE_OTEL_CAPTURE_QUERY",
+            reader="search/hybrid_searcher.py",
+        ),
+    )  # off by default (query text can be sensitive)
+
+
+@dataclass
+class QueryExpansionConfig:
+    """Curated-vocabulary query expansion settings (6 fields).
+
+    When enabled, queries whose lowercased text contains a concept trigger
+    from ``config/query_expansion_variants.yaml`` gain extra discounted
+    fusion legs built from that concept's code-domain terms (see
+    ``search/query_expansion.py``). Bridges zero-identifier English
+    paraphrases ("survive a restart") to the identifiers code actually
+    uses ("save", "persist", "disk"). Unmatched or disabled queries take
+    exactly the unexpanded two-leg fusion path.
+    """
+
+    enabled: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="query_expansion_enabled",
+            reader="search/search_executor.py",
+        ),
+    )  # Opt-in pending A/B (flip on pass, BM25-only)
+    variants_path: str = field(
+        default="",  # Empty = package default config/query_expansion_variants.yaml
+        metadata=spec(
+            flat_alias="query_expansion_variants_path",
+            reader="search/search_executor.py",
+        ),
+    )
+    max_variants: int = field(
+        default=2,
+        metadata=spec(
+            flat_alias="query_expansion_max_variants",
+            reader="search/search_executor.py",
+        ),
+    )  # Max matched concepts per query (deterministic order)
+    variant_weight_discount: float = field(
+        default=0.5,
+        metadata=spec(
+            flat_alias="query_expansion_weight_discount",
+            reader="search/search_executor.py",
+        ),
+    )  # Variant-leg weight = base leg weight * this
+    apply_to_bm25: bool = field(
+        default=True,
+        metadata=spec(
+            flat_alias="query_expansion_apply_to_bm25",
+            reader="search/search_executor.py",
+        ),
+    )  # Add expanded-query BM25 leg(s)
+    apply_to_dense: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="query_expansion_apply_to_dense",
+            reader="search/search_executor.py",
+        ),
+    )  # Add expanded-query dense leg(s) — needs its own A/B
 
 
 @dataclass
@@ -490,28 +1154,41 @@ class CallGraphConfig:
     seam runs.
     """
 
-    resolvers: list[str] | None = None
+    resolvers: list[str] | None = field(
+        default=None,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
     """Resolver names to attempt in the injection pipeline.
 
     Default: ``["pyan", "libcst"]`` (both in the ``[callgraph]`` extra).
     Set to ``["pyan"]`` to disable LibCST (Stage 2), ``[]`` to skip entirely.
     """
 
-    lsp_enabled: bool = False
-    """Enable the basedpyright LSP resolver (Stage 3, opt-in).
+    lsp_enabled: bool = field(
+        default=True,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
+    """Enable the basedpyright LSP resolver (Stage 3).
 
-    Requires the ``[lsp]`` extra: ``pip install -e ".[lsp]"``.
-    Adds basedpyright as the highest-accuracy resolver (confidence 0.98) but
-    is the slowest and requires a full-type-check pass.
+    Requested by default; no-ops unless the ``[lsp]`` extra is installed:
+    ``pip install -e ".[lsp]"``. Adds basedpyright as the highest-accuracy
+    resolver (confidence 0.98) but is the slowest and requires a
+    full-type-check pass.
     """
 
-    lsp_timeout_seconds: float = 30.0
+    lsp_timeout_seconds: float = field(
+        default=30.0,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
     """Per-request timeout for LSP JSON-RPC calls (seconds).
 
     Increase for large codebases where basedpyright type-checking takes longer.
     """
 
-    lsp_total_timeout_seconds: float = 180.0
+    lsp_total_timeout_seconds: float = field(
+        default=180.0,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
     """Aggregate wall-clock budget for the *entire* LSP pass (seconds).
 
     Unlike ``lsp_timeout_seconds`` (per JSON-RPC request), this bounds the
@@ -521,7 +1198,10 @@ class CallGraphConfig:
     edges the pyan/libcst resolvers already produced.
     """
 
-    use_pyproject_toml: bool = False
+    use_pyproject_toml: bool = field(
+        default=False,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
     """Derive LibCST FQNs from the nearest ``pyproject.toml`` package root.
 
     Enable for *src-layout* projects (``src/mypkg/mod.py``) where the project
@@ -534,12 +1214,16 @@ class CallGraphConfig:
     Has no effect when ``"libcst"`` is not in ``resolvers``.
     """
 
-    min_confidence: float = 0.0
+    min_confidence: float = field(
+        default=0.65,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
     """Minimum resolver confidence required to inject an edge (inclusive floor).
 
     Edges from ``run_resolvers()`` whose ``confidence`` is strictly below this
-    threshold are discarded before injection.  The default ``0.0`` accepts all
-    edges (no behaviour change).
+    threshold are discarded before injection.  The default ``0.65`` drops
+    wildcard-fan-out pyan edges (0.6) while keeping whole-project pyan (0.75)
+    and higher-confidence resolvers.
 
     Reference confidence tiers:
     - ``0.5`` / ``0.7`` — in-house AST (single-file, already in graph)
@@ -571,6 +1255,22 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> None:
             base[key] = value
 
 
+def _dotted_keys(nested: dict[str, Any], _prefix: str = "") -> list[str]:
+    """Flatten a nested dict to sorted dotted leaf-key paths.
+
+    ``{"performance": {"max_chunking_workers": 12}}`` →
+    ``["performance.max_chunking_workers"]``.  Used for override provenance.
+    """
+    keys: list[str] = []
+    for key, value in nested.items():
+        path = f"{_prefix}{key}"
+        if isinstance(value, dict) and value:
+            keys.extend(_dotted_keys(value, f"{path}."))
+        else:
+            keys.append(path)
+    return sorted(keys)
+
+
 def validate_field_value(spec_cls: type, field_name: str, value: Any) -> str | None:
     """Return an error message if *value* violates *spec_cls*'s field metadata, else None.
 
@@ -597,12 +1297,100 @@ def validate_field_value(spec_cls: type, field_name: str, value: Any) -> str | N
     return None  # unknown field — no spec to enforce
 
 
+def _derive_flat_key_aliases(
+    subconfig_types: dict[str, type],
+) -> dict[str, tuple[str, str]]:
+    """Derive the legacy-flat-key alias map from each field's ``spec(flat_alias=...)``.
+
+    Single declaration site per ADR-0022: a field states its own alias (or
+    leaves it unset), rather than restating that decision in a second
+    hand-maintained table.
+    """
+    aliases: dict[str, tuple[str, str]] = {}
+    for section_name, section_cls in subconfig_types.items():
+        for f in dataclasses.fields(section_cls):
+            alias = f.metadata.get("flat_alias")
+            if alias is not None:
+                aliases[alias] = (section_name, f.name)
+    return aliases
+
+
+def _derive_env_mapping(
+    subconfig_types: dict[str, type],
+    bool_converter: Callable[[str], bool],
+) -> dict[str, tuple[str, Callable[[str], Any]]]:
+    """Derive the ``CLAUDE_*`` env-var mapping from each field's ``spec(env=...)``.
+
+    The converter is inferred from the field's declared type — ``bool`` uses
+    the tolerant *bool_converter* (``bool("false")`` is truthy, so the raw
+    type is never usable directly); ``str``/``int``/``float`` use the type
+    itself. Every env-settable field is also flat-aliased (asserted by
+    ``test_search_config.py``), so ``flat_alias`` doubles as the dict key the
+    validation path looks up in ``_FLAT_KEY_ALIASES``. See ADR-0022.
+    """
+    type_converters: dict[type, Callable[[str], Any]] = {
+        str: str,
+        int: int,
+        float: float,
+        bool: bool_converter,
+    }
+    mapping: dict[str, tuple[str, Callable[[str], Any]]] = {}
+    for section_cls in subconfig_types.values():
+        for f in dataclasses.fields(section_cls):
+            env_var = f.metadata.get("env")
+            if env_var is None:
+                continue
+            mapping[env_var] = (
+                f.metadata["flat_alias"],
+                type_converters[cast(type, f.type)],
+            )
+    return mapping
+
+
+def _derive_mcp_field_names(section_cls: type, *mcp_tags: str) -> tuple[str, ...]:
+    """Field names (declaration order) whose ``spec(mcp=...)`` is one of *mcp_tags*.
+
+    Derives the MCP config handlers' per-tool field maps (e.g. ``configure_chunking``'s
+    settable fields, ``configure_reranker``'s settable + read-only echo fields) from the
+    same spec table instead of a hand-maintained tuple. See ADR-0022.
+    """
+    return tuple(
+        f.name
+        for f in dataclasses.fields(section_cls)
+        if f.metadata.get("mcp") in mcp_tags
+    )
+
+
+def _derive_construction_baked_fields(
+    subconfig_types: dict[str, type],
+) -> frozenset[tuple[str, str]]:
+    """Derive the set of (section_name, field_name) pairs baked into a
+    collaborator at construction time from each field's ``spec(construction_baked=True)``.
+
+    Single declaration site per ADR-0022: a field states its own liveness
+    (read fresh every call vs. baked into e.g. a cached ``HybridSearcher``/
+    reranker at construction), rather than restating that domain knowledge in
+    a hand-written six-argument None-check (the original
+    ``_maybe_reset_for_construction_overrides`` in
+    ``scripts/benchmark/run_sscg_benchmark.py``). Used by
+    ``evaluation/arm_overrides.py``'s ``requires_rebuild`` to decide whether
+    an A/B arm's override needs a fresh searcher instead of a live mutation.
+    """
+    baked: set[tuple[str, str]] = set()
+    for section_name, section_cls in subconfig_types.items():
+        for f in dataclasses.fields(section_cls):
+            if f.metadata.get("construction_baked"):
+                baked.add((section_name, f.name))
+    return frozenset(baked)
+
+
 class SearchConfig:
     """Root configuration with nested sub-configs.
 
-    Configuration organization:
-    - Split into focused sub-configs for better organization
-    - embedding, search_mode, performance, multi_hop, intent, reranker, output, chunking
+    Split into focused sub-configs for organization; see ``_SUBCONFIG_FIELDS``
+    below for the current, single-source-of-truth list of section names (this
+    docstring used to hand-duplicate that list and had drifted to 8 of 14
+    sections before being replaced by this pointer -- see ADR-0022).
 
     Initialization style (nested configs only):
         config = SearchConfig(embedding=EmbeddingConfig(model_name="..."))
@@ -623,6 +1411,7 @@ class SearchConfig:
         graph_enhanced: GraphEnhancedConfig | None = None,
         observability: ObservabilityConfig | None = None,
         call_graph: CallGraphConfig | None = None,
+        query_expansion: QueryExpansionConfig | None = None,
     ):
         """Initialize SearchConfig with nested sub-configs.
 
@@ -640,6 +1429,7 @@ class SearchConfig:
             graph_enhanced: GraphEnhancedConfig instance (optional, defaults to GraphEnhancedConfig())
             observability: ObservabilityConfig instance (optional, defaults to ObservabilityConfig())
             call_graph: CallGraphConfig instance (optional, defaults to CallGraphConfig())
+            query_expansion: QueryExpansionConfig instance (optional, defaults to QueryExpansionConfig())
         """
         # Initialize nested configs with defaults
         self.embedding = embedding if embedding is not None else EmbeddingConfig()
@@ -667,6 +1457,9 @@ class SearchConfig:
             observability if observability is not None else ObservabilityConfig()
         )
         self.call_graph = call_graph if call_graph is not None else CallGraphConfig()
+        self.query_expansion = (
+            query_expansion if query_expansion is not None else QueryExpansionConfig()
+        )
 
     # ------------------------------------------------------------------
     # Serialization schema — single source of truth
@@ -688,6 +1481,7 @@ class SearchConfig:
         "graph_enhanced",
         "observability",
         "call_graph",
+        "query_expansion",
     )
 
     # frozenset for O(1) membership tests in _flat_to_nested / is_nested checks
@@ -707,123 +1501,30 @@ class SearchConfig:
         "graph_enhanced": GraphEnhancedConfig,
         "observability": ObservabilityConfig,
         "call_graph": CallGraphConfig,
+        "query_expansion": QueryExpansionConfig,
     }
 
     # Maps legacy flat config keys (and env-var flat keys) to
     # (sub_config_name, field_name) in the nested schema.
     # Used by _flat_to_nested() and by SearchConfigManager.load_config()
     # to translate env overrides into the nested structure before merging.
-    _FLAT_KEY_ALIASES: dict[str, tuple[str, str]] = {
-        # EmbeddingConfig
-        "embedding_model_name": ("embedding", "model_name"),
-        "model_dimension": ("embedding", "dimension"),
-        "embedding_batch_size": ("embedding", "batch_size"),
-        "query_cache_size": ("embedding", "query_cache_size"),
-        "enable_import_context": ("embedding", "enable_import_context"),
-        "enable_class_context": ("embedding", "enable_class_context"),
-        "max_import_lines": ("embedding", "max_import_lines"),
-        "max_class_signature_lines": ("embedding", "max_class_signature_lines"),
-        "enable_structural_header": ("embedding", "enable_structural_header"),
-        # SearchModeConfig
-        "default_search_mode": ("search_mode", "default_mode"),
-        "enable_hybrid_search": ("search_mode", "enable_hybrid"),
-        "bm25_weight": ("search_mode", "bm25_weight"),
-        "dense_weight": ("search_mode", "dense_weight"),
-        "bm25_k1": ("search_mode", "bm25_k1"),
-        "bm25_b": ("search_mode", "bm25_b"),
-        "bm25_use_stopwords": ("search_mode", "bm25_use_stopwords"),
-        "bm25_use_stemming": ("search_mode", "bm25_use_stemming"),
-        "bm25_tokenizer": ("search_mode", "bm25_tokenizer"),
-        "bm25_reserved_slots": ("search_mode", "bm25_reserved_slots"),
-        "min_bm25_score": ("search_mode", "min_bm25_score"),
-        "rrf_k_parameter": ("search_mode", "rrf_k_parameter"),
-        "enable_result_reranking": ("search_mode", "enable_result_reranking"),
-        "default_k": ("search_mode", "default_k"),
-        "max_k": ("search_mode", "max_k"),
-        # PerformanceConfig
-        "use_parallel_search": ("performance", "use_parallel_search"),
-        "max_parallel_workers": ("performance", "max_parallel_workers"),
-        "enable_parallel_chunking": ("performance", "enable_parallel_chunking"),
-        "max_chunking_workers": ("performance", "max_chunking_workers"),
-        "enable_entity_tracking": ("performance", "enable_entity_tracking"),
-        "prefer_gpu": ("performance", "prefer_gpu"),
-        "enable_fp16": ("performance", "enable_fp16"),
-        "prefer_bf16": ("performance", "prefer_bf16"),
-        "enable_dynamic_batch_size": ("performance", "enable_dynamic_batch_size"),
-        "dynamic_batch_min": ("performance", "dynamic_batch_min"),
-        "dynamic_batch_max": ("performance", "dynamic_batch_max"),
-        "enable_auto_reindex": ("performance", "enable_auto_reindex"),
-        "max_index_age_minutes": ("performance", "max_index_age_minutes"),
-        "use_onnx": ("performance", "use_onnx"),
-        "onnx_gpu_mem_limit": ("performance", "onnx_gpu_mem_limit"),
-        "allow_shared_memory": ("performance", "allow_ram_fallback"),  # backward-compat
-        # MultiHopConfig
-        "enable_multi_hop": ("multi_hop", "enabled"),
-        "multi_hop_count": ("multi_hop", "hop_count"),
-        "multi_hop_expansion": ("multi_hop", "expansion"),
-        "multi_hop_initial_k_multiplier": ("multi_hop", "initial_k_multiplier"),
-        "multi_hop_mode": ("multi_hop", "multi_hop_mode"),
-        # IntentConfig
-        "intent_enabled": ("intent", "enabled"),
-        "intent_confidence_threshold": ("intent", "confidence_threshold"),
-        "intent_default_intent": ("intent", "default_intent"),
-        "intent_log_classifications": ("intent", "log_classifications"),
-        "intent_semantic_enabled": ("intent", "semantic_enabled"),
-        "intent_semantic_weight": ("intent", "semantic_weight"),
-        # RerankerConfig
-        "reranker_enabled": ("reranker", "enabled"),
-        "reranker_model_name": ("reranker", "model_name"),
-        "reranker_top_k_candidates": ("reranker", "top_k_candidates"),
-        "reranker_min_vram_gb": ("reranker", "min_vram_gb"),
-        "reranker_batch_size": ("reranker", "batch_size"),
-        "reranker_dedupe_split_blocks": ("reranker", "dedupe_split_blocks"),
-        "reranker_single_pass": ("reranker", "single_pass"),
-        # OutputConfig
-        "output_format": ("output", "format"),
-        "source_order_output": ("output", "source_order_output"),
-        "include_subgraph": ("output", "include_subgraph"),
-        "include_result_graph": ("output", "include_result_graph"),
-        # ChunkingConfig (flat keys equal their field names for most)
-        "min_chunk_tokens": ("chunking", "min_chunk_tokens"),
-        "max_merged_tokens": ("chunking", "max_merged_tokens"),
-        "enable_large_node_splitting": ("chunking", "enable_large_node_splitting"),
-        "max_chunk_lines": ("chunking", "max_chunk_lines"),
-        "token_estimation": ("chunking", "token_estimation"),
-        "community_resolution": ("chunking", "community_resolution"),
-        "size_method": ("chunking", "size_method"),
-        "enable_community_detection": ("chunking", "enable_community_detection"),
-        "enable_community_merge": ("chunking", "enable_community_merge"),
-        "split_size_method": ("chunking", "split_size_method"),
-        "max_split_chars": ("chunking", "max_split_chars"),
-        "max_phantom_degree": ("chunking", "max_phantom_degree"),
-        # EgoGraphConfig
-        "ego_graph_enabled": ("ego_graph", "enabled"),
-        "ego_graph_k_hops": ("ego_graph", "k_hops"),
-        "ego_graph_max_neighbors_per_hop": ("ego_graph", "max_neighbors_per_hop"),
-        "ego_graph_relation_types": ("ego_graph", "relation_types"),
-        "ego_graph_include_anchor": ("ego_graph", "include_anchor"),
-        "ego_graph_deduplicate": ("ego_graph", "deduplicate"),
-        # GraphEnhancedConfig (flat keys equal their field names)
-        "centrality_method": ("graph_enhanced", "centrality_method"),
-        "centrality_alpha": ("graph_enhanced", "centrality_alpha"),
-        "centrality_annotation": ("graph_enhanced", "centrality_annotation"),
-        "centrality_reranking": ("graph_enhanced", "centrality_reranking"),
-        "enable_size_normalization": ("graph_enhanced", "enable_size_normalization"),
-        "size_norm_target_lines": ("graph_enhanced", "size_norm_target_lines"),
-        "size_norm_alpha": ("graph_enhanced", "size_norm_alpha"),
-        "centrality_bm25_boost": ("graph_enhanced", "centrality_bm25_boost"),
-        "centrality_boost_threshold": ("graph_enhanced", "centrality_boost_threshold"),
-        "centrality_boost_factor": ("graph_enhanced", "centrality_boost_factor"),
-        "centrality_boost_cap": ("graph_enhanced", "centrality_boost_cap"),
-        "max_results_multiplier": ("graph_enhanced", "max_results_multiplier"),
-        # ObservabilityConfig
-        "otel_enabled": ("observability", "enabled"),
-        "otel_service_name": ("observability", "service_name"),
-        "otel_exporter": ("observability", "exporter"),
-        "otel_endpoint": ("observability", "otlp_endpoint"),
-        "otel_sample_ratio": ("observability", "sample_ratio"),
-        "otel_capture_query_text": ("observability", "capture_query_text"),
-    }
+    #
+    # Derived from each field's spec(flat_alias=...) — see ADR-0022. The
+    # backward-compat shim ("allow_shared_memory" -> performance.allow_ram_fallback)
+    # is declared the same way, as PerformanceConfig.allow_ram_fallback's alias.
+    _FLAT_KEY_ALIASES: dict[str, tuple[str, str]] = _derive_flat_key_aliases(
+        _SUBCONFIG_TYPES
+    )
+
+    # (section_name, field_name) pairs baked into a collaborator (cached
+    # HybridSearcher / reranker) at construction time rather than read live
+    # per search call — mutating one on the config singleton is a no-op until
+    # that collaborator is rebuilt. Derived from each field's
+    # spec(construction_baked=True) — see ADR-0022 and
+    # evaluation/arm_overrides.py's requires_rebuild().
+    _CONSTRUCTION_BAKED_FIELDS: frozenset[tuple[str, str]] = (
+        _derive_construction_baked_fields(_SUBCONFIG_TYPES)
+    )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to nested dictionary for JSON serialization.
@@ -939,6 +1640,40 @@ class SearchConfigManager:
         self.config_file = config_file or self._get_default_config_path()
         self._config = None
         self._config_mtime: float | None = None  # Track file modification time
+        # (path, mtime) of the applied per-project overrides file — part of the
+        # hot-reload cache key so project switches and hand-edits invalidate.
+        self._overrides_key: tuple[str, float] | None = None
+        self._active_overrides_meta: dict[str, Any] | None = None
+        # Guards the reload body in load_config() (#reindex-log-audit-2026-07-30):
+        # a cache-key change (e.g. index_probe rewriting search_overrides.json)
+        # can be observed by every ThreadPoolExecutor worker in the same instant,
+        # and without a lock each one redundantly re-parses and re-merges the
+        # config. RLock because get_active_overrides_meta() re-enters load_config().
+        self._lock = threading.RLock()
+
+    def _resolve_overrides_path(self) -> Path | None:
+        """Path to the active project's search_overrides.json, or None.
+
+        None when no active project storage dir is set, the file does not
+        exist, or ``CLAUDE_DISABLE_PROJECT_OVERRIDES`` is truthy (escape hatch
+        checked before anything else).
+        """
+        if self._bool_from_env(os.environ.get("CLAUDE_DISABLE_PROJECT_OVERRIDES", "")):
+            return None
+        storage_dir = get_active_project_storage_dir()
+        if not storage_dir:
+            return None
+        path = Path(storage_dir) / PROJECT_OVERRIDES_FILENAME
+        return path if path.exists() else None
+
+    def get_active_overrides_meta(self) -> dict[str, Any] | None:
+        """Provenance of the applied per-project overrides, or None if inactive.
+
+        Keys: ``path``, ``probe_version``, ``generated_at``, ``keys`` (sorted
+        dotted config keys).  Forces a (cached) load so the answer is current.
+        """
+        self.load_config()
+        return self._active_overrides_meta
 
     def _get_default_config_path(self) -> str:
         """Get default config file path (delegates to shared config_paths module)."""
@@ -965,129 +1700,148 @@ class SearchConfigManager:
         if _read_path.exists():
             current_mtime = _read_path.stat().st_mtime
 
-        # Return cache only if file hasn't changed
-        if self._config is not None and current_mtime == self._config_mtime:
+        # Per-project overrides file (ADR-0014) participates in the cache key:
+        # switching projects or hand-editing the file must trigger a reload.
+        override_path = self._resolve_overrides_path()
+        overrides_key: tuple[str, float] | None = None
+        if override_path is not None:
+            try:
+                overrides_key = (str(override_path), override_path.stat().st_mtime)
+            except OSError:
+                override_path = None
+
+        # Double-checked locking: cheap outer test avoids the lock on the hot
+        # path (#reindex-log-audit-2026-07-30). Only a cache-key change (config
+        # file edit, or index_probe rewriting search_overrides.json) reaches the
+        # lock below — otherwise every ThreadPoolExecutor worker racing a cache
+        # miss (e.g. ParallelChunker calling get_chunking_config() per file)
+        # would redundantly re-parse and re-merge the config in lockstep.
+        if (
+            self._config is not None
+            and current_mtime == self._config_mtime
+            and overrides_key == self._overrides_key
+        ):
             return self._config
 
-        # Start with defaults
-        config_dict: dict[str, Any] = {}
+        with self._lock:
+            # Re-check inside the lock: another thread may have already
+            # completed the reload while we were waiting to acquire it.
+            if (
+                self._config is not None
+                and current_mtime == self._config_mtime
+                and overrides_key == self._overrides_key
+            ):
+                return self._config
 
-        # Load from file if exists
-        if _read_path.exists():
-            try:
-                with open(_read_path) as f:
-                    raw = json.load(f)
-                self.logger.info(f"Loaded search config from {_read_path}")
-                # Normalise to nested format so env overrides can be deep-merged
-                # without mixing flat and nested keys in a single dict.
-                file_is_nested = any(
-                    isinstance(v, dict) and k in SearchConfig._SUBCONFIG_NAMES
-                    for k, v in raw.items()
-                )
-                config_dict = (
-                    raw if file_is_nested else SearchConfig._flat_to_nested(raw)
-                )
-            except Exception as e:  # noqa: BLE001 - parse-recovery: malformed config file, fall back to defaults
-                self.logger.warning(f"Failed to load config file {_read_path}: {e}")
+            # Start with defaults
+            config_dict: dict[str, Any] = {}
 
-        # Translate env-var flat keys to nested and deep-merge so they apply over
-        # a nested config file (previously the update() call was a no-op for nested
-        # files because the flat env keys were never read by the nested branch).
-        env_overrides = self._load_from_environment()
-        env_nested = SearchConfig._flat_to_nested(env_overrides)
-        _deep_merge(config_dict, env_nested)
+            # Load from file if exists
+            if _read_path.exists():
+                try:
+                    with open(_read_path) as f:
+                        raw = json.load(f)
+                    self.logger.info(f"Loaded search config from {_read_path}")
+                    # Normalise to nested format so env overrides can be deep-merged
+                    # without mixing flat and nested keys in a single dict.
+                    file_is_nested = any(
+                        isinstance(v, dict) and k in SearchConfig._SUBCONFIG_NAMES
+                        for k, v in raw.items()
+                    )
+                    config_dict = (
+                        raw if file_is_nested else SearchConfig._flat_to_nested(raw)
+                    )
+                except Exception as e:  # noqa: BLE001 - parse-recovery: malformed config file, fall back to defaults
+                    self.logger.warning(f"Failed to load config file {_read_path}: {e}")
 
-        # Create config object
-        self._config = SearchConfig.from_dict(config_dict)
+            # Per-project overrides (ADR-0014): deep-merged over the global file so
+            # probe results apply only to the active project.  Env vars are merged
+            # last (below) and therefore still win — the human-in-the-loop escape.
+            # The enable flag is read from the GLOBAL layer only, so an overrides
+            # file can never re-enable itself.
+            self._active_overrides_meta = None
+            if override_path is not None and config_dict.get("performance", {}).get(
+                "enable_project_overrides", True
+            ):
+                try:
+                    with open(override_path) as f:
+                        raw_overrides = json.load(f)
+                    overrides = raw_overrides.get("overrides") or {}
+                    if not isinstance(overrides, dict):
+                        raise TypeError("'overrides' must be a JSON object")
+                    _deep_merge(config_dict, overrides)
+                    self._active_overrides_meta = {
+                        "path": str(override_path),
+                        "probe_version": raw_overrides.get("probe_version"),
+                        "generated_at": raw_overrides.get("generated_at"),
+                        "keys": _dotted_keys(overrides),
+                    }
+                    self.logger.info(
+                        f"Applied project overrides from {override_path}: "
+                        f"{', '.join(self._active_overrides_meta['keys']) or '(none)'}"
+                    )
+                except Exception as e:  # noqa: BLE001 - parse-recovery: malformed overrides file, skip the layer
+                    self.logger.warning(
+                        f"Failed to load project overrides {override_path}: {e}"
+                    )
 
-        # Store mtime after loading
-        self._config_mtime = current_mtime
+            # Translate env-var flat keys to nested and deep-merge so they apply over
+            # a nested config file (previously the update() call was a no-op for nested
+            # files because the flat env keys were never read by the nested branch).
+            env_overrides = self._load_from_environment()
+            env_nested = SearchConfig._flat_to_nested(env_overrides)
+            _deep_merge(config_dict, env_nested)
 
-        self.logger.info(
-            f"Search mode: {self._config.search_mode.default_mode}, "
-            f"hybrid enabled: {self._config.search_mode.enable_hybrid}"
-        )
+            # Create config object
+            self._config = SearchConfig.from_dict(config_dict)
 
-        return self._config
+            # Store mtimes after loading
+            self._config_mtime = current_mtime
+            self._overrides_key = overrides_key
+
+            self.logger.info(
+                f"Search mode: {self._config.search_mode.default_mode}, "
+                f"hybrid enabled: {self._config.search_mode.enable_hybrid}"
+            )
+
+            return self._config
 
     def _load_from_environment(self) -> dict[str, Any]:
         """Load configuration from environment variables."""
-        env_mapping = {
-            "CLAUDE_EMBEDDING_MODEL": ("embedding_model_name", str),
-            "CLAUDE_EMBEDDING_BATCH_SIZE": ("embedding_batch_size", int),
-            "CLAUDE_QUERY_CACHE_SIZE": ("query_cache_size", int),
-            "CLAUDE_SEARCH_MODE": ("default_search_mode", str),
-            "CLAUDE_ENABLE_HYBRID": ("enable_hybrid_search", self._bool_from_env),
-            "CLAUDE_BM25_WEIGHT": ("bm25_weight", float),
-            "CLAUDE_DENSE_WEIGHT": ("dense_weight", float),
-            "CLAUDE_BM25_USE_STEMMING": ("bm25_use_stemming", self._bool_from_env),
-            "CLAUDE_USE_PARALLEL": ("use_parallel_search", self._bool_from_env),
-            "CLAUDE_ENABLE_PARALLEL_CHUNKING": (
-                "enable_parallel_chunking",
-                self._bool_from_env,
-            ),
-            "CLAUDE_MAX_CHUNKING_WORKERS": ("max_chunking_workers", int),
-            "CLAUDE_ENABLE_ENTITY_TRACKING": (
-                "enable_entity_tracking",
-                self._bool_from_env,
-            ),
-            "CLAUDE_PREFER_GPU": ("prefer_gpu", self._bool_from_env),
-            "CLAUDE_ENABLE_FP16": ("enable_fp16", self._bool_from_env),
-            "CLAUDE_PREFER_BF16": ("prefer_bf16", self._bool_from_env),
-            "CLAUDE_DYNAMIC_BATCH_ENABLED": (
-                "enable_dynamic_batch_size",
-                self._bool_from_env,
-            ),
-            "CLAUDE_DYNAMIC_BATCH_MIN": ("dynamic_batch_min", int),
-            "CLAUDE_DYNAMIC_BATCH_MAX": ("dynamic_batch_max", int),
-            "CLAUDE_AUTO_REINDEX": ("enable_auto_reindex", self._bool_from_env),
-            "CLAUDE_MAX_INDEX_AGE": ("max_index_age_minutes", float),
-            "CLAUDE_ENABLE_MULTI_HOP": ("enable_multi_hop", self._bool_from_env),
-            "CLAUDE_MULTI_HOP_COUNT": ("multi_hop_count", int),
-            "CLAUDE_MULTI_HOP_EXPANSION": ("multi_hop_expansion", float),
-            "CLAUDE_MULTI_HOP_INITIAL_K_MULTIPLIER": (
-                "multi_hop_initial_k_multiplier",
-                float,
-            ),
-            "CLAUDE_DEFAULT_K": ("default_k", int),
-            "CLAUDE_MAX_K": ("max_k", int),
-            "CLAUDE_RERANKER_ENABLED": ("reranker_enabled", self._bool_from_env),
-            "CLAUDE_RERANKER_MODEL": ("reranker_model_name", str),
-            "CLAUDE_RERANKER_TOP_K": ("reranker_top_k_candidates", int),
-            "CLAUDE_RERANKER_MIN_VRAM_GB": ("reranker_min_vram_gb", float),
-            "CLAUDE_RERANKER_BATCH_SIZE": ("reranker_batch_size", int),
-            "CLAUDE_RERANKER_DEDUPE_SPLIT_BLOCKS": (
-                "reranker_dedupe_split_blocks",
-                self._bool_from_env,
-            ),
-            "CLAUDE_RERANKER_SINGLE_PASS": (
-                "reranker_single_pass",
-                self._bool_from_env,
-            ),
-            # Observability (OTel tracing) env vars
-            "CLAUDE_OTEL_ENABLED": ("otel_enabled", self._bool_from_env),
-            "CLAUDE_OTEL_EXPORTER": ("otel_exporter", str),
-            "CLAUDE_OTEL_ENDPOINT": ("otel_endpoint", str),
-            "CLAUDE_OTEL_SAMPLE": ("otel_sample_ratio", float),
-            "CLAUDE_OTEL_CAPTURE_QUERY": (
-                "otel_capture_query_text",
-                self._bool_from_env,
-            ),
-        }
+        # Derived from each field's spec(env=...) — see ADR-0022.
+        env_mapping = _derive_env_mapping(
+            SearchConfig._SUBCONFIG_TYPES, self._bool_from_env
+        )
 
         config_dict: dict[str, Any] = {}
         for env_var, (config_key, converter) in env_mapping.items():
             env_value = os.environ.get(env_var)
             if env_value is not None:
                 try:
-                    config_dict[config_key] = converter(env_value)
-                    self.logger.debug(
-                        f"Set {config_key} = {config_dict[config_key]} from {env_var}"
-                    )
+                    converted = converter(env_value)
                 except ValueError as e:
                     self.logger.warning(
                         f"Invalid value for {env_var}: {env_value} ({e})"
                     )
+                    continue
+
+                # Validate against the same field metadata the MCP config handlers
+                # use (validate_field_value), so an env override can't smuggle in a
+                # value the file-based path would never persist. Warn-and-skip,
+                # matching the ValueError handling above.
+                alias = SearchConfig._FLAT_KEY_ALIASES.get(config_key)
+                if alias is not None:
+                    section, field_name = alias
+                    spec_cls = SearchConfig._SUBCONFIG_TYPES[section]
+                    err = validate_field_value(spec_cls, field_name, converted)
+                    if err:
+                        self.logger.warning(f"Invalid value for {env_var}: {err}")
+                        continue
+
+                config_dict[config_key] = converted
+                self.logger.debug(
+                    f"Set {config_key} = {config_dict[config_key]} from {env_var}"
+                )
 
         # Auto-detect: if standard OTEL_* vars are present without CLAUDE_OTEL_ENABLED,
         # treat as opted-in with OTLP (network exporter — never touches stdio).
@@ -1109,6 +1863,52 @@ class SearchConfigManager:
         """Convert environment variable string to boolean."""
         return value.lower() in ("true", "1", "yes", "on", "enabled")
 
+    def _read_global_config_dict(self) -> dict[str, Any]:
+        """Read ``self.config_file`` as a nested dict, ignoring project overrides
+        and env vars — i.e. exactly the "global layer" ``load_config`` starts from
+        before ``_deep_merge``-ing the overrides file in. Returns ``{}`` if the
+        file does not exist or fails to parse (same fallback ``load_config`` uses).
+        """
+        config_path = Path(self.config_file)
+        if not config_path.exists():
+            return {}
+        try:
+            with open(config_path) as f:
+                raw = json.load(f)
+        except Exception:  # noqa: BLE001 - parse-recovery, mirrors load_config
+            return {}
+        file_is_nested = any(
+            isinstance(v, dict) and k in SearchConfig._SUBCONFIG_NAMES
+            for k, v in raw.items()
+        )
+        return raw if file_is_nested else SearchConfig._flat_to_nested(raw)
+
+    def _prune_active_overrides(self, config_dict: dict[str, Any]) -> None:
+        """Strip the active project's overridden fields from *config_dict* in-place.
+
+        ``load_config`` deep-merges the active project's ``search_overrides.json``
+        (ADR-0014) into the returned config, so ``config`` — and therefore
+        ``config_dict`` — can carry values that only apply to that project.
+        Without this guard, every ``load_config()`` -> mutate -> ``save_config()``
+        handler (e.g. ``handle_configure_search_mode``) would silently promote
+        those project-scoped values into the global config file. Each overridden
+        field is restored to whatever the global file currently has on disk for
+        it, or omitted entirely if the global file never set it.
+        """
+        meta = self._active_overrides_meta
+        if not meta:
+            return
+        global_dict = self._read_global_config_dict()
+        for dotted in meta["keys"]:
+            section, _, field = dotted.partition(".")
+            if not field:
+                continue  # defensive: SearchConfig overrides are always "section.field"
+            global_section = global_dict.get(section)
+            if isinstance(global_section, dict) and field in global_section:
+                config_dict.setdefault(section, {})[field] = global_section[field]
+            else:
+                config_dict.get(section, {}).pop(field, None)
+
     def save_config(self, config: SearchConfig) -> None:
         """Save configuration to file with atomic write protection."""
         try:
@@ -1124,6 +1924,7 @@ class SearchConfigManager:
             Path(self.config_file).parent.mkdir(parents=True, exist_ok=True)
 
             config_dict = config.to_dict()  # Serialize BEFORE opening file
+            self._prune_active_overrides(config_dict)
             write_json_atomic(self.config_file, config_dict)
 
             self.logger.info(f"Saved search config to {self.config_file}")
@@ -1195,6 +1996,34 @@ def set_indexing_ram_fallback_override(value: bool | None) -> None:
 def get_indexing_ram_fallback_override() -> bool | None:
     """Return the current transient RAM-fallback override, or None if not set."""
     return _indexing_ram_fallback_override
+
+
+# Per-project overrides layer (ADR-0014).
+PROJECT_OVERRIDES_FILENAME = "search_overrides.json"
+
+# Storage directory of the currently active project (set by the MCP server on
+# switch_project / index_directory).  Module-level for the same
+# survive-singleton-reset reason as _indexing_ram_fallback_override: it must
+# outlive `_config_manager = None` resets on model switches.
+_active_project_storage_dir: str | None = None
+
+
+def set_active_project_storage_dir(path: str | Path | None) -> None:
+    """Point the config layer at the active project's storage directory.
+
+    Enables the per-project ``search_overrides.json`` merge in
+    :meth:`SearchConfigManager.load_config`.  Pass ``None`` to detach (no
+    project active).  The manager's hot-reload cache key includes the override
+    file's path+mtime, so no explicit invalidation is required here — the next
+    ``load_config()`` picks up the new project's overrides automatically.
+    """
+    global _active_project_storage_dir
+    _active_project_storage_dir = str(path) if path else None
+
+
+def get_active_project_storage_dir() -> str | None:
+    """Return the active project's storage directory, or None if unset."""
+    return _active_project_storage_dir
 
 
 def get_config_manager(config_file: str | None = None) -> SearchConfigManager:

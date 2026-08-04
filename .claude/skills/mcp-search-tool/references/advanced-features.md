@@ -18,7 +18,6 @@ The project has **three distinct graph-aware subsystems** that are often confuse
 - BM25 Snowball Stemming (inactive under the default `bm25_tokenizer="whole"`)
 - A1: Intent-Adaptive Edge Weights (internal)
 - A2: File-Level Summary Chunks (configurable)
-- B1: Community-Level Summary Chunks (configurable)
 - **pyan3 Cross-Module Caller Edges** (v0.13.0 — injected at full-index time)
 
 ---
@@ -28,7 +27,7 @@ The project has **three distinct graph-aware subsystems** that are often confuse
 **Status:** Always-on engine behavior; not exposed as tool parameters.
 
 **Per-leg pool sizing:** hybrid search retrieves `search_k = max(reranker.top_k_candidates, k*5)` candidates per leg (BM25 + dense) — the shipped
-reranker budget is **30** (`top_k_candidates`, `search/config.py:281`; retuned down from 50 by the 2026-07-26 Q2 sweep, which found 30 vs 50
+reranker budget is **30** (`RerankerConfig.top_k_candidates` in `search/config.py`; retuned down from 50 by the 2026-07-26 Q2 sweep, which found 30 vs 50
 quality-neutral within ±0.025 on both golden sets and 32% faster). RRF fusion then keeps `max(k, budget)` candidates, the **listwise neural reranker
 orders the full pool**, and truncation to `k` happens only after reranking. Consequence: a small `k` no longer starves the reranker (before v0.21.0
 the fused pool was only `k*2` ≈ 14 candidates at k=7, so the pre-retune 50-candidate reranker budget was never reached). Benchmark impact of the
@@ -125,11 +124,7 @@ ranks them low. Both can be set together.
 **Additional import filters (independent of `relation_types`):** `exclude_stdlib_imports: true` and `exclude_third_party_imports: true` (both default
 `true`) drop stdlib / third-party import neighbors even when `relation_types` includes `"imports"`.
 
-**All 21 valid values** (same as `code-search:find_connections.relationship_types`):
-
-`calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`,
-`defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`,
-`uses_context_manager`
+**All 21 valid values** (same as `code-search:find_connections.relationship_types`) — see [parameters.md](parameters.md).
 
 ---
 
@@ -138,13 +133,14 @@ ranks them low. Both can be set together.
 **Status:** Always-on when graph data is available — runs independently of `ego_graph_enabled`.
 
 **Formula:** `blended_score = (1 - centrality_alpha) × semantic_score + centrality_alpha × centrality` (`search/centrality_ranker.py`,
-`CentralityRanker.rerank()`), where `centrality_alpha` (`search/config.py:438`) ships at **0.0** — so the centrality term drops out and
+`CentralityRanker.rerank()`), where `GraphEnhancedConfig.centrality_alpha` (`search/config.py`) ships at **0.0** — so the centrality term drops out and
 `blended_score` starts from `semantic_score` before `CentralityRanker.rerank()` applies its other, non-centrality adjustments (size penalty,
 name-match boost, chunk-type boosts, directory/test/doc-intent factors). Higher `centrality_alpha` values were tested and found to cost recall
 (replicated finding) — this is a deliberate tuning choice, not an oversight. Visible in result field: `centrality`.
 
-> **Implementation notes (may drift — 2026-04-11):** applied in `mcp_server/tools/search_handlers.py`, gated on `graph_config.centrality_reranking`
-> and presence of `index_manager.graph_storage`.
+> **Implementation notes (may drift — 2026-08-02):** applied in `GraphScoringStage._apply_centrality` (`search/graph_scoring_stage.py`), gated on
+> `graph_config.centrality_annotation` (adds `centrality`) and, additionally, `graph_config.centrality_reranking` (adds `blended_score`) — both
+> default `true` — plus presence of `index_manager.graph_storage`. Score blending itself is `search/centrality_ranker.py`'s `CentralityRanker`.
 
 ---
 
@@ -210,30 +206,14 @@ query to filter them out.
 
 ---
 
-## B1: Community-Level Summary Chunks
-
-**Status:** Configurable. Enabled by default.
-
-**What they are:** Synthetic `chunk_type="community"` chunks generated per code community (detected via Louvain algorithm). Contain thematic groupings
-of related chunks across files.
-
-**ID format:** `__community__/{label}:0-0:community:{label}`
-
-**Score handling:** Demoted by 0.9–0.95× multiplier. Excluded from call graph.
-
-**Control:** `code-search:configure_chunking(enable_community_summaries=true/false)`
-
----
-
 ## configure_chunking Advanced Options
 
-`code-search:configure_chunking` exposes many options beyond just file/community summaries:
+`code-search:configure_chunking` exposes many options beyond just file summaries:
 
 - `sizing_mode`: "fixed" (default) or "adaptive" (adjusts chunk size by complexity)
 - `adaptive_multiplier_max` / `adaptive_multiplier_min`: bounds for adaptive sizing
 - `max_complexity_cap`: cap on complexity-based growth
 - `max_phantom_degree`: limit on phantom node degree
-- `token_estimation`: algorithm for token counting
 - `enable_large_node_splitting` / `max_chunk_lines` / `split_size_method` / `max_split_chars`
 
 These are advanced tuning options. For most projects, defaults are correct.

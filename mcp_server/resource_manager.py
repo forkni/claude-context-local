@@ -141,6 +141,30 @@ def close_project_resources(project_path: str, *, clear_current: bool = True) ->
     return True
 
 
+def _bind_active_project_overrides(project_path: str) -> None:
+    """Point the config layer at *project_path*'s storage dir and drop stale caches.
+
+    Mirrors the pairing already used at every other project-activation site
+    (``handle_switch_project``, ``_run_index_directory``): binding
+    ``_active_project_storage_dir`` (search/config.py) is what makes the
+    project's ``search_overrides.json`` (ADR-0014) get merged into subsequent
+    ``load_config()`` calls, and ``invalidate_config_caches()`` is required
+    alongside it so the config singleton cached by step 1's ``load_config()``
+    call (before any project was bound) doesn't keep serving the un-merged
+    config. Non-fatal: startup should not crash over a project storage lookup
+    failure, matching the try/except already around the step-1 config load.
+    """
+    from mcp_server.state import invalidate_config_caches
+    from mcp_server.storage_manager import get_project_storage_dir
+    from search.config import set_active_project_storage_dir
+
+    try:
+        set_active_project_storage_dir(get_project_storage_dir(project_path))
+        invalidate_config_caches()
+    except Exception as e:  # noqa: BLE001 - cleanup: non-fatal init step, project still activates without overrides
+        logger.warning(f"[INIT] Could not bind project overrides layer: {e}")
+
+
 def initialize_server_state() -> None:
     """Initialize global server state (shared by stdio and StreamableHTTP modes).
 
@@ -177,12 +201,14 @@ def initialize_server_state() -> None:
     if default_project:
         project_path = str(Path(default_project).resolve())
         state.current_project = project_path
+        _bind_active_project_overrides(project_path)
         logger.info(f"[INIT] Default project (env): {project_path}")
     else:
         selection = load_project_selection()
         if selection:
             restored_path = selection["last_project_path"]
             set_current_project(restored_path)
+            _bind_active_project_overrides(restored_path)
             logger.info(f"[INIT] Restored project: {Path(restored_path).name}")
         else:
             logger.info("[INIT] No default project")

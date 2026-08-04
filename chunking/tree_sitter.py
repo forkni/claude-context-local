@@ -3,7 +3,7 @@
 This module provides the main TreeSitterChunker class that delegates to
 language-specific chunkers from the chunking.languages package.
 
-Supported languages (8 tree-sitter + 1 AST):
+Supported languages (9, all via tree-sitter):
 - JavaScript (.js)
 - TypeScript (.ts, .tsx)
 - Go (.go)
@@ -12,7 +12,7 @@ Supported languages (8 tree-sitter + 1 AST):
 - C++ (.cpp, .cc, .cxx, .c++)
 - C# (.cs)
 - GLSL (.glsl, .frag, .vert, .comp, .geom, .tesc, .tese, .glslinc)
-- Python (.py) - via separate AST-based chunker
+- Python (.py)
 """
 
 from __future__ import annotations

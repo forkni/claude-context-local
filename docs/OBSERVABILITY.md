@@ -37,7 +37,7 @@ Or add it to your MCP client configuration (`claude_desktop_config.json`):
 ## Configuration
 
 | Env var | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `CLAUDE_OTEL_ENABLED` | `false` | Enable tracing |
 | `CLAUDE_OTEL_EXPORTER` | `otlp` | Exporter: `otlp`, `console`, `none` |
 | `CLAUDE_OTEL_ENDPOINT` | `http://localhost:4318` | OTLP HTTP endpoint |
@@ -127,11 +127,13 @@ touches stdio.
 ## Overhead
 
 When disabled (default):
+
 - Zero OTel SDK imports at module level.
 - `traced_block` returns on a single boolean check.
 - Benchmark: <1 µs/call, 100k calls < 100 ms.
 
 When enabled:
+
 - Per-span overhead is the OTel SDK's `BatchSpanProcessor` overhead
   (background thread, non-blocking on the hot path).
 - Wall-clock overhead per search query < 5% in benchmarks.

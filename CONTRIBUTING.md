@@ -81,6 +81,7 @@ git commit -m "feat: Your changes"  # Runs ruff, markdownlint, checks automatica
 ```
 
 **Pre-commit features:**
+
 - Automatic ruff formatting and fixes
 - Markdown linting with auto-fix
 - Trailing whitespace removal

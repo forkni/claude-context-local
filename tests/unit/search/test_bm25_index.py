@@ -1,6 +1,7 @@
 """Tests for BM25 sparse index implementation."""
 
 import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -762,6 +763,106 @@ class TestBM25Index:
         import shutil
 
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+
+class TestBM25IndexClear:
+    """clear() resets the index to a fresh, empty state in place (ADR-0025)."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+
+    def teardown_method(self):
+        """Clean up test fixtures."""
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_clear_resets_corpus_fields(self):
+        """clear() empties the corpus and drops the fitted BM25Okapi model."""
+        index = BM25Index(self.temp_dir)
+        index.index_documents(["def foo(): pass", "class Bar: pass"], ["doc1", "doc2"])
+        assert not index.is_empty
+
+        index.clear()
+
+        assert index.is_empty
+        assert index.size == 0
+        assert index._bm25 is None
+        assert index._documents == []
+        assert index._doc_ids == []
+        assert index._tokenized_docs == []
+        assert index._metadata == {}
+
+    def test_clear_preserves_config_fields(self):
+        """clear() must not touch configuration -- callers that used to
+        construct a fresh BM25Index(**same_config) relied on getting the
+        same k1/b/tokenizer/paths back.
+        """
+        index = BM25Index(
+            self.temp_dir,
+            use_stopwords=False,
+            use_stemming=True,
+            tokenizer="whole",
+            k1=1.2,
+            b=0.8,
+        )
+        index.index_documents(["def foo(): pass"], ["doc1"])
+
+        index.clear()
+
+        assert index.storage_dir == Path(self.temp_dir)
+        assert index.use_stopwords is False
+        assert index.use_stemming is True
+        assert index.tokenizer == "whole"
+        assert index.k1 == 1.2
+        assert index.b == 0.8
+
+    def test_clear_recreates_storage_directory(self):
+        """clear() recreates storage_dir on disk, taking over the
+        shutil.rmtree the old IndexSynchronizer.clear_index used to do at
+        its call site.
+        """
+        index = BM25Index(self.temp_dir)
+        index.index_documents(["def foo(): pass"], ["doc1"])
+        index.save()
+        assert index.storage_dir.exists()
+
+        index.clear()
+
+        assert index.storage_dir.exists()
+        assert list(index.storage_dir.iterdir()) == []
+
+    def test_clear_field_completeness_against_fresh_instance(self):
+        """Highest-value regression test in the ADR-0025 plan: a future field
+        added to __init__ but forgotten in clear() must fail this test
+        immediately, instead of silently reintroducing the stale-state class
+        of bug ADR-0025 closed.
+
+        Compares the *set* of instance fields (not raw equality), because
+        `preprocessor` is a fresh TextPreprocessor object each construction
+        and has no __eq__ -- two functionally-identical instances are never
+        `==` to each other. The property under test is "no field was left
+        out of clear()", not "the objects are interchangeable".
+        """
+        fresh = BM25Index(self.temp_dir)
+        cleared = BM25Index(self.temp_dir)
+        cleared.index_documents(["def foo(): pass"], ["doc1"])
+
+        cleared.clear()
+
+        assert vars(fresh).keys() == vars(cleared).keys()
+
+        # Every field except the two non-comparable derived objects
+        # (preprocessor, _logger) must be genuinely equal, not just present.
+        skip = {"preprocessor", "_logger"}
+        for field in vars(fresh):
+            if field in skip:
+                continue
+            assert vars(fresh)[field] == vars(cleared)[field], (
+                f"clear() left field {field!r} in a different state than a "
+                f"fresh instance would have"
+            )
 
 
 class TestBM25ScoringParams:

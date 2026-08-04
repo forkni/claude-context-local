@@ -2,6 +2,7 @@
 
 import dataclasses
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -112,6 +113,12 @@ class TestIncrementalIndexer:
         # Mock components
         self.mock_indexer = Mock()
         self.mock_indexer.resync_if_desynced.return_value = (False, 0)
+        # Default to a clean bill of health: _full_index (and the incremental
+        # batch-removal path) now unconditionally consult validate_index_consistency
+        # via _consistency_target(), and a bare Mock()'s auto-created attribute
+        # returns an unconfigured Mock() that can't be unpacked into (is_valid,
+        # issues). Tests that specifically exercise the failure path override this.
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
         self.mock_embedder = Mock()
         self.mock_chunker = Mock()
         self.mock_snapshot_manager = Mock()
@@ -259,41 +266,6 @@ class TestIncrementalIndexer:
         assert result.files_modified == 0
         assert result.chunks_added == 0
         assert result.chunks_removed == 0
-
-    def test_incremental_update_no_changes_preserves_drift_accumulator(self):
-        """Regression guard for Fix 1b: a no-change pass must carry the prior
-        cumulative_changed_files/cumulative_changed_paths forward in the saved
-        snapshot metadata rather than dropping them — the previous behavior
-        silently reset drift tracking on the next pass whenever a no-op run
-        happened to run in between."""
-        indexer = IncrementalIndexer(
-            indexer=self.mock_indexer,
-            embedder=self.mock_embedder,
-            chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager,
-        )
-
-        self.mock_snapshot_manager.has_snapshot.return_value = True
-        self.mock_snapshot_manager.load_metadata.return_value = {
-            "cumulative_changed_files": 7,
-            "cumulative_changed_paths": ["a.py", "b.py"],
-        }
-
-        mock_changes = Mock()
-        mock_changes.has_changes.return_value = False
-        mock_dag = Mock()
-        mock_dag.get_all_files.return_value = []
-        indexer.change_detector.detect_changes_from_snapshot = Mock(
-            return_value=(mock_changes, mock_dag)
-        )
-
-        result = indexer.incremental_index(str(self.project_path), "test_project")
-
-        assert result.success is True
-        self.mock_snapshot_manager.save_snapshot.assert_called_once()
-        _dag_arg, metadata_arg = self.mock_snapshot_manager.save_snapshot.call_args[0]
-        assert metadata_arg["cumulative_changed_files"] == 7
-        assert metadata_arg["cumulative_changed_paths"] == ["a.py", "b.py"]
 
     def test_incremental_update_with_changes(self):
         """Test incremental update with detected changes."""
@@ -790,9 +762,19 @@ class TestIncrementalIndexer:
         # Mock file removal
         self.mock_indexer.remove_files = Mock(return_value=5)
 
-        # Mock FAILED validation (index corrupted)
+        # Mock FAILED validation on the incremental batch-removal check (index
+        # corrupted), then a clean bill of health on the second call -- made by
+        # _full_index's own tail check once recovery's clear_index() + reindex
+        # has actually rebuilt things. Fix 2/3 wire _full_index's completion to
+        # re-validate, so a mock that stayed permanently broken would (correctly)
+        # make recovery itself report success=False; this test is about recovery
+        # being *triggered* and *succeeding*, not about recovery being unable to
+        # fix a still-broken index.
         self.mock_indexer.validate_index_consistency = Mock(
-            return_value=(False, ["FAISS index size mismatch"])
+            side_effect=[
+                (False, ["FAISS index size mismatch"]),
+                (True, []),
+            ]
         )
 
         # Mock full re-index components
@@ -816,8 +798,10 @@ class TestIncrementalIndexer:
             assert result.success is True
             # Verify clear_index was called (recovery)
             self.mock_indexer.clear_index.assert_called()
-            # Verify validation was attempted
-            self.mock_indexer.validate_index_consistency.assert_called_once()
+            # Verify validation was attempted twice: once by the incremental
+            # batch-removal check (which fails and triggers recovery), and once
+            # more by _full_index's own tail check once recovery completes.
+            assert self.mock_indexer.validate_index_consistency.call_count == 2
 
     @patch.object(IncrementalIndexer, "_release_and_verify_resources")
     def test_error_recovery_via_full_reindex(self, mock_release):
@@ -1143,6 +1127,9 @@ class TestIncrementalIndexer:
         fresh_embedder.embed_chunks.return_value = [fresh_embedding_result]
         fresh_indexer = Mock()
         fresh_indexer.resync_if_desynced.return_value = (False, 0)
+        # _full_index's tail consults self.indexer (the fresh one, post-swap) via
+        # _consistency_target() -- give it the same clean default as self.mock_indexer.
+        fresh_indexer.validate_index_consistency = Mock(return_value=(True, []))
 
         def swap_resources(project_path):
             indexer.embedder = fresh_embedder
@@ -1177,6 +1164,247 @@ class TestIncrementalIndexer:
         import shutil
 
         shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+
+class TestConsistencyTarget:
+    """_consistency_target() resolution and its wiring into _full_index.
+
+    Regression coverage for the bug found while diagnosing the community-summary
+    chunk_id collision: self.indexer is declared CodeIndexManager in type hints
+    but is a HybridSearcher in production (mcp_server/tools/index_handlers.py),
+    which has no validate_index_consistency method — only its .dense_index
+    (a CodeIndexManager) does. The old unguarded call site was dead code on
+    every production path; _consistency_target() resolves the right object.
+    """
+
+    def setup_method(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.project_path = Path(self.temp_dir) / "test_project"
+        self.project_path.mkdir(parents=True, exist_ok=True)
+        (self.project_path / "main.py").write_text("def main(): pass")
+
+        self.mock_indexer = Mock()
+        self.mock_indexer.resync_if_desynced.return_value = (False, 0)
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
+        self.mock_embedder = Mock()
+        self.mock_chunker = Mock()
+        self.mock_snapshot_manager = Mock()
+
+    def teardown_method(self):
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_consistency_target_resolves_through_hybrid_searcher_shaped_indexer(self):
+        """Locks down the original bug. A plain MagicMock/Mock would NOT catch a
+        regression here, because hasattr() is unconditionally True on one — that
+        is exactly how the dead branch stayed invisible in every prior test.
+        spec=HybridSearcher makes the attribute that's genuinely absent in
+        production genuinely absent here too."""
+        from search.hybrid_searcher import HybridSearcher
+        from search.indexer import CodeIndexManager
+
+        hybrid_like = Mock(spec=HybridSearcher)
+        hybrid_like.dense_index = Mock(spec=CodeIndexManager)
+        hybrid_like.dense_index.validate_index_consistency = Mock(
+            return_value=(True, [])
+        )
+
+        indexer = IncrementalIndexer(
+            indexer=hybrid_like,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        # Sanity check the fixture actually shapes like production: HybridSearcher
+        # itself has no validate_index_consistency, only dense_index does.
+        assert not hasattr(hybrid_like, "validate_index_consistency")
+        assert hasattr(hybrid_like.dense_index, "validate_index_consistency")
+
+        target = indexer._consistency_target()
+
+        assert target is hybrid_like.dense_index
+
+    def test_consistency_target_uses_indexer_directly_when_it_has_the_method(self):
+        """Under most existing tests self.indexer is a bare CodeIndexManager
+        stand-in (has validate_index_consistency itself) -- _consistency_target
+        must not detour through .dense_index in that case."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        target = indexer._consistency_target()
+
+        assert target is self.mock_indexer
+
+    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
+    def test_full_index_validation_failure_marks_result_failed(self, mock_release):
+        """Fix 2: _full_index's tail now actually re-validates. Before this fix
+        the check was dead code (hasattr false on the real HybridSearcher shape)
+        so a corrupted index would still come back success=True."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        self.mock_snapshot_manager.has_snapshot.return_value = False
+        self.mock_indexer.validate_index_consistency = Mock(
+            return_value=(False, ["metadata rows (10) != chunk_ids length (11)"])
+        )
+
+        with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
+            mock_dag = Mock()
+            mock_dag.get_all_files.return_value = ["main.py"]
+            mock_dag_class.return_value = mock_dag
+
+            mock_chunk = Mock()
+            mock_chunk.content = "test content"
+            self.mock_chunker.is_supported.return_value = True
+            self.mock_chunker.chunk_file.return_value = [mock_chunk]
+
+            mock_embedding_result = Mock()
+            mock_embedding_result.metadata = {}
+            self.mock_embedder.embed_chunks.return_value = [mock_embedding_result]
+
+            result = indexer.incremental_index(str(self.project_path), "test_project")
+
+        assert result.success is False
+        assert result.error is not None
+        assert "metadata rows (10) != chunk_ids length (11)" in result.error
+
+
+class TestBoundedRecovery:
+    """_attempt_recovery is bounded by an on-disk marker file, not an instance
+    counter, because IncrementalIndexer is constructed fresh per MCP request
+    (see _recovery_marker_path's docstring) — a counter on self would reset
+    every call and never trip. This is the regression coverage for the "62
+    consecutive recovery attempts" incident: once a recovery attempt itself
+    fails, further automatic recovery must stop and name cleanup_resources
+    instead of retrying against the same held file handle forever.
+    """
+
+    def setup_method(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.project_path = Path(self.temp_dir) / "test_project"
+        self.project_path.mkdir(parents=True, exist_ok=True)
+        self.storage_dir = Path(self.temp_dir) / "index"
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
+
+        self.mock_indexer = Mock()
+        self.mock_indexer.storage_dir = str(self.storage_dir)
+        self.mock_indexer.resync_if_desynced.return_value = (False, 0)
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
+        self.mock_embedder = Mock()
+        self.mock_chunker = Mock()
+        self.mock_snapshot_manager = Mock()
+
+    def teardown_method(self):
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    @property
+    def marker_path(self) -> Path:
+        return self.storage_dir / "index_recovery_failed.marker"
+
+    def test_recovery_failure_writes_marker_and_names_cleanup_resources(self):
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+        self.mock_indexer.clear_index = Mock(
+            side_effect=PermissionError("metadata.db locked")
+        )
+
+        result = indexer._attempt_recovery(
+            "original failure",
+            str(self.project_path),
+            "test_project",
+            time.time(),
+        )
+
+        assert result.success is False
+        assert "cleanup_resources" in result.error
+        assert self.marker_path.exists(), (
+            "a failed recovery attempt must leave a durable marker — an "
+            "in-memory counter would reset on the next request"
+        )
+
+    def test_recovery_short_circuits_when_marker_already_present(self):
+        self.marker_path.write_text("Original: x\nRecovery: y\nTimestamp: 0\n")
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+        self.mock_indexer.clear_index = Mock()
+
+        result = indexer._attempt_recovery(
+            "original failure",
+            str(self.project_path),
+            "test_project",
+            time.time(),
+        )
+
+        assert result.success is False
+        assert "cleanup_resources" in result.error
+        # a prior marker must block retrying clear_index() against the same
+        # held handle, not just report the same error after retrying
+        self.mock_indexer.clear_index.assert_not_called()
+
+    def test_successful_recovery_clears_a_marker_left_by_the_attempt(self):
+        """Defensive cleanup: _attempt_recovery clears any marker present
+        after a successful clear_index()/_full_index() pair, even though the
+        normal case never sees one appear mid-attempt (the top-of-method
+        check already short-circuits a pre-existing marker). Simulates the
+        marker being (re)written during the attempt to lock down that the
+        success path still sweeps it."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        def _clear_index_and_leave_a_marker():
+            self.marker_path.write_text("stale from a concurrent attempt")
+
+        self.mock_indexer.clear_index = Mock(
+            side_effect=_clear_index_and_leave_a_marker
+        )
+        successful_result = IncrementalIndexResult(
+            success=True,
+            files_added=0,
+            files_removed=0,
+            files_modified=0,
+            chunks_added=0,
+            chunks_removed=0,
+            time_taken=0.0,
+        )
+        with patch.object(
+            IncrementalIndexer, "_full_index", return_value=successful_result
+        ):
+            result = indexer._attempt_recovery(
+                "original failure",
+                str(self.project_path),
+                "test_project",
+                time.time(),
+            )
+
+        assert result.success is True
+        assert not self.marker_path.exists(), (
+            "a successful recovery must clear the marker so a future "
+            "genuine failure can retry once, not stay permanently blocked"
+        )
 
 
 class TestParallelChunking:
@@ -1478,139 +1706,241 @@ class TestRestoreRepoProfile:
         assert assigned.max_complexity == 15
 
 
-class TestCheckCommunityDrift:
-    """Direct tests for IncrementalIndexer._check_community_drift.
+class TestProbeWiring:
+    """Auto-tuning probe pass 1 wiring in _full_index (ADR-0014).
 
-    Drift is tracked as a *set* of distinct changed file paths (see
-    _check_community_drift's docstring) — so unlike the old event-counting
-    version, these helpers must produce distinct path values per changed
-    file, not just a count of entries.
+    The probe must run exactly once per full reindex (when an active project
+    storage dir is set), never on incremental passes, and a probe failure
+    must never break indexing.
     """
 
-    def _make_indexer(self):
+    def setup_method(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.project_path = Path(self.temp_dir) / "test_project"
+        self.project_path.mkdir(parents=True, exist_ok=True)
+        for filename in ("main.py", "utils.py"):
+            (self.project_path / filename).write_text("def f(): return 1")
+
+        self.mock_indexer = Mock()
+        self.mock_indexer.resync_if_desynced.return_value = (False, 0)
+        # See TestIncrementalIndexer.setup_method for why this default is needed.
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
+        self.mock_embedder = Mock()
+        self.mock_embedder.model_name = "BAAI/bge-m3"
+        self.mock_chunker = Mock()
+        self.mock_snapshot_manager = Mock()
+
+    def _make_indexer(self) -> IncrementalIndexer:
         return IncrementalIndexer(
-            indexer=Mock(),
-            embedder=Mock(),
-            chunker=Mock(),
-            snapshot_manager=Mock(),
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
         )
 
-    def _make_changes(self, added=1, modified=1, removed=0, prefix=""):
-        changes = Mock()
-        changes.added = [f"{prefix}added_{i}" for i in range(added)]
-        changes.modified = [f"{prefix}modified_{i}" for i in range(modified)]
-        changes.removed = [f"{prefix}removed_{i}" for i in range(removed)]
-        return changes
-
-    def test_below_threshold_returns_none_and_new_cumulative(self):
-        """When drift fraction < threshold, returns (None, new_cumulative, new_paths)."""
-        indexer = self._make_indexer()
-        prev_meta = {
-            "cumulative_changed_files": 2,
-            "cumulative_changed_paths": ["prev_a", "prev_b"],
-            "supported_files": 100,
-        }
-        changes = self._make_changes(
-            added=1, modified=1, removed=0
-        )  # 2 new distinct → 4 total
-
-        with patch("search.incremental_indexer.get_search_config") as mock_cfg:
-            mock_cfg.return_value.chunking.incremental_community_redetect_threshold = (
-                0.5
-            )
-            result, cumulative, paths = indexer._check_community_drift(
-                "/p", "proj", changes, 0.0, True, prev_meta
-            )
-
-        assert result is None
-        assert cumulative == 4  # 2 prev + 2 new distinct
-        assert set(paths) == {"prev_a", "prev_b", "added_0", "modified_0"}
-
-    def test_same_file_across_passes_does_not_inflate_drift(self):
-        """Re-editing the same file across many passes must not, by itself,
-        approach the redetect threshold the way summing per-pass change
-        events would (this is the 1a regression guard)."""
-        indexer = self._make_indexer()
-        prev_meta = {
-            "cumulative_changed_files": 1,
-            "cumulative_changed_paths": ["hot_file"],
-            "supported_files": 100,
-        }
-        changes = Mock()
-        changes.added = []
-        changes.modified = ["hot_file"] * 20  # same file, 20 edit events
-        changes.removed = []
-
-        with patch("search.incremental_indexer.get_search_config") as mock_cfg:
-            mock_cfg.return_value.chunking.incremental_community_redetect_threshold = (
-                0.5
-            )
-            result, cumulative, paths = indexer._check_community_drift(
-                "/p", "proj", changes, 0.0, True, prev_meta
-            )
-
-        assert result is None
-        assert cumulative == 1  # still just the one distinct file
-        assert paths == ["hot_file"]
-
-    def test_above_threshold_calls_full_index_and_returns_result(self):
-        """When drift fraction >= threshold, calls _full_index and returns its
-        result with the true change counts substituted in (not the full-index
-        file totals) — see _check_community_drift's dataclasses.replace step."""
-        indexer = self._make_indexer()
-        prev_meta = {
-            "cumulative_changed_files": 80,
-            "cumulative_changed_paths": [f"prev_{i}" for i in range(80)],
-            "supported_files": 100,
-        }
-        # 80 prev distinct + 20 new distinct = 100 → 100% drift, well above 50%
-        changes = self._make_changes(added=10, modified=5, removed=5)
-
-        # A real IncrementalIndexResult (not an opaque Mock): the promotion
-        # path runs dataclasses.replace() on it, which raises on a Mock.
-        mock_full_result = IncrementalIndexResult(
-            files_added=100,  # full-index reports every supported file...
-            files_removed=0,
-            files_modified=0,
-            chunks_added=42,
-            chunks_removed=0,
-            time_taken=1.0,
-            success=True,
-        )
+    def _run_full_index(self, indexer: IncrementalIndexer) -> IncrementalIndexResult:
+        """Drive a full index with the same mock scaffolding as
+        test_full_index_no_snapshot."""
+        self.mock_snapshot_manager.has_snapshot.return_value = False
         with (
-            patch.object(indexer, "_full_index", return_value=mock_full_result),
-            patch("search.incremental_indexer.get_search_config") as mock_cfg,
-            patch("search.incremental_indexer.traced_block"),
+            patch.object(IncrementalIndexer, "_release_and_verify_resources"),
+            patch("search.incremental_indexer.MerkleDAG") as mock_dag_class,
         ):
-            mock_cfg.return_value.chunking.incremental_community_redetect_threshold = (
-                0.5
-            )
-            result, cumulative, paths = indexer._check_community_drift(
-                "/p", "proj", changes, 0.0, True, prev_meta
-            )
+            mock_dag = Mock()
+            mock_dag.get_all_files.return_value = ["main.py", "utils.py"]
+            mock_dag_class.return_value = mock_dag
 
-        # ...but the caller is told the true change set, not the rebuild total.
-        assert result.files_added == 10
-        assert result.files_removed == 5
-        assert result.files_modified == 5
-        assert result.chunks_added == 42  # untouched — real work done
-        assert cumulative == 100  # 80 prev + 20 new distinct
-        assert paths == []  # promotion resets the on-disk accumulator
+            mock_chunk = Mock()
+            mock_chunk.content = "test content"
+            self.mock_chunker.is_supported.return_value = True
+            self.mock_chunker.chunk_file.return_value = [mock_chunk]
+            self.mock_embedder.embed_chunks.side_effect = lambda chunks, **kwargs: [
+                Mock(metadata={}) for _ in chunks
+            ]
 
-    def test_no_prior_tracking_skips_drift_check(self):
-        """When 'cumulative_changed_files' absent, always returns (None, this_count, paths)."""
+            return indexer.incremental_index(str(self.project_path), "test_project")
+
+    def test_full_index_calls_probe_once_and_attaches_summary(self):
+        sentinel_summary = {"stage": "pre_chunking", "override_keys": ["x"]}
         indexer = self._make_indexer()
-        # No 'cumulative_changed_files' key → _has_prior_tracking is False
-        prev_meta = {"supported_files": 100}
-        # Would be 99% drift if tracking were applied
-        changes = self._make_changes(added=99, modified=0, removed=0)
 
-        with patch.object(indexer, "_full_index") as mock_full:
-            result, cumulative, paths = indexer._check_community_drift(
-                "/p", "proj", changes, 0.0, True, prev_meta
+        with (
+            patch(
+                "search.incremental_indexer.get_active_project_storage_dir",
+                return_value=self.temp_dir,
+            ),
+            patch(
+                "search.index_probe.probe_pre_chunking",
+                return_value=sentinel_summary,
+            ) as mock_probe,
+        ):
+            result = self._run_full_index(indexer)
+
+        assert result.success is True
+        mock_probe.assert_called_once()
+        args, kwargs = mock_probe.call_args
+        assert args[0] == self.temp_dir  # project storage dir
+        assert sorted(args[1]) == ["main.py", "utils.py"]  # supported files
+        assert kwargs["embedding_model"] == "BAAI/bge-m3"
+        assert result.probe_summary == sentinel_summary
+        assert result.to_dict()["probe_summary"] == sentinel_summary
+
+    def test_full_index_without_active_storage_dir_skips_probe(self):
+        indexer = self._make_indexer()
+        with (
+            patch(
+                "search.incremental_indexer.get_active_project_storage_dir",
+                return_value=None,
+            ),
+            patch("search.index_probe.probe_pre_chunking") as mock_probe,
+        ):
+            result = self._run_full_index(indexer)
+
+        assert result.success is True
+        mock_probe.assert_not_called()
+        assert result.probe_summary is None
+
+    def test_incremental_pass_never_probes(self):
+        indexer = self._make_indexer()
+        self.mock_snapshot_manager.has_snapshot.return_value = True
+        mock_changes = Mock()
+        mock_changes.has_changes.return_value = False
+        mock_dag = Mock()
+        mock_dag.get_all_files.return_value = []
+        indexer.change_detector.detect_changes_from_snapshot = Mock(
+            return_value=(mock_changes, mock_dag)
+        )
+
+        with (
+            patch(
+                "search.incremental_indexer.get_active_project_storage_dir",
+                return_value=self.temp_dir,
+            ),
+            patch("search.index_probe.probe_pre_chunking") as mock_probe,
+        ):
+            result = indexer.incremental_index(str(self.project_path), "test_project")
+
+        assert result.success is True
+        mock_probe.assert_not_called()
+        assert result.probe_summary is None
+
+    def test_probe_failure_never_breaks_indexing(self):
+        indexer = self._make_indexer()
+        with (
+            patch(
+                "search.incremental_indexer.get_active_project_storage_dir",
+                return_value=self.temp_dir,
+            ),
+            patch(
+                "search.index_probe.probe_pre_chunking",
+                side_effect=RuntimeError("probe exploded"),
+            ),
+        ):
+            result = self._run_full_index(indexer)
+
+        assert result.success is True
+        assert result.probe_summary is None
+
+
+class TestModuleSummaryInjection:
+    """Module-summary generation is called directly from _full_index(),
+    not routed through CommunityStage.run() (relocated ahead of its removal).
+    """
+
+    def setup_method(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.project_path = Path(self.temp_dir) / "test_project"
+        self.project_path.mkdir(parents=True, exist_ok=True)
+        for filename in ("main.py", "utils.py"):
+            (self.project_path / filename).write_text("def f(): return 1")
+
+        self.mock_indexer = Mock()
+        self.mock_indexer.resync_if_desynced.return_value = (False, 0)
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
+        self.mock_embedder = Mock()
+        self.mock_embedder.model_name = "BAAI/bge-m3"
+        self.mock_chunker = Mock()
+        self.mock_snapshot_manager = Mock()
+
+    def _make_indexer(self) -> IncrementalIndexer:
+        return IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+    def _run_full_index(
+        self,
+        indexer: IncrementalIndexer,
+        enable_file_summaries: bool,
+        chunker_supported: bool = True,
+    ) -> IncrementalIndexResult:
+        """Drive a full index with the same mock scaffolding as
+        TestProbeWiring._run_full_index, with enable_file_summaries controlled."""
+        self.mock_snapshot_manager.has_snapshot.return_value = False
+        mock_config = Mock()
+        mock_config.chunking.enable_file_summaries = enable_file_summaries
+
+        with (
+            patch.object(IncrementalIndexer, "_release_and_verify_resources"),
+            patch("search.incremental_indexer.MerkleDAG") as mock_dag_class,
+            patch(
+                "search.incremental_indexer.get_active_project_storage_dir",
+                return_value=None,
+            ),
+            patch(
+                "search.incremental_indexer.get_search_config",
+                return_value=mock_config,
+            ),
+        ):
+            mock_dag = Mock()
+            mock_dag.get_all_files.return_value = ["main.py", "utils.py"]
+            mock_dag_class.return_value = mock_dag
+
+            mock_chunk = Mock()
+            mock_chunk.content = "test content"
+            self.mock_chunker.is_supported.return_value = chunker_supported
+            self.mock_chunker.chunk_file.return_value = [mock_chunk]
+            self.mock_embedder.embed_chunks.side_effect = lambda chunks, **kwargs: [
+                Mock(metadata={}) for _ in chunks
+            ]
+
+            return indexer.incremental_index(str(self.project_path), "test_project")
+
+    def test_generates_and_appends_module_summaries(self):
+        indexer = self._make_indexer()
+        sentinel_summary = Mock()
+        with patch.object(
+            indexer._summary_stage,
+            "generate_module_summaries",
+            return_value=[sentinel_summary],
+        ) as mock_generate:
+            result = self._run_full_index(indexer, enable_file_summaries=True)
+
+        assert result.success is True
+        mock_generate.assert_called_once()
+        embedded_chunks = self.mock_embedder.embed_chunks.call_args.args[0]
+        assert sentinel_summary in embedded_chunks
+
+    def test_disabled_by_config_skips_generation(self):
+        indexer = self._make_indexer()
+        with patch.object(
+            indexer._summary_stage, "generate_module_summaries"
+        ) as mock_generate:
+            result = self._run_full_index(indexer, enable_file_summaries=False)
+
+        assert result.success is True
+        mock_generate.assert_not_called()
+
+    def test_no_chunks_skips_generation(self):
+        indexer = self._make_indexer()
+        with patch.object(
+            indexer._summary_stage, "generate_module_summaries"
+        ) as mock_generate:
+            result = self._run_full_index(
+                indexer, enable_file_summaries=True, chunker_supported=False
             )
 
-        assert result is None
-        assert cumulative == 99  # 0 prev + 99 new distinct
-        assert len(paths) == 99
-        mock_full.assert_not_called()
+        assert result.success is True
+        mock_generate.assert_not_called()

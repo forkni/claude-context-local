@@ -392,7 +392,7 @@ class FaissVectorIndex:
         # Normalize embeddings for cosine similarity.
         # L2-normalization invariant: all vectors in the index are unit-norm;
         # search() also normalizes the query before scoring, making IndexFlatIP
-        # equivalent to cosine similarity. Both ONNX and PyTorch embeddings
+        # equivalent to cosine similarity. PyTorch embeddings
         # reach this point already approximately unit-norm; the explicit
         # normalize_L2 here is the canonical source of that guarantee (#33).
         # Copy first — normalize_L2 is in-place, and callers must not see
@@ -498,6 +498,14 @@ class FaissVectorIndex:
 
         self._index = None
         self._chunk_ids = []
+
+        # Close and release the mmap handle before unlinking its file, else
+        # a loaded storage keeps serving reconstruct() reads from a deleted
+        # file (and unlink() itself fails with WinError 32 on Windows while
+        # the handle is still open).
+        if self._mmap_storage is not None:
+            self._mmap_storage.close()
+            self._mmap_storage = None
 
         # Remove index files
         if self.index_path.exists():

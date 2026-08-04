@@ -1,4 +1,4 @@
-name: Branch Protection
+name: CI
 
 on:
   push:
@@ -6,14 +6,22 @@ on:
   pull_request:
     branches: [development, main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     name: Validate Branch State
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
         with:
           fetch-depth: 0  # Full history for branch comparison
 
@@ -61,7 +69,7 @@ jobs:
           echo "Checking docs/ directory..."
 
           # Allowed public documentation files (main branch)
-          ALLOWED_DOCS="ADVANCED_FEATURES_GUIDE.md|BENCHMARKS.md|CALL_GRAPH_TUNING.md|CLAUDE_DESKTOP_SETUP.md|CLAUDE_MD_TEMPLATE.md|claude_code_config.md|CODE_REVIEW_IMPROVEMENT_PLAN.md|DOCUMENTATION_INDEX.md|DSPY_SETUP.md|GIT_WORKFLOW.md|HYBRID_SEARCH_CONFIGURATION_GUIDE.md|INSTALLATION_GUIDE.md|MCP_TOOLS_REFERENCE.md|MODEL_MIGRATION_GUIDE.md|OBSERVABILITY.md|PYTORCH_COMPATIBILITY.md|VERSION_HISTORY.md"
+          ALLOWED_DOCS="ADVANCED_FEATURES_GUIDE.md|BENCHMARKS.md|CALL_GRAPH_TUNING.md|CLAUDE_DESKTOP_SETUP.md|CLAUDE_MD_TEMPLATE.md|claude_code_config.md|CODE_REVIEW_IMPROVEMENT_PLAN.md|DOCUMENTATION_INDEX.md|GIT_WORKFLOW.md|HYBRID_SEARCH_CONFIGURATION_GUIDE.md|INSTALLATION_GUIDE.md|MCP_TOOLS_REFERENCE.md|MODEL_MIGRATION_GUIDE.md|OBSERVABILITY.md|PYTORCH_COMPATIBILITY.md|VERSION_HISTORY.md"
 
           # Find unauthorized docs (only check on main branch)
           # docs/adr/ subtree is always permitted (architecture decision records)
@@ -84,30 +92,57 @@ jobs:
   test:
     name: Run Test Suite
     runs-on: ubuntu-latest
-    needs: validate
-    # Only run tests on development branch (main branch has tests/ removed per .gitattributes)
-    if: github.ref == 'refs/heads/development'
+    timeout-minutes: 20
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8.1.0
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
         with:
           python-version: '3.11'
           enable-cache: true  # uploads uv store to GitHub Actions cache (10 GB free tier)
 
       - name: Install dependencies
-        run: uv sync --locked --extra test --extra callgraph
+        run: uv sync --locked --extra test --extra callgraph --extra otel --extra gpu
         # Note: uv.lock pins torch to pytorch-cu128 on linux; installs CUDA wheels (~2.3 GB).
         # Tests mock torch so GPU is not needed; subsequent runs use the Actions cache.
+        # otel: without it, tests/integration/test_observability_e2e.py and
+        # tests/unit/utils/test_observability.py silently skip (importorskip/skipif)
+        # instead of running — utils/observability.py is in the coverage source set,
+        # so skipping them makes the coverage number dishonest.
+        # gpu: nvidia-ml-py is pure-Python NVML bindings (no CUDA device required);
+        # exercises mcp_server/tools/status_handlers.py's real import path instead
+        # of its ImportError fallback.
 
       - name: Run tests with coverage
         run: |
-          uv run pytest tests/ -v --tb=short --maxfail=20 \
+          mkdir -p test-results
+          uv run pytest tests/ -v --tb=short --maxfail=20 -rs \
             --ignore=tests/slow_integration/ \
-            --cov --cov-branch --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+            -m "not slow" \
+            -n auto --dist loadfile \
+            --junitxml=test-results/junit.xml \
+            --cov --cov-branch --cov-report=term-missing --cov-report=xml
+        # --cov-fail-under intentionally omitted here: [tool.coverage.report]
+        # fail_under in pyproject.toml is the single source of truth (previously
+        # the CLI flag silently overrode it with a laxer, undocumented number).
+        # -m "not slow": complements --ignore, not redundant with it. --ignore
+        # prevents collection of slow_integration/ (never imported). -m deselects
+        # after collection — needed because tests/integration/test_observability_e2e.py
+        # must still be imported (its 2 fast tests stay on this gate); only the 2
+        # @pytest.mark.slow model-loading tests in that file (184s/173s) are dropped.
+        # They still run nightly (see nightly.yml) and in any local full-suite run.
+        # -n auto --dist loadfile: parallelizes across CPU cores. `loadfile` (not the
+        # default `load`) keeps each test module on a single worker — required because
+        # tests/integration/test_observability_e2e.py has a module-scoped autouse
+        # fixture over global otel tracer-provider state, and pytest-randomly (active,
+        # see pyproject.toml) would otherwise let per-test distribution race it across
+        # workers. --maxfail becomes approximate under xdist (each worker reports
+        # independently); pytest-cov's combine step adds a few seconds.
+        # Verified locally: `-m "not slow" -n auto --dist loadfile` reports
+        # 5726 passed, 2 skipped == the 5728 serial baseline exactly, no dropped tests.
 
       - name: Slow-integration collection guard
         # tests/slow_integration/ is excluded from the run above (real model
@@ -115,20 +150,24 @@ jobs:
         # and signature-level rot (e.g. a constructor gaining a required arg)
         # in seconds; it does NOT catch runtime/assertion failures, so this
         # is not a substitute for periodically running the suite for real.
+        # if: always() so a coverage-step failure doesn't hide whether this
+        # directory also rotted.
+        if: always()
         run: uv run pytest tests/slow_integration --collect-only -q
 
       - name: Upload coverage to Codecov
         if: always()
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v6.0.2
         with:
           files: ./coverage.xml
-          flags: development
+          flags: unit
+          name: ubuntu-py311
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
         with:
           name: test-results
           path: test-results/
@@ -137,37 +176,102 @@ jobs:
   lint:
     name: Code Quality Checks
     runs-on: ubuntu-latest
-    needs: validate
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8.1.0
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
         with:
           python-version: '3.11'
           enable-cache: true
 
       - name: Install dependencies
         run: uv sync --locked --extra dev --extra callgraph
-        # dev → pyrefly; callgraph → libcst; base deps → numpy/dspy/mcp/etc.
-        # so pyrefly resolves third-party imports (was: uvx isolated env → 50 false
+        # dev → pyrefly, pre-commit; callgraph → libcst; base deps → numpy/mcp/etc. so
+        # pyrefly resolves third-party imports (was: uvx isolated env → 50 false
         # missing-import errors). Torch wheels are heavy (~2.3 GB) but cached by setup-uv.
 
+      - name: Cache pre-commit hook environments
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
       - name: Run ruff check (linting + import sorting)
-        run: uv run ruff check .
+        id: ruff_check
+        continue-on-error: true
+        run: uv run ruff check --output-format=github .
         # Blocking gate — ruff is already enforced locally via commit_enhanced.sh
 
       - name: Check formatting (ruff format)
+        id: ruff_format
+        continue-on-error: true
         run: uv run ruff format --check .
         # Blocking gate — ruff format is already enforced locally
 
       - name: Run type checking (pyrefly)
+        id: pyrefly
+        continue-on-error: true
         run: uv run pyrefly check
         # Blocking gate — pyrefly exits 0 consistently on development (verified 2026-06-30)
 
       - name: Run pre-commit hooks
-        run: uvx pre-commit run --all-files
+        id: precommit
+        continue-on-error: true
+        run: uv run pre-commit run --all-files --show-diff-on-failure
         # Blocking gate — enforces markdownlint, file hygiene, ruff --fix
         # (ruff-pre-commit pinned to match project's ruff>=0.15.20; verified green 2026-07-21)
+        # `uv run`, not `uvx`: pre-commit>=4.6.0 is already in the dev extra installed
+        # above, so uvx would build a second, unpinned copy for no reason.
+        # Deliberately overlaps the ruff steps above: .pre-commit-config.yaml pins
+        # ruff to a fixed rev while `uv run ruff` uses uv.lock's resolution — running
+        # both catches drift between the two pins.
+
+      - name: Check spelling (typos)
+        id: typos
+        continue-on-error: true
+        uses: crate-ci/typos@8a48f81b6c64dcfea44b3633223084c4be58ac5f  # v1.49.0
+        with:
+          files: docs/ README.md CHANGELOG.md
+        # Moved here from the old docs-validation.yml spelling job (paths-filtered,
+        # could never become a required check). Ran clean on its first execution
+        # after the @master -> @v1.49.0 pin (run 30868713105, 2026-08-04), so it is
+        # now in the blocking loop below.
+
+      - name: Aggregate lint results
+        if: always()
+        run: |
+          fail=0
+          for r in "ruff check:${{ steps.ruff_check.outcome }}" \
+                   "ruff format:${{ steps.ruff_format.outcome }}" \
+                   "pyrefly:${{ steps.pyrefly.outcome }}" \
+                   "pre-commit:${{ steps.precommit.outcome }}" \
+                   "typos:${{ steps.typos.outcome }}"; do
+            name="${r%%:*}"; out="${r##*:}"
+            if [ "$out" != "success" ]; then echo "FAIL  $name"; fail=1; else echo "ok    $name"; fi
+          done
+          [ "$fail" -eq 0 ] || { echo "::error::one or more lint sub-checks failed"; exit 1; }
+
+  all-gates-green:
+    name: All Gates Green
+    runs-on: ubuntu-latest
+    needs: [validate, test, lint]
+    if: always()
+    timeout-minutes: 5
+
+    steps:
+      - name: Check gate results
+        run: |
+          echo "validate: ${{ needs.validate.result }}"
+          echo "test:     ${{ needs.test.result }}"
+          echo "lint:     ${{ needs.lint.result }}"
+          if [ "${{ needs.validate.result }}" != "success" ] \
+          || [ "${{ needs.test.result }}"     != "success" ] \
+          || [ "${{ needs.lint.result }}"     != "success" ]; then
+            echo "::error::One or more required gates did not succeed"
+            exit 1
+          fi
+          echo "All gates green."

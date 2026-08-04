@@ -15,7 +15,7 @@ from mcp_server.tools.config_handlers import (
     handle_configure_chunking,
     handle_configure_search_mode,
 )
-from search.config import ChunkingConfig, SearchModeConfig
+from search.config import ChunkingConfig, SearchConfig, SearchModeConfig
 
 
 @pytest.fixture
@@ -75,48 +75,45 @@ async def test_configure_search_mode_valid_saves_config(
     mock_config_manager.save_config.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_configure_search_mode_partial_call_retains_persisted_weights(
+    mock_state,
+):
+    """Phase 1.1 regression guard: a call that only sets ``search_mode`` must not
+    stomp bm25_weight/dense_weight/use_parallel_search back to hardcoded literals.
+
+    Uses a real SearchConfig (not a Mock) with ADR-0019 benchmark-locked-looking
+    values pre-set to something other than the old hardcoded defaults (0.35/0.65/
+    True), so a regression back to unconditional assignment would be caught by
+    value, not just by call count.
+    """
+    config = SearchConfig()
+    config.search_mode.bm25_weight = 0.7
+    config.search_mode.dense_weight = 0.3
+    config.performance.use_parallel_search = False
+
+    mgr = Mock()
+    mgr.load_config.return_value = config
+
+    with (
+        patch("mcp_server.tools.config_handlers.get_config_manager", return_value=mgr),
+        patch("mcp_server.tools.config_handlers.get_state", return_value=mock_state),
+    ):
+        result = await handle_configure_search_mode({"search_mode": "bm25"})
+
+    assert "error" not in result
+    assert config.search_mode.default_mode == "bm25"
+    assert config.search_mode.bm25_weight == 0.7
+    assert config.search_mode.dense_weight == 0.3
+    assert config.performance.use_parallel_search is False
+    assert result["config"]["bm25_weight"] == 0.7
+    assert result["config"]["dense_weight"] == 0.3
+    assert result["config"]["enable_parallel"] is False
+
+
 # ============================================================================
 # handle_configure_chunking — per-field validation
 # ============================================================================
-
-
-@pytest.mark.asyncio
-async def test_chunking_community_resolution_out_of_range(mock_config_manager):
-    with patch(
-        "mcp_server.tools.config_handlers.get_config_manager",
-        return_value=mock_config_manager,
-    ):
-        result = await handle_configure_chunking({"community_resolution": 0.05})
-
-    assert "error" in result
-    assert "community_resolution" in result["error"]
-    mock_config_manager.save_config.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_chunking_max_phantom_degree_out_of_range(mock_config_manager):
-    with patch(
-        "mcp_server.tools.config_handlers.get_config_manager",
-        return_value=mock_config_manager,
-    ):
-        result = await handle_configure_chunking({"max_phantom_degree": 0})
-
-    assert "error" in result
-    assert "max_phantom_degree" in result["error"]
-    mock_config_manager.save_config.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_chunking_token_estimation_invalid(mock_config_manager):
-    with patch(
-        "mcp_server.tools.config_handlers.get_config_manager",
-        return_value=mock_config_manager,
-    ):
-        result = await handle_configure_chunking({"token_estimation": "gpt4"})
-
-    assert "error" in result
-    assert "token_estimation" in result["error"]
-    mock_config_manager.save_config.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -206,9 +203,6 @@ async def test_chunking_all_valid_saves_config(mock_config_manager):
     ):
         result = await handle_configure_chunking(
             {
-                "community_resolution": 1.0,
-                "max_phantom_degree": 50,
-                "token_estimation": "whitespace",
                 "split_size_method": "lines",
                 "max_split_chars": 5000,
                 "sizing_mode": "adaptive",
@@ -245,13 +239,10 @@ class TestConfigValidationOwnership:
     @pytest.mark.parametrize(
         "field_name,spec_key,expected",
         [
-            ("community_resolution", "range", (0.1, 2.0)),
-            ("max_phantom_degree", "range", (1, 1000)),
             ("max_split_chars", "range", (1000, 10000)),
             ("adaptive_multiplier_max", "range", (1.0, 2.0)),
             ("adaptive_multiplier_min", "range", (0.1, 1.0)),
             ("max_complexity_cap", "range", (5, 100)),
-            ("token_estimation", "choices", ("whitespace", "tiktoken")),
             ("split_size_method", "choices", ("lines", "characters")),
             ("sizing_mode", "choices", ("fixed", "adaptive")),
         ],

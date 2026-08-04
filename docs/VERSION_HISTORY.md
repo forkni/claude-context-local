@@ -2,15 +2,99 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-07-27)
+## Current Status: All Features Operational (2026-08-02)
 
-- **Version**: 0.22.0
+- **Version**: 0.23.0
 - **Status**: Production-ready, concurrency-safe
-- **Test Coverage**: 3,359 unit tests · 103 fast_integration · 22 integration · 93 slow_integration (2026-07-27)
-- **Dependencies**: 38 direct (`pyproject.toml`) + optional `[callgraph]` / `[lsp]` / `[gpu]` / `[otel]` extras
-- **SSCG Benchmark**: MRR 0.787-0.796, Recall@7 0.719-0.734, Recall@20 0.80-0.81 (2026-07-26/27)
+- **Test Coverage**: 5,540 unit tests · 102 fast_integration · 19 integration · 108 slow_integration (2026-08-02)
+- **Dependencies**: 36 direct (`pyproject.toml`) + optional `[callgraph]` / `[lsp]` / `[test]` / `[dev]` / `[gpu]` / `[otel]` extras
+- **SSCG Benchmark**: MRR 0.8348 (canonical, 63q, k=10) / 0.6816 (expanded, 131 non-D, k=10) — `canon_C3`, see `evaluation/CANON_20260803.md` and ADR-0024 for full provenance; the README's k=7 headline (MRR 0.787-0.796, 2026-07-27) is a separate operating point, not directly comparable
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: v0.22.0 — GLSL indexing parity, persistent chunk embedding cache (43× reindex speedup), BM25 path/symbol augmentation (MRR +0.113), `HybridSearcher.clear_index()` truthiness fix (was discarding 100% of resolver-derived call edges); v0.21.0 — MCPB extension bundle, module-preamble chunks, core/advanced MCP tool tiering, default embedder corrected to `BAAI/bge-m3`, Qwen3-Reranker official-template fix (MRR 0.311→0.754); v0.20.1 — intent-classifier verification-term routing fix (Q12)
+- **Recent**: v0.23.0 — MCP Python SDK v1→v2 migration, community/DSPy/ONNX subsystems removed (86 commits since v0.22.0, three models dropped from the registries), per-project config overrides (ADR-0014), config field liveness audit (ADR-0020); v0.22.0 — GLSL indexing parity, persistent chunk embedding cache (43× reindex speedup), BM25 path/symbol augmentation (MRR +0.113), `HybridSearcher.clear_index()` truthiness fix (was discarding 100% of resolver-derived call edges); v0.21.0 — MCPB extension bundle, module-preamble chunks, core/advanced MCP tool tiering, default embedder corrected to `BAAI/bge-m3`, Qwen3-Reranker official-template fix (MRR 0.311→0.754)
+
+---
+
+## v0.23.0 - SDK v2 Migration, Three Subsystems Removed, Config Liveness Audit (2026-08-02)
+
+86 commits since `v0.22.0`. The headline is three subsystem removals — community-detection/
+summarization (ADR-0015), DSPy agent-evaluation (ADR-0016, no production consumer, superseded by
+`scripts/benchmark/run_mcp_pipeline_eval.py`), and the ONNX inference path — landing alongside an
+MCP Python SDK v1→v2 migration (ADR-0017) and a 13-field config liveness audit (ADR-0020: 7 fields
+wired to real config control, 6 dead fields deleted). Full CHANGELOG entry: `CHANGELOG.md` `[0.23.0]`.
+
+### Migration
+
+- **Reindex recommended, not required.** `INDEX_VERSION` stays at 4, but the community-removal
+  score-demotion change means any stale `__community__/*` chunks from a pre-0.23.0 index now
+  compete at full score instead of being demoted — a full reindex clears them.
+- Before upgrading a deployed `search_config.json`, check `embedding.model_name` and
+  `reranker.model_name` against the pruned registries below — a config pinned to a removed model
+  fails to load until repointed.
+
+### Added
+
+- **Per-project config overrides + auto-tune probe** (ADR-0014) — a `search_overrides.json` layer
+  between the shipped defaults and a project's live config.
+- **`exclude_same_file` on `find_similar_code`** (`d468dcb`) — caller-controlled cross-file-only
+  filtering, default byte-identical to prior behavior.
+- **Four new evaluation metrics** (`21a438c`) — `recall@20`, `recall@50`, `pool_hit_rate`,
+  `file_acc@k`/`file_recall@k`; plus an `mcp_eval` CI regression gate (`d20e0de`).
+- **Golden dataset expanded 108 → 145 queries** (`988f1f9`) — 37 commit-mined bug-fix-localization
+  queries promoted after a 2-round grading pass.
+- **Config field liveness audit** (ADR-0020) — 7 previously-hardcoded fields wired to real config
+  control (byte-identical default behavior); an ego-graph config-reset bug found and fixed
+  alongside the audit.
+
+### Removed
+
+- **Community-detection/summarization subsystem** (ADR-0015) — scoped to the retrieval pipeline;
+  `evaluation/metrics.py` and `scripts/benchmark/run_sscg_benchmark.py` retain
+  community-membership helpers used only for benchmark ablation, not live search.
+- **DSPy eval subsystem** (13 files, 4,849 lines): `evaluation/dspy_agent_eval.py`,
+  `evaluation/dspy_gepa_optimize.py`, `utils/dspy_claude_code.py`, `utils/dspy_mcp.py`,
+  `scripts/benchmark/run_dspy_eval.py`, `scripts/benchmark/run_dspy_gepa.py`,
+  `scripts/dspy_mcp_demo.py`, `docs/DSPY_SETUP.md`, and their unit/integration tests, plus the
+  now-dead `env.example`. The `[project.optional-dependencies] eval` extra (`dspy>=3.2.1`) and
+  its pyrefly stub-ignore entries are gone from `pyproject.toml`. Historical measurements
+  (Recall@7=0.9046, MRR=0.8519, 77-query set) are preserved as dated citations in
+  `.claude/skills/mcp-search-tool/SKILL.md` and `references/performance.md`.
+- **ONNX inference path** (`72b6881`).
+- **Three models removed from the registries** (`24f6b8c`, **breaking**): `nomic-ai/CodeRankEmbed`
+  and `Alibaba-NLP/gte-modernbert-base` from `MODEL_REGISTRY`; `Qwen/Qwen3-Reranker-4B` from
+  `GENERATIVE_RERANKERS`. `MODEL_REGISTRY` now has 4 entries: `google/embeddinggemma-300m`,
+  `BAAI/bge-m3`, `Qwen/Qwen3-Embedding-0.6B`, `codefuse-ai/F2LLM-v2-0.6B`.
+- **`[eval]` / `[profile]` optional-dependency extras** — no longer needed after the DSPy removal.
+
+### Changed
+
+- **`mcp` pinned to `>=2,<3`** (was `>=1.28.1,<2`). `mcp_server/server.py`'s six JSON-RPC
+  handlers (`list_tools`, `call_tool`, `list_resources`, `read_resource`, `list_prompts`,
+  `get_prompt`) converted from v1's post-construction `@server.*()` decorators to v2's
+  constructor-kwarg `on_*` pattern; every handler now takes `(ctx: ServerRequestContext,
+  params)` and returns a typed v2 result object (`ListToolsResult`, `CallToolResult`, etc.)
+  instead of a bare list/string.
+- Field renames: `Tool.inputSchema` → `.input_schema`, `CallToolResult.structuredContent`/
+  `.isError` → `.structured_content`/`.is_error`, `Resource.mimeType` → `.mime_type`. Wire
+  format is unchanged — pydantic aliases still serialize camelCase on the wire, verified
+  end-to-end against the HTTP transport, the live `code-search` MCP client, and the
+  `code-search-extension` stdio↔HTTP bridge.
+- Unknown-prompt error path now raises `mcp.shared.exceptions.MCPError(INVALID_PARAMS, ...)`
+  instead of a bare `ValueError`, matching v2's dispatch-layer error contract.
+- `mcp_server/tool_registry.py`'s `Tool(...)` construction and its unit test updated to
+  `input_schema=`.
+
+### Notes
+
+- `opentelemetry-api>=1.28.0` becomes a hard transitive dependency of `mcp` (v2 instruments
+  every JSON-RPC message with a protocol-level span by default). Verified non-conflicting with
+  this repo's own opt-in `[otel]` tracing — see `docs/adr/0017-adopt-mcp-sdk-v2.md`.
+- `truststore==0.10.4` now installs transitively (`truststore ← httpcore2 ← httpx2 ← mcp`), not
+  as a direct `mcp` dependency; `httpx2`/`httpcore2` install alongside the repo's existing
+  `httpx`/`httpcore` without conflict.
+- StreamableHTTP's bare-GET behavior differs from a naive v1-era expectation: a bare `GET /mcp`
+  with a wildcard `Accept: */*` opens a standalone SSE stream (`200 OK`, held open) rather than
+  returning `406` — only an explicit `Accept: application/json` (excluding `text/event-stream`)
+  triggers the `406` rejection. Spec-compliant v2 behavior, not a regression.
 
 ---
 
@@ -255,7 +339,7 @@ New agent-evaluation and optimization subsystem built on DSPy, plus search quali
 
 ### Added — DSPy/GEPA agent-evaluation harness
 
-- **`ClaudeCodeLM` subscription backend** (`utils/dspy_claude_code.py`) — `dspy.BaseLM` subclass that shells to `claude -p --output-format json`; routes rollout and reflection calls through a Claude Max subscription with zero API cost. Handles dict and array CLI JSON shapes, async dispatch, intentionally-zero cost accounting. `configure_dspy()` helper. See `docs/DSPY_SETUP.md`.
+- **`ClaudeCodeLM` subscription backend** (`utils/dspy_claude_code.py`) — `dspy.BaseLM` subclass that shells to `claude -p --output-format json`; routes rollout and reflection calls through a Claude Max subscription with zero API cost. Handles dict and array CLI JSON shapes, async dispatch, intentionally-zero cost accounting. `configure_dspy()` helper. (Setup guide `docs/DSPY_SETUP.md` removed along with the rest of this subsystem in v0.23.0, ADR-0016.)
 - **DSPy ReAct → MCP HTTP bridge** — wraps the running code-search HTTP server as DSPy-callable tools for structured agent rollouts against the live index.
 - **DSPy agent-evaluation harness** — `dspy.Evaluate` + `dspy.GEPA` end-to-end harness; dataset loading, metric wiring, trace collection.
 - **GEPA optimization on CodeNavQA** — reflective evolutionary search with the subscription LM as proposer. GEPA-discovered guidance improved **Recall@7 0.668→0.717** after distillation back into the `CodeNavQA` signature. Includes chunk-id verbatim copy fix, unranked recall ceiling metric, tool-vs-agent recall diagnostic.
@@ -405,11 +489,13 @@ Architectural release introducing a pluggable multi-resolver call-graph pipeline
 Feature release adding pyan3-powered cross-module call edges and overhauling `find_connections` direct-caller recall across four phases.
 
 ### Added
+
 - **pyan3 cross-module caller edges** (`chunking/relationships/external_call_graph.py`, new) — `build_call_edges()` runs pyan3 on all project `.py` files at full-index time, maps nodes via `filename+lineno → find_enclosing_chunk` (FQN fallback), and injects resolved pairs into `CodeGraphStorage`. Hard `install_requires` dep; runtime failures are non-fatal warnings. On this codebase: 5,341 edges resolved, 3,594 injected.
 - **Shared FQN/line-number helpers** (`evaluation/chunk_mapping.py`, new) — `build_line_to_chunk_map`, `find_enclosing_chunk`, `chunk_id_from_fqn` promoted from private benchmark internals to a shared public module.
 - **Direct-caller recall harness** (`evaluation/caller_golden.json`, `scripts/benchmark/build_caller_oracle.py`, `scripts/benchmark/run_caller_recall.py`) — 7 golden queries (C001–C007) including 2 cross-module pyan3 targets; baseline shows `total_missed_callers: 0` (14/14 expected callers found).
 
 ### Fixed
+
 - **`find_connections` missed direct callers after incremental reindex** — four-phase fix: stale chunk IDs recovered via `_resolve_by_symbol` Tier 1→3 cascade; common-method blocklist refined; `ImpactReport` confidence counters added. Recall: 0.5667 → 0.9500.
 - **`split_block` chunks emitted zero call edges** — extractor re-reads enclosing `FunctionDef` from source (per-file AST cache) instead of parsing bare body fragment.
 - **Windows backslash `relative_path` in `build_line_to_chunk_map`** — `.replace("\\", "/")` normalization added; fixed zero-pyan3-edges on Windows.
@@ -418,9 +504,11 @@ Feature release adding pyan3-powered cross-module call edges and overhauling `fi
 - **Silent broad-except in pynvml per-device query** — added `logger.debug()` with exc binding.
 
 ### Refactored
+
 - **`exc_info=True` added to all swallow-and-degrade handlers** across `graph/`, `search/`, `chunking/`, `utils/`, `tools/`.
 
 ### Security
+
 - `pyjwt` 2.12.1 → 2.13.0 (CVE-2026-48522, CVE-2026-48524, CVE-2026-48525, CVE-2026-48526); `uv` 0.11.6 → 0.11.18 (GHSA-4gg8-gxpx-9rph).
 
 ---
@@ -430,15 +518,18 @@ Feature release adding pyan3-powered cross-module call edges and overhauling `fi
 Patch release fixing three MCP server bugs and removing the ServiceLocator DI container.
 
 ### Fixed
+
 - **`switch_project` always logged "No indexed model detected"** — `_detect_indexed_model` now reads `project_info.json` (pool-agnostic) before falling back to active-pool scan.
 - **`list_embedding_models` always returned `loaded: false`** — now computes `loaded_names = {e.model_name for e in state.embedders.values() if e is not None}` for accurate VRAM check.
 - **`CodeGraphStorage.clear()` left phantom nodes after full reindex** — `clear()` now deletes the backing JSON file; fresh instance starts empty.
 
 ### Refactored
+
 - **`GraphScoringStage` extracted** — centrality scoring, SSCG subgraph extraction, and k×4 cap encapsulated in `search/graph_scoring_stage.py`.
 - **`ServiceLocator`/`ResourceManager`/`SearchFactory` removed** (ADR-0005) — collapsed to module-level functions; `services.py` reduced to a 2-line re-export shim.
 
 ### Security
+
 - idna 3.11 → 3.17 (CVE-2026-45409).
 
 ---
@@ -448,6 +539,7 @@ Patch release fixing three MCP server bugs and removing the ServiceLocator DI co
 Patch release eliminating the `chunking↔graph` bidirectional import cycle.
 
 ### Refactored
+
 - **`chunking↔graph` import cycle eliminated** — 24 files moved from `graph/` into `chunking/relationships/`. `git mv` history preserved; `graph/__init__.py` re-exports for backward compatibility. Remaining direction: `graph → chunking` (architecturally correct).
 - **`SearchOrchestrator` introduced** (Phases A–D) — `_assemble` logic extracted to helpers; cyclomatic complexity reduced from ~30 to ~5.
 - 20+ helper extractions across `IncrementalIndexer`, `CentralityRanker`, `RelationshipAnalyzer`.
@@ -459,15 +551,18 @@ Patch release eliminating the `chunking↔graph` bidirectional import cycle.
 Patch release fixing a root-cause stale-reference bug in `IndexWriteStage`, improving OOM recovery, refactoring `GraphIntegration` for long-term safety, and tuning `search_config.json` for 8 GB VRAM machines.
 
 ### Fixed
+
 - **Stale embedder/indexer in `IndexWriteStage`** (`search/incremental_indexer.py`): `_build_write_pipeline()` helper now rebuilds both `IndexWriteStage` and `BM25SyncManager` after every `_release_and_verify_resources()` call — stages can no longer embed against cleaned-up objects.
 - **Embedding failure silently reported as success** (`search/index_write_stage.py`): `run()` returns `success=False` + error message when embedding raises; snapshot is not written, preventing a zero-chunk corrupt state.
 - **GPU cache not freed on OOM** (`search/index_write_stage.py`): `_clear_gpu("FULL_INDEX")` called before embedding-failure early return, avoiding cascading OOM on immediate retry.
 
 ### Refactored
+
 - **`GraphIntegration` shared initializer** (`search/graph_integration.py`): `_setup_from_storage(storage)` called by both `__init__` and `from_storage()` — the two construction paths share one attribute-setting site.
 - **Import hoists** (`search/community_stage.py`, `search/graph_integration.py`): `CommunityDetector` and `RelationshipEdge`/`RelationshipType` moved to module level; `LanguageChunker` import annotated with circular-import reason.
 
 ### Changed (breaking config)
+
 - **Embedding model**: `Qwen/Qwen3-Embedding-0.6B` (1024-dim) → `Alibaba-NLP/gte-modernbert-base` (768-dim). Requires full reindex if upgrading from 1024-dim index.
 - **Reranker**: `gte-reranker-modernbert-base` → `jinaai/jina-reranker-v3`; `min_vram_gb` 4.0 → 6.0.
 - **Routing**: `multi_model_enabled` false → true; pool "full" → "lightweight-speed"; `batch_size` 128 → 64.
@@ -479,17 +574,21 @@ Patch release fixing a root-cause stale-reference bug in `IndexWriteStage`, impr
 Patch release fixing missing call and relationship edges for `split_block` chunks, ASGI transport stability, and a search-layer refactor.
 
 ### Added
+
 - ANSI color output in MCP server console (`mcp_server/server.py`): blue=stages, yellow=warnings, red=errors.
 
 ### Fixed
+
 - **split_block call edges** (`chunking/multi_language_chunker.py`): `"split_block"` added to call-extraction allowlist — large methods split at AST boundaries now generate call edges for all fragments.
 - **split_block relationship edges** (`chunking/multi_language_chunker.py`): `_extract_phase3_relationships` extracts from signature-only content for split_blocks, making it parseable. Result: +584 `uses_type`/`imports` edges after re-index.
 - **Starlette 307 on POST `/mcp`** (`mcp_server/server.py`): ASGI wrapper blocks `redirect_slashes` before Starlette issues a 307.
 
 ### Changed
+
 - `CodeRelationshipAnalyzer` moved from `mcp_server/tools/` to `search/relationship_analyzer.py` with `GraphQueryEngine` seam (`graph/graph_queries.py`) and shared types (`search/types.py`). Old path is a backward-compat shim.
 
 ### Security
+
 - `pip ≥ 26.1.1`, `pillow ≥ 12.2.0`, `python-multipart ≥ 0.0.27` (2026-05-25 audit, 13 CVEs resolved).
 
 ---
@@ -518,13 +617,17 @@ Replaced the legacy SSE transport (`SseServerTransport`, two-endpoint GET `/sse`
 ### Migration Note
 
 Update `.claude.json` MCP server config from:
+
 ```json
 {"type": "sse", "url": "http://localhost:8765/sse"}
 ```
+
 to:
+
 ```json
 {"type": "http", "url": "http://localhost:8765/mcp"}
 ```
+
 Re-run `scripts\batch\manual_configure.bat` to apply automatically.
 
 ---
@@ -1448,7 +1551,7 @@ for field_name in sorted(all_fields):
 All 3 features confirmed working via MCP search queries:
 
 | Feature | Status | Evidence |
-|---------|--------|----------|
+| --------- | -------- | ---------- |
 | **Complexity Scores** | ✅ Working | Values 6, 2, 4 visible in ultra format |
 | **Intent Classification** | ✅ Working | NAVIGATIONAL queries auto-redirect to find_connections |
 | **Lightweight Pool Routing** | ✅ Working | GTE-ModernBERT (code/impl/validate), BGE-M3 (config/serialize) |
@@ -1985,7 +2088,7 @@ def clear_index(self) -> None:
 **Added helpful descriptions to all menu options** (`start_mcp_server.cmd:343-351`):
 
 | Option | Description |
-|--------|-------------|
+| -------- | ------------- |
 | View Current Configuration | Show all active settings |
 | Set Search Mode | Hybrid/Semantic/BM25 (Hybrid recommended) |
 | Configure Search Weights | Balance text vs semantic matching |
@@ -2398,7 +2501,7 @@ Updated all calls in `run_tests()` function to use new names.
 **Solution**: Comprehensive protection at 6 critical points:
 
 | Layer | Feature | Implementation | Protection |
-|-------|---------|----------------|------------|
+| ------- | --------- | ---------------- | ------------ |
 | **1** | Resource Cleanup | `cleanup_previous_resources()` | Prevents duplicate model loads, clears stale connections |
 | **2** | File Read Timeout | `_read_file_with_timeout()` | 5s ThreadPoolExecutor timeout for locked files |
 | **3** | PermissionError Handling | `try/except PermissionError` | Skip locked files with `[LOCKED]` warnings |
@@ -2411,11 +2514,11 @@ Updated all calls in `run_tests()` function to use new names.
 **Configuration Constants**:
 
 ```python
-FILE_READ_TIMEOUT = 5           # seconds (Layer 2)
+FILE_READ_TIMEOUT = 5  # seconds (Layer 2)
 CHUNKING_TIMEOUT_PER_FILE = 10  # seconds (Layer 5)
-TOTAL_CHUNKING_TIMEOUT = 300    # seconds (Layer 5)
-VRAM_WARNING_THRESHOLD = 0.85   # 85% (Layer 4)
-VRAM_ABORT_THRESHOLD = 0.95     # 95% (Layer 4)
+TOTAL_CHUNKING_TIMEOUT = 300  # seconds (Layer 5)
+VRAM_WARNING_THRESHOLD = 0.85  # 85% (Layer 4)
+VRAM_ABORT_THRESHOLD = 0.95  # 95% (Layer 4)
 ```
 
 **Files Modified**:
@@ -2465,7 +2568,7 @@ VRAM_ABORT_THRESHOLD = 0.95     # 95% (Layer 4)
 Converted function-scoped fixtures to class-scoped using `tmp_path_factory`:
 
 | Test File | Before | After | Improvement |
-|-----------|--------|-------|-------------|
+| ----------- | -------- | ------- | ------------- |
 | `test_full_flow.py` | ~88s | 1.91s | 98.2% faster |
 | `test_relationship_extraction_integration.py` | ~180s | 3.34s | 98.1% faster |
 | `test_multi_hop_flow.py` | ~70s | 10.21s | 85.4% faster |
@@ -2588,7 +2691,7 @@ Converted function-scoped fixtures to class-scoped using `tmp_path_factory`:
 ### Refactoring Summary
 
 | Component | Extraction | Lines |
-|-----------|------------|-------|
+| ----------- | ------------ | ------- |
 | CodeIndexManager | → GraphIntegration + BatchOperations | ~200 |
 | CodeEmbedder | → ModelLoader + ModelCacheManager + QueryCache | ~300 |
 | HybridSearcher | Removed deprecated methods (Tier 1-3) | ~150 |
@@ -3170,7 +3273,7 @@ Old internal methods → New resolver methods:
 ### New Relationship Types
 
 | Type | Forward Field | Reverse Field | Use Case |
-|------|---------------|---------------|----------|
+| ------ | --------------- | --------------- | ---------- |
 | `decorates` | `decorates` | `decorated_by` | Find decorator usage patterns |
 | `raises` | `exceptions_raised` | `exception_handlers` | Error handling analysis |
 | `catches` | `exceptions_caught` | - | Exception handling locations |
@@ -3256,7 +3359,7 @@ Old internal methods → New resolver methods:
 ### Relationship Types Now Available
 
 | Field | Description |
-|-------|-------------|
+| ------- | ------------- |
 | \ | Classes/traits this code inherits from |
 | \ | Classes/traits that inherit from this code |
 | \ | Types used in annotations or field declarations |
@@ -3274,6 +3377,7 @@ Old internal methods → New resolver methods:
 ✅ Discover type dependencies across codebase
 ✅ Track import relationships
 ✅ Complete dependency analysis with
+
 ---
 
 ## v0.5.5 - Low-Level MCP SDK Migration (2025-11-13)

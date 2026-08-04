@@ -171,7 +171,7 @@ class GraphScoringStage:
         results: list[dict],
         intent_decision: IntentDecision | None,
     ) -> list[dict]:
-        """Move module/community summary chunks to the end for non-GLOBAL queries.
+        """Move module summary chunks to the end for non-GLOBAL queries.
 
         Intent-aware synthetic chunk ordering (post-centrality reranking).
         Research: TNO, GRACE, GraphRAG all separate summaries from code retrieval.
@@ -189,7 +189,7 @@ class GraphScoringStage:
         real_scores = [
             score
             for r in results
-            if r.get("kind") not in ("module", "community")
+            if r.get("kind") != "module"
             for score in (self._result_score(r),)
             if score is not None
         ]
@@ -198,7 +198,7 @@ class GraphScoringStage:
         kept: list[dict] = []
         demoted: list[dict] = []
         for r in results:
-            is_synthetic = r.get("kind") in ("module", "community")
+            is_synthetic = r.get("kind") == "module"
             synthetic_score = self._result_score(r) if is_synthetic else None
             outranks_real = (
                 top_real_score is not None

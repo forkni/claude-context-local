@@ -7,7 +7,13 @@ import it without pulling in the full analyzer or its graph dependencies.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from chunking.relationships.relationship_types import get_relationship_field_mapping
+
+
+if TYPE_CHECKING:
+    from search.config import SearchConfig, SearchMode
 
 
 # Python primitives, stdlib types, and typing module types that will never be
@@ -62,6 +68,93 @@ BUILTIN_TYPES: frozenset[str] = frozenset(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class RetrievalRequest:
+    """Everything one retrieval executes against.
+
+    Constructed once by HybridSearcher.search and threaded unchanged through
+    MultiHopSearcher, the single-hop callback, and SearchExecutor.execute_single_hop.
+    Hop-1 widening derives a copy with a different k via dataclasses.replace —
+    there is no with_k() helper; one call site doesn't earn one.
+
+    NB: shallow freeze — `config` is a mutable SearchConfig reachable through
+    this object. Nothing may mutate it mid-request; the orchestrator's only
+    config mutation happens before construction (search_orchestrator.py:498-501,
+    before the search call at :511).
+    """
+
+    query: str
+    k: int
+    search_mode: SearchMode
+    bm25_weight: float
+    dense_weight: float
+    min_bm25_score: float
+    use_parallel: bool
+    filters: dict[str, Any] | None
+    config: SearchConfig
+
+
+# The 23 relationship buckets ImpactReport.to_dict() has always emitted, in
+# their original order. Kept fixed (not derived) so any consumer relying on
+# today's key order for these specific 23 names sees no change — the
+# consolidation onto ImpactReport.relationships stays additive, not a
+# reshuffle. See get_relationship_field_mapping() in
+# chunking/relationships/relationship_types.py for the full vocabulary this
+# is a subset of.
+_LEGACY_RELATIONSHIP_FIELDS: tuple[str, ...] = (
+    "parent_classes",
+    "child_classes",
+    "uses_types",
+    "used_as_type_in",
+    "imports",
+    "imported_by",
+    "decorates",
+    "decorated_by",
+    "exceptions_raised",
+    "exception_handlers",
+    "exceptions_caught",
+    "instantiates",
+    "instantiated_by",
+    "defines_constants",
+    "uses_constants",
+    "defines_enum_members",
+    "uses_defaults",
+    "defines_class_attrs",
+    "class_attr_definitions",
+    "defines_fields",
+    "field_definitions",
+    "uses_context_managers",
+    "context_manager_usages",
+)
+
+
+def _compute_emitted_relationship_fields() -> tuple[str, ...]:
+    """All relationship field names to_dict() emits, in stable order.
+
+    Derived from get_relationship_field_mapping() — the single source of
+    truth for the relationship vocabulary — rather than hand-maintained a
+    second time. _LEGACY_RELATIONSHIP_FIELDS keeps its historical relative
+    order first; every other field the mapping defines is appended, sorted
+    for determinism, so adding a relationship type never reorders an
+    existing one. "calls" is excluded: to_dict() already emits its forward
+    field (direct_callers) as its own top-level key, separately from this
+    loop.
+    """
+    all_fields: set[str] = set()
+    for fwd, rev in get_relationship_field_mapping().values():
+        if fwd:
+            all_fields.add(fwd)
+        if rev:
+            all_fields.add(rev)
+    all_fields.discard("direct_callers")
+
+    remainder = sorted(all_fields - set(_LEGACY_RELATIONSHIP_FIELDS))
+    return (*_LEGACY_RELATIONSHIP_FIELDS, *remainder)
+
+
+_EMITTED_RELATIONSHIP_FIELDS: tuple[str, ...] = _compute_emitted_relationship_fields()
+
+
 @dataclass
 class ImpactReport:
     """Structured impact analysis report."""
@@ -75,31 +168,14 @@ class ImpactReport:
     unique_files: set[str]
     dependency_graph: dict[str, list[str]]
 
-    parent_classes: list[dict[str, Any]] = field(default_factory=list)
-    child_classes: list[dict[str, Any]] = field(default_factory=list)
-    uses_types: list[dict[str, Any]] = field(default_factory=list)
-    used_as_type_in: list[dict[str, Any]] = field(default_factory=list)
-    imports: list[dict[str, Any]] = field(default_factory=list)
-    imported_by: list[dict[str, Any]] = field(default_factory=list)
-
-    decorates: list[dict[str, Any]] = field(default_factory=list)
-    decorated_by: list[dict[str, Any]] = field(default_factory=list)
-    exceptions_raised: list[dict[str, Any]] = field(default_factory=list)
-    exception_handlers: list[dict[str, Any]] = field(default_factory=list)
-    exceptions_caught: list[dict[str, Any]] = field(default_factory=list)
-    instantiates: list[dict[str, Any]] = field(default_factory=list)
-    instantiated_by: list[dict[str, Any]] = field(default_factory=list)
-
-    defines_constants: list[dict[str, Any]] = field(default_factory=list)
-    uses_constants: list[dict[str, Any]] = field(default_factory=list)
-    defines_enum_members: list[dict[str, Any]] = field(default_factory=list)
-    uses_defaults: list[dict[str, Any]] = field(default_factory=list)
-    defines_class_attrs: list[dict[str, Any]] = field(default_factory=list)
-    class_attr_definitions: list[dict[str, Any]] = field(default_factory=list)
-    defines_fields: list[dict[str, Any]] = field(default_factory=list)
-    field_definitions: list[dict[str, Any]] = field(default_factory=list)
-    uses_context_managers: list[dict[str, Any]] = field(default_factory=list)
-    context_manager_usages: list[dict[str, Any]] = field(default_factory=list)
+    # All non-caller relationship buckets (inheritance, type usage, imports,
+    # decorators, exceptions, instantiation, constants, class attrs, fields,
+    # context managers, …), keyed by the field names in
+    # get_relationship_field_mapping() (chunking/relationships/relationship_types.py).
+    # Populated wholesale by RelationshipAnalyzer._build_graph_relationships,
+    # which already iterates that same mapping — this dict is its shape
+    # verbatim, not a second declaration of the vocabulary.
+    relationships: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
     stale_chunk_count: int = 0
 
@@ -141,31 +217,8 @@ class ImpactReport:
         if self.dependency_graph:
             result["dependency_graph"] = self.dependency_graph
 
-        for name, value in [
-            ("parent_classes", self.parent_classes),
-            ("child_classes", self.child_classes),
-            ("uses_types", self.uses_types),
-            ("used_as_type_in", self.used_as_type_in),
-            ("imports", self.imports),
-            ("imported_by", self.imported_by),
-            ("decorates", self.decorates),
-            ("decorated_by", self.decorated_by),
-            ("exceptions_raised", self.exceptions_raised),
-            ("exception_handlers", self.exception_handlers),
-            ("exceptions_caught", self.exceptions_caught),
-            ("instantiates", self.instantiates),
-            ("instantiated_by", self.instantiated_by),
-            ("defines_constants", self.defines_constants),
-            ("uses_constants", self.uses_constants),
-            ("defines_enum_members", self.defines_enum_members),
-            ("uses_defaults", self.uses_defaults),
-            ("defines_class_attrs", self.defines_class_attrs),
-            ("class_attr_definitions", self.class_attr_definitions),
-            ("defines_fields", self.defines_fields),
-            ("field_definitions", self.field_definitions),
-            ("uses_context_managers", self.uses_context_managers),
-            ("context_manager_usages", self.context_manager_usages),
-        ]:
+        for name in _EMITTED_RELATIONSHIP_FIELDS:
+            value = self.relationships.get(name)
             if value:
                 result[name] = value
 

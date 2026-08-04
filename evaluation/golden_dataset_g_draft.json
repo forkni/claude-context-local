@@ -1,0 +1,350 @@
+{
+  "_meta": {
+    "status": "DRAFT — NOT PROMOTED",
+    "note": "Category G global/thematic queries with LLM-draft golds, pending human grading before promotion into golden_dataset.json (plan gate: 'LLM drafting only, human-graded before promotion'). Used only by the community-ablation benchmark via --golden-dataset; all G results are provisional until grading. Score at k=10. Decision metric is strict file_recall@10 over expected_files.",
+    "created": "2026-07-30"
+  },
+  "queries": [
+    {
+      "id": "QG01",
+      "query": "when files change, how does the indexer figure out what changed and keep the BM25 and dense indices consistent with each other",
+      "category": "G",
+      "split": "test",
+      "intent": "GLOBAL",
+      "expected_files": [
+        "merkle/change_detector.py",
+        "search/incremental_indexer.py",
+        "search/index_sync.py"
+      ],
+      "expected": [
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes",
+        "search/index_sync.py:method:IndexSynchronizer.resync_bm25_from_dense",
+        "search/incremental_indexer.py:class:IncrementalIndexer"
+      ],
+      "expected_primary": [
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes",
+        "search/index_sync.py:method:IndexSynchronizer.resync_bm25_from_dense",
+        "search/incremental_indexer.py:class:IncrementalIndexer"
+      ],
+      "relevance_grades": {
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes": 3,
+        "search/index_sync.py:method:IndexSynchronizer.resync_bm25_from_dense": 3,
+        "search/incremental_indexer.py:class:IncrementalIndexer": 3
+      }
+    },
+    {
+      "id": "QG02",
+      "query": "trace how a settings override travels from the MCP configuration tools down to the searcher that serves queries",
+      "category": "G",
+      "split": "test",
+      "intent": "GLOBAL",
+      "expected_files": [
+        "mcp_server/tools/config_handlers.py",
+        "mcp_server/search_factory.py",
+        "search/config.py",
+        "search/hybrid_searcher.py"
+      ],
+      "expected": [
+        "mcp_server/tools/config_handlers.py:function:apply_config_patch",
+        "mcp_server/search_factory.py:method:get_searcher"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/config_handlers.py:function:apply_config_patch",
+        "mcp_server/search_factory.py:method:get_searcher"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/config_handlers.py:function:apply_config_patch": 3,
+        "mcp_server/search_factory.py:method:get_searcher": 3
+      }
+    },
+    {
+      "id": "QG03",
+      "query": "what happens end to end when a code search request arrives at the server until results are returned",
+      "category": "G",
+      "split": "test",
+      "intent": "GLOBAL",
+      "expected_files": [
+        "mcp_server/tools/search_handlers.py",
+        "mcp_server/tools/search_orchestrator.py",
+        "search/hybrid_searcher.py"
+      ],
+      "expected": [
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run",
+        "search/hybrid_searcher.py:method:HybridSearcher.search"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run",
+        "search/hybrid_searcher.py:method:HybridSearcher.search"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run": 3,
+        "search/hybrid_searcher.py:method:HybridSearcher.search": 3
+      }
+    },
+    {
+      "id": "QG04",
+      "query": "how are per-file summary documents generated for search",
+      "category": "G",
+      "split": "test",
+      "intent": "GLOBAL",
+      "expected_files": [
+        "chunking/file_summarizer.py",
+        "search/summary_stage.py"
+      ],
+      "expected": [
+        "chunking/file_summarizer.py:function:generate_file_summaries",
+        "search/summary_stage.py:method:SummaryStage.generate_module_summaries"
+      ],
+      "expected_primary": [
+        "chunking/file_summarizer.py:function:generate_file_summaries",
+        "search/summary_stage.py:method:SummaryStage.generate_module_summaries"
+      ],
+      "relevance_grades": {
+        "chunking/file_summarizer.py:function:generate_file_summaries": 3,
+        "search/summary_stage.py:method:SummaryStage.generate_module_summaries": 3
+      }
+    },
+    {
+      "id": "QG05",
+      "query": "how does the system pull in graph neighbors of the top hits to widen the result pool, and what keeps that expansion bounded",
+      "category": "G",
+      "split": "test",
+      "intent": "GLOBAL",
+      "expected_files": [
+        "search/ego_graph_retriever.py",
+        "search/graph_scoring_stage.py",
+        "search/hybrid_searcher.py"
+      ],
+      "expected": [
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.retrieve_ego_graph",
+        "search/hybrid_searcher.py:method:HybridSearcher._apply_ego_graph_expansion",
+        "search/graph_scoring_stage.py:method:GraphScoringStage._inject_ego_centrality"
+      ],
+      "expected_primary": [
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.retrieve_ego_graph",
+        "search/hybrid_searcher.py:method:HybridSearcher._apply_ego_graph_expansion",
+        "search/graph_scoring_stage.py:method:GraphScoringStage._inject_ego_centrality"
+      ],
+      "relevance_grades": {
+        "search/ego_graph_retriever.py:method:EgoGraphRetriever.retrieve_ego_graph": 3,
+        "search/hybrid_searcher.py:method:HybridSearcher._apply_ego_graph_expansion": 3,
+        "search/graph_scoring_stage.py:method:GraphScoringStage._inject_ego_centrality": 3
+      }
+    },
+    {
+      "id": "QG06",
+      "query": "how does the engine decide what kind of question a query is and adapt ranking behavior to it",
+      "category": "G",
+      "split": "test",
+      "intent": "GLOBAL",
+      "expected_files": [
+        "search/intent_classifier.py",
+        "search/graph_scoring_stage.py",
+        "mcp_server/tools/search_orchestrator.py"
+      ],
+      "expected": [
+        "search/intent_classifier.py:class:IntentClassifier",
+        "search/graph_scoring_stage.py:method:GraphScoringStage._reorder_synthetic"
+      ],
+      "expected_primary": [
+        "search/intent_classifier.py:class:IntentClassifier",
+        "search/graph_scoring_stage.py:method:GraphScoringStage._reorder_synthetic"
+      ],
+      "relevance_grades": {
+        "search/intent_classifier.py:class:IntentClassifier": 3,
+        "search/graph_scoring_stage.py:method:GraphScoringStage._reorder_synthetic": 3
+      }
+    },
+    {
+      "id": "QG07",
+      "query": "after the initial retrieval, how are candidates re-scored by a neural model and which component decides whether that happens",
+      "category": "G",
+      "split": "test",
+      "intent": "GLOBAL",
+      "expected_files": [
+        "search/reranking_engine.py",
+        "search/neural_reranker.py",
+        "search/hybrid_searcher.py"
+      ],
+      "expected": [
+        "search/reranking_engine.py:decorated_definition:RerankingEngine.apply_neural_reranking",
+        "search/neural_reranker.py:function:create_reranker",
+        "search/reranking_engine.py:method:RerankingEngine.rerank_by_query"
+      ],
+      "expected_primary": [
+        "search/reranking_engine.py:decorated_definition:RerankingEngine.apply_neural_reranking",
+        "search/neural_reranker.py:function:create_reranker",
+        "search/reranking_engine.py:method:RerankingEngine.rerank_by_query"
+      ],
+      "relevance_grades": {
+        "search/reranking_engine.py:decorated_definition:RerankingEngine.apply_neural_reranking": 3,
+        "search/neural_reranker.py:function:create_reranker": 3,
+        "search/reranking_engine.py:method:RerankingEngine.rerank_by_query": 3
+      }
+    },
+    {
+      "id": "QG08",
+      "query": "how does the system break source files of many programming languages into indexable pieces",
+      "category": "G",
+      "split": "test",
+      "intent": "GLOBAL",
+      "expected_files": [
+        "chunking/multi_language_chunker.py",
+        "chunking/tree_sitter.py",
+        "chunking/language_registry.py"
+      ],
+      "expected": [
+        "chunking/multi_language_chunker.py:class:MultiLanguageChunker",
+        "chunking/tree_sitter.py:method:TreeSitterChunker.chunk_file"
+      ],
+      "expected_primary": [
+        "chunking/multi_language_chunker.py:class:MultiLanguageChunker",
+        "chunking/tree_sitter.py:method:TreeSitterChunker.chunk_file"
+      ],
+      "relevance_grades": {
+        "chunking/multi_language_chunker.py:class:MultiLanguageChunker": 3,
+        "chunking/tree_sitter.py:method:TreeSitterChunker.chunk_file": 3
+      }
+    },
+    {
+      "id": "QG09",
+      "query": "where do embedding models come from at runtime — how are they located on disk, loaded, and shared across projects",
+      "category": "G",
+      "split": "test",
+      "intent": "GLOBAL",
+      "expected_files": [
+        "embeddings/model_loader.py",
+        "embeddings/model_cache.py",
+        "mcp_server/model_pool_manager.py"
+      ],
+      "expected": [
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_embedder",
+        "embeddings/model_loader.py:class:ModelLoader"
+      ],
+      "expected_primary": [
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_embedder",
+        "embeddings/model_loader.py:class:ModelLoader"
+      ],
+      "relevance_grades": {
+        "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_embedder": 3,
+        "embeddings/model_loader.py:class:ModelLoader": 3
+      }
+    },
+    {
+      "id": "QG10",
+      "query": "how does the system remember what the project looked like at the last indexing run and compare against it later",
+      "category": "G",
+      "split": "test",
+      "intent": "GLOBAL",
+      "expected_files": [
+        "merkle/merkle_dag.py",
+        "merkle/snapshot_manager.py",
+        "merkle/change_detector.py"
+      ],
+      "expected": [
+        "merkle/merkle_dag.py:method:MerkleDAG.build",
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot"
+      ],
+      "expected_primary": [
+        "merkle/merkle_dag.py:method:MerkleDAG.build",
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot"
+      ],
+      "relevance_grades": {
+        "merkle/merkle_dag.py:method:MerkleDAG.build": 3,
+        "merkle/change_detector.py:method:ChangeDetector.detect_changes_from_snapshot": 3
+      }
+    },
+    {
+      "id": "QG11",
+      "query": "how is the call and relationship graph of the codebase constructed during indexing and persisted for later queries",
+      "category": "G",
+      "split": "test",
+      "intent": "GLOBAL",
+      "expected_files": [
+        "search/graph_integration.py",
+        "graph/graph_storage.py",
+        "chunking/multi_language_chunker.py"
+      ],
+      "expected": [
+        "search/graph_integration.py:method:GraphIntegration.populate_from_embeddings",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge"
+      ],
+      "expected_primary": [
+        "search/graph_integration.py:method:GraphIntegration.populate_from_embeddings",
+        "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge"
+      ],
+      "relevance_grades": {
+        "search/graph_integration.py:method:GraphIntegration.populate_from_embeddings": 3,
+        "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge": 3
+      }
+    },
+    {
+      "id": "QG12",
+      "query": "how does the system decide whether the GPU has room for heavy models and what happens when memory runs low",
+      "category": "G",
+      "split": "test",
+      "intent": "GLOBAL",
+      "expected_files": [
+        "search/vram_manager.py",
+        "search/gpu_monitor.py",
+        "mcp_server/model_pool_manager.py"
+      ],
+      "expected": [
+        "search/vram_manager.py:method:VRAMTierManager.detect_tier",
+        "search/gpu_monitor.py:method:GPUMemoryMonitor.can_use_gpu",
+        "search/gpu_monitor.py:function:release_gpu_memory"
+      ],
+      "expected_primary": [
+        "search/vram_manager.py:method:VRAMTierManager.detect_tier",
+        "search/gpu_monitor.py:method:GPUMemoryMonitor.can_use_gpu",
+        "search/gpu_monitor.py:function:release_gpu_memory"
+      ],
+      "relevance_grades": {
+        "search/vram_manager.py:method:VRAMTierManager.detect_tier": 3,
+        "search/gpu_monitor.py:method:GPUMemoryMonitor.can_use_gpu": 3,
+        "search/gpu_monitor.py:function:release_gpu_memory": 3
+      }
+    },
+    {
+      "id": "QG13",
+      "query": "when only part of the codebase is reindexed, how do file-level module summaries stay up to date",
+      "category": "G",
+      "split": "test",
+      "intent": "GLOBAL",
+      "expected_files": [
+        "search/incremental_indexer.py",
+        "chunking/file_summarizer.py"
+      ],
+      "expected": [
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks"
+      ],
+      "expected_primary": [
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks"
+      ],
+      "relevance_grades": {
+        "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks": 3
+      }
+    },
+    {
+      "id": "QG14",
+      "query": "how are raw search hits shaped, trimmed, and packaged into the response the MCP client finally sees",
+      "category": "G",
+      "split": "test",
+      "intent": "GLOBAL",
+      "expected_files": [
+        "mcp_server/output_formatter.py",
+        "mcp_server/tools/result_view.py",
+        "mcp_server/tools/search_orchestrator.py"
+      ],
+      "expected": [
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run"
+      ],
+      "expected_primary": [
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run"
+      ],
+      "relevance_grades": {
+        "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run": 3
+      }
+    }
+  ]
+}

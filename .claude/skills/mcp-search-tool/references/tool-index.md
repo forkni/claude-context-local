@@ -31,13 +31,15 @@ Find code with natural language query or direct chunk lookup. Use for all initia
 (default 10, range 1-50), `include_parent` (default false), `output_format` ("compact"/"verbose"/"ultra", default "compact"), `max_context_tokens`
 (token-budget cap). Full parameter reference in [parameters.md](parameters.md).
 
-**chunk_type values (13):** "function", "class", "method", "module", "module_preamble", "decorated_definition", "interface", "enum", "struct", "type",
-"merged", "split_block", "community" (omit the field to match any chunk type)
+**chunk_type values (12):** see [parameters.md](parameters.md) (omit the field to match any chunk type)
 
 **Chunk ID format:** `file.py:start-end:type:name` (e.g., `auth.py:10-50:function:login`)
 
-**Result fields (always):** `chunk_id`, `kind`, `score`, `blended_score`, `centrality`, `source` **Result fields (optional):** `complexity_score`,
-`graph`, `reranker_score`, `summary`
+**Result fields (always):** `file`, `lines`, `kind`, `score`, `chunk_id`, `source` (`_format_search_results` in `mcp_server/tools/result_view.py`).
+**Present whenever the project has an indexed call graph** (on by default — `GraphEnhancedConfig.centrality_annotation`/`centrality_reranking` in
+`search/config.py`): `centrality`, `blended_score` (with the default `centrality_alpha=0.0`, `blended_score` is numerically identical to `score`).
+**Result fields (optional):** `name` (chunk has a name), `summary` (module chunks with a docstring), `reranker_score` (neural reranking ran),
+`complexity_score` (functions with a computed score).
 
 ### code-search:find_connections
 
@@ -47,9 +49,7 @@ per-entry provenance (`resolver_source`, `resolver_confidence`). Preferred over 
 **Key options:** `chunk_id` (preferred), `symbol_name` (fallback — may be ambiguous), `max_depth` (default 3, range 1-5), `exclude_dirs`,
 `relationship_types`, `output_format`
 
-**Valid relationship types (21):** calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, assigns_to,
-reads_from, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type,
-uses_context_manager
+**Valid relationship types (21):** see [parameters.md](parameters.md)
 
 ### code-search:find_path
 
@@ -70,7 +70,7 @@ range 1-20), `output_format`
 | `code-search:list_projects` | Core | Show all indexed projects | — |
 | `code-search:switch_project` | Core | Switch active project | — |
 | `code-search:get_index_status` | Core | Check index health and staleness | — |
-| `code-search:index_directory` | Core | Index or re-index a project (supports incremental indexing). **Key options:** `directory_path` (required), `incremental` (default true), `wait` (default true — blocks until done and returns results inline; pass `false` for large repos to get a `job_id` immediately and poll `get_index_status(job_id=...)` until `status="done"`/`"error"`). `include_dirs`/`exclude_dirs` are **immutable after project creation** — set them on first index, not a later re-index. | — |
+| `code-search:index_directory` | Core | Index or re-index a project (supports incremental indexing). **Key options:** `directory_path` (required), `project_name` (optional, defaults to the directory name — use to organize/disambiguate), `incremental` (default true), `wait` (default true — blocks until done and returns results inline; pass `false` for large repos to get a `job_id` immediately and poll `get_index_status(job_id=...)` until `status="done"`/`"error"`). `include_dirs`/`exclude_dirs` can be changed on a later re-index — passing either forces a full reindex and **replaces** the stored filters wholesale (never merges), so re-pass the full list, not just the delta (`_run_index_directory`/`update_project_filters` in `mcp_server/tools/index_handlers.py`/`mcp_server/storage_manager.py`). Omit both to keep the stored filters. | — |
 | `code-search:clear_index` | Advanced | Delete entire current index | None — a stale/corrupted index is fixed by re-running the core `index_directory(directory_path=...)`, not by clearing first |
 | `code-search:delete_project` | Advanced | Safely delete project data | None |
 
@@ -78,7 +78,7 @@ range 1-20), `output_format`
 
 | Tool | Tier | Purpose | In-band alternative |
 |------|------|---------|----------------------|
-| `code-search:configure_search_mode` | Advanced | Set hybrid/semantic/bm25 mode and BM25/dense weights | `search_code(search_mode="bm25"\|"dense"\|"hybrid")` for a one-off override |
+| `code-search:configure_search_mode` | Advanced | Set hybrid/semantic/bm25 mode and BM25/dense weights | `search_code(search_mode="bm25"\|"semantic"\|"hybrid")` for a one-off override |
 | `code-search:get_search_config_status` | Advanced | View current search config | None |
 
 ## Advanced Search
@@ -88,15 +88,15 @@ despite the section title.)*
 
 | Tool | Tier | Purpose | In-band alternative |
 |------|------|---------|----------------------|
-| `code-search:find_similar_code` | Core | Find functionally similar code. **Key options:** `chunk_id` (required), `k` (default **4** — does not inherit `default_k`, unlike `search_code`) | — |
+| `code-search:find_similar_code` | Core | Find functionally similar code. **Key options:** `chunk_id` (required), `k` (default **4** — does not inherit `default_k`, unlike `search_code`), `exclude_same_file` (default false — set true for cross-file-only matches) | — |
 | `code-search:configure_reranking` | Advanced | Neural reranking settings | None |
-| `code-search:configure_chunking` | Advanced | Chunking + community detection (file/community summaries, sizing mode, etc.) | None |
+| `code-search:configure_chunking` | Advanced | Chunking settings (file summaries, sizing mode, etc.) | None |
 
 ## Model Management
 
 | Tool | Tier | Purpose | In-band alternative |
 |------|------|---------|----------------------|
-| `code-search:list_embedding_models` | Advanced | Show available models (BGE-M3, Qwen3-0.6B, EmbeddingGemma-300m, CodeRankEmbed, GTE-ModernBERT, F2LLM-v2-0.6B) | None |
+| `code-search:list_embedding_models` | Advanced | Show available models (BGE-M3, Qwen3-0.6B, EmbeddingGemma-300m, F2LLM-v2-0.6B) | None |
 | `code-search:switch_embedding_model` | Advanced | Change active embedding model (single-model; swaps index when switching) | None |
 
 ## Memory Management

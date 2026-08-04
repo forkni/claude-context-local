@@ -1,4 +1,4 @@
-"""basedpyright LSP resolver for the call-graph pipeline (opt-in, Stage 3).
+"""basedpyright LSP resolver for the call-graph pipeline (Stage 3).
 
 Uses ``basedpyright-langserver --stdio`` (shipped by the ``basedpyright`` pip
 package) to drive the Language Server Protocol ``callHierarchy`` flow and
@@ -12,15 +12,18 @@ resolves duck-typed dispatch, method aliasing, and decorator-wrapped callables
 that purely-AST analysis cannot.  The resulting confidence (0.98) means LSP
 edges upgrade all prior resolvers' edges when present.
 
-Opt-in / disabled by default
-------------------------------
+Requested by default; no-ops unless the [lsp] extra is installed
+------------------------------------------------------------------
 LSP analysis is **expensive** (~30 s for small projects, minutes for large
 ones) and requires a ``basedpyright-langserver`` binary (bundled with the
 ``basedpyright`` pip package in the ``[lsp]`` optional extra)::
 
     pip install -e ".[lsp]"
 
-Enable via ``search_config.json``::
+``lsp_enabled`` defaults to ``true`` in ``search_config.json``, but the
+resolver's own ``available()`` capability probe (a ``shutil.which`` check)
+gates actual execution — installations without the extra pay only a
+deferred import, a constructor call, and an info log::
 
     "call_graph": {
         "lsp_enabled": true,
@@ -404,6 +407,16 @@ class _LspClient:
             self._eof = True
             self._cond.notify_all()
         self._reader_thread.join(timeout=2)
+        self._stderr_thread.join(timeout=2)
+        # subprocess.Popen never closes stdin/stdout/stderr itself -- wait()/kill()
+        # only reap the process. Left open, these FileIO objects are only closed
+        # whenever the GC eventually collects self._proc, which surfaces as a
+        # ResourceWarning/ExceptionGroup on some unrelated, later-running test.
+        for stream in (self._proc.stdin, self._proc.stdout, self._proc.stderr):
+            if stream is None:
+                continue
+            with contextlib.suppress(Exception):
+                stream.close()
 
     def _on_deadline(self) -> None:
         """Watchdog fired: aggregate budget exceeded — force-kill."""
@@ -542,9 +555,10 @@ class LSPResolver:
 
     Implements :class:`~.call_edge_resolver.CallEdgeResolver`.
 
-    This is the **opt-in, highest-confidence** resolver.  It is disabled by
-    default because it spawns a subprocess and can take tens of seconds on
-    large projects.  Enable via ``CallGraphConfig(lsp_enabled=True)``.
+    This is the **highest-confidence** resolver, requested by default
+    (``CallGraphConfig(lsp_enabled=True)``). It no-ops unless the ``[lsp]``
+    extra is installed, since it spawns a subprocess and can take tens of
+    seconds on large projects.
 
     Confidence: 0.98 — type-inference–level resolution.
 

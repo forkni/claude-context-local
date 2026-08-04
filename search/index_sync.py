@@ -5,7 +5,6 @@ of both BM25 and dense FAISS indices.
 """
 
 import logging
-import shutil
 from pathlib import Path
 from typing import Any
 
@@ -189,6 +188,18 @@ class IndexSynchronizer:
             )
             return False
 
+        # Equal counts can still hide a colliding chunk_id (one metadata write
+        # upserting over another) -- flag it so the cause is named, not just
+        # the symptom. Log only: resync_if_desynced rebuilds BM25 from dense
+        # and cannot repair a duplicate id, so flipping `synced` here would
+        # just churn without fixing anything.
+        ids = self.bm25_index._doc_ids if self.bm25_index else []
+        if len(ids) != len(set(ids)):
+            self._logger.warning(
+                f"[SYNC_CHECK] Duplicate chunk_ids: {len(ids)} total, "
+                f"{len(set(ids))} unique"
+            )
+
         self._logger.info(f"[SYNC_CHECK] Indices synced at {bm25_count} documents")
         return True
 
@@ -270,15 +281,12 @@ class IndexSynchronizer:
 
         self._logger.info(f"[RESYNC] Found {len(documents)} documents to sync")
 
-        # Rebuild BM25 index
-        self.bm25_index = BM25Index(
-            str(self.storage_dir / "bm25"),
-            use_stopwords=self.bm25_use_stopwords,
-            use_stemming=self.bm25_use_stemming,
-            tokenizer=self.bm25_tokenizer,
-            k1=self.bm25_k1,
-            b=self.bm25_b,
-        )
+        # Rebuild the BM25 corpus in place (ADR-0025) -- bm25_index keeps its
+        # identity, so every collaborator that cached it at construction time
+        # (in particular search_executor.bm25_index, which nothing used to
+        # repair after a resync) sees the resynced corpus without a
+        # write-back.
+        self.bm25_index.clear()
         self.bm25_index.index_documents(documents, doc_ids, metadata)
         self.bm25_index.save()
 
@@ -312,59 +320,25 @@ class IndexSynchronizer:
 
     def clear_index(self) -> None:
         """
-        Clear both BM25 and dense indices.
+        Clear both BM25 and dense indices in place.
         Compatible with incremental indexer interface.
         """
         self._logger.info("Clearing hybrid indices")
 
         try:
-            # DELETE BM25 files from disk FIRST
-            bm25_dir = self.storage_dir / "bm25"
-            if bm25_dir.exists():
-                shutil.rmtree(bm25_dir)
-                self._logger.info(f"Deleted BM25 directory: {bm25_dir}")
+            # Fail-fast probe: verify metadata.db is deletable BEFORE
+            # destroying BM25 or FAISS state. Without this, a locked
+            # metadata.db (caught later, inside CodeIndexManager.clear_index)
+            # would only abort *after* the BM25 directory below was already
+            # gone — a half-clear with no rollback.
+            self.dense_index.preflight_clear()
 
-            # Recreate empty BM25 index with same configuration
-            self.bm25_index = BM25Index(
-                str(self.storage_dir / "bm25"),
-                use_stopwords=self.bm25_use_stopwords,
-                use_stemming=self.bm25_use_stemming,
-                tokenizer=self.bm25_tokenizer,
-                k1=self.bm25_k1,
-                b=self.bm25_b,
-            )
+            self.bm25_index.clear()
 
-            # Clear dense index - MUST close metadata before recreating
-            if self.dense_index is not None:
-                self.dense_index.clear_index()
-
-                # CRITICAL: Close metadata store AGAIN (clear_index reopens it at the end)
-                # This prevents file lock [WinError 32] on Windows when creating new CodeIndexManager
-                if (
-                    hasattr(self.dense_index, "_metadata_store")
-                    and self.dense_index._metadata_store is not None
-                ):
-                    self.dense_index._metadata_store.close()
-                    self._logger.debug(
-                        "Closed old dense_index metadata store before recreation"
-                    )
-
-                # Release reference to allow garbage collection
-                # pyrefly: ignore [bad-assignment]
-                self.dense_index = None
-
-            # Force garbage collection to release file handles (Windows)
-            import gc
-
-            gc.collect()
-
-            # Recreate with clean state (preserve project_id, config, and embedder for dimension validation)
-            # NOW safe - old metadata store is closed and garbage collected
-            self.dense_index = CodeIndexManager(
-                str(self.storage_dir),
-                embedder=self.embedder,
-                project_id=self.project_id,
-            )
+            # preflight_clear() is idempotent (see probe_metadata_deletable's
+            # docstring) — clear_index() calling it again internally is a
+            # documented no-op, not redundant work.
+            self.dense_index.clear_index()
 
             self._logger.info("Successfully cleared hybrid indices")
         except Exception as e:

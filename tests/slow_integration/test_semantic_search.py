@@ -29,12 +29,14 @@ class TestSemanticSearch:
     """
 
     @pytest.fixture(scope="class")
-    def test_project_path(self):
+    @classmethod
+    def test_project_path(cls):
         """Path to the test Python project."""
         return Path(__file__).parent.parent / "test_data" / "python_project"
 
     @pytest.fixture(scope="class")
-    def indexed_searcher(self, test_project_path, tmp_path_factory):
+    @classmethod
+    def indexed_searcher(cls, test_project_path, tmp_path_factory):
         """Create a searcher with pre-indexed test data."""
         # Create index directory using tmp_path_factory for class scope
         tmp_path = tmp_path_factory.mktemp("semantic_search_test")

@@ -19,6 +19,7 @@ def _make_app_config(intent_enabled=True, semantic_enabled=False):
     cfg.intent.confidence_threshold = 0.3
     cfg.intent.log_classifications = False
     cfg.intent.semantic_weight = 0.3
+    cfg.intent.default_intent = "HYBRID"
     cfg.performance.max_index_age_minutes = 5.0
     cfg.search_mode.default_max_context_tokens = 0
     return cfg
@@ -169,12 +170,6 @@ class TestSearchPlannerIntentDisabled:
         assert plan.intent_decision is None
         assert plan.redirect is None
 
-    def test_intent_disabled_no_weight_suggestions(self):
-        with _patch_planner_deps(app_cfg=_make_app_config(intent_enabled=False)):
-            plan = SearchPlanner().plan({"query": "test"})
-        assert plan.suggested_bm25 is None
-        assert plan.suggested_dense is None
-
 
 # ---------------------------------------------------------------------------
 # Intent redirects
@@ -283,15 +278,6 @@ class TestSearchPlannerIntentAdjustments:
         ):
             plan = SearchPlanner().plan({"query": "how does search work"})
         assert plan.k == 4  # suggested_k 2 < k 4 → unchanged
-
-    def test_intent_weight_suggestions_extracted(self):
-        decision = _make_intent_decision(
-            "local", suggested_params={"bm25_weight": 0.6, "dense_weight": 0.4}
-        )
-        with _patch_planner_deps(intent_decision=decision):
-            plan = SearchPlanner().plan({"query": "where is CodeEmbedder defined"})
-        assert plan.suggested_bm25 == 0.6
-        assert plan.suggested_dense == 0.4
 
     def test_intent_suggested_search_mode_applied(self):
         decision = _make_intent_decision(

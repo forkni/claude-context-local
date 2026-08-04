@@ -25,6 +25,7 @@ Remove `ServiceLocator`, the empty `ResourceManager`/`SearchFactory` classes,
 their singletons, and the locator-first paths in the lower-layer modules.
 
 Canonical accessors:
+
 - **Application state**: `from mcp_server.state import get_state`
 - **Search config**: `from search.config import get_search_config`
 - **Resources/cleanup**: module-level functions in `mcp_server/resource_manager.py`
@@ -35,7 +36,7 @@ files (`from mcp_server.services import get_state, get_config`) continue to work
 without an import sweep.
 
 Test isolation: `reset_state()` in `mcp_server/state.py` (already the real mechanism)
-+ `config_manager._config = None` in `tests/conftest.py`.  Test injection of mock
+plus `config_manager._config = None` in `tests/conftest.py`.  Test injection of mock
 configs uses `patch("search.config.get_search_config", return_value=mock_config)`.
 
 ## Reasons
@@ -76,6 +77,7 @@ held no state and enabled nothing.
 ## Re-evaluation triggers
 
 Reconsider a DI container if and when:
+
 1. Multiple non-test implementations of `ApplicationState` or `SearchConfig` are needed
    in the same process (e.g., multi-tenant mode), AND
 2. The swapping cannot be achieved via environment variables, config files, or

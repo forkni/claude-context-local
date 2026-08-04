@@ -39,62 +39,10 @@ _WARMUP_TEXT = (
     "        if len(item) <= max_length:\n"
     "            results.append(item.strip())\n"
     "    return results\n"
-) * 32  # repeat to fill ~2048 tokens — matches the explicit max_length cap in
-# onnx_wrapper.py and t_eff in calculate_optimal_batch_size (#54/#46).
+) * 32  # repeat to fill ~2048 tokens — matches t_eff in
+# calculate_optimal_batch_size (#54/#46).
 # The probe must reflect peak-length inputs so the measured per-item activation
 # cost is representative of real indexing (code chunks regularly hit 1500+ tokens).
-
-
-# NVML init-once state: avoids repeated nvmlInit()/nvmlShutdown() per call (#53).
-# nvmlInit() is not free (~1–5 ms) and nvmlShutdown() invalidates all handles;
-# keeping them alive for the process lifetime is correct (NVML is process-scoped).
-_nvml_initialized: bool = False
-_nvml_handles: dict[int, Any] = {}  # device_index → nvml handle
-
-
-def _get_nvml_used_bytes(device: str = "cuda:0") -> int:
-    """Return total GPU memory used (bytes) via NVML, or 0 on failure.
-
-    Used to take before/after snapshots around ONNX model loads so that
-    ORT's CUDAExecutionProvider allocations (invisible to PyTorch) can be
-    measured and reported to the dynamic batch-size calculator.  Also used
-    by ``CodeEmbedder._check_vram_status`` on the ONNX path (#56).
-
-    NVML is initialised once and device handles are cached across calls (#53).
-    ``nvmlShutdown()`` is never called — handles remain valid for the process
-    lifetime, and re-initialising would invalidate cached handles.
-
-    Args:
-        device: PyTorch device string (e.g. "cuda:0", "cuda:1", "cuda").
-            The integer index is parsed from after the colon; bare "cuda"
-            and non-cuda strings fall back to index 0.
-    """
-    global _nvml_initialized, _nvml_handles
-    try:
-        # pyrefly: ignore [missing-import]
-        import pynvml
-
-        # Parse device index from "cuda:N"; default to 0 for "cuda"/"cpu"/"auto"/etc.
-        idx = 0
-        if ":" in device:
-            try:
-                idx = int(device.split(":", 1)[1])
-            except ValueError:
-                idx = 0
-
-        # Init once — nvmlShutdown() intentionally omitted (init-once pattern).
-        if not _nvml_initialized:
-            pynvml.nvmlInit()
-            _nvml_initialized = True
-
-        # Cache per-device handles; nvmlDeviceGetHandleByIndex is slightly expensive.
-        if idx not in _nvml_handles:
-            _nvml_handles[idx] = pynvml.nvmlDeviceGetHandleByIndex(idx)
-
-        mem = pynvml.nvmlDeviceGetMemoryInfo(_nvml_handles[idx])
-        return mem.used
-    except Exception:  # noqa: BLE001 - dep-probe: pynvml/NVML unavailable, caller treats 0 as unknown
-        return 0
 
 
 class ModelLoader:
@@ -170,7 +118,6 @@ class ModelLoader:
         model: Any,
         device: str,
         batch_size: int = 4,
-        is_onnx: bool = False,
     ) -> float:
         """Measure activation VRAM per batch item using a small warmup batch.
 
@@ -181,46 +128,34 @@ class ModelLoader:
         Stores the result on ``model._activation_gb_per_item`` and also returns it.
 
         Args:
-            model: Loaded model (SentenceTransformer or ONNXEmbeddingModel).
+            model: Loaded model (SentenceTransformer).
             device: Resolved device string ("cuda" or "cpu").
             batch_size: Warmup batch size for measurement (default: 4).
-            is_onnx: True for ONNX Runtime backend (uses pynvml instead of torch).
 
         Returns:
             Measured activation memory per item in GB, or 0.0 on failure.
         """
         if not str(device).startswith("cuda"):
             return 0.0
-        if not is_onnx and (torch is None or not torch.cuda.is_available()):
+        if torch is None or not torch.cuda.is_available():
             return 0.0
 
         dummy_batch = [_WARMUP_TEXT] * batch_size
         try:
-            if is_onnx:
-                # ORT allocates outside PyTorch — use pynvml delta. NOTE: this delta
-                # captures BFCArena arena growth, not marginal per-item cost, so it is
-                # logged for diagnostics but is NOT trusted for ONNX batch sizing — the
-                # consumer (embedder.calculate_optimal_batch_size path) ignores the ONNX
-                # measured value and uses max(analytical estimate, calibrated floor).
-                pre = _get_nvml_used_bytes(device)
-                model.encode(dummy_batch, batch_size=batch_size)
-                post = _get_nvml_used_bytes(device)
-                delta_gb = max(0.0, (post - pre) / (1024**3))
-            else:
-                # PyTorch: track peak allocated memory across the batch
-                # pyrefly: ignore [missing-attribute]
-                torch.cuda.reset_peak_memory_stats()
-                # pyrefly: ignore [missing-attribute]
-                pre_allocated = torch.cuda.memory_allocated()
-                model.encode(
-                    dummy_batch,
-                    batch_size=batch_size,
-                    show_progress_bar=False,
-                    convert_to_numpy=True,
-                )
-                # pyrefly: ignore [missing-attribute]
-                peak = torch.cuda.max_memory_allocated()
-                delta_gb = max(0.0, (peak - pre_allocated) / (1024**3))
+            # PyTorch: track peak allocated memory across the batch
+            # pyrefly: ignore [missing-attribute]
+            torch.cuda.reset_peak_memory_stats()
+            # pyrefly: ignore [missing-attribute]
+            pre_allocated = torch.cuda.memory_allocated()
+            model.encode(
+                dummy_batch,
+                batch_size=batch_size,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+            )
+            # pyrefly: ignore [missing-attribute]
+            peak = torch.cuda.max_memory_allocated()
+            delta_gb = max(0.0, (peak - pre_allocated) / (1024**3))
 
             # Per-item cost + 1.3× safety margin for real batches with longer sequences
             per_item = delta_gb / batch_size * 1.3
@@ -301,18 +236,11 @@ class ModelLoader:
         so the string is identical before and after a model load in the same
         process (see ``ModelLoader.device`` vs. the ``resolved_device`` local
         in ``load()``).
-
-        Known limitation: this records ONNX *intent*, not the effective
-        backend — ``load()`` silently falls back to PyTorch on ImportError
-        or RuntimeError. That fallback is stable (so it carries no cache
-        hit-rate risk), but installing ``optimum`` later changes the produced
-        numerics without changing this string.
         """
         device = self.resolve_device(self.device)
         dtype = self._resolve_dtype(log=False)
         dtype_name = "fp32" if dtype is None else str(dtype).removeprefix("torch.")
-        backend = "onnx" if self._should_use_onnx() else "pytorch"
-        return f"v1|device={device}|dtype={dtype_name}|backend={backend}"
+        return f"v1|device={device}|dtype={dtype_name}|backend=pytorch"
 
     def resolve_device(self, requested: str | None) -> str:
         """Resolve target device string.
@@ -399,104 +327,6 @@ class ModelLoader:
 
         return kwargs
 
-    def _should_use_onnx(self) -> bool:
-        """Return True if ONNX is enabled in config and this model is eligible.
-
-        Eligibility requires:
-        - use_onnx=True in performance config
-        - Model does NOT require trust_remote_code (custom architectures unsupported)
-        - Model does NOT set onnx_supported=False (opt-out for models whose upstream
-          pooling is not yet implemented in onnx_wrapper.py, e.g. lasttoken)
-        """
-        try:
-            from mcp_server.utils.config_helpers import (
-                get_config_via_service_locator as _get_config,
-            )
-
-            config = _get_config()
-            if not config or not getattr(config.performance, "use_onnx", False):
-                return False
-        except Exception:  # noqa: BLE001 - parse-recovery: config unavailable, default to ONNX disabled
-            return False
-
-        model_config = self._get_model_config()
-        if model_config.get("trust_remote_code", False):
-            self._logger.debug(
-                f"[ONNX] Skipping {self.model_name!r}: trust_remote_code=True"
-            )
-            return False
-        if not model_config.get("onnx_supported", True):
-            self._logger.debug(
-                f"[ONNX] Skipping {self.model_name!r}: onnx_supported=False "
-                f"(upstream pooling not supported by wrapper)"
-            )
-            return False
-        return True
-
-    def _load_onnx(self) -> tuple[Any, str]:
-        """Load model via ONNX Runtime, auto-converting from HuggingFace if needed.
-
-        Returns:
-            Tuple of (ONNXEmbeddingModel, resolved_device)
-        """
-        from embeddings.onnx_loader import ONNXModelLoader
-        from embeddings.onnx_wrapper import ONNXEmbeddingModel
-
-        model_config = self._get_model_config()
-        pooling = model_config.get("onnx_pooling", "cls")
-
-        # Snapshot real VRAM before ORT session creation. ORT's CUDAExecutionProvider
-        # allocates CUDA memory outside PyTorch — torch.cuda.memory_allocated() stays 0.
-        # A before/after delta gives the true model footprint for batch-size calculation.
-        pre_vram_bytes = _get_nvml_used_bytes(self.device)
-
-        loader = ONNXModelLoader(
-            model_name=self.model_name,
-            cache_dir=self.cache_dir,
-            device=self.device,
-        )
-        ort_model, tokenizer, device = loader.load()
-
-        wrapper = ONNXEmbeddingModel(
-            ort_model=ort_model,
-            tokenizer=tokenizer,
-            device=device,
-            pooling=pooling,
-            model_name=self.model_name,
-        )
-
-        # Warmup inference: ORT CUDAExecutionProvider defers bulk CUDA allocation to
-        # first inference. Without warmup, the pynvml delta only captures session setup
-        # overhead (~0.5GB) rather than the full runtime footprint (~1.5-2.5GB).
-        if device == "cuda":
-            try:
-                wrapper.encode(["warmup"], batch_size=1)
-                self._logger.debug(
-                    "[ONNX] Warmup inference complete — CUDA memory now allocated"
-                )
-            except Exception:  # noqa: BLE001 - resilience: warmup non-fatal, batch sizing falls back
-                # Preserve traceback for diagnostics while keeping severity at debug —
-                # warmup failure is non-fatal (batch sizing falls back to setup-only VRAM).
-                self._logger.debug("[ONNX] Warmup failed (non-fatal)", exc_info=True)
-
-        post_vram_bytes = _get_nvml_used_bytes(device)
-        vram_delta_gb = max(0.0, (post_vram_bytes - pre_vram_bytes) / (1024**3))
-        wrapper._vram_gb = (
-            vram_delta_gb  # used by _get_model_vram_gb() for batch sizing
-        )
-
-        # Measure per-item activation cost with a representative warmup batch
-        if device == "cuda":
-            self._measure_activation_per_item(
-                wrapper, device, batch_size=4, is_onnx=True
-            )
-
-        self._logger.info(
-            f"Model loaded successfully on device: {device} "
-            f"[backend=onnxruntime, pooling={pooling}, vram={vram_delta_gb:.2f}GB]"
-        )
-        return wrapper, device
-
     def load(self) -> tuple[Any, str]:
         """Load model with automatic cache corruption recovery and fallback.
 
@@ -508,30 +338,6 @@ class ModelLoader:
             ValueError: If model not found on HuggingFace Hub
             RuntimeError: If model loading fails after all recovery attempts
         """
-        # ONNX fast path — bypasses PyTorch loading entirely when enabled.
-        # Falls back to PyTorch on:
-        #   - ImportError: optimum[onnxruntime] not installed (fresh install without
-        #     the ONNX extra).
-        #   - RuntimeError: ONNX export, optimization, or runtime load failed
-        #     (e.g. unsupported architecture, corrupted cache, missing optimum
-        #     symbol). With use_onnx=true as the default, swallowing these here
-        #     prevents a hard startup failure on environments where ORT can't run
-        #     the requested model — at the cost of silently changing backends.
-        # Both paths log a loud warning so the backend switch is visible in logs.
-        if self._should_use_onnx():
-            try:
-                return self._load_onnx()
-            except ImportError as e:
-                self._logger.warning(
-                    f"[ONNX] Falling back to PyTorch — optimum not installed: {e}"
-                )
-            except RuntimeError as e:
-                self._logger.warning(
-                    f"[ONNX] Falling back to PyTorch — ONNX load/conversion "
-                    f"failed: {e}",
-                    exc_info=True,
-                )
-
         if SentenceTransformer is None:
             raise ImportError(
                 "sentence-transformers not found. Install with: "
@@ -712,9 +518,7 @@ class ModelLoader:
             # (not the old 4-token "warm-up" string) so the measurement reflects real
             # workload and TorchDynamo compiles for a realistic shape.
             # Method is a no-op on CPU (returns 0.0 early).
-            self._measure_activation_per_item(
-                model, resolved_device, batch_size=4, is_onnx=False
-            )
+            self._measure_activation_per_item(model, resolved_device, batch_size=4)
 
             # Build detailed info string
             precision_info = f" ({torch_dtype})" if torch_dtype else " (fp32 default)"
@@ -768,7 +572,7 @@ class ModelLoader:
 
                     # Warmup + activation measurement (fallback path — same as primary).
                     self._measure_activation_per_item(
-                        model, resolved_device, batch_size=4, is_onnx=False
+                        model, resolved_device, batch_size=4
                     )
 
                     # Track VRAM usage for this model (fallback path)

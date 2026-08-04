@@ -32,7 +32,7 @@ Three concrete payoffs for this codebase:
   codebase imports torch in `search/neural_reranker.py`), JAX, and Instagram (20M LOC). 10×–50×
   faster than Pyright; significantly better torch/transformers handling than Mypy. `permissive-ignores`
   respects existing `# type: ignore` comments (20 sites in this repo). `replace-imports-with-any`
-  suppresses noise from stubless native deps (faiss, tree_sitter_*, rank_bm25, onnxruntime) at
+  suppresses noise from stubless native deps (faiss, tree_sitter_*, rank_bm25) at
   the config layer rather than per-file.
 - **Pyright** — not chosen. More conformant (~99% typing-spec vs Pyrefly's ~88–90%), but slower,
   with weaker handling of torch tensor subclasses and diffusers/transformers patterns. No

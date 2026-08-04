@@ -27,9 +27,10 @@ possible.
 ## Reasons
 
 **No measurable eval gap.** The golden dataset (`evaluation/golden_dataset.json`,
-13 queries) covers categories A/B/C/D — all local/structural queries
-(function discovery, sibling context, class overview, connections). There are
-zero GLOBAL/architectural queries, even though the system has a real
+77 queries) covers categories A–F — all local/structural queries
+(function discovery, sibling context, class overview, connections, cross-file
+context, similarity). There are zero GLOBAL/architectural queries, even though
+the system has a real
 `QueryIntent.GLOBAL` path (`search/intent_classifier.py`). The feature's
 entire stated payoff is improvement on GLOBAL-intent queries. There is no
 benchmark that can detect a regression or improvement here, so the ±0.5%

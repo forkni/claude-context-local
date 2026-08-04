@@ -69,7 +69,6 @@ class TestTypeBoostDicts:
 
     def test_entity_boosts_module_lt_one(self):
         assert TYPE_BOOSTS_ENTITY["module"] < 1.0
-        assert TYPE_BOOSTS_ENTITY["community"] < 1.0
 
     def test_code_boosts_function_equals_method(self):
         assert TYPE_BOOSTS_CODE["function"] == TYPE_BOOSTS_CODE["method"]

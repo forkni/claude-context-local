@@ -233,7 +233,8 @@ class TestRetrievalEvaluation:
     """End-to-end retrieval evaluation using frozen sample codebase."""
 
     @pytest.fixture(scope="class")
-    def indexed_environment(self, tmp_path_factory):
+    @classmethod
+    def indexed_environment(cls, tmp_path_factory):
         """Build the full BM25 + FAISS index once for all tests in this class.
 
         Steps:
@@ -272,8 +273,6 @@ class TestRetrievalEvaluation:
         searcher = HybridSearcher(
             storage_dir=str(storage_dir),
             embedder=None,  # Not needed for BM25 mode
-            bm25_weight=0.4,
-            dense_weight=0.6,
             config=test_config,
         )
 
@@ -387,7 +386,7 @@ class TestRetrievalEvaluation:
     # -------------------------------------------------------------------
 
     def test_metrics_pipeline_produces_all_keys(self, indexed_environment):
-        """calculate_metrics_from_results returns all 14 expected keys
+        """calculate_metrics_from_results returns all 16 expected keys
         when fed real search results."""
         searcher = indexed_environment["searcher"]
         q = GOLDEN_QUERIES[0]
@@ -416,6 +415,8 @@ class TestRetrievalEvaluation:
             "mrr",
             "ndcg@5",
             "ndcg@10",
+            "acc@5",
+            "acc@10",
             "hit",
             "hit@7",
         }

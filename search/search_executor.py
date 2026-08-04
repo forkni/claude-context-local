@@ -12,13 +12,14 @@ from typing import Any
 
 import numpy as np
 
-from search.config import SearchMode, get_search_config
+from search.config import SearchMode
 from utils.observability import wrap_in_context
 from utils.timing import timed
 
 from .filters import FilterEngine
 from .reranker import SearchResult
 from .result_factory import ResultFactory
+from .types import RetrievalRequest
 
 
 class SearchExecutor:
@@ -35,8 +36,6 @@ class SearchExecutor:
         reranker,  # RRFReranker
         reranking_engine,  # RerankingEngine
         gpu_monitor,  # GPUMemoryMonitor
-        bm25_weight: float = 0.35,
-        dense_weight: float = 0.65,
         max_workers: int = 2,
         logger: logging.Logger | None = None,
     ):
@@ -50,8 +49,6 @@ class SearchExecutor:
             reranker: RRFReranker for result fusion
             reranking_engine: RerankingEngine for neural reranking
             gpu_monitor: GPUMemoryMonitor for VRAM tracking
-            bm25_weight: Weight for BM25 results (0.0 to 1.0)
-            dense_weight: Weight for dense results (0.0 to 1.0)
             max_workers: Maximum thread pool workers
             logger: Optional logger instance
         """
@@ -62,8 +59,6 @@ class SearchExecutor:
         self.reranking_engine = reranking_engine
         self.gpu_monitor = gpu_monitor
 
-        self.bm25_weight = bm25_weight
-        self.dense_weight = dense_weight
         self.max_workers = max_workers
 
         self._logger = logger or logging.getLogger(__name__)
@@ -84,31 +79,27 @@ class SearchExecutor:
 
     def execute_single_hop(
         self,
-        query: str,
-        k: int = 5,
-        search_mode: str = SearchMode.HYBRID,
-        use_parallel: bool = True,
-        min_bm25_score: float = 0.0,
-        filters: dict[str, Any] | None = None,
+        request: RetrievalRequest,
         query_embedding: np.ndarray | None = None,
-        bm25_weight: float | None = None,
-        dense_weight: float | None = None,
     ) -> list[SearchResult]:
         """
         Execute single-hop search (direct query matching).
 
         Args:
-            query: Search query
-            k: Number of results to return
-            search_mode: Search mode - "hybrid", "semantic", or "bm25"
-            use_parallel: Whether to run BM25 and dense search in parallel
-            min_bm25_score: Minimum BM25 score threshold
-            filters: Optional filters for dense search
+            request: The RetrievalRequest this leg executes against.
             query_embedding: Pre-computed query embedding (optional, for caching)
 
         Returns:
             Search results from single-hop search
         """
+        query = request.query
+        k = request.k
+        search_mode = request.search_mode
+        use_parallel = request.use_parallel
+        min_bm25_score = request.min_bm25_score
+        filters = request.filters
+        config = request.config
+
         self._logger.debug(f"{search_mode.title()} search for: '{query}' (k={k})")
 
         start_time = time.time()
@@ -118,7 +109,7 @@ class SearchExecutor:
         # Handle different search modes
         if search_mode == SearchMode.BM25:
             # BM25-only search
-            bm25_results = self.search_bm25(query, k, min_bm25_score)
+            bm25_results = self.search_bm25(query, k, min_bm25_score, filters)
             # Convert BM25 results to SearchResult format
             final_results = ResultFactory.from_bm25_results(bm25_results)
             rerank_time = 0.0  # No reranking for single mode
@@ -135,7 +126,7 @@ class SearchExecutor:
             # can actually fill the neural reranker's candidate budget
             # (reranker.top_k_candidates, deployed 30) instead of starving it at
             # k*2. Exact FlatIP dense search makes the wider sweep ~free.
-            reranker_budget = get_search_config().reranker.top_k_candidates
+            reranker_budget = config.reranker.top_k_candidates
             search_k = max(reranker_budget, k * 5)
 
             if use_parallel and not self._is_shutdown:
@@ -149,10 +140,31 @@ class SearchExecutor:
                     query, search_k, min_bm25_score, filters, query_embedding
                 )
 
+            # Resolved once, upstream in HybridSearcher.search — never None
+            # here (ADR-0018 deletes the is-not-None fallback that used to
+            # hide a dropped weight as a stale construction-time default).
+            eff_bm25 = request.bm25_weight
+            eff_dense = request.dense_weight
+
+            # Curated-vocabulary query expansion (opt-in): matched concepts add
+            # discounted variant legs to the fusion below. Disabled or unmatched
+            # queries skip this entirely and take the exact rerank_simple path.
+            variant_legs: list[list[SearchResult]] = []
+            variant_weights: list[float] = []
+            qe_cfg = config.query_expansion
+            if qe_cfg.enabled:
+                variant_legs, variant_weights = self._build_variant_legs(
+                    query,
+                    search_k,
+                    min_bm25_score,
+                    filters,
+                    qe_cfg,
+                    eff_bm25,
+                    eff_dense,
+                )
+
             # Rerank results
             rerank_start = time.time()
-            eff_bm25 = bm25_weight if bm25_weight is not None else self.bm25_weight
-            eff_dense = dense_weight if dense_weight is not None else self.dense_weight
             self._logger.debug(
                 f"[RERANK] Using weights: BM25={eff_bm25}, Dense={eff_dense}, "
                 f"BM25_results={len(bm25_results)}, Dense_results={len(dense_results)}"
@@ -163,14 +175,36 @@ class SearchExecutor:
             # disabled/unavailable, apply_neural_reranking returns the pool
             # unchanged and the [:k] below reproduces the old RRF top-k.
             fusion_k = max(k, reranker_budget)
-            final_results = self.reranker.rerank_simple(
-                bm25_results=bm25_results,
-                dense_results=dense_results,
-                max_results=fusion_k,
-                bm25_weight=eff_bm25,
-                dense_weight=eff_dense,
-                reserved_slots=get_search_config().search_mode.bm25_reserved_slots,
-            )
+            if variant_legs:
+                # Generic N-list fusion: primary legs keep their weights,
+                # variant legs enter discounted; reserved slots stay pointed
+                # at the primary BM25 leg (index 0) — the bm25_reserved_slots
+                # interaction is unchanged, not extended to variant legs.
+                # Same tuple->SearchResult conversion rerank_simple performs
+                primary_bm25 = [
+                    SearchResult(chunk_id=c, score=s, metadata=m, source="bm25")
+                    for c, s, m in bm25_results
+                ]
+                primary_dense = [
+                    SearchResult(chunk_id=c, score=s, metadata=m, source="dense")
+                    for c, s, m in dense_results
+                ]
+                final_results = self.reranker.rerank(
+                    results_lists=[primary_bm25, primary_dense, *variant_legs],
+                    weights=[eff_bm25, eff_dense, *variant_weights],
+                    max_results=fusion_k,
+                    reserved_slots=config.search_mode.bm25_reserved_slots,
+                    reserve_list_idx=0,
+                )
+            else:
+                final_results = self.reranker.rerank_simple(
+                    bm25_results=bm25_results,
+                    dense_results=dense_results,
+                    max_results=fusion_k,
+                    bm25_weight=eff_bm25,
+                    dense_weight=eff_dense,
+                    reserved_slots=config.search_mode.bm25_reserved_slots,
+                )
             rerank_time = time.time() - rerank_start
             self._logger.debug(
                 f"[RERANK] Produced {len(final_results)} results in {rerank_time:.3f}s"
@@ -179,9 +213,9 @@ class SearchExecutor:
             # Neural reranking (Quality First mode) - delegate to reranking_engine.
             # Skipped under reranker.single_pass: the one listwise pass runs at
             # the tail of HybridSearcher.search(); hop-1 seeds keep RRF order.
-            if len(final_results) > 0 and not get_search_config().reranker.single_pass:
+            if len(final_results) > 0 and not config.reranker.single_pass:
                 final_results = self.reranking_engine.apply_neural_reranking(
-                    query, final_results, k, context="search"
+                    query, final_results, k, context="search", config=config
                 )
             final_results = final_results[:k]
 
@@ -198,6 +232,63 @@ class SearchExecutor:
         )
 
         return final_results
+
+    def _build_variant_legs(
+        self,
+        query: str,
+        search_k: int,
+        min_bm25_score: float,
+        filters: dict[str, Any] | None,
+        qe_cfg,  # QueryExpansionConfig
+        bm25_weight: float,
+        dense_weight: float,
+    ) -> tuple[list[list[SearchResult]], list[float]]:
+        """Build discounted fusion legs for concepts matched by query expansion.
+
+        One leg per matched concept per enabled backend (BM25 and/or dense),
+        each searched with the original query plus the concept's terms and
+        weighted at ``base_leg_weight * variant_weight_discount``. Returns
+        ``([], [])`` when no concept matches, keeping the caller on the
+        unexpanded fusion path.
+        """
+        from search.query_expansion import build_variant_query, match_concepts
+
+        matches = match_concepts(query, qe_cfg.variants_path, qe_cfg.max_variants)
+        if not matches:
+            return [], []
+
+        legs: list[list[SearchResult]] = []
+        weights: list[float] = []
+        for concept, terms in matches:
+            variant_query = build_variant_query(query, terms)
+            self._logger.debug(
+                f"[QUERY-EXPANSION] concept={concept} variant_query={variant_query!r}"
+            )
+            if qe_cfg.apply_to_bm25:
+                tuples = self.search_bm25(
+                    variant_query, search_k, min_bm25_score, filters
+                )
+                legs.append(
+                    [
+                        SearchResult(
+                            chunk_id=c, score=s, metadata=m, source="bm25_variant"
+                        )
+                        for c, s, m in tuples
+                    ]
+                )
+                weights.append(bm25_weight * qe_cfg.variant_weight_discount)
+            if qe_cfg.apply_to_dense:
+                tuples = self.search_dense(variant_query, search_k, filters)
+                legs.append(
+                    [
+                        SearchResult(
+                            chunk_id=c, score=s, metadata=m, source="dense_variant"
+                        )
+                        for c, s, m in tuples
+                    ]
+                )
+                weights.append(dense_weight * qe_cfg.variant_weight_discount)
+        return legs, weights
 
     def _parallel_search(
         self,
@@ -323,8 +414,17 @@ class SearchExecutor:
 
                     from embeddings.embedder import CodeEmbedder
 
-                    # Use same cache directory as main embedder
-                    cache_dir = Path.home() / ".claude_code_search" / "models"
+                    # Use same cache directory as main embedder. Route through
+                    # get_storage_dir() so this honors CODE_SEARCH_STORAGE (test
+                    # redirection) instead of reading Path.home() directly --
+                    # see merkle/snapshot_manager.py's __init__ for the same
+                    # try/except fallback pattern.
+                    try:
+                        from mcp_server.storage_manager import get_storage_dir
+
+                        cache_dir = get_storage_dir() / "models"
+                    except Exception:  # noqa: BLE001 - resilience: fall back to default storage dir if import fails
+                        cache_dir = Path.home() / ".claude_code_search" / "models"
                     cache_dir.mkdir(parents=True, exist_ok=True)
                     self.embedder = CodeEmbedder(cache_dir=str(cache_dir))
                     self._logger.info(

@@ -2,7 +2,8 @@
 
 ## Overview
 
-The Claude Context MCP system now includes **hybrid search capabilities** that combine BM25 sparse search with dense vector search for improved accuracy and efficiency. This guide explains how to configure and control these features.
+The Claude Context MCP system now includes **hybrid search capabilities** that combine BM25 sparse search with dense vector search
+for improved accuracy and efficiency. This guide explains how to configure and control these features.
 
 ## Key Benefits
 
@@ -17,7 +18,7 @@ The Claude Context MCP system now includes **hybrid search capabilities** that c
 
 - **Reciprocal Rank Fusion (RRF)** combines results from multiple search methods
 - **Complementary strengths**: BM25 for exact text matches, dense search for semantic similarity
-- **Proven quality metrics**: MRR 0.797, Recall@5 0.689, Hit@5 100% (see [SSCG Retrieval Benchmark](BENCHMARKS.md#sscg-retrieval-benchmark))
+- **Proven quality metrics**: MRR 0.8348 on the 63-query canonical golden set, k=10, hybrid mode (`canon_C3`, 2026-08-03 baseline; see [SSCG Retrieval Benchmark](BENCHMARKS.md#sscg-retrieval-benchmark) for the full provenance-stamped tables and comparability notes)
 - **Configurable weights** to tune for your specific use case
 - **Auto-mode detection** based on query characteristics
 
@@ -191,6 +192,44 @@ search_code("request handler", ego_graph_enabled=True)
 - **Expansion factor**: 3.5-4.6× (e.g., 5 anchors → 23 total results)
 - **Symbol filtering**: Automatic (removes 4-33 invalid nodes per anchor)
 
+### Latency Profile: PPR Expansion Mode (opt-in)
+
+**Default**: `expansion_mode: "bfs"` — best recall, canonical. Do not change
+it unless query latency matters more than recall depth.
+
+`ego_graph.expansion_mode: "ppr"` (Personalized PageRank) is a supported
+per-project **latency profile**, measured on the deterministic 131-query
+benchmark (2026-08-02, `evaluation/PPR_LATENCY_PROFILE_20260802.md`):
+
+| Metric | bfs (default) | ppr | Delta |
+|--------|---------------|-----|-------|
+| Avg query latency | 4,501 ms | 3,787 ms | **−15.8%** |
+| MRR | 0.6527 | 0.6483 | −0.0044 (flat) |
+| recall@10 | 0.7839 | 0.7742 | −0.0097 |
+| recall@20 | 0.8365 | 0.8115 | **−0.0250** |
+
+**Mechanism**: BFS floods to the neighbor cap on most queries (mean pool 29.2
+chunks); PPR's top-N-by-score selection returns smaller, better-ranked pools
+(mean 21.7), making the final listwise rerank ~680 ms cheaper per query. The
+smaller pool is equally the source of the recall@20 debit — fewer candidates
+survive to the deep-recall window. Known replicated per-query losses: Q51
+(0.5→0.333) and Q70 (→0.0) class.
+
+**Enabling per project** (ADR-0014 override layer — create
+`search_overrides.json` next to the project's `search_config.json`):
+
+```json
+{
+  "ego_graph": {
+    "expansion_mode": "ppr"
+  }
+}
+```
+
+Verify after switching: benchmark or spot-check with `confounds.ppr_fallback`
+= 0 (a nonzero count means the graph lacks PPR support and BFS silently took
+over — the latency win will not materialize).
+
 ---
 
 ## Filter Parameters
@@ -282,7 +321,8 @@ Parameters:
 
 ### Multi-Hop Search Configuration
 
-**Multi-hop search** discovers interconnected code relationships by iteratively expanding search results to find related chunks. Inspired by ChunkHound and cAST research, it provides deeper code context discovery.
+**Multi-hop search** discovers interconnected code relationships by iteratively expanding search results to find related chunks.
+Inspired by ChunkHound and cAST research, it provides deeper code context discovery.
 
 **Empirically validated**: 93.3% of queries benefit, with average 3.2 unique chunks discovered and 40-60% top result changes for complex queries.
 
@@ -362,7 +402,8 @@ These parameters were validated with 15+ queries showing 93% benefit rate and op
 
 ### BM25 Stemming Configuration (v0.5.2)
 
-**BM25 Stemming** normalizes word forms to improve recall by matching different variations of the same word. For example, "indexing", "indexed", "indexes", and "index" all stem to "index" and match each other.
+**BM25 Stemming** normalizes word forms to improve recall by matching different variations of the same word. For example,
+"indexing", "indexed", "indexes", and "index" all stem to "index" and match each other.
 
 **Empirically validated**: 93.3% of queries benefit, with average 3.33 unique discoveries per query and negligible overhead (0.47ms).
 
@@ -386,7 +427,9 @@ The Snowball stemmer (Porter2 algorithm) normalizes words during BM25 text prepr
 > all** — `bm25_use_stemming` is only consulted by the `"legacy"` tokenizer variant
 > (`search/bm25_index.py`). The `"whole"` default keeps identifiers intact (no
 > camelCase/snake_case split, no stemming) and outperforms `"legacy"` on the golden
-> sets (+0.05/+0.07 Recall@5, +0.09/+0.10 MRR — `search/config.py:173-174`). The
+> sets (+0.05/+0.07 Recall@5, +0.09/+0.10 MRR — see the `bm25_tokenizer` field in
+> `search/config.py`'s `SearchModeConfig`; the tokenizer choice is consumed by
+> `TextPreprocessor._resolve_tokenizer` in `search/bm25_index.py`). The
 > stemming behavior and benchmark numbers below apply only if you opt back into
 > `bm25_tokenizer: "legacy"`; switching tokenizers requires a full reindex.
 
@@ -425,9 +468,81 @@ export CLAUDE_BM25_USE_STEMMING=false
 
 **Recommendation**: Keep stemming enabled unless you specifically need exact text matching.
 
-**After Upgrade**: Re-index existing projects for optimal stemming benefits. The system automatically detects configuration mismatches and warns you if loading old indices.
+**After Upgrade**: Re-index existing projects for optimal stemming benefits. The system automatically detects configuration
+mismatches and warns you if loading old indices.
 
 Stemming was validated with comparative testing showing improved recall for morphological variations without impacting precision.
+
+### Query Expansion (opt-in, default off)
+
+**Query expansion** bridges zero-identifier English paraphrases to the identifiers code
+actually uses. A curated concept→terms vocabulary (`config/query_expansion_variants.yaml`,
+12 concepts: persistence, eviction, pooling, …) is matched against the query by
+deterministic lowercase trigger containment; each matched concept adds an extra
+**discounted fusion leg** (the query text plus the concept's code-domain terms) to the
+existing RRF fusion. Example: "write the analyzed relationships out so they *survive a
+restart*" triggers the `persistence` concept and adds a BM25 leg carrying "save",
+"persist", "disk".
+
+**Why it ships disabled**: the 2026-07-28 A/B closed FAIL on its primary criterion —
+only 1 of 3 target queries flipped, and rescuing the one genuine vocabulary-gap query
+required a variant weight that measurably diluted the dense leg for other queries.
+Aggregates and latency were neutral. Full verdict:
+[ADR-0012](adr/0012-curated-vocabulary-query-expansion.md) and
+`evaluation/QUERY_EXPANSION_AB_20260728.md`. The mechanism remains available for opt-in
+use and re-evaluation.
+
+#### QueryExpansionConfig fields
+
+All six fields live in `QueryExpansionConfig` (`search/config.py`):
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `enabled` | `false` | Master switch. Disabled/unmatched queries take the exact unexpanded fusion path |
+| `variants_path` | `""` | Vocabulary YAML path; empty = package default `config/query_expansion_variants.yaml` |
+| `max_variants` | `2` | Max matched concepts per query (deterministic order) |
+| `variant_weight_discount` | `0.5` | Variant-leg weight = base leg weight × this |
+| `apply_to_bm25` | `true` | Add expanded-query BM25 leg(s) |
+| `apply_to_dense` | `false` | Add expanded-query dense leg(s) — needs its own A/B before use |
+
+#### Enabling via `search_config.json`
+
+Nested block:
+
+```json
+{
+  "query_expansion": {
+    "enabled": true,
+    "max_variants": 2,
+    "variant_weight_discount": 0.5,
+    "apply_to_bm25": true,
+    "apply_to_dense": false
+  }
+}
+```
+
+Flat-key aliases are also accepted (`search/config.py` `_FLAT_KEY_ALIASES`):
+`query_expansion_enabled`, `query_expansion_variants_path`,
+`query_expansion_max_variants`, `query_expansion_weight_discount`,
+`query_expansion_apply_to_bm25`, `query_expansion_apply_to_dense`.
+There are no environment variables for query expansion — use the configuration file.
+
+No reindex is required; expansion is a search-time-only mechanism.
+
+#### Vocabulary curation policy
+
+The YAML header enforces these rules at review time (restated here; the file is
+authoritative):
+
+- **Generality test**: every concept must plausibly serve queries outside any benchmark
+  set — universal software ideas (persistence, eviction, pooling), never a specific
+  query's wording.
+- **Never query-keyed**: no entry may be named after, or triggered solely by, a
+  golden-dataset query.
+- **Cap ~15 concepts**: growth pressure means the approach is wrong (switch to
+  embedding-based matching instead of adding entries).
+- Matching is verbatim lowercase substring containment — prefer 1–2 word triggers, and
+  use longer phrases only to avoid over-firing (e.g. "memory gets tight", not "memory").
 
 ### 2. Using Environment Variables
 
@@ -669,7 +784,7 @@ under 1s.
 
 **Cache invalidation**: The cache header records the embedding model name, vector dimension, and a
 provenance string (effective device/dtype/backend, e.g. `v1|device=cuda|dtype=fp16|backend=pytorch`).
-Changing the embedding model, or flipping `enable_fp16`, `prefer_bf16`, or `use_onnx` in
+Changing the embedding model, or flipping `enable_fp16` or `prefer_bf16` in
 `PerformanceConfig`, changes this provenance and invalidates the entire cache — the next reindex
 cold-starts (full re-embed) and then re-populates the cache under the new numerics. This is
 expected, one-time behavior, not a bug.
@@ -771,11 +886,13 @@ export CLAUDE_LOG_LEVEL=INFO
 ```python
 from utils.timing import timed, Timer
 
+
 # Decorator for functions
 @timed("my_operation")
 def my_function():
     # Your code
     pass
+
 
 # Context manager for code blocks
 with Timer("custom_operation") as t:
@@ -884,13 +1001,30 @@ start_mcp_server.bat
     "enabled": true,
     "hop_count": 2,
     "expansion": 0.5
+  },
+  "query_expansion": {
+    "enabled": false,
+    "variants_path": "",
+    "max_variants": 2,
+    "variant_weight_discount": 0.5,
+    "apply_to_bm25": true,
+    "apply_to_dense": false
   }
 }
 ```
 
 Field names mirror `search_config.json.example` — see that file (and `search/config.py`'s
-`SearchModeConfig`/`PerformanceConfig`/`MultiHopConfig` dataclasses) for the authoritative
-list; this excerpt is illustrative, not exhaustive. Note `bm25_tokenizer: "whole"` keeps
+`SearchModeConfig`/`PerformanceConfig`/`MultiHopConfig`/`QueryExpansionConfig` dataclasses)
+for the authoritative list; this excerpt is illustrative, not exhaustive. Note `bm25_tokenizer: "whole"` keeps
 identifiers intact with **no stemming** — changing it requires a full reindex.
+
+> **Packaged vs. deployed model config**: the dataclass factory defaults and the tracked
+> `search_config.json.example` both ship `embedding.model_name = "BAAI/bge-m3"` and
+> `reranker.model_name = "Alibaba-NLP/gte-reranker-modernbert-base"`. A **deployed**
+> `search_config.json` (gitignored, machine-local) can diverge from that — e.g. this
+> development machine currently runs `F2LLM-v2-0.6B` + `jina-reranker-v3`. Docs and
+> benchmark reports that name a specific model are describing whichever layer they
+> measured; check `get_search_config_status` for the model actually active on your
+> installation rather than assuming the packaged default.
 
 This configuration provides optimal performance for most Windows development environments with CUDA-capable GPUs.

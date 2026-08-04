@@ -47,7 +47,6 @@ class EgoGraphRetriever:
         self.graph = graph_storage
         self._gv = GraphView(graph_storage)
         self._centrality_scores: dict[str, float] = {}
-        self._community_map: dict[str, int] = graph_storage.load_community_map() or {}
         logger.info("EgoGraphRetriever initialized")
 
     def set_centrality_scores(self, scores: dict[str, float]) -> None:
@@ -80,7 +79,7 @@ class EgoGraphRetriever:
             return {}
 
         # QW3: route to PPR expansion when requested
-        if getattr(config, "expansion_mode", "bfs") == "ppr":
+        if config.expansion_mode == "ppr":
             return self._expand_via_ppr(anchor_chunk_ids, config)
 
         results = {}
@@ -125,11 +124,8 @@ class EgoGraphRetriever:
                     # QW1: rank by centrality before truncation so hub functions
                     # survive the cap rather than being dropped by BFS order
                     if self._centrality_scores:
-                        anchor_community = self._community_map.get(anchor)
                         valid_neighbors.sort(
-                            key=lambda n: self._rank_neighbor(
-                                n, anchor_community, config
-                            ),
+                            key=lambda n: self._rank_neighbor(n),
                             reverse=True,
                         )
                     valid_neighbors = valid_neighbors[:max_total]
@@ -142,39 +138,19 @@ class EgoGraphRetriever:
 
         return results
 
-    def _rank_neighbor(
-        self,
-        neighbor_id: str,
-        anchor_community: int | None,
-        config: "EgoGraphConfig",
-    ) -> float:
+    def _rank_neighbor(self, neighbor_id: str) -> float:
         """Compute ranking score for a neighbor during pre-truncation sorting.
 
-        Combines PageRank centrality (QW1) with optional community-boundary
-        penalty (QW2). Higher score = higher priority to survive truncation.
+        PageRank centrality (QW1). Higher score = higher priority to survive
+        truncation.
 
         Args:
             neighbor_id: Chunk ID of the neighbor being ranked.
-            anchor_community: Community ID of the anchor chunk (None if unknown).
-            config: EgoGraphConfig with community_bounded and cross_community_penalty.
 
         Returns:
             Ranking score in [0, 1] range.
         """
-        score = self._centrality_scores.get(neighbor_id, 0.0)
-
-        # QW2: apply community penalty for cross-community neighbors
-        if (
-            getattr(config, "community_bounded", False)
-            and anchor_community is not None
-            and self._community_map
-        ):
-            neighbor_community = self._community_map.get(neighbor_id)
-            if neighbor_community != anchor_community:
-                penalty = getattr(config, "cross_community_penalty", 0.6)
-                score *= penalty
-
-        return score
+        return self._centrality_scores.get(neighbor_id, 0.0)
 
     def _expand_via_ppr(
         self,
@@ -266,18 +242,29 @@ class EgoGraphRetriever:
             config: Ego-graph configuration
 
         Returns:
-            List of unique chunk_ids combining all ego-graphs
+            List of chunk_ids combining all ego-graphs. Deduplicated when
+            config.deduplicate is True (default); otherwise order-preserving
+            with duplicates retained.
         """
-        all_chunks: set[str] = set()
+        if config.deduplicate:
+            all_chunks: set[str] = set()
 
-        for anchor, neighbors in ego_graphs.items():
-            if config.include_anchor:
-                all_chunks.add(anchor)
-            all_chunks.update(neighbors)
+            for anchor, neighbors in ego_graphs.items():
+                if config.include_anchor:
+                    all_chunks.add(anchor)
+                all_chunks.update(neighbors)
 
-        result = list(all_chunks)
+            result = list(all_chunks)
+        else:
+            result = []
+            for anchor, neighbors in ego_graphs.items():
+                if config.include_anchor:
+                    result.append(anchor)
+                result.extend(neighbors)
+
         logger.debug(
-            f"Flattened {len(ego_graphs)} ego-graphs into {len(result)} unique chunks"
+            f"Flattened {len(ego_graphs)} ego-graphs into {len(result)} chunks "
+            f"(deduplicate={config.deduplicate})"
         )
         return result
 
@@ -408,7 +395,7 @@ class EgoGraphRetriever:
         # Pass 2 — score neighbors, batching FAISS reconstruction and
         # computing similarities in a single matmul (#52/#59).
         neighbor_results: list[SearchResult] = []
-        threshold = getattr(ego_config, "min_similarity_threshold", 0.15)
+        threshold = ego_config.min_similarity_threshold
 
         if query_embedding_available and valid_neighbors:
             assert query_embedding is not None

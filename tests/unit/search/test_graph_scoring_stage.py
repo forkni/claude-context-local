@@ -114,7 +114,7 @@ class TestApplyCentrality:
         mock_ranker.rerank.assert_not_called()
 
     def test_intent_pushes_synthetic_chunks_last(self):
-        """Non-GLOBAL intent: module/community chunks moved after real code chunks."""
+        """Non-GLOBAL intent: module chunks moved after real code chunks."""
         stage = GraphScoringStage()
         intent = IntentDecision(
             intent=QueryIntent.LOCAL,
@@ -297,7 +297,7 @@ class TestPrivateHelpers:
         assert out == results
 
     def test_reorder_synthetic_moves_synthetic_to_tail(self):
-        """Non-GLOBAL intent moves module/community to the end."""
+        """Non-GLOBAL intent moves module to the end."""
         stage = GraphScoringStage()
         intent = IntentDecision(
             intent=QueryIntent.LOCAL,
@@ -308,10 +308,9 @@ class TestPrivateHelpers:
         )
         fn = {"kind": "function"}
         mod = {"kind": "module"}
-        com = {"kind": "community"}
-        out = stage._reorder_synthetic([mod, fn, com], intent)
+        out = stage._reorder_synthetic([mod, fn], intent)
         assert out[0] == fn
-        assert {r["kind"] for r in out[1:]} == {"module", "community"}
+        assert out[1] == mod
 
     def test_reorder_synthetic_no_synthetic_chunks_unchanged(self):
         """No synthetic chunks → list unchanged even with non-GLOBAL intent."""
