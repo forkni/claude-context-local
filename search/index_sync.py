@@ -344,6 +344,7 @@ class IndexSynchronizer:
                     and self.dense_index._metadata_store is not None
                 ):
                     self.dense_index._metadata_store.close()
+                    # pyrefly: ignore [bad-assignment]
                     self.dense_index._metadata_store = None
 
                 import gc
