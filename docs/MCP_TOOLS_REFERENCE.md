@@ -120,6 +120,11 @@ find_connections(
 
 **Valid relationship types**: `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`, `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`, `uses_context_manager`
 
+**Note**: `assigns_to`, `reads_from`, `uses_global`, and `asserts_type` are accepted as
+filter values but currently return no data for any symbol — no extractor in
+`chunking/relationships/` emits those edge types yet. This is a known upstream gap
+(missing extractors), not a bug in the filter itself.
+
 ### Filter Examples
 
 ```bash

@@ -600,6 +600,10 @@ class GraphQueryEngine:
         query-nodes via edges of different types would be marked visited on the
         first (possibly non-matching) encounter, silently suppressing the second
         (possibly matching) edge.
+
+        KNOWN LIMITATION (found 2026-08-03, not yet fixed): same primary-edge
+        collapse as _traverse_outbound — see that method's docstring and
+        CodeGraphStorage.get_edge_data's docstring for the mechanism.
         """
         results: list[RelationshipEntry] = []
         origin_set = set(self._node_variants(chunk_id))
@@ -656,6 +660,15 @@ class GraphQueryEngine:
         Uses two separate sets for the same reason as _traverse_inbound (#23):
         - ``visited``: BFS expansion dedup.
         - ``reported``: result dedup.
+
+        KNOWN LIMITATION (found 2026-08-03, not yet fixed): ``get_edge_data(node,
+        succ)`` below is called without a ``relationship_type`` key, so on a (node,
+        succ) pair with multiple parallel edge types it collapses to one "primary"
+        edge (see CodeGraphStorage.get_edge_data's docstring) *before* the
+        ``relation_types`` filter is applied — a non-primary type can be silently
+        invisible to callers even though its edge exists in the graph. See
+        graph_storage.py's get_edge_data docstring for the full mechanism and a
+        concrete repro.
         """
         results: list[RelationshipEntry] = []
         visited: set[str] = {chunk_id}  # nodes queued for BFS expansion

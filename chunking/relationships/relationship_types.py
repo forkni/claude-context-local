@@ -419,6 +419,15 @@ def get_relationship_field_mapping() -> dict[str, tuple]:
         "instantiates": ("instantiates", "instantiated_by"),
         "implements": ("implements_protocols", "protocol_implementations"),
         "overrides": ("overrides_methods", "overridden_by"),
+        # KNOWN GAP (found 2026-08-03): assigns_to, reads_from, uses_global, and
+        # asserts_type below have no producing extractor anywhere in
+        # chunking/relationships/relationship_extractors/ — grepping
+        # RelationshipType.ASSIGNS_TO/.READS_FROM/.USES_GLOBAL/.ASSERTS_TYPE across
+        # chunking/ finds zero call sites that construct an edge of these types. Their
+        # ImpactReport fields are wired up correctly (find_connections'
+        # relationship_types filter accepts these names) but will never return data
+        # until either a real extractor is written or these four are pruned from this
+        # mapping. See docs/MCP_TOOLS_REFERENCE.md's relationship-types note.
         "assigns_to": ("assigned_by", None),  # Reverse lookup for attributes
         "reads_from": ("read_by", None),  # Reverse lookup for attributes
         # Entity tracking enhancements (Priority 4-5)

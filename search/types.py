@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from chunking.relationships.relationship_types import get_relationship_field_mapping
+
 
 if TYPE_CHECKING:
     from search.config import SearchConfig, SearchMode
@@ -93,10 +95,13 @@ class RetrievalRequest:
 
 
 # The 23 relationship buckets ImpactReport.to_dict() has always emitted, in
-# their original order. See get_relationship_field_mapping() in
+# their original order. Kept fixed (not derived) so any consumer relying on
+# today's key order for these specific 23 names sees no change — the
+# consolidation onto ImpactReport.relationships stays additive, not a
+# reshuffle. See get_relationship_field_mapping() in
 # chunking/relationships/relationship_types.py for the full vocabulary this
 # is a subset of.
-_EMITTED_RELATIONSHIP_FIELDS: tuple[str, ...] = (
+_LEGACY_RELATIONSHIP_FIELDS: tuple[str, ...] = (
     "parent_classes",
     "child_classes",
     "uses_types",
@@ -121,6 +126,33 @@ _EMITTED_RELATIONSHIP_FIELDS: tuple[str, ...] = (
     "uses_context_managers",
     "context_manager_usages",
 )
+
+
+def _compute_emitted_relationship_fields() -> tuple[str, ...]:
+    """All relationship field names to_dict() emits, in stable order.
+
+    Derived from get_relationship_field_mapping() — the single source of
+    truth for the relationship vocabulary — rather than hand-maintained a
+    second time. _LEGACY_RELATIONSHIP_FIELDS keeps its historical relative
+    order first; every other field the mapping defines is appended, sorted
+    for determinism, so adding a relationship type never reorders an
+    existing one. "calls" is excluded: to_dict() already emits its forward
+    field (direct_callers) as its own top-level key, separately from this
+    loop.
+    """
+    all_fields: set[str] = set()
+    for fwd, rev in get_relationship_field_mapping().values():
+        if fwd:
+            all_fields.add(fwd)
+        if rev:
+            all_fields.add(rev)
+    all_fields.discard("direct_callers")
+
+    remainder = sorted(all_fields - set(_LEGACY_RELATIONSHIP_FIELDS))
+    return (*_LEGACY_RELATIONSHIP_FIELDS, *remainder)
+
+
+_EMITTED_RELATIONSHIP_FIELDS: tuple[str, ...] = _compute_emitted_relationship_fields()
 
 
 @dataclass

@@ -747,6 +747,20 @@ class CodeGraphStorage:
         **primary** edge — the one with the highest resolver_confidence; "calls" is
         preferred on ties — preserving the single-dict contract for existing callers.
 
+        KNOWN LIMITATION (found 2026-08-03, not yet fixed): non-"calls" relationship
+        edges all default resolver_confidence to 0.0, so ties between them fall back to
+        insertion order — whichever extractor ran first in
+        chunking/relationships/relationship_extractors/registry.py's priority list wins.
+        GraphQueryEngine._traverse_outbound/_traverse_inbound (graph/graph_queries.py)
+        call this method WITHOUT relationship_type even when the caller passed a
+        relation_types filter, so a shadowed edge type is invisible to
+        find_connections(relationship_types=[...]) even though it exists in the graph
+        as its own parallel edge — confirmed for e.g. an "implements" edge to a target
+        also reached by a "uses_constant" edge (ALL_CAPS base-class names like "ABC"
+        trip both extractors). Fix direction: thread relation_types through to a keyed
+        get_edge_data() lookup per candidate type instead of collapsing to one primary
+        edge before filtering.
+
         Args:
             caller_id: Caller chunk ID (source node)
             callee_id: Callee chunk ID (target node)
