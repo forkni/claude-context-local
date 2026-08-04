@@ -39,4 +39,9 @@ jobs:
         run: uv sync --locked --extra test --extra callgraph --extra otel --extra gpu
 
       - name: Run tests
+        # Deliberately no `-m "not slow"` here, unlike branch-protection.yml's PR gate:
+        # this is the only automated place the 3 @pytest.mark.slow tests outside
+        # slow_integration/ (2 model-loading observability tests + 1 project-switch
+        # test) currently run. Do not "align" this command with the PR gate's — that
+        # would silently drop them from CI entirely.
         run: uv run pytest tests/ --ignore=tests/slow_integration -q --no-cov

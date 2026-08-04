@@ -14,6 +14,11 @@ on:
         type: boolean
         default: false
 
+concurrency:
+  group: merge-development-to-main
+  cancel-in-progress: false  # deliberate: cancelling a half-finished merge-and-push is
+                              # worse than queueing the next dispatch behind it
+
 jobs:
   merge:
     name: Merge development → main
@@ -89,16 +94,14 @@ jobs:
           git checkout main
 
           echo "Merging development into main..."
-          git merge --no-ff origin/development -m "$(cat <<'EOF'
+          if ! git merge --no-ff origin/development -m "$(cat <<'EOF'
           chore: Merge development to main
 
           - Applied .gitattributes merge strategies
           - Excluded development-only files
           - Automated merge via GitHub Actions
           EOF
-          )"
-
-          if [ $? -ne 0 ]; then
+          )"; then
             echo "❌ Merge failed - conflicts detected"
             git merge --abort
             exit 1

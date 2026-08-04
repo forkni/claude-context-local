@@ -121,11 +121,18 @@ jobs:
           mkdir -p test-results
           uv run pytest tests/ -v --tb=short --maxfail=20 -rs \
             --ignore=tests/slow_integration/ \
+            -m "not slow" \
             --junitxml=test-results/junit.xml \
             --cov --cov-branch --cov-report=term-missing --cov-report=xml
         # --cov-fail-under intentionally omitted here: [tool.coverage.report]
         # fail_under in pyproject.toml is the single source of truth (previously
         # the CLI flag silently overrode it with a laxer, undocumented number).
+        # -m "not slow": complements --ignore, not redundant with it. --ignore
+        # prevents collection of slow_integration/ (never imported). -m deselects
+        # after collection — needed because tests/integration/test_observability_e2e.py
+        # must still be imported (its 2 fast tests stay on this gate); only the 2
+        # @pytest.mark.slow model-loading tests in that file (184s/173s) are dropped.
+        # They still run nightly (see nightly.yml) and in any local full-suite run.
 
       - name: Slow-integration collection guard
         # tests/slow_integration/ is excluded from the run above (real model
@@ -213,6 +220,20 @@ jobs:
         # ruff to a fixed rev while `uv run ruff` uses uv.lock's resolution — running
         # both catches drift between the two pins.
 
+      - name: Check spelling (typos)
+        id: typos
+        continue-on-error: true
+        uses: crate-ci/typos@8a48f81b6c64dcfea44b3633223084c4be58ac5f  # v1.49.0
+        with:
+          files: docs/ README.md CHANGELOG.md
+        # Moved here from the old docs-validation.yml spelling job (paths-filtered,
+        # could never become a required check). NOT yet added to the failure loop
+        # below: the pin (@master -> @v1.49.0, commit 89e6411) has never actually
+        # run since it landed, and master may have drifted ahead of that release.
+        # Observe one clean run first, triage any findings into .typos.toml's
+        # [default.extend-words], then add "typos:${{ steps.typos.outcome }}" to
+        # the loop in a follow-up commit to make it blocking.
+
       - name: Aggregate lint results
         if: always()
         run: |
@@ -224,6 +245,7 @@ jobs:
             name="${r%%:*}"; out="${r##*:}"
             if [ "$out" != "success" ]; then echo "FAIL  $name"; fail=1; else echo "ok    $name"; fi
           done
+          echo "typos: ${{ steps.typos.outcome }} (observation-only, not yet blocking)"
           [ "$fail" -eq 0 ] || { echo "::error::one or more lint sub-checks failed"; exit 1; }
 
   all-gates-green:
