@@ -15,12 +15,16 @@ updates:
   #
   # Split into two entries because "target-branch" only applies to version updates:
   # security updates are always raised by GitHub against the default branch and
-  # ignore "target-branch" entirely. A single entry with target-branch: development
-  # would silently detach these ignore ceilings and the dev-tooling group from
-  # security PRs, which would then land on main ungrouped and unfiltered.
+  # ignore "target-branch" entirely. Verified 2026-08-04: security job definitions
+  # carry "security-updates-only":true AND "ignore-conditions":[] — the "ignore:"
+  # ceilings below are NOT honoured for security PRs (confirmed both with and
+  # without this file present on main). They only govern the version-update entry
+  # below. This entry's own "ignore:" block is kept for documentation/consistency,
+  # not because it has any effect on what lands here.
 
-  # Security updates — no target-branch, so these ceilings/groups stay attached
-  # to the security PRs GitHub forces onto the default branch (main).
+  # Security updates — no target-branch, so GitHub forces these onto the default
+  # branch (main) regardless. "ignore:" below has no effect on these jobs — see
+  # the note above.
   - package-ecosystem: "uv"
     directory: "/"
     schedule:
