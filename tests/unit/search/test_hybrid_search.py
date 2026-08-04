@@ -5,6 +5,7 @@ Note: GPUMemoryMonitor tests have been moved to test_gpu_monitor.py (Phase 3.1 r
 
 import contextlib
 import tempfile
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -709,6 +710,11 @@ class TestHybridSearcher:
         mock_bm25_hs.return_value = Mock(name="BM25_1")
         mock_dense_instance_1 = Mock(name="Dense_1")
         mock_dense_instance_1.index = None
+        # A1's fail-fast probe (index_sync.py:clear_index) calls
+        # os.replace() on this path before destroying BM25/FAISS state, so
+        # it must be a real path like production's CodeIndexManager sets,
+        # not an unconfigured Mock attribute.
+        mock_dense_instance_1.metadata_path = Path(self.temp_dir) / "metadata.db"
         mock_dense_hs.return_value = mock_dense_instance_1
 
         searcher = HybridSearcher(self.temp_dir)

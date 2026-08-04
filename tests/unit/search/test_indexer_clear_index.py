@@ -12,7 +12,12 @@ independent file purge and is the only place chunk_embeddings.bin should be
 deleted.
 """
 
-from search.indexer import CodeIndexManager
+import os
+from pathlib import Path
+
+import pytest
+
+from search.indexer import CodeIndexManager, probe_metadata_deletable
 
 
 class TestClearIndexPreservesChunkCache:
@@ -75,3 +80,79 @@ class TestClearIndexSweepsLegacyCommunityFiles:
             "nothing writes them since ADR-0015, but nothing was purging them "
             "either"
         )
+
+
+class TestClearIndexFailsFastOnLockedMetadata:
+    """Regression test for the inverted-deletion-order bug: clear_index() used
+    to delete FAISS and BM25 state before ever attempting to delete
+    metadata.db, so a locked metadata.db (a live SQLite handle on Windows)
+    surfaced its PermissionError only after everything else was already gone
+    — a half-cleared index with no rollback. The fix probes metadata.db's
+    deletability (via os.replace) before touching FAISS at all.
+    """
+
+    def test_clear_index_raises_before_touching_faiss_when_metadata_locked(
+        self, tmp_path, monkeypatch
+    ):
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+
+        manager = CodeIndexManager(storage_dir=str(storage_dir))
+
+        chunk_cache = storage_dir / "chunk_embeddings.bin"
+        chunk_cache.write_bytes(b"fake cache contents")
+        stats = storage_dir / "stats.json"
+        stats.write_text("{}")
+        metadata_db = storage_dir / "metadata.db"
+        metadata_db.write_bytes(b"fake sqlite db")
+
+        def _raise_permission_error(*_args, **_kwargs):
+            raise PermissionError("[WinError 32] file in use by another process")
+
+        monkeypatch.setattr(os, "replace", _raise_permission_error)
+
+        faiss_clear_called = False
+        original_clear = manager._faiss_index.clear
+
+        def _tracking_clear():
+            nonlocal faiss_clear_called
+            faiss_clear_called = True
+            return original_clear()
+
+        monkeypatch.setattr(manager._faiss_index, "clear", _tracking_clear)
+
+        with pytest.raises(PermissionError):
+            manager.clear_index()
+
+        assert not faiss_clear_called, (
+            "FAISS must not be cleared until metadata.db is proven deletable"
+        )
+        assert metadata_db.exists(), (
+            "a failed probe must leave metadata.db exactly where it was — "
+            "the clear is a no-op, not a half-clear"
+        )
+        assert stats.exists(), "stats.json must survive an aborted clear too"
+
+    def test_probe_metadata_deletable_is_idempotent(self, tmp_path):
+        metadata_path = tmp_path / "metadata.db"
+        metadata_path.write_bytes(b"fake sqlite db")
+
+        first = probe_metadata_deletable(metadata_path)
+        assert first == Path(str(metadata_path) + ".deleting")
+        assert first.exists()
+        assert not metadata_path.exists()
+
+        # Second call (e.g. IndexSynchronizer's preflight followed by
+        # CodeIndexManager.clear_index()'s own probe) must be a no-op that
+        # returns the same already-renamed path, not raise or re-rename.
+        second = probe_metadata_deletable(metadata_path)
+        assert second == first
+        assert second.exists()
+
+    def test_probe_metadata_deletable_no_file_returns_original_path(self, tmp_path):
+        metadata_path = tmp_path / "metadata.db"
+        assert not metadata_path.exists()
+
+        result = probe_metadata_deletable(metadata_path)
+
+        assert result == metadata_path

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .bm25_index import BM25Index
-from .indexer import CodeIndexManager
+from .indexer import CodeIndexManager, probe_metadata_deletable
 from .tokenization import augment_bm25_document
 
 
@@ -330,6 +330,28 @@ class IndexSynchronizer:
         self._logger.info("Clearing hybrid indices")
 
         try:
+            # Fail-fast probe: verify metadata.db is deletable BEFORE
+            # destroying BM25 or FAISS state. Without this, a locked
+            # metadata.db (caught later, inside CodeIndexManager.clear_index)
+            # would only abort *after* the BM25 directory below was already
+            # gone — a half-clear with no rollback. Close the metadata store
+            # first so a lingering Python-side reference doesn't make the
+            # probe raise spuriously (mirrors CodeIndexManager.clear_index's
+            # own close-then-gc-then-probe sequence).
+            if self.dense_index is not None:
+                if (
+                    hasattr(self.dense_index, "_metadata_store")
+                    and self.dense_index._metadata_store is not None
+                ):
+                    self.dense_index._metadata_store.close()
+                    self.dense_index._metadata_store = None
+
+                import gc
+
+                gc.collect()
+
+                probe_metadata_deletable(self.dense_index.metadata_path)
+
             # DELETE BM25 files from disk FIRST
             bm25_dir = self.storage_dir / "bm25"
             if bm25_dir.exists():

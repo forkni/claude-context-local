@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
@@ -31,6 +32,46 @@ from search.faiss_index import FaissVectorIndex
 from search.filters import FilterEngine
 from search.graph_integration import GraphIntegration
 from search.metadata import MetadataStore
+
+
+def probe_metadata_deletable(metadata_path: Path) -> Path:
+    """Rename metadata.db out of the way as a fail-fast deletability probe.
+
+    ``clear_index`` previously deleted BM25 and FAISS state first and only
+    discovered a locked ``metadata.db`` (a live SQLite handle on Windows) on
+    the last, bare ``unlink()`` — leaving the index half-destroyed with no
+    rollback. ``os.replace`` succeeds against far more Windows lock states
+    than ``unlink`` and, on failure, raises before anything else has been
+    touched, so the caller can treat the whole clear as a no-op.
+
+    Idempotent and safe to call twice in one clear chain: IndexSynchronizer.
+    clear_index() runs it before deleting the BM25 directory, and
+    CodeIndexManager.clear_index() (its eventual callee, and also reachable
+    directly from other callers such as BatchOperations' clear_index_callback)
+    runs it again before touching FAISS. The second call is a no-op — it
+    finds the already-renamed ``.deleting`` sibling and returns it unchanged.
+
+    Args:
+        metadata_path: Path to metadata.db.
+
+    Returns:
+        The path metadata.db now lives at — either the renamed
+        ``<metadata_path>.deleting`` sibling, or ``metadata_path`` itself if
+        there was nothing on disk to rename. Callers should unlink whatever
+        path is returned (guarded by ``.exists()``) as the real delete step.
+
+    Raises:
+        OSError: If metadata.db exists but cannot be renamed (e.g. a
+            lingering open handle) — the signal that the whole clear must
+            abort before BM25 or FAISS state is destroyed.
+    """
+    deleting_path = Path(str(metadata_path) + ".deleting")
+    if deleting_path.exists():
+        return deleting_path
+    if not metadata_path.exists():
+        return metadata_path
+    os.replace(metadata_path, deleting_path)
+    return deleting_path
 
 
 class CodeIndexManager:
@@ -750,13 +791,24 @@ class CodeIndexManager:
         if hasattr(self, "_batch_ops") and self._batch_ops is not None:
             self._batch_ops._metadata_store = None
 
-        # Clear FAISS index (includes GPU cleanup if needed)
-        self._faiss_index.clear()
-
-        # Force garbage collection to release file handles (Windows)
+        # Force garbage collection to release file handles (Windows) BEFORE
+        # probing — a lingering Python-side reference is exactly what would
+        # otherwise make the probe below raise spuriously.
         import gc
 
         gc.collect()
+
+        # Fail-fast probe: verify metadata.db is actually deletable BEFORE
+        # destroying FAISS. A PermissionError here (e.g. a still-open Windows
+        # handle) now aborts the clear as a no-op instead of leaving FAISS
+        # gone with metadata.db stranded and no rollback. See
+        # probe_metadata_deletable's docstring for why this is idempotent
+        # with IndexSynchronizer.clear_index()'s own preflight call.
+        metadata_deleting_path = probe_metadata_deletable(self.metadata_path)
+
+        # Clear FAISS index (includes GPU cleanup if needed) — only reached
+        # once metadata.db has been proven deletable.
+        self._faiss_index.clear()
 
         # Remove additional files - NOW safe because store is closed.
         # metadata.db-wal/-shm are not a defensive nicety: SQLite routinely
@@ -775,7 +827,7 @@ class CodeIndexManager:
         # (handle_clear_index) drops the cache itself, independently, via its
         # own file purge — it never calls this method.
         for file_path in [
-            self.metadata_path,
+            metadata_deleting_path,
             Path(str(self.metadata_path) + "-wal"),
             Path(str(self.metadata_path) + "-shm"),
             self.stats_path,

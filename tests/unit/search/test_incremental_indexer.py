@@ -2,6 +2,7 @@
 
 import dataclasses
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -1276,6 +1277,134 @@ class TestConsistencyTarget:
         assert result.success is False
         assert result.error is not None
         assert "metadata rows (10) != chunk_ids length (11)" in result.error
+
+
+class TestBoundedRecovery:
+    """_attempt_recovery is bounded by an on-disk marker file, not an instance
+    counter, because IncrementalIndexer is constructed fresh per MCP request
+    (see _recovery_marker_path's docstring) — a counter on self would reset
+    every call and never trip. This is the regression coverage for the "62
+    consecutive recovery attempts" incident: once a recovery attempt itself
+    fails, further automatic recovery must stop and name cleanup_resources
+    instead of retrying against the same held file handle forever.
+    """
+
+    def setup_method(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.project_path = Path(self.temp_dir) / "test_project"
+        self.project_path.mkdir(parents=True, exist_ok=True)
+        self.storage_dir = Path(self.temp_dir) / "index"
+        self.storage_dir.mkdir(parents=True, exist_ok=True)
+
+        self.mock_indexer = Mock()
+        self.mock_indexer.storage_dir = str(self.storage_dir)
+        self.mock_indexer.resync_if_desynced.return_value = (False, 0)
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
+        self.mock_embedder = Mock()
+        self.mock_chunker = Mock()
+        self.mock_snapshot_manager = Mock()
+
+    def teardown_method(self):
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    @property
+    def marker_path(self) -> Path:
+        return self.storage_dir / "index_recovery_failed.marker"
+
+    def test_recovery_failure_writes_marker_and_names_cleanup_resources(self):
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+        self.mock_indexer.clear_index = Mock(
+            side_effect=PermissionError("metadata.db locked")
+        )
+
+        result = indexer._attempt_recovery(
+            "original failure",
+            str(self.project_path),
+            "test_project",
+            time.time(),
+        )
+
+        assert result.success is False
+        assert "cleanup_resources" in result.error
+        assert self.marker_path.exists(), (
+            "a failed recovery attempt must leave a durable marker — an "
+            "in-memory counter would reset on the next request"
+        )
+
+    def test_recovery_short_circuits_when_marker_already_present(self):
+        self.marker_path.write_text("Original: x\nRecovery: y\nTimestamp: 0\n")
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+        self.mock_indexer.clear_index = Mock()
+
+        result = indexer._attempt_recovery(
+            "original failure",
+            str(self.project_path),
+            "test_project",
+            time.time(),
+        )
+
+        assert result.success is False
+        assert "cleanup_resources" in result.error
+        # a prior marker must block retrying clear_index() against the same
+        # held handle, not just report the same error after retrying
+        self.mock_indexer.clear_index.assert_not_called()
+
+    def test_successful_recovery_clears_a_marker_left_by_the_attempt(self):
+        """Defensive cleanup: _attempt_recovery clears any marker present
+        after a successful clear_index()/_full_index() pair, even though the
+        normal case never sees one appear mid-attempt (the top-of-method
+        check already short-circuits a pre-existing marker). Simulates the
+        marker being (re)written during the attempt to lock down that the
+        success path still sweeps it."""
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+        def _clear_index_and_leave_a_marker():
+            self.marker_path.write_text("stale from a concurrent attempt")
+
+        self.mock_indexer.clear_index = Mock(
+            side_effect=_clear_index_and_leave_a_marker
+        )
+        successful_result = IncrementalIndexResult(
+            success=True,
+            files_added=0,
+            files_removed=0,
+            files_modified=0,
+            chunks_added=0,
+            chunks_removed=0,
+            time_taken=0.0,
+        )
+        with patch.object(
+            IncrementalIndexer, "_full_index", return_value=successful_result
+        ):
+            result = indexer._attempt_recovery(
+                "original failure",
+                str(self.project_path),
+                "test_project",
+                time.time(),
+            )
+
+        assert result.success is True
+        assert not self.marker_path.exists(), (
+            "a successful recovery must clear the marker so a future "
+            "genuine failure can retry once, not stay permanently blocked"
+        )
 
 
 class TestParallelChunking:

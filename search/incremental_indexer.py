@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import os
 import tempfile
 import time
 import traceback
@@ -413,6 +414,30 @@ class IncrementalIndexer:
             return self.indexer
         return getattr(self.indexer, "dense_index", None)
 
+    _RECOVERY_MARKER_NAME = "index_recovery_failed.marker"
+
+    def _recovery_marker_path(self) -> Path | None:
+        """Resolve the recovery-marker path in the index storage directory.
+
+        IncrementalIndexer is constructed fresh per MCP request
+        (search_handlers.py, index_handlers.py), so a retry counter kept on
+        ``self`` resets every call and can never bound anything — a marker
+        file on disk is what actually survives across the request boundary
+        that previously produced 62 consecutive recovery attempts.
+
+        Reuses ``_consistency_target`` to resolve to a CodeIndexManager
+        regardless of whether ``self.indexer`` is a HybridSearcher
+        (production) or a bare CodeIndexManager (most tests).
+        """
+        target = self._consistency_target()
+        storage_dir = getattr(target, "storage_dir", None)
+        if not isinstance(storage_dir, (str, os.PathLike)):
+            # None (no target resolved) or an unconfigured test double
+            # (e.g. a bare Mock() with no storage_dir set) — either way
+            # there is no real directory to write a marker into.
+            return None
+        return Path(storage_dir) / self._RECOVERY_MARKER_NAME
+
     def _attempt_recovery(
         self,
         original_error: str,
@@ -421,6 +446,12 @@ class IncrementalIndexer:
         start_time: float,
     ) -> IncrementalIndexResult:
         """Attempt recovery via full re-index after failure.
+
+        Bounded by a marker file (see ``_recovery_marker_path``): if a prior
+        recovery attempt already failed, this returns an error immediately
+        instead of retrying clear_index()/full-index again, since the
+        underlying cause (e.g. a held file handle) will not have changed on
+        its own.
 
         Args:
             original_error: Description of the original failure
@@ -431,18 +462,52 @@ class IncrementalIndexer:
         Returns:
             IncrementalIndexResult from recovery attempt or error result
         """
+        marker_path = self._recovery_marker_path()
+        if marker_path is not None and marker_path.exists():
+            error = (
+                f"Recovery already failed previously ({marker_path.name} "
+                "present) and was not retried automatically. Call "
+                "cleanup_resources to release any held file handles, then "
+                "retry indexing; a successful recovery removes the marker."
+            )
+            logger.error(error)
+            return self._zero_result(start_time, success=False, error=error)
+
         logger.warning(f"Attempting recovery via full re-index: {original_error}")
         try:
             self.indexer.clear_index()
-            return self._full_index(project_path, project_name, start_time)
+            result = self._full_index(project_path, project_name, start_time)
         except Exception as recovery_error:  # noqa: BLE001 - api-boundary: recovery failure converted to structured error result
             logger.error(f"Recovery failed: {recovery_error}")
             logger.error(traceback.format_exc())
+            if marker_path is not None:
+                try:
+                    marker_path.parent.mkdir(parents=True, exist_ok=True)
+                    marker_path.write_text(
+                        f"Original: {original_error}\nRecovery: {recovery_error}\n"
+                        f"Timestamp: {time.time()}\n",
+                        encoding="utf-8",
+                    )
+                except OSError as marker_error:  # noqa: BLE001 - best-effort: marker write failure must not mask the real error below
+                    logger.warning(f"Could not write recovery marker: {marker_error}")
             return self._zero_result(
                 start_time,
                 success=False,
-                error=f"Original: {original_error}, Recovery: {recovery_error}",
+                error=(
+                    f"Original: {original_error}, Recovery: {recovery_error}. "
+                    "Call cleanup_resources to release held file handles "
+                    "before retrying."
+                ),
             )
+        else:
+            if marker_path is not None and marker_path.exists():
+                try:
+                    marker_path.unlink()
+                except OSError as marker_error:  # noqa: BLE001 - best-effort: stale marker cleanup, not fatal to a successful recovery
+                    logger.warning(
+                        f"Recovery succeeded but could not clear stale marker: {marker_error}"
+                    )
+            return result
 
     def _release_and_verify_resources(self, project_path: str) -> None:
         """Mandatory resource release and verification before full reindex.
