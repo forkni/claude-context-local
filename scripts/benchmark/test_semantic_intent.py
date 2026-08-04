@@ -2,19 +2,24 @@
 """Semantic Intent Classification Evaluation Script.
 
 Tests whether the semantic_enabled parameter in IntentConfig improves retrieval
-quality by comparing classification decisions (semantic on vs off) across:
-  - 13 SSCG golden dataset queries
-  - 8 novel phrasings using synonyms not in keyword lists
+quality by comparing classification decisions (semantic on vs off) across the
+golden dataset (77 queries in golden_dataset.json, 145 in
+golden_dataset_expanded.json) plus novel phrasings using synonyms not in
+keyword lists.
 
 Two phases:
   Part A: Classification Comparison — no search needed, fast
            Compare intent + confidence for each query with semantic on vs off.
   Part B: Retrieval Impact — only for queries where classification changed
            Apply intent-driven param adjustments, run search, compare vs ground truth.
+           NOTE: _apply_intent_params() is a stale mirror of
+           search_orchestrator.py's redirect logic (missing legs added since it
+           was written) -- treat Part B output as indicative, not authoritative.
 
-The benchmark runner (run_sscg_benchmark.py) bypasses intent classification
-because it calls searcher.search() directly. This script tests the classification
-layer specifically.
+run_sscg_benchmark.py now routes through SearchOrchestrator.run() (ADR-0023)
+but pins intent.enabled = False for its own comparability, so it still
+bypasses intent classification in practice. This script tests the
+classification layer directly, independent of that pin.
 
 Usage:
     .venv/Scripts/python.exe scripts/benchmark/test_semantic_intent.py \\
@@ -150,7 +155,7 @@ def _classify_one(
     query: str,
     semantic_enabled: bool,
     embedder: Any | None,
-    confidence_threshold: float = 0.35,
+    confidence_threshold: float = 0.4,
 ) -> dict[str, Any]:
     """Run IntentClassifier on a single query, return classification details."""
     classifier = IntentClassifier(
@@ -173,7 +178,7 @@ def _classify_one(
 def run_classification_comparison(
     queries: list[dict[str, Any]],
     embedder: Any | None,
-    confidence_threshold: float = 0.35,
+    confidence_threshold: float = 0.4,
 ) -> list[dict[str, Any]]:
     """Classify all queries with semantic on and off, return comparison rows."""
     rows = []
@@ -244,6 +249,13 @@ def _apply_intent_params(
 ) -> dict[str, Any]:
     """Replicate the parameter adjustments from handle_search_code().
 
+    STALE MIRROR (as of 2026-08-03): this only replicates the GLOBAL-k and
+    CONTEXTUAL-ego legs. mcp_server/tools/search_orchestrator.py:140-232 now
+    has six legs, including four redirects and a search_mode leg this
+    function does not implement. Treat Part B output as indicative only,
+    not as a faithful replay of production routing -- refreshing this mirror
+    is its own scoped task.
+
     Returns kwargs dict suitable for searcher.search() plus a note string.
     """
     k = base_k
@@ -296,7 +308,7 @@ def run_retrieval_comparison(
     changed_rows: list[dict[str, Any]],
     sscg_queries: list[dict[str, Any]],
     searcher: Any,
-    confidence_threshold: float = 0.35,
+    confidence_threshold: float = 0.4,
     base_k: int = 4,
 ) -> list[dict[str, Any]]:
     """For classification-changed queries, compare retrieval with semantic on vs off."""
@@ -607,8 +619,9 @@ def main() -> None:
     parser.add_argument(
         "--confidence-threshold",
         type=float,
-        default=0.35,
-        help="IntentClassifier confidence threshold (default: 0.35)",
+        default=0.4,
+        help="IntentClassifier confidence threshold (default: 0.4, matching "
+        "production IntentConfig.confidence_threshold)",
     )
     args = parser.parse_args()
 

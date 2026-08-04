@@ -112,9 +112,18 @@ it was explicitly out of scope for this change.
   The first attempt at the two required 63q rounds hit it: Windows' legacy console (cp1252)
   can't encode the Braille glyph rich's `Progress` bar uses
   (`parallel_chunker.py::_progress_context`). `utils.console.get_progress_console()` already
-  guards against this by checking `sys.stdout.encoding`, but that check doesn't cover rich's
-  `_win32_console.LegacyWindowsTerm` write path, which encodes via the raw Win32 console
-  codepage independent of Python's own stream encoding. Every one of round 1's 63 queries found
+  guards against this by checking `sys.stdout.encoding`, but that check only sets
+  `force_terminal` — a separate knob from rich's `legacy_windows` auto-detection, which still
+  runs regardless of the check's verdict.
+  > **Correction (2026-08-03):** the paragraph above misidentified the write path.
+  > `LegacyWindowsTerm.write_text` is `self.write(text); self.flush()` with
+  > `self.write = file.write` — it goes through Python's normal stream encoding, not a raw
+  > Win32 console codepage independent of it. The actual hazard is that `SpinnerColumn`'s
+  > default `"dots"` spinner renders Braille glyphs (U+2800+) with no `ascii_only` gating, so
+  > whatever stream encoding is in effect (cp1252 here) fails to encode them. Fixed by passing
+  > `spinner_name="line"` (ASCII-only) at both `Progress` call sites rather than by touching the
+  > write path. See A2 in the session's follow-on plan.
+  Every one of round 1's 63 queries found
   the index "stale" per the check above, attempted a reindex, and crashed on this encoding bug
   mid-chunk. `_attempt_recovery`'s `clear_index()` call is not atomic across its FAISS/BM25/
   `metadata.db` deletions, and partially succeeded on 62 consecutive retries — deleting the
