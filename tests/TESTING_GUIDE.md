@@ -12,7 +12,16 @@ organized into clear categories for effective quality assurance.
 see "Fixed (Phase 10.8)" below):
 
 - **Unit Tests**: **5,644 passed, 1 skipped** (`tests/unit/`), ~100s serial / ~52s with
-  `--parallel` (`-n auto --dist loadfile`, matching CI)
+  `--parallel` (`-n auto --dist loadfile`, matching CI). This is *collected test cases*, not
+  distinct test functions: `tests/unit/evaluation/test_golden_set_guard.py` contributes 2
+  `def test_*` functions but 2,217 collected cases (`--collect-only -q` on that file alone) —
+  one is a single sanity check (`test_guard_detects_corrupted_id`), the other 2,216 are one
+  `@pytest.mark.parametrize`d function (`test_golden_chunk_id_exists_in_live_index`) run once
+  per golden chunk-id across four `evaluation/*golden*.json` files. That single data-driven
+  drift guard is **~39% of the entire `tests/unit/` collected total** (2,216 of 5,645). The
+  protection is real and worth keeping (see Phase 10.6 note below for why it's collection-time
+  live-file-reading, not a fixed count) — but "5,644 unit tests" should not be read as 5,644
+  independent test functions.
   - Chunking (incl. relationships): includes `test_call_edge_resolver.py`,
     `test_call_graph_config.py`, `test_libcst_call_graph.py`,
     `test_lsp_call_graph.py` (1 POSIX skip)
@@ -23,14 +32,20 @@ see "Fixed (Phase 10.8)" below):
   `test_search_span_hierarchy_via_mcp_handlers`) reproduce identically on the pre-Phase-10.8
   baseline too (isolated with `git stash push -- pyproject.toml`) — unrelated to this pass, not
   fixed here
-- **Slow Integration Tests**: not re-measured in this pass — see Notes below on why this tier is
-  excluded from routine runs
-- **Total**: not re-measured as a single `pytest tests/` process this pass; the combined
-  **3,592 passed ... 478.55s** figure this section previously carried predates the Phase 10.5–10.8
-  fixes and is now self-contradictory with the unit-tier count alone — removed rather than left
-  stale. Use the per-tier numbers above; branch coverage was last measured at **82.02%** on
-  2026-07-26 (vs. the `fail_under = 77` gate — see Coverage Requirements below) and has not been
-  re-run since.
+- **Slow Integration Tests**: **107 passed, 1 skipped** (`tests/slow_integration/`), 2h39m30s
+  wall clock — now runs automatically in a weekly CI job (`.github/workflows/weekly.yml`, Phase
+  11.1; this tier never ran in any automated job before). The one skip is a runtime
+  `pytest.skip()` conditioned on `searcher.embedder is None`, not a decorator-level skip. Two
+  tests dominate the runtime (`test_incremental_indexer_class` ~42min,
+  `test_multi_hop_reranking` ~61min) — confirmed genuine real-model download/load work, not
+  hangs, since `tests/conftest.py`'s session-wide `CODE_SEARCH_STORAGE` redirect forces a fresh,
+  empty model cache for every run of this tier.
+- **Total**: not re-measured as a single `pytest tests/` process this pass; use the per-tier
+  numbers above. Branch coverage (CI-shaped, `--ignore=tests/slow_integration/`) was last
+  measured at **75.03%** on 2026-08-04 (5,762 passed, 1 skipped, 3 pre-existing failures noted
+  above) against `fail_under = 73` — see "Measuring and gating coverage" below for why this
+  dropped from the prior 83.52%/81 baseline (Phase 11.3 honestly added `tools/`'s mostly-untested
+  CLI scripts to the measured source set).
 - **Resolved (Phase 10.2)**: the intermittent failure previously tracked here in
   `tests/unit/search/test_index_write_stage.py::TestInjectCallEdgesResolverSelection::test_none_resolvers_falls_back_to_default_pair`
   did not reproduce once across 22+ randomized whole-suite runs during the Phase 10 hardening
@@ -83,7 +98,7 @@ see "Fixed (Phase 10.8)" below):
   failed each time, vs. the original run's 5,620 collected / 5 failed — a stable 5-item
   collection-count delta). `pytest-randomly`'s seed controls `random.shuffle()` over the
   *collected* item list; it does not make collection itself stable across runs.
-  `tests/unit/evaluation/test_golden_set_guard.py` builds its ~2,213-case parametrize list
+  `tests/unit/evaluation/test_golden_set_guard.py` builds its 2,216-case parametrize list
   (`_all_golden_id_cases()`) by reading four `evaluation/*golden*.json` files live at collection
   time — the same files this repo's benchmark scripts (`scripts/benchmark/merge_h_queries.py`,
   `scripts/benchmark/mine_commit_queries.py`) write to as part of routine golden-set
@@ -166,6 +181,26 @@ see "Fixed (Phase 10.8)" below):
 
 **Note**: Run `uv run pytest tests/ --ignore=tests/slow_integration -q` for the fast CI subset
 (excludes GPU-dependent slow tests, ~2 min).
+
+### Reproducible baseline (Phase 12.3)
+
+Every count and percentage quoted above and in the root `CLAUDE.md` Quick Reference is
+reproducible from one of these commands, all run 2026-08-04:
+
+| Metric | Value | Command |
+| ------ | ----- | ------- |
+| Unit collected cases | 5,645 (5,644 passed, 1 skipped) | `bash scripts/test/run_tests.sh tests/unit/ -q` |
+| Fast integration | 102 passed | `bash scripts/test/run_tests.sh tests/fast_integration/ -q` |
+| Integration | 19 collected, 16 passed, 3 pre-existing failures | `bash scripts/test/run_tests.sh tests/integration/ -q` |
+| Slow integration | 108 collected (107 passed, 1 skipped) | `bash scripts/test/run_tests.sh tests/slow_integration/ -v --tb=short --no-cov` (~2h39m wall clock) |
+| CI-shaped coverage | 75.03% (5,762 passed, 1 skipped, 3 pre-existing failures) vs. `fail_under = 73` | `bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration/ --cov --cov-branch --cov-report=term-missing` |
+| Golden-set guard share | 2,216 of 5,645 unit cases (~39%) from one parametrized function | `.venv/Scripts/python.exe -m pytest tests/unit/evaluation/test_golden_set_guard.py --collect-only -q` |
+
+The three pre-existing `tests/integration/` failures
+(`test_full_index_injects_real_call_edges`, `test_index_full_span_via_mcp_handler`,
+`test_search_span_hierarchy_via_mcp_handlers`) reproduce identically on the pre-Phase-10.8
+baseline too (see "Current Test Status" above) — unrelated to the Phase 10–12 work, not fixed
+as part of this campaign.
 
 ## Recommended Testing Approach
 
@@ -586,7 +621,7 @@ The test suite uses a 4-tier system optimized for CI/CD performance:
 | **Unit** | `tests/unit/` | 5,644 passed, 1 skipped | < 1s per test (~100s total serial / ~52s with `--parallel`) | Component isolation testing |
 | **Fast Integration** | `tests/fast_integration/` | 102 passed | < 5s per test | Quick workflow validation |
 | **Integration** | `tests/integration/` | 6 files, 16 passed | up to ~15s per test | Real-component E2E (no model downloads, so still fast enough for CI) |
-| **Slow Integration** | `tests/slow_integration/` | see full-suite total | > 10s per test | Comprehensive end-to-end (real model downloads) |
+| **Slow Integration** | `tests/slow_integration/` | 107 passed, 1 skipped | > 10s per test, up to ~61min | Comprehensive end-to-end (real model downloads); weekly CI job, not on every PR |
 
 Kept as a 4th tier rather than folded into `fast_integration/` (Phase 6 decision — see the >5s
 durations table below: every `tests/integration/` file has at least one test over the 5s tier
@@ -599,10 +634,12 @@ write ledger): the dominant way a unit test silently balloons past the budget is
 network I/O, a real model load, or real disk storage instead of a mock, and those guards now fail
 that test outright rather than letting it pass slowly.
 
-Unit/fast_integration/integration counts above re-measured 2026-08-04 (Phase 10.8). No combined
-`pytest tests/` (all tiers, one process) figure is carried here anymore — the previous "3,592
-passed ... 478.55s" measurement predates the Phase 10.5–10.8 fixes and would understate the
-current unit-tier count alone; re-measure per-tier as needed rather than trusting a stale total.
+Unit/fast_integration/integration counts above re-measured 2026-08-04 (Phase 10.8);
+slow_integration count re-measured the same day (Phase 11, first-ever automated run of that
+tier). No combined `pytest tests/` (all tiers, one process) figure is carried here anymore — the
+previous "3,592 passed ... 478.55s" measurement predates the Phase 10.5–10.8 fixes and would
+understate the current unit-tier count alone; re-measure per-tier as needed rather than trusting
+a stale total.
 
 **Tests over 5s** (unit-tier row re-measured 2026-08-04 via `--durations=0`, Phase 10.8;
 integration/slow_integration rows carried over from the 2026-07-26 baseline, not re-measured this
@@ -1676,11 +1713,14 @@ pytest tests/ -n auto --dist=loadfile
 
 ### CI Pipeline Strategies
 
+These two illustrative pipelines are hypothetical — actual CI is one workflow,
+`branch-protection.yml` (see "Measuring and gating coverage" above and "Codecov integration"
+below for what it actually runs and gates).
+
 **Fast Feedback Pipeline** (runs on every commit, < 3 min):
 
 - Unit tests (~5s)
 - Fast integration tests (~2 min)
-- Coverage check with `--cov-fail-under=80` threshold (active in CI)
 - **Total time**: ~3 minutes
 - **Purpose**: Quick feedback for developers
 
@@ -1689,7 +1729,8 @@ pytest tests/ -n auto --dist=loadfile
 - All unit tests
 - All fast integration tests
 - All slow integration tests
-- Coverage check with `fail_under=81` threshold (full suite, `pyproject.toml`)
+- Coverage check with `fail_under = 73` threshold (`[tool.coverage.report]` in
+  `pyproject.toml` — the single gate; see "Measuring and gating coverage" above)
 - **Total time**: ~15 minutes
 - **Purpose**: Complete validation before merge
 
@@ -1921,38 +1962,43 @@ global state not reset between tests). The autouse fixtures `reset_global_state`
 
 Coverage config lives in `pyproject.toml` `[tool.coverage.*]`. Branch coverage is on.
 
-**The two gates measure different runs — they are not the same number.** `[tool.coverage.report]
-fail_under` (`pyproject.toml`) gates whatever `pytest tests/` covers by default, which includes
-`tests/slow_integration/`. CI's `--cov-fail-under` (`branch-protection.yml`) gates the
-`--ignore=tests/slow_integration/` run only, since CI never runs that tier. The CI number is always
-the lower of the two — ratchet both, from the run that actually produces each number, never from
-one run's total applied to both gates.
+**Single gate, not two.** Earlier revisions of this guide documented two separate coverage gates
+(`pyproject.toml`'s `fail_under` for the full suite, plus a CI-only `--cov-fail-under` CLI flag in
+`branch-protection.yml`) that could silently disagree. The CLI flag was removed in `7a751fb` — CI
+now runs `pytest tests/ --ignore=tests/slow_integration/ --cov --cov-branch` with no
+`--cov-fail-under` override, so pytest-cov falls back to `[tool.coverage.report] fail_under` in
+`pyproject.toml`. That one number is the single source of truth, and it is measured against the
+**CI-shaped run** (`--ignore=tests/slow_integration/`), not the full suite — `tests/slow_integration/`
+runs only in the separate weekly job (`weekly.yml`, Phase 11) and is never part of this gate.
 
-**Baseline (measured 2026-07-26, post-Phase-8 storage isolation, Phase 9 of the hardening
-campaign):**
+**Baseline (measured 2026-08-04, Phase 11.4 of the hardening campaign):**
 
-- Full suite incl. `slow_integration/`: **82.59%** (3594 passed, 7 skipped) → `fail_under = 81` in
-  `[tool.coverage.report]`.
-- CI-equivalent, `--ignore=tests/slow_integration/`: **81.69%** (3516 passed, 5 skipped; two new test
-  files added to close the two lowest-covered `mcp_server/` modules — see below) → `--cov-fail-under=80`
-  in CI.
+- CI-shaped, `--ignore=tests/slow_integration/`: **75.03%** (5,762 passed, 1 skipped, 3
+  pre-existing failures unrelated to coverage scope — see "Current Test Status" above) →
+  `fail_under = 73` in `[tool.coverage.report]`.
+- This is a drop from the prior 83.52%/`fail_under = 81` baseline (2026-08-03), not a regression
+  in the tests themselves: Phase 11.3 added `tools` to `[tool.coverage.run] source` so that its
+  two existing test files (`test_safe_clear_index.py`, `test_cleanup_stale_snapshots.py`) would
+  actually count toward the gate. That honestly surfaced 7 of `tools/`'s 9 files (~4.5k lines of
+  CLI/batch scripts) as having zero test coverage, which they always did — the old baseline just
+  never measured them. `codecov.yml` deliberately excludes `tools/**` from its patch gate for the
+  same reason; this whole-repo floor is now the only place `tools/`'s coverage is tracked at all.
 
-(Previous baseline 2026-06-30: 78.53% combined at 3104 tests, gated both at 77 — see git history for
-that measurement's methodology; it predates the two-gates-differ correction above.)
+(Previous baselines: 82.59%/81 combined incl. slow_integration and 81.69%/80 CI-only, both
+2026-07-26 — obsolete under the single-gate model above, kept here only as history. 78.53%/77
+combined, 2026-06-30, predates the two-gates-differ correction that revision made.)
 
 ```bash
-# Re-measure the CI-gating number (excludes slow_integration/):
+# Re-measure the number this gate actually uses (matches CI exactly, no --cov-fail-under
+# override — pytest-cov reads fail_under from pyproject.toml):
 bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration/ \
-  --cov --cov-branch --cov-report=term-missing --cov-fail-under=80
-
-# Re-measure the full-suite number that pyproject.toml's fail_under actually gates:
-bash scripts/test/run_tests.sh tests/ --cov --cov-branch --cov-report=term-missing --cov-fail-under=81
+  --cov --cov-branch --cov-report=term-missing
 ```
 
-Ratchet upward: when coverage improves, bump `fail_under` in `pyproject.toml` **and**
-`--cov-fail-under` in `.github/workflows/branch-protection.yml` — from their respective runs, not
-the same number copied to both. Both files ship a comment recording the date, the measured
-percentage, and the passing-test count the measurement was taken at.
+Ratchet upward: when coverage improves, bump `fail_under` in `pyproject.toml` from a fresh
+CI-shaped measurement, with a comment recording the date, the measured percentage, and the
+passing-test count. Never gate on the full-suite (incl. `slow_integration/`) number — CI never
+produces it, so a gate on it can never actually trip.
 
 **Phase 9 coverage additions:** `tests/unit/mcp_server/test_metrics.py` (`SessionMetrics` was at 0%
 coverage — a small, zero-mock, deterministic class with no prior tests at all) and
@@ -2170,16 +2216,69 @@ When adding `pytest-split`: use `--splitting-algorithm least_duration` (compatib
 `pytest-randomly`); commit `.test_durations` to repo; re-run `--store-durations` after major suite
 changes.
 
-### Codecov integration (Phase 3 CI scaffolding — 2026-06-30)
+### Codecov integration (Phase 3 CI scaffolding 2026-06-30; `codecov.yml` added Phase 11, 2026-08-03)
 
 `codecov/codecov-action@v5` is wired into `branch-protection.yml` (test job, development branch only).
-CI now emits `--cov-report=xml`; the XML is uploaded after each run including on `--cov-fail-under`
+CI emits `--cov-report=xml`; the XML is uploaded after each run including on coverage-gate
 failures, so regressions remain visible on Codecov. The README badge tracks the `development` branch.
+
+`codecov.yml` at the repo root configures two status checks, both distinct from the
+`pyproject.toml` `fail_under` whole-repo floor described above:
+
+- **`patch` — blocking.** Target 80% coverage on changed lines only (not the whole repo);
+  `threshold: 0%` means no slack below target; `if_ci_failed: error` fails the check if the
+  CI run itself failed. This is the gate that actually blocks a PR on coverage — a PR is
+  blocked only for regressions it introduces on the lines it touches, not pre-existing gaps
+  elsewhere.
+- **`project` — informational only.** `target: auto` makes this a true ratchet (it re-baselines
+  to whatever the current measured total is, ±0.5% threshold) rather than a hand-maintained
+  number; `informational: true` means it never blocks merges, just reports drift.
+- **`ignore: ["tests/**", "scripts/**", "tools/**"]`** — none of these count toward either
+  Codecov status. `tools/**` is the same set of mostly-untested CLI scripts that dragged the
+  `pyproject.toml` whole-repo floor down in Phase 11.3/11.4 above; excluding it from `patch`
+  means new `tools/` code isn't held to the 80%-on-changed-lines bar, but the whole-repo
+  `fail_under` floor is still the only place its coverage is tracked at all.
 
 **Notes:**
 
 - `fail_ci_if_error: false` — Codecov outages or missing token never fail the CI gate.
-- Authoritative gate remains `--cov-fail-under=80` in CI; Codecov is reporting/visualization only.
-- No `codecov.yml` — relying on Codecov defaults.
 - `pyrefly` is now a **blocking gate** (2026-06-30) — `continue-on-error` removed after verified green.
 - `pre-commit` remains `continue-on-error: true`; flip to blocking when it exits 0 consistently on CI.
+
+### Integrity-gap remediation (Phases 10–12 — 2026-08-04)
+
+The 2026-06 overhaul above (Phases 1–9) built the scaffolding — config, order-randomization,
+coverage gating, snapshot/mutation testing. Phases 10–12 closed a different class of problem:
+places where the suite *reported* protection it did not actually provide.
+
+| Area | Before | After |
+| ------ | -------- | ------- |
+| Flaky-run detection | `detect_flaky_tests.sh` looped a single test file only | `--suite-loop` mode loops the whole tier, randomized order, to surface cross-test ordering flakes |
+| `test_index_write_stage.py` flake | documented as an open, tolerated flake since 2026-07-26 | closed as unreproducible (22+ clean randomized whole-suite runs); Phase 10.4's unconditional singleton reset is the plausible incidental fix |
+| `test_clear_index_clears_bm25_and_dense` | quarantined (skipped) | un-quarantined, passing |
+| `_reset_singleton_state()` | conditional imports, could silently no-op | unconditional imports |
+| Real-home-storage guard (`_no_real_storage_pollution`) | attributed any external write in `~/.claude_code_search` to whichever test happened to be running (misattributed a live MCP server's own writes to the test suite) | process-local write ledger (wraps `os.replace`/`os.rename`/`Path.mkdir`); failure message names the actual writing call site |
+| `mock_snapshot_manager_for_unit_tests` | patched `SnapshotManager` at its definition module only — silently bypassed by every module that imports the class eagerly (`incremental_indexer.py`, `index_write_stage.py`, `status_handlers.py`, `change_detector.py`, `merkle/__init__.py`) | patches `SnapshotManager.__init__`, the attribute every holder shares regardless of import style |
+| BM25 mock-config order dependency (seed `811371831`) | unexplained, order-dependent `MagicMock` attribute-visibility failures in `test_index_sync.py`/`test_hybrid_search.py` | root-caused and fixed (Phase 10.6) |
+| `tests/slow_integration/` (107 tests) | never ran in any automated job | weekly CI job (`.github/workflows/weekly.yml`), first-ever automated run confirmed 107 passed/1 skipped |
+| `tests/fast_integration/test_mmap_cleanup.py` | gitignored — silently excluded from every run and from git history | untracked from `.gitignore`, committed, running |
+| `[tool.coverage.run] source` | omitted `tools/` (4.5k lines, 0% measured) | includes `tools/`; honestly surfaced 7 of 9 files as untested |
+| `fail_under` (`pyproject.toml`) | 81, measured before `tools/` was in scope | re-baselined to 73 against the honest 75.03% CI-shaped measurement |
+| Coverage gate architecture | described as "two gates, two numbers" (`pyproject.toml` + CI `--cov-fail-under`) | CI's `--cov-fail-under` CLI flag removed (`7a751fb`); `pyproject.toml`'s `fail_under` is the single source of truth |
+| `codecov.yml` | did not exist; doc claimed "relying on Codecov defaults" | added — blocking `patch: 80%` (changed-line) gate + informational `project: auto` ratchet, `tools/**`/`scripts/**`/`tests/**` ignored |
+| This doc's numbers | several stale (pre-`tools/`-inclusion coverage %, pre-weekly-job slow_integration status, fictional "no codecov.yml") | reconciled against `pyproject.toml`, `branch-protection.yml`, `weekly.yml`, `codecov.yml` (Phase 12.1) |
+
+**Pitfall generalized from Phase 10.5:** `unittest.mock.patch()` (and `patch.object`) rebinds a
+name in **one namespace** — the module you point it at. `patch("pkg.module.ClassName")` only
+affects code that looks up `pkg.module.ClassName` at call time (e.g. a lazy `import pkg.module`
+inside a function, then `pkg.module.ClassName(...)`). Any module that already did
+`from pkg.module import ClassName` at its own import time holds an independent local binding —
+patching the original module does not touch it, and the mock silently fails to apply with no
+error raised. This generalizes beyond `SnapshotManager`: before trusting a `patch()` target,
+check every import site (`grep -rn "import ClassName\|from .* import.*ClassName"`) for `from X
+import Y` style imports, not just `import X` style. Two fixes, in order of preference: (1) patch
+the attribute/method every holder shares regardless of import style — `patch.object(ClassName,
+"__init__", ...)` rather than replacing the class reference itself; (2) if the class reference
+itself must be swapped, patch it at every eager-import call site, not just the definition
+module. A fixture docstring claiming to patch "all import locations" is itself worth verifying —
+Phase 10.5 found one that was wrong.

@@ -489,10 +489,17 @@ source = [
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 81  # Ratcheted 2026-08-03: 83.52% measured at 5723 passing tests, CI-shaped suite
-# (tests/ --ignore=tests/slow_integration, --extra test --extra callgraph --extra otel --extra gpu,
-# branch coverage) — this is a coarse soft-floor tripwire; the real per-PR gate is Codecov's
-# `patch` target in codecov.yml (blocking on changed-line coverage, not this whole-repo number).
+fail_under = 73  # Re-baselined 2026-08-04: 75.03% measured at 5762 passed, 1 skipped, 3
+# pre-existing failures (unrelated to coverage scope, see tests/TESTING_GUIDE.md), CI-shaped
+# suite (tests/ --ignore=tests/slow_integration, --extra test --extra callgraph --extra otel
+# --extra gpu, branch coverage). Dropped from the prior 83.52%/fail_under=81 baseline because
+# that measurement predates "tools" being added to source= above (Phase 11.3): 7 of the 9
+# tools/ files are untested CLI/batch scripts at 0% coverage (~4.5k lines), honestly dragging
+# the aggregate down now that they are actually counted instead of silently excluded. This is
+# a coarse soft-floor tripwire; the real per-PR gate is Codecov's `patch` target in
+# codecov.yml (blocking on changed-line coverage, not this whole-repo number) — codecov.yml
+# also excludes tools/** from that gate, so this whole-repo floor is the only place tools/'s
+# coverage is tracked at all.
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
