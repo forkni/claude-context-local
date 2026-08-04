@@ -778,6 +778,41 @@ class TestCodeGraphStorage:
         # Missing key must return None
         assert graph_storage.get_edge_data(u, v, relationship_type="inherits") is None
 
+    def test_get_all_edge_data_returns_every_parallel_edge(self, graph_storage):
+        """get_all_edge_data(u, v) must return every parallel edge, not just the primary.
+
+        Consumed by GraphQueryEngine._traverse_outbound/_traverse_inbound to
+        populate RelationshipEntry.parallel_edges (the parallel-edge-collapse
+        fix, ADR-0027) -- this was previously an orphaned zero-caller method.
+        """
+        u = "src/a.py:1-5:function:foo"
+        v = "src/b.py:1-5:function:bar"
+        graph_storage.add_node(u, "foo", "function", "src/a.py")
+        graph_storage.add_node(v, "bar", "function", "src/b.py")
+
+        graph_storage.add_call_edge(u, v, line_number=3, resolver_confidence=0.8)
+        graph_storage.graph.add_edge(
+            u, v, key="imports", type="imports", line=1, confidence=1.0
+        )
+
+        all_edges = graph_storage.get_all_edge_data(u, v)
+
+        assert len(all_edges) == 2
+        types = {d["relationship_type"] for d in all_edges}
+        assert types == {"calls", "imports"}
+        # Each dict must be independently normalized, matching get_edge_data's output.
+        calls_entry = next(d for d in all_edges if d["relationship_type"] == "calls")
+        assert calls_entry.get("resolver_confidence") == 0.8
+
+    def test_get_all_edge_data_no_edge_returns_empty_list(self, graph_storage):
+        """get_all_edge_data(u, v) must return [] (not None) when no edge exists."""
+        u = "src/a.py:1-5:function:foo"
+        v = "src/b.py:1-5:function:bar"
+        graph_storage.add_node(u, "foo", "function", "src/a.py")
+        graph_storage.add_node(v, "bar", "function", "src/b.py")
+
+        assert graph_storage.get_all_edge_data(u, v) == []
+
     def test_coerce_on_load_upgrades_old_digraph_json(self, temp_storage_dir):
         """Loading an old DiGraph-format (no 'multigraph' key) must yield a MultiDiGraph."""
         import networkx as nx

@@ -24,13 +24,23 @@ from .schema import (
 
 @dataclass
 class RelationshipEntry:
-    """A single relationship edge in the code graph."""
+    """A single relationship edge in the code graph.
+
+    ``relationship_type``/``edge_data`` describe one edge — the primary edge when
+    no filter was requested, or the first filter-matching type otherwise (see
+    ``GraphQueryEngine._resolve_entry_type``). ``parallel_edges`` carries *every*
+    relationship type that exists between this node and its neighbor (from
+    ``CodeGraphStorage.get_all_edge_data``), so a consumer that wants every
+    relationship — not just the one this entry happens to be labeled with — can
+    fan out over it instead of re-querying the graph.
+    """
 
     chunk_id: str
     relationship_type: str
     direction: str  # "inbound" | "outbound"
     depth: int
     edge_data: dict[str, Any] = field(default_factory=dict)
+    parallel_edges: list[dict[str, Any]] = field(default_factory=list)
 
 
 class GraphQueryEngine:
@@ -584,6 +594,36 @@ class GraphQueryEngine:
                     variants.append(bare)
         return variants
 
+    @staticmethod
+    def _resolve_entry_type(
+        edge_data: dict[str, Any],
+        parallel_edges: list[dict[str, Any]],
+        relation_types: list[str] | None,
+    ) -> tuple[bool, str]:
+        """Decide whether a (u, v) pair should be reported and which
+        ``relationship_type`` the resulting :class:`RelationshipEntry` carries.
+
+        ``relation_types=None`` reports unconditionally using the primary edge's
+        type — unchanged from the pre-fix behavior. When a filter is given, a
+        node is reported if *any* parallel edge type matches the filter, even
+        when that type is not the primary edge (the parallel-edge-collapse fix);
+        ties among matching types are broken by sorted name for reproducibility.
+        """
+        primary_type = edge_relation_type(edge_data) or "unknown"
+        if relation_types is None:
+            return True, primary_type
+
+        matching_types = sorted(
+            {
+                d.get("relationship_type", "unknown")
+                for d in parallel_edges
+                if d.get("relationship_type", "unknown") in relation_types
+            }
+        )
+        if matching_types:
+            return True, matching_types[0]
+        return False, primary_type
+
     def _traverse_inbound(
         self,
         chunk_id: str,
@@ -601,9 +641,10 @@ class GraphQueryEngine:
         first (possibly non-matching) encounter, silently suppressing the second
         (possibly matching) edge.
 
-        KNOWN LIMITATION (found 2026-08-03, not yet fixed): same primary-edge
-        collapse as _traverse_outbound — see that method's docstring and
-        CodeGraphStorage.get_edge_data's docstring for the mechanism.
+        Each reported node's entry carries every parallel edge type between it
+        and its neighbor (``RelationshipEntry.parallel_edges``, populated from
+        ``CodeGraphStorage.get_all_edge_data``), not just the primary one — see
+        ``_resolve_entry_type``.
         """
         results: list[RelationshipEntry] = []
         origin_set = set(self._node_variants(chunk_id))
@@ -619,19 +660,23 @@ class GraphQueryEngine:
             for query_node in current_query:
                 for pred in self.storage.get_callers(query_node):
                     edge_data = self.storage.get_edge_data(pred, query_node) or {}
-                    rel_type = edge_relation_type(edge_data) or "unknown"
+                    parallel_edges = self.storage.get_all_edge_data(
+                        pred, query_node
+                    ) or [edge_data]
+                    matches, chosen_type = self._resolve_entry_type(
+                        edge_data, parallel_edges, relation_types
+                    )
 
                     # Report once per node on first matching edge (#23).
-                    if pred not in reported and (
-                        relation_types is None or rel_type in relation_types
-                    ):
+                    if pred not in reported and matches:
                         results.append(
                             RelationshipEntry(
                                 chunk_id=pred,
-                                relationship_type=rel_type,
+                                relationship_type=chosen_type,
                                 direction="inbound",
                                 depth=depth,
                                 edge_data=edge_data,
+                                parallel_edges=parallel_edges,
                             )
                         )
                         reported.add(pred)
@@ -661,14 +706,10 @@ class GraphQueryEngine:
         - ``visited``: BFS expansion dedup.
         - ``reported``: result dedup.
 
-        KNOWN LIMITATION (found 2026-08-03, not yet fixed): ``get_edge_data(node,
-        succ)`` below is called without a ``relationship_type`` key, so on a (node,
-        succ) pair with multiple parallel edge types it collapses to one "primary"
-        edge (see CodeGraphStorage.get_edge_data's docstring) *before* the
-        ``relation_types`` filter is applied — a non-primary type can be silently
-        invisible to callers even though its edge exists in the graph. See
-        graph_storage.py's get_edge_data docstring for the full mechanism and a
-        concrete repro.
+        Each reported node's entry carries every parallel edge type between it
+        and its neighbor (``RelationshipEntry.parallel_edges``, populated from
+        ``CodeGraphStorage.get_all_edge_data``), not just the primary one — see
+        ``_resolve_entry_type``.
         """
         results: list[RelationshipEntry] = []
         visited: set[str] = {chunk_id}  # nodes queued for BFS expansion
@@ -683,19 +724,23 @@ class GraphQueryEngine:
             for node in current_nodes:
                 for succ in self.storage.get_callees(node):
                     edge_data = self.storage.get_edge_data(node, succ) or {}
-                    rel_type = edge_relation_type(edge_data) or "unknown"
+                    parallel_edges = self.storage.get_all_edge_data(node, succ) or [
+                        edge_data
+                    ]
+                    matches, chosen_type = self._resolve_entry_type(
+                        edge_data, parallel_edges, relation_types
+                    )
 
                     # Report once per node on first matching edge (#23).
-                    if succ not in reported and (
-                        relation_types is None or rel_type in relation_types
-                    ):
+                    if succ not in reported and matches:
                         results.append(
                             RelationshipEntry(
                                 chunk_id=succ,
-                                relationship_type=rel_type,
+                                relationship_type=chosen_type,
                                 direction="outbound",
                                 depth=depth,
                                 edge_data=edge_data,
+                                parallel_edges=parallel_edges,
                             )
                         )
                         reported.add(succ)
