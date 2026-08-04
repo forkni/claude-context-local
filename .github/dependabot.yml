@@ -12,6 +12,15 @@ updates:
           - "*"
 
   # Python deps — "uv" (not "pip") so uv.lock gets refreshed, not just pyproject.toml.
+  #
+  # Split into two entries because "target-branch" only applies to version updates:
+  # security updates are always raised by GitHub against the default branch and
+  # ignore "target-branch" entirely. A single entry with target-branch: development
+  # would silently detach these ignore ceilings and the dev-tooling group from
+  # security PRs, which would then land on main ungrouped and unfiltered.
+
+  # Security updates — no target-branch, so these ceilings/groups stay attached
+  # to the security PRs GitHub forces onto the default branch (main).
   - package-ecosystem: "uv"
     directory: "/"
     schedule:
@@ -28,6 +37,30 @@ updates:
     ignore:
       # Deliberate ceilings recorded in pyproject.toml — see the inline comments
       # there for the specific incompatibility/CVE each one is pinned against.
+      - dependency-name: "torch"
+        versions: [">=2.9.0"]
+      - dependency-name: "tree-sitter"
+        versions: [">=0.26"]
+      - dependency-name: "transformers"
+        versions: [">=6"]
+
+  # Version updates — routed to development so routine bumps go through CI/review
+  # before reaching main, instead of landing directly on the default branch.
+  - package-ecosystem: "uv"
+    directory: "/"
+    target-branch: "development"
+    schedule:
+      interval: "weekly"
+    groups:
+      dev-tooling:
+        patterns:
+          - "ruff"
+          - "pyrefly"
+          - "pre-commit"
+          - "pytest*"
+          - "mutmut"
+          - "cosmic-ray"
+    ignore:
       - dependency-name: "torch"
         versions: [">=2.9.0"]
       - dependency-name: "tree-sitter"

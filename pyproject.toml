@@ -28,8 +28,8 @@ keywords = [
     "python",
 ]
 dependencies = [
-    "aiohttp>=3.14.1",  # Security: Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1)
-    "cryptography>=46.0.7",  # Security: PYSEC-2026-35/36 (DNS name-constraint bypass, buffer overflow). Defer GHSA-537c (OpenSSL wheel, needs 48.x major bump).
+    "aiohttp>=3.14.3",  # Security: Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1); CVE-2026-59881 (3.14.2); CVE-2026-69243 (3.14.2); CVE-2026-69244 (3.14.3)
+    "cryptography>=50.0.0",  # Security: PYSEC-2026-35/36 (DNS name-constraint bypass, buffer overflow); CVE-2026-69247 (50.0.0). Defer GHSA-537c (OpenSSL wheel, needs 48.x major bump).
     "faiss-cpu>=1.14.3",
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
     "huggingface-hub>=1.3.0",  # transformers>=5.3.0 requires >=1.3.0,<2
@@ -109,7 +109,7 @@ dev = [
     "pyrefly>=1.1.1",
     "mutmut>=2.5.1",  # Phase 4.2: mutation testing; run periodically, not per-commit (Linux CI only)
     "cosmic-ray>=8.4",  # Phase 4.2: mutation testing; local cross-platform runner
-    "gitpython>=3.1.55",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
+    "gitpython>=3.1.57",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
     "deptry>=0.25.1",  # /deps-audit Phase 1.7: dependency-usage hygiene check; declared to match what summarize_audit.py installs into this venv
 ]
 gpu = [
@@ -140,7 +140,18 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-07-30 (pip-audit — default PyPI service cannot resolve local-version wheels
+# Last audit: 2026-08-04 (`/deps-audit` — 169 packages, pip check clean. Found aiohttp 3.14.1
+#             (CVE-2026-59881, CVE-2026-69243, CVE-2026-69244; fix 3.14.3), cryptography 49.0.0
+#             (CVE-2026-69247; fix 50.0.0), and confirmed the venv's installed gitpython had
+#             already drifted ahead to 3.1.57 without the declared floor being raised to match
+#             — same record/reality drift class as the 2026-07-25/26 GitPython incident, this
+#             time in the other direction. Also flagged via GitHub code-scanning alerts (superset
+#             of pip-audit): lycheeverse/lychee-action pinned to v1.10.0 in
+#             .github/workflows/docs-validation.yml, GHSA-65rg-554r-9j5x, fixed 2.0.2 (bumped
+#             separately, not a Python dependency). Remaining: diskcache/sqlitedict/torch, no
+#             upstream fix — see "Deferred (no upstream fix)" block below.)
+#
+# Previous audit: 2026-07-30 (pip-audit — default PyPI service cannot resolve local-version wheels
 #             (torch 2.8.0+cu128) and silently skip_reason's them out of every report; re-ran with
 #             `-s osv` and found torch carries 8 CVEs, now tracked below. Also found nltk 3.10.0
 #             is a real fix for CVE-2026-54293 (confirmed via OSV affected-range query) and that
@@ -152,7 +163,7 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Direct dependency security updates:
 # mcp>=2,<3            # Fixes CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin), carried forward from 1.28.1; migrated to SDK v2 API (ADR-0017)
 # nltk>=3.10.0         # Fixes CVE-2025-14009 (path traversal in zipfile.extractall), CVE-2026-54293 (URL-encoded path traversal in nltk.data.load())
-# aiohttp>=3.14.1      # Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1)
+# aiohttp>=3.14.3      # Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1); CVE-2026-59881/69243 (3.14.2); CVE-2026-69244 (3.14.3)
 # python-dotenv>=1.2.2 # Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)
 # starlette>=1.3.1     # Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
 # transformers>=5.3.0,<6 # Fixes CVE-2026-4372 (config.json RCE, 5.3.0), CVE-2026-1839 (Trainer RCE, 5.0.0)
@@ -160,7 +171,7 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 #
 # Transitive dependency security updates:
 # click>=8.3.3             # Fixes CVE-2026-7246 (command injection in click.edit())
-# cryptography>=46.0.7     # Fixes CVE-2026-34073 (46.0.6 DNS name-constraint), CVE-2026-39892 (46.0.7 buffer overflow)
+# cryptography>=50.0.0     # Fixes CVE-2026-34073 (46.0.6 DNS name-constraint), CVE-2026-39892 (46.0.7 buffer overflow), CVE-2026-69247 (50.0.0)
 # idna>=3.18               # Fixes CVE-2026-45409 (incomplete fix of CVE-2024-3651, DoS in idna.encode)
 # msgpack>=1.2.1           # Fixes GHSA-6v7p-g79w-8964 (repeated unpacker SEGV)
 # pip>=26.1.2              # Fixes CVE-2025-8869, CVE-2026-1703, CVE-2026-3219, CVE-2026-6357, CVE-2026-8643
@@ -198,6 +209,18 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 #   weights_only bypass and DoS CVEs are not reachable via this project's model-loading path.
 #   Re-check upstream (pytorch/pytorch) each cycle for a fix to the inductor regression that would
 #   unblock the <2.9.0 ceiling.
+#
+# Resolved 2026-08-04: aiohttp CVE-2026-59881/69243 (3.14.2), CVE-2026-69244 (3.14.3) via
+#   aiohttp>=3.14.3. cryptography CVE-2026-69247 via cryptography>=50.0.0 (confirmed >=3.9
+#   Python-compatible on PyPI). gitpython floor raised >=3.1.55 -> >=3.1.57 to match the venv,
+#   which had already drifted ahead to 3.1.57 with 0 live CVEs (record/reality drift, this time
+#   the record trailing reality rather than the reverse). lycheeverse/lychee-action bumped
+#   v1.10.0 -> v2.9.0 in .github/workflows/docs-validation.yml (GHSA-65rg-554r-9j5x; GitHub
+#   Actions ecosystem, not a Python dependency). Also repaired CI red on `development` (see
+#   commit "fix: repair CI red on development") and closed 4 Dependabot PRs superseded by this
+#   commit (#46 cryptography, #47 nltk [already applied], #48 gitpython, #49 aiohttp). Tested:
+#   full unit suite green (5644 passed, 1 skipped), pyrefly 0 errors, pip-audit clean except the
+#   documented no-fix sqlitedict finding.
 #
 # Resolved 2026-07-30: nltk CVE-2026-54293 (URL-encoded path traversal in nltk.data.load()) via
 #   nltk>=3.10.0 (confirmed fixed by OSV affected-range query: [0, 3.10.0); 3.10.0 itself reports
