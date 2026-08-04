@@ -42,6 +42,8 @@ import subprocess
 import sys
 import time
 from collections import Counter
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -104,6 +106,7 @@ from evaluation.metrics import (  # noqa: E402
     resolve_chunk_ids_to_ranges,
     to_file_entries,
 )
+from search.config import SearchConfig  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +135,330 @@ RERANKER_SWEEP: list[dict[str, Any]] = [
 
 
 # ---------------------------------------------------------------------------
+# Knob table (ADR-0018 Part 2 / C1) — single source of truth for the named
+# CLI override flags, replacing five separate restatements (CLI flag,
+# `_apply_*_override` wrapper, `run_single` keyword param, console print
+# line, `config_metadata` entry) with one row per knob, consumed by
+# `_overrides_from_args`, `_build_config_metadata`, and `_print_overrides`.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Knob:
+    """One row = one benchmark override knob.
+
+    ``arg`` is the argparse dest on the parsed ``Namespace``. ``key`` is the
+    dotted ``SearchConfig`` field the (possibly ``to_config``-converted)
+    value is written to via ``evaluation.arm_overrides.apply_overrides``;
+    ``None`` means the knob is not routed through that seam — either because
+    it mutates an undeclared ``EgoGraphConfig`` field via legacy raw
+    ``setattr`` (``community_bounded``, ``cross_community_penalty`` — see
+    ``_apply_legacy_ego_overrides``), or because it isn't a config field at
+    all (``f_via_similar`` selects a scoring view, not a mutation).
+
+    ``meta`` is the ``config_metadata`` key the knob's raw CLI value is
+    recorded under; ``None`` means deliberately not recorded — a
+    pre-existing gap (the two reranker doc-budget knobs) kept as-is rather
+    than silently closed by this refactor. ``label`` is the console print
+    grouping. ``to_config``/``from_config`` are the (rare) raw-CLI-value <->
+    config-value conversion pair — e.g. ``"on"`` <-> ``True`` for
+    ``ego_graph`` — needed because ``config_metadata`` must keep recording
+    the raw value even though ``overrides`` (this table's other consumer)
+    only carries the converted one. ``only_if_true`` marks ``store_true``
+    flags, which apply when truthy rather than when non-``None``.
+    """
+
+    arg: str
+    key: str | None
+    meta: str | None
+    label: str | None
+    to_config: Callable[[Any], Any] | None = None
+    from_config: Callable[[Any], Any] | None = None
+    only_if_true: bool = False
+
+
+_KNOBS: tuple[_Knob, ...] = (
+    _Knob("bm25_weight", "search_mode.bm25_weight", "bm25_weight", "Weights"),
+    _Knob("dense_weight", "search_mode.dense_weight", "dense_weight", "Weights"),
+    # No console line pre-refactor either (search_mode only ever appeared
+    # grouped under "Weights" via bm25_weight/dense_weight presence).
+    _Knob("search_mode", "search_mode.default_mode", "search_mode", None),
+    _Knob("reranker_model", "reranker.model_name", "reranker_model", "Reranker"),
+    _Knob(
+        "reranker_enabled",
+        "reranker.enabled",
+        "reranker_enabled",
+        "Reranker",
+        to_config=lambda v: v == "true",
+    ),
+    _Knob(
+        "top_k_candidates",
+        "reranker.top_k_candidates",
+        "top_k_candidates",
+        "Reranker pool budget",
+    ),
+    _Knob(
+        "reranker_doc_max_chars",
+        "reranker.doc_max_chars",
+        None,  # preserve the pre-existing config_metadata gap
+        "Reranker doc budget",
+    ),
+    _Knob(
+        "reranker_listwise_doc_max_chars",
+        "reranker.listwise_doc_max_chars",
+        None,  # preserve the pre-existing config_metadata gap
+        "Reranker doc budget",
+    ),
+    _Knob(
+        "reranker_dtype", "reranker.listwise_dtype", "reranker_dtype", "Reranker dtype"
+    ),
+    _Knob("rrf_k", "search_mode.rrf_k_parameter", "rrf_k", "RRF fusion constant"),
+    _Knob(
+        "bm25_reserved_slots",
+        "search_mode.bm25_reserved_slots",
+        "bm25_reserved_slots",
+        "BM25 reserved pool slots",
+    ),
+    _Knob(
+        "multi_hop_expansion",
+        "multi_hop.expansion",
+        "multi_hop_expansion",
+        "Multi-hop expansion factor",
+    ),
+    _Knob(
+        "hop1_reserved_slots",
+        "reranker.hop1_reserved_slots",
+        "hop1_reserved_slots",
+        "Hop1 reserved rerank-window slots",
+    ),
+    _Knob(
+        "query_expansion",
+        "query_expansion.enabled",
+        "query_expansion",
+        "Query expansion",
+        only_if_true=True,
+    ),
+    _Knob(
+        "ego_graph",
+        "ego_graph.enabled",
+        "ego_graph",
+        "Ego-graph expansion",
+        to_config=lambda v: v == "on",
+        from_config=lambda v: "on" if v else "off",
+    ),
+    _Knob(
+        "community_bounded",
+        None,  # undeclared EgoGraphConfig field - legacy raw setattr
+        "community_bounded",
+        "Community-bounded ego truncation",
+    ),
+    _Knob(
+        "cross_community_penalty",
+        None,  # undeclared EgoGraphConfig field - legacy raw setattr
+        "cross_community_penalty",
+        "Cross-community penalty",
+    ),
+    _Knob(
+        "expansion_mode",
+        "ego_graph.expansion_mode",
+        "expansion_mode",
+        "Ego expansion mode",
+    ),
+    _Knob(
+        "f_via_similar",
+        None,  # not a SearchConfig field - selects a scoring view
+        "f_via_similar",
+        "F-via-similar",
+        only_if_true=True,
+    ),
+)
+
+# Reserved (non-dotted, non-section-name) key `_overrides_from_args` uses to
+# carry the two legacy ego fields alongside the dotted overrides dict, so
+# both travel through one `arm_overrides.merge_overrides` call. Callers must
+# `.pop()` it before handing the rest to `arm_overrides.apply_overrides`
+# (`run_single` does this) - left in, it would be misread as an attempt to
+# override the `ego_graph` *section* and rejected by `normalize_overrides`.
+_LEGACY_EGO_KEY = "__legacy_ego__"
+
+
+def _overrides_from_args(
+    args: argparse.Namespace, *, exclude: frozenset[str] = frozenset()
+) -> dict[str, Any]:
+    """Build one merge-ready overrides dict from a parsed CLI ``Namespace``.
+
+    Reads each ``_KNOBS`` row off *args* by its ``arg`` (the argparse dest),
+    applies ``to_config`` where declared, and keys the result by dotted
+    ``SearchConfig`` path - ready for ``arm_overrides.merge_overrides``/
+    ``apply_overrides``. Knobs the caller didn't supply (``None``, or falsy
+    for ``only_if_true`` rows) are omitted entirely, matching every
+    ``_apply_*_override`` wrapper's all-``None``-means-no-op guard. The two
+    undeclared ``EgoGraphConfig`` fields ride under ``_LEGACY_EGO_KEY``
+    instead of a dotted path (see its docstring); ``f_via_similar`` isn't a
+    config field, so it never appears here at all.
+
+    *exclude* skips the named knobs in ``{knob.arg}`` entirely - used by
+    ``main_async``'s sweep loops, which supply those specific fields from a
+    ``SWEEP_CONFIGS``/``RERANKER_SWEEP`` delta (see ``_sweep_delta``) instead
+    of the CLI flag, and must not silently fall back to it, matching the
+    pre-refactor sweep loops (which never read ``args.bm25_weight`` /
+    ``args.reranker_model`` inside a sweep iteration).
+    """
+    overrides: dict[str, Any] = {}
+    legacy_ego: dict[str, Any] = {}
+    for knob in _KNOBS:
+        if knob.arg in exclude:
+            continue
+        value = getattr(args, knob.arg, None)
+        if knob.only_if_true:
+            if not value:
+                continue
+        elif value is None:
+            continue
+        if knob.key is not None:
+            overrides[knob.key] = knob.to_config(value) if knob.to_config else value
+        elif knob.arg in ("community_bounded", "cross_community_penalty"):
+            legacy_ego[knob.arg] = value
+    if legacy_ego:
+        overrides[_LEGACY_EGO_KEY] = legacy_ego
+    return overrides
+
+
+def _sweep_delta(sweep_cfg: dict[str, Any]) -> dict[str, Any]:
+    """Convert one ``SWEEP_CONFIGS``/``RERANKER_SWEEP`` entry into a dotted-
+    key overrides delta, ready to merge via ``arm_overrides.merge_overrides``.
+
+    Unlike ``_overrides_from_args``, sweep-dict values are already final
+    ``SearchConfig``-typed (e.g. ``reranker_enabled: False`` is a literal
+    ``bool``, not the raw CLI string ``"false"``) — so this applies the
+    ``_KNOBS``-table ``key`` mapping directly, with no ``to_config``
+    conversion. ``"config_name"`` and any key without a table entry (or
+    whose entry doesn't route through ``apply_overrides``) are ignored.
+    """
+    knobs_by_arg = {knob.arg: knob for knob in _KNOBS if knob.key is not None}
+    return {
+        knobs_by_arg[arg_name].key: value
+        for arg_name, value in sweep_cfg.items()
+        if arg_name in knobs_by_arg
+    }
+
+
+def _apply_legacy_ego_overrides(
+    cfg: SearchConfig,
+    community_bounded: str | None,
+    cross_community_penalty: float | None,
+) -> None:
+    """Set the two undeclared ``EgoGraphConfig`` fields via raw ``setattr``.
+
+    ``community_bounded``/``cross_community_penalty`` are not declared
+    ``EgoGraphConfig`` fields (confirmed by introspection - vestigial from
+    the since-rejected community-merge experiment) and are not read anywhere
+    in ``search/``. Routing them through ``arm_overrides.apply_overrides``
+    would turn that silent no-op into a hard ``ArmOverrideError`` ("unknown
+    field") - a real behavior change this refactor must not make, so they
+    keep the original raw ``setattr``, unchanged from the pre-refactor
+    ``_apply_ego_graph_overrides``.
+    """
+    if community_bounded is None and cross_community_penalty is None:
+        return
+    try:
+        if community_bounded is not None:
+            cfg.ego_graph.community_bounded = community_bounded == "on"
+        if cross_community_penalty is not None:
+            cfg.ego_graph.cross_community_penalty = cross_community_penalty
+    except Exception as e:
+        print(f"[WARN] Could not apply ego-graph overrides: {e}", file=sys.stderr)
+
+
+def _build_config_metadata(
+    *,
+    project_path: str,
+    k: int,
+    category_filter: str | None,
+    overrides: dict[str, Any],
+    legacy_ego: dict[str, Any],
+    f_via_similar: bool,
+) -> dict[str, Any]:
+    """Build ``config_metadata`` from the same *overrides* dict used to
+    mutate ``SearchConfig``, recovering each knob's raw CLI value (never the
+    ``to_config``-converted one) via ``_Knob.from_config``.
+
+    *overrides* must already have ``_LEGACY_EGO_KEY`` popped into
+    *legacy_ego* (see ``_overrides_from_args``). Base fields
+    (``project_path``/``k``/``category_filter``) and
+    ``peak_vram_reserved_gb`` are not knobs - callers add the latter
+    themselves when available.
+    """
+    metadata: dict[str, Any] = {
+        "project_path": project_path,
+        "k": k,
+        "category_filter": category_filter,
+    }
+    knobs_by_key = {knob.key: knob for knob in _KNOBS if knob.key is not None}
+    for dotted_key, config_value in overrides.items():
+        knob = knobs_by_key.get(dotted_key)
+        if knob is None or knob.meta is None:
+            continue
+        metadata[knob.meta] = (
+            knob.from_config(config_value) if knob.from_config else config_value
+        )
+    if legacy_ego.get("community_bounded") is not None:
+        metadata["community_bounded"] = legacy_ego["community_bounded"]
+    if legacy_ego.get("cross_community_penalty") is not None:
+        metadata["cross_community_penalty"] = legacy_ego["cross_community_penalty"]
+    if f_via_similar:
+        metadata["f_via_similar"] = True
+    return metadata
+
+
+def _print_overrides(
+    overrides: dict[str, Any],
+    legacy_ego: dict[str, Any],
+    f_via_similar: bool,
+) -> None:
+    """Print one console line per supplied override, grouped by label.
+
+    Sourced from *overrides* (the dotted-key, post-``to_config`` values)
+    rather than ``config_metadata`` so the two doc-budget knobs - which are
+    deliberately absent from ``config_metadata`` (see ``_Knob``) - still get
+    a console line, matching the pre-refactor output. *overrides* must
+    already have ``_LEGACY_EGO_KEY`` popped into *legacy_ego*. Any dotted key
+    with no ``_KNOBS`` entry - i.e. it can only have arrived via ``--set``,
+    since every named-flag/sweep-delta key is tabled - prints under a
+    catch-all line instead of being silently dropped, preserving the
+    visibility the old ``print(f"  --set overrides: {set_overrides}")`` gave
+    arbitrary fields with no dedicated flag.
+    """
+    knobs_by_key = {knob.key: knob for knob in _KNOBS if knob.key is not None}
+    lines: dict[str, list[str]] = {}
+    untabled: dict[str, Any] = {}
+    for dotted_key, value in overrides.items():
+        knob = knobs_by_key.get(dotted_key)
+        if knob is None:
+            untabled[dotted_key] = value
+            continue
+        if knob.label is None:
+            continue
+        text = f"{knob.meta or knob.arg}={value}"
+        lines.setdefault(knob.label, []).append(text)
+    for arg_name in ("community_bounded", "cross_community_penalty"):
+        value = legacy_ego.get(arg_name)
+        if value is None:
+            continue
+        knob = next(k for k in _KNOBS if k.arg == arg_name)
+        lines.setdefault(knob.label, []).append(f"{knob.meta}={value}")
+    if f_via_similar:
+        lines.setdefault("F-via-similar", []).append(
+            "ON (anchored F queries scored via find_similar_to_chunk; "
+            "secondary view, not the official aggregate)"
+        )
+    for label, parts in lines.items():
+        print(f"  {label}: {'  '.join(parts)}")
+    if untabled:
+        print(f"  --set overrides: {untabled}")
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -153,255 +480,14 @@ def _setup_project(project_path: str) -> None:
         print("[WARN] Proceeding — project may already be loaded.", file=sys.stderr)
 
 
-def _non_none_overrides(pairs: dict[str, Any]) -> dict[str, Any]:
-    """Drop ``None``-valued entries.
-
-    The eleven ``_apply_*_override`` functions below share one contract:
-    only override the fields the caller actually passed a value for. Each
-    used to encode that as its own hand-written ``if X is None and Y is
-    None...: return`` guard; ``apply_overrides({})`` is already a no-op, so
-    filtering here is sufficient — expressed once instead of eleven times.
-    """
-    return {key: value for key, value in pairs.items() if value is not None}
-
-
-def _apply_weight_overrides(
-    bm25_weight: float | None,
-    dense_weight: float | None,
-    search_mode: str | None,
-) -> None:
-    """Override BM25/dense weights in the in-memory search config singleton."""
-    overrides = _non_none_overrides(
-        {
-            "search_mode.bm25_weight": bm25_weight,
-            "search_mode.dense_weight": dense_weight,
-            "search_mode.default_mode": search_mode,
-        }
-    )
-    if not overrides:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(get_search_config(), overrides)
-
-
-def _apply_reranker_override(
-    reranker_model: str | None,
-    reranker_enabled: bool | None,
-) -> None:
-    """Override the reranker model/enabled flag in the in-memory search config singleton.
-
-    In-memory only (no file write): does not touch ``search_config.json``, so it survives
-    the config-revert hook and never bumps the file mtime that ``SearchConfigManager``
-    watches for reload. ``RerankingEngine._ensure_reranker()`` picks up the change on the
-    next search and hot-swaps the loaded model (cleanup + rebuild) when ``model_name``
-    differs from what is currently loaded.
-    """
-    overrides = _non_none_overrides(
-        {
-            "reranker.model_name": reranker_model,
-            "reranker.enabled": reranker_enabled,
-        }
-    )
-    if not overrides:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(get_search_config(), overrides)
-
-
-def _apply_reranker_budget_override(top_k_candidates: int | None) -> None:
-    """Override the reranker candidate-pool budget in the in-memory config singleton.
-
-    In-memory only, like ``_apply_reranker_override``. ``top_k_candidates`` is read
-    live from config on every search (``search_executor.py``), so no searcher reset
-    is needed between runs with different values.
-    """
-    if top_k_candidates is None:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(
-        get_search_config(), {"reranker.top_k_candidates": top_k_candidates}
-    )
-
-
-def _apply_reranker_doc_max_chars_override(
-    doc_max_chars: int | None,
-    listwise_doc_max_chars: int | None,
-) -> None:
-    """Override the per-reranker document budgets in the in-memory config singleton.
-
-    Unlike ``top_k_candidates``, these are baked into the reranker instance at
-    construction (``create_reranker(...)`` in ``RerankingEngine._ensure_reranker``)
-    and only reloaded there when ``model_name`` changes — so, like ``rrf_k``,
-    callers must reset the cached searcher afterwards for a same-model override
-    to take effect (see ``_maybe_reset_for_construction_overrides``).
-    """
-    overrides = _non_none_overrides(
-        {
-            "reranker.doc_max_chars": doc_max_chars,
-            "reranker.listwise_doc_max_chars": listwise_doc_max_chars,
-        }
-    )
-    if not overrides:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(get_search_config(), overrides)
-
-
-def _apply_reranker_dtype_override(reranker_dtype: str | None) -> None:
-    """Override the listwise reranker weight dtype in the in-memory config singleton.
-
-    Like the doc budgets, ``listwise_dtype`` is baked into the JinaRerankerV3
-    instance at construction (``create_reranker(...)`` in
-    ``RerankingEngine._ensure_reranker``) and the swap branch there reloads only
-    on ``model_name`` change — a dtype-only override silently no-ops without a
-    searcher reset (see ``_maybe_reset_for_construction_overrides``).
-    """
-    if reranker_dtype is None:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(
-        get_search_config(), {"reranker.listwise_dtype": reranker_dtype}
-    )
-
-
-def _apply_reserved_slots_override(reserved_slots: int | None) -> None:
-    """Override the BM25 reserved fused-pool slots in the in-memory config.
-
-    In-memory only. Read live from config on every search
-    (``search_executor.py``), so no searcher reset is needed between runs.
-    """
-    if reserved_slots is None:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(
-        get_search_config(), {"search_mode.bm25_reserved_slots": reserved_slots}
-    )
-
-
-def _apply_multi_hop_expansion_override(expansion: float | None) -> None:
-    """Override the multi-hop expansion factor in the in-memory config singleton.
-
-    In-memory only. Read live from config on every search
-    (``multi_hop_searcher.py``), so no searcher reset is needed between runs.
-    """
-    if expansion is None:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(
-        get_search_config(), {"multi_hop.expansion": expansion}
-    )
-
-
-def _apply_hop1_reserved_slots_override(reserved_slots: int | None) -> None:
-    """Override the hop1-reserve rerank-window knob in the in-memory config.
-
-    In-memory only. Read live from config on every search
-    (``multi_hop_searcher.py``), so no searcher reset is needed between runs.
-    """
-    if reserved_slots is None:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(
-        get_search_config(), {"reranker.hop1_reserved_slots": reserved_slots}
-    )
-
-
-def _apply_query_expansion_override(enabled: bool) -> None:
-    """Enable curated-vocabulary query expansion in the in-memory config.
-
-    In-memory only. Read live from config on every search
-    (``search_executor.py``), so no searcher reset is needed between runs.
-    """
-    if not enabled:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(
-        get_search_config(), {"query_expansion.enabled": True}
-    )
-
-
-def _apply_ego_graph_overrides(
-    ego_graph: str | None,
-    community_bounded: str | None,
-    cross_community_penalty: float | None,
-    expansion_mode: str | None,
-) -> None:
-    """Override ego-graph knobs in the in-memory config singleton.
-
-    In-memory only, like ``_apply_query_expansion_override``. ``enabled`` and
-    ``expansion_mode`` are real ``EgoGraphConfig`` fields, read live per
-    search — ``HybridSearcher.search()`` re-reads ``effective_config.ego_graph``
-    on every call — so no searcher reset is needed between runs.
-
-    ``community_bounded``/``cross_community_penalty`` are pre-existing here
-    but are **not** declared ``EgoGraphConfig`` fields and are not read
-    anywhere in ``search/`` (confirmed by grep — likely vestigial from the
-    since-rejected community-merge experiment; see project memory
-    ``project_benchmark_noise_and_pool_hit``). Migrating this pair through
-    ``arm_overrides.apply_overrides`` would turn that silent no-op into a
-    hard ``ArmOverrideError`` ("unknown field"), a real behavior change this
-    refactor must not make — so they keep the original raw ``setattr``.
-    """
-    if ego_graph is not None or expansion_mode is not None:
-        from search.config import get_search_config
-
-        arm_overrides.apply_overrides(
-            get_search_config(),
-            _non_none_overrides(
-                {
-                    "ego_graph.enabled": ego_graph == "on"
-                    if ego_graph is not None
-                    else None,
-                    "ego_graph.expansion_mode": expansion_mode,
-                }
-            ),
-        )
-
-    if community_bounded is not None or cross_community_penalty is not None:
-        try:
-            from search.config import get_search_config
-
-            cfg = get_search_config()
-            if community_bounded is not None:
-                cfg.ego_graph.community_bounded = community_bounded == "on"
-            if cross_community_penalty is not None:
-                cfg.ego_graph.cross_community_penalty = cross_community_penalty
-        except Exception as e:
-            print(f"[WARN] Could not apply ego-graph overrides: {e}", file=sys.stderr)
-
-
-def _apply_rrf_k_override(rrf_k: int | None) -> None:
-    """Override the RRF fusion constant in the in-memory config singleton.
-
-    Unlike ``top_k_candidates``, ``rrf_k_parameter`` is baked into ``RRFReranker``
-    at HybridSearcher construction (``search_factory.py``) — callers must reset
-    the cached searcher afterwards for the value to take effect.
-    """
-    if rrf_k is None:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(
-        get_search_config(), {"search_mode.rrf_k_parameter": rrf_k}
-    )
-
-
 def _reset_cached_searcher() -> None:
     """Drop the cached ``HybridSearcher`` in server state.
 
-    Shared by ``_maybe_reset_for_construction_overrides`` (the 32 named
-    flags) and ``run_single``'s ``--set`` handling — both need the same
-    reset once a construction-baked field has changed underneath a cached
-    searcher.
+    Needed once a construction-baked field (``rrf_k``, the reranker document
+    budgets, ``listwise_dtype``) has changed underneath a cached searcher —
+    see ``arm_overrides.apply_overrides``'s return value, which callers
+    (``run_single``) check via ``arm_overrides.requires_rebuild`` before
+    calling this.
     """
     try:
         from mcp_server.services import get_state
@@ -409,48 +495,6 @@ def _reset_cached_searcher() -> None:
         get_state().reset_searcher()
     except Exception as e:
         print(f"[WARN] Could not reset cached searcher: {e}", file=sys.stderr)
-
-
-def _maybe_reset_for_construction_overrides(
-    bm25_weight: float | None,
-    dense_weight: float | None,
-    rrf_k: int | None,
-    doc_max_chars: int | None = None,
-    listwise_doc_max_chars: int | None = None,
-    reranker_dtype: str | None = None,
-) -> None:
-    """Drop the cached HybridSearcher when construction-baked params are overridden.
-
-    ``search_factory.get_searcher()`` caches the searcher in server state, and
-    rrf_k, the reranker document budgets, and the listwise reranker dtype are
-    baked in at construction — without this reset, a ``--sweep`` silently
-    reuses the first iteration's params for every subsequent config
-    (Blocker B). The decision is derived from ``arm_overrides.requires_rebuild``,
-    which reads the same ``spec(construction_baked=True)`` flag (ADR-0022) that
-    every other seam caller reads — one source of truth for "which fields are
-    baked in at construction" instead of a second, hand-maintained one that
-    could silently drift from it.
-
-    bm25_weight/dense_weight are accepted here for backward-compatible call
-    sites but are NOT construction-baked (Phase 2a, ADR-0018 follow-on):
-    ``HybridSearcher`` takes no weight parameters and resolves both live from
-    the effective config on every ``search()`` call
-    (``hybrid_searcher.py:731-739``) — so touching only these two no longer
-    triggers a reset, and a ``--sweep`` over ``SWEEP_CONFIGS`` (bm25/dense
-    weight arms) stops paying a spurious searcher reset + reranker reload.
-    """
-    touched = _non_none_overrides(
-        {
-            "search_mode.bm25_weight": bm25_weight,
-            "search_mode.dense_weight": dense_weight,
-            "search_mode.rrf_k_parameter": rrf_k,
-            "reranker.doc_max_chars": doc_max_chars,
-            "reranker.listwise_doc_max_chars": listwise_doc_max_chars,
-            "reranker.listwise_dtype": reranker_dtype,
-        }
-    )
-    if arm_overrides.requires_rebuild(touched):
-        _reset_cached_searcher()
 
 
 class _EgoConfoundRecorder(logging.Handler):
@@ -1630,59 +1674,34 @@ async def run_single(
     dataset: dict[str, Any],
     config_name: str,
     k: int,
-    bm25_weight: float | None,
-    dense_weight: float | None,
-    search_mode: str | None,
     category_filter: str | None,
     verbose: bool,
-    reranker_model: str | None = None,
-    reranker_enabled: bool | None = None,
-    top_k_candidates: int | None = None,
-    rrf_k: int | None = None,
-    bm25_reserved_slots: int | None = None,
-    reranker_doc_max_chars: int | None = None,
-    reranker_listwise_doc_max_chars: int | None = None,
-    reranker_dtype: str | None = None,
+    overrides: dict[str, Any],
     f_via_similar: bool = False,
-    query_expansion: bool = False,
-    multi_hop_expansion: float | None = None,
-    hop1_reserved_slots: int | None = None,
-    ego_graph: str | None = None,
-    community_bounded: str | None = None,
-    cross_community_penalty: float | None = None,
-    expansion_mode: str | None = None,
-    set_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Execute one benchmark run and return the result dict."""
-    _apply_weight_overrides(bm25_weight, dense_weight, search_mode)
-    _apply_reranker_override(reranker_model, reranker_enabled)
-    _apply_reranker_budget_override(top_k_candidates)
-    _apply_reranker_doc_max_chars_override(
-        reranker_doc_max_chars, reranker_listwise_doc_max_chars
-    )
-    _apply_reranker_dtype_override(reranker_dtype)
-    _apply_rrf_k_override(rrf_k)
-    _apply_reserved_slots_override(bm25_reserved_slots)
-    _apply_multi_hop_expansion_override(multi_hop_expansion)
-    _apply_hop1_reserved_slots_override(hop1_reserved_slots)
-    _apply_query_expansion_override(query_expansion)
-    _apply_ego_graph_overrides(
-        ego_graph, community_bounded, cross_community_penalty, expansion_mode
-    )
-    _maybe_reset_for_construction_overrides(
-        bm25_weight,
-        dense_weight,
-        rrf_k,
-        reranker_doc_max_chars,
-        reranker_listwise_doc_max_chars,
-        reranker_dtype,
-    )
-    if set_overrides:
-        from search.config import get_search_config
+    """Execute one benchmark run and return the result dict.
 
-        if arm_overrides.apply_overrides(get_search_config(), set_overrides):
-            _reset_cached_searcher()
-        print(f"  --set overrides: {set_overrides}")
+    *overrides* is one merge-ready dotted-key dict — the caller's
+    already-merged combination of named-flag overrides
+    (``_overrides_from_args``), any sweep-arm delta (``_sweep_delta``), and
+    ``--set`` overrides (``arm_overrides.parse_set_flags``), all folded
+    together via ``arm_overrides.merge_overrides`` before this call. May
+    carry ``_LEGACY_EGO_KEY`` for the two undeclared ``EgoGraphConfig``
+    fields, popped here before the rest reaches ``apply_overrides``.
+    """
+    overrides = dict(overrides)
+    legacy_ego = overrides.pop(_LEGACY_EGO_KEY, {})
+
+    from search.config import get_search_config
+
+    cfg = get_search_config()
+    if arm_overrides.apply_overrides(cfg, overrides):
+        _reset_cached_searcher()
+    _apply_legacy_ego_overrides(
+        cfg,
+        legacy_ego.get("community_bounded"),
+        legacy_ego.get("cross_community_penalty"),
+    )
 
     try:
         searcher = _get_searcher(project_path)
@@ -1701,62 +1720,16 @@ async def run_single(
 
     queries = dataset["queries"]
     print(f"\nRunning: {config_name} | k={k} | {len(queries)} queries")
-    if bm25_weight is not None or dense_weight is not None:
-        print(
-            f"  Weights: BM25={bm25_weight or 'default'}  dense={dense_weight or 'default'}"
-        )
-    if reranker_model is not None or reranker_enabled is not None:
-        print(
-            f"  Reranker: model={reranker_model or 'default'}  "
-            f"enabled={reranker_enabled if reranker_enabled is not None else 'default'}"
-        )
-    if top_k_candidates is not None:
-        print(f"  Reranker pool budget: top_k_candidates={top_k_candidates}")
-    if (
-        reranker_doc_max_chars is not None
-        or reranker_listwise_doc_max_chars is not None
-    ):
-        print(
-            f"  Reranker doc budget: doc_max_chars={reranker_doc_max_chars or 'default'}  "
-            f"listwise_doc_max_chars={reranker_listwise_doc_max_chars or 'default'}"
-        )
-    if reranker_dtype is not None:
-        print(f"  Reranker dtype: listwise_dtype={reranker_dtype}")
-    if rrf_k is not None:
-        print(f"  RRF fusion constant: rrf_k={rrf_k}")
-    if bm25_reserved_slots is not None:
-        print(f"  BM25 reserved pool slots: {bm25_reserved_slots}")
-    if multi_hop_expansion is not None:
-        print(f"  Multi-hop expansion factor: {multi_hop_expansion}")
-    if hop1_reserved_slots is not None:
-        print(f"  Hop1 reserved rerank-window slots: {hop1_reserved_slots}")
-    if ego_graph is not None:
-        print(f"  Ego-graph expansion: {ego_graph}")
-    if community_bounded is not None:
-        print(f"  Community-bounded ego truncation: {community_bounded}")
-    if cross_community_penalty is not None:
-        print(f"  Cross-community penalty: {cross_community_penalty}")
-    if expansion_mode is not None:
-        print(f"  Ego expansion mode: {expansion_mode}")
-    if f_via_similar:
-        print(
-            "  F-via-similar: ON (anchored F queries scored via "
-            "find_similar_to_chunk; secondary view, not the official aggregate)"
-        )
-    if query_expansion:
-        print(
-            "  Query expansion: ON (curated-vocabulary variant legs, "
-            "config/query_expansion_variants.yaml)"
-        )
+    _print_overrides(overrides, legacy_ego, f_via_similar)
 
     # Reset peak VRAM stats and issue a warm-up search so a reranker model swap's
     # (or dtype swap's) first-call load/download cost lands here, not in the
     # timed latency average.
     torch_module = None
     if (
-        reranker_model is not None
-        or reranker_enabled is not None
-        or reranker_dtype is not None
+        "reranker.model_name" in overrides
+        or "reranker.enabled" in overrides
+        or "reranker.listwise_dtype" in overrides
     ):
         try:
             import torch
@@ -1796,7 +1769,7 @@ async def run_single(
         category_filter=category_filter,
         verbose=verbose,
         line_lookup=line_lookup,
-        search_mode=search_mode,
+        search_mode=overrides.get("search_mode.default_mode"),
         merged_membership=merged_membership,
         f_via_similar=f_via_similar,
         confound_recorder=confound_recorder,
@@ -1843,45 +1816,14 @@ async def run_single(
         )
 
     # Config metadata for comparison / experiment tracking (Lesson 4 pattern)
-    config_metadata: dict[str, Any] = {
-        "project_path": project_path,
-        "k": k,
-        "category_filter": category_filter,
-    }
-    if bm25_weight is not None:
-        config_metadata["bm25_weight"] = bm25_weight
-    if dense_weight is not None:
-        config_metadata["dense_weight"] = dense_weight
-    if search_mode is not None:
-        config_metadata["search_mode"] = search_mode
-    if reranker_model is not None:
-        config_metadata["reranker_model"] = reranker_model
-    if reranker_enabled is not None:
-        config_metadata["reranker_enabled"] = reranker_enabled
-    if top_k_candidates is not None:
-        config_metadata["top_k_candidates"] = top_k_candidates
-    if reranker_dtype is not None:
-        config_metadata["reranker_dtype"] = reranker_dtype
-    if rrf_k is not None:
-        config_metadata["rrf_k"] = rrf_k
-    if bm25_reserved_slots is not None:
-        config_metadata["bm25_reserved_slots"] = bm25_reserved_slots
-    if multi_hop_expansion is not None:
-        config_metadata["multi_hop_expansion"] = multi_hop_expansion
-    if hop1_reserved_slots is not None:
-        config_metadata["hop1_reserved_slots"] = hop1_reserved_slots
-    if f_via_similar:
-        config_metadata["f_via_similar"] = True
-    if query_expansion:
-        config_metadata["query_expansion"] = True
-    if ego_graph is not None:
-        config_metadata["ego_graph"] = ego_graph
-    if community_bounded is not None:
-        config_metadata["community_bounded"] = community_bounded
-    if cross_community_penalty is not None:
-        config_metadata["cross_community_penalty"] = cross_community_penalty
-    if expansion_mode is not None:
-        config_metadata["expansion_mode"] = expansion_mode
+    config_metadata = _build_config_metadata(
+        project_path=project_path,
+        k=k,
+        category_filter=category_filter,
+        overrides=overrides,
+        legacy_ego=legacy_ego,
+        f_via_similar=f_via_similar,
+    )
     if torch_module is not None:
         config_metadata["peak_vram_reserved_gb"] = round(
             torch_module.cuda.max_memory_reserved() / 1e9, 2
@@ -1960,9 +1902,6 @@ async def main_async(args: argparse.Namespace) -> None:
 
     dataset = _load_golden_dataset(Path(args.golden_dataset))
     verbose = not args.quiet
-    reranker_enabled = (
-        None if args.reranker_enabled is None else args.reranker_enabled == "true"
-    )
     # Parse once, up front, so a malformed --set fails before any search run
     # (and before any sweep iteration) rather than mid-sweep.
     set_overrides = arm_overrides.parse_set_flags(args.set_overrides)
@@ -1976,33 +1915,22 @@ async def main_async(args: argparse.Namespace) -> None:
         print(f"{'=' * 70}")
         reranker_results: list[dict[str, Any]] = []
         for sweep_cfg in RERANKER_SWEEP:
+            overrides = arm_overrides.merge_overrides(
+                _overrides_from_args(
+                    args, exclude=frozenset({"reranker_model", "reranker_enabled"})
+                ),
+                _sweep_delta(sweep_cfg),
+                set_overrides,
+            )
             result = await run_single(
                 project_path=project_path,
                 dataset=dataset,
                 config_name=sweep_cfg["config_name"],
                 k=args.k,
-                bm25_weight=args.bm25_weight,
-                dense_weight=args.dense_weight,
-                search_mode=args.search_mode,
                 category_filter=args.category,
                 verbose=False,  # quiet during sweep
-                reranker_model=sweep_cfg.get("reranker_model"),
-                reranker_enabled=sweep_cfg.get("reranker_enabled"),
-                top_k_candidates=args.top_k_candidates,
-                reranker_doc_max_chars=args.reranker_doc_max_chars,
-                reranker_listwise_doc_max_chars=args.reranker_listwise_doc_max_chars,
-                reranker_dtype=args.reranker_dtype,
-                rrf_k=args.rrf_k,
-                bm25_reserved_slots=args.bm25_reserved_slots,
-                multi_hop_expansion=args.multi_hop_expansion,
-                hop1_reserved_slots=args.hop1_reserved_slots,
+                overrides=overrides,
                 f_via_similar=args.f_via_similar,
-                query_expansion=args.query_expansion,
-                ego_graph=args.ego_graph,
-                community_bounded=args.community_bounded,
-                cross_community_penalty=args.cross_community_penalty,
-                expansion_mode=args.expansion_mode,
-                set_overrides=set_overrides,
             )
             reranker_results.append(result)
 
@@ -2029,33 +1957,22 @@ async def main_async(args: argparse.Namespace) -> None:
         print(f"{'=' * 70}")
         sweep_results: list[dict[str, Any]] = []
         for sweep_cfg in SWEEP_CONFIGS:
+            overrides = arm_overrides.merge_overrides(
+                _overrides_from_args(
+                    args, exclude=frozenset({"bm25_weight", "dense_weight"})
+                ),
+                _sweep_delta(sweep_cfg),
+                set_overrides,
+            )
             result = await run_single(
                 project_path=project_path,
                 dataset=dataset,
                 config_name=sweep_cfg["config_name"],
                 k=args.k,
-                bm25_weight=sweep_cfg["bm25_weight"],
-                dense_weight=sweep_cfg["dense_weight"],
-                search_mode=args.search_mode,
                 category_filter=args.category,
                 verbose=False,  # quiet during sweep
-                reranker_model=args.reranker_model,
-                reranker_enabled=reranker_enabled,
-                top_k_candidates=args.top_k_candidates,
-                reranker_doc_max_chars=args.reranker_doc_max_chars,
-                reranker_listwise_doc_max_chars=args.reranker_listwise_doc_max_chars,
-                reranker_dtype=args.reranker_dtype,
-                rrf_k=args.rrf_k,
-                bm25_reserved_slots=args.bm25_reserved_slots,
-                multi_hop_expansion=args.multi_hop_expansion,
-                hop1_reserved_slots=args.hop1_reserved_slots,
+                overrides=overrides,
                 f_via_similar=args.f_via_similar,
-                query_expansion=args.query_expansion,
-                ego_graph=args.ego_graph,
-                community_bounded=args.community_bounded,
-                cross_community_penalty=args.cross_community_penalty,
-                expansion_mode=args.expansion_mode,
-                set_overrides=set_overrides,
             )
             sweep_results.append(result)
 
@@ -2076,33 +1993,16 @@ async def main_async(args: argparse.Namespace) -> None:
     # -----------------------------------------------------------------------
     # Single run
     # -----------------------------------------------------------------------
+    overrides = arm_overrides.merge_overrides(_overrides_from_args(args), set_overrides)
     result = await run_single(
         project_path=project_path,
         dataset=dataset,
         config_name=args.config_name,
         k=args.k,
-        bm25_weight=args.bm25_weight,
-        dense_weight=args.dense_weight,
-        search_mode=args.search_mode,
         category_filter=args.category,
         verbose=verbose,
-        reranker_model=args.reranker_model,
-        reranker_enabled=reranker_enabled,
-        top_k_candidates=args.top_k_candidates,
-        reranker_doc_max_chars=args.reranker_doc_max_chars,
-        reranker_listwise_doc_max_chars=args.reranker_listwise_doc_max_chars,
-        reranker_dtype=args.reranker_dtype,
-        rrf_k=args.rrf_k,
-        bm25_reserved_slots=args.bm25_reserved_slots,
-        multi_hop_expansion=args.multi_hop_expansion,
-        hop1_reserved_slots=args.hop1_reserved_slots,
+        overrides=overrides,
         f_via_similar=args.f_via_similar,
-        query_expansion=args.query_expansion,
-        ego_graph=args.ego_graph,
-        community_bounded=args.community_bounded,
-        cross_community_penalty=args.cross_community_penalty,
-        expansion_mode=args.expansion_mode,
-        set_overrides=set_overrides,
     )
 
     # Print leaderboard (single row)
