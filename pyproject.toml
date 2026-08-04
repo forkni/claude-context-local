@@ -29,7 +29,7 @@ keywords = [
 ]
 dependencies = [
     "aiohttp>=3.14.1",  # Security: Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1)
-    "cryptography>=46.0.7",  # Security: PYSEC-2026-35/36 (DNS name-constraint bypass, buffer overflow). Defer GHSA-537c (OpenSSL wheel, needs 48.x major bump).
+    "cryptography>=50.0.0",  # Security: PYSEC-2026-35/36 (DNS name-constraint bypass, buffer overflow). Defer GHSA-537c (OpenSSL wheel, needs 48.x major bump).
     "einops>=0.8.0",  # Required for CodeRankEmbed model
     "faiss-cpu>=1.14.3",
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
