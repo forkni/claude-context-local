@@ -169,6 +169,10 @@
       {
         "date": "2026-08-02",
         "change": "Added 37 H-category queries (Q100-Q133-adjacent, id-prefixed H not Q to keep the commit-mined batch visually distinct): bug-fix localization queries mined from single-file/<=2-gold commits, paraphrased from commit subjects (evaluation/commit_mined_candidates.json, benchmark_results/h_candidates_paraphrased.json) and graded via live search at k=10 across 2 rounds (scripts/benchmark/grade_candidate_queries.py --candidates). All intended golds graded 3 as-is (no manual sibling/near-miss grade-2 embellishment this round). H012 and H067 had an invalid intended gold (mcp_server/server.py:function:app_lifespan, a stale pre-refactor ID) corrected to the grader's suggested mcp_server/server.py:decorated_definition:app_lifespan. Dropped H042 as an exact duplicate of H041 (same query text and gold, different source commit). Excluded H035/H060/H061/H068 despite being found in top-10 during round 1: round 2 (an identical re-run scoped to round 1's passers) dropped all four to pool_miss against the same live index -- bf16 neural-reranker batch-composition non-determinism changes score ordering for borderline candidates between runs of different query-set sizes, and a single lucky run isn't enough signal to fix these into a golden set. Splits: train 25 / val 6 / test 6. 126 I-category candidates (multi-file or >2 golds) remain out of scope."
+      },
+      {
+        "date": "2026-08-04",
+        "change": "H064: retargeted after ADR-0025 (commit fde9a44) collapsed HybridSearcher.clear_index from a 65-line implementation to a 4-line delegator to IndexSynchronizer.clear_index, moving the BM25-files-per-model rmtree logic the query describes into BM25Index.clear (search/bm25_index.py:456-458, reached via IndexSynchronizer.clear_index at index_sync.py:336). The old sole gold (HybridSearcher.clear_index) no longer contains the behaviour the query asks to change. expected_primary retargeted grade-3 to BM25Index.clear (owns the rmtree); IndexSynchronizer.clear_index added at grade 2 (sequencer deciding what gets cleared); HybridSearcher.clear_index kept at grade 1 (legitimate entry point). Comparability break vs. the pre-refactor canon: H064 moves from one gold to three."
       }
     ]
   },
@@ -3153,13 +3157,17 @@
       "category": "H",
       "split": "test",
       "expected": [
+        "search/bm25_index.py:method:BM25Index.clear",
+        "search/index_sync.py:method:IndexSynchronizer.clear_index",
         "search/hybrid_searcher.py:method:HybridSearcher.clear_index"
       ],
       "expected_primary": [
-        "search/hybrid_searcher.py:method:HybridSearcher.clear_index"
+        "search/bm25_index.py:method:BM25Index.clear"
       ],
       "relevance_grades": {
-        "search/hybrid_searcher.py:method:HybridSearcher.clear_index": 3
+        "search/bm25_index.py:method:BM25Index.clear": 3,
+        "search/index_sync.py:method:IndexSynchronizer.clear_index": 2,
+        "search/hybrid_searcher.py:method:HybridSearcher.clear_index": 1
       }
     },
     {
