@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import Any
 
 from mcp_server.project_persistence import save_project_selection
-from mcp_server.resource_manager import _cleanup_previous_resources
+from mcp_server.resource_manager import (
+    _cleanup_previous_resources,
+    bind_active_project_overrides,
+)
 from mcp_server.services import get_state
-from mcp_server.state import invalidate_config_caches
 from mcp_server.storage_manager import (
     get_project_storage_dir,
     set_current_project,
@@ -27,7 +29,6 @@ from search.config import (
     SearchModeConfig,
     _derive_mcp_field_names,
     get_config_manager,
-    set_active_project_storage_dir,
     validate_field_value,
 )
 
@@ -137,9 +138,10 @@ async def handle_switch_project(arguments: dict[str, Any]) -> dict:
     # search_overrides.json (ADR-0014) is merged into subsequent config loads,
     # then drop config-derived caches (the global file's mtime does not change
     # on a project switch, so without this the old project's merged config —
-    # and the searcher built from it — would keep serving).
-    set_active_project_storage_dir(project_dir)
-    invalidate_config_caches()
+    # and the searcher built from it — would keep serving). Non-swallowing:
+    # a bind failure here must surface via @error_handler rather than
+    # returning success: True while the previous project's overrides serve.
+    bind_active_project_overrides(str(project_path))
 
     if not index_dir.exists() or not (index_dir / "code.index").exists():
         return responses.ok(

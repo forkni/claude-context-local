@@ -17,7 +17,6 @@ from mcp_server.search_factory import (
     get_searcher,
 )
 from mcp_server.services import get_config, get_state
-from mcp_server.state import invalidate_config_caches
 from mcp_server.storage_manager import (
     get_canonical_project_info,
     get_project_storage_dir,
@@ -28,7 +27,6 @@ from mcp_server.storage_manager import (
 from mcp_server.tools import responses
 from mcp_server.tools.decorators import error_handler, with_mutation_lock
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
-from search.config import set_active_project_storage_dir
 from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
 from search.incremental_indexer import IncrementalIndexer
 
@@ -737,7 +735,10 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
     logger.info("[INDEX] Releasing previous resources before indexing...")
     import asyncio
 
-    from mcp_server.resource_manager import _cleanup_previous_resources
+    from mcp_server.resource_manager import (
+        _cleanup_previous_resources,
+        bind_active_project_overrides,
+    )
 
     await asyncio.to_thread(_cleanup_previous_resources)
 
@@ -811,8 +812,9 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
     # search_overrides.json (ADR-0014) applies to this run — index_directory
     # without a prior switch_project must still pick up the right file — then
     # drop config-derived caches built against the previous project's overrides.
-    set_active_project_storage_dir(get_project_storage_dir(str(directory_path)))
-    invalidate_config_caches()
+    # Non-swallowing: a bind failure here must surface via @error_handler
+    # rather than indexing proceeding against the previous project's overrides.
+    bind_active_project_overrides(str(directory_path))
 
     # Temporarily disable allow_ram_fallback during indexing for performance
     with temporary_ram_fallback_off() as original_value:

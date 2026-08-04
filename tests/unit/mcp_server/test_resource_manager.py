@@ -8,22 +8,31 @@ the others. These tests cover the two properties that guarantee: the happy
 path invokes every dependency, and a raising early step doesn't stop later
 steps from running.
 
-_bind_active_project_overrides()/initialize_server_state() are covered
-separately (Phase 1c, ADR-0018 follow-on). Before this fix, server startup
+bind_active_project_overrides()/initialize_server_state() are covered
+separately (Phase 1c, ADR-0018 follow-on; promoted to public + non-swallowing
+in the project-activation-pairing refactor). Before Phase 1c, server startup
 restored the active project (env var or persisted selection) on both
 branches but never bound search/config.py's ``_active_project_storage_dir``,
 so a restored project's search_overrides.json (ADR-0014) was silently not
 merged into effective config until an explicit switch_project or
 index_directory call. These tests assert the binding now happens on both
-restoration paths, and that a storage-lookup failure degrades gracefully
-instead of crashing startup.
+restoration paths.
+
+bind_active_project_overrides() itself is non-swallowing: a bind failure at
+a handler call site (handle_switch_project, _run_index_directory) must
+propagate so @error_handler surfaces it, rather than returning success while
+the previous project's overrides keep serving. Only initialize_server_state's
+two startup call sites wrap it in a non-fatal try/except, since a project
+storage lookup failure at boot should not crash the server.
 """
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from mcp_server.resource_manager import (
-    _bind_active_project_overrides,
     _cleanup_previous_resources,
+    bind_active_project_overrides,
     initialize_server_state,
 )
 from mcp_server.storage_manager import get_project_storage_dir
@@ -107,7 +116,8 @@ def test_cleanup_previous_resources_isolates_component_failures():
 
 
 class TestBindActiveProjectOverrides:
-    """Unit tests for _bind_active_project_overrides (Phase 1c)."""
+    """Unit tests for bind_active_project_overrides (Phase 1c; promoted to
+    public + non-swallowing by the project-activation-pairing refactor)."""
 
     def test_happy_path_binds_storage_dir_and_invalidates_caches(self):
         """The helper resolves the project's storage dir, binds it as the
@@ -123,18 +133,21 @@ class TestBindActiveProjectOverrides:
             patch("search.config.set_active_project_storage_dir") as mock_set_dir,
             patch("mcp_server.state.invalidate_config_caches") as mock_invalidate,
         ):
-            result = _bind_active_project_overrides("/some/project")
+            result = bind_active_project_overrides("/some/project")
 
         assert result is None
         mock_get_dir.assert_called_once_with("/some/project")
         mock_set_dir.assert_called_once_with(fake_storage_dir)
         mock_invalidate.assert_called_once()
 
-    def test_storage_lookup_failure_is_swallowed(self):
-        """A raising project-storage lookup (e.g. an unregistered embedding
-        model) must not crash startup — the project still activates via
-        state.current_project/set_current_project, just without its
-        overrides layer bound, mirroring step 1's non-fatal config load."""
+    def test_storage_lookup_failure_propagates(self):
+        """Non-swallowing by design: a raising project-storage lookup (e.g.
+        an unregistered embedding model) must propagate to the caller.
+        Handler call sites rely on this so @error_handler surfaces a bind
+        failure instead of returning success while the previous project's
+        search_overrides.json keeps serving; startup call sites are
+        responsible for their own non-fatal try/except around this call
+        (see TestInitializeServerStateSwallowsBindFailure)."""
         with (
             patch(
                 "mcp_server.storage_manager.get_project_storage_dir",
@@ -142,10 +155,10 @@ class TestBindActiveProjectOverrides:
             ),
             patch("search.config.set_active_project_storage_dir") as mock_set_dir,
             patch("mcp_server.state.invalidate_config_caches") as mock_invalidate,
+            pytest.raises(ValueError, match="unknown embedding model"),
         ):
-            result = _bind_active_project_overrides("/some/project")  # must not raise
+            bind_active_project_overrides("/some/project")
 
-        assert result is None
         mock_set_dir.assert_not_called()
         mock_invalidate.assert_not_called()
 
@@ -198,3 +211,57 @@ class TestInitializeServerStateBindsOverrides:
             expected_storage = get_project_storage_dir(str(project_path))
 
         assert config_module.get_active_project_storage_dir() == str(expected_storage)
+
+
+class TestInitializeServerStateSwallowsBindFailure:
+    """bind_active_project_overrides() is non-swallowing (see
+    TestBindActiveProjectOverrides.test_storage_lookup_failure_propagates),
+    so initialize_server_state's two startup call sites are responsible for
+    their own non-fatal try/except — a project storage lookup failure at
+    boot must not crash the server on either restoration path."""
+
+    def test_env_var_branch_does_not_crash_on_bind_failure(self, tmp_path, monkeypatch):
+        project_path = tmp_path / "env_project"
+        project_path.mkdir()
+        monkeypatch.setenv("CLAUDE_DEFAULT_PROJECT", str(project_path))
+
+        fake_config = MagicMock()
+        fake_config.embedding.model_name = "Qwen/Qwen3-Embedding-0.6B"
+        with (
+            patch(
+                "mcp_server.storage_manager.get_search_config", return_value=fake_config
+            ),
+            patch(
+                "mcp_server.resource_manager.bind_active_project_overrides",
+                side_effect=ValueError("unknown embedding model"),
+            ) as mock_bind,
+        ):
+            initialize_server_state()  # must not raise
+
+        mock_bind.assert_called_once_with(str(project_path))
+
+    def test_persisted_selection_branch_does_not_crash_on_bind_failure(
+        self, tmp_path, monkeypatch
+    ):
+        from mcp_server.project_persistence import save_project_selection
+
+        monkeypatch.delenv("CLAUDE_DEFAULT_PROJECT", raising=False)
+
+        project_path = tmp_path / "restored_project"
+        project_path.mkdir()
+        save_project_selection(str(project_path))
+
+        fake_config = MagicMock()
+        fake_config.embedding.model_name = "Qwen/Qwen3-Embedding-0.6B"
+        with (
+            patch(
+                "mcp_server.storage_manager.get_search_config", return_value=fake_config
+            ),
+            patch(
+                "mcp_server.resource_manager.bind_active_project_overrides",
+                side_effect=ValueError("unknown embedding model"),
+            ) as mock_bind,
+        ):
+            initialize_server_state()  # must not raise
+
+        mock_bind.assert_called_once_with(str(project_path))
