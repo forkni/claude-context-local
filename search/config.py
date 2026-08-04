@@ -1387,9 +1387,10 @@ def _derive_construction_baked_fields(
 class SearchConfig:
     """Root configuration with nested sub-configs.
 
-    Configuration organization:
-    - Split into focused sub-configs for better organization
-    - embedding, search_mode, performance, multi_hop, intent, reranker, output, chunking
+    Split into focused sub-configs for organization; see ``_SUBCONFIG_FIELDS``
+    below for the current, single-source-of-truth list of section names (this
+    docstring used to hand-duplicate that list and had drifted to 8 of 14
+    sections before being replaced by this pointer -- see ADR-0022).
 
     Initialization style (nested configs only):
         config = SearchConfig(embedding=EmbeddingConfig(model_name="..."))
