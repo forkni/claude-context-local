@@ -259,36 +259,62 @@ class SearchModeConfig:
 
     # BM25 Configuration
     # Okapi BM25 scoring parameters (rank_bm25 defaults). k1 controls term-
-    # frequency saturation; b controls document-length normalization. Applied
-    # at query time — changing them takes effect on next load, no re-index
-    # needed. (Replaces the dead ``bm25_k_parameter`` field, which was never
-    # read by any scoring path.)
+    # frequency saturation; b controls document-length normalization. No
+    # re-index needed — bm25_index.py re-applies configured k1/b against the
+    # saved corpus stats on load. But they are read once at HybridSearcher
+    # construction (BM25Index build/load/rebuild), not at query time: mutating
+    # a live SearchConfig singleton is inert until the index reloads or the
+    # searcher is rebuilt (construction_baked=True below drives
+    # arm_overrides.requires_rebuild() accordingly). Both are also in
+    # index_probe.py's FORBIDDEN_AUTO_TUNE_KEYS — fusion sweep saturated, do
+    # not re-sweep; that frozenset governs whether the ADR-0014 auto-tuning
+    # probe may write a key, a different question from whether a benchmark
+    # arm must rebuild the cached searcher. (Replaces the dead
+    # ``bm25_k_parameter`` field, which was never read by any scoring path.)
     bm25_k1: float = field(
         default=1.5,
-        metadata=spec(flat_alias="bm25_k1", reader="search/hybrid_searcher.py"),
+        metadata=spec(
+            flat_alias="bm25_k1",
+            reader="search/hybrid_searcher.py",
+            construction_baked=True,
+        ),
     )
     bm25_b: float = field(
         default=0.75,
-        metadata=spec(flat_alias="bm25_b", reader="search/hybrid_searcher.py"),
+        metadata=spec(
+            flat_alias="bm25_b",
+            reader="search/hybrid_searcher.py",
+            construction_baked=True,
+        ),
     )
+    # Also in FORBIDDEN_AUTO_TUNE_KEYS (A/B 2026-08-01: removing regresses
+    # recall@5/MRR) — read once at construction, same rebuild caveat as k1/b.
     bm25_use_stopwords: bool = field(
         default=True,
         metadata=spec(
-            flat_alias="bm25_use_stopwords", reader="search/hybrid_searcher.py"
+            flat_alias="bm25_use_stopwords",
+            reader="search/hybrid_searcher.py",
+            construction_baked=True,
         ),
     )
+    # Not in FORBIDDEN_AUTO_TUNE_KEYS — covered by neither guardrail today.
+    # Read once at construction like the other four BM25 tuning knobs.
     bm25_use_stemming: bool = field(
         default=True,  # Snowball stemmer for word normalization
         metadata=spec(
             flat_alias="bm25_use_stemming",
             env="CLAUDE_BM25_USE_STEMMING",
             reader="search/hybrid_searcher.py",
+            construction_baked=True,
         ),
     )
     # Tokenizer variant (arXiv 2605.18561): "legacy" = destructive camel/snake
     # split + stemming; "whole" = identifiers kept intact, no stemming;
     # "additive" = whole identifiers + camel/snake sub-tokens. Changing this
-    # requires a re-index (index/query tokenization must match).
+    # requires a re-index (index/query tokenization must match) — also read
+    # once at construction (construction_baked=True) and in
+    # FORBIDDEN_AUTO_TUNE_KEYS (INDEX_VERSION 4, identifier-preserving
+    # "whole" tokenizer).
     # Default "whole": +0.05/+0.07 Recall@5, +0.09/+0.10 MRR vs legacy on the
     # 96q/63q golden sets (BM25-standalone, bm25_tokenizer_ab.py 2026-07-26).
     bm25_tokenizer: str = field(
@@ -297,6 +323,7 @@ class SearchModeConfig:
             choices=("legacy", "whole", "additive"),
             flat_alias="bm25_tokenizer",
             reader="search/hybrid_searcher.py",
+            construction_baked=True,
         ),
     )
     # Reserved fused-pool slots for BM25-unique candidates. Under weighted RRF
@@ -366,10 +393,15 @@ class PerformanceConfig:
             reader="mcp_server/tools/search_orchestrator.py",
         ),
     )
+    # Read once at HybridSearcher construction (ThreadPoolExecutor max_workers);
+    # not in index_probe.py's FORBIDDEN_AUTO_TUNE_KEYS — covered by neither
+    # guardrail today, same gap as bm25_use_stemming above.
     max_parallel_workers: int = field(
         default=2,
         metadata=spec(
-            flat_alias="max_parallel_workers", reader="search/hybrid_searcher.py"
+            flat_alias="max_parallel_workers",
+            reader="search/hybrid_searcher.py",
+            construction_baked=True,
         ),
     )
 

@@ -72,7 +72,7 @@ def test_reader_files_mention_field_name():
 
 def test_construction_baked_fields_are_pinned():
     """Ratchet for spec(construction_baked=True) (Part 2/C1 of the ADR-0018
-    follow-on plan): the four fields read once into a collaborator (cached
+    follow-on plan): the ten fields read once into a collaborator (cached
     HybridSearcher/reranker) at construction rather than live per search call
     - pin the exact set so a silent addition or removal shows up here instead
     of only as a stale benchmark arm that silently didn't take effect.
@@ -84,10 +84,26 @@ def test_construction_baked_fields_are_pinned():
     hand from run_sscg_benchmark.py's _maybe_reset_for_construction_overrides)
     was wrong about those two. See test_weight_change_takes_effect_without_rebuild
     for the direct liveness proof.
+
+    The six search_mode.bm25_*/performance.max_parallel_workers fields were
+    added by the C3+C4 config-seam deepening (ADR-0030): all six were passed
+    as primitive kwargs to HybridSearcher.__init__ (read once there, several
+    only at BM25Index build/load/rebuild) but had never been marked
+    construction_baked=True, so a benchmark arm overriding e.g.
+    search_mode.bm25_k1 silently measured the pre-override value - the same
+    failure class this ratchet exists to catch. See
+    test_requires_rebuild_true_for_construction_baked_fields in
+    tests/unit/evaluation/test_arm_overrides.py for the direct proof.
     """
     expected = frozenset(
         {
             ("search_mode", "rrf_k_parameter"),
+            ("search_mode", "bm25_k1"),
+            ("search_mode", "bm25_b"),
+            ("search_mode", "bm25_use_stopwords"),
+            ("search_mode", "bm25_use_stemming"),
+            ("search_mode", "bm25_tokenizer"),
+            ("performance", "max_parallel_workers"),
             ("reranker", "doc_max_chars"),
             ("reranker", "listwise_doc_max_chars"),
             ("reranker", "listwise_dtype"),
