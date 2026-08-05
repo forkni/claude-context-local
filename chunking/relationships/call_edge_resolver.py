@@ -441,13 +441,20 @@ def run_resolvers(
         if process_resolvers:
             process_executor = ProcessPoolExecutor(max_workers=len(process_resolvers))
             for resolver in process_resolvers:
-                futures_by_resolver[resolver] = process_executor.submit(
-                    _resolve_in_subprocess,
-                    resolver,
-                    project_root,
-                    raw_line_map,
-                    py_files,
-                )
+                try:
+                    futures_by_resolver[resolver] = process_executor.submit(
+                        _resolve_in_subprocess,
+                        resolver,
+                        project_root,
+                        raw_line_map,
+                        py_files,
+                    )
+                except Exception:  # noqa: BLE001 - resilience: a submit failure (e.g. a broken process pool) must not take down thread-pool resolvers submitted below
+                    logger.warning(
+                        "[RESOLVERS] %s resolver failed to submit (non-fatal):\n%s",
+                        resolver.name,
+                        traceback.format_exc(),
+                    )
 
         if thread_resolvers:
             thread_executor = ThreadPoolExecutor(max_workers=len(thread_resolvers))
@@ -464,7 +471,10 @@ def run_resolvers(
         # submitted in, so merge precedence is unaffected by which finishes
         # first or which pool (thread vs process) ran it.
         for resolver in available_resolvers:
-            future = futures_by_resolver[resolver]
+            future = futures_by_resolver.get(resolver)
+            if future is None:
+                # Already logged above — submit() itself failed for this resolver.
+                continue
             try:
                 edges = future.result()
             except Exception:  # noqa: BLE001 - resilience: an optional resolver failing must not break the overall call-graph build
