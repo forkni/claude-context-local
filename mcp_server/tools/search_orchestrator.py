@@ -12,9 +12,8 @@ only genuine indexing/redirect calls into search_handlers stay lazy.
 from __future__ import annotations
 
 import asyncio
-import copy
 import logging
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from mcp_server.search_factory import get_searcher
@@ -27,6 +26,7 @@ from search.config import (
     get_config_manager,
     get_search_config,
 )
+from search.effective_config import build_effective_config
 from search.exceptions import DimensionMismatchError
 from search.graph_scoring_stage import GraphScoringStage
 from search.intent_classifier import IntentClassifier, IntentDecision, QueryIntent
@@ -388,84 +388,13 @@ class SearchOrchestrator:
             plan.query, plan.search_mode
         )
 
-        # get_search_config() returns a process-wide cached singleton. Requests that
-        # don't apply ego-graph / parent-retrieval / intent-edge overrides can pass the
-        # singleton straight through. Requests that do mutate lazily deep-copy once,
-        # so the singleton is never written and concurrent requests don't race.
-        config_singleton = get_search_config()
-        config_copy: SearchConfig | None = None
-
-        def mutable_config() -> SearchConfig:
-            """Deep-copy the singleton on first call; return the same copy thereafter."""
-            nonlocal config_copy
-            if config_copy is None:
-                config_copy = copy.deepcopy(config_singleton)
-            assert config_copy is not None  # set immediately above when None
-            return config_copy
-
-        # These four config mutations only apply to HybridSearcher (ego-graph,
-        # parent-retrieval, and intent-edge overrides are all graph/BM25-adjacent
-        # features IntelligentSearcher doesn't have) — one is_hybrid check gates
-        # the whole region instead of re-asking per mutation.
-        if _view.is_hybrid:
-            if plan.ego_graph_enabled:
-                cfg = mutable_config()
-                cfg.ego_graph = replace(
-                    cfg.ego_graph,
-                    enabled=plan.ego_graph_enabled,
-                    k_hops=plan.ego_graph_k_hops,
-                    max_neighbors_per_hop=plan.ego_graph_max_neighbors,
-                )
-                logger.info(
-                    f"[EGO_GRAPH] Enabled with k_hops={plan.ego_graph_k_hops}, "
-                    f"max_neighbors_per_hop={plan.ego_graph_max_neighbors}"
-                )
-
-            # QW5: apply intent-adaptive similarity threshold to ego-graph expansion
-            if plan.ego_graph_enabled and plan.intent_decision:
-                _intent_ego_thresholds = {
-                    "local": 0.25,
-                    "global": 0.10,
-                    "contextual": 0.12,
-                    "navigational": 0.20,
-                    "path_tracing": 0.15,
-                    "similarity": 0.10,
-                    "hybrid": 0.15,
-                }
-                intent_threshold = _intent_ego_thresholds.get(
-                    plan.intent_decision.intent.value, 0.15
-                )
-                if intent_threshold != 0.15:
-                    logger.info(
-                        f"[EGO_GRAPH] Intent-adaptive threshold: "
-                        f"{plan.intent_decision.intent.value} -> {intent_threshold}"
-                    )
-                mutable_config().ego_graph.min_similarity_threshold = intent_threshold
-
-            if plan.include_parent:
-                cfg = mutable_config()
-                cfg.parent_retrieval = replace(
-                    cfg.parent_retrieval, enabled=plan.include_parent
-                )
-                logger.info("[PARENT_RETRIEVAL] Enabled")
-
-            # Apply intent-driven edge weights for graph traversal (A1)
-            if plan.intent_decision:
-                from graph.graph_storage import INTENT_EDGE_WEIGHT_PROFILES
-
-                intent_key = plan.intent_decision.intent.value
-                edge_profile = INTENT_EDGE_WEIGHT_PROFILES.get(intent_key)
-                if edge_profile:
-                    cfg = mutable_config()
-                    cfg.multi_hop.edge_weights = edge_profile
-                    if cfg.ego_graph:
-                        cfg.ego_graph.edge_weights = edge_profile
-                    logger.info(
-                        f"[INTENT] Edge weight profile set for {intent_key}: "
-                        f"calls={edge_profile.get('calls', 'N/A')}, imports={edge_profile.get('imports', 'N/A')}"
-                    )
-
-        effective_config = config_copy if config_copy is not None else config_singleton
+        # get_search_config() returns a process-wide cached singleton.
+        # build_effective_config lazily deep-copies it only when plan overrides
+        # (ego-graph / parent-retrieval / intent-edge) actually apply, so the
+        # singleton is never written and concurrent requests don't race.
+        effective_config = build_effective_config(
+            plan, get_search_config(), _view.is_hybrid
+        )
 
         # ===== Block D: Search execution =====
         # Genuine polymorphic dispatch (HybridSearcher.search vs
