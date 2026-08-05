@@ -287,13 +287,15 @@ class TestIntentClassifierBasicDetection:
         assert symbol == "handle_search_code"
 
     def test_symbol_extraction_no_match(self, classifier):
-        """Test symbol extraction with ambiguous generic query."""
-        # With generic words, may extract last word as fallback
-        # This test verifies behavior exists (not necessarily None)
+        """Generic queries with no code-shaped token return None (no redirect).
+
+        Pattern 5 selects by symbol predicate (camelcase/dotted/snake_or_dunder/
+        upper_const), not "any lowercase word" — none of these words satisfy
+        any predicate, so this must be deterministically None, not a guessed
+        fallback word.
+        """
         symbol = classifier._extract_symbol_from_query("show me the code")
-        # Should extract "code" as last snake_case-like word, or None
-        # Either is acceptable for generic queries
-        assert symbol is None or isinstance(symbol, str)
+        assert symbol is None
 
     # ===== Tie Resolution Tests =====
 
@@ -569,6 +571,88 @@ class TestSimilarityIntent:
         decision = classifier.classify("similar implementations to CodeIndexManager")
         assert decision.intent == QueryIntent.SIMILARITY
         assert decision.confidence >= 0.3
+
+
+class TestSymbolExtractionGoldenRegressions:
+    """Pin _extract_symbol_from_query against real similarity golden queries.
+
+    Round C (docs/adr/0029) rewrote Pattern 5's fallback on
+    _detect_code_symbols' tokenizer+predicate shape after these exact query
+    strings (golden dataset Q70, Q71, Q93-Q99, the SIMILARITY/"F" category)
+    were measured extracting a trailing prose word ("hook", "codebase",
+    "get") instead of the dotted anchor symbol. Real query text is used
+    deliberately — a guessed phrasing reproduces a different misfire than
+    the one it is meant to pin.
+    """
+
+    @pytest.fixture
+    def classifier(self):
+        """Create IntentClassifier instance for testing."""
+        return IntentClassifier(enable_logging=False)
+
+    @pytest.mark.parametrize(
+        ("query", "expected_symbol"),
+        [
+            (
+                "find language chunker constructors similar to "
+                "PythonChunker.__init__ — I want all the concrete "
+                "language-specific chunker initializers across the codebase",
+                "PythonChunker.__init__",
+            ),
+            (
+                "find implementations similar to "
+                "InheritanceExtractor._extract_from_tree — other "
+                "relationship extractors that override the same abstract "
+                "tree-walk hook",
+                "InheritanceExtractor._extract_from_tree",
+            ),
+            (
+                "find detect_changes implementations similar to "
+                "IncrementalIndexer.detect_changes — other change "
+                "detection routines in the codebase",
+                "IncrementalIndexer.detect_changes",
+            ),
+            (
+                "find add_chunk pattern implementations similar to "
+                "GraphIntegration.add_chunk — other chunk-insertion "
+                "routines across indexer and graph storage classes",
+                "GraphIntegration.add_chunk",
+            ),
+            (
+                "find BM25 search methods similar to BM25Index.search — "
+                "other keyword retrieval implementations",
+                "BM25Index.search",
+            ),
+            (
+                "find search implementations similar to "
+                "SearchExecutor.search_bm25 — other methods that wrap "
+                "BM25 or dense retrieval",
+                "SearchExecutor.search_bm25",
+            ),
+            (
+                "find FaissVectorIndex operations similar to "
+                "FaissVectorIndex.save — other vector index lifecycle "
+                "methods",
+                "FaissVectorIndex.save",
+            ),
+            (
+                "find caching get and put implementations similar to "
+                "QueryEmbeddingCache.get",
+                "QueryEmbeddingCache.get",
+            ),
+            (
+                "find save and restore implementations similar to "
+                "GraphIntegration.save — other graph persistence and "
+                "load methods",
+                "GraphIntegration.save",
+            ),
+        ],
+        ids=["Q70", "Q71", "Q93", "Q94", "Q95", "Q96", "Q97", "Q98", "Q99"],
+    )
+    def test_similarity_golden_query_extracts_anchor_symbol(
+        self, classifier, query, expected_symbol
+    ):
+        assert classifier._extract_symbol_from_query(query) == expected_symbol
 
 
 class TestContextualIntent:
