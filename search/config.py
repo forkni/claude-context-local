@@ -544,11 +544,13 @@ class IntentConfig:
     """Intent classification settings (6 fields)."""
 
     enabled: bool = field(
-        # Default off: ADR-0026 measured the intent layer's non-redirect machinery (QW5 ego
-        # thresholds, A1 edge-weight profiles) as inert (+0.0005 MRR, bit-identical pools) and its
-        # two redirects as net-negative on the same substrate (find_path has no upside evidence at
-        # all; find_similar is salvageable but not yet repaired). See ADR-0028.
-        default=False,  # Enable intent classification for query routing
+        # Default on: ADR-0028 took this off pending a repair of the SIMILARITY-intent symbol
+        # extractor (_extract_symbol_from_query), which was misfiring on trailing prose words
+        # instead of the query's actual anchor symbol. ADR-0029 repaired the extractor and
+        # re-gated it: on the same substrate, the find_similar redirect now beats the normal
+        # ranked path on MRR for the 9 similarity queries without falling below the find_similar
+        # ceiling on recall@20, on both the 63q and 133q golden datasets. See ADR-0029.
+        default=True,  # Enable intent classification for query routing
         metadata=spec(
             flat_alias="intent_enabled",
             reader="mcp_server/tools/search_orchestrator.py",
