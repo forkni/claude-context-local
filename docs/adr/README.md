@@ -34,6 +34,7 @@ for avoiding re-litigating settled questions.
 | [0026](0026-canon-repin-and-b1b-intent-arm.md) | Re-pin the SSCG canon to `canon_f1` and capture the `canon_B1b` intent-on arm | accepted | 2026-08-04 |
 | [0027](0027-parallel-edge-bucketing.md) | Parallel edges carry through `find_connections` instead of collapsing to one primary type | accepted | 2026-08-04 |
 | [0028](0028-intent-off-by-default-and-remove-find-path-redirect.md) | Default intent classification off; remove the `find_path` redirect | accepted | 2026-08-04 |
+| [0029](0029-repair-symbol-extraction-and-regate-find-similar.md) | Repair `_extract_symbol_from_query` and re-gate the `find_similar` redirect | accepted | 2026-08-04 |
 
 ## Adding a new ADR
 

@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`find_similar` redirects no longer anchor on a trailing prose word** (ADR-0029) —
+  `_extract_symbol_from_query`'s fallback scanned `reversed(query.split())` and accepted any
+  non-blocklisted lowercase word as the redirect's target symbol, so queries like "find code
+  similar to `InheritanceExtractor._extract_from_tree` hook" redirected on `'hook'` instead of the
+  actual symbol (also: dotted names truncated at the dot, leading-underscore privates and
+  UPPER_CONST constants matched nothing). Rewritten to reuse `_detect_code_symbols`'s
+  dot-preserving tokenizer and predicate-precedence ranking (promoted to a shared
+  `search/tokenization.py` helper), returning `None` — no redirect, normal ranked search — when no
+  token qualifies. Nine golden-query regression tests pin the exact anchor each must extract.
 - **`search_code` no longer returns an empty result set for path-shaped queries** (ADR-0028) —
   the `find_path` redirect's extractor (`_extract_path_endpoints`) regex-matched ordinary prose
   (e.g. "strip line range **from** chunk_id **to get** stable normalized identifier" parsed as a
@@ -34,6 +43,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Intent classification defaults back on; `find_similar` re-gated live; SSCG canon re-pinned to
+  `canon_h1`** (ADR-0029) — after the extractor repair (see Fixed, above), a pre-registered gate on
+  the 9 similarity-category golden queries required the intent-on arm's MRR to exceed the
+  normal-path mean and its recall@20 to not fall below the `find_similar` correct-anchor ceiling,
+  on both the 63q and 133q datasets. Both passed (MRR 0.4594 → 0.5593, recall@20 0.7185 ceiling vs.
+  0.7418 arm), so `IntentConfig.enabled`'s default flips back `False` → `True`
+  (`search/config.py`, `search_config.json.example`). Re-pin: intent-on arm mrr 0.8418 (63q) /
+  0.6750 (133q), superseding `canon_g1`'s intent-off figures as the published baseline (kept
+  alongside as the intent-off reference). See `evaluation/CANON_20260804_INTENT_ON_REPAIRED.md`.
 - **Intent classification defaults off; SSCG canon re-pinned to `canon_g1`** (ADR-0028) — following
   ADR-0026's measurement that the intent layer's non-redirect machinery is inert (+0.0005 MRR,
   bit-identical pools) and one of its two redirects is a pure regression (see Fixed, above),
