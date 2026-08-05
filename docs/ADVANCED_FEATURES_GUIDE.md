@@ -3434,7 +3434,10 @@ The system classifies queries into 7 categories:
 
 ### Status
 
-**Always-on** with automatic intent detection. No configuration needed.
+**Off by default** (`intent.enabled=false`, `search/config.py`) since ADR-0028 — intent
+classification must be explicitly enabled (`intent.enabled=true`) to activate. ADR-0026 measured
+this profile table as inert on the canonical benchmark: pool composition is bit-identical whether
+it fires or not, only ranking within an already-fixed pool moves, for a net +0.0005 MRR.
 
 ---
 

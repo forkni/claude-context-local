@@ -156,14 +156,19 @@ routes through `_tokenize_identifiers()` instead — that path does **not** stem
 
 ## A1: Intent-Adaptive Edge Weights
 
-**Status:** Internal to the search engine. NOT directly exposed at the MCP boundary.
+**Status:** Internal to the search engine. NOT directly exposed at the MCP boundary. **Off by default** (`intent.enabled=false`) since ADR-0028 —
+ADR-0026 measured this table as inert on the canonical benchmark (pool composition bit-identical whether it fires or not, net +0.0005 MRR), and the
+`find_path` redirect below was removed outright as a live-bug stopgap. Must be explicitly re-enabled (`intent.enabled=true`) to activate.
 
 **What it does:** Classifies queries into 7 intent categories using a keyword + anchor-embedding ensemble, then adjusts graph traversal edge weights
 and search parameters accordingly.
 
-**⚠️ Note on automatic routing:** The intent classifier may internally redirect `search_code` to `find_path` (path_tracing intent) or
-`find_similar_code` (similarity intent) when confidence ≥ 0.35. This routing is transparent — the MCP dispatcher does NOT change which tool is called
-on the wire. If you need deterministic behavior, call `code-search:find_path` or `code-search:find_similar_code` directly.
+**⚠️ Note on automatic routing:** When enabled, the intent classifier may internally redirect `search_code` to `find_similar_code` (similarity
+intent) when confidence ≥ 0.4. This routing is transparent — the MCP dispatcher does NOT change which tool is called on the wire. If you need
+deterministic behavior, call `code-search:find_similar_code` directly. The `path_tracing` intent no longer redirects to `find_path` — that branch
+was removed (ADR-0028): both of its live golden-dataset firings were regex misfires of `_extract_path_endpoints` on ordinary prose, and
+`fallback_on_error=False` turned each into an empty result set with no upside case ever observed. `find_path` remains available as a standalone
+MCP tool (`code-search:find_path`); only the automatic `search_code` redirect to it is gone.
 
 **Intent categories and adjustments (for reference):**
 
@@ -172,18 +177,18 @@ on the wire. If you need deterministic behavior, call `code-search:find_path` or
 | `local` | calls=1.0, inherits=1.0, imports=0.1 | Standard search |
 | `global` | imports=0.7, uses_type=0.9, instantiates=0.8 | k expanded |
 | `navigational` | calls=1.0, inherits=0.9, imports=0.5 | Standard search |
-| `path_tracing` | uniform 0.7 base, calls=1.0, inherits=0.9 | Internal redirect to find_path |
+| `path_tracing` | uniform 0.7 base, calls=1.0, inherits=0.9 | Standard search (redirect removed, ADR-0028) |
 | `similarity` | uses_type=0.9, decorates=0.7, defines_class_attr=0.7 | Internal redirect to find_similar_code |
 | `contextual` | all weights raised to min 0.5 | ego_graph enabled |
 | `hybrid` | default weights | Standard search |
 
-**Semantic enhancement** (opt-in, default off):
+**Semantic enhancement** (opt-in relative to intent classification, but its own default is on):
 
-- `semantic_enabled=false` by default; `semantic_weight=0.3`
+- `semantic_enabled=true` by default; `semantic_weight=0.3`
 - Ensemble: `0.7 × keyword_score + 0.3 × anchor_embedding_score`
 - Anchor queries: 8–10 representative phrases per intent, defined in `config/intent_anchors.yaml`
-- Confidence threshold: 0.35 (queries below fall back to HYBRID intent)
-- Enable via `search_config.json` (`IntentConfig.semantic_enabled = true`); **not** exposed through any MCP config tool (`configure_search_mode` does
+- Confidence threshold: 0.4 (queries below fall back to HYBRID intent)
+- Configure via `search_config.json` (`IntentConfig.semantic_enabled`); **not** exposed through any MCP config tool (`configure_search_mode` does
   not accept `semantic_enabled`)
 
 ---

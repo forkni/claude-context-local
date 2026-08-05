@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`search_code` no longer returns an empty result set for path-shaped queries** (ADR-0028) —
+  the `find_path` redirect's extractor (`_extract_path_endpoints`) regex-matched ordinary prose
+  (e.g. "strip line range **from** chunk_id **to get** stable normalized identifier" parsed as a
+  `source`/`target` path query), and the redirect carried `fallback_on_error=False`, so a misfire
+  returned nothing instead of falling back to ranked search. ADR-0026 found no query in either
+  golden dataset ever benefited from this branch, so it is removed outright — construction branch,
+  execution arm, extractor, and its dedicated tests — rather than left disabled behind a flag.
+  `QueryIntent.PATH_TRACING` itself is unaffected; it still selects a QW5 ego threshold and an A1
+  edge-weight profile.
 - **`find_connections` no longer silently drops non-primary relationship edges** (ADR-0027) — a
   `(u, v)` node pair can carry more than one relationship type (e.g. `implements` + `uses_constant`,
   which collide whenever a base class is ALL_CAPS such as `abc.ABC`), but both graph traversals
@@ -25,6 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Intent classification defaults off; SSCG canon re-pinned to `canon_g1`** (ADR-0028) — following
+  ADR-0026's measurement that the intent layer's non-redirect machinery is inert (+0.0005 MRR,
+  bit-identical pools) and one of its two redirects is a pure regression (see Fixed, above),
+  `IntentConfig.enabled`'s default flips `True` → `False` (`search/config.py`). The `find_similar`
+  redirect is untouched but stays gated off pending a repair-and-gate round. Re-pin: mrr 0.8352
+  (63q) / 0.6667 (133q) / F-view whole-aggregate 0.8915, F-only mean 0.8519 — bit-identical to
+  `canon_f1`'s F-only figure, confirming the ~0.01 MRR shift on the other two views is substrate
+  drift from the `find_path` deletion, not the default flip (the benchmark harness already
+  re-asserted `intent.enabled=False` per query on every non-arm capture, so `canon_f1` was already
+  measuring this condition). See `evaluation/CANON_20260804_INTENT_OFF.md` for full numbers.
 - **MCP config-field liveness closed for `search_mode`/`performance` fields, project-activation
   pairing unified, a dead config-locator wrapper removed.** `SearchModeConfig.bm25_weight`/
   `.dense_weight` and `PerformanceConfig.use_parallel_search` are MCP-settable but carried no `mcp=`

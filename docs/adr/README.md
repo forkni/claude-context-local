@@ -33,6 +33,7 @@ for avoiding re-litigating settled questions.
 | [0025](0025-clear-index-directory-in-place.md) | Clear and resync index objects in place instead of replacing them | accepted | 2026-08-03 |
 | [0026](0026-canon-repin-and-b1b-intent-arm.md) | Re-pin the SSCG canon to `canon_f1` and capture the `canon_B1b` intent-on arm | accepted | 2026-08-04 |
 | [0027](0027-parallel-edge-bucketing.md) | Parallel edges carry through `find_connections` instead of collapsing to one primary type | accepted | 2026-08-04 |
+| [0028](0028-intent-off-by-default-and-remove-find-path-redirect.md) | Default intent classification off; remove the `find_path` redirect | accepted | 2026-08-04 |
 
 ## Adding a new ADR
 
