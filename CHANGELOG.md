@@ -9,8 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`find_connections` no longer silently drops non-primary relationship edges** (ADR-0027) — a
+  `(u, v)` node pair can carry more than one relationship type (e.g. `implements` + `uses_constant`,
+  which collide whenever a base class is ALL_CAPS such as `abc.ABC`), but both graph traversals
+  called `get_edge_data` with no type filter and kept only the single primary edge it selects. The
+  loss was not confined to filtered calls — `analyze_impact` never passes `relation_types`, so every
+  unfiltered `find_connections` call lost non-primary types during bucketing.
+  `RelationshipEntry` now carries every parallel edge (via the previously-orphaned
+  `get_all_edge_data`), and the analyzer fans out over all of them before bucketing.
+  `direct_callers`/`direct_callees`/`total_impacted`/`dependency_graph` are provably unchanged on the
+  unfiltered path (a `calls` edge always wins the primary selection when one exists); only the
+  `relationships` buckets gain the previously-dropped rows.
+
 ### Changed
 
+- **MCP config-field liveness closed for `search_mode`/`performance` fields, project-activation
+  pairing unified, a dead config-locator wrapper removed.** `SearchModeConfig.bm25_weight`/
+  `.dense_weight` and `PerformanceConfig.use_parallel_search` are MCP-settable but carried no `mcp=`
+  tag; both field maps now derive from the same `mcp=` declaration ADR-0022 established, plus a new
+  ratchet test asserting no MCP-settable field is ever `construction_baked`. The existing
+  `_bind_active_project_overrides` helper — previously inlined at two handler call sites instead of
+  called — is now shared and non-swallowing there, so a bind failure surfaces via `@error_handler`
+  instead of silently leaving the previous project's `search_overrides.json` active.
+  `get_config_via_service_locator` (11 call sites, all invoked with no arguments, its `key`/`default`
+  lookup dead) is deleted in favor of a direct `get_search_config()` import.
+- **SSCG benchmark harness measures the intent layer's redirect behavior** — `run_single`'s
+  unconditional per-query intent-off re-pin now stands down when an arm's own overrides set
+  `intent.enabled`, and `find_path`/`find_similar` redirects are scored as a distinct outcome
+  (`mrr_excl_redirect`, `redirect_rate`, `redirect_ids`, per-query `redirect_kind`) rather than
+  silently as a zero or an already-fair fallback. Discharges ADR-0023's `canon_B1b` gate.
+- **SSCG canon re-pinned to `canon_f1`** (ADR-0026) — the four fixes/refactors above edit indexed
+  source, so the canon is re-measured: mrr 0.8458 (63q, up from `canon_e1`'s 0.8362) / 0.6692 (133q).
+  The `canon_B1b` intent-on arm is captured for the first time and matches its pre-registered
+  falsifiability table exactly, but reveals the intent layer's entire measurable effect is two
+  redirect branches: `find_path` is a pure regression (both instances are prose misfires returning
+  empty results), while `find_similar` is a real, sabotaged capability (mean mrr 0.4577 normal →
+  0.2315 buggy redirect → 0.8519 correct anchor) with no config-only fix. Disposition: flip
+  `intent.enabled` off by default and remove `find_path` as a stopgap, then repair the symbol
+  extractor and re-measure `find_similar` against a pre-registered gate before deciding to keep or
+  remove it. See `evaluation/CANON_20260804_B1B.md` for full numbers.
 - **SSCG benchmark harness routes through `SearchOrchestrator.run()`** (ADR-0023) —
   `run_sscg_benchmark.py` previously called `HybridSearcher.search()` directly, one layer
   below the path the MCP `search_code` tool actually serves, forcing two hand-written replays

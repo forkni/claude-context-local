@@ -30,6 +30,9 @@ for avoiding re-litigating settled questions.
 | [0022](0022-config-field-spec-and-liveness-ratchet.md) | Config field spec table and liveness ratchet | accepted | 2026-08-02 |
 | [0023](0023-benchmark-routes-through-orchestrator.md) | Route the SSCG benchmark through `SearchOrchestrator` | accepted | 2026-08-02 |
 | [0024](0024-repin-sscg-canon-post-c3.md) | Re-pin the SSCG canon after the C3 searcher-construction / config-metadata fixes | accepted | 2026-08-03 |
+| [0025](0025-clear-index-directory-in-place.md) | Clear and resync index objects in place instead of replacing them | accepted | 2026-08-03 |
+| [0026](0026-canon-repin-and-b1b-intent-arm.md) | Re-pin the SSCG canon to `canon_f1` and capture the `canon_B1b` intent-on arm | accepted | 2026-08-04 |
+| [0027](0027-parallel-edge-bucketing.md) | Parallel edges carry through `find_connections` instead of collapsing to one primary type | accepted | 2026-08-04 |
 
 ## Adding a new ADR
 
