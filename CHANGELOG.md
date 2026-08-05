@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Six BM25/worker config fields could be silently ignored by a benchmark arm** (ADR-0030) —
+  `bm25_k1`, `bm25_b`, `bm25_use_stopwords`, `bm25_use_stemming`, `bm25_tokenizer`, and
+  `max_parallel_workers` are read once into `HybridSearcher`/`BM25Index` at construction, but
+  were untagged in `spec()`, so `evaluation/arm_overrides.py::requires_rebuild()` returned
+  `False` for them — an arm overriding e.g. `search_mode.bm25_k1` would mutate the live config
+  in place, the cached `HybridSearcher` would be reused, and the arm would measure the
+  pre-override value instead of its own. All six now carry `construction_baked=True`, forcing a
+  rebuild; a corrected code comment states the true liveness (inert until index reload or
+  searcher rebuild, not query-time). No published benchmark result used any of these six as an
+  A/B'd knob, so the hazard was latent, not realized.
 - **`find_similar` redirects no longer anchor on a trailing prose word** (ADR-0029) —
   `_extract_symbol_from_query`'s fallback scanned `reversed(query.split())` and accepted any
   non-blocklisted lowercase word as the redirect's target symbol, so queries like "find code
@@ -43,6 +53,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Config→searcher seam deepened; SSCG canon re-pinned to `canon_i1`** (ADR-0030) — unified two
+  architectural-review candidates: `SearchOrchestrator._search`'s five raw
+  `isinstance(searcher, HybridSearcher)` checks now route through the previously-uncalled
+  `SearcherView.is_hybrid`; its per-request config assembly is extracted into
+  `build_effective_config()` (new module `search/effective_config.py`); and
+  `HybridSearcher`/`IndexSynchronizer` construction now preserves the whole `SearchConfig` object
+  instead of unpacking seven fields into primitives that ten dead `self.` copies never read.
+  Pure refactor, 0 behaviour change. Re-pin: intent-on arm mrr 0.8524 (63q) / 0.6879 (133q),
+  superseding `canon_h1`'s figures (0.8418/0.6750) — 0 flips measured, deltas attributed to
+  substrate drift from six intervening commits, not the refactor. See
+  `evaluation/CANON_20260805_CONFIG_SEAM_REPIN.md`.
 - **Intent classification defaults back on; `find_similar` re-gated live; SSCG canon re-pinned to
   `canon_h1`** (ADR-0029) — after the extractor repair (see Fixed, above), a pre-registered gate on
   the 9 similarity-category golden queries required the intent-on arm's MRR to exceed the
