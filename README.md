@@ -442,25 +442,28 @@ claude-context-local/
 
 ### Latest Validation (2026-08-04, hybrid-only, k=10)
 
-Provenance: `evaluation/CANON_20260804.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`). Re-pinned after 34 commits landed on top of `canon_C3` — `canon_d1` isolates the code-drift effect (pre-promotion dataset), `canon_d2` isolates the dataset-change effect (two H candidates re-graded and promoted under the ADR-0021 determinism pin). Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
+Provenance: `evaluation/CANON_20260804_INTENT_ON_REPAIRED.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`, `intent.enabled=True`). Re-pinned to `canon_h1` after the intent-layer disposition (ADR-0026 → ADR-0029): `canon_f1` (ADR-0026) captured the `canon_B1b` intent-on arm and found the layer's only measurable effect was two redirects, one of which (`find_path`) returned nothing at all — regex misfires on ordinary prose; `canon_g1` (ADR-0028) defaulted `intent.enabled=False` and deleted the dead `find_path` redirect as a stopgap; `canon_h1` (ADR-0029) repaired the `find_similar` redirect's anchor-symbol extractor, passed a pre-registered gate on both datasets, and flipped `intent.enabled` back to `True` as the shipped default. The table below cites `canon_h1`'s **intent-on arm** — the figures matching the shipped default — not its intent-off control view (published alongside it in the canon doc for anyone running with the layer disabled via `search_overrides.json`). Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
 
 | Dataset | Queries | MRR | Recall@5 | Recall@10 | NDCG@5 | pool_hit_rate |
 |---|---|---|---|---|---|---|
-| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8339** (`canon_d1`, 0 flips r1/r2) | 0.6570 | 0.7757 | 0.6858 | 1.0000 |
-| Expanded (`golden_dataset_expanded.json`, non-D, post H top-up) | 133 | **0.6591** (`canon_d2`, 0 flips r1/r2) | 0.6563 | 0.7734 | 0.6279 | 0.9699 |
-| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.8915** (`canon_d1`) | 0.6638 | 0.7796 | 0.7012 | 1.0000 |
-| F-via-similar (F-category only, 9 queries) | 9 | **0.8519** (`canon_d1`) | 0.5690 | 0.7185 | 0.6064 | — |
+| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8418** (`canon_h1` intent-on arm) | 0.6967 | 0.8036 | 0.7157 | 0.9048 |
+| Expanded (`golden_dataset_expanded.json`, non-D, 133 queries) | 133 | **0.6750** (`canon_h1` intent-on arm) | 0.6751 | 0.7766 | 0.6428 | 0.9023 |
+| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.8836** (`canon_h1`) | 0.6818 | 0.7963 | 0.7086 | 1.0000 |
+| F-via-similar (F-category only, 9 queries) | 9 | **0.8519** (`canon_h1`) | 0.5690 | 0.7185 | 0.6064 | — |
 
-Run-to-run noise band is **±0.02 MRR**, measured directly via a same-code control (two 94-query runs on unchanged code landed 0.701 and 0.683). Treat any delta smaller than that as noise. Note the two F-via-similar rows above: the whole-63-query aggregate (0.8915) and the true F-category-only mean (0.8519) are different numbers over different query sets — a prior generation of this table published only the whole-aggregate figure under a "9-query" caption and mixed a whole-aggregate `file_recall@5` into the F-only row; this generation corrects both.
+Run-to-run noise band is **±0.02 MRR**, measured directly via a same-code control (two 94-query runs on unchanged code landed 0.701 and 0.683). Treat any delta smaller than that as noise. Note the two F-via-similar rows above: the whole-63-query aggregate (0.8836) and the true F-category-only mean (0.8519) are different numbers over different query sets — a prior generation of this table published only the whole-aggregate figure under a "9-query" caption and mixed a whole-aggregate `file_recall@5` into the F-only row; this generation corrects both.
 
 **Comparability breaks** — do not read the numbers above as a trend against older figures in this repo's history:
 
 - ADR-0023 (`canon_B1`, 2026-08-02, mrr 0.8249) routed the harness through `SearchOrchestrator.run()` instead of a direct `HybridSearcher.search()` call — not comparable to anything measured before it.
 - ADR-0024 (`canon_C3`, mrr 0.8348/0.6816/0.8907) re-pinned after the C3 searcher-construction dedup and config-metadata fixes; see `evaluation/CANON_20260803.md`.
-- This table (`canon_d1`/`canon_d2`, `evaluation/CANON_20260804.md`) re-pins after 34 further commits and a 2-query dataset top-up (H035, H068). The two effects are reported separately in the CANON document; MRR moved by less than the ±0.02 noise band on the canonical/F views and by −0.0225 on the expanded view (−0.0162 code drift + −0.0063 dataset change).
+- `canon_d1`/`canon_d2` (`evaluation/CANON_20260804.md`) re-pinned after 34 further commits and a 2-query dataset top-up (H035, H068); MRR moved by less than the ±0.02 noise band on the canonical/F views and by −0.0225 on the expanded view (−0.0162 code drift + −0.0063 dataset change).
+- ADR-0026 (`canon_f1`, `evaluation/CANON_20260804_B1B.md`) re-pinned after further commits and captured `canon_B1b`, the first intent-on arm — the measurement that started the intent-layer disposition below.
+- ADR-0028 (`canon_g1`, `evaluation/CANON_20260804_INTENT_OFF.md`) defaulted `intent.enabled=False` and removed the dead `find_path` redirect as a stopgap while the `find_similar` extractor bug was diagnosed.
+- ADR-0029 (`canon_h1`, `evaluation/CANON_20260804_INTENT_ON_REPAIRED.md`) repaired `_extract_symbol_from_query`, passed the pre-registered similarity-query gate on both datasets, and re-enabled `intent.enabled=True` as the shipped default — `canon_h1`'s intent-on arm is the published baseline above.
 - The 2026-07-28 golden-dataset repair (`6df36db`) changed scoring for 3-part `split_block` chunks; nothing measured before that commit is comparable to what's measured after.
 - The 2026-08-02 H-category promotion grew the expanded set 108→145 queries (94→131 non-D); the 2026-08-04 top-up grew it further to 147 (133 non-D). H queries are harder by construction (single-file, ≤2 golds), so treat each generation's figure as a separate measurement, not a before/after comparison.
-- `0.797` in the historical table below (2026-06-08, 13 queries) predates the golden-dataset repair, the H-promotion, the SDK v2 migration, and ADR-0023/ADR-0024/this re-pin; kept only for continuity.
+- `0.797` in the historical table below (2026-06-08, 13 queries) predates the golden-dataset repair, the H-promotion, the SDK v2 migration, and every re-pin since; kept only for continuity.
 
 ### Live MCP pipeline eval (k=7, orchestrator + multi-hop, 2026-08-01)
 
