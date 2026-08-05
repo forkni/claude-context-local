@@ -378,6 +378,7 @@ def _build_config_metadata(
     overrides: dict[str, Any],
     legacy_ego: dict[str, Any],
     f_via_similar: bool,
+    ego_per_request: bool = False,
 ) -> dict[str, Any]:
     """Build ``config_metadata`` from the same *overrides* dict used to
     mutate ``SearchConfig``, recovering each knob's raw CLI value (never the
@@ -388,6 +389,10 @@ def _build_config_metadata(
     (``project_path``/``k``/``category_filter``) and
     ``peak_vram_reserved_gb`` are not knobs - callers add the latter
     themselves when available.
+
+    ``ego_per_request`` records whether this run set the per-request
+    ``ego_graph_enabled`` plan argument (distinct from the ``--ego-graph``
+    config-field override, which is already captured via ``overrides``).
     """
     metadata: dict[str, Any] = {
         "project_path": project_path,
@@ -408,6 +413,8 @@ def _build_config_metadata(
         metadata["cross_community_penalty"] = legacy_ego["cross_community_penalty"]
     if f_via_similar:
         metadata["f_via_similar"] = True
+    if ego_per_request:
+        metadata["ego_per_request"] = True
     return metadata
 
 
@@ -415,6 +422,7 @@ def _print_overrides(
     overrides: dict[str, Any],
     legacy_ego: dict[str, Any],
     f_via_similar: bool,
+    ego_per_request: bool = False,
 ) -> None:
     """Print one console line per supplied override, grouped by label.
 
@@ -451,6 +459,11 @@ def _print_overrides(
         lines.setdefault("F-via-similar", []).append(
             "ON (anchored F queries scored via find_similar_to_chunk; "
             "secondary view, not the official aggregate)"
+        )
+    if ego_per_request:
+        lines.setdefault("Ego-per-request", []).append(
+            "ON (plan.ego_graph_enabled=True on every query; "
+            "distinct from --ego-graph's config-field override)"
         )
     for label, parts in lines.items():
         print(f"  {label}: {'  '.join(parts)}")
@@ -639,6 +652,7 @@ async def _run_query(
     k: int,
     search_mode: str | None = None,
     pin_intent_off: bool = True,
+    ego_per_request: bool = False,
 ) -> tuple[list[Any], float, str | None]:
     """Execute a single query through ``SearchOrchestrator.run()`` (ADR-0023).
 
@@ -681,6 +695,16 @@ async def _run_query(
             when the arm's overrides already set ``intent.enabled`` via
             ``arm_overrides.apply_overrides`` — otherwise this per-query
             re-pin would silently undo the arm's override every query.
+        ego_per_request: Set ``ego_graph_enabled=True`` in the ``run()``
+            arguments dict, the per-request ``SearchPlan`` flag that gates
+            ``build_effective_config``'s QW5 intent-adaptive ego similarity
+            threshold (``effective_config.py``). Distinct from
+            ``ego_graph.enabled`` (the config field toggled by
+            ``--ego-graph``): ``EgoGraphConfig.enabled`` already defaults to
+            ``True``, so ego expansion itself runs regardless of this flag —
+            this only controls whether QW5's per-intent threshold override
+            fires. Default ``False`` matches every prior capture, which never
+            set this key.
 
     Returns:
         ``(results, latency_ms, redirect_kind)``. ``redirect_kind`` is
@@ -696,6 +720,8 @@ async def _run_query(
         "include_context": True,
         "max_context_tokens": 0,
     }
+    if ego_per_request:
+        arguments["ego_graph_enabled"] = True
     # The B1 (ADR-0023) intent-off pin (main():~1939) mutates a single
     # mtime-cached SearchConfig singleton once, at startup. get_search_config()
     # does an unconditional stat() on every call (search/config.py:1682-1689),
@@ -953,6 +979,7 @@ async def run_benchmark(
     community_lookup: dict[str, Any] | None = None,
     intent_pinned_by_arm: bool = False,
     intent_signal_recorder: "_IntentSignalRecorder | None" = None,
+    ego_per_request: bool = False,
 ) -> tuple[list[dict[str, Any]], list[float]]:
     """Run all queries and return (per_query_results, latencies).
 
@@ -1010,6 +1037,10 @@ async def run_benchmark(
             ``SearchPlanner.plan()`` logged a GLOBAL-intent k bump for that
             query (see ``_IntentSignalRecorder`` for why this is silent at
             the harness's canonical k=10).
+        ego_per_request: Threaded to ``_run_query`` — sets the per-request
+            ``ego_graph_enabled`` plan argument on every non-anchor query
+            (see ``_run_query``'s docstring). Anchor (F-via-similar) queries
+            bypass ``_run_query`` entirely and are unaffected.
 
     Every successful query also gains ``file_recall@{5,10}`` /
     ``file_acc@{5,10}`` (SweRank max-pool rollup of the ordinary chunk-level
@@ -1087,6 +1118,7 @@ async def run_benchmark(
                     k=k,
                     search_mode=search_mode,
                     pin_intent_off=not intent_pinned_by_arm,
+                    ego_per_request=ego_per_request,
                 )
             latencies.append(latency_ms)
 
@@ -1688,6 +1720,20 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--ego-per-request",
+        action="store_true",
+        help=(
+            "Set the per-request plan.ego_graph_enabled flag on every query "
+            "(SearchOrchestrator's arguments dict), enabling QW5's "
+            "intent-adaptive ego similarity threshold in "
+            "build_effective_config. NOT the same as --ego-graph, which "
+            "overrides the config field ego_graph.enabled (already True by "
+            "default, so ego expansion runs either way) -- this flag is the "
+            "only way to exercise QW5, which no prior capture has measured. "
+            "Default: off, matching every prior capture."
+        ),
+    )
+    parser.add_argument(
         "--rrf-k",
         type=int,
         help=(
@@ -1783,6 +1829,7 @@ async def run_single(
     verbose: bool,
     overrides: dict[str, Any],
     f_via_similar: bool = False,
+    ego_per_request: bool = False,
 ) -> dict[str, Any]:
     """Execute one benchmark run and return the result dict.
 
@@ -1793,6 +1840,10 @@ async def run_single(
     together via ``arm_overrides.merge_overrides`` before this call. May
     carry ``_LEGACY_EGO_KEY`` for the two undeclared ``EgoGraphConfig``
     fields, popped here before the rest reaches ``apply_overrides``.
+
+    ``ego_per_request`` is threaded straight to ``run_benchmark`` /
+    ``_run_query`` — it sets a per-query plan argument, not a config
+    override, so it never reaches ``apply_overrides``.
     """
     overrides = dict(overrides)
     legacy_ego = overrides.pop(_LEGACY_EGO_KEY, {})
@@ -1830,7 +1881,7 @@ async def run_single(
 
     queries = dataset["queries"]
     print(f"\nRunning: {config_name} | k={k} | {len(queries)} queries")
-    _print_overrides(overrides, legacy_ego, f_via_similar)
+    _print_overrides(overrides, legacy_ego, f_via_similar, ego_per_request)
 
     # Reset peak VRAM stats and issue a warm-up search so a reranker model swap's
     # (or dtype swap's) first-call load/download cost lands here, not in the
@@ -1889,6 +1940,7 @@ async def run_single(
         community_lookup=community_lookup,
         intent_pinned_by_arm=intent_pinned_by_arm,
         intent_signal_recorder=intent_signal_recorder,
+        ego_per_request=ego_per_request,
     )
 
     # Detach the recorders so repeated run_single calls (sweeps) don't stack handlers
@@ -1973,6 +2025,7 @@ async def run_single(
         overrides=overrides,
         legacy_ego=legacy_ego,
         f_via_similar=f_via_similar,
+        ego_per_request=ego_per_request,
     )
     if torch_module is not None:
         config_metadata["peak_vram_reserved_gb"] = round(
@@ -2082,6 +2135,7 @@ async def main_async(args: argparse.Namespace) -> None:
                 verbose=False,  # quiet during sweep
                 overrides=overrides,
                 f_via_similar=args.f_via_similar,
+                ego_per_request=args.ego_per_request,
             )
             reranker_results.append(result)
 
@@ -2124,6 +2178,7 @@ async def main_async(args: argparse.Namespace) -> None:
                 verbose=False,  # quiet during sweep
                 overrides=overrides,
                 f_via_similar=args.f_via_similar,
+                ego_per_request=args.ego_per_request,
             )
             sweep_results.append(result)
 
@@ -2154,6 +2209,7 @@ async def main_async(args: argparse.Namespace) -> None:
         verbose=verbose,
         overrides=overrides,
         f_via_similar=args.f_via_similar,
+        ego_per_request=args.ego_per_request,
     )
 
     # Print leaderboard (single row)

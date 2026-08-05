@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **SSCG benchmark harness can measure the per-request ego-graph path for the first time** — new
+  `--ego-per-request` flag sets `plan.ego_graph_enabled` on `SearchOrchestrator.run()`'s arguments
+  dict, distinct from the pre-existing `--ego-graph on|off`, which only overrides the *config
+  field* `ego_graph.enabled` (already `True` by default) and never reached this path. This is the
+  only way to exercise `_intent_ego_thresholds` (QW5, `search/effective_config.py`), which fires
+  when both `plan.ego_graph_enabled` and `plan.intent_decision` are set — a path production MCP
+  callers exercise by default (`mcp_server/tool_registry.py`) but no benchmark capture had ever
+  measured. Four-view 63q capture (ego-off/on × intent-off/on) isolates `D − C` (QW5 alone) as
+  flat: MRR +0.0013, driven by one already-known boundary-riding query, recall@10 −0.0053 — feeds
+  the pending decision on deleting the two intent policy tables. Pure harness/test addition, no
+  production source touched; `canon_i1` remains the published canon. See
+  `evaluation/EGO_PER_REQUEST_VIEW_20260805.md`.
+
 ### Fixed
 
 - **Six BM25/worker config fields could be silently ignored by a benchmark arm** (ADR-0030) —

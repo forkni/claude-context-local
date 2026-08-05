@@ -196,3 +196,45 @@ async def test_run_query_pin_intent_off_false_skips_repin():
         )
 
     assert mock_config.intent.enabled is True
+
+
+@pytest.mark.asyncio
+async def test_run_query_ego_per_request_absent_by_default():
+    """No prior capture ever set ``ego_graph_enabled`` -- confirm the default
+    stays that way, or every existing canon capture is silently reinterpreted.
+
+    ``plan.ego_graph_enabled`` gates QW5 (``build_effective_config``'s
+    intent-adaptive ego similarity threshold); it must stay unset unless a
+    caller opts in via ``ego_per_request=True``.
+    """
+    mock_config = MagicMock()
+    orchestrator = MagicMock()
+    orchestrator.run = AsyncMock(return_value={"results": []})
+    searcher = MagicMock(dense_index=None)
+
+    with patch("search.config.get_search_config", return_value=mock_config):
+        await _run_query(orchestrator, searcher, "some query", k=10)
+
+    called_arguments = orchestrator.run.await_args.args[0]
+    assert "ego_graph_enabled" not in called_arguments
+
+
+@pytest.mark.asyncio
+async def test_run_query_ego_per_request_true_sets_plan_flag():
+    """``ego_per_request=True`` sets ``ego_graph_enabled=True`` in the
+    ``SearchOrchestrator.run()`` arguments dict -- the one-line change that
+    lets the harness exercise QW5 for the first time (see
+    ``docs/adr/0030-deepen-config-searcher-seam.md``'s Out of scope section).
+    """
+    mock_config = MagicMock()
+    orchestrator = MagicMock()
+    orchestrator.run = AsyncMock(return_value={"results": []})
+    searcher = MagicMock(dense_index=None)
+
+    with patch("search.config.get_search_config", return_value=mock_config):
+        await _run_query(
+            orchestrator, searcher, "some query", k=10, ego_per_request=True
+        )
+
+    called_arguments = orchestrator.run.await_args.args[0]
+    assert called_arguments["ego_graph_enabled"] is True
