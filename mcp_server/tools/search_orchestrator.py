@@ -29,7 +29,6 @@ from search.config import (
 )
 from search.exceptions import DimensionMismatchError
 from search.graph_scoring_stage import GraphScoringStage
-from search.hybrid_searcher import HybridSearcher
 from search.intent_classifier import IntentClassifier, IntentDecision, QueryIntent
 
 
@@ -404,71 +403,75 @@ class SearchOrchestrator:
             assert config_copy is not None  # set immediately above when None
             return config_copy
 
-        if isinstance(searcher, HybridSearcher) and plan.ego_graph_enabled:
-            cfg = mutable_config()
-            cfg.ego_graph = replace(
-                cfg.ego_graph,
-                enabled=plan.ego_graph_enabled,
-                k_hops=plan.ego_graph_k_hops,
-                max_neighbors_per_hop=plan.ego_graph_max_neighbors,
-            )
-            logger.info(
-                f"[EGO_GRAPH] Enabled with k_hops={plan.ego_graph_k_hops}, "
-                f"max_neighbors_per_hop={plan.ego_graph_max_neighbors}"
-            )
-
-        # QW5: apply intent-adaptive similarity threshold to ego-graph expansion
-        if (
-            isinstance(searcher, HybridSearcher)
-            and plan.ego_graph_enabled
-            and plan.intent_decision
-        ):
-            _intent_ego_thresholds = {
-                "local": 0.25,
-                "global": 0.10,
-                "contextual": 0.12,
-                "navigational": 0.20,
-                "path_tracing": 0.15,
-                "similarity": 0.10,
-                "hybrid": 0.15,
-            }
-            intent_threshold = _intent_ego_thresholds.get(
-                plan.intent_decision.intent.value, 0.15
-            )
-            if intent_threshold != 0.15:
-                logger.info(
-                    f"[EGO_GRAPH] Intent-adaptive threshold: "
-                    f"{plan.intent_decision.intent.value} -> {intent_threshold}"
-                )
-            mutable_config().ego_graph.min_similarity_threshold = intent_threshold
-
-        if isinstance(searcher, HybridSearcher) and plan.include_parent:
-            cfg = mutable_config()
-            cfg.parent_retrieval = replace(
-                cfg.parent_retrieval, enabled=plan.include_parent
-            )
-            logger.info("[PARENT_RETRIEVAL] Enabled")
-
-        # Apply intent-driven edge weights for graph traversal (A1)
-        if isinstance(searcher, HybridSearcher) and plan.intent_decision:
-            from graph.graph_storage import INTENT_EDGE_WEIGHT_PROFILES
-
-            intent_key = plan.intent_decision.intent.value
-            edge_profile = INTENT_EDGE_WEIGHT_PROFILES.get(intent_key)
-            if edge_profile:
+        # These four config mutations only apply to HybridSearcher (ego-graph,
+        # parent-retrieval, and intent-edge overrides are all graph/BM25-adjacent
+        # features IntelligentSearcher doesn't have) — one is_hybrid check gates
+        # the whole region instead of re-asking per mutation.
+        if _view.is_hybrid:
+            if plan.ego_graph_enabled:
                 cfg = mutable_config()
-                cfg.multi_hop.edge_weights = edge_profile
-                if cfg.ego_graph:
-                    cfg.ego_graph.edge_weights = edge_profile
-                logger.info(
-                    f"[INTENT] Edge weight profile set for {intent_key}: "
-                    f"calls={edge_profile.get('calls', 'N/A')}, imports={edge_profile.get('imports', 'N/A')}"
+                cfg.ego_graph = replace(
+                    cfg.ego_graph,
+                    enabled=plan.ego_graph_enabled,
+                    k_hops=plan.ego_graph_k_hops,
+                    max_neighbors_per_hop=plan.ego_graph_max_neighbors,
                 )
+                logger.info(
+                    f"[EGO_GRAPH] Enabled with k_hops={plan.ego_graph_k_hops}, "
+                    f"max_neighbors_per_hop={plan.ego_graph_max_neighbors}"
+                )
+
+            # QW5: apply intent-adaptive similarity threshold to ego-graph expansion
+            if plan.ego_graph_enabled and plan.intent_decision:
+                _intent_ego_thresholds = {
+                    "local": 0.25,
+                    "global": 0.10,
+                    "contextual": 0.12,
+                    "navigational": 0.20,
+                    "path_tracing": 0.15,
+                    "similarity": 0.10,
+                    "hybrid": 0.15,
+                }
+                intent_threshold = _intent_ego_thresholds.get(
+                    plan.intent_decision.intent.value, 0.15
+                )
+                if intent_threshold != 0.15:
+                    logger.info(
+                        f"[EGO_GRAPH] Intent-adaptive threshold: "
+                        f"{plan.intent_decision.intent.value} -> {intent_threshold}"
+                    )
+                mutable_config().ego_graph.min_similarity_threshold = intent_threshold
+
+            if plan.include_parent:
+                cfg = mutable_config()
+                cfg.parent_retrieval = replace(
+                    cfg.parent_retrieval, enabled=plan.include_parent
+                )
+                logger.info("[PARENT_RETRIEVAL] Enabled")
+
+            # Apply intent-driven edge weights for graph traversal (A1)
+            if plan.intent_decision:
+                from graph.graph_storage import INTENT_EDGE_WEIGHT_PROFILES
+
+                intent_key = plan.intent_decision.intent.value
+                edge_profile = INTENT_EDGE_WEIGHT_PROFILES.get(intent_key)
+                if edge_profile:
+                    cfg = mutable_config()
+                    cfg.multi_hop.edge_weights = edge_profile
+                    if cfg.ego_graph:
+                        cfg.ego_graph.edge_weights = edge_profile
+                    logger.info(
+                        f"[INTENT] Edge weight profile set for {intent_key}: "
+                        f"calls={edge_profile.get('calls', 'N/A')}, imports={edge_profile.get('imports', 'N/A')}"
+                    )
 
         effective_config = config_copy if config_copy is not None else config_singleton
 
         # ===== Block D: Search execution =====
-        if isinstance(searcher, HybridSearcher):
+        # Genuine polymorphic dispatch (HybridSearcher.search vs
+        # IntelligentSearcher.search take different kwargs) — not folded into
+        # the is_hybrid block above; see Phase 2 scope note.
+        if _view.is_hybrid:
             results = await asyncio.to_thread(
                 searcher.search,
                 query=plan.query,
