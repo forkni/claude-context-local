@@ -544,7 +544,11 @@ class IntentConfig:
     """Intent classification settings (6 fields)."""
 
     enabled: bool = field(
-        default=True,  # Enable intent classification for query routing
+        # Default off: ADR-0026 measured the intent layer's non-redirect machinery (QW5 ego
+        # thresholds, A1 edge-weight profiles) as inert (+0.0005 MRR, bit-identical pools) and its
+        # two redirects as net-negative on the same substrate (find_path has no upside evidence at
+        # all; find_similar is salvageable but not yet repaired). See ADR-0028.
+        default=False,  # Enable intent classification for query routing
         metadata=spec(
             flat_alias="intent_enabled",
             reader="mcp_server/tools/search_orchestrator.py",
