@@ -44,8 +44,6 @@ class TestIndexSynchronizer:
             storage_dir=self.storage_dir,
             bm25_index=self.mock_bm25_index,
             dense_index=self.mock_dense_index,
-            bm25_use_stopwords=True,
-            bm25_use_stemming=True,
             project_id="test_project",
         )
 
@@ -54,8 +52,6 @@ class TestIndexSynchronizer:
         assert self.synchronizer.storage_dir == self.storage_dir
         assert self.synchronizer.bm25_index == self.mock_bm25_index
         assert self.synchronizer.dense_index == self.mock_dense_index
-        assert self.synchronizer.bm25_use_stopwords is True
-        assert self.synchronizer.bm25_use_stemming is True
         assert self.synchronizer.project_id == "test_project"
 
     def test_save_indices_success(self):
@@ -398,8 +394,6 @@ class TestIndexSynchronizer:
             storage_dir=self.storage_dir,
             bm25_index=self.mock_bm25_index,
             dense_index=self.mock_dense_index,
-            bm25_use_stopwords=True,
-            bm25_use_stemming=True,
             project_id="test_project",
             embedder=mock_embedder,
         )
@@ -420,8 +414,6 @@ class TestIndexSynchronizer:
             storage_dir=self.storage_dir,
             bm25_index=self.mock_bm25_index,
             dense_index=self.mock_dense_index,
-            bm25_use_stopwords=True,
-            bm25_use_stemming=True,
             project_id="test_project",
             embedder=None,
         )

@@ -50,13 +50,6 @@ def test_build_hybrid_searcher_passes_exact_kwargs():
     mock_cls.assert_called_once_with(
         storage_dir=str(project_storage / "index"),
         embedder=embedder,
-        rrf_k=60,
-        max_workers=4,
-        bm25_use_stopwords=True,
-        bm25_use_stemming=False,
-        bm25_tokenizer="whole",
-        bm25_k1=1.5,
-        bm25_b=0.75,
         project_id="some_project",
         config=config,
         load_existing=True,

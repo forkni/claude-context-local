@@ -112,13 +112,6 @@ def build_hybrid_searcher(
     return HybridSearcher(
         storage_dir=str(storage_dir),
         embedder=embedder,
-        rrf_k=config.search_mode.rrf_k_parameter,
-        max_workers=config.performance.max_parallel_workers,
-        bm25_use_stopwords=config.search_mode.bm25_use_stopwords,
-        bm25_use_stemming=config.search_mode.bm25_use_stemming,
-        bm25_tokenizer=config.search_mode.bm25_tokenizer,
-        bm25_k1=config.search_mode.bm25_k1,
-        bm25_b=config.search_mode.bm25_b,
         project_id=project_id,
         config=config,
         load_existing=load_existing,

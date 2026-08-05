@@ -59,13 +59,6 @@ class HybridSearcher(BaseSearcher):
         self,
         storage_dir: str,
         embedder: Optional["CodeEmbedder"] = None,
-        rrf_k: int = 60,
-        max_workers: int = 2,
-        bm25_use_stopwords: bool = True,
-        bm25_use_stemming: bool = True,
-        bm25_tokenizer: str = "legacy",
-        bm25_k1: float = 1.5,
-        bm25_b: float = 0.75,
         project_id: str | None = None,
         config: Optional["SearchConfig"] = None,
         load_existing: bool = True,
@@ -76,15 +69,11 @@ class HybridSearcher(BaseSearcher):
         Args:
             storage_dir: Directory for storing indices
             embedder: CodeEmbedder instance for semantic search (optional)
-            rrf_k: RRF parameter for reranking
-            max_workers: Maximum thread pool workers for parallel execution
-            bm25_use_stopwords: Whether BM25 should filter stopwords
-            bm25_use_stemming: Whether BM25 should use Snowball stemming
-            bm25_tokenizer: BM25 tokenizer variant (legacy/whole/additive)
-            bm25_k1: Okapi BM25 term-frequency saturation parameter
-            bm25_b: Okapi BM25 document-length normalization parameter
             project_id: Project identifier for graph storage
-            config: SearchConfig instance for mmap storage and other settings
+            config: SearchConfig instance for RRF/BM25/thread-pool tuning,
+                mmap storage, and other settings. Resolved to the repo-wide
+                default (``get_search_config()``) when omitted — callers no
+                longer need to unpack individual fields (C4, ADR-0030).
             load_existing: When False, skip reading the on-disk BM25 index
                 (#reindex-log-audit-2026-07-30). Set this for a searcher that
                 exists only as a write target for a force-full reindex — the
@@ -104,18 +93,19 @@ class HybridSearcher(BaseSearcher):
         # Store project_id for graph storage
         self.project_id = project_id
 
-        # Store config for index synchronizer
-        self.config = config
-
-        # BM25 configuration
-        self.bm25_use_stopwords = bm25_use_stopwords
-        self.bm25_use_stemming = bm25_use_stemming
-        self.bm25_tokenizer = bm25_tokenizer
-        self.bm25_k1 = bm25_k1
-        self.bm25_b = bm25_b
+        # Resolve once: the config given at construction, else the repo-wide
+        # default (ADR-0018). Every collaborator below reads BM25/RRF/thread-pool
+        # tuning from self.config instead of receiving them as separate params.
+        self.config = config if config is not None else get_search_config()
 
         # Override logger with module-specific logger (set by BaseSearcher)
         self._logger = logging.getLogger(__name__)
+
+        bm25_use_stopwords = self.config.search_mode.bm25_use_stopwords
+        bm25_use_stemming = self.config.search_mode.bm25_use_stemming
+        bm25_tokenizer = self.config.search_mode.bm25_tokenizer
+        bm25_k1 = self.config.search_mode.bm25_k1
+        bm25_b = self.config.search_mode.bm25_b
 
         # BM25 index gets its own subdirectory
         self._logger.info(
@@ -185,17 +175,7 @@ class HybridSearcher(BaseSearcher):
             )
 
         # Initialize search components (reranker, search executor, multi-hop)
-        self._init_search_components(
-            embedder=embedder,
-            rrf_k=rrf_k,
-            max_workers=max_workers,
-            bm25_use_stopwords=bm25_use_stopwords,
-            bm25_use_stemming=bm25_use_stemming,
-            bm25_tokenizer=bm25_tokenizer,
-            bm25_k1=bm25_k1,
-            bm25_b=bm25_b,
-            project_id=project_id,
-        )
+        self._init_search_components(embedder=embedder, project_id=project_id)
 
         # Initialize graph components (ego-graph retrieval)
         self._init_graph_components(project_id=project_id)
@@ -205,7 +185,7 @@ class HybridSearcher(BaseSearcher):
             self.multi_hop_searcher.graph_storage = self._graph_storage
 
         # Backward compatibility
-        self.max_workers = max_workers
+        self.max_workers = self.config.performance.max_parallel_workers
         self._shutdown_lock = threading.Lock()
         self._is_shutdown = False
 
@@ -215,33 +195,23 @@ class HybridSearcher(BaseSearcher):
     def _init_search_components(
         self,
         embedder: Optional["CodeEmbedder"],
-        rrf_k: int,
-        max_workers: int,
-        bm25_use_stopwords: bool,
-        bm25_use_stemming: bool,
-        bm25_tokenizer: str,
-        bm25_k1: float,
-        bm25_b: float,
         project_id: str | None,
     ) -> None:
         """Initialize search execution components.
 
         Creates reranker, GPU monitor, reranking engine, index synchronizer,
         search executor, and multi-hop searcher with proper configuration.
+        RRF/BM25/thread-pool tuning is read from ``self.config`` (resolved in
+        ``__init__``) rather than threaded through as separate parameters.
 
         Args:
             embedder: CodeEmbedder instance
-            rrf_k: RRF parameter for reranking
-            max_workers: Maximum thread pool workers
-            bm25_use_stopwords: Whether BM25 uses stopwords
-            bm25_use_stemming: Whether BM25 uses stemming
-            bm25_tokenizer: BM25 tokenizer variant (legacy/whole/additive)
-            bm25_k1: Okapi BM25 term-frequency saturation parameter
-            bm25_b: Okapi BM25 document-length normalization parameter
             project_id: Project identifier
         """
+        max_workers = self.config.performance.max_parallel_workers
+
         # Reranker and GPU monitor
-        self.reranker = RRFReranker(k=rrf_k)
+        self.reranker = RRFReranker(k=self.config.search_mode.rrf_k_parameter)
         self.gpu_monitor = GPUMemoryMonitor()
 
         # Reranking engine (coordinates embedding-based and neural reranking)
@@ -254,11 +224,6 @@ class HybridSearcher(BaseSearcher):
             storage_dir=self.storage_dir,
             bm25_index=self.bm25_index,
             dense_index=self.dense_index,
-            bm25_use_stopwords=bm25_use_stopwords,
-            bm25_use_stemming=bm25_use_stemming,
-            bm25_tokenizer=bm25_tokenizer,
-            bm25_k1=bm25_k1,
-            bm25_b=bm25_b,
             project_id=project_id,
             config=self.config,
             embedder=embedder,
@@ -1028,11 +993,8 @@ class HybridSearcher(BaseSearcher):
 
         results = ResultFactory.from_similarity_results(similar_chunks)
 
-        # Resolve once, same as HybridSearcher.search(): the config given at
-        # construction, else the repo-wide default from get_search_config() (ADR-0018).
-        effective_config = (
-            self.config if self.config is not None else get_search_config()
-        )
+        # self.config is resolved once in __init__ (never None) — see ADR-0018/ADR-0030.
+        effective_config = self.config
 
         # Apply neural reranking if requested and available
         if rerank and results:
@@ -1083,12 +1045,8 @@ class HybridSearcher(BaseSearcher):
         avg_rerank_time = stats["rerank_time"] / total_searches
 
         # No per-call config here (this reports aggregate stats, not one
-        # request) — resolve the same way HybridSearcher.search() does: the
-        # config given at construction, else the repo-wide default from
-        # get_search_config().
-        effective_config = (
-            self.config if self.config is not None else get_search_config()
-        )
+        # request) — self.config is resolved once in __init__ (never None).
+        effective_config = self.config
 
         return {
             "total_searches": total_searches,

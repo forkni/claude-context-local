@@ -265,22 +265,24 @@ class SearchModeConfig:
     # read by any scoring path.)
     bm25_k1: float = field(
         default=1.5,
-        metadata=spec(flat_alias="bm25_k1", reader="search/index_sync.py"),
+        metadata=spec(flat_alias="bm25_k1", reader="search/hybrid_searcher.py"),
     )
     bm25_b: float = field(
         default=0.75,
-        metadata=spec(flat_alias="bm25_b", reader="search/index_sync.py"),
+        metadata=spec(flat_alias="bm25_b", reader="search/hybrid_searcher.py"),
     )
     bm25_use_stopwords: bool = field(
         default=True,
-        metadata=spec(flat_alias="bm25_use_stopwords", reader="search/index_sync.py"),
+        metadata=spec(
+            flat_alias="bm25_use_stopwords", reader="search/hybrid_searcher.py"
+        ),
     )
     bm25_use_stemming: bool = field(
         default=True,  # Snowball stemmer for word normalization
         metadata=spec(
             flat_alias="bm25_use_stemming",
             env="CLAUDE_BM25_USE_STEMMING",
-            reader="search/index_sync.py",
+            reader="search/hybrid_searcher.py",
         ),
     )
     # Tokenizer variant (arXiv 2605.18561): "legacy" = destructive camel/snake
@@ -294,7 +296,7 @@ class SearchModeConfig:
         metadata=spec(
             choices=("legacy", "whole", "additive"),
             flat_alias="bm25_tokenizer",
-            reader="search/index_sync.py",
+            reader="search/hybrid_searcher.py",
         ),
     )
     # Reserved fused-pool slots for BM25-unique candidates. Under weighted RRF
@@ -319,7 +321,7 @@ class SearchModeConfig:
         default=100,
         metadata=spec(
             flat_alias="rrf_k_parameter",
-            reader="mcp_server/search_factory.py",
+            reader="search/hybrid_searcher.py",
             construction_baked=True,
         ),
     )
@@ -367,7 +369,7 @@ class PerformanceConfig:
     max_parallel_workers: int = field(
         default=2,
         metadata=spec(
-            flat_alias="max_parallel_workers", reader="mcp_server/search_factory.py"
+            flat_alias="max_parallel_workers", reader="search/hybrid_searcher.py"
         ),
     )
 
