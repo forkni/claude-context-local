@@ -177,42 +177,6 @@ class TestSearchPlannerIntentDisabled:
 
 
 class TestSearchPlannerRedirects:
-    def test_path_tracing_redirect_when_source_and_target_present(self):
-        decision = _make_intent_decision(
-            "path_tracing",
-            confidence=0.9,
-            suggested_params={"source": "FooClass", "target": "BarFunction"},
-        )
-        with _patch_planner_deps(intent_decision=decision):
-            plan = SearchPlanner().plan({"query": "how does foo reach bar"})
-
-        assert plan.redirect is not None
-        assert plan.redirect.kind == "find_path"
-        assert plan.redirect.params["source"] == "FooClass"
-        assert plan.redirect.params["target"] == "BarFunction"
-        assert plan.redirect.params["max_hops"] == 10
-        assert plan.redirect.fallback_on_error is False
-
-    def test_path_tracing_no_redirect_when_source_missing(self):
-        decision = _make_intent_decision(
-            "path_tracing",
-            confidence=0.9,
-            suggested_params={"target": "BarFunction"},
-        )
-        with _patch_planner_deps(intent_decision=decision):
-            plan = SearchPlanner().plan({"query": "how does foo reach bar"})
-        assert plan.redirect is None
-
-    def test_path_tracing_no_redirect_below_threshold(self):
-        decision = _make_intent_decision(
-            "path_tracing",
-            confidence=0.1,  # below default 0.3
-            suggested_params={"source": "Foo", "target": "Bar"},
-        )
-        with _patch_planner_deps(intent_decision=decision):
-            plan = SearchPlanner().plan({"query": "path from foo to bar"})
-        assert plan.redirect is None
-
     def test_similarity_redirect_when_symbol_present(self):
         decision = _make_intent_decision(
             "similarity",
@@ -321,14 +285,14 @@ class TestSearchPlannerRedirectHasFullPlan:
         assert plan.k == 8  # normal search k is set even when redirect is present
         assert plan.redirect is not None
 
-    def test_path_tracing_redirect_plan_is_searchplan_instance(self):
+    def test_similarity_redirect_plan_is_searchplan_instance(self):
         decision = _make_intent_decision(
-            "path_tracing",
+            "similarity",
             confidence=0.9,
-            suggested_params={"source": "A", "target": "B"},
+            suggested_params={"symbol_name": "HybridSearcher"},
         )
         with _patch_planner_deps(intent_decision=decision):
-            plan = SearchPlanner().plan({"query": "trace path from A to B"})
+            plan = SearchPlanner().plan({"query": "code similar to HybridSearcher"})
         assert isinstance(plan, SearchPlan)
         assert isinstance(plan.redirect, PlanRedirect)
 

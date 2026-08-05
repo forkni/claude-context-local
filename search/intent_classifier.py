@@ -592,13 +592,6 @@ class IntentClassifier:
             if rel_types:
                 params["relationship_types"] = rel_types
 
-        elif intent == QueryIntent.PATH_TRACING:
-            # Extract source and target for find_path
-            source, target = self._extract_path_endpoints(query)
-            if source and target:
-                params["source"] = source
-                params["target"] = target
-
         elif intent == QueryIntent.SIMILARITY:
             # Extract reference symbol for find_similar_code
             reference = self._extract_symbol_from_query(query)
@@ -742,46 +735,6 @@ class IntentClassifier:
             types.append("instantiates")
 
         return types
-
-    def _extract_path_endpoints(self, query: str) -> tuple[str | None, str | None]:
-        """Extract source and target symbols from path-tracing queries.
-
-        Args:
-            query: Path tracing query string.
-
-        Returns:
-            Tuple of (source, target) or (None, None) if not found.
-
-        Examples:
-            >>> classifier = IntentClassifier()
-            >>> classifier._extract_path_endpoints("trace path from login to database")
-            ('login', 'database')
-            >>> classifier._extract_path_endpoints("how does UserModel connect to API")
-            ('UserModel', 'API')
-        """
-        query = query.strip()
-
-        # Pattern 1: "from X to Y"
-        match = re.search(r"from\s+(\w+)\s+to\s+(\w+)", query, re.I)
-        if match:
-            return match.group(1), match.group(2)
-
-        # Pattern 2: "between X and Y"
-        match = re.search(r"between\s+(\w+)\s+and\s+(\w+)", query, re.I)
-        if match:
-            return match.group(1), match.group(2)
-
-        # Pattern 3: "how does X connect to Y"
-        match = re.search(r"how\s+does\s+(\w+)\s+connect\s+to\s+(\w+)", query, re.I)
-        if match:
-            return match.group(1), match.group(2)
-
-        # Pattern 4: "X to Y path/connection"
-        match = re.search(r"(\w+)\s+to\s+(\w+)\s+(path|connection)", query, re.I)
-        if match:
-            return match.group(1), match.group(2)
-
-        return None, None
 
     def get_intent_patterns(self, intent: QueryIntent) -> dict | None:
         """Get pattern details for a specific intent type.

@@ -516,20 +516,12 @@ class TestPathTracingIntent:
         decision = classifier.classify("trace path from login to database")
         assert decision.intent == QueryIntent.PATH_TRACING
         assert decision.confidence >= 0.3
-        assert decision.suggested_params.get("source") == "login"
-        assert decision.suggested_params.get("target") == "database"
-        assert "tool" not in decision.suggested_params
 
     def test_how_does_connect(self, classifier):
         """Test PATH_TRACING intent for 'how does X connect to Y' queries."""
         decision = classifier.classify("how does UserModel connect to API")
         assert decision.intent == QueryIntent.PATH_TRACING
         assert decision.confidence >= 0.3
-        source, target = (
-            decision.suggested_params.get("source"),
-            decision.suggested_params.get("target"),
-        )
-        assert source == "UserModel" and target == "API"
 
     def test_connection_between(self, classifier):
         """Test PATH_TRACING intent for 'connection between X and Y' queries."""

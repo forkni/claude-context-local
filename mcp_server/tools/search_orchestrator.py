@@ -72,12 +72,11 @@ class PlanRedirect:
     """Intent-based redirect to a different MCP handler.
 
     kind:
-      "find_path"     — redirect to handle_find_path; params contains {source, target, max_hops}.
       "find_similar"  — redirect to handle_find_similar_code after a 1-result symbol lookup;
                         params["symbol_name"] is the target symbol.
 
     fallback_on_error: when True (SIMILARITY), the handler should fall through to normal
-        search if the I/O lookup raises. When False (PATH_TRACING), no fallback.
+        search if the I/O lookup raises.
     k: k to forward to find_similar_code.
     """
 
@@ -162,24 +161,9 @@ class SearchPlanner:
                 f"(conf={intent_decision.confidence:.2f}, reason={intent_decision.reason})"
             )
 
-            # Suggest PATH_TRACING redirect (no fallback — if source/target absent, skip)
-            if (
-                intent_decision.intent == QueryIntent.PATH_TRACING
-                and intent_decision.confidence >= config.intent.confidence_threshold
-            ):
-                source = intent_decision.suggested_params.get("source")
-                target = intent_decision.suggested_params.get("target")
-                if source and target:
-                    redirect = PlanRedirect(
-                        kind="find_path",
-                        params={"source": source, "target": target, "max_hops": 10},
-                        fallback_on_error=False,
-                    )
-
             # Suggest SIMILARITY redirect (fallback on error — I/O lookup may fail)
             if (
-                redirect is None
-                and intent_decision.intent == QueryIntent.SIMILARITY
+                intent_decision.intent == QueryIntent.SIMILARITY
                 and intent_decision.confidence >= config.intent.confidence_threshold
             ):
                 symbol_name = intent_decision.suggested_params.get("symbol_name")
@@ -733,14 +717,6 @@ class SearchOrchestrator:
 
         if plan.redirect is not None:
             redirect = plan.redirect
-            if redirect.kind == "find_path":
-                logger.info(
-                    f"[INTENT] Redirecting PATH_TRACING query to find_path: "
-                    f"{redirect.params.get('source')} → {redirect.params.get('target')}"
-                )
-                from mcp_server.tools.search_handlers import handle_find_path
-
-                return await handle_find_path(redirect.params)
             if redirect.kind == "find_similar":
                 logger.info(
                     f"[INTENT] Redirecting SIMILARITY query to find_similar_code: "
