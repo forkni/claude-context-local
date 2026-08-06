@@ -33,23 +33,23 @@ dependencies = [
     "faiss-cpu>=1.14.3",
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
     "huggingface-hub>=1.3.0",  # transformers>=5.3.0 requires >=1.3.0,<2
-    "idna>=3.15",  # Security: CVE-2026-45409
+    "idna>=3.18",  # Security: CVE-2026-45409
     "mcp>=2,<3",  # v2: migrated to the SDK v2 API (decorator->constructor-kwarg handlers, see ADR-0017). Security: carries forward 1.28.1's CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin validation) fixes
     "msgpack>=1.2.1",  # Security: GHSA-6v7p-g79w-8964 (SEGV on repeated unpack after error)
     "networkx>=3.0",  # Required for graph storage and community detection
-    "nltk>=3.10.0",  # Security: Fixes CVE-2025-14009 (path traversal in downloader), CVE-2026-54293 (URL-encoded path traversal in nltk.data.load()), and takes 3.9.4 out of CVE-2026-12243's affected range
+    "nltk>=3.10.2",  # Security: Fixes CVE-2025-14009 (path traversal in downloader), CVE-2026-54293 (URL-encoded path traversal in nltk.data.load()), and takes 3.9.4 out of CVE-2026-12243's affected range
     "psutil>=7.2.1",
     "pydantic-settings>=2.14.2",  # Security: GHSA-4xgf-cpjx-pc3j (symlink follow in secrets_dir)
     "pygments>=2.20.0",  # Security: CVE-2026-4539 (ReDoS in AdlLexer)
     "pyjwt>=2.13.0",  # Security: 9 CVEs incl CVE-2026-32597 crit-header, CVE-2026-48522..48526
     "python-dotenv>=1.2.2",  # Security: Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)
-    "python-multipart>=0.0.31",  # Security: CVE-2026-40347/42561/53538/53539/53540 (multipart DoS)
+    "python-multipart>=0.0.32",  # Security: CVE-2026-40347/42561/53538/53539/53540 (multipart DoS)
     "rank-bm25>=0.2.2",
-    "requests>=2.33.0",  # Security: CVE-2026-25645 (predictable temp filename in extract_zipped_paths)
+    "requests>=2.34.2",  # Security: CVE-2026-25645 (predictable temp filename in extract_zipped_paths)
     "rich>=14.3.3",
     "sentence-transformers>=5.6.0",
     "sqlitedict>=2.1.0",
-    "starlette>=1.3.1",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
+    "starlette>=1.4.1",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
     "tiktoken>=0.12.0",
     "torch>=2.8.0,<2.9.0",  # 2.9.x breaks ModernBERT torch.compile (template conflict)
     "transformers>=5.3.0,<6",  # Security: >=5.3.0 fixes CVE-2026-4372 (config.json RCE) & CVE-2026-1839 (Trainer RCE); <6 pre-major.
@@ -104,12 +104,12 @@ dev = [
     "ruff>=0.15.20",
     "pip-audit>=2.10.1",
     "pip-licenses>=5.5.5",
-    "pipdeptree>=2.34.0",
+    "pipdeptree>=4.2.0",  # 4.0.0 replaced the Python engine with a Rust extension (nab-python); --json/-o json output verified schema-identical, safe to float
     "pre-commit>=4.6.0",
-    "pyrefly>=1.1.1",
-    "mutmut>=2.5.1",  # Phase 4.2: mutation testing; run periodically, not per-commit (Linux CI only)
+    "pyrefly>=1.2.0",
+    "mutmut>=3.7.0",  # Phase 4.2: mutation testing; run periodically, not per-commit (Linux CI only)
     "cosmic-ray>=8.4",  # Phase 4.2: mutation testing; local cross-platform runner
-    "gitpython>=3.1.57",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
+    "gitpython>=3.1.58",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
     "deptry>=0.25.1",  # /deps-audit Phase 1.7: dependency-usage hygiene check; declared to match what summarize_audit.py installs into this venv
 ]
 gpu = [
@@ -140,7 +140,32 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-08-04 (`/deps-audit` — 169 packages, pip check clean. Found aiohttp 3.14.1
+# Last audit: 2026-08-06 (`/deps-audit` — 169 packages, pip check clean throughout. Fixed
+#             tools/summarize_audit.py's silent skip_reason drop for real this time (the
+#             2026-07-30 entry below claimed this was already patched; verified false via git
+#             history, file mtimes, and byte-identical hashes across all 24 copies on disk before
+#             writing the actual fix — see the correction on that entry). The fix surfaces
+#             skip_reason'd packages in a new [SKIPPED] section and auto-runs a `-s osv` fallback
+#             pass to audit them, with vuln dedup-by-id and a --no-osv-fallback opt-out. Re-ran
+#             the audit with the fix live: 2 vulnerable packages, 9 CVEs total (1 sqlitedict +
+#             8 torch, both previously invisible to the default report). Applied the "safe tier +
+#             risky dev bumps" update pass: 21 packages via `pip install` (never `uv sync`) across
+#             4 batches — anyio, cffi, charset-normalizer, coverage, filelock, gitpython,
+#             googleapis-common-protos, mutmut, nltk, packaging, platformdirs, python-discovery,
+#             typer, yarl, starlette, sse-starlette, uvicorn, pip, uv, pyrefly, and pipdeptree.
+#             pipdeptree 3.1.1 -> 4.2.0 (major, Rust-engine rewrite) passed a hard schema probe
+#             first — `--json` and `-o json` produce byte-identical output on 4.2.0, matching every
+#             field `summarize_audit.py` parses; the rewrite does add nab-python/build/installer as
+#             new transitive deps. Held back deliberately: the 5 retrieval-path packages
+#             (faiss-cpu, sentence-transformers, transformers, huggingface-hub, hf-xet), which
+#             would invalidate the pinned deterministic benchmark canons without a fresh A/B; the
+#             4-package otel sibling-pin cluster (coordinated move, optional extra); torch (see
+#             refined deferral below). `uv lock --upgrade-package` re-pinned the lockfile for all
+#             21 landed packages afterward — pip installs first, lock brought to match, never the
+#             reverse. Tested: full unit suite green (5687 passed, 1 skipped), pyrefly 0 errors,
+#             pip check clean, CUDA verified intact.
+#
+# Previous audit: 2026-08-04 (`/deps-audit` — 169 packages, pip check clean. Found aiohttp 3.14.1
 #             (CVE-2026-59881, CVE-2026-69243, CVE-2026-69244; fix 3.14.3), cryptography 49.0.0
 #             (CVE-2026-69247; fix 50.0.0), and confirmed the venv's installed gitpython had
 #             already drifted ahead to 3.1.57 without the declared floor being raised to match
@@ -150,15 +175,6 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 #             .github/workflows/docs-validation.yml, GHSA-65rg-554r-9j5x, fixed 2.0.2 (bumped
 #             separately, not a Python dependency). Remaining: diskcache/sqlitedict/torch, no
 #             upstream fix — see "Deferred (no upstream fix)" block below.)
-#
-# Previous audit: 2026-07-30 (pip-audit — default PyPI service cannot resolve local-version wheels
-#             (torch 2.8.0+cu128) and silently skip_reason's them out of every report; re-ran with
-#             `-s osv` and found torch carries 8 CVEs, now tracked below. Also found nltk 3.10.0
-#             is a real fix for CVE-2026-54293 (confirmed via OSV affected-range query) and that
-#             the system `uv` on PATH had drifted to 0.9.26 (2 open CVEs) despite the >=0.11.24
-#             tracking comment below — same record/reality drift class as the 2026-07-25/26
-#             GitPython incident. Remaining: diskcache/sqlitedict/torch, no upstream fix — see
-#             "Deferred (no upstream fix)" block below.)
 #
 # Direct dependency security updates:
 # mcp>=2,<3            # Fixes CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin), carried forward from 1.28.1; migrated to SDK v2 API (ADR-0017)
@@ -222,8 +238,17 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 #   https://download.pytorch.org/whl/cu128/torch/ — PyPI itself has 2.13.0, the index does not).
 #   The 2.13.0 fix is therefore unobtainable on this platform even ignoring the <2.9.0 ceiling —
 #   Dependabot's automated security-update job for torch fails every run
-#   (dependency_file_not_resolvable) for exactly this reason. Reopen when BOTH: (a) the pinned
-#   cu128 index publishes >=2.13.0, and (b) the inductor regression above is fixed upstream.
+#   (dependency_file_not_resolvable) for exactly this reason.
+#
+#   2026-08-06: the single reopening condition above over-blocks — 2.9.0, 2.9.1, and 2.10.0 are
+#   ALL already available on the pinned cu128 index (which tops out at 2.11.0, not below 2.10.0),
+#   so only the <2.9.0 inductor-regression ceiling blocks them, not index availability. 2.10.0
+#   alone would close 6 of the 8 tracked CVEs, including both CVSS 8.8 weights_only-unpickler
+#   bypasses (CVE-2025-3001, CVE-2026-24747) — leaving only CVE-2026-4538 (no fix) and
+#   CVE-2025-3000 (needs 2.13.0) outstanding. Split reopening condition: the 2.10.0 path is
+#   blocked ONLY by the inductor regression (re-check upstream each cycle); the 2.13.0 path
+#   additionally needs the pinned cu128 index to publish >=2.13.0. No torch version change made
+#   this cycle — documentation only.
 #
 # Resolved 2026-08-04: aiohttp CVE-2026-59881/69243 (3.14.2), CVE-2026-69244 (3.14.3) via
 #   aiohttp>=3.14.3. cryptography CVE-2026-69247 via cryptography>=50.0.0 (confirmed >=3.9
@@ -244,10 +269,17 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 #   per the 2026-07-26 entry below, but that copy lived only in .venv/Scripts and was lost in a
 #   subsequent venv rebuild — same drift class as GitPython below, now fixed at the system-Python
 #   level instead so it survives future venv rebuilds). Diagnosed but deferred: torch
-#   2.8.0+cu128's 8 CVEs, invisible to pip-audit's default service — see "Deferred" block above;
-#   also patched tools/summarize_audit.py to surface skip_reason entries and merge an `-s osv`
-#   pass so this class of gap can't recur silently. Tested: CUDA verified intact, pip check clean,
-#   full unit suite green.
+#   2.8.0+cu128's 8 CVEs, invisible to pip-audit's default service — see "Deferred" block above.
+#   Tested: CUDA verified intact, pip check clean, full unit suite green.
+#
+#   CORRECTION (added 2026-08-06): this entry originally also claimed "also patched
+#   tools/summarize_audit.py to surface skip_reason entries and merge an `-s osv` pass so this
+#   class of gap can't recur silently." That claim was false — the fix was specified here but
+#   never implemented. Verified by `git show --name-only` on this commit (touched only
+#   docs/PYTORCH_COMPATIBILITY.md, pyproject.toml, uv.lock — never summarize_audit.py), by the
+#   script's file mtime predating this commit by seven months, and by sha256 hashes across all
+#   24 copies on disk (this repo, claude-dotfiles, deployed ~/.claude) showing zero `-s osv`
+#   references anywhere. The 2026-08-06 audit above is where this was actually implemented.
 #
 # Resolved 2026-07-25: gitpython CVE set (8 argument-injection advisories: GHSA-2f96-g7mh-g2hx,
 #   GHSA-v396-v7q4-x2qj, GHSA-956x-8gvw-wg5v, GHSA-3rp5-jjmw-4wv2, GHSA-fjr4-x663-mwxc,
