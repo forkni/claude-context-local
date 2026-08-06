@@ -465,7 +465,7 @@ The Mixed approach demonstrates that **MCP semantic search is production-ready**
 
 ## SSCG Retrieval Benchmark
 
-**Added**: v0.9.0 | **Last run**: 2026-08-05 (see provenance below)
+**Added**: v0.9.0 | **Last run**: 2026-08-06 (see provenance below)
 
 Measures end-to-end retrieval quality for `search_code` queries: how well the ranked results cover the labeled relevant chunks for each query.
 
@@ -490,18 +490,17 @@ Relevance grades: 3 = primary target, 2 = expected, 1 = acceptable/hard-negative
 
 **Runner**: `scripts/benchmark/run_sscg_benchmark.py` (shell wrapper: `scripts/benchmark/run_benchmark.sh`)
 
-### Results (2026-08-05, hybrid-only, k=10)
+### Results (2026-08-06, hybrid-only, k=10)
 
-Provenance: `docs/adr/0031-delete-intent-policy-tables.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`, `intent.enabled=True`). Re-pinned to `canon_j1` after deleting the two intent policy tables (ADR-0031, QW5 `_intent_ego_thresholds` + A1 `INTENT_EDGE_WEIGHT_PROFILES` consumption) — both measured inert/flat in prior rounds; deletion judged via a pre-registered difference-of-differences gate against a same-substrate `canon_j0` pre-side, passing cleanly on both MRR and recall@10 (all four deltas within ±0.004 of zero, well above the −0.02 revert threshold). The table below cites `canon_j1`'s **intent-on arm** — the figures matching the shipped default — not its intent-off control view. Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
+Provenance: `docs/adr/0033-lift-torch-ceiling.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`, `intent.enabled=True`). Re-pinned to `canon_l1` after the ML-stack bump (retrieval libraries + torch 2.8.0+cu128 → 2.10.0+cu128 → 2.11.0+cu128, ADR-0033) — all three stages independently gated on a fresh 63q intent-on arm against a same-day pre-side baseline, passing cleanly (stage 1: 0 queries moved, CI zero on 4 of 5 metrics; stage 2: all five paired 95% CIs include zero; stage 3: 0 queries moved, all five CIs exactly `[+0.0000, +0.0000]`, byte-identical to stage 2). The table below cites `canon_l1`'s **intent-on arm** — the figures matching the shipped default — not its intent-off control view. Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
 
 | Dataset | Queries | MRR | Recall@5 | Recall@10 | NDCG@5 | pool_hit_rate |
 |---|---|---|---|---|---|---|
-| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8603** (`canon_j1` intent-on arm) | 0.6676 | 0.7864 | 0.7052 | 0.9048 |
-| Expanded (`golden_dataset_expanded.json`, non-D, 133 queries) | 133 | **0.6869** (`canon_j1` intent-on arm) | 0.6607 | 0.7704 | 0.6400 | 0.8872 |
-| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.8836** (`canon_h1`, carried forward — not recaptured this round) | 0.6818 | 0.7963 | 0.7086 | 1.0000 |
-| F-via-similar (F-category only, 9 queries) | 9 | **0.8519** (`canon_h1`, carried forward — not recaptured this round) | 0.5690 | 0.7185 | 0.6064 | — |
+| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8603** (`canon_l1` intent-on arm) | 0.6795 | 0.7957 | 0.7107 | 0.9048 |
+| Expanded (`golden_dataset_expanded.json`, non-D, 133 queries) | 133 | **0.6789** (`canon_l1` intent-on arm) | 0.6507 | 0.7758 | 0.6324 | 0.8797 |
+| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.9021** (`canon_l1`) | 0.6633 | 0.7804 | 0.7047 | 1.0000 |
 
-Run-to-run noise band is **±0.02 MRR**, measured directly via a same-code control (two 94-query runs on unchanged code landed 0.701 and 0.683). Treat any delta smaller than that as noise. The F-via-similar rows were not recaptured for `canon_j1` — the ADR-0031 deletion touches neither `find_similar`'s redirect nor its scoring path — and carry forward `canon_h1`'s figures unchanged; a future round that does touch that path should recapture this view explicitly rather than continue the carry-forward.
+Run-to-run noise band is **±0.02 MRR**, measured directly via a same-code control (two 94-query runs on unchanged code landed 0.701 and 0.683). Treat any delta smaller than that as noise. The canonical-view and F-via-similar figures are byte-identical to `canon_k1`/`canon_k2` (0 queries moved across both stage 2 and stage 3 gates); the expanded-view deltas vs the prior `canon_j1` figures (0.6869, 0.8836) are within or just outside the noise band and are attributed to torch's kernel-level floating-point reordering measured in ADR-0033's Stage 2 gate, not a functional regression. The separate F-category-only (9-query) sub-row from prior generations is dropped — the whole-63q aggregate is the one actually consumed downstream.
 
 **Comparability breaks** — do not read the numbers above as a trend against the historical table below:
 
@@ -513,6 +512,7 @@ Run-to-run noise band is **±0.02 MRR**, measured directly via a same-code contr
 - ADR-0029 (`canon_h1`, `evaluation/CANON_20260804_INTENT_ON_REPAIRED.md`) repaired `_extract_symbol_from_query`, passed the pre-registered similarity-query gate on both datasets, and re-enabled `intent.enabled=True` as the shipped default.
 - ADR-0030 (`canon_i1`, `evaluation/CANON_20260805_CONFIG_SEAM_REPIN.md`) deepened the config→searcher seam (C3+C4 unified) and corrected six construction-baked liveness tags; measured 0 flips, all deltas attributed to substrate drift.
 - ADR-0031 (`canon_j1`, `docs/adr/0031-delete-intent-policy-tables.md`) deleted the two intent policy tables (QW5 `_intent_ego_thresholds` + A1 `INTENT_EDGE_WEIGHT_PROFILES` consumption), both previously measured inert/flat; a pre-registered difference-of-differences gate against a same-substrate `canon_j0` pre-side passed cleanly (all four deltas within ±0.004 of zero) — `canon_j1`'s intent-on arm is the published baseline above, superseding `canon_i1`.
+- ADR-0033 (`canon_l1`, `docs/adr/0033-lift-torch-ceiling.md`) bumped the ML stack (transformers/sentence-transformers/faiss-cpu/huggingface-hub/hf-xet, then torch 2.8.0+cu128 → 2.10.0+cu128 → 2.11.0+cu128) across three independently-gated stages, each passing its paired-CI adoption gate against a same-day pre-side baseline — the stage 3 bump corrected a factual error in stage 2's CVE-2026-4538 claim (see ADR-0033 and the CHANGELOG Security section). `canon_l1`'s intent-on arm is the published baseline above, superseding `canon_j1`/`canon_k1`/`canon_k2`.
 - The 2026-07-28 golden-dataset repair (`6df36db`) changed scoring for 3-part `split_block` chunks; nothing measured before that commit is comparable to what's measured after.
 - The 2026-08-02 H-category promotion grew the expanded set 108→145 queries (94→131 non-D); the 2026-08-04 top-up grew it further to 147 (133 non-D). H queries are harder by construction (single-file, ≤2 golds), so treat each generation's figure as a separate measurement, not a before/after comparison.
 - `0.797` in the historical table below (2026-06-08, 13 queries) predates the golden-dataset repair, the H-promotion, the SDK v2 migration, and every re-pin since; kept only for continuity.

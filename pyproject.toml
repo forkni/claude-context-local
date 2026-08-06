@@ -51,7 +51,7 @@ dependencies = [
     "sqlitedict>=2.1.0",
     "starlette>=1.4.1",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
     "tiktoken>=0.12.0",
-    "torch>=2.10.0,<2.11.0",  # Security: 2.10.0 closes 6 of 8 tracked CVEs incl. CVE-2025-3001/CVE-2026-24747 weights_only unpickler bypasses (2026-08-06). Old <2.9.0 ceiling's "ModernBERT torch.compile" rationale lapsed: the GTE-ModernBERT embedder it protected was deleted in 24f6b8c, and transformers>=5.3.0 removed ModernBERT's reference_compile path entirely.
+    "torch>=2.11.0,<2.12.0",  # Security: 2.11.0 closes 7 of 8 tracked CVEs incl. CVE-2025-3001/CVE-2026-24747 weights_only unpickler bypasses and CVE-2026-4538 (pt2 loader deserialization, PYSEC-2026-139, last_affected=2.10.0 per OSV) (2026-08-06). Old <2.9.0 ceiling's "ModernBERT torch.compile" rationale lapsed: the GTE-ModernBERT embedder it protected was deleted in 24f6b8c, and transformers>=5.3.0 removed ModernBERT's reference_compile path entirely.
     "transformers>=5.14.1,<6",  # Security: >=5.3.0 fixes CVE-2026-4372 (config.json RCE) & CVE-2026-1839 (Trainer RCE); <6 pre-major.
     "tree-sitter>=0.25.0,<0.26",  # ABI: no tree-sitter-* grammar package supports the 0.26 ABI yet (max on PyPI is 0.25.0); loading grammars raises OverflowError under 0.26
     "tree-sitter-c>=0.24.2",
@@ -151,8 +151,8 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 #             2.8.0+cu128 -> 2.10.0+cu128, closing 6 of 8 tracked CVEs: CVE-2025-55551/-55552/
 #             -55554 (DoS, fixed 2.9.0), CVE-2025-2999 (fixed 2.9.1), CVE-2025-3001 (torch.lstm_cell
 #             memory corruption, fixed 2.10.0), CVE-2026-24747 (weights_only unpickler bypass,
-#             CVSS 8.8, fixed 2.10.0) — leaving CVE-2026-4538 (no fix) and CVE-2025-3000 (needs
-#             2.13.0, unpublished on the pinned cu128 index) outstanding. The lifted <2.9.0
+#             CVSS 8.8, fixed 2.10.0) — leaving CVE-2026-4538 and CVE-2025-3000 (needs 2.13.0,
+#             unpublished on the pinned cu128 index) outstanding at this point. The lifted <2.9.0
 #             ceiling's stated rationale ("2.9.x breaks ModernBERT torch.compile") was verified
 #             false on both legs before lifting it: the GTE-ModernBERT embedder it protected was
 #             deleted in 24f6b8c (2026-07-31), and transformers>=5.3.0 removed ModernBERT's
@@ -164,7 +164,20 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 #             --deterministic-gpu strict-mode re-validation completed with zero RuntimeErrors
 #             (utils/determinism.py). Both stages: full unit suite green (5687 passed, 1 skipped),
 #             pip check clean except the now-resolved <2.9.0 ceiling conflict, CUDA verified
-#             intact (2.10.0+cu128, CUDA 12.8, RTX 4090). See docs/adr/0033-lift-torch-ceiling.md.
+#             intact (2.10.0+cu128, CUDA 12.8, RTX 4090). Stage 3 (torch, same-day correction) —
+#             the "CVE-2026-4538 has no fix" claim above was wrong: pip-audit's default OSV lookup
+#             silently drops findings for local-version wheels like 2.10.0+cu128 (no skip_reason,
+#             just absent from the report); the raw OSV API
+#             (https://api.osv.dev/v1/vulns/PYSEC-2026-139) shows last_affected="2.10.0" with a
+#             merged fix PR (pytorch/pytorch#176791), i.e. 2.10.0 was still vulnerable and 2.11.0
+#             is what actually closes it. Bumped 2.10.0+cu128 -> 2.11.0+cu128 (7 of 8 CVEs closed,
+#             only CVE-2025-3000 remains); canon_k1(=canon_l0) -> canon_l1 gate: 0 queries moved,
+#             all five paired 95% CIs exactly [+0.0000,+0.0000], byte-identical retrieval outcome;
+#             --deterministic-gpu re-validation again zero RuntimeErrors. Side effect: torch
+#             2.11.0 declares setuptools<82, downgrading the venv's setuptools from 83.0.0 to
+#             78.1.0 — build-time-only exposure (no runtime import of setuptools/pkg_resources in
+#             this codebase; [build-system].requires>=83.0.0 still governs actual builds via PEP
+#             517 isolation; pip check clean). See docs/adr/0033-lift-torch-ceiling.md.
 #
 # Previous audit: 2026-08-06 (`/deps-audit` — 169 packages, pip check clean throughout. Fixed
 #             tools/summarize_audit.py's silent skip_reason drop for real this time (the
@@ -229,6 +242,18 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 #                          # entry floated to 82.0.1 until bumped 2026-08-04 via `uv lock --upgrade-package
 #                          # setuptools`. This is the entry GitHub's Dependabot alerts flag (manifest uv.lock),
 #                          # not the build-system one.
+#                          # NOTE (2026-08-06): torch 2.11.0 declares `setuptools<82` as a real runtime
+#                          # Requires-Dist, so `pip install torch==2.11.0` downgrades the venv's *installed*
+#                          # setuptools to 78.1.0 -- below the fix versions for both PYSEC-2025-49/CVE-2025-47273
+#                          # (fixed 78.1.1) and CVE-2026-59890 above (fixed 83.0.0). Forcing the venv's
+#                          # setuptools back to 83.0.0 was tested and works (torch still imports, CUDA intact),
+#                          # but leaves a standing `pip check` conflict against torch's declared constraint that
+#                          # a future `pip install`/`uv sync` would likely silently re-resolve away -- not done.
+#                          # Accepted as build-time-only exposure instead: no module in this codebase imports
+#                          # `setuptools`/`pkg_resources` at runtime (verified via grep), and
+#                          # `[build-system].requires>=83.0.0` above still governs actual package builds via PEP
+#                          # 517 isolation, unaffected by the venv's installed version. See
+#                          # docs/PYTORCH_COMPATIBILITY.md and docs/adr/0033-lift-torch-ceiling.md.
 # urllib3>=2.7.0           # Fixes CVE-2026-44431 (cross-origin redirect), CVE-2026-44432 (decompression)
 # uv>=0.11.24              # Fixes GHSA-4gg8-gxpx-9rph (0.11.15, malicious-wheel path traversal), GHSA-pjjw-68hj-v9mw (0.11.6, arbitrary file deletion via RECORD entries)
 # werkzeug>=3.1.4          # Fixes CVE-2025-66221 (Windows device name handling)
@@ -243,14 +268,18 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 #   calls are nltk.data.find("corpora/stopwords") and nltk.download("stopwords", quiet=True) with
 #   hardcoded literals (search/bm25_index.py:33,35).
 # * pyjwt PYSEC-2025-183 (disputed weak encryption) — no upstream fix
-# * torch 2.10.0+cu128, 2 CVEs remaining (down from 8 as of 2026-08-06 — see the ML-stack-bump
-#   entry at the top of "Last audit" above and docs/adr/0033-lift-torch-ceiling.md).
-#   CVE-2026-4538 — no upstream fix at any version. CVE-2025-3000 — fixed in 2.13.0, which the
-#   pinned cu128 index does not publish (tops out at 2.11.0; verified via
-#   https://download.pytorch.org/whl/cu128/torch/ — PyPI itself has 2.13.0, the index does not).
-#   Mitigation for both: local-only tool, no internet-exposed API; models are loaded from
-#   official HuggingFace repos over HTTPS as safetensors (embeddings/model_loader.py), never as
-#   untrusted .pth/pickle checkpoints. Reopening condition: re-check each cycle whether the
+# * torch 2.11.0+cu128, 1 CVE remaining (down from 8 as of 2026-08-06 — see the ML-stack-bump
+#   entry at the top of "Last audit" above and docs/adr/0033-lift-torch-ceiling.md). Note:
+#   pip-audit's default OSV lookup silently misses vulns on local-version wheels like
+#   "2.11.0+cu128" (no skip_reason, just absent) — ground truth for CVE-2026-4538 came from
+#   querying https://api.osv.dev/v1/vulns/PYSEC-2026-139 directly, which lists
+#   last_affected="2.10.0" and a merged fix PR (pytorch/pytorch#176791), confirming 2.11.0 closes
+#   it. Always cross-check torch CVE claims against the raw OSV API, not just pip-audit's report.
+#   CVE-2025-3000 — fixed in 2.13.0, which the pinned cu128 index does not publish (tops out at
+#   2.11.0; verified via https://download.pytorch.org/whl/cu128/torch/ — PyPI itself has 2.13.0,
+#   the index does not). Mitigation: local-only tool, no internet-exposed API; models are loaded
+#   from official HuggingFace repos over HTTPS as safetensors (embeddings/model_loader.py), never
+#   as untrusted .pth/pickle checkpoints. Reopening condition: re-check each cycle whether the
 #   pinned cu128 index has started publishing >=2.13.0.
 #
 # Resolved 2026-08-04: aiohttp CVE-2026-59881/69243 (3.14.2), CVE-2026-69244 (3.14.3) via

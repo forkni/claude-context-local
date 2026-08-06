@@ -68,6 +68,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **ML stack bumped (retrieval libs + torch 2.11.0); SSCG canon re-pinned to `canon_l1`**
+  (ADR-0033) — three independently-gated stages: transformers 5.13.0→5.14.1,
+  sentence-transformers 5.6.1→5.7.0, faiss-cpu 1.14.3→1.15.0, huggingface-hub 1.22.0→1.26.1,
+  hf-xet 1.5.1→1.6.0 (stage 1, byte-identical retrieval outcome, 0 queries moved), then torch
+  2.8.0+cu128→2.10.0+cu128 (stage 2, all five paired 95% CIs include zero — gate passes), then
+  torch 2.10.0+cu128→2.11.0+cu128 (stage 3, correcting a factual error discovered in stage 2's own
+  CVE claims — see Security below; also byte-identical retrieval outcome, 0 queries moved). The
+  `torch<2.9.0` ceiling's stated rationale (ModernBERT `torch.compile` inductor conflict) was
+  verified dead: the embedder it protected was deleted in `24f6b8c` and `transformers>=5.3.0`
+  removed ModernBERT's `reference_compile` path entirely. New ceiling `<2.12.0` reflects the
+  pinned `cu128` wheel index's current publish maximum, not a known regression. Re-pin: intent-on
+  arm mrr 0.8603 (63q, unchanged) / 0.6789 (133q), F-via-similar mrr 0.9021, superseding
+  `canon_j1`'s figures (0.8603/0.6869/0.8836) — deltas attributed to torch's kernel-level
+  floating-point reordering, not a functional change. See `docs/adr/0033-lift-torch-ceiling.md`.
 - **Deleted the two intent policy tables (QW5 + A1); SSCG canon re-pinned to `canon_j1`**
   (ADR-0031) — `_intent_ego_thresholds` (`search/effective_config.py`) and
   `INTENT_EDGE_WEIGHT_PROFILES` (`graph/graph_storage.py`) were measured inert by ADR-0026 and
@@ -193,6 +207,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   user-facing docs updated to the new figures. See `evaluation/CANON_20260804.md` for full
   numbers, the per-category/per-split breakdown, and the frontier disposition
   (`evaluation/CATEGORY_G_DESCOPE_20260804.md` for the Category G descope).
+
+### Security
+
+- **torch 2.8.0+cu128 → 2.11.0+cu128 closes 7 of 8 tracked CVEs** (ADR-0033), including both
+  CVSS 8.8 vulnerabilities: `CVE-2026-24747` (a `weights_only` unpickler bypass) and
+  `CVE-2025-3001` (a `torch.lstm_cell` memory-corruption bug — not a second `weights_only`
+  bypass, correcting an earlier mischaracterization in this project's own tracking notes), plus
+  `CVE-2026-4538` (`PYSEC-2026-139`, a `pt2` loader deserialization issue). Remaining 1:
+  `CVE-2025-3000` (fixed in 2.13.0, which the pinned `cu128` wheel index does not yet publish).
+  See `pyproject.toml`'s "Deferred (no upstream fix)" tracking comment and
+  `docs/adr/0033-lift-torch-ceiling.md`.
+- **Correction**: an intermediate pass of this same audit (torch 2.10.0) claimed
+  `CVE-2026-4538` had "no upstream fix at any version" and closed the ledger at 6 of 8. That was
+  wrong — `pip-audit`'s default OSV lookup silently drops findings for local-version wheels like
+  `torch==2.10.0+cu128` (no `skip_reason`, the entry is just absent from the report). Querying the
+  OSV API directly (`https://api.osv.dev/v1/vulns/PYSEC-2026-139`) shows `last_affected: "2.10.0"`
+  with a merged fix PR (`pytorch/pytorch#176791`) — `2.10.0` was still vulnerable, `2.11.0` closes
+  it. New standing rule: always cross-check torch CVE claims against the raw OSV API, not just
+  `pip-audit`'s report, when the installed wheel carries a local version suffix.
 
 ---
 

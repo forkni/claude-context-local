@@ -19,8 +19,8 @@ removed from `MODEL_REGISTRY` in v0.23.0.)
 
 ### Recommended (and Enforced) Versions
 
-- **PyTorch >=2.10.0, <2.11.0** - The only range installed by this project (see
-  "Why `<2.11.0`?" below). Fully tested and supported ✅
+- **PyTorch >=2.11.0, <2.12.0** - The only range installed by this project (see
+  "Why `<2.12.0`?" below). Fully tested and supported ✅
 
 ## CUDA Compatibility
 
@@ -65,16 +65,16 @@ torch = [
 # uv resolves torch via the pinned pytorch-cu128 index automatically -- no extra needed
 uv sync
 
-# Result: PyTorch 2.10.x+cu128 (✅ Recommended)
+# Result: PyTorch 2.11.x+cu128 (✅ Recommended)
 ```
 
 **Older driver / cu128 unavailable:**
 
 ```batch
 # Fall back to the legacy cu124 index
-uv pip install torch==2.10.* torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+uv pip install torch==2.11.* torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
-# Result: PyTorch 2.10.x+cu124
+# Result: PyTorch 2.11.x+cu124
 ```
 
 ## Version Constraints in pyproject.toml
@@ -84,13 +84,13 @@ uv pip install torch==2.10.* torchvision torchaudio --index-url https://download
 ```toml
 [project]
 dependencies = [
-    "torch>=2.10.0,<2.11.0",
+    "torch>=2.11.0,<2.12.0",
     "torchvision>=0.21.0",
     "torchaudio>=2.6.0",
 ]
 ```
 
-### Why `<2.11.0`?
+### Why `<2.12.0`?
 
 `torch` is **capped** at the next major boundary rather than left floor-only, matching the
 project's index-availability constraint — this is intentional (commit history: `b68cfff8`
@@ -105,32 +105,49 @@ introduced the original `<2.9.0` ceiling, lifted 2026-08-06, see `docs/adr/0033-
   package returns nothing). The project itself never calls `torch.compile` — the only `_dynamo`
   hit in the codebase is a log suppressor (`mcp_server/server.py:207`), and nine benchmark logs
   showed TorchDynamo tracing zero frames even before the ceiling was lifted.
-- **Security improvement**: lifting the ceiling to `2.10.0` closed 6 of 8 tracked CVEs, including
-  both CVSS 8.8 `weights_only` unpickler bypasses (`CVE-2025-3001`... — see correction below,
-  `CVE-2026-24747`). See the `pyproject.toml` "Deferred (no upstream fix)" tracking comment for
-  the 2 CVEs that remain (`CVE-2026-4538`: no fix at any version; `CVE-2025-3000`: fixed in
-  `2.13.0`, which the pinned `cu128` index does not publish).
+- **Security improvement**: `2.11.0` closes 7 of 8 tracked CVEs, including both CVSS 8.8
+  `weights_only` unpickler bypasses (`CVE-2026-24747`; see correction below re: `CVE-2025-3001`)
+  and `CVE-2026-4538` (`PYSEC-2026-139`, a `pt2` loader deserialization issue). See the
+  `pyproject.toml` "Deferred (no upstream fix)" tracking comment for the 1 CVE that remains
+  (`CVE-2025-3000`: fixed in `2.13.0`, which the pinned `cu128` index does not publish).
 
   > **Correction**: an earlier version of this rationale (and of the pre-upgrade audit trail)
   > described `CVE-2025-3001` as a second `weights_only` unpickler bypass alongside
   > `CVE-2026-24747`. That's wrong — `CVE-2025-3001` is a `torch.lstm_cell` memory-corruption
-  > bug, unrelated to unpickling. Only `CVE-2026-24747` is a `weights_only` bypass. Both are
-  > fixed by `2.10.0`; the CVE *count* closed (6 of 8) was correct throughout, only the
-  > characterization of `CVE-2025-3001` was mischaracterized.
+  > bug, unrelated to unpickling. Only `CVE-2026-24747` is a `weights_only` bypass. Both were
+  > fixed by `2.10.0`; the CVE count closed was correct throughout, only the characterization of
+  > `CVE-2025-3001` was mischaracterized.
+  >
+  > **Second correction (same day)**: the initial `2.10.0` adoption pass claimed
+  > `CVE-2026-4538` had "no upstream fix at any version" and closed the ledger at 6 of 8. That
+  > was wrong — `pip-audit`'s default OSV lookup silently drops findings for local-version wheels
+  > like `torch==2.10.0+cu128` (no `skip_reason`, the entry is just absent from the report).
+  > Querying the OSV API directly (`https://api.osv.dev/v1/vulns/PYSEC-2026-139`) shows
+  > `last_affected: "2.10.0"` with a merged fix PR (`pytorch/pytorch#176791`) — i.e. `2.10.0`
+  > was still vulnerable, and `2.11.0` is the version that actually closes it. **Always verify
+  > torch CVE claims against the raw OSV API, not just `pip-audit`'s report, when the installed
+  > wheel carries a local version suffix.**
 - **New ceiling rationale**: `[tool.uv.sources]` pins `torch` to the explicit `pytorch-cu128`
   index, which tops out at `2.11.0` (PyPI itself has newer releases, but the CUDA-12.8 wheel
-  index does not publish them) — `<2.11.0` reflects that hard platform limit, not a known
-  regression. There is no known reason to avoid `2.11.0`+ once the index publishes it; re-check
+  index does not publish them) — `<2.12.0` reflects that hard platform limit, not a known
+  regression. There is no known reason to avoid `2.12.0`+ once the index publishes it; re-check
   each cycle and raise the ceiling opportunistically.
+- **Side effect**: `torch==2.11.0` declares `setuptools<82`, downgrading the venv's installed
+  `setuptools` from `83.0.0` (this project's runtime floor, `CVE-2026-59890`) to `78.1.0`. This
+  is build-time-only exposure — no module in this codebase imports `setuptools`/`pkg_resources`
+  at runtime (verified via grep), and `[build-system].requires` still pins `>=83.0.0` for actual
+  package builds, which run in a PEP 517 isolated environment unaffected by the venv's installed
+  version. `pip check` stays clean because build-system requirements aren't runtime dependency
+  declarations.
 
 ### Acceptable Versions
 
 | Version | Status | Notes |
 | --- | --- | --- |
 | 2.4.0-2.5.x | ⚠️ Works | Minimum for Gemma, but lacks BGE-M3 optimizations |
-| 2.6.0-2.9.x | ⚠️ Works | Below the enforced floor; not installed by this project |
-| 2.10.0-2.10.x | ✅ Recommended | The only range `pyproject.toml` allows (`>=2.10.0,<2.11.0`) |
-| 2.11.0+ | ⚠️ Unpublished | Not yet available on the pinned `cu128` index; no known blocker once it lands |
+| 2.6.0-2.10.x | ⚠️ Works | Below the enforced floor; not installed by this project |
+| 2.11.0-2.11.x | ✅ Recommended | The only range `pyproject.toml` allows (`>=2.11.0,<2.12.0`) |
+| 2.12.0+ | ⚠️ Unpublished | Not yet available on the pinned `cu128` index; no known blocker once it lands |
 
 ## Installation Scenarios
 
@@ -138,16 +155,16 @@ introduced the original `<2.9.0` ceiling, lifted 2026-08-06, see `docs/adr/0033-
 
 ```
 Detection: CUDA 12.8-capable driver
-Installation: PyTorch 2.10.x+cu128 (via the pinned pytorch-cu128 index)
+Installation: PyTorch 2.11.x+cu128 (via the pinned pytorch-cu128 index)
 Result: ✅ FULLY COMPATIBLE
 ```
 
-### Scenario 2: Patch Update Within 2.10.x
+### Scenario 2: Patch Update Within 2.11.x
 
 ```
-Before: PyTorch 2.10.0+cu128
-After: PyTorch 2.10.x+cu128 (any later 2.10 patch)
-Action: No index clearing required (same CUDA variant, same <2.11.0 ceiling)
+Before: PyTorch 2.11.0+cu128
+After: PyTorch 2.11.x+cu128 (any later 2.11 patch)
+Action: No index clearing required (same CUDA variant, same <2.12.0 ceiling)
 Result: ✅ Seamless upgrade
 ```
 
@@ -161,16 +178,16 @@ Reason: Different embedding dimensions are incompatible
 
 ## Troubleshooting
 
-### "PyTorch 2.11.x got installed and things broke"
+### "PyTorch 2.12.x got installed and things broke"
 
-**Status:** ⚠️ **This should not happen** — `pyproject.toml` pins `<2.11.0`
+**Status:** ⚠️ **This should not happen** — `pyproject.toml` pins `<2.12.0`
 
 - Check `uv.lock` and `.venv` haven't drifted from the declared constraint
   (`uv sync` should always respect the ceiling)
 - If it did install, downgrade: `uv lock --upgrade-package torch` then `uv sync` (uv will select
-  the highest version satisfying `<2.11.0`)
-- The `<2.11.0` ceiling reflects the pinned `cu128` index's current maximum, not a known
-  regression — if you hit a real 2.11.x incompatibility, document it here before assuming it's
+  the highest version satisfying `<2.12.0`)
+- The `<2.12.0` ceiling reflects the pinned `cu128` index's current maximum, not a known
+  regression — if you hit a real 2.12.x incompatibility, document it here before assuming it's
   just the platform-availability ceiling
 
 ### "CUDA 12.8 wheel installed but my driver only supports CUDA 12.4"
@@ -178,7 +195,7 @@ Reason: Different embedding dimensions are incompatible
 **Fix:** Switch to the legacy `cu124` index for this one dependency:
 
 ```batch
-.venv\Scripts\uv.exe pip install torch==2.10.* torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 --force-reinstall
+.venv\Scripts\uv.exe pip install torch==2.11.* torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124 --force-reinstall
 ```
 
 ### "torch.cuda.is_available() returns False"
@@ -195,8 +212,8 @@ Reason: Different embedding dimensions are incompatible
 # Check current installation
 .venv\Scripts\python.exe -c "import torch; print(torch.__version__)"
 
-# If shows "2.10.x+cpu", reinstall with CUDA
-.venv\Scripts\uv.exe pip install torch==2.10.* torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
+# If shows "2.11.x+cpu", reinstall with CUDA
+.venv\Scripts\uv.exe pip install torch==2.11.* torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
 ```
 
 ## Verification Commands
@@ -229,11 +246,11 @@ Reason: Different embedding dimensions are incompatible
 
 ## Summary
 
-✅ **PyTorch 2.10.x+cu128 (via the pinned `pytorch-cu128` index) is the correct installation**
-✅ **`torch>=2.10.0,<2.11.0` in pyproject.toml — the `<2.11.0` ceiling reflects the pinned
+✅ **PyTorch 2.11.x+cu128 (via the pinned `pytorch-cu128` index) is the correct installation**
+✅ **`torch>=2.11.0,<2.12.0` in pyproject.toml — the `<2.12.0` ceiling reflects the pinned
 `cu128` index's current maximum, not a known regression; the old ModernBERT-inductor rationale
 was disproved and lifted 2026-08-06 (see `docs/adr/0033-lift-torch-ceiling.md`)**
-✅ **No index clearing needed when upgrading within 2.10.x**
+✅ **No index clearing needed when upgrading within 2.11.x**
 ✅ **Always clear indexes when switching embedding models**
 
 **Last Updated:** 2026-08-06
