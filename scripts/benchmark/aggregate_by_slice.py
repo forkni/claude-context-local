@@ -7,8 +7,9 @@ JSON -- this script slices that array by `category` (already present) and by
 saved per-query). No harness rewrite; this is read-only over an existing result
 file.
 
-Golden-dataset splits (verified 2026-08-04): canonical 43/16/18 (train/val/test),
-expanded 86/28/31 (post H-promotion, before any Phase-3 H top-up).
+Golden-dataset splits, full file (verified 2026-08-06): canonical 43/16/18 (train/val/test),
+expanded 86/28/33. Scored (category D excluded, what run_sscg_benchmark.py and this script's
+per-split table actually cover): canonical 35/13/15, expanded 78/25/30.
 
 Usage:
     .venv/Scripts/python.exe scripts/benchmark/aggregate_by_slice.py \

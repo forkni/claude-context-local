@@ -80,6 +80,17 @@ Comparison tool: `scripts/benchmark/analyze_dtype_determinism.py <r1> <r2>
 6. **Re-probe before design**: stable-miss profiles drift with the index —
    re-diagnose on the current substrate before designing a lever (Q122
    became a hit and Q119 changed failure class between diagnosis and probe).
+7. **Paired-CI adoption gate** (added 2026-08-06, `evaluate-rag` skill audit):
+   an arm is adopted only if the paired 95% CI on the metric being optimized
+   excludes zero **and** `n_moved` is reported alongside it — not the prose
+   "±0.02 noise band" this closeout used throughout. The two arms share
+   queries, so a paired statistic (mean delta, SE, 95% CI, n_moved over
+   queries with non-zero delta) is the correct one; it is computable
+   post-hoc from already-saved `per_query` arrays via `run_sscg_benchmark.py
+   --compare`, zero re-runs required. Retires nothing above — determinism
+   pinning, the substrate re-baseline rule, and control-arm attribution all
+   still stand; this rule only replaces how "moved enough to matter" gets
+   decided.
 
 ## Frontier disposition
 
