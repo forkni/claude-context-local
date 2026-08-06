@@ -2154,8 +2154,8 @@ def get_model_slug(model_name: str) -> str:
         'bge-m3'
         >>> get_model_slug("Qwen/Qwen3-Embedding-0.6B")
         'qwen3-0.6b'
-        >>> get_model_slug("nomic-ai/CodeRankEmbed")
-        'coderankembed'
+        >>> get_model_slug("codefuse-ai/F2LLM-v2-0.6B")
+        'f2llm-v2-0.6b'
         >>> get_model_slug("google/embeddinggemma-300m")
         'gemma-300m'
     """

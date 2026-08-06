@@ -2193,23 +2193,17 @@ echo.
 echo   2. EmbeddingGemma ^(768d, ~1.2GB^)
 echo      Lightweight general-purpose
 echo.
-echo   3. CodeRankEmbed ^(768d, 0.5-0.6GB^)
-echo      Code-specialized retrieval
-echo.
-echo   4. GTE-ModernBERT ^(768d, 0.28GB^)
-echo      Lightest; code-capable
-echo.
 echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+, RTX 4090^)
-echo   5. Qwen3-Embedding-0.6B ^(1024d, 2.3GB^)
-echo      MRR 0.94 SSCG baseline
+echo   3. Qwen3-Embedding-0.6B ^(1024d, 2.3GB^)
+echo      Qwen3-0.6B-based embedding model
 echo.
-echo   6. F2LLM-v2-0.6B ^(1024d, 2.2GB^)
-echo      Qwen3-0.6B-based, MTEB avg 66.47
+echo   4. F2LLM-v2-0.6B ^(1024d, 2.2GB^) [DEFAULT]
+echo      MRR 0.8603 SSCG canonical baseline
 echo.
 echo   0. Back to Main Menu
 echo.
 set "model_choice="
-set /p model_choice="Select model (0-6): "
+set /p model_choice="Select model (0-4): "
 
 REM Handle empty input or back
 if not defined model_choice goto menu_restart
@@ -2220,10 +2214,8 @@ REM Map choices to model names
 set "SELECTED_MODEL="
 if "!model_choice!"=="1" set "SELECTED_MODEL=BAAI/bge-m3"
 if "!model_choice!"=="2" set "SELECTED_MODEL=google/embeddinggemma-300m"
-if "!model_choice!"=="3" set "SELECTED_MODEL=nomic-ai/CodeRankEmbed"
-if "!model_choice!"=="4" set "SELECTED_MODEL=Alibaba-NLP/gte-modernbert-base"
-if "!model_choice!"=="5" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
-if "!model_choice!"=="6" set "SELECTED_MODEL=codefuse-ai/F2LLM-v2-0.6B"
+if "!model_choice!"=="3" set "SELECTED_MODEL=Qwen/Qwen3-Embedding-0.6B"
+if "!model_choice!"=="4" set "SELECTED_MODEL=codefuse-ai/F2LLM-v2-0.6B"
 
 REM Perform model switch
 if defined SELECTED_MODEL (
@@ -2232,7 +2224,7 @@ if defined SELECTED_MODEL (
     echo.
 
     REM Use Python to switch model
-    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.embedding.dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; mgr.save_config(cfg); print('[OK] Model switched successfully'); print(f'[INFO] Dimension: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"dimension\"]}d'); print(f'[INFO] VRAM: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"vram_gb\"]}')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "from search.config import SearchConfigManager, MODEL_REGISTRY; mgr = SearchConfigManager(); cfg = mgr.load_config(); cfg.embedding.model_name = '!SELECTED_MODEL!'; cfg.embedding.dimension = MODEL_REGISTRY['!SELECTED_MODEL!']['dimension']; mgr.save_config(cfg); print('[OK] Model switched successfully'); print(f'[INFO] Dimension: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"dimension\"]}d'); print(f'[INFO] VRAM: {MODEL_REGISTRY[\"!SELECTED_MODEL!\"][\"vram_gb\"]}')"
 
     if errorlevel 1 (
         echo [ERROR] Failed to switch model
@@ -2955,11 +2947,11 @@ echo.
 echo Key Features:
 echo   - 18 MCP Tools: Index, search, configure, manage projects
 echo   - Low-Level MCP SDK: Official Anthropic implementation
-echo   - Single-Model: selectable from 6 models ^(BGE-M3, EmbeddingGemma, CodeRankEmbed, GTE-ModernBERT, Qwen3-0.6B, F2LLM-v2-0.6B^)
+echo   - Single-Model: selectable from 4 models ^(BGE-M3, EmbeddingGemma, Qwen3-0.6B, F2LLM-v2-0.6B^)
 echo   - Neural Reranking: Cross-encoder model ^(15-25%% quality boost^)
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
 echo   - 85-95%% Token Reduction: Validated benchmark results
-echo   - Multi-language Support: 9 languages, 19 extensions
+echo   - Multi-language Support: 9 languages, 20 extensions
 echo   - Local Processing: No API calls, complete privacy
 echo.
 echo Quick Start:

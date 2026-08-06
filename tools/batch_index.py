@@ -40,7 +40,7 @@ def main():
     parser.add_argument(
         "--multi-model",
         action="store_true",
-        help="Index for all models in pool (Qwen3, BGE-M3, CodeRankEmbed). Auto-detects if not specified.",
+        help="Index for all models in pool (Qwen3, BGE-M3, F2LLM-v2). Auto-detects if not specified.",
     )
     parser.add_argument(
         "--include-dirs",
