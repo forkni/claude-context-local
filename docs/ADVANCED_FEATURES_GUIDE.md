@@ -3387,57 +3387,46 @@ Centrality *annotation* and the blended-score *rerank pass* (`centrality_annotat
 
 ---
 
-## A1: Intent-Adaptive Edge Weight Profiles (v0.9.0+)
+## A1: Intent Classification — Effects That Still Exist
 
 ### Overview
 
-Automatically adjusts graph traversal edge weights based on query intent classification (7 intent categories) for more relevant graph expansion. Based on SOG (USENIX Security '24) ablation study showing different relation types contribute differently to code understanding.
+Queries are classified into 7 intent categories (`LOCAL`, `GLOBAL`, `NAVIGATIONAL`, `PATH_TRACING`, `SIMILARITY`, `CONTEXTUAL`, `HYBRID`,
+`search/intent_classifier.py`) using a keyword + anchor-embedding ensemble. Classification itself is cheap and always runs when `intent.enabled` is
+`true` (the shipped default); what matters is which of the classifier's outputs the search orchestrator actually consumes.
 
-### Query Intent Classification
+An earlier version of this page documented a 7-row per-intent graph-traversal **edge-weight** table (`INTENT_EDGE_WEIGHT_PROFILES` in
+`graph/graph_storage.py`) plus a separate `_intent_ego_thresholds` policy in `search/effective_config.py`. **Both were deleted** (ADR-0031) —
+ADR-0026 had measured the edge-weight table as inert on the canonical benchmark (pool composition bit-identical whether it fired or not, ranking-only
+movement netting +0.0005 MRR), and a later measurement (QW5) found the CONTEXTUAL ego-threshold policy produced 0 diffs across all 63 canonical
+queries. A repo-wide grep for either name now returns zero production hits. **Both were already tried and measured inert — don't re-add either
+without new evidence.**
 
-The system classifies queries into 7 categories:
+### What intent classification actually still does
 
-| Intent | Keyword Examples | Use Case |
-| -------- | ------------------ | ---------- |
-| `local` | "where is", "which file", "find definition" | Focus on direct relationships, suppress cross-file imports |
-| `global` | "how does", "what is", "explain" | Boost cross-file connections for holistic understanding |
-| `navigational` | "find callers", "who uses" | Prioritize call chains |
-| `path_tracing` | "trace", "flow from X to Y" | Balanced traversal |
-| `similarity` | "find similar", "alternatives" | Prioritize structural similarity |
-| `contextual` | Broad context gathering | All weights raised to min 0.5 |
-| `hybrid` | Mixed intent queries | Default weights (fallback) |
+(`mcp_server/tools/search_orchestrator.py`), each with its own evidence status:
 
-### Edge Weight Tables
+1. **`SIMILARITY` intent + confidence ≥ 0.4 + an extractable symbol → redirects `search_code` to `find_similar_code`** instead of running the normal
+   search path (`fallback_on_error=True` — a redirect failure falls back to normal search rather than erroring out). **The only effect with positive
+   measured evidence:** the redirect beats the normal ranked path on MRR for the similarity queries in the golden set, on both the canonical and
+   expanded datasets (ADR-0029).
+2. **`CONTEXTUAL` intent → forces `ego_graph_enabled=True`** for that search. **Present in code but proven inert** — ego-graph expansion is already
+   always-on regardless of this flag (see "Ego-Graph Expansion" above), so this effect currently changes nothing observable.
+3. **`GLOBAL` intent → suggests `k=10`**, applied only when greater than the caller's `k` (plus suggests `search_mode=HYBRID`).
+4. **Any intent whose `suggested_params` includes `search_mode="auto"` → applies that suggested `search_mode`** to the actual search call.
+5. **`NAVIGATIONAL` intent writes `symbol_name`/`relationship_types` into `suggested_params` that nothing consumes.** `PlanRedirect` only ever
+   constructs `kind="find_similar"` — there is no `find_connections` redirect path for these values to feed into. This is dead code that computes a
+   result and discards it, not a documented feature.
 
-**LOCAL Intent** (suppress imports):
-
-- `calls`: 1.0
-- `inherits`: 1.0
-- `imports`: **0.1** (suppressed)
-
-**GLOBAL Intent** (boost cross-file):
-
-- `imports`: **0.7** (boosted)
-- `uses_type`: 0.9
-- `instantiates`: 0.8
-
-**NAVIGATIONAL Intent** (prioritize calls):
-
-- `calls`: 1.0
-- `inherits`: 0.9
-- `imports`: 0.5
-
-### Effect
-
-- **LOCAL queries**: "where is X defined" → suppress noisy stdlib/third-party imports (0.1x weight)
-- **GLOBAL queries**: "how does X work" → boost cross-file connections (0.7x) for comprehensive understanding
+**`path_tracing` intent no longer redirects to `find_path`** — that branch was removed outright (ADR-0028): both of its live golden-dataset firings
+were regex misfires of `_extract_path_endpoints` on ordinary prose, and `fallback_on_error=False` turned each into an empty result set with no
+upside case ever observed. `find_path` remains available as a standalone MCP tool; only the automatic `search_code` redirect to it is gone.
 
 ### Status
 
-**Off by default** (`intent.enabled=false`, `search/config.py`) since ADR-0028 — intent
-classification must be explicitly enabled (`intent.enabled=true`) to activate. ADR-0026 measured
-this profile table as inert on the canonical benchmark: pool composition is bit-identical whether
-it fires or not, only ranking within an already-fixed pool moves, for a net +0.0005 MRR.
+**On by default** (`intent.enabled=true`, `search/config.py`) — re-enabled by ADR-0029 after ADR-0028 had turned it off pending a repair of the
+SIMILARITY-intent symbol extractor (`_extract_symbol_from_query`), which had been misfiring on trailing prose words instead of the query's actual
+anchor symbol. Not directly exposed at the MCP boundary — there is no tool argument that reads intent classification results.
 
 ---
 
