@@ -129,11 +129,16 @@ class EmbeddingConfig:
         ),
     )
     dimension: int = field(
-        default=1024,
+        default=1024,  # Derived, not configured: overwritten from
+        # MODEL_REGISTRY[model_name] on every from_dict() and save_config() call
+        # (_apply_model_registry_dimension). Editing this value in the JSON file
+        # has no effect.
         metadata=spec(flat_alias="model_dimension", reader="embeddings/embedder.py"),
     )
     batch_size: int = field(
-        default=64,  # Dynamic based on model, see MODEL_REGISTRY
+        default=64,  # Dynamic based on model, see MODEL_REGISTRY. Used only
+        # when performance.enable_dynamic_batch_size is False or no CUDA GPU
+        # is available — otherwise calculate_optimal_batch_size() overrides it.
         metadata=spec(
             flat_alias="embedding_batch_size",
             env="CLAUDE_EMBEDDING_BATCH_SIZE",
@@ -432,6 +437,10 @@ class PerformanceConfig:
     )
 
     # GPU Configuration
+    # Gates dynamic embedding-batch-size calculation only (embed_chunks());
+    # does NOT select the compute device. CUDA is used whenever available
+    # regardless of this flag — disabling it falls back to the fixed
+    # embedding.batch_size, not to CPU.
     prefer_gpu: bool = field(
         default=True,
         metadata=spec(
@@ -661,7 +670,9 @@ class RerankerConfig:
         ),
     )
     min_vram_gb: float = field(
-        default=2.0,  # Auto-disable below this threshold (reranker uses ~1.5GB)
+        default=2.0,  # Auto-disable below this threshold (reranker uses ~1.5GB).
+        # Bypassed entirely when performance.allow_ram_fallback=True — that
+        # check short-circuits first in should_enable_neural_reranking().
         metadata=spec(
             flat_alias="reranker_min_vram_gb",
             env="CLAUDE_RERANKER_MIN_VRAM_GB",
@@ -670,12 +681,15 @@ class RerankerConfig:
         ),
     )
     batch_size: int = field(
-        default=16,  # Reranker inference batch size
+        default=16,  # NeuralReranker/GenerativeReranker inference batch size.
+        # Ignored by JinaRerankerV3 (the deployed default), which batches
+        # internally and never reads this field.
         metadata=spec(
             flat_alias="reranker_batch_size",
             env="CLAUDE_RERANKER_BATCH_SIZE",
             mcp="reranker_echo",
             reader="search/reranking_engine.py",
+            construction_baked=True,
         ),
     )
     dedupe_split_blocks: bool = field(
@@ -704,6 +718,7 @@ class RerankerConfig:
             flat_alias="reranker_instruction",
             env="CLAUDE_RERANKER_INSTRUCTION",
             reader="search/reranking_engine.py",
+            construction_baked=True,
         ),
     )
     doc_max_chars: int = field(
@@ -1184,13 +1199,17 @@ class CallGraphConfig:
     Controls which static-analysis backends run at full-index time to inject
     cross-module ``calls`` edges into the code graph.
 
-    Resolver names map to concrete classes in the ``chunking/relationships/``
-    package.  Only resolvers that are also *available* (i.e. their optional
-    dependency is installed) are executed::
+    ``resolvers`` below governs Stages 1-2 only. Names map to concrete classes
+    in the ``chunking/relationships/`` package; only resolvers that are also
+    *available* (i.e. their optional dependency is installed) are executed::
 
         "pyan"   → PyanResolver   (pyan3>=2.6.0, optional extra [callgraph])
         "libcst" → LibCSTResolver (libcst>=1.8.6, optional extra [callgraph])
-        "lsp"    → LSPResolver    (basedpyright>=1.21, optional extra [lsp])
+
+    Stage 3 (LSP/basedpyright) is governed **solely** by ``lsp_enabled``
+    below — it is not a ``resolvers`` entry, and ``resolvers: []`` does not
+    disable it. Any name in ``resolvers`` other than ``"pyan"``/``"libcst"``
+    is silently ignored (``search/call_edge_injection.py``).
 
     The ``"ast"`` entry is a documentation placeholder — in-house AST edges are
     produced during chunking and are already in the graph before the injection
@@ -1204,7 +1223,8 @@ class CallGraphConfig:
     """Resolver names to attempt in the injection pipeline.
 
     Default: ``["pyan", "libcst"]`` (both in the ``[callgraph]`` extra).
-    Set to ``["pyan"]`` to disable LibCST (Stage 2), ``[]`` to skip entirely.
+    Set to ``["pyan"]`` to disable LibCST (Stage 2), ``[]`` to skip both.
+    Does **not** affect the LSP resolver (Stage 3) — see ``lsp_enabled``.
     """
 
     lsp_enabled: bool = field(

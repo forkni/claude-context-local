@@ -356,7 +356,7 @@ Multi-hop is **enabled by default** with optimal settings validated through empi
 
 - `enabled`: `true` (enabled by default)
 - `hop_count`: `2` (two hops - validated optimal)
-- `expansion`: `0.5` (50% expansion in `search_config.json.example`; dataclass factory default is `0.3`)
+- `expansion`: `0.5` (50% expansion — dataclass factory default and `search_config.json.example` agree)
 - `initial_k_multiplier`: `2.0` (2× initial results)
 
 #### To Disable Multi-Hop

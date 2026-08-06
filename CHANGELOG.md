@@ -19,9 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when both `plan.ego_graph_enabled` and `plan.intent_decision` are set — a path production MCP
   callers exercise by default (`mcp_server/tool_registry.py`) but no benchmark capture had ever
   measured. Four-view 63q capture (ego-off/on × intent-off/on) isolates `D − C` (QW5 alone) as
-  flat: MRR +0.0013, driven by one already-known boundary-riding query, recall@10 −0.0053 — feeds
-  the pending decision on deleting the two intent policy tables. Pure harness/test addition, no
-  production source touched; `canon_i1` remains the published canon. See
+  flat: MRR +0.0013, driven by one already-known boundary-riding query, recall@10 −0.0053 — fed
+  ADR-0031's deletion of the two intent policy tables (see Changed, below). Pure harness/test
+  addition, no production source touched; `canon_i1` remains the published canon. See
   `evaluation/EGO_PER_REQUEST_VIEW_20260805.md`.
 
 ### Fixed

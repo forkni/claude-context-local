@@ -147,6 +147,13 @@ def test_validate_overrides_rejects_unknown_section():
         "search_mode.bm25_use_stemming",
         "search_mode.bm25_tokenizer",
         "performance.max_parallel_workers",
+        # 2026-08-06 config-liveness audit (D2): read in the same
+        # create_reranker(...) call as doc_max_chars/listwise_doc_max_chars/
+        # listwise_dtype above, but left untagged - an arm overriding either
+        # silently measured the un-overridden value (requires_rebuild() was
+        # False). Red before the construction_baked=True tag was added.
+        "reranker.batch_size",
+        "reranker.instruction",
     ],
 )
 def test_requires_rebuild_true_for_construction_baked_fields(key):

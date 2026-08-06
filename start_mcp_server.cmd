@@ -1707,11 +1707,12 @@ goto search_mode_menu
 echo.
 echo === Configure GPU Acceleration ===
 echo.
-echo GPU acceleration uses CUDA for faster embeddings and search operations.
+echo This controls dynamic embedding-batch-size sizing, not the compute device.
+echo CUDA is used whenever available either way.
 echo.
-echo When GPU is:
-echo   - Preferred: Use GPU if available ^(faster, higher VRAM usage^)
-echo   - Not Preferred: Use CPU only ^(slower, no VRAM usage^)
+echo When GPU acceleration is:
+echo   - Preferred: Batch size is derived from measured free VRAM each run
+echo   - Not Preferred: The fixed embedding batch size is used instead
 echo.
 echo Recommendation: Keep ENABLED if you have a CUDA-capable GPU.
 echo.
@@ -1739,7 +1740,7 @@ if "!gpu_choice!"=="1" (
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
-        echo [INFO] GPU will be used if CUDA is available
+        echo [INFO] Embedding batch size will be sized from measured free VRAM
     )
 )
 if "!gpu_choice!"=="2" (
@@ -1749,7 +1750,7 @@ if "!gpu_choice!"=="2" (
     if errorlevel 1 (
         echo [ERROR] Failed to save configuration
     ) else (
-        echo [INFO] CPU will be used for all operations
+        echo [INFO] Fixed embedding batch size will be used ^(CUDA still used if available^)
     )
 )
 

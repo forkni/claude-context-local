@@ -135,6 +135,63 @@ class TestGuardrails:
                 f"'{dotted_key}': '{field}' is not a field of {subconfig_type.__name__}"
             )
 
+    def test_override_rules_resolve_to_real_fields(self):
+        """Every RULES entry's 'section.field' string must exist on
+        SearchConfig (2026-08-06 config-liveness audit, D4).
+
+        Mirrors test_forbidden_keys_resolve_to_real_fields above but walks
+        RULES instead of FORBIDDEN_AUTO_TUNE_KEYS: nothing previously asserted
+        that a probe rule's key resolves to a real field, so a typo'd key
+        would write a nonsense dotted key that _set_dotted/_build_subconfig
+        silently drops as forward-compatible — the same inert-guardrail shape
+        as the historical 'search_mode.centrality_alpha' bug, but on the
+        write side instead of the forbidden-set read side.
+        """
+        import dataclasses
+
+        from search.config import SearchConfig
+
+        for rule in RULES:
+            section, _, field = rule.key.partition(".")
+            assert section in SearchConfig._SUBCONFIG_TYPES, (
+                f"'{rule.key}': '{section}' is not a SearchConfig sub-config"
+            )
+            subconfig_type = SearchConfig._SUBCONFIG_TYPES[section]
+            field_names = {f.name for f in dataclasses.fields(subconfig_type)}
+            assert field in field_names, (
+                f"'{rule.key}': '{field}' is not a field of {subconfig_type.__name__}"
+            )
+
+    def test_rules_pinned(self):
+        """Pin the exact (kind, stage, key) set so a silent addition or
+        removal of a rule shows up here as a reviewed diff.
+
+        Reachability caveat: pinning proves a rule's key is a real
+        SearchConfig field (see test_override_rules_resolve_to_real_fields)
+        and its shape is stable — it does NOT prove the rule ever fires on
+        the shipped code path. 'reranker.batch_size' is exactly this case:
+        the rule is live for NeuralReranker/GenerativeReranker but a no-op on
+        JinaRerankerV3 (the deployed default), which drops batch_size in
+        create_reranker(). A rule can be correctly pinned here and still be
+        inert on most installs; that is a deliberate, recorded trade-off
+        (see docs/adr/0032-config-liveness-audit.md), not a gap this test
+        closes.
+        """
+        assert {(r.kind, r.stage, r.key) for r in RULES} == {
+            ("override", "pre_chunking", "embedding.batch_size"),
+            ("override", "pre_chunking", "performance.dynamic_batch_max"),
+            ("override", "pre_chunking", "performance.max_chunking_workers"),
+            ("override", "pre_chunking", "reranker.enabled"),
+            ("override", "pre_chunking", "reranker.batch_size"),
+            ("override", "pre_chunking", "performance.vram_limit_fraction"),
+            ("override", "pre_chunking", "performance.prefer_bf16"),
+            ("override", "pre_chunking", "chunking.glsl_filter_td_prefix"),
+            ("observation", "pre_chunking", "embedding.model_name"),
+            ("observation", "pre_chunking", "chunking.max_split_chars"),
+            ("observation", "post_build", "chunking.max_chunk_lines"),
+            ("observation", "post_build", "ego_graph.max_neighbors_per_hop"),
+        }
+
     def test_index_affecting_overrides_are_pre_chunking_only(self):
         """chunking.*/call_graph.*/embedding-context overrides may only fire at hook A."""
         index_affecting_prefixes = ("chunking.", "call_graph.")
