@@ -35,6 +35,9 @@ for avoiding re-litigating settled questions.
 | [0027](0027-parallel-edge-bucketing.md) | Parallel edges carry through `find_connections` instead of collapsing to one primary type | accepted | 2026-08-04 |
 | [0028](0028-intent-off-by-default-and-remove-find-path-redirect.md) | Default intent classification off; remove the `find_path` redirect | accepted | 2026-08-04 |
 | [0029](0029-repair-symbol-extraction-and-regate-find-similar.md) | Repair `_extract_symbol_from_query` and re-gate the `find_similar` redirect | accepted | 2026-08-04 |
+| [0030](0030-deepen-config-searcher-seam.md) | Deepen the config→searcher seam (C3 + C4) | accepted | 2026-08-05 |
+| [0031](0031-delete-intent-policy-tables.md) | Delete the two intent policy tables (QW5 + A1) | accepted | 2026-08-05 |
+| [0032](0032-config-liveness-audit.md) | Config liveness audit: 124/124 fields live, five defects fixed | accepted | 2026-08-06 |
 
 ## Adding a new ADR
 
