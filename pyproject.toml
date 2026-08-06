@@ -30,9 +30,9 @@ keywords = [
 dependencies = [
     "aiohttp>=3.14.3",  # Security: Fixes CVE-2026-34993, CVE-2026-47265, CVE-2026-50269 (3.14.0); CVE-2026-54273..54280 (3.14.1); CVE-2026-59881 (3.14.2); CVE-2026-69243 (3.14.2); CVE-2026-69244 (3.14.3)
     "cryptography>=50.0.0",  # Security: PYSEC-2026-35/36 (DNS name-constraint bypass, buffer overflow); CVE-2026-69247 (50.0.0). Defer GHSA-537c (OpenSSL wheel, needs 48.x major bump).
-    "faiss-cpu>=1.14.3",
+    "faiss-cpu>=1.15.0",
     "fsspec[http]>=2024.2.0,<=2025.10.0",  # Upper bound: datasets 4.4.2 constraint
-    "huggingface-hub>=1.3.0",  # transformers>=5.3.0 requires >=1.3.0,<2
+    "huggingface-hub>=1.26.1",  # transformers>=5.3.0 requires >=1.3.0,<2
     "idna>=3.18",  # Security: CVE-2026-45409
     "mcp>=2,<3",  # v2: migrated to the SDK v2 API (decorator->constructor-kwarg handlers, see ADR-0017). Security: carries forward 1.28.1's CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin validation) fixes
     "msgpack>=1.2.1",  # Security: GHSA-6v7p-g79w-8964 (SEGV on repeated unpack after error)
@@ -47,12 +47,12 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "requests>=2.34.2",  # Security: CVE-2026-25645 (predictable temp filename in extract_zipped_paths)
     "rich>=14.3.3",
-    "sentence-transformers>=5.6.0",
+    "sentence-transformers>=5.7.0",
     "sqlitedict>=2.1.0",
     "starlette>=1.4.1",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
     "tiktoken>=0.12.0",
-    "torch>=2.8.0,<2.9.0",  # 2.9.x breaks ModernBERT torch.compile (template conflict)
-    "transformers>=5.3.0,<6",  # Security: >=5.3.0 fixes CVE-2026-4372 (config.json RCE) & CVE-2026-1839 (Trainer RCE); <6 pre-major.
+    "torch>=2.10.0,<2.11.0",  # Security: 2.10.0 closes 6 of 8 tracked CVEs incl. CVE-2025-3001/CVE-2026-24747 weights_only unpickler bypasses (2026-08-06). Old <2.9.0 ceiling's "ModernBERT torch.compile" rationale lapsed: the GTE-ModernBERT embedder it protected was deleted in 24f6b8c, and transformers>=5.3.0 removed ModernBERT's reference_compile path entirely.
+    "transformers>=5.14.1,<6",  # Security: >=5.3.0 fixes CVE-2026-4372 (config.json RCE) & CVE-2026-1839 (Trainer RCE); <6 pre-major.
     "tree-sitter>=0.25.0,<0.26",  # ABI: no tree-sitter-* grammar package supports the 0.26 ABI yet (max on PyPI is 0.25.0); loading grammars raises OverflowError under 0.26
     "tree-sitter-c>=0.24.2",
     "tree-sitter-c-sharp>=0.23.5",
@@ -140,7 +140,33 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-08-06 (`/deps-audit` — 169 packages, pip check clean throughout. Fixed
+# Last audit: 2026-08-06 (ML stack bump — closes the retrieval-library and torch holds from
+#             the same-day dep audit below. Two-stage upgrade, each gated on a fresh 63q
+#             intent-on benchmark arm vs. a same-day pre-side baseline (substrate-drift rule,
+#             evaluation/RECALL_CAMPAIGN_CLOSEOUT_20260802.md:72): Stage 1 (retrieval libs) —
+#             transformers 5.13.0->5.14.1, sentence-transformers 5.6.1->5.7.0, faiss-cpu
+#             1.14.3->1.15.0, huggingface-hub 1.22.0->1.26.1, hf-xet 1.5.1->1.6.0 (tokenizers
+#             unchanged at 0.22.2) — canon_k0 -> canon_k1: 0 queries moved on MRR/recall@5/
+#             recall@10/hit_rate, paired 95% CI includes zero on every metric. Stage 2 (torch) —
+#             2.8.0+cu128 -> 2.10.0+cu128, closing 6 of 8 tracked CVEs: CVE-2025-55551/-55552/
+#             -55554 (DoS, fixed 2.9.0), CVE-2025-2999 (fixed 2.9.1), CVE-2025-3001 (torch.lstm_cell
+#             memory corruption, fixed 2.10.0), CVE-2026-24747 (weights_only unpickler bypass,
+#             CVSS 8.8, fixed 2.10.0) — leaving CVE-2026-4538 (no fix) and CVE-2025-3000 (needs
+#             2.13.0, unpublished on the pinned cu128 index) outstanding. The lifted <2.9.0
+#             ceiling's stated rationale ("2.9.x breaks ModernBERT torch.compile") was verified
+#             false on both legs before lifting it: the GTE-ModernBERT embedder it protected was
+#             deleted in 24f6b8c (2026-07-31), and transformers>=5.3.0 removed ModernBERT's
+#             reference_compile path entirely (grep torch.compile over
+#             transformers/models/modernbert/*.py returns nothing); the project itself never
+#             calls torch.compile (the only _dynamo hit is a log suppressor,
+#             mcp_server/server.py:207). canon_k1 -> canon_k2 gate: paired 95% CI includes zero on
+#             every metric (MRR +0.0026 [-0.0025,+0.0078], recall@10 -0.0132 [-0.0394,+0.0130]);
+#             --deterministic-gpu strict-mode re-validation completed with zero RuntimeErrors
+#             (utils/determinism.py). Both stages: full unit suite green (5687 passed, 1 skipped),
+#             pip check clean except the now-resolved <2.9.0 ceiling conflict, CUDA verified
+#             intact (2.10.0+cu128, CUDA 12.8, RTX 4090). See docs/adr/0033-lift-torch-ceiling.md.
+#
+# Previous audit: 2026-08-06 (`/deps-audit` — 169 packages, pip check clean throughout. Fixed
 #             tools/summarize_audit.py's silent skip_reason drop for real this time (the
 #             2026-07-30 entry below claimed this was already patched; verified false via git
 #             history, file mtimes, and byte-identical hashes across all 24 copies on disk before
@@ -217,38 +243,15 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 #   calls are nltk.data.find("corpora/stopwords") and nltk.download("stopwords", quiet=True) with
 #   hardcoded literals (search/bm25_index.py:33,35).
 # * pyjwt PYSEC-2025-183 (disputed weak encryption) — no upstream fix
-# * torch 2.8.0+cu128, 8 CVEs — pip-audit's default PyPI service silently skip_reason's local-version
-#   wheels like this one; only visible via `pip-audit -s osv`. CVE-2025-55551/-55552/-55554 (DoS,
-#   fixed 2.9.0), CVE-2025-2999 (fixed 2.9.1), CVE-2025-3000 (fixed 2.13.0), CVE-2025-3001 +
-#   CVE-2026-24747 (weights_only unpickler bypass via crafted .pth, CVSS 8.8, fixed 2.10.0),
-#   CVE-2026-4538 (no fix). The <2.9.0 ceiling above is intentional (ModernBERT
-#   @torch.compile(dynamic=True) hits a torch.inductor AssertionError on 2.9.x/Windows — see
-#   commit b68cfff8) and blocks every one of these fixes. Mitigation: local-only tool, no
-#   internet-exposed API; models are loaded from official HuggingFace repos over HTTPS as
-#   safetensors (embeddings/model_loader.py), never as untrusted .pth/pickle checkpoints — the
-#   weights_only bypass and DoS CVEs are not reachable via this project's model-loading path.
-#   Re-check upstream (pytorch/pytorch) each cycle for a fix to the inductor regression that would
-#   unblock the <2.9.0 ceiling.
-#
-#   2026-08-04: GitHub Dependabot alerts for CVE-2025-2999/GHSA-vgrw-7cvw-pwgx (2.9.1),
-#   CVE-2025-3001+CVE-2026-24747/GHSA-qfhq-4f3w-5fph (2.10.0), and CVE-2025-3000/GHSA-rrmf-rvhw-rf47
-#   (2.13.0) dismissed as tolerable_risk, in addition to being blocked by the <2.9.0 ceiling above.
-#   torch is pinned via [tool.uv.sources] to the explicit "pytorch-cu128" index for
-#   sys_platform in {linux, win32}, and that index tops out at 2.11.0 (verified via
+# * torch 2.10.0+cu128, 2 CVEs remaining (down from 8 as of 2026-08-06 — see the ML-stack-bump
+#   entry at the top of "Last audit" above and docs/adr/0033-lift-torch-ceiling.md).
+#   CVE-2026-4538 — no upstream fix at any version. CVE-2025-3000 — fixed in 2.13.0, which the
+#   pinned cu128 index does not publish (tops out at 2.11.0; verified via
 #   https://download.pytorch.org/whl/cu128/torch/ — PyPI itself has 2.13.0, the index does not).
-#   The 2.13.0 fix is therefore unobtainable on this platform even ignoring the <2.9.0 ceiling —
-#   Dependabot's automated security-update job for torch fails every run
-#   (dependency_file_not_resolvable) for exactly this reason.
-#
-#   2026-08-06: the single reopening condition above over-blocks — 2.9.0, 2.9.1, and 2.10.0 are
-#   ALL already available on the pinned cu128 index (which tops out at 2.11.0, not below 2.10.0),
-#   so only the <2.9.0 inductor-regression ceiling blocks them, not index availability. 2.10.0
-#   alone would close 6 of the 8 tracked CVEs, including both CVSS 8.8 weights_only-unpickler
-#   bypasses (CVE-2025-3001, CVE-2026-24747) — leaving only CVE-2026-4538 (no fix) and
-#   CVE-2025-3000 (needs 2.13.0) outstanding. Split reopening condition: the 2.10.0 path is
-#   blocked ONLY by the inductor regression (re-check upstream each cycle); the 2.13.0 path
-#   additionally needs the pinned cu128 index to publish >=2.13.0. No torch version change made
-#   this cycle — documentation only.
+#   Mitigation for both: local-only tool, no internet-exposed API; models are loaded from
+#   official HuggingFace repos over HTTPS as safetensors (embeddings/model_loader.py), never as
+#   untrusted .pth/pickle checkpoints. Reopening condition: re-check each cycle whether the
+#   pinned cu128 index has started publishing >=2.13.0.
 #
 # Resolved 2026-08-04: aiohttp CVE-2026-59881/69243 (3.14.2), CVE-2026-69244 (3.14.3) via
 #   aiohttp>=3.14.3. cryptography CVE-2026-69247 via cryptography>=50.0.0 (confirmed >=3.9
