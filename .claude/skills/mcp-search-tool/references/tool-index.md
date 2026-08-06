@@ -3,10 +3,12 @@
 All tools use the `code-search:` server prefix. Always use fully qualified names.
 
 **Tiering:** by default the server's `list_tools` advertises only the **10 core** tools (tool-count budget, MCP Architecture-Patterns §VI-C). Set
-`MCP_EXPOSE_ADVANCED_TOOLS=1` on the server process **and reconnect** (`/mcp` → Reconnect) to also *list* the 8 **advanced** tools (marked below).
-**An unlisted tool cannot be called — it is not dispatchable in this session, and calling it speculatively will fail.** Check the "In-band
-alternative" column below before asking the user to enable the flag; only `configure_search_mode` has one. See `SKILL.md` → "Tool Tiers" for the full
-decision procedure.
+`MCP_EXPOSE_ADVANCED_TOOLS` to `1`/`true`/`yes` (case-insensitive) on the server process **and reconnect** (`/mcp` → Reconnect) to also *list* the 8
+**advanced** tools (marked below). This flag only controls what `list_tools` advertises — `TOOL_DISPATCH` internally registers all 18 tools
+regardless, so an advanced tool called by exact name while unlisted still fails at the client/protocol level (the client won't offer it), not because
+the server can't route it. **An unlisted tool cannot be called — it is not dispatchable in this session, and calling it speculatively will fail.**
+Check the "In-band alternative" column below before asking the user to enable the flag; only `configure_search_mode` has one. See `SKILL.md` → "Tool
+Tiers" for the full decision procedure.
 
 ## Contents
 
@@ -25,11 +27,13 @@ decision procedure.
 
 Find code with natural language query or direct chunk lookup. Use for all initial code searches.
 
-**Key options:** `query`, `chunk_id` (direct O(1) lookup), `k` (results count, default 7), `search_mode` ("hybrid"/"semantic"/"bm25"/"auto"),
-`file_pattern`, `include_dirs`, `exclude_dirs`, `chunk_type` (see below), `include_context` (default true), `auto_reindex` (default true),
-`max_age_minutes` (default 5), `ego_graph_enabled` (default false), `ego_graph_k_hops` (default 2, range 1-5), `ego_graph_max_neighbors_per_hop`
-(default 10, range 1-50), `include_parent` (default false), `output_format` ("compact"/"verbose"/"ultra", default "compact"), `max_context_tokens`
-(token-budget cap). Full parameter reference in [parameters.md](parameters.md).
+**Key options:** `query`, `chunk_id` (direct O(1) lookup), `k` (schema default 4, effective default **7** via `search_mode.default_k`), `search_mode`
+("hybrid"/"semantic"/"bm25"/"auto"), `file_pattern`, `include_dirs`, `exclude_dirs`, `chunk_type` (see below), `include_context` (default true),
+`auto_reindex` (default true), `max_age_minutes` (schema default 5, effective default **30** via `performance.max_index_age_minutes`),
+`ego_graph_enabled` (schema default false — **does not gate ego-graph expansion, which always runs**; only widens hop depth/neighbor cap when
+`true`), `ego_graph_k_hops` (default 2, range 1-5), `ego_graph_max_neighbors_per_hop` (default 10, range 1-50), `include_parent` (default false),
+`output_format` (schema default "compact", effective default **"ultra"** via `config.output.format`), `max_context_tokens` (token-budget cap, default
+0/no cap). Full parameter reference (with the schema-vs-effective fallback chains) in [parameters.md](parameters.md).
 
 **chunk_type values (12):** see [parameters.md](parameters.md) (omit the field to match any chunk type)
 
@@ -49,7 +53,8 @@ per-entry provenance (`resolver_source`, `resolver_confidence`). Preferred over 
 **Key options:** `chunk_id` (preferred), `symbol_name` (fallback — may be ambiguous), `max_depth` (default 3, range 1-5), `exclude_dirs`,
 `relationship_types`, `output_format`
 
-**Valid relationship types (21):** see [parameters.md](parameters.md)
+**Valid relationship types (21 enum members, only 19 route to a response field — `assigns_to`/`reads_from` don't):** see
+[parameters.md](parameters.md)
 
 ### code-search:find_path
 
@@ -88,7 +93,7 @@ despite the section title.)*
 
 | Tool | Tier | Purpose | In-band alternative |
 |------|------|---------|----------------------|
-| `code-search:find_similar_code` | Core | Find functionally similar code. **Key options:** `chunk_id` (required), `k` (default **4** — does not inherit `default_k`, unlike `search_code`), `exclude_same_file` (default false — set true for cross-file-only matches) | — |
+| `code-search:find_similar_code` | Core | Find functionally similar code. **Key options:** `chunk_id` (required), `k` (schema declares **no default** — the handler falls back to `search_mode.default_k`, same as `search_code`; effective default is **7** on this deployment, not 4), `exclude_same_file` (default false — set true for cross-file-only matches) | — |
 | `code-search:configure_reranking` | Advanced | Neural reranking settings | None |
 | `code-search:configure_chunking` | Advanced | Chunking settings (file summaries, sizing mode, etc.) | None |
 

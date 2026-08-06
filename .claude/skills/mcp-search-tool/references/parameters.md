@@ -32,28 +32,31 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 | `exclude_dirs` | — | Blacklist directories, e.g. `["tests/"]` |
 | `chunk_type` | — | Filter by structure type (see below) |
 | `include_context` | true | Include similar chunks and relationships |
-| `auto_reindex` | true | Auto-reindex if index is stale |
+| `auto_reindex` | schema **true**, effective **true** | If omitted, `search_orchestrator.py` falls back to `config.performance.enable_auto_reindex` — dataclass default is also `True`, so schema and effective values agree today. Documented for the same reason as the two rows below: if a project's `search_config.json` ever overrides this, the schema-shown default becomes stale, not the behavior. |
 | `max_age_minutes` | schema **5**, effective **30** | If omitted, the server falls back to `config.performance.max_index_age_minutes` (`SearchPlanner.plan` in `mcp_server/tools/search_orchestrator.py`), not the schema's 5 — dataclass factory default is 5.0, and both the shipped `search_config.json.example` and this machine's local config set 30.0. Pass the value explicitly if you need a specific staleness window. |
-| `ego_graph_enabled` | false | Enable k-hop graph expansion for neighbors |
+| `ego_graph_enabled` | false | **Does not gate ego-graph expansion — it always runs.** Only widens `ego_graph_k_hops`/`ego_graph_max_neighbors_per_hop` when `true`; see `SKILL.md` Gotchas and [advanced-features.md](advanced-features.md). |
 | `ego_graph_k_hops` | 2 | Graph traversal depth (range 1-5) |
 | `ego_graph_max_neighbors_per_hop` | 10 | Max neighbors per hop (range 1-50) |
 | `include_parent` | false | Also retrieve enclosing class when matching methods |
 | `output_format` | schema `"compact"`, effective `"ultra"` | If omitted, `handle_call_tool` (`mcp_server/server.py`) falls back to `config.output.format`, which ships as **`"ultra"`** (`OutputConfig.format` in `search/config.py`, for 45-55% token reduction). Pass `output_format="compact"` or `"verbose"` explicitly to override. |
-| `max_context_tokens` | 0 (no cap) | Token-budget cap to prevent context overflow |
+| `max_context_tokens` | schema **0**, effective **0** | If omitted, falls back to `config.search_mode.default_max_context_tokens` — dataclass default is also `0` (no cap), so schema and effective values agree today. Same drift risk as `auto_reindex` above if a project overrides the config value. |
 
 **chunk_type values (12):** "function", "class", "method", "module", "module_preamble", "decorated_definition", "interface", "enum", "struct", "type",
 "merged", "split_block"
 
-**Result fields (always):** `file`, `lines`, `kind`, `score`, `chunk_id`, `source` (`_format_search_results` in `mcp_server/tools/result_view.py`).
+**Result fields (always):** `file`, `lines`, `kind`, `score`, `chunk_id` (`_format_search_results` in `mcp_server/tools/result_view.py`).
 
 **Present whenever the project has an indexed call graph** (on by default — `GraphEnhancedConfig.centrality_annotation`/`centrality_reranking` in
 `search/config.py`): `centrality`, `blended_score` (with the default `centrality_alpha=0.0`, `blended_score` is numerically identical to `score`).
 
 **Result fields (optional):** `name` (chunk has a name), `summary` (module chunks with a docstring), `reranker_score` (neural reranking ran),
-`complexity_score` (functions with a computed score).
+`complexity_score` (functions with a computed score), `source` (present whenever the underlying result object carries a non-empty `source`
+attribute — in practice this covers essentially every result path (`hybrid`/`multi_hop`/`graph_hop`/`ego_graph`/`direct_lookup`), but it is not a
+schema-guaranteed field, so check for its presence rather than assuming it).
 
 **Source values:** `"search"` (direct lexical/dense match), `"multi_hop"` (always-on semantic expansion of initial hits), `"graph_hop"` (always-on
-call/import graph expansion of initial hits), `"ego_graph"` (opt-in k-hop neighbors via `ego_graph_enabled=true`). See
+call/import graph expansion of initial hits), `"ego_graph"` (always-on k-hop neighbors — `ego_graph_enabled=true` widens the neighborhood, it doesn't
+switch this on). A direct `chunk_id` lookup instead returns `"direct_lookup"` plus a `graph` summary object. See
 [advanced-features.md](advanced-features.md) for the full disambiguation.
 
 **Examples:**
@@ -95,11 +98,21 @@ code-search:search_code("how does the indexing pipeline work", k=10)
 | `relationship_types` | — | Filter to specific types (see list below) |
 | `output_format` | "compact" | "compact" / "verbose" / "ultra" |
 
-**Valid relationship_types (21 total):**
+**Valid relationship_types (21 enum members; only 19 actually route to a response field):**
 
 `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`,
 `defines_constant`, `defines_enum_member`, `defines_class_attr`, `defines_field`, `uses_constant`, `uses_default`, `uses_global`, `asserts_type`,
 `uses_context_manager`
+
+`assigns_to` and `reads_from` have no extractor in `get_relationship_field_mapping()`
+(`chunking/relationships/relationship_types.py` — deliberate, to protect the GLSL tree-sitter dynamic-conversion path from a silently-swallowed
+`ValueError`), so passing either one filters every relationship block to empty. **Also note:** the filter only scopes a *subset* of the response —
+`direct_callers`, `indirect_callers`, `direct_callees`, and `similar_code` are returned unfiltered regardless of `relationship_types`; only sections
+like `uses_types`/`exceptions_caught`/`instantiates` are actually narrowed by it (confirmed by live probing — see `SKILL.md` Gotchas).
+
+`uses_global` and `asserts_type` route to a field like the other 17, but the live tool schema notes they additionally require
+`enable_entity_tracking` (default `True`) — on a project indexed before that setting was enabled, these two sections stay empty until you reindex,
+even though the type itself is valid and routable.
 
 **Returns:** Direct callers (inbound) and direct callees (outbound), indirect callers, dependency graph (DOT format), similar code (when available).
 
@@ -157,12 +170,15 @@ code-search:find_connections(chunk_id="...", relationship_types=["imports", "use
 | `source` | — | Starting symbol name (fallback — may be ambiguous) |
 | `target` | — | Ending symbol name (fallback) |
 | `edge_types` | — | Filter path to specific relationship types (12-type subset — see below) |
-| `max_hops` | 10 | Maximum path length (range 1-20) |
+| `max_hops` | 10 | Maximum path length. **Silently clamped to 20** via `min(arguments.get("max_hops", 10), 20)` (`search_handlers.py`) — passing 30 does not error, it just runs at 20. |
 | `output_format` | "compact" | "compact" / "verbose" / "ultra" |
 
 **Valid `edge_types` for `find_path` (12 types, a subset of the 21 `find_connections` types):**
 
 `calls`, `inherits`, `uses_type`, `imports`, `decorates`, `raises`, `catches`, `instantiates`, `implements`, `overrides`, `assigns_to`, `reads_from`
+
+This list includes `assigns_to`/`reads_from`, which — same as in `find_connections` above — match zero edges in practice; they're listed in the
+schema's allowed values but have no routing behind them.
 
 **Algorithm:** Bidirectional BFS for optimal performance.
 
