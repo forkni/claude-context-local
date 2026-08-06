@@ -8,6 +8,7 @@
 #   --output PATH             Where to save results JSON
 #   --k INT                   Results to retrieve per query (default: 10)
 #   --category A|B|C          Filter by query category
+#   --split train|val|test    Restrict to one golden-dataset split (composes with --category)
 #   --bm25-weight FLOAT       Override BM25 weight
 #   --dense-weight FLOAT      Override dense weight
 #   --search-mode MODE        hybrid|semantic|bm25|auto

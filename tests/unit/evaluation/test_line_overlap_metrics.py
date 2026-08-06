@@ -822,6 +822,7 @@ class TestOverridesFromArgsAndMetadata:
             "project_path": "/proj",
             "k": 10,
             "category_filter": None,
+            "split_filter": None,
             "bm25_weight": args.bm25_weight,
             "dense_weight": args.dense_weight,
             "search_mode": args.search_mode,
@@ -856,7 +857,7 @@ class TestOverridesFromArgsAndMetadata:
 
     def test_none_args_produce_no_overrides(self):
         """An all-None/all-False Namespace must be a strict no-op: empty
-        overrides dict, and config_metadata containing only the three base
+        overrides dict, and config_metadata containing only the four base
         keys every run always has."""
         from scripts.benchmark import run_sscg_benchmark as mod
 
@@ -873,7 +874,12 @@ class TestOverridesFromArgsAndMetadata:
             legacy_ego={},
             f_via_similar=False,
         )
-        assert metadata == {"project_path": "/proj", "k": 10, "category_filter": None}
+        assert metadata == {
+            "project_path": "/proj",
+            "k": 10,
+            "category_filter": None,
+            "split_filter": None,
+        }
 
 
 # ---------------------------------------------------------------------------

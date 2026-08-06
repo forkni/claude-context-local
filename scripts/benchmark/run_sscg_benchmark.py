@@ -45,7 +45,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from statistics import mean
+from statistics import mean, stdev
 from typing import Any
 
 
@@ -378,6 +378,7 @@ def _build_config_metadata(
     overrides: dict[str, Any],
     legacy_ego: dict[str, Any],
     f_via_similar: bool,
+    split_filter: str | None = None,
     ego_per_request: bool = False,
 ) -> dict[str, Any]:
     """Build ``config_metadata`` from the same *overrides* dict used to
@@ -398,6 +399,7 @@ def _build_config_metadata(
         "project_path": project_path,
         "k": k,
         "category_filter": category_filter,
+        "split_filter": split_filter,
     }
     knobs_by_key = {knob.key: knob for knob in _KNOBS if knob.key is not None}
     for dotted_key, config_value in overrides.items():
@@ -970,6 +972,7 @@ async def run_benchmark(
     k: int,
     category_filter: str | None,
     verbose: bool,
+    split_filter: str | None = None,
     line_lookup: dict[str, tuple[str, int, int]] | None = None,
     search_mode: str | None = None,
     merged_membership: dict[str, tuple[str, frozenset[str]]] | None = None,
@@ -997,6 +1000,10 @@ async def run_benchmark(
             (default), category D is excluded automatically — the pure-searcher
             cannot traverse the call graph and D rows would score ~0 recall,
             polluting the A/B/C aggregate.  Pass ``"D"`` explicitly to benchmark D.
+        split_filter: If set, only run queries whose golden-dataset ``split`` field
+            equals this value (``"train"``/``"val"``/``"test"``). Composes with
+            ``category_filter`` rather than replacing it. ``None`` (default) runs
+            every split, matching every published canon figure.
         verbose: Print per-query details.
         line_lookup: Pre-built ``{normalized_chunk_id: (path, start, end)}`` lookup
             from ``_build_line_lookup``. When provided, line-overlap metrics
@@ -1066,6 +1073,14 @@ async def run_benchmark(
                 f"  Excluded {d_count} category-D queries (use --category D to include)"
             )
 
+    if split_filter:
+        pre_split_count = len(filtered)
+        filtered = [q for q in filtered if q.get("split") == split_filter]
+        print(
+            f"  Filtered to {len(filtered)} queries in split '{split_filter}' "
+            f"(from {pre_split_count})"
+        )
+
     per_query: list[dict[str, Any]] = []
     latencies: list[float] = []
     anchor_lookup = _build_anchor_lookup(searcher) if f_via_similar else {}
@@ -1074,6 +1089,7 @@ async def run_benchmark(
         qid = item["id"]
         query = item["query"]
         category = item.get("category", "?")
+        split = item.get("split", "unknown")
         # Already normalized in golden_dataset.json
         expected: list[str] = item["expected"]
         expected_primary: list[str] = item.get("expected_primary") or expected
@@ -1301,6 +1317,7 @@ async def run_benchmark(
                     "id": qid,
                     "query": query,
                     "category": category,
+                    "split": split,
                     "retrieved": retrieved[:k],
                     "expected": expected,
                     "expected_primary": expected_primary,
@@ -1329,6 +1346,7 @@ async def run_benchmark(
                     "id": qid,
                     "query": query,
                     "category": category,
+                    "split": split,
                     "error": str(exc),
                     "hit": False,
                     "hit@7": False,
@@ -1496,6 +1514,42 @@ def print_per_query_drilldown(
 # ---------------------------------------------------------------------------
 
 
+# Metrics reported by the paired-CI summary in compare_runs(). Kept in sync
+# with aggregate_by_slice.py's METRICS so the two post-hoc report tools agree.
+_PAIRED_CI_METRICS = ("mrr", "recall@5", "recall@10", "ndcg@5", "hit")
+
+# Below this many non-zero-delta pairs, a normal-approximation CI is not
+# meaningful (a single moved query can already look "significant") -- print
+# the point estimate and n_moved but flag the CI as unreliable instead of a
+# ±0.0000 or divide-by-zero.
+_PAIRED_CI_MIN_N = 2
+
+
+def _paired_delta_summary(
+    q1: dict[str, dict], q2: dict[str, dict], metric: str
+) -> tuple[float, float, float, int, int] | None:
+    """Return (mean_delta, se, ci95_halfwidth, n_moved, n_pairs) for one metric,
+    or ``None`` if fewer than two queries carry the metric in both runs.
+
+    Uses a normal approximation (z=1.96) rather than Student's t — the harness
+    has no scipy dependency and this is a diagnostic, not a publication stat.
+    """
+    deltas = [
+        float(q.get(metric, 0.0)) - float(q1[qid].get(metric, 0.0))
+        for qid, q in q2.items()
+        if qid in q1 and metric in q and metric in q1[qid]
+    ]
+    n = len(deltas)
+    if n < _PAIRED_CI_MIN_N:
+        return None
+    n_moved = sum(1 for d in deltas if abs(d) > 1e-9)
+    mean_delta = mean(deltas)
+    sd = stdev(deltas)
+    se = sd / (n**0.5)
+    ci95 = 1.96 * se
+    return mean_delta, se, ci95, n_moved, n
+
+
 def compare_runs(result_files: list[str]) -> None:
     """Load saved benchmark JSONs and print a comparison leaderboard."""
     runs = []
@@ -1514,6 +1568,29 @@ def compare_runs(result_files: list[str]) -> None:
         r1, r2 = runs[0], runs[1]
         q1 = {q["id"]: q for q in r1.get("per_query", [])}
         q2 = {q["id"]: q for q in r2.get("per_query", [])}
+
+        # Paired-delta summary (methodology rule 7, RECALL_CAMPAIGN_CLOSEOUT_20260802.md):
+        # arms are decided on this, not the prose "±0.02 noise band" -- the arms
+        # share queries, so a paired statistic is the correct one.
+        print(
+            f"\n--- Paired delta: '{r1['config_name']}' -> '{r2['config_name']}' "
+            f"(n={len(set(q1) & set(q2))} shared queries) ---"
+        )
+        header = f"{'metric':<12}{'mean_d':>10}{'SE':>9}  {'95% CI':>19}{'n_moved':>9}{'n':>6}"
+        print(header)
+        print("-" * len(header))
+        for metric in _PAIRED_CI_METRICS:
+            summary = _paired_delta_summary(q1, q2, metric)
+            if summary is None:
+                print(f"{metric:<12}{'(< 2 paired queries carry this metric)':>52}")
+                continue
+            mean_delta, se, ci95, n_moved, n = summary
+            ci_str = f"[{mean_delta - ci95:+.4f}, {mean_delta + ci95:+.4f}]"
+            print(
+                f"{metric:<12}{mean_delta:>+10.4f}{se:>9.4f}  {ci_str:>19}"
+                f"{n_moved:>9}{n:>6}"
+            )
+
         deltas = []
         for qid, q in q2.items():
             if qid in q1:
@@ -1577,6 +1654,17 @@ def build_parser() -> argparse.ArgumentParser:
             "'A,B,C'. Category D is excluded by default because this runner uses "
             "search_code only and cannot traverse the call graph; pass --category D to "
             "run it explicitly (expect low recall — use find_connections for D queries)."
+        ),
+    )
+    parser.add_argument(
+        "--split",
+        choices=("train", "val", "test"),
+        help=(
+            "Restrict to one golden-dataset split (composes with --category; "
+            "default: all splits, matching every published canon figure). Each "
+            "query's `split` field is joined in from evaluation/golden_dataset.json "
+            "(or the expanded dataset). Tuning should consult train+val only — "
+            "test is for re-pinning, not for choosing an arm."
         ),
     )
     parser.add_argument(
@@ -1828,6 +1916,7 @@ async def run_single(
     category_filter: str | None,
     verbose: bool,
     overrides: dict[str, Any],
+    split_filter: str | None = None,
     f_via_similar: bool = False,
     ego_per_request: bool = False,
 ) -> dict[str, Any]:
@@ -1931,6 +2020,7 @@ async def run_single(
         k=k,
         category_filter=category_filter,
         verbose=verbose,
+        split_filter=split_filter,
         line_lookup=line_lookup,
         search_mode=overrides.get("search_mode.default_mode"),
         merged_membership=merged_membership,
@@ -2025,6 +2115,7 @@ async def run_single(
         overrides=overrides,
         legacy_ego=legacy_ego,
         f_via_similar=f_via_similar,
+        split_filter=split_filter,
         ego_per_request=ego_per_request,
     )
     if torch_module is not None:
@@ -2134,6 +2225,7 @@ async def main_async(args: argparse.Namespace) -> None:
                 category_filter=args.category,
                 verbose=False,  # quiet during sweep
                 overrides=overrides,
+                split_filter=args.split,
                 f_via_similar=args.f_via_similar,
                 ego_per_request=args.ego_per_request,
             )
@@ -2177,6 +2269,7 @@ async def main_async(args: argparse.Namespace) -> None:
                 category_filter=args.category,
                 verbose=False,  # quiet during sweep
                 overrides=overrides,
+                split_filter=args.split,
                 f_via_similar=args.f_via_similar,
                 ego_per_request=args.ego_per_request,
             )
@@ -2208,6 +2301,7 @@ async def main_async(args: argparse.Namespace) -> None:
         category_filter=args.category,
         verbose=verbose,
         overrides=overrides,
+        split_filter=args.split,
         f_via_similar=args.f_via_similar,
         ego_per_request=args.ego_per_request,
     )
