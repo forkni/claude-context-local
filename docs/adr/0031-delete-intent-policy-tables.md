@@ -153,11 +153,13 @@ intent-on request because all seven `QueryIntent` members are keys of the table.
 `pyrefly check` clean (0 errors). `audit_golden_dataset.py` CLEAN on both datasets, both
 pre- and post-deletion.
 
-**End-to-end MCP re-verification was blocked on an environmental issue, not a code issue** — no
-listener was found on port 8765 at verification time, the same limitation ADR-0030 recorded. The
-benchmark harness's own capture runs the real `search_orchestrator.py`/`HybridSearcher` path in a
-fresh process per invocation and is the authoritative confirmation that the deletion is
-behaviour-preserving beyond the measured DiD.
+**End-to-end MCP re-verification**, once the server was available: `get_index_status()` reported
+205 files / 2324 chunks, matching the `canon_j1` capture substrate exactly. A live `search_code`
+call against this repo with `ego_graph_enabled=True` and intent on (`"find all callers of
+build_effective_config"`) completed successfully with ego-graph-sourced results present
+(`"source":"ego_graph"` entries in the response, `index_refreshed` confirming the running server
+picked up the deletion commit), confirming the production path — the exact one QW5 used to sit
+on — is unaffected by the deletion.
 
 ## Out of scope
 
