@@ -568,7 +568,7 @@ class MultiHopConfig:
         ),
     )
     edge_weights: dict[str, float] | None = field(
-        default=None,  # Intent-specific weights (None = DEFAULT_EDGE_WEIGHTS)
+        default=None,  # None = DEFAULT_EDGE_WEIGHTS
         metadata=spec(reader="search/hybrid_searcher.py"),
     )
 

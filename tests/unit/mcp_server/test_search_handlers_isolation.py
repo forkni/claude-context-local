@@ -22,11 +22,16 @@ from tests.fixtures.mcp_mocks import (
 async def test_handle_search_code_does_not_mutate_config_singleton():
     """handle_search_code must not write to the SearchConfig singleton.
 
-    Exercises all 4 mutation-prone code paths:
+    Exercises the mutation-prone code paths:
     - ego_graph settings (ego_graph_enabled=True)
-    - intent-adaptive ego threshold
     - parent_retrieval (include_parent=True)
-    - intent edge weights (local intent → INTENT_EDGE_WEIGHT_PROFILES["local"])
+
+    The intent-adaptive ego threshold and intent edge weight assertions below
+    (ego_graph.min_similarity_threshold, multi_hop.edge_weights,
+    ego_graph.edge_weights) are now vacuous — QW5 and A1 were deleted in
+    ADR-0031, so nothing writes those fields any more. They are kept as
+    reintroduction guards: any future write that bypasses
+    ``build_effective_config``'s ``mutable_config()`` seam re-arms them.
     """
     mock_searcher = make_hybrid_searcher_mock()
     intent_decision = make_intent_decision_mock("local")

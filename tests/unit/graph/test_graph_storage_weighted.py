@@ -279,8 +279,7 @@ def test_weighted_bfs_reverse_edges(graph_storage):
 
 
 def test_default_edge_weights_coverage():
-    """Test that DEFAULT_EDGE_WEIGHTS includes all major relationship types."""
-    # Verify all P1-P3 relationship types have weights defined
+    """Test that DEFAULT_EDGE_WEIGHTS includes all 21 relationship types."""
     expected_types = [
         "calls",
         "inherits",
@@ -288,12 +287,26 @@ def test_default_edge_weights_coverage():
         "overrides",
         "uses_type",
         "instantiates",
-        "imports",
         "decorates",
         "raises",
         "catches",
+        "imports",
+        "assigns_to",
+        "reads_from",
+        "defines_constant",
+        "defines_enum_member",
+        "defines_class_attr",
+        "defines_field",
+        "uses_constant",
+        "uses_default",
+        "uses_global",
+        "asserts_type",
+        "uses_context_manager",
     ]
 
+    assert set(DEFAULT_EDGE_WEIGHTS) == set(expected_types), (
+        "DEFAULT_EDGE_WEIGHTS keys drifted from the expected 21 edge types"
+    )
     for edge_type in expected_types:
         assert edge_type in DEFAULT_EDGE_WEIGHTS, f"Missing weight for {edge_type}"
         assert 0.0 <= DEFAULT_EDGE_WEIGHTS[edge_type] <= 1.0, (
