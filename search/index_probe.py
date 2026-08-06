@@ -352,7 +352,9 @@ RULES: tuple[ProbeRule, ...] = (
         value_fn=lambda m: 8 if _reranker_squeezed(m) else 32,
         reason_fn=lambda m: (
             f"vram_total={m.vram_total_gb:.1f}GB -> reranker batch "
-            f"{8 if _reranker_squeezed(m) else 32}"
+            f"{8 if _reranker_squeezed(m) else 32} (applies to "
+            "NeuralReranker/GenerativeReranker; ignored by jina-reranker-v3, "
+            "the deployed default, which batches internally)"
         ),
     ),
     ProbeRule(

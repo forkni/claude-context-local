@@ -106,6 +106,25 @@ def inject_call_edges(
             else {"pyan", "libcst"}
         )
 
+        # `resolvers` governs Stages 1-2 only; Stage 3 (LSP) is governed
+        # solely by the separate `lsp_enabled` bool below and is silently
+        # ignored if named here (2026-08-06 config-liveness audit, D3).
+        unknown_names = enabled_names - {"pyan", "libcst"}
+        if unknown_names:
+            if "lsp" in unknown_names:
+                logger.warning(
+                    "[CALL_EDGES] call_graph.resolvers contains 'lsp', which "
+                    "has no effect — Stage 3 (LSP) is enabled solely via "
+                    "call_graph.lsp_enabled, not the resolvers list"
+                )
+                unknown_names = unknown_names - {"lsp"}
+            if unknown_names:
+                logger.warning(
+                    "[CALL_EDGES] call_graph.resolvers contains unrecognized "
+                    "name(s) %s — ignored (valid: 'pyan', 'libcst')",
+                    sorted(unknown_names),
+                )
+
         resolvers: list[CallEdgeResolver] = []
         resolver_names: list[str] = []
         if "pyan" in enabled_names:
