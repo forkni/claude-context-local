@@ -68,6 +68,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Deleted the two intent policy tables (QW5 + A1); SSCG canon re-pinned to `canon_j1`**
+  (ADR-0031) — `_intent_ego_thresholds` (`search/effective_config.py`) and
+  `INTENT_EDGE_WEIGHT_PROFILES` (`graph/graph_storage.py`) were measured inert by ADR-0026 and
+  isolated as flat on the per-request ego-graph path by a prior harness round
+  (`evaluation/EGO_PER_REQUEST_VIEW_20260805.md`); both are now deleted. Every intent-on request
+  (the shipped default) carrying only `intent_decision` — no ego, no parent — now gets its
+  `SearchConfig` back from `build_effective_config` by identity instead of a `copy.deepcopy`.
+  A pre-registered difference-of-differences gate (revert threshold: either metric < −0.02 on
+  either dataset) passed cleanly on both MRR and recall@10, both datasets (all four deltas within
+  ±0.004 of zero); a follow-up capture with `--ego-per-request` confirmed 0 per-query diffs against
+  the plain arm across all 63 queries, proving nothing but QW5 rode that flag. Re-pin: intent-on
+  arm mrr 0.8603 (63q) / 0.6869 (133q), superseding `canon_i1`'s figures (0.8524/0.6879). See
+  `docs/adr/0031-delete-intent-policy-tables.md`.
 - **Config→searcher seam deepened; SSCG canon re-pinned to `canon_i1`** (ADR-0030) — unified two
   architectural-review candidates: `SearchOrchestrator._search`'s five raw
   `isinstance(searcher, HybridSearcher)` checks now route through the previously-uncalled
