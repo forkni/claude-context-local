@@ -67,16 +67,23 @@ class MerkleDAG:
         self.root_node: MerkleNode | None = None
         self.supported_extensions = supported_extensions
 
-        # Initialize directory filter for custom include/exclude dirs
-        from search.filters import DirectoryFilter
+        # Initialize directory filter for custom include/exclude dirs. Kept
+        # (unchanged) for snapshot serialization compatibility — to_dict()/
+        # from_dict() persist include_dirs/exclude_dirs via this object — but
+        # should_ignore() below now delegates the actual filtering decision to
+        # PathFilter, the single precedence-ordered resolver shared with
+        # IncrementalIndexer and MultiLanguageChunker.
+        from search.filters import DirectoryFilter, PathFilter
 
         self.directory_filter = DirectoryFilter(include_dirs, exclude_dirs)
+        self.path_filter = PathFilter(include_dirs, exclude_dirs, self.root_path)
 
-        # Import default ignored directories from canonical source
-        from chunking.language_registry import DEFAULT_IGNORED_DIRS
-
-        # Combine default ignored directories with file-specific patterns
-        self.ignore_patterns: set[str] = set(DEFAULT_IGNORED_DIRS) | {
+        # File-specific patterns not covered by PathFilter (which only decides
+        # directory admission + default-ignore basenames). Multi-segment
+        # patterns (e.g. the snapshot directory, added via ignore_patterns.add()
+        # in ChangeDetector._add_snapshot_ignore) are compared against the
+        # root-relative path; separator-free patterns match the basename.
+        self.ignore_patterns: set[str] = {
             "*.pyc",
             "*.pyo",
             ".DS_Store",
@@ -104,7 +111,7 @@ class MerkleDAG:
         # relative to the project root (normalised to forward-slashes so they
         # work identically on Windows and POSIX).  Separator-free patterns
         # continue to match on the basename only, preserving existing behaviour
-        # for entries like ".git", "__pycache__", and "*.pyc".
+        # for entries like ".DS_Store" and "*.pyc".
         for pattern in self.ignore_patterns:
             if pattern.startswith("*"):
                 if name.endswith(pattern[1:]):
@@ -121,25 +128,19 @@ class MerkleDAG:
             elif name == pattern:
                 return True
 
-        # Apply custom directory filters (for directories only)
-        if path.is_dir() and self.directory_filter:
-            try:
-                relative_path = str(path.relative_to(self.root_path))
-                # Root directory should never be filtered - only its contents
-                # Use traversal mode to allow parent directories of include targets to pass through
-                # This enables traversal to reach nested include_dirs like "Scripts/StreamDiffusionTD"
-                if (
-                    relative_path != "."
-                    and not self.directory_filter.matches_for_traversal(
-                        relative_path + "/"
-                    )
-                ):
-                    return True
-            except ValueError:
-                # Path not under root, ignore it
-                return True
+        # Delegate default-ignore + include/exclude precedence to PathFilter.
+        # Root directory should never be filtered — only its contents.
+        try:
+            relative_path = str(path.relative_to(self.root_path))
+        except ValueError:
+            # Path not under root, ignore it
+            return True
+        if relative_path == ".":
+            return False
 
-        return False
+        if path.is_dir():
+            return not self.path_filter.should_traverse_dir(relative_path)
+        return not self.path_filter.should_index_file(relative_path)
 
     def hash_file(self, file_path: Path) -> tuple[str, int]:
         """Calculate SHA-256 hash of a file.

@@ -196,12 +196,17 @@ When a project is indexed with a `project_id`, `search_code()` automatically inc
 
 ### Parameters
 
-| Parameter       | Tools                         | Type  | Description                              |
-|-----------------|-------------------------------|-------|------------------------------------------|
-| `include_dirs`  | search_code                   | array | Only search in these directories         |
-| `exclude_dirs`  | search_code, find_connections | array | Exclude from search                      |
+| Parameter       | Tools                                          | Type  | Description                              |
+|-----------------|-------------------------------------------------|-------|------------------------------------------|
+| `include_dirs`  | search_code, index_directory                    | array | Only search/index these directories       |
+| `exclude_dirs`  | search_code, find_connections, index_directory  | array | Exclude from search/indexing              |
 
-### Path Matching
+**`index_directory` uses different matching rules than `search_code`/`find_connections`** —
+see [Index-Time Filter Semantics](#index-time-filter-semantics) below. The rest of this
+section (prefix matching, post-search precedence) describes the `search_code`/
+`find_connections` behavior only, which filters results from an already-built index.
+
+### Path Matching (search_code / find_connections)
 
 - **Prefix matching**: `"src/"` matches `src/utils/auth.py`
 - **Normalized separators**: Windows backslashes (`\`) converted to forward slashes (`/`)
@@ -240,6 +245,41 @@ find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 - Search k multiplier increased from 3x to 5x when directory filters present
 - Minimal overhead for typical filter sizes
 
+### Index-Time Filter Semantics
+
+**Feature**: `index_directory`'s `include_dirs`/`exclude_dirs` use gitignore-style pattern
+matching, resolved by `PathFilter` (`search/filters.py`) — a single precedence resolver used
+by the Merkle DAG walk, the incremental indexer, and the chunker. This differs from the
+prefix-matching, post-search filters described above for `search_code`/`find_connections`.
+
+**Pattern syntax**:
+
+- A pattern with **no `/`** matches its basename at **any depth** — `"diffusers"` matches
+  every directory named `diffusers` anywhere under the project root.
+- A pattern **containing `/`** (or a leading `/`) is **root-anchored** — `"src/core"` matches
+  only `<root>/src/core`.
+- Wildcards `*`, `?`, `[abc]` are supported per path segment; `**` matches zero or more
+  segments.
+- Absolute paths are accepted and resolved against the project root. An absolute path that
+  doesn't resolve under the root is dropped with a warning, not silently ignored.
+
+**Precedence** (`PathFilter.should_traverse_dir` / `.should_index_file`, evaluated in order):
+
+1. `.git`/`.hg`/`.svn` — always rejected, never re-includable.
+2. Any `exclude_dirs` pattern matching this path — rejected. **Exclude always beats include.**
+3. If `include_dirs` is non-empty, the path must match an include pattern (directly, or be an
+   ancestor of one, so the walk can descend) — otherwise rejected.
+4. The default-ignored set (`chunking/language_registry.py` — `__pycache__`, `.venv`, `venv`,
+   `node_modules`, `site-packages`, `build`, and ~50 more) — rejected **unless** step 3 already
+   matched it. **An include pattern overrides a default exclusion for that target only**; every
+   other default-ignored directory stays excluded.
+5. Otherwise accepted.
+
+**Zero-match patterns are never silent**: any include/exclude pattern that matches nothing is
+logged as a warning naming the pattern; if every include pattern matches nothing, indexing
+aborts with an error rather than silently writing an empty index. Preview a filter set first
+with `python tools/batch_index.py --path <dir> --mode new --dry-run --include-dirs "a,b,c"`.
+
 ### Filter Persistence (v0.5.9+)
 
 **Feature**: User-defined filters are automatically saved and restored across server restarts and re-indexing operations.
@@ -258,15 +298,11 @@ find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 ```python
 from search.filters import get_effective_filters
 
-# Resolves: default_exclude_dirs + user_included_dirs + user_excluded_dirs
-filters = get_effective_filters(project_info)
+# Returns only the user's raw lists (user_included_dirs, user_excluded_dirs).
+# Defaults are NOT merged in here — they're applied by PathFilter at match time,
+# so an include_dirs entry can still override a default-ignored directory.
+include_dirs, exclude_dirs = get_effective_filters(project_info)
 ```
-
-**Filter Resolution Priority**:
-
-1. **Default excludes** (always applied): `["__pycache__/", ".git/", "node_modules/", ".venv/"]`
-2. **User includes** (from `include_dirs` parameter): Only search in these directories
-3. **User excludes** (from `exclude_dirs` parameter): Additional directories to exclude
 
 **project_info.json Format**:
 

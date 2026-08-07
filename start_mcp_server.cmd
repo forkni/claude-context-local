@@ -1002,13 +1002,23 @@ echo.
 echo === Directory Filters (Optional) ===
 echo.
 echo Specify directories to include or exclude from indexing.
-echo Paths must be RELATIVE to the project root (not absolute).
+echo Paths may be relative to the project root OR absolute.
+echo.
+echo   a/b            -^> root-anchored (matches only project_root/a/b)
+echo   foo*           -^> matches "foo*" at ANY depth, plus its subfolders
+echo   D:\full\path   -^> absolute paths are resolved against the project root
+echo.
+echo An include pattern OVERRIDES default exclusions (venv, site-packages,
+echo node_modules, etc.) for that specific target - other default-ignored
+echo directories stay excluded unless you include them too.
 echo.
 echo Examples:
 echo   Include: src/core,lib/utils
+echo   Include: venv/Lib/site-packages/torch,venv/Lib/site-packages/transformers
 echo   Exclude: tests,vendor,docs
 echo.
-echo   For nested paths: Scripts/StreamDiffusionTD (not D:\full\path)
+echo Pressing Enter for BOTH fields clears any filters stored from a
+echo previous index of this project (this menu always indexes "new").
 echo.
 set "include_filter="
 set "exclude_filter="

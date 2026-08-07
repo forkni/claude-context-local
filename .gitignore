@@ -300,6 +300,10 @@ docs/PRE_COMMIT_HOOKS.md
 !docs/adr/
 !docs/adr/**
 
+# Implementation plans (tracked in repo)
+!docs/plans/
+!docs/plans/**
+
 # Evaluation and test results (temporary/generated files)
 custom_evaluation_results/
 evaluation_results/

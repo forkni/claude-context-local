@@ -18,6 +18,7 @@ from mcp_server.search_factory import (
 )
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import (
+    check_filter_semantics_migration,
     get_canonical_project_info,
     get_project_storage_dir,
     get_storage_dir,
@@ -770,6 +771,7 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
         project_info = await asyncio.to_thread(_read_project_info)
         stored_include = project_info.get("user_included_dirs")
         stored_exclude = project_info.get("user_excluded_dirs")
+        check_filter_semantics_migration(project_info)
 
     # Determine effective filters
     # If user didn't provide filters, use stored filters (auto-reindex case)

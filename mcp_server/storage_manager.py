@@ -32,6 +32,14 @@ logger = logging.getLogger(__name__)
 # storage root before performing destructive operations.
 STORAGE_SENTINEL = ".claude_code_search_storage"
 
+# Bumped when include_dirs/exclude_dirs pattern semantics change in a way that
+# can silently change what an existing project's filters match. Version 2 =
+# gitignore-style matching (search/filters.py PathFilter/DirPattern): a
+# separator-free pattern now matches at ANY depth instead of root-only, and an
+# include_dirs pattern can override a default-ignored directory (e.g. "venv",
+# "site-packages"). See check_filter_semantics_migration().
+FILTER_SEMANTICS_VERSION = 2
+
 # Project-root markers — if any ancestor of the candidate path contains
 # one of these (excluding the home dir itself), the path is inside a
 # source tree and must be refused as storage location.
@@ -292,6 +300,7 @@ def get_project_storage_dir(
             "user_excluded_dirs": exclude_dirs,
             "default_included_dirs": None,
             "user_included_dirs": include_dirs,
+            "filter_semantics_version": FILTER_SEMANTICS_VERSION,
         }
         with open(project_info_file, "w") as f:
             json.dump(project_info, f, indent=2)
@@ -352,6 +361,43 @@ def get_canonical_project_info(project_path: str) -> Path | None:
     return None
 
 
+def check_filter_semantics_migration(project_info: dict) -> None:
+    """Warn when stored filters predate the current pattern-matching semantics.
+
+    ``filter_semantics_version`` 2 (search/filters.py PathFilter/DirPattern)
+    changed how a *separator-free* include_dirs/exclude_dirs pattern matches:
+    it now matches at ANY depth (gitignore-style basename match), not just at
+    the project root, and an include pattern can now override a
+    default-ignored directory (e.g. "venv", "site-packages"). A project
+    indexed before this change may have relied on the old root-only
+    behavior — warn loudly rather than let the next full reindex silently
+    change what gets matched.
+
+    Args:
+        project_info: Parsed project_info.json contents.
+    """
+    stored_version = project_info.get("filter_semantics_version")
+    if stored_version is not None and stored_version >= FILTER_SEMANTICS_VERSION:
+        return
+
+    patterns = list(project_info.get("user_included_dirs") or []) + list(
+        project_info.get("user_excluded_dirs") or []
+    )
+    separator_free = [p for p in patterns if p and "/" not in p and "\\" not in p]
+    if separator_free:
+        logger.warning(
+            "[FILTER_SEMANTICS] This project's stored include/exclude patterns "
+            "were saved before filter_semantics_version=%d. Separator-free "
+            "patterns %r now match at ANY depth (gitignore-style), not just at "
+            "the project root — the next full reindex may match a different "
+            "file set than before. Anchor a pattern with a leading '/' (e.g. "
+            "'/%s') to keep the old root-only behavior.",
+            FILTER_SEMANTICS_VERSION,
+            separator_free,
+            separator_free[0],
+        )
+
+
 def update_project_filters(
     project_path: str,
     include_dirs: list | None = None,
@@ -383,6 +429,7 @@ def update_project_filters(
         project_info["default_excluded_dirs"] = sorted(
             MultiLanguageChunker.DEFAULT_IGNORED_DIRS
         )
+        project_info["filter_semantics_version"] = FILTER_SEMANTICS_VERSION
 
         # Guard against silently clearing user-defined filters.
         # None means "caller didn't specify", not "user wants to clear".

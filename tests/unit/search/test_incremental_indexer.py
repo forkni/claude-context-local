@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from search.filters import PathFilter
 from search.incremental_indexer import IncrementalIndexer, IncrementalIndexResult
 
 
@@ -203,6 +204,7 @@ class TestIncrementalIndexer:
         with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py", "utils.py", "config.py"]
+            mock_dag.path_filter = PathFilter(None, None, self.project_path)
             mock_dag_class.return_value = mock_dag
 
             # Mock chunker
@@ -291,6 +293,7 @@ class TestIncrementalIndexer:
             "old_file.py",
             "changed_file.py",
         ]
+        mock_dag.path_filter = PathFilter(None, None, self.project_path)
 
         indexer.change_detector.detect_changes_from_snapshot = Mock(
             return_value=(mock_changes, mock_dag)
@@ -355,6 +358,7 @@ class TestIncrementalIndexer:
         mock_changes.modified = []
         mock_dag = Mock()
         mock_dag.get_all_files.return_value = ["new_file.py"]
+        mock_dag.path_filter = PathFilter(None, None, self.project_path)
 
         indexer.change_detector.detect_changes_from_snapshot = Mock(
             return_value=(mock_changes, mock_dag)
@@ -596,6 +600,7 @@ class TestIncrementalIndexer:
         with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py"]
+            mock_dag.path_filter = PathFilter(None, None, self.project_path)
             mock_dag_class.return_value = mock_dag
 
             self.mock_chunker.is_supported.return_value = True
@@ -630,6 +635,7 @@ class TestIncrementalIndexer:
         with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["error_file.py", "good_file.py"]
+            mock_dag.path_filter = PathFilter(None, None, self.project_path)
             mock_dag_class.return_value = mock_dag
 
             # Mock chunker - one file fails, one succeeds
@@ -670,6 +676,7 @@ class TestIncrementalIndexer:
         with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["test_file.py"]
+            mock_dag.path_filter = PathFilter(None, None, self.project_path)
             mock_dag_class.return_value = mock_dag
 
             self.mock_chunker.is_supported.return_value = True
@@ -709,6 +716,7 @@ class TestIncrementalIndexer:
         mock_changes.modified = []
         mock_dag = Mock()
         mock_dag.get_all_files.return_value = ["old_file1.py", "old_file2.py"]
+        mock_dag.path_filter = PathFilter(None, None, self.project_path)
 
         indexer.change_detector.detect_changes_from_snapshot = Mock(
             return_value=(mock_changes, mock_dag)
@@ -752,6 +760,7 @@ class TestIncrementalIndexer:
         mock_changes.removed = ["file1.py"]
         mock_changes.modified = []
         mock_dag = Mock()
+        mock_dag.path_filter = PathFilter(None, None, self.project_path)
 
         indexer.change_detector.detect_changes_from_snapshot = Mock(
             return_value=(mock_changes, mock_dag)
@@ -781,6 +790,7 @@ class TestIncrementalIndexer:
         with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
             mock_full_dag = Mock()
             mock_full_dag.get_all_files.return_value = ["remaining_file.py"]
+            mock_full_dag.path_filter = PathFilter(None, None, self.project_path)
             mock_dag_class.return_value = mock_full_dag
 
             self.mock_chunker.is_supported.return_value = True
@@ -825,6 +835,7 @@ class TestIncrementalIndexer:
         with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["file.py"]
+            mock_dag.path_filter = PathFilter(None, None, self.project_path)
             mock_dag_class.return_value = mock_dag
 
             self.mock_chunker.is_supported.return_value = True
@@ -865,6 +876,7 @@ class TestIncrementalIndexer:
         mock_changes.modified = []
         mock_dag = Mock()
         mock_dag.get_all_files.return_value = files_to_remove
+        mock_dag.path_filter = PathFilter(None, None, self.project_path)
 
         indexer.change_detector.detect_changes_from_snapshot = Mock(
             return_value=(mock_changes, mock_dag)
@@ -933,6 +945,7 @@ class TestIncrementalIndexer:
         mock_changes.modified = ["modified.py"]  # At least one change
         mock_dag = Mock()
         mock_dag.get_all_files.return_value = ["modified.py"]
+        mock_dag.path_filter = PathFilter(None, None, self.project_path)
         indexer.change_detector.detect_changes_from_snapshot = Mock(
             return_value=(mock_changes, mock_dag)
         )
@@ -1030,8 +1043,28 @@ class TestIncrementalIndexer:
             exclude_dirs=exclude_dirs,
         )
 
+        # Real files under the include targets. MerkleDAG is NOT mocked in
+        # this test (it exercises the real DAG's directory_filter), and the
+        # PathFilter hard-fail (all_includes_unmatched) now aborts full
+        # indexing if every include pattern matches zero real files — so at
+        # least one file per pattern must exist on disk for the walk to find.
+        (self.project_path / "src").mkdir(parents=True)
+        (self.project_path / "src" / "main.py").write_text("x = 1")
+        (self.project_path / "lib").mkdir(parents=True)
+        (self.project_path / "lib" / "utils.py").write_text("y = 2")
+
         # Mock that no snapshot exists (triggers full index path)
         self.mock_snapshot_manager.has_snapshot.return_value = False
+
+        # Mock chunker/embedder so the real MerkleDAG's discovered files can
+        # be "chunked" and "embedded" without touching real file contents.
+        self.mock_chunker.is_supported.return_value = True
+        mock_chunk = Mock()
+        mock_chunk.content = "test content"
+        self.mock_chunker.chunk_file.return_value = [mock_chunk]
+        self.mock_embedder.embed_chunks.side_effect = lambda chunks, **kwargs: [
+            Mock(metadata={}) for _ in chunks
+        ]
 
         # Mock save_snapshot to verify filters are saved
         saved_dag = None
@@ -1083,6 +1116,24 @@ class TestIncrementalIndexer:
         self.mock_snapshot_manager.has_snapshot.return_value = (
             False  # Triggers full index
         )
+
+        # Real files under the recovered include targets. The NEW DAG built
+        # by _full_index (after recovering include_dirs/exclude_dirs from
+        # the mock snapshot above) is a real, unmocked MerkleDAG — the
+        # PathFilter hard-fail (all_includes_unmatched) aborts full indexing
+        # if every include pattern matches zero real files.
+        (self.project_path / "src").mkdir(parents=True)
+        (self.project_path / "src" / "main.py").write_text("x = 1")
+        (self.project_path / "lib").mkdir(parents=True)
+        (self.project_path / "lib" / "utils.py").write_text("y = 2")
+
+        self.mock_chunker.is_supported.return_value = True
+        mock_chunk = Mock()
+        mock_chunk.content = "test content"
+        self.mock_chunker.chunk_file.return_value = [mock_chunk]
+        self.mock_embedder.embed_chunks.side_effect = lambda chunks, **kwargs: [
+            Mock(metadata={}) for _ in chunks
+        ]
 
         # Mock save_snapshot
         saved_dag = None
@@ -1142,6 +1193,7 @@ class TestIncrementalIndexer:
         with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py"]
+            mock_dag.path_filter = PathFilter(None, None, self.project_path)
             mock_dag_class.return_value = mock_dag
 
             mock_chunk = Mock()
@@ -1261,6 +1313,7 @@ class TestConsistencyTarget:
         with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py"]
+            mock_dag.path_filter = PathFilter(None, None, self.project_path)
             mock_dag_class.return_value = mock_dag
 
             mock_chunk = Mock()
@@ -1748,6 +1801,7 @@ class TestProbeWiring:
         ):
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py", "utils.py"]
+            mock_dag.path_filter = PathFilter(None, None, self.project_path)
             mock_dag_class.return_value = mock_dag
 
             mock_chunk = Mock()
@@ -1896,6 +1950,7 @@ class TestModuleSummaryInjection:
         ):
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py", "utils.py"]
+            mock_dag.path_filter = PathFilter(None, None, self.project_path)
             mock_dag_class.return_value = mock_dag
 
             mock_chunk = Mock()

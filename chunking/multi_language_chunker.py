@@ -847,41 +847,43 @@ class MultiLanguageChunker:
         else:
             valid_extensions = self.SUPPORTED_EXTENSIONS
 
-        # Collect all file paths first
+        # Collect all file paths, applying the single include/exclude/default
+        # precedence resolver (PathFilter) — replaces the old two-stage
+        # basename-ignore + strict-mode DirectoryFilter check, which could not
+        # let an include_dirs pattern override a default-ignored directory
+        # (e.g. "venv", "site-packages"). Relative paths are computed against
+        # self.root_path when set (so a chunk_directory call scanning a
+        # subdirectory, e.g. an include_dirs target, still resolves patterns
+        # against the project root) and fall back to the scan directory
+        # itself otherwise.
+        from search.filters import PathFilter
+
+        effective_root = Path(self.root_path) if self.root_path else dir_path
+        path_filter = PathFilter(
+            self.directory_filter.include_dirs,
+            self.directory_filter.exclude_dirs,
+            effective_root,
+        )
+
         file_paths = []
+        skipped = 0
         for ext in valid_extensions:
             for file_path in dir_path.rglob(f"*{ext}"):
-                # Skip common large/build/tooling directories.
-                # Scope the check to components *relative to the scan root*
-                # so ancestor directories named "build", "env", etc. don't
-                # suppress the entire project (#12).
                 try:
-                    rel_parts = file_path.relative_to(dir_path).parts
+                    relative_path = str(file_path.relative_to(effective_root))
                 except ValueError:
-                    rel_parts = file_path.parts
-                if any(part in self.DEFAULT_IGNORED_DIRS for part in rel_parts):
+                    # File not under the effective root; skip it.
+                    skipped += 1
                     continue
-                file_paths.append(file_path)
+                if path_filter.should_index_file(relative_path):
+                    file_paths.append(file_path)
+                else:
+                    skipped += 1
 
-        # Apply custom directory filters (include_dirs/exclude_dirs)
-        if self.root_path and self.directory_filter:
-            root = Path(self.root_path)
-            filtered_paths = []
-            for file_path in file_paths:
-                try:
-                    relative_path = str(file_path.relative_to(root))
-                    # Use strict mode for file filtering (no ancestor passthrough)
-                    if self.directory_filter.matches_for_file(relative_path):
-                        filtered_paths.append(file_path)
-                except ValueError:
-                    # File not under root, skip it
-                    continue
-            logger.info(
-                f"Applied directory filters: {len(file_paths)} files -> {len(filtered_paths)} files"
-            )
-            file_paths = filtered_paths
+        for unmatched in path_filter.unmatched_patterns():
+            logger.warning(f"Directory filter pattern matched 0 files: {unmatched!r}")
 
-        logger.info(f"Found {len(file_paths)} files to chunk")
+        logger.info(f"Found {len(file_paths)} files to chunk ({skipped} filtered out)")
 
         # Process files in parallel or sequentially
         if enable_parallel and len(file_paths) > 1:

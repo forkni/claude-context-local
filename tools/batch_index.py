@@ -18,6 +18,139 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from mcp_server.tool_handlers import handle_index_directory
 
 
+def _dry_run(
+    project_path: Path, include_dirs: list[str] | None, exclude_dirs: list[str] | None
+) -> int:
+    """Preview what an include/exclude filter set would match, without indexing.
+
+    Walks project_path applying the exact same PathFilter precedence resolver
+    (defaults + include + exclude) the real indexing path uses, but skips
+    hashing/chunking/embedding entirely. Prints a per-pattern breakdown of
+    matched files/size, and flags any pattern that matched zero
+    files/directories — the silent-failure class this preview exists to catch
+    (e.g. a typo'd or absent package name under site-packages).
+
+    Args:
+        project_path: Root project directory (resolved against this for
+            absolute/relative pattern parsing).
+        include_dirs: Raw include_dirs patterns, or None/empty for no include
+            filter (whole supported-extension tree, minus defaults/excludes).
+        exclude_dirs: Raw exclude_dirs patterns, or None/empty.
+
+    Returns:
+        Exit code: 0 if the filter set matched at least one file (or no
+        include patterns were given), 1 if every include pattern matched
+        zero files (nothing would be indexed).
+    """
+    import os
+
+    from chunking.language_registry import SUPPORTED_EXTENSIONS
+    from search.filters import MatchKind, PathFilter, match_pattern
+
+    root = project_path.resolve()
+    path_filter = PathFilter(include_dirs, exclude_dirs, root)
+
+    per_pattern_size: dict[str, int] = dict.fromkeys(
+        (p.raw for p in path_filter.include_patterns), 0
+    )
+    file_count = 0
+    total_size = 0
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirpath_p = Path(dirpath)
+        rel_dir = (
+            "."
+            if dirpath_p == root
+            else str(dirpath_p.relative_to(root)).replace("\\", "/")
+        )
+
+        dirnames[:] = [
+            d
+            for d in sorted(dirnames)
+            if path_filter.should_traverse_dir(
+                d if rel_dir == "." else f"{rel_dir}/{d}"
+            )
+        ]
+
+        for name in sorted(filenames):
+            if Path(name).suffix.lower() not in SUPPORTED_EXTENSIONS:
+                continue
+            rel_file = name if rel_dir == "." else f"{rel_dir}/{name}"
+            if not path_filter.should_index_file(rel_file):
+                continue
+
+            try:
+                size = (dirpath_p / name).stat().st_size
+            except OSError:
+                size = 0
+            file_count += 1
+            total_size += size
+
+            if path_filter.include_patterns:
+                rel_parts = tuple(rel_file.split("/"))
+                for pat in path_filter.include_patterns:
+                    if match_pattern(pat, rel_parts) is MatchKind.INSIDE:
+                        per_pattern_size[pat.raw] += size
+
+    print("=" * 70)
+    print("DRY RUN - FILTER PREVIEW (no files indexed)")
+    print("=" * 70)
+
+    if path_filter.include_patterns:
+        matched = 0
+        absent = []
+        for pat in path_filter.include_patterns:
+            count = path_filter.include_hits.get(pat.raw, 0)
+            size_mb = per_pattern_size.get(pat.raw, 0) / 1_048_576
+            if count:
+                matched += 1
+                print(f"  {pat.raw:<45} {count:>6} files  {size_mb:>9.2f} MB")
+            else:
+                absent.append(pat.raw)
+                print(f"  {pat.raw:<45} (absent - matched 0 files)")
+        print("-" * 70)
+        print(
+            f"{len(path_filter.include_patterns)} include pattern(s), {matched} matched, "
+            f"{len(absent)} absent -> {file_count} files, {total_size / 1_048_576:.2f} MB"
+        )
+        if absent:
+            print()
+            print(f"[WARN] {len(absent)} include pattern(s) matched 0 files: {absent}")
+    else:
+        print("No include_dirs given - whole tree scanned (minus defaults/excludes).")
+        print(f"{file_count} files, {total_size / 1_048_576:.2f} MB")
+
+    unmatched_excludes = [
+        pat.raw
+        for pat in path_filter.exclude_patterns
+        if path_filter.exclude_hits.get(pat.raw, 0) == 0
+    ]
+    if unmatched_excludes:
+        print()
+        print(
+            f"[WARN] {len(unmatched_excludes)} exclude pattern(s) matched 0 "
+            f"directories/files: {unmatched_excludes}"
+        )
+
+    print("=" * 70)
+
+    if file_count > 5000:
+        print(
+            f"[WARN] {file_count} files would be indexed - this may take a "
+            "while for a large corpus."
+        )
+        print()
+
+    if path_filter.include_patterns and path_filter.all_includes_unmatched():
+        print(
+            "[ERROR] Every include_dirs pattern matched 0 files - nothing "
+            "would be indexed."
+        )
+        return 1
+
+    return 0
+
+
 def main():
     """Entry point for batch indexing CLI.
 
@@ -55,6 +188,15 @@ def main():
         "forces a full reindex — always re-pass every directory you still want excluded, "
         "or the omitted ones silently become indexable again.",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview which files --include-dirs/--exclude-dirs would match, with a "
+        "per-pattern file-count/size breakdown, then exit WITHOUT indexing. Any "
+        "include pattern that matches 0 files is reported explicitly (never silently "
+        "dropped). Requires --include-dirs and/or --exclude-dirs to be meaningful; "
+        "with neither, it previews the whole supported-extension tree minus defaults.",
+    )
 
     args = parser.parse_args()
 
@@ -85,10 +227,23 @@ def main():
     include_dirs = None
     if args.include_dirs:
         include_dirs = [d.strip() for d in args.include_dirs.split(",") if d.strip()]
+    elif args.mode == "new":
+        # "new" means first-time/from-scratch indexing — explicitly clear any
+        # filters stored from a prior index of this same path instead of
+        # silently inheriting them. None (the default when the flag is
+        # omitted) means "caller didn't specify" and triggers snapshot
+        # inheritance in mcp_server/tools/index_handlers.py; [] means "user
+        # explicitly cleared it".
+        include_dirs = []
 
     exclude_dirs = None
     if args.exclude_dirs:
         exclude_dirs = [d.strip() for d in args.exclude_dirs.split(",") if d.strip()]
+    elif args.mode == "new":
+        exclude_dirs = []
+
+    if args.dry_run:
+        return _dry_run(project_path, include_dirs, exclude_dirs)
 
     # Display configuration
     print("=" * 70)

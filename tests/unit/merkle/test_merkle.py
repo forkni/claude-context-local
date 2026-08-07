@@ -223,6 +223,56 @@ class TestMerkleDAG(TestCase):
         # Regular files are unaffected
         assert "README.md" in all_files
 
+    def test_include_dirs_overrides_default_ignored_dir(self):
+        """An explicit include_dirs entry re-admits a default-ignored directory
+        (e.g. venv) for that target only — other default-ignored dirs stay out."""
+        self.create_test_files()
+
+        (self.test_path / "venv" / "Lib" / "site-packages" / "pkg").mkdir(parents=True)
+        (
+            self.test_path / "venv" / "Lib" / "site-packages" / "pkg" / "mod.py"
+        ).write_text("x = 1")
+        (self.test_path / "__pycache__").mkdir()
+        (self.test_path / "__pycache__" / "cache.pyc").write_text("cache")
+
+        dag = MerkleDAG(self.temp_dir, include_dirs=["venv/Lib/site-packages/pkg"])
+        dag.build()
+
+        all_files = dag.get_all_files()
+        normalized = {f.replace("\\", "/") for f in all_files}
+
+        assert "venv/Lib/site-packages/pkg/mod.py" in normalized, (
+            "include_dirs must override the default-ignored 'venv'/'site-packages' "
+            f"directories for its own target, got: {normalized}"
+        )
+        # __pycache__ stays default-ignored — the include didn't name it.
+        assert not any("__pycache__" in f for f in normalized)
+        # Files outside the include target (root/src/tests) are excluded once
+        # include_dirs is non-empty.
+        assert "README.md" not in normalized
+        assert not any(f.startswith("src/") for f in normalized)
+
+    def test_include_dirs_excludes_ancestor_files_regression(self):
+        """Regression test for the reported bug: include_dirs=["A/venv/Lib/
+        site-packages"] must select only files under that target, never files
+        at the project root or in ancestor directories of the target (the
+        original bug indexed 3 ancestor files and zero target files)."""
+        (self.test_path / "A").mkdir()
+        (self.test_path / "A" / "top_level.py").write_text("x = 1")
+        (self.test_path / "root_file.py").write_text("y = 2")
+        target = self.test_path / "A" / "venv" / "Lib" / "site-packages" / "pkg"
+        target.mkdir(parents=True)
+        (target / "mod.py").write_text("z = 3")
+
+        dag = MerkleDAG(self.temp_dir, include_dirs=["A/venv/Lib/site-packages"])
+        dag.build()
+
+        all_files = {f.replace("\\", "/") for f in dag.get_all_files()}
+
+        assert all_files == {"A/venv/Lib/site-packages/pkg/mod.py"}, (
+            f"Expected only the include target's file, got: {all_files}"
+        )
+
     def test_dag_serialization(self):
         """Test DAG to/from dict conversion."""
         self.create_test_files()

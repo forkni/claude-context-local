@@ -236,12 +236,12 @@ RETURNS:
                 "include_dirs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": 'Only index files in these directories (e.g., ["src/", "lib/"]). Uses path prefix matching. Omit to reuse the stored value from project creation; pass a new list to replace it wholesale (not merged), or [] to clear it. Changing this on an existing project forces a full (non-incremental) reindex.',
+                    "description": 'Only index files under these directories, e.g. ["src/core", "lib/utils"]. Gitignore-style matching: a pattern with no "/" matches at ANY depth by basename (e.g. "diffusers" matches every directory named "diffusers" anywhere in the tree); a pattern containing "/" is root-anchored; wildcards ("*", "?", "[abc]", "**") are supported. Absolute paths are accepted and resolved against the project root. An include pattern OVERRIDES a default-ignored directory for that target only (e.g. ["venv/Lib/site-packages/torch"] indexes torch even though venv/site-packages are ignored by default) — other default-ignored directories stay excluded. A pattern matching zero files/directories is reported as a warning, not silently dropped; if EVERY include pattern matches nothing, indexing aborts with an error instead of writing an empty index. Omit to reuse the stored value from project creation; pass a new list to replace it wholesale (not merged), or [] to clear it. Changing this on an existing project forces a full (non-incremental) reindex.',
                 },
                 "exclude_dirs": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": 'Exclude these directories from indexing (e.g., ["tests/", "vendor/"]). Uses path prefix matching. Omit to reuse the stored value from project creation; pass a new list to replace it wholesale (not merged) — always include every directory you still want excluded — or [] to clear it. Changing this on an existing project forces a full (non-incremental) reindex.',
+                    "description": 'Exclude these directories from indexing, e.g. ["tests", "vendor"]. Same gitignore-style pattern syntax as include_dirs (any-depth basename match, root-anchored with "/", wildcards, absolute paths). Exclude always beats include on a matching path. Omit to reuse the stored value from project creation; pass a new list to replace it wholesale (not merged) — always include every directory you still want excluded — or [] to clear it. Changing this on an existing project forces a full (non-incremental) reindex.',
                 },
                 "output_format": {
                     "type": "string",

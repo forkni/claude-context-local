@@ -56,6 +56,30 @@ excluded dir") is detected against the stored snapshot and **forces a full, non-
 reindex** even if `incremental=True` was requested — `batch_index.py` prints the effective
 filters before indexing starts so you can confirm the full list took effect.
 
+**`index_directory`'s pattern syntax is gitignore-style, not prefix matching** (this differs
+from `search_code`'s `include_dirs`/`exclude_dirs` below, which are pure path-prefix filters
+over an already-built index). A pattern with **no `/`** matches its basename at **any depth**
+— `include_dirs=["diffusers"]` matches every directory named `diffusers` anywhere under the
+project root, not just at the top level. A pattern **containing `/`** (or a leading `/`) is
+**root-anchored** — `include_dirs=["src/core"]` matches only `<root>/src/core`. Wildcards
+(`*`, `?`, `[abc]`, and `**` for "zero or more segments") are supported in either form.
+Absolute paths are accepted and resolved against the project root; an absolute path that
+doesn't resolve under the root is dropped with a loud warning rather than silently ignored.
+
+**An include pattern overrides a default-ignored directory for that target only.**
+Directories like `venv`, `site-packages`, `node_modules`, and `build` are excluded by
+default (`chunking/language_registry.py`), but an explicit include re-admits exactly the
+path(s) it names — e.g. `include_dirs=["venv/Lib/site-packages/torch"]` indexes `torch` even
+though both `venv` and `site-packages` are default-ignored; every *other* default-ignored
+directory stays excluded. `exclude_dirs` always wins over `include_dirs` on a matching path.
+
+**Zero-match patterns are never silent.** Any include or exclude pattern that matches zero
+files/directories is logged as a warning naming the exact pattern. If **every** include
+pattern matches zero files, indexing aborts with an error instead of writing an empty index
+over a working one. To preview a filter set before paying for a full index, use
+`python tools/batch_index.py --path <dir> --mode new --dry-run --include-dirs "a,b,c"` —
+it prints a per-pattern file-count/size breakdown and exits without indexing.
+
 ---
 
 ## Filter Parameters for search_code
