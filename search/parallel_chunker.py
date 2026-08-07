@@ -179,6 +179,10 @@ class ParallelChunker:
         zero_chunk_files: list[str] = []
         total_original = 0
         total_merged = 0
+        # Reset before this pass starts so a second index in the same process
+        # (or a retried full index) never inherits stale relationship-extractor
+        # failure counts from a prior pass.
+        self.chunker.reset_extractor_failures()
 
         if self.enable_parallel and len(file_paths) > 1:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -273,4 +277,11 @@ class ParallelChunker:
                 f"[SUMMARY] {len(stalled_files)} files skipped/slow due to timeout "
                 f"(possibly locked)"
             )
+
+        # Flush after the ThreadPoolExecutor context manager has exited (its
+        # __exit__ joins every worker, so the tally is final even on the
+        # timeout `break` above) and after _progress_context has restored the
+        # root log level -- covers the serial path too, since both branches
+        # converge above this point.
+        self.chunker.log_extractor_failure_summary()
         return all_chunks
