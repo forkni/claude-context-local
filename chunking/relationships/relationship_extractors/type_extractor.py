@@ -98,7 +98,10 @@ class TypeAnnotationExtractor(BaseRelationshipExtractor):
         self.current_function_id = func_chunk_id
 
         # Extract parameter type hints
-        for arg in func_node.args.args:
+        # PEP 570: positional-only params (`def f(x: T, /)`) live in
+        # `args.posonlyargs`, not `args.args` -- walk both so annotated
+        # posonly params get the same edges as every other parameter kind.
+        for arg in func_node.args.posonlyargs + func_node.args.args:
             if arg.annotation:
                 self._extract_types_from_annotation(
                     arg.annotation,
