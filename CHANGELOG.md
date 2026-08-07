@@ -504,8 +504,8 @@ plus an MCP SDK major-version migration; see `### Removed` for the breaking chan
   `n_dropped_non_file_uri`/`n_dropped_outside_root`; legitimately-empty files no longer warn;
   scan counters now sum (`scanned + skipped + empty == supported`); a GLSL call-graph log line
   that was discarded at source by a too-late logging configuration now reaches a handler; recovery-
-  ladder probe misses no longer warn; `[PARSE_ERROR]` downgrades to DEBUG when the surrounding
-  content survives chunking.
+  ladder probe misses no longer warn; `[PARSE_WARN]` (formerly `[PARSE_ERROR]`) downgrades to
+  DEBUG when the surrounding content survives chunking.
 - Minor: safer futures-dict typing, tmp-file cleanup no longer raises out of
   `ChunkEmbeddingCache.save()`, and a corrected pyrefly suppression category.
 

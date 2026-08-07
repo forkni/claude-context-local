@@ -450,7 +450,7 @@ class TestParseFileSingleRead(TestCase):
             chunks = self.chunker.chunk_file(str(file_path))
 
         assert chunks, "the intact function must still chunk"
-        warning = next(msg for msg in cm.output if "PARSE_ERROR" in msg)
+        warning = next(msg for msg in cm.output if "PARSE_WARN" in msg)
         assert "dropped from chunking" in warning
         assert "4" in warning, f"expected uncovered line 4 in: {warning}"
 
@@ -458,7 +458,7 @@ class TestParseFileSingleRead(TestCase):
         """A file that is 100% parse error but whose text survives as a
         module_preamble chunk (e.g. a TouchDesigner textport-command file
         like `opcook -F override` externalized to `.py`) logs the
-        [PARSE_ERROR] verdict at DEBUG, not WARNING."""
+        [PARSE_WARN] verdict at DEBUG, not WARNING."""
         import logging
 
         import chunking.tree_sitter as tsf
@@ -475,8 +475,8 @@ class TestParseFileSingleRead(TestCase):
         assert len(chunks) == 1
         assert chunks[0].node_type == "module_preamble"
         assert chunks[0].content == "opcook -F override"
-        parse_error_records = [r for r in cm.records if "PARSE_ERROR" in r.getMessage()]
-        assert parse_error_records, "expected a DEBUG-level [PARSE_ERROR] outcome"
+        parse_error_records = [r for r in cm.records if "PARSE_WARN" in r.getMessage()]
+        assert parse_error_records, "expected a DEBUG-level [PARSE_WARN] outcome"
         assert all(r.levelno == logging.DEBUG for r in parse_error_records), (
             f"retained ERROR content must not WARN: "
             f"{[r.getMessage() for r in parse_error_records]}"
@@ -500,7 +500,7 @@ class TestParseFileSingleRead(TestCase):
             chunks = self.chunker.chunk_file(str(file_path))
 
         assert any(c.node_type == "module_preamble" for c in chunks)
-        parse_error_records = [r for r in cm.records if "PARSE_ERROR" in r.getMessage()]
+        parse_error_records = [r for r in cm.records if "PARSE_WARN" in r.getMessage()]
         assert parse_error_records
         assert all(r.levelno == logging.DEBUG for r in parse_error_records)
 
@@ -508,7 +508,7 @@ class TestParseFileSingleRead(TestCase):
         """`emit_parse_warnings=False` (used by the repo-profiling pre-pass)
         parses the same malformed file silently and collects no error
         ranges -- the profiler and the chunking pass share this seam, so
-        without the opt-out a bad file logged [PARSE_ERROR] twice per index
+        without the opt-out a bad file logged [PARSE_WARN] twice per index
         run instead of once."""
         import chunking.tree_sitter as tsf
 
@@ -523,3 +523,68 @@ class TestParseFileSingleRead(TestCase):
 
         assert result is not None
         assert result.error_line_ranges == ()
+
+    def test_parse_warn_trivia_uncovered_downgrades_to_debug(self):
+        """A dropped line that is nothing but a bare `}` (the real-world
+        implementation.cc case) is punctuation trivia -- no searchable
+        symbols are lost, so it must log at DEBUG, not WARNING, even though
+        the content is genuinely uncovered by any chunk."""
+        import logging
+
+        from chunking.tree_sitter import ParsedSource
+
+        parsed_source = ParsedSource(
+            abs_path="trivia.cc",
+            rel_path="trivia.cc",
+            content="int main() {\n    return 0;\n}\n\n}\n",
+            language_name="cpp",
+            chunker=None,
+            tree=None,
+            error_line_ranges=((5, 5),),
+        )
+
+        with self.assertLogs("chunking.tree_sitter", level="DEBUG") as cm:
+            self.chunker._log_parse_error_outcome(parsed_source, chunks=[])
+
+        assert not any(r.levelno == logging.WARNING for r in cm.records), (
+            f"pure-trivia uncovered content must not WARN: "
+            f"{[r.getMessage() for r in cm.records]}"
+        )
+        debug_msg = next(
+            r.getMessage() for r in cm.records if "PARSE_WARN" in r.getMessage()
+        )
+        assert "trivia" in debug_msg
+
+    def test_parse_warn_span_list_truncated_past_five(self):
+        """200 uncovered spans must not produce a ~2000-char log line -- only
+        the first 5 are listed, with a `(+N more)` count for the rest."""
+        from chunking.tree_sitter import ParsedSource
+
+        # 200 single-line, non-adjacent (gap >= 2) uncovered spans so
+        # _uncovered_line_ranges's merge() keeps them distinct, each with
+        # real (non-trivia) content so the WARNING path is exercised.
+        lines = []
+        for i in range(1, 400):
+            lines.append(f"garbage{i}" if i % 2 == 1 else "")
+        content = "\n".join(lines) + "\n"
+        error_line_ranges = tuple((i, i) for i in range(1, 400, 2))
+        assert len(error_line_ranges) == 200
+
+        parsed_source = ParsedSource(
+            abs_path="garbled.py",
+            rel_path="garbled.py",
+            content=content,
+            language_name="python",
+            chunker=None,
+            tree=None,
+            error_line_ranges=error_line_ranges,
+        )
+
+        with self.assertLogs("chunking.tree_sitter", level="WARNING") as cm:
+            self.chunker._log_parse_error_outcome(parsed_source, chunks=[])
+
+        warning = next(msg for msg in cm.output if "PARSE_WARN" in msg)
+        assert "(+195 more)" in warning, warning
+        assert len(warning) < 500, (
+            f"expected a short truncated line, got {len(warning)} chars"
+        )

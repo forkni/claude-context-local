@@ -239,6 +239,31 @@ def _uncovered_line_ranges(
     return uncovered
 
 
+# Deliberately narrow: only brace/whitespace trivia is verified against real
+# data (implementation.cc's 2 bare closing-`}` lines). Parens are excluded —
+# a garbled punctuation run like `)))) ((((` is exactly what
+# test_parse_error_warning_fires_when_content_dropped guards as a genuine
+# loss, so widening this set would silently downgrade that case too.
+_TRIVIA_CHARS = frozenset(" \t{}")
+
+
+def _uncovered_is_pure_trivia(content: str, uncovered: list[tuple[int, int]]) -> bool:
+    """True if every uncovered line strips to nothing but brace/whitespace
+    trivia (e.g. a lone unmatched `}` left over from tree-sitter's error
+    recovery). Such content carries no searchable symbols, so dropping it
+    from chunking doesn't warrant a WARNING.
+    """
+    source_lines = content.splitlines()
+    for start, end in uncovered:
+        for lineno in range(start, end + 1):
+            idx = lineno - 1
+            if not (0 <= idx < len(source_lines)):
+                return False
+            if any(ch not in _TRIVIA_CHARS for ch in source_lines[idx]):
+                return False
+    return True
+
+
 class TreeSitterChunker:
     """Main tree-sitter chunker that delegates to language-specific implementations."""
 
@@ -352,7 +377,7 @@ class TreeSitterChunker:
                     `file_path`.
             emit_parse_warnings: Whether to collect ERROR-node line ranges
                     onto the result's `error_line_ranges`, which
-                    `chunk_parsed` turns into a `[PARSE_ERROR]` warning only
+                    `chunk_parsed` turns into a `[PARSE_WARN]` warning only
                     if the ERROR content is missing from the emitted chunks
                     (retained content logs at DEBUG instead). Defaults to
                     True. The repo-profiling pre-pass parses every file a
@@ -437,7 +462,7 @@ class TreeSitterChunker:
         # knowable after chunking — root-level ERROR text routinely
         # survives verbatim as a module_preamble chunk (e.g. TouchDesigner
         # textport-command files like `opcook -F override` externalized to
-        # `.py`) — so the [PARSE_ERROR] verdict is deferred to
+        # `.py`) — so the [PARSE_WARN] verdict is deferred to
         # chunk_parsed, which sees the emitted chunks.
         error_line_ranges: tuple[tuple[int, int], ...] = ()
         if emit_parse_warnings and tree.root_node.has_error:
@@ -483,32 +508,56 @@ class TreeSitterChunker:
     def _log_parse_error_outcome(
         self, parsed_source: ParsedSource, chunks: list[TreeSitterChunk]
     ) -> None:
-        """Emit the deferred `[PARSE_ERROR]` verdict now that chunks are known.
+        """Emit the deferred `[PARSE_WARN]` verdict now that chunks are known.
 
         Warning at parse time overstated the failure: tree-sitter ERROR spans
         frequently survive into chunks verbatim (root-level garbage lands in a
         module_preamble chunk), so warn only when some ERROR line ended up in
-        no chunk — with the exact uncovered spans — and otherwise log the
-        retained outcome at DEBUG.
+        no chunk — reporting impact (lines lost, share of file) rather than
+        the raw unparsed-region count — and otherwise log the retained
+        outcome at DEBUG. Uncovered content that is pure brace/whitespace
+        trivia (e.g. a lone unmatched `}`) also logs at DEBUG: it carries no
+        searchable symbols, so losing it isn't worth a WARNING.
         """
         uncovered = _uncovered_line_ranges(parsed_source.error_line_ranges, chunks)
-        error_count = len(parsed_source.error_line_ranges)
-        if uncovered:
-            spans = ", ".join(
-                str(start) if start == end else f"{start}-{end}"
-                for start, end in uncovered
+        region_count = len(parsed_source.error_line_ranges)
+        if not uncovered:
+            logger.debug(
+                f"[PARSE_WARN] {parsed_source.abs_path}: {region_count} unparsed "
+                f"region(s) after parsing, but all content was retained in "
+                f"emitted chunks"
             )
-            logger.warning(
-                f"[PARSE_ERROR] {parsed_source.abs_path}: {error_count} ERROR "
-                f"node(s) after parsing — content at line(s) {spans} was "
-                f"dropped from chunking"
+            return
+
+        total_lines = len(parsed_source.content.splitlines()) or 1
+        lines_lost = sum(end - start + 1 for start, end in uncovered)
+        share = lines_lost / total_lines
+
+        max_spans = 5
+        span_strs = [
+            str(start) if start == end else f"{start}-{end}" for start, end in uncovered
+        ]
+        if len(span_strs) > max_spans:
+            spans = (
+                f"{', '.join(span_strs[:max_spans])} "
+                f"(+{len(span_strs) - max_spans} more)"
             )
         else:
+            spans = ", ".join(span_strs)
+
+        if _uncovered_is_pure_trivia(parsed_source.content, uncovered):
             logger.debug(
-                f"[PARSE_ERROR] {parsed_source.abs_path}: {error_count} ERROR "
-                f"node(s) after parsing, but all ERROR content was retained "
-                f"in emitted chunks"
+                f"[PARSE_WARN] {parsed_source.abs_path}: {lines_lost} of "
+                f"{total_lines} line(s) ({share:.1%}) dropped from chunking "
+                f"at line(s) {spans}, but it is punctuation/whitespace trivia"
             )
+            return
+
+        logger.warning(
+            f"[PARSE_WARN] {parsed_source.abs_path}: {lines_lost} of "
+            f"{total_lines} line(s) ({share:.1%}) dropped from chunking "
+            f"across {region_count} unparsed region(s) — line(s) {spans}"
+        )
 
     def chunk_file(
         self, file_path: str, content: str | None = None
