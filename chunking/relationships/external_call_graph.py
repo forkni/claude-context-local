@@ -1,3 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
+#
+# This file is dual-licensed. Unlike the rest of this Apache-2.0 project, it
+# subclasses pyan3's CallGraphVisitor in-process (_TrackedVisitor below) and
+# imports pyan.anutils / pyan.postprocessor directly rather than shelling out
+# to pyan as a subprocess -- the strongest derivative-work posture available.
+# pyan3 itself is GPL-2.0-or-later (Technologicat fork; verified via wheel
+# METADATA, not the GPL-2.0-only some older docs/comments in this repo used
+# to claim -- "or-later" is what makes an Apache-2.0-adjacent file legally
+# viable at all, since Apache-2.0 is one-way compatible with GPLv3 but not
+# GPLv2-only). This module is licensed under GPL-2.0-or-later; the rest of
+# the project remains Apache-2.0 as declared in the top-level LICENSE file.
+# See NOTICE and docs/adr/0034-pyan-gpl-quarantine.md for the full rationale.
+# pyan3 is never distributed with this project -- it is an optional
+# `[callgraph]` install extra that users pull from PyPI themselves.
 """pyan3-based whole-project call-graph builder.
 
 This module uses **pyan3** (``pip install pyan3``, import ``pyan``) to

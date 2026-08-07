@@ -25,16 +25,26 @@
 `run_resolvers()` in `chunking/relationships/call_edge_resolver.py` runs four
 resolver tiers in ascending confidence order and merges them by
 **confidence-precedence** (higher confidence wins on the same `(caller, callee)`
-key):
+key). **AST edges are not one of these tiers** — they ride a separate
+`extract_calls()` / `add_call_edge` rail written during chunking, before
+`run_resolvers()` ever runs (see `call_edge_resolver.py`'s module docstring
+for the authoritative "two namespaces" explanation):
 
 | Tier | Module | Confidence | Always on? | Notes |
 |------|--------|-----------|------------|-------|
-| AST (definition) | `ast_call_graph.py` | 0.5 | ✅ | Same-file calls only |
-| AST (cross-file) | `ast_call_graph.py` | 0.7 | ✅ | FQN-based cross-file |
+| AST (in-house) | `chunking/relationships/call_graph_extractor.py` | tag: `"exact"` / `"ambiguous"` / `"recovered"` (qualitative, **not** numeric) | ✅ | Same-file + import-resolved calls, single pass; not a `CallEdgeResolver`, not part of the keep-max merge |
 | pyan wildcard fan-out | `external_call_graph.py` | **0.6** | ✅ (but tagged by `_TrackedVisitor`) | `expand_unknowns` residue, demoted |
 | pyan direct | `external_call_graph.py` | 0.75 | via `resolvers` config | Cross-module, graph-inferred |
 | LibCST FQN | `libcst_call_graph.py` | 0.90 | via `resolvers` config | Import-aware, per-file |
 | LSP / basedpyright | `lsp_call_graph.py` | 0.98 | `lsp_enabled=True` | Most precise; opt-in |
+
+**Two distinct confidence namespaces** (do not conflate): the AST rail's
+`CallEdge.confidence` (a float, always `1.0`, set at extraction time and not
+graph-consumed the way resolver confidence is) is unrelated to the qualitative
+`"exact"`/`"ambiguous"`/`"recovered"` string tag assigned during graph
+injection based on resolution certainty (unique match vs. multiple same-named
+candidates) — and both are unrelated to `resolver_confidence`, the numeric
+score written by the resolver pipeline below.
 
 Config is read from `CallGraphConfig` (see `search/config.py`).
 
@@ -290,8 +300,7 @@ relationships captured.
 
 | Tier | Confidence | Accuracy | Recall | Primary gap |
 |------|-----------|----------|--------|-------------|
-| AST in-file | 0.5 | ≈ 90% | Low — same-file only | Cross-module calls missed |
-| AST cross-file | 0.7 | ≈ 85% | Medium | Dynamic dispatch, re-exports |
+| AST (in-house) | qualitative tag, not numeric — see §1 | Not measured on this scale (baseline rail, not a `run_resolvers()` tier) | Same-file + import-resolved cross-file | Dynamic dispatch, re-exports, shadowed names (§5.3) |
 | pyan wildcard fan-out | **0.6** | ≈ 40% | High | Many phantom edges; demoted |
 | pyan direct | 0.75 | ≈ 75% | High | Same-name collisions; duck typing |
 | LibCST FQN | 0.90 | ≈ 92% | Medium–high | Re-exports; type-polymorphic calls |
@@ -430,8 +439,8 @@ Health signals:
 | Use case | Settings |
 |----------|---------|
 | **Fast indexing, any precision** | `resolvers: ["pyan"]`, `min_confidence: 0.0` |
-| **Balanced (default)** | `resolvers: ["pyan", "libcst"]`, `min_confidence: 0.0` |
-| **High precision** | `resolvers: ["pyan", "libcst"]`, `min_confidence: 0.65` |
+| **Balanced (default)** | `resolvers: ["pyan", "libcst"]`, `min_confidence: 0.65` |
+| **High precision** | `resolvers: ["pyan", "libcst"]`, `min_confidence: 0.80` (drops all pyan; §6.1) |
 | **Highest precision (slow)** | `resolvers: ["pyan", "libcst"]`, `lsp_enabled: true`, `min_confidence: 0.80` |
 | **Src-layout project** | Add `use_pyproject_toml: true` to any of the above |
 
@@ -447,4 +456,3 @@ These were evaluated and deliberately excluded from the implementation:
 | Fan-out cap per caller | Deferred until evidence of need; add to `_TrackedVisitor` if required |
 | `pyan.Flavor.is_method_call` | `is_method` flag in `ResolvedEdge` is caller-flavor-based, not receiver-based — note in future refactor |
 | LSP per-request timeout thread leak | Pre-existing concern, separate tracking item |
-| `character: 0` LSP probe position | Pre-existing; affects accuracy but not scope of this work |

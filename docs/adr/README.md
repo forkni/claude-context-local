@@ -38,6 +38,9 @@ for avoiding re-litigating settled questions.
 | [0030](0030-deepen-config-searcher-seam.md) | Deepen the config→searcher seam (C3 + C4) | accepted | 2026-08-05 |
 | [0031](0031-delete-intent-policy-tables.md) | Delete the two intent policy tables (QW5 + A1) | accepted | 2026-08-05 |
 | [0032](0032-config-liveness-audit.md) | Config liveness audit: 124/124 fields live, five defects fixed | accepted | 2026-08-06 |
+| [0033](0033-lift-torch-ceiling.md) | Lift the torch `<2.9.0` ceiling, bump the ML stack | accepted | 2026-08-06 |
+| [0034](0034-pyan-gpl-quarantine.md) | GPL-2.0-or-later quarantine for the pyan call-graph tier | accepted | 2026-08-07 |
+| [0035](0035-cpp-call-edge-tier-scope.md) | C/C++ call-edge strategy: tree-sitter tier only, sequenced behind chunking parity | accepted | 2026-08-07 |
 
 ## Adding a new ADR
 

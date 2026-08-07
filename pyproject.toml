@@ -78,9 +78,14 @@ classifiers = [
 
 [project.optional-dependencies]
 callgraph = [
-    # pyan3: GPL-2.0-only; kept as an optional extra so the Apache-2.0 core
-    # distribution remains licence-clean.  Provides whole-project cross-module
-    # call edges (recall booster on top of the in-house AST extractor).
+    # pyan3: GPL-2.0-or-later (Technologicat fork, verified via wheel METADATA —
+    # NOT GPL-2.0-only, which matters: Apache-2.0 is one-way compatible with
+    # GPLv3 but not GPLv2-only). Kept as an optional extra so the Apache-2.0
+    # core distribution remains licence-clean; we ship none of its code, users
+    # install it themselves. See ADR-0034 and
+    # chunking/relationships/external_call_graph.py's own dual-license header.
+    # Provides whole-project cross-module call edges (recall booster on top of
+    # the in-house AST extractor).
     "pyan3>=2.6.0",
     # libcst: MIT; FullyQualifiedNameProvider cross-file resolution (Stage 2).
     "libcst>=1.8.6",
