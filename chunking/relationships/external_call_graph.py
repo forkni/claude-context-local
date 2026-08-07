@@ -75,6 +75,50 @@ try:
         """
 
         expanded_edges: set[tuple[object, object]]
+        _failed_files: set[str]
+
+        def visit_Lambda(self, node):  # type: ignore[override]  # noqa: N802
+            # pyan's analyze_scopes() does not number an anon scope nested
+            # inside another anon scope, but _next_anon_scope_name() always
+            # does -- so a lambda inside a comprehension (or another lambda)
+            # is registered as e.g. "...listcomp.2.lambda" but requested as
+            # "...listcomp.2.lambda.0", and ExecuteInInnerScope raises
+            # ValueError, aborting the ENTIRE pyan pass for the project.
+            # analyze_comprehension() (pyan/analyzer.py) already self-heals
+            # this exact asymmetry for comprehensions; visit_Lambda does not.
+            # _next_anon_scope_name dedups on (namespace, type, lineno,
+            # col_offset), so calling it here returns the same name super()
+            # will independently compute -- we just make sure it exists first.
+            from pyan.anutils import Scope  # type: ignore[import-untyped]
+
+            numbered = self._next_anon_scope_name("lambda", node)
+            inner_ns = f"{self.get_node_of_current_namespace().get_name()}.{numbered}"
+            if inner_ns not in self.scopes:
+                a = node.args
+                names = {x.arg for x in (*a.posonlyargs, *a.args, *a.kwonlyargs)}
+                names.update(x.arg for x in (a.vararg, a.kwarg) if x is not None)
+                self.scopes[inner_ns] = Scope.from_names(numbered, names)
+            return super().visit_Lambda(node)
+
+        def process_one(self, filename):  # type: ignore[override]
+            # One third-party file with a pyan-hostile construct (e.g. the
+            # scope asymmetry above, for constructs visit_Lambda's guard
+            # doesn't cover) must never abort the whole-project pass -- the
+            # other files' edges are still worth having. process() calls
+            # process_one() twice per file (2-pass analysis), so dedupe the
+            # tally by filename and only log the traceback on first sight.
+            if not hasattr(self, "_failed_files"):
+                self._failed_files = set()
+            try:
+                super().process_one(filename)
+            except Exception:  # noqa: BLE001 - resilience: one bad file must not cost the whole pyan tier
+                first_sight = filename not in self._failed_files
+                self._failed_files.add(filename)
+                self.logger.warning(
+                    "[PYAN] skipping %s (analysis failed)",
+                    filename,
+                    exc_info=first_sight,
+                )
 
         def postprocess(self) -> None:  # type: ignore[override]
             from pyan.postprocessor import (  # type: ignore[import-untyped]
@@ -243,6 +287,13 @@ class PyanResolver:
         # Use _TrackedVisitor to record which edges were added by expand_unknowns
         # so they can be assigned a lower confidence (0.6 vs 0.75).
         visitor = _TrackedVisitor(py_files, root=str(project_root), logger=pyan_logger)
+        failed_files = getattr(visitor, "_failed_files", set())
+        if failed_files:
+            logger.warning(
+                "[PYAN] %d of %d files skipped (analysis failed, see warnings above)",
+                len(failed_files),
+                len(py_files),
+            )
         expanded = getattr(visitor, "expanded_edges", set())
         wildcard_confidence: float = (
             ResolverConfidence.PYAN_WILDCARD
