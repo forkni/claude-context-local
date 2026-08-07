@@ -65,6 +65,20 @@ class TestLSPResolverProtocol:
     def test_custom_max_total_seconds(self) -> None:
         assert LSPResolver(max_total_seconds=45.0)._max_total_seconds == 45.0
 
+    def test_default_seconds_per_chunk(self) -> None:
+        assert LSPResolver()._seconds_per_chunk == pytest.approx(0.012)
+
+    def test_custom_seconds_per_chunk(self) -> None:
+        assert LSPResolver(seconds_per_chunk=0.02)._seconds_per_chunk == pytest.approx(
+            0.02
+        )
+
+    def test_default_cap_seconds(self) -> None:
+        assert LSPResolver()._cap_seconds == pytest.approx(1800.0)
+
+    def test_custom_cap_seconds(self) -> None:
+        assert LSPResolver(cap_seconds=600.0)._cap_seconds == pytest.approx(600.0)
+
     def test_available_returns_bool(self) -> None:
         assert isinstance(LSPResolver().available(), bool)
 
@@ -133,6 +147,141 @@ class TestLSPSubprocessFailure:
 
         edges = LSPResolver().resolve(tmp_path, {}, _LOG)
         assert edges == []
+
+
+# ---------------------------------------------------------------------------
+# Dynamic aggregate-budget derivation (pure arithmetic, no subprocess)
+# ---------------------------------------------------------------------------
+
+
+class TestLSPResolverBudgetDerivation:
+    """LSPResolver.resolve() derives its aggregate budget from the number of
+    indexed chunks (raw_line_map entries), not files. No basedpyright
+    subprocess runs here -- _run_lsp() is monkeypatched to capture the
+    derived budget it would otherwise pass to _LspClient."""
+
+    def _capture_budget(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        raw_line_map: dict[str, list[tuple[int, int, str]]],
+        resolver: LSPResolver,
+        py_files: list[str] | None = None,
+    ) -> dict:
+        import chunking.relationships.lsp_call_graph as lcg
+
+        monkeypatch.setattr(lcg, "_LSP_AVAILABLE", True)
+        monkeypatch.setattr(lcg, "_LSP_BINARY", "/fake/basedpyright-langserver")
+
+        captured: dict = {}
+
+        def _fake_run_lsp(py_files_arg, project_root, raw_line_map_arg, logger, budget):
+            captured["budget"] = budget
+            captured["n_files"] = len(py_files_arg)
+            return []
+
+        monkeypatch.setattr(resolver, "_run_lsp", _fake_run_lsp)
+        edges = resolver.resolve(tmp_path, raw_line_map, _LOG, py_files=py_files)
+        captured["edges"] = edges
+        return captured
+
+    def test_small_project_floors_at_max_total_seconds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A handful of chunks must not scale the budget below the floor."""
+        (tmp_path / "mod.py").write_text("def foo(): pass\n")
+        raw_line_map = {"mod.py": [(1, 2, "mod.py:1-2:function:foo")]}
+
+        resolver = LSPResolver(max_total_seconds=180.0, seconds_per_chunk=0.012)
+        captured = self._capture_budget(monkeypatch, tmp_path, raw_line_map, resolver)
+
+        assert captured["budget"] == pytest.approx(180.0)
+
+    def test_large_project_scales_above_the_floor(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Enough chunks push the derived budget above the floor."""
+        (tmp_path / "mod.py").write_text("def foo(): pass\n")
+        # 20,000 chunks -> 2.0 + 0.012 * 20000 = 242.0s, above the 180.0 floor.
+        raw_line_map = {
+            "mod.py": [
+                (i, i + 1, f"mod.py:{i}-{i + 1}:function:f{i}") for i in range(20_000)
+            ]
+        }
+
+        resolver = LSPResolver(max_total_seconds=180.0, seconds_per_chunk=0.012)
+        captured = self._capture_budget(monkeypatch, tmp_path, raw_line_map, resolver)
+
+        assert captured["budget"] == pytest.approx(2.0 + 0.012 * 20_000)
+
+    def test_pathological_project_clamps_at_the_cap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An extreme chunk count must not push the budget past cap_seconds."""
+        (tmp_path / "mod.py").write_text("def foo(): pass\n")
+        raw_line_map = {
+            "mod.py": [
+                (i, i + 1, f"mod.py:{i}-{i + 1}:function:f{i}")
+                for i in range(1_000_000)
+            ]
+        }
+
+        resolver = LSPResolver(
+            max_total_seconds=180.0, seconds_per_chunk=0.012, cap_seconds=1800.0
+        )
+        captured = self._capture_budget(monkeypatch, tmp_path, raw_line_map, resolver)
+
+        assert captured["budget"] == pytest.approx(1800.0)
+
+    def test_n_probes_counts_chunks_not_files(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two files x 100 chunks each must scale as 200 probes, not 2."""
+        (tmp_path / "a.py").write_text("def foo(): pass\n")
+        (tmp_path / "b.py").write_text("def bar(): pass\n")
+        raw_line_map = {
+            "a.py": [(i, i + 1, f"a.py:{i}-{i + 1}:function:f{i}") for i in range(100)],
+            "b.py": [(i, i + 1, f"b.py:{i}-{i + 1}:function:f{i}") for i in range(100)],
+        }
+
+        resolver = LSPResolver(
+            max_total_seconds=1.0, seconds_per_chunk=1.0, cap_seconds=10_000.0
+        )
+        captured = self._capture_budget(monkeypatch, tmp_path, raw_line_map, resolver)
+
+        # 200 probes * 1.0 s/chunk + 2.0s startup = 202.0s -- if this counted
+        # files instead of chunks it would be 2.0s (1 file) or 4.0s (2 files).
+        assert captured["budget"] == pytest.approx(202.0)
+
+    def test_file_outside_project_root_is_skipped_not_raised(
+        self,
+        tmp_path: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A py_files entry outside project_root must be skipped
+        (relative_to() raises ValueError), not propagate and abort resolve()."""
+        inside = tmp_path / "mod.py"
+        inside.write_text("def foo(): pass\n")
+        outside_dir = tmp_path_factory.mktemp("lsp_budget_outside")
+        outside_file = outside_dir / "outside.py"
+        outside_file.write_text("def bar(): pass\n")
+
+        raw_line_map = {"mod.py": [(1, 2, "mod.py:1-2:function:foo")]}
+        resolver = LSPResolver(max_total_seconds=180.0, seconds_per_chunk=0.012)
+
+        captured = self._capture_budget(
+            monkeypatch,
+            tmp_path,
+            raw_line_map,
+            resolver,
+            py_files=[str(inside), str(outside_file)],
+        )
+
+        assert captured["edges"] == []
+        # Only the in-root file's 1 chunk counts; the out-of-root file
+        # contributes nothing and does not raise.
+        assert captured["budget"] == pytest.approx(180.0)
 
 
 # ---------------------------------------------------------------------------

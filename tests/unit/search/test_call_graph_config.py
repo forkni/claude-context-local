@@ -114,6 +114,59 @@ class TestCallGraphConfig:
         assert sc2.call_graph.use_pyproject_toml is True
         assert sc2.call_graph.min_confidence == pytest.approx(0.75)
 
+    # -----------------------------------------------------------------
+    # New fields: lsp_seconds_per_chunk + lsp_total_timeout_cap_seconds
+    # (dynamic LSP aggregate budget)
+    # -----------------------------------------------------------------
+
+    def test_lsp_seconds_per_chunk_default(self) -> None:
+        from search.config import CallGraphConfig
+
+        assert CallGraphConfig().lsp_seconds_per_chunk == pytest.approx(0.012)
+
+    def test_lsp_seconds_per_chunk_custom(self) -> None:
+        from search.config import CallGraphConfig
+
+        cfg = CallGraphConfig(lsp_seconds_per_chunk=0.02)
+        assert cfg.lsp_seconds_per_chunk == pytest.approx(0.02)
+
+    def test_lsp_total_timeout_cap_seconds_default(self) -> None:
+        from search.config import CallGraphConfig
+
+        assert CallGraphConfig().lsp_total_timeout_cap_seconds == pytest.approx(1800.0)
+
+    def test_lsp_total_timeout_cap_seconds_custom(self) -> None:
+        from search.config import CallGraphConfig
+
+        cfg = CallGraphConfig(lsp_total_timeout_cap_seconds=600.0)
+        assert cfg.lsp_total_timeout_cap_seconds == pytest.approx(600.0)
+
+    def test_lsp_total_timeout_seconds_still_the_floor(self) -> None:
+        """Existing knob keeps its name, attribute, and 180.0 default --
+        Part 2 reinterprets it as the floor, it does not rename it."""
+        from search.config import CallGraphConfig
+
+        assert CallGraphConfig().lsp_total_timeout_seconds == pytest.approx(180.0)
+
+    def test_lsp_budget_fields_survive_to_dict_roundtrip(self) -> None:
+        """lsp_seconds_per_chunk and lsp_total_timeout_cap_seconds must
+        survive SearchConfig serialisation."""
+        from search.config import CallGraphConfig, SearchConfig
+
+        sc = SearchConfig(
+            call_graph=CallGraphConfig(
+                lsp_seconds_per_chunk=0.02,
+                lsp_total_timeout_cap_seconds=600.0,
+            )
+        )
+        d = sc.to_dict()
+        assert d["call_graph"]["lsp_seconds_per_chunk"] == pytest.approx(0.02)
+        assert d["call_graph"]["lsp_total_timeout_cap_seconds"] == pytest.approx(600.0)
+
+        sc2 = SearchConfig.from_dict(d)
+        assert sc2.call_graph.lsp_seconds_per_chunk == pytest.approx(0.02)
+        assert sc2.call_graph.lsp_total_timeout_cap_seconds == pytest.approx(600.0)
+
 
 class TestImpactReportCalleeFields:
     def _make_report(self, **kwargs):

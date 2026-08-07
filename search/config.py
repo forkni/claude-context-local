@@ -1194,7 +1194,7 @@ class QueryExpansionConfig:
 
 @dataclass
 class CallGraphConfig:
-    """Call-graph resolver pipeline settings (6 fields).
+    """Call-graph resolver pipeline settings (8 fields).
 
     Controls which static-analysis backends run at full-index time to inject
     cross-module ``calls`` edges into the code graph.
@@ -1252,13 +1252,46 @@ class CallGraphConfig:
         default=180.0,
         metadata=spec(reader="search/call_edge_injection.py"),
     )
-    """Aggregate wall-clock budget for the *entire* LSP pass (seconds).
+    """**Floor** for the aggregate wall-clock budget of the *entire* LSP pass
+    (seconds) — the pass never gets *less* time than this, regardless of
+    project size.
 
     Unlike ``lsp_timeout_seconds`` (per JSON-RPC request), this bounds the
     whole ``resolve()`` call across all files. If exceeded, the basedpyright
     subprocess is force-killed and edges collected so far are returned —
     partial LSP results are safe because LSP only *upgrades confidence* on
     edges the pyan/libcst resolvers already produced.
+
+    The effective budget scales above this floor with project size — see
+    ``lsp_seconds_per_chunk`` and ``lsp_total_timeout_cap_seconds``.
+    """
+
+    lsp_seconds_per_chunk: float = field(
+        default=0.012,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
+    """Marginal LSP budget added per indexed chunk (seconds/chunk).
+
+    ``LSPResolver.resolve()`` derives the effective aggregate budget as
+    ``startup + lsp_seconds_per_chunk * n_probes`` (one ``prepareCallHierarchy``
+    probe per chunk), then clamps it to
+    ``[lsp_total_timeout_seconds, lsp_total_timeout_cap_seconds]``. The
+    default is calibrated ~1.5x above the worst measured rate (0.0079 s/chunk
+    on a deep third-party type graph) so a static under-count doesn't
+    silently truncate the pass. Over-budgeting is free — the pass exits as
+    soon as it finishes, so this only matters when it is too low.
+    """
+
+    lsp_total_timeout_cap_seconds: float = field(
+        default=1800.0,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
+    """Upper bound on the derived LSP aggregate budget (seconds), regardless
+    of how many chunks ``lsp_seconds_per_chunk`` would otherwise imply.
+
+    Caps how long a pathologically large project can occupy the LSP stage.
+    Partial results below the cap are safe for the same reason a mid-pass
+    timeout is safe — see ``lsp_total_timeout_seconds``.
     """
 
     use_pyproject_toml: bool = field(

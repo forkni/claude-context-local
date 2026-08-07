@@ -151,6 +151,8 @@ def inject_call_edges(
                 LSPResolver(
                     timeout=cg_cfg.lsp_timeout_seconds,
                     max_total_seconds=cg_cfg.lsp_total_timeout_seconds,
+                    seconds_per_chunk=cg_cfg.lsp_seconds_per_chunk,
+                    cap_seconds=cg_cfg.lsp_total_timeout_cap_seconds,
                 )
             )
             resolver_names.append("lsp")

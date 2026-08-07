@@ -549,6 +549,12 @@ class _LspClient:
 # LSPResolver
 # ---------------------------------------------------------------------------
 
+# Fixed startup cost folded into the derived aggregate budget (basedpyright
+# process spawn + initialize handshake) -- measured 1.5-2.4s across two
+# projects of very different size, so it is not the dominant term; the
+# per-chunk marginal cost is. See LSPResolver.resolve()'s budget derivation.
+_LSP_STARTUP_SECONDS = 2.0
+
 
 class LSPResolver:
     """Call-edge resolver backed by basedpyright Language Server Protocol.
@@ -565,18 +571,34 @@ class LSPResolver:
     Args:
         timeout: Maximum seconds to wait for a response to each individual
             JSON-RPC request.  Default: 30.0.
-        max_total_seconds: Aggregate wall-clock budget for the entire pass
-            (all files, all requests).  If exceeded, the subprocess is
+        max_total_seconds: **Floor** for the aggregate wall-clock budget of
+            the entire pass (all files, all requests) -- the pass never gets
+            *less* time than this, regardless of project size.  If the
+            (possibly scaled-up) budget is exceeded, the subprocess is
             force-killed and edges collected so far are returned.  Default:
             120.0.
+        seconds_per_chunk: Marginal budget added per indexed chunk, on top
+            of the floor -- see ``resolve()``'s budget derivation.  Default:
+            0.012 (~1.5x the measured worst case of 0.0079 s/chunk).
+        cap_seconds: Upper bound on the derived budget, regardless of how
+            many chunks ``seconds_per_chunk`` would otherwise imply.
+            Default: 1800.0.
     """
 
     name: str = "lsp"
     base_confidence: float = ResolverConfidence.LSP
 
-    def __init__(self, timeout: float = 30.0, max_total_seconds: float = 120.0) -> None:
+    def __init__(
+        self,
+        timeout: float = 30.0,
+        max_total_seconds: float = 120.0,
+        seconds_per_chunk: float = 0.012,
+        cap_seconds: float = 1800.0,
+    ) -> None:
         self._timeout = timeout
         self._max_total_seconds = max_total_seconds
+        self._seconds_per_chunk = seconds_per_chunk
+        self._cap_seconds = cap_seconds
 
     def available(self) -> bool:
         """Return True if ``basedpyright-langserver`` is on PATH."""
@@ -617,16 +639,43 @@ class LSPResolver:
         if py_files is None:
             return []
 
+        # Derive the effective aggregate budget from the actual amount of
+        # work: one prepareCallHierarchy probe per indexed chunk (not per
+        # file) is what _session() below actually issues. Reuses the same
+        # relative_to() + backslash-normalize pattern _session() uses per
+        # file, including its skip-on-ValueError for paths outside
+        # project_root -- such files contribute no chunks either way.
+        n_probes = 0
+        for fn in py_files:
+            try:
+                rel = str(Path(fn).resolve().relative_to(project_root)).replace(
+                    "\\", "/"
+                )
+            except ValueError:
+                continue
+            n_probes += len(raw_line_map.get(rel, []))
+
+        budget = min(
+            self._cap_seconds,
+            max(
+                self._max_total_seconds,
+                _LSP_STARTUP_SECONDS + self._seconds_per_chunk * n_probes,
+            ),
+        )
+
         logger.info(
-            "[LSP] Querying basedpyright-langserver for %d files "
-            "(per-request timeout=%.1fs, aggregate budget=%.1fs)...",
+            "[LSP] Querying basedpyright-langserver for %d files, %d chunks "
+            "(per-request timeout=%.1fs, aggregate budget=%.1fs [floor=%.1fs, cap=%.1fs])...",
             len(py_files),
+            n_probes,
             self._timeout,
+            budget,
             self._max_total_seconds,
+            self._cap_seconds,
         )
 
         try:
-            return self._run_lsp(py_files, project_root, raw_line_map, logger)
+            return self._run_lsp(py_files, project_root, raw_line_map, logger, budget)
         except Exception as exc:  # noqa: BLE001 - resilience: LSP resolver is an optional recall booster, fall back to no edges
             logger.warning("[LSP] LSP pass failed (%s) — falling back to []", exc)
             return []
@@ -641,6 +690,7 @@ class LSPResolver:
         project_root: Path,
         raw_line_map: dict[str, list[tuple[int, int, str]]],
         logger: logging.Logger,
+        budget: float,
     ) -> list[ResolvedEdge]:
         """Run the full LSP session and collect outgoing-call edges."""
         assert _LSP_BINARY is not None  # guarded above
@@ -649,16 +699,18 @@ class LSPResolver:
             [_LSP_BINARY, "--stdio"],
             project_root,
             per_request_timeout=self._timeout,
-            max_total_seconds=self._max_total_seconds,
+            max_total_seconds=budget,
             logger=logger,
         ) as client:
-            result = self._session(client, py_files, project_root, raw_line_map, logger)
+            result = self._session(
+                client, py_files, project_root, raw_line_map, logger, budget
+            )
 
             if client.deadline_exceeded:
                 logger.warning(
                     "[LSP] Aggregate timeout (%.1fs) reached — returning %d "
                     "edge(s) collected before the cutoff",
-                    self._max_total_seconds,
+                    budget,
                     len(result),
                 )
 
@@ -681,6 +733,7 @@ class LSPResolver:
         project_root: Path,
         raw_line_map: dict[str, list[tuple[int, int, str]]],
         logger: logging.Logger,
+        budget: float,
     ) -> list[ResolvedEdge]:
         """Drive the LSP session: initialize → didOpen + callHierarchy → results."""
 
@@ -722,8 +775,9 @@ class LSPResolver:
         for fn in py_files:
             if client.deadline_exceeded:
                 logger.warning(
-                    "[LSP] Aggregate timeout reached mid-pass — stopping early "
-                    "(not all of %d files processed)",
+                    "[LSP] Aggregate timeout (%.1fs) reached mid-pass — stopping "
+                    "early (not all of %d files processed)",
+                    budget,
                     len(py_files),
                 )
                 break
