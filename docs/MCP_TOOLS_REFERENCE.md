@@ -22,7 +22,7 @@ set. This keeps the advertised tool count small without removing the capability.
 | **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=4 (schema default; `search_config.json.example` sets the effective default to 7), search_mode="hybrid", file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0 |
 | **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types |
 | **find_path** | 🟡 **IMPACT** | Trace shortest path between code entities in relationship graph | source OR source_chunk_id, target OR target_chunk_id, edge_types, max_hops=10 |
-| **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), project_name, incremental=True, wait=True, include_dirs, exclude_dirs |
+| **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), project_name, incremental=True, wait=True, include_dirs, exclude_dirs, include_exclusive=False |
 | **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=4, exclude_same_file=False (set true for cross-file analogues — sibling implementations in other files; leave false for neighbors within the reference chunk's own file, e.g. other methods of the same class) |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.35, dense_weight=0.65, enable_parallel=True |
 | configure_reranking | Config | Configure neural reranker settings (BGE OR Jina v3, runtime configurable) | enabled, model_name, top_k_candidates=30 |
@@ -66,19 +66,37 @@ project root, not just at the top level. A pattern **containing `/`** (or a lead
 Absolute paths are accepted and resolved against the project root; an absolute path that
 doesn't resolve under the root is dropped with a loud warning rather than silently ignored.
 
-**An include pattern overrides a default-ignored directory for that target only.**
-Directories like `venv`, `site-packages`, `node_modules`, and `build` are excluded by
-default (`chunking/language_registry.py`), but an explicit include re-admits exactly the
-path(s) it names — e.g. `include_dirs=["venv/Lib/site-packages/torch"]` indexes `torch` even
-though both `venv` and `site-packages` are default-ignored; every *other* default-ignored
-directory stays excluded. `exclude_dirs` always wins over `include_dirs` on a matching path.
+**`include_dirs` and `exclude_dirs` compose oppositely — this is the whole thing to
+remember.** `exclude_dirs` is always **additive**: it adds to the built-in exclusions, it
+never replaces them. `include_dirs` depends on *what* you name:
+
+- A pattern reaching into a **dependency tree** (`venv`, `.venv`, `site-packages`,
+  `node_modules`, and the rest of `DEPENDENCY_TREE_DIRS` in
+  `chunking/language_registry.py`) is **additive** — re-admitted on top of the normal
+  root-down source scope. `include_dirs=["venv/Lib/site-packages/torch"]` indexes your
+  whole project *plus* `torch`; every *other* default-ignored directory stays excluded.
+- Any **other** pattern is **narrowing** — it restricts indexing to only the path(s) you
+  name. `include_dirs=["src/core"]` indexes *only* `src/core`, nothing else.
+- Mixing both in one list unions them: `include_dirs=["src/core", "venv/Lib/site-packages/torch"]`
+  indexes `src/core` plus `torch` — not the whole project.
+
+Pass `include_exclusive=true` to force *every* pattern to be narrowing regardless (the
+"index ONLY these libraries" case, which additive-by-default can no longer express on its
+own). `exclude_dirs` always wins over `include_dirs` on a matching path. A stored project's
+filters carry a `filter_semantics_version`; an existing index whose stored include patterns
+reach into a dependency tree logs a one-time warning on its next reindex, since it will now
+index more than before (a benign widening — see `check_filter_semantics_migration` in
+`mcp_server/storage_manager.py`).
 
 **Zero-match patterns are never silent.** Any include or exclude pattern that matches zero
 files/directories is logged as a warning naming the exact pattern. If **every** include
 pattern matches zero files, indexing aborts with an error instead of writing an empty index
 over a working one. To preview a filter set before paying for a full index, use
 `python tools/batch_index.py --path <dir> --mode new --dry-run --include-dirs "a,b,c"` —
-it prints a per-pattern file-count/size breakdown and exits without indexing.
+it prints a per-pattern file-count/size breakdown, then the concrete inventory that would be
+indexed: root-level files by name, and every contributing directory with its file count and
+size, capped at 150 rows per section (pass `--dry-run-full` to list every row, e.g. when an
+include pattern reaches into a large dependency tree). Exits without indexing.
 
 ---
 

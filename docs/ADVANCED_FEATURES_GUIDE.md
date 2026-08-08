@@ -263,22 +263,56 @@ prefix-matching, post-search filters described above for `search_code`/`find_con
 - Absolute paths are accepted and resolved against the project root. An absolute path that
   doesn't resolve under the root is dropped with a warning, not silently ignored.
 
+**`include_dirs` is additive for dependency trees, narrowing for everything else.** This is
+the one rule that matters most, and it's the opposite of what you might expect from
+`exclude_dirs` (always additive — adds to the built-in exclusions, never replaces them):
+
+- A pattern reaching into a **dependency tree** — `venv`, `.venv`, `site-packages`,
+  `node_modules`, and the rest of `DEPENDENCY_TREE_DIRS` (`chunking/language_registry.py`) —
+  is **additive**: re-admitted on top of the normal root-down source scope.
+  `include_dirs=["venv/Lib/site-packages/torch"]` indexes your whole project *plus* `torch`.
+- Any **other** pattern is **narrowing**: it restricts the whole project down to only the
+  path(s) named. `include_dirs=["src/core"]` indexes *only* `src/core`.
+- A mixed list unions the two groups — `["src/core", "venv/Lib/site-packages/torch"]` indexes
+  `src/core` plus `torch`, not the whole project.
+- `include_exclusive=True` forces every pattern to be treated as narrowing regardless
+  (the "index ONLY these libraries" case, which additive-by-default can't express on its own).
+
 **Precedence** (`PathFilter.should_traverse_dir` / `.should_index_file`, evaluated in order):
 
 1. `.git`/`.hg`/`.svn` — always rejected, never re-includable.
 2. Any `exclude_dirs` pattern matching this path — rejected. **Exclude always beats include.**
-3. If `include_dirs` is non-empty, the path must match an include pattern (directly, or be an
-   ancestor of one, so the walk can descend) — otherwise rejected.
+3. If any **narrowing** include pattern is configured, the path must match one (directly, or
+   be an ancestor of one, so the walk can descend) — otherwise rejected. Additive patterns
+   don't gate this step — an all-additive include list (e.g. dependency paths only) does
+   **not** narrow the project down to just those paths.
 4. The default-ignored set (`chunking/language_registry.py` — `__pycache__`, `.venv`, `venv`,
-   `node_modules`, `site-packages`, `build`, and ~50 more) — rejected **unless** step 3 already
-   matched it. **An include pattern overrides a default exclusion for that target only**; every
-   other default-ignored directory stays excluded.
+   `node_modules`, `site-packages`, `build`, and ~50 more) — rejected **unless** the path is
+   inside or an ancestor of *any* include pattern (narrowing or additive). This is what lets
+   an include re-admit `venv`/`site-packages`/etc.
 5. Otherwise accepted.
 
 **Zero-match patterns are never silent**: any include/exclude pattern that matches nothing is
 logged as a warning naming the pattern; if every include pattern matches nothing, indexing
 aborts with an error rather than silently writing an empty index. Preview a filter set first
-with `python tools/batch_index.py --path <dir> --mode new --dry-run --include-dirs "a,b,c"`.
+with `python tools/batch_index.py --path <dir> --mode new --dry-run --include-dirs "a,b,c"` —
+beyond the per-pattern breakdown, the preview lists the actual files/folders it would index:
+root-level files by name, then every directory that directly contains a matched file, each
+with its file count and size, and a files/directories/size total. Each section is capped at
+150 rows (with a "... N more not shown" note) to stay readable when a pattern reaches into a
+large dependency tree; pass `--dry-run-full` to list every row instead.
+
+Note this zero-match guard does **not**, by itself, protect against a filter set that matches
+files successfully but discards all first-party source — that was the actual 2026 incident: 8
+`include_dirs` patterns all pointed inside `venv/Lib/site-packages`, all matched thousands of
+files, and the zero-match guard never fired because nothing was zero. Two separate mechanisms
+close that gap: dependency-tree patterns being additive by default (above) means normal source
+folders are no longer discarded in the first place, and a second backstop
+(`PathFilter.only_dependency_paths_matched`, checked in `IncrementalIndexer._full_index`
+immediately after the zero-match check) aborts a full reindex — before touching the existing
+index/snapshot — if a **narrowing** pattern (or `include_exclusive=True`) still resolves to
+nothing but dependency-tree files, downgrading to a warning only when `include_exclusive` was
+passed deliberately.
 
 ### Filter Persistence (v0.5.9+)
 
@@ -298,10 +332,11 @@ with `python tools/batch_index.py --path <dir> --mode new --dry-run --include-di
 ```python
 from search.filters import get_effective_filters
 
-# Returns only the user's raw lists (user_included_dirs, user_excluded_dirs).
-# Defaults are NOT merged in here — they're applied by PathFilter at match time,
-# so an include_dirs entry can still override a default-ignored directory.
-include_dirs, exclude_dirs = get_effective_filters(project_info)
+# Returns only the user's raw lists (user_included_dirs, user_excluded_dirs) plus
+# the stored include_exclusive flag. Defaults are NOT merged in here — they're
+# applied by PathFilter at match time, so a dependency-tree include_dirs entry
+# can still be re-admitted on top of the normal scope.
+include_dirs, exclude_dirs, include_exclusive = get_effective_filters(project_info)
 ```
 
 **project_info.json Format**:
@@ -311,6 +346,8 @@ include_dirs, exclude_dirs = get_effective_filters(project_info)
   "project_path": "F:/RD_PROJECTS/COMPONENTS/claude-context-local",
   "user_included_dirs": ["src/", "lib/"],
   "user_excluded_dirs": ["tests/", "benchmark_results/"],
+  "include_exclusive": false,
+  "filter_semantics_version": 3,
   "created_at": "2025-12-16T10:30:00"
 }
 ```
