@@ -128,7 +128,23 @@ def inject_call_edges(
         resolvers: list[CallEdgeResolver] = []
         resolver_names: list[str] = []
         if "pyan" in enabled_names:
-            resolvers.append(PyanResolver())
+            resolvers.append(
+                PyanResolver(
+                    max_total_seconds=(
+                        cg_cfg.pyan_total_timeout_seconds
+                        if cg_cfg is not None
+                        else 600.0
+                    ),
+                    seconds_per_file=(
+                        cg_cfg.pyan_seconds_per_file if cg_cfg is not None else 2.5
+                    ),
+                    cap_seconds=(
+                        cg_cfg.pyan_total_timeout_cap_seconds
+                        if cg_cfg is not None
+                        else 3600.0
+                    ),
+                )
+            )
             resolver_names.append("pyan")
         # Stage 2 — LibCST FQN resolver (MIT, default in [callgraph] extra):
         if "libcst" in enabled_names:

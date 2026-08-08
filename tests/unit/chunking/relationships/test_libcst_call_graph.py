@@ -15,6 +15,7 @@ Tests cover:
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -607,3 +608,79 @@ class TestLibCSTResolverTuning:
             LibCSTResolver().resolve(tmp_path, {}, _LOG)
 
         fake_frm.resolve_cache.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Part 2 — per-file heartbeat ticks (progress observability)
+# ---------------------------------------------------------------------------
+
+
+class TestLibCSTProgressTicks:
+    """tick() must fire once per file in the resolve() loop -- via the
+    ``finally:`` block -- even when a file's wrapper construction raises, so
+    heartbeat progress covers 100% of the file list regardless of per-file
+    failures."""
+
+    @staticmethod
+    def _make_fake_frm() -> MagicMock:
+        frm = MagicMock()
+        frm.get_cache_for_path.return_value = {}
+        return frm
+
+    def test_tick_fires_once_per_file_including_on_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import chunking.relationships.libcst_call_graph as lcg
+
+        if not lcg._LIBCST_AVAILABLE:
+            pytest.skip("libcst not installed")
+
+        (tmp_path / "a.py").write_text("def f(): pass\n", encoding="utf-8")
+        (tmp_path / "b.py").write_text("def g(): pass\n", encoding="utf-8")
+
+        calls: list[int] = []
+
+        @contextmanager
+        def fake_heartbeat(logger, prefix, total, *, unit, interval=15.0):
+            assert total == 2
+
+            def tick(n: int = 1, phase: str | None = None) -> None:
+                calls.append(n)
+
+            yield tick
+
+        monkeypatch.setattr(lcg, "heartbeat", fake_heartbeat)
+
+        call_count = {"n": 0}
+
+        def fake_mw_factory(module: object, unsafe_skip_copy: bool, cache: object):
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                raise RuntimeError("simulated wrapper failure")
+            w = MagicMock()
+            w.visit = lambda visitor: setattr(visitor, "edges", [])
+            return w
+
+        with (
+            patch(
+                "chunking.relationships.libcst_call_graph.FullRepoManager",
+                return_value=self._make_fake_frm(),
+            ),
+            patch(
+                "chunking.relationships.libcst_call_graph.MetadataWrapper",
+                side_effect=fake_mw_factory,
+            ),
+            caplog.at_level(logging.WARNING, logger=_LOG.name),
+        ):
+            LibCSTResolver().resolve(tmp_path, {}, _LOG)
+
+        assert len(calls) == 2, f"Expected 2 ticks (one per file), got {calls}"
+        skip_lines = [
+            r.message for r in caplog.records if "[LIBCST] Skipping" in r.message
+        ]
+        assert skip_lines, (
+            "Expected a '[LIBCST] Skipping ...' warning for the failing file"
+        )

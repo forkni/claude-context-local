@@ -1194,7 +1194,7 @@ class QueryExpansionConfig:
 
 @dataclass
 class CallGraphConfig:
-    """Call-graph resolver pipeline settings (8 fields).
+    """Call-graph resolver pipeline settings (11 fields).
 
     Controls which static-analysis backends run at full-index time to inject
     cross-module ``calls`` edges into the code graph.
@@ -1292,6 +1292,47 @@ class CallGraphConfig:
     Caps how long a pathologically large project can occupy the LSP stage.
     Partial results below the cap are safe for the same reason a mid-pass
     timeout is safe — see ``lsp_total_timeout_seconds``.
+    """
+
+    pyan_total_timeout_seconds: float = field(
+        default=600.0,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
+    """**Floor** for the aggregate wall-clock budget of the *entire* pyan
+    pass (seconds) — the pass never gets *less* time than this, regardless
+    of project size.
+
+    Mirrors ``lsp_total_timeout_seconds``. If exceeded, ``PyanResolver``
+    abandons the tier entirely and returns ``[]`` — unlike LSP, a partial
+    pyan pass is not safe to keep: without a completed ``postprocess()``,
+    ``uses_edges`` still holds unresolved imports and wildcard placeholders.
+    libcst/lsp edges are unaffected.
+
+    The effective budget scales above this floor with project size — see
+    ``pyan_seconds_per_file`` and ``pyan_total_timeout_cap_seconds``.
+    """
+
+    pyan_seconds_per_file: float = field(
+        default=2.5,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
+    """Marginal pyan budget added per analysed file (seconds/file).
+
+    ``PyanResolver.resolve()`` derives the effective aggregate budget as
+    ``max(pyan_total_timeout_seconds, pyan_seconds_per_file * len(py_files))``,
+    then clamps it to ``pyan_total_timeout_cap_seconds``. Mirrors
+    ``lsp_seconds_per_chunk``.
+    """
+
+    pyan_total_timeout_cap_seconds: float = field(
+        default=3600.0,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
+    """Upper bound on the derived pyan aggregate budget (seconds), regardless
+    of how many files ``pyan_seconds_per_file`` would otherwise imply.
+
+    Caps how long a pathologically large project can occupy the pyan stage.
+    Mirrors ``lsp_total_timeout_cap_seconds``.
     """
 
     use_pyproject_toml: bool = field(

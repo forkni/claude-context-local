@@ -175,6 +175,9 @@
     "lsp_total_timeout_seconds": 180.0,
     "lsp_seconds_per_chunk": 0.012,
     "lsp_total_timeout_cap_seconds": 1800.0,
+    "pyan_total_timeout_seconds": 600.0,
+    "pyan_seconds_per_file": 2.5,
+    "pyan_total_timeout_cap_seconds": 3600.0,
     "use_pyproject_toml": false,
     "min_confidence": 0.65
   }

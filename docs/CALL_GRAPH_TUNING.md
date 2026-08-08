@@ -1,6 +1,6 @@
 # Call-Graph Resolver Tuning Reference
 
-> **Version**: v0.14.0 | **Updated**: 2026-06-03
+> **Version**: v0.23.0 | **Updated**: 2026-08-07
 >
 > Covers both **pyan3 2.6.0** and **LibCST** APIs as used by the layered
 > call-graph resolver pipeline.  Includes accuracy-limitation matrices,
@@ -434,7 +434,68 @@ Health signals:
 - Large `dropped_no_chunk` is **normal** — most callees land in `.venv/` site-packages which are not indexed.
 - Zero resolved edges with `items > 0` and `dropped_uri = 0` — basedpyright stderr tail is logged at WARNING.
 
-### 6.5 Recommended Defaults by Use Case
+### 6.5 pyan Budget
+
+```json
+"call_graph": {
+  "pyan_total_timeout_seconds": 600.0,
+  "pyan_seconds_per_file": 2.5,
+  "pyan_total_timeout_cap_seconds": 3600.0
+}
+```
+
+Mirrors the LSP budget trio in §6.4, same derivation shape:
+`budget = min(cap, max(floor, seconds_per_file * n_files))`, computed in
+`PyanResolver.resolve()` from the scoped file count.
+
+Unlike LSP's partial results, **a pyan pass that hits its deadline is
+abandoned entirely** — `resolve()` returns `[]` and logs:
+
+```text
+[PYAN] budget 600.0s exceeded after 842/1483 files — abandoning pyan tier (libcst/lsp edges unaffected)
+```
+
+This is deliberate: without a completed `postprocess()`, `uses_edges` still
+holds unresolved imports and wildcard placeholders left over from
+`expand_unknowns`, so a partial pass is not comparable to a complete one the
+way partial LSP results are (LSP only ever *upgrades confidence* on edges
+the earlier tiers already produced). Increase `pyan_seconds_per_file` if a
+large project legitimately needs more than the default ~2.5s/file; the
+default floor (600s) already covers most projects, and the cap (3600s) is a
+runaway guard, not a throttle — raising it only matters for projects larger
+than the cap would otherwise allow.
+
+The deadline is checked cooperatively at each file boundary
+(`_prescan_one`, `process_one`) and at the top of the two whole-project
+stages (`resolve_base_classes`, `postprocess`) — not via a hard kill, since
+force-terminating the child process mid-analysis could leave pyan's internal
+scope state inconsistent. `expand_unknowns` and its postprocess siblings
+have no interior polling point, so the budget can overshoot by up to one
+postprocess step.
+
+**Progress observability.** Both pyan and LibCST run in a child process and
+previously produced no log output there at all — the parent's `Logger`
+cannot cross the process boundary, so every `[PYAN]`/`[LIBCST]` line was
+silently dropped. All three resolvers (pyan, LibCST, LSP) now emit
+throttled heartbeat lines (at most one per ~15s) to stderr for every
+long-running phase:
+
+```text
+[PYAN] pass 1: 302/1483 files (20%), 24s elapsed, ~1m35s remaining
+[PYAN] resolve_base_classes: 3.2s elapsed
+[PYAN] postprocess: expand_unknowns took 41.7s
+[LIBCST] resolve_cache: 1.1s elapsed
+[LIBCST] 890/1483 files (60%), 52s elapsed, ~35s remaining
+[LSP] 12000/18892 chunks (63%), 94s elapsed, ~55s remaining
+```
+
+pyan reports five distinct phases, matching `process()`'s structure
+(§2.2): `prescan`, `pass 1`, `pass 2` (all per-file), plus the two
+whole-project stages `resolve_base_classes` and `postprocess` (five named
+sub-steps). No gap in that sequence should exceed the ~15s heartbeat
+interval on a healthy run.
+
+### 6.6 Recommended Defaults by Use Case
 
 | Use case | Settings |
 |----------|---------|

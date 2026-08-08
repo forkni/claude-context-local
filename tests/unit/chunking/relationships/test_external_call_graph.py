@@ -692,3 +692,107 @@ class TestLambdaInAnonymousScope:
         ]
         assert skip_lines, "Expected a '[PYAN] skipping ...' warning for b.py"
         assert any("b.py" in line for line in skip_lines)
+
+
+# ---------------------------------------------------------------------------
+# Part 3 — pyan cooperative deadline (runaway-runtime budget)
+# ---------------------------------------------------------------------------
+
+
+class TestPyanCooperativeDeadline:
+    """A deadline already in the past must be honoured cooperatively at each
+    of the four checkpoints (_prescan_one, process_one, resolve_base_classes,
+    postprocess) -- draining the pass in milliseconds instead of running to
+    completion, and without raising through pyan's constructor."""
+
+    @requires_pyan
+    def test_construction_with_past_deadline_aborts_without_raising(
+        self, tmp_path: Path
+    ) -> None:
+        """visitor._aborted must be True and construction must not raise.
+
+        Does NOT assert on .expanded_edges -- postprocess() only sets that
+        attribute on normal loop completion (the ``self.expanded_edges = {...}``
+        assignment sits after the per-step loop), and an aborted postprocess
+        returns early via _past_deadline() before ever reaching it.
+        """
+        import logging
+        import time
+
+        from chunking.relationships.external_call_graph import _TrackedVisitor
+
+        (tmp_path / "a.py").write_text("def helper():\n    pass\n", encoding="utf-8")
+        py_files = [str(tmp_path / "a.py")]
+        pyan_logger = logging.getLogger("pyan")
+
+        visitor = _TrackedVisitor(
+            py_files,
+            root=str(tmp_path),
+            logger=pyan_logger,
+            deadline=time.monotonic() - 1000.0,
+        )
+
+        assert visitor._aborted is True
+
+    @requires_pyan
+    def test_resolve_abandons_pyan_tier_when_deadline_already_exceeded(
+        self, two_module_project: dict, monkeypatch: pytest.MonkeyPatch, caplog
+    ) -> None:
+        """PyanResolver.resolve() must return [] and log the abandon warning
+        when real time jumps past the derived deadline before the first
+        _past_deadline() check inside the constructor -- simulating a
+        runaway pass caught by the budget rather than run to completion."""
+        import logging
+
+        import chunking.relationships.external_call_graph as ecg
+
+        project_root = two_module_project["project_root"]
+        raw_line_map = two_module_project["raw_line_map"]
+
+        class _JumpingClock:
+            """First call (the deadline computation in resolve()) returns
+            t0=0.0; every call after (inside _past_deadline()) returns a
+            value far past any plausible deadline."""
+
+            def __init__(self) -> None:
+                self._calls = 0
+
+            def __call__(self) -> float:
+                self._calls += 1
+                return 0.0 if self._calls == 1 else 1_000_000.0
+
+        monkeypatch.setattr(ecg.time, "monotonic", _JumpingClock())
+
+        log = logging.getLogger("test_ecg_deadline_resolve")
+        with caplog.at_level(logging.WARNING, logger=log.name):
+            edges = ecg.PyanResolver(
+                max_total_seconds=0.01, seconds_per_file=0.0
+            ).resolve(project_root, raw_line_map, log)
+
+        assert edges == []
+        abandon_lines = [
+            r.message for r in caplog.records if "abandoning pyan tier" in r.message
+        ]
+        assert abandon_lines, (
+            f"Expected an 'abandoning pyan tier' warning; got "
+            f"{[r.message for r in caplog.records]}"
+        )
+
+    @requires_pyan
+    def test_future_deadline_matches_no_deadline_baseline(
+        self, two_module_project: dict
+    ) -> None:
+        """A deadline far in the future must be inert -- identical output to
+        a resolver whose default budget is never approached."""
+        import logging
+
+        project_root = two_module_project["project_root"]
+        raw_line_map = two_module_project["raw_line_map"]
+        log = logging.getLogger("test_ecg_deadline_inert")
+
+        baseline = PyanResolver().resolve(project_root, raw_line_map, log)
+        with_future_deadline = PyanResolver(max_total_seconds=10_000.0).resolve(
+            project_root, raw_line_map, log
+        )
+
+        assert set(baseline) == set(with_future_deadline)

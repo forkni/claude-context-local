@@ -167,6 +167,68 @@ class TestCallGraphConfig:
         assert sc2.call_graph.lsp_seconds_per_chunk == pytest.approx(0.02)
         assert sc2.call_graph.lsp_total_timeout_cap_seconds == pytest.approx(600.0)
 
+    # -----------------------------------------------------------------
+    # New fields: pyan_total_timeout_seconds + pyan_seconds_per_file +
+    # pyan_total_timeout_cap_seconds (pyan runaway-runtime budget, mirrors
+    # the LSP trio above)
+    # -----------------------------------------------------------------
+
+    def test_pyan_total_timeout_seconds_default(self) -> None:
+        from search.config import CallGraphConfig
+
+        assert CallGraphConfig().pyan_total_timeout_seconds == pytest.approx(600.0)
+
+    def test_pyan_total_timeout_seconds_custom(self) -> None:
+        from search.config import CallGraphConfig
+
+        cfg = CallGraphConfig(pyan_total_timeout_seconds=120.0)
+        assert cfg.pyan_total_timeout_seconds == pytest.approx(120.0)
+
+    def test_pyan_seconds_per_file_default(self) -> None:
+        from search.config import CallGraphConfig
+
+        assert CallGraphConfig().pyan_seconds_per_file == pytest.approx(2.5)
+
+    def test_pyan_seconds_per_file_custom(self) -> None:
+        from search.config import CallGraphConfig
+
+        cfg = CallGraphConfig(pyan_seconds_per_file=1.0)
+        assert cfg.pyan_seconds_per_file == pytest.approx(1.0)
+
+    def test_pyan_total_timeout_cap_seconds_default(self) -> None:
+        from search.config import CallGraphConfig
+
+        assert CallGraphConfig().pyan_total_timeout_cap_seconds == pytest.approx(3600.0)
+
+    def test_pyan_total_timeout_cap_seconds_custom(self) -> None:
+        from search.config import CallGraphConfig
+
+        cfg = CallGraphConfig(pyan_total_timeout_cap_seconds=900.0)
+        assert cfg.pyan_total_timeout_cap_seconds == pytest.approx(900.0)
+
+    def test_pyan_budget_fields_survive_to_dict_roundtrip(self) -> None:
+        """pyan_total_timeout_seconds, pyan_seconds_per_file, and
+        pyan_total_timeout_cap_seconds must survive SearchConfig
+        serialisation."""
+        from search.config import CallGraphConfig, SearchConfig
+
+        sc = SearchConfig(
+            call_graph=CallGraphConfig(
+                pyan_total_timeout_seconds=120.0,
+                pyan_seconds_per_file=1.0,
+                pyan_total_timeout_cap_seconds=900.0,
+            )
+        )
+        d = sc.to_dict()
+        assert d["call_graph"]["pyan_total_timeout_seconds"] == pytest.approx(120.0)
+        assert d["call_graph"]["pyan_seconds_per_file"] == pytest.approx(1.0)
+        assert d["call_graph"]["pyan_total_timeout_cap_seconds"] == pytest.approx(900.0)
+
+        sc2 = SearchConfig.from_dict(d)
+        assert sc2.call_graph.pyan_total_timeout_seconds == pytest.approx(120.0)
+        assert sc2.call_graph.pyan_seconds_per_file == pytest.approx(1.0)
+        assert sc2.call_graph.pyan_total_timeout_cap_seconds == pytest.approx(900.0)
+
 
 class TestImpactReportCalleeFields:
     def _make_report(self, **kwargs):

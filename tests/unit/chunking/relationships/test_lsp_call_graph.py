@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -175,9 +176,12 @@ class TestLSPResolverBudgetDerivation:
 
         captured: dict = {}
 
-        def _fake_run_lsp(py_files_arg, project_root, raw_line_map_arg, logger, budget):
+        def _fake_run_lsp(
+            py_files_arg, project_root, raw_line_map_arg, logger, budget, n_chunks
+        ):
             captured["budget"] = budget
             captured["n_files"] = len(py_files_arg)
+            captured["n_chunks"] = n_chunks
             return []
 
         monkeypatch.setattr(resolver, "_run_lsp", _fake_run_lsp)
@@ -282,6 +286,92 @@ class TestLSPResolverBudgetDerivation:
         # Only the in-root file's 1 chunk counts; the out-of-root file
         # contributes nothing and does not raise.
         assert captured["budget"] == pytest.approx(180.0)
+
+
+# ---------------------------------------------------------------------------
+# Tick-unit property: heartbeat's denominator must be n_chunks (every
+# indexed chunk), not the runtime n_probes counter (only chunks that
+# survive _find_def_position) -- ticking on n_probes would report a
+# percentage that never reaches 100%.
+# ---------------------------------------------------------------------------
+
+
+class TestLSPTickUnitProperty:
+    class _FakeLspClient:
+        """Stand-in for _LspClient -- no subprocess, just enough surface
+        for _session() to drive: deadline_exceeded, request(), notify()."""
+
+        def __init__(self) -> None:
+            self.deadline_exceeded = False
+            self.stderr_tail: list[str] = []
+
+        def request(self, method, params, req_id=None):
+            return {"result": None}
+
+        def notify(self, method, params) -> None:
+            return None
+
+    def test_tick_count_equals_n_chunks_and_exceeds_n_probes(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """One rejected module-level chunk, one accepted function chunk, and
+        one rejected split_block continuation -- tick() must fire for all
+        three (n_chunks), while n_probes (parsed from the summary log) only
+        counts the one that survived _find_def_position."""
+        import chunking.relationships.lsp_call_graph as lcg
+
+        mod_path = tmp_path / "mod.py"
+        mod_path.write_text(
+            "import os\nimport sys\n\ndef foo():\n    pass\n", encoding="utf-8"
+        )
+
+        raw_line_map = {
+            "mod.py": [
+                (1, 2, "mod.py:1-2:module"),  # rejected: no def/class line
+                (4, 5, "mod.py:4-5:function:foo"),  # accepted
+                (5, 5, "mod.py:5-5:split_block:foo"),  # rejected: continuation
+            ]
+        }
+        n_chunks = len(raw_line_map["mod.py"])
+
+        calls: list[int] = []
+
+        @contextmanager
+        def fake_heartbeat(logger, prefix, total, *, unit, interval=15.0):
+            assert total == n_chunks
+
+            def tick(n: int = 1, phase: str | None = None) -> None:
+                calls.append(n)
+
+            yield tick
+
+        monkeypatch.setattr(lcg, "heartbeat", fake_heartbeat)
+
+        resolver = LSPResolver()
+        client = self._FakeLspClient()
+
+        with caplog.at_level(logging.INFO, logger=_LOG.name):
+            resolver._session(
+                client,
+                [str(mod_path)],
+                tmp_path,
+                raw_line_map,
+                _LOG,
+                100.0,
+                n_chunks,
+            )
+
+        assert len(calls) == n_chunks == 3
+
+        probes_line = next(
+            r.message for r in caplog.records if r.message.startswith("[LSP] probes=")
+        )
+        n_probes = int(probes_line.split("probes=")[1].split()[0])
+        assert n_probes == 1
+        assert n_probes < len(calls)
 
 
 # ---------------------------------------------------------------------------

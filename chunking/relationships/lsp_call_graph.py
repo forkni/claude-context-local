@@ -86,6 +86,7 @@ from urllib.parse import unquote, urljoin, urlparse
 from urllib.request import pathname2url, url2pathname
 
 from evaluation.chunk_mapping import find_enclosing_chunk
+from utils.progress import heartbeat
 
 from .call_edge_resolver import (
     ResolvedEdge,
@@ -645,7 +646,15 @@ class LSPResolver:
         # relative_to() + backslash-normalize pattern _session() uses per
         # file, including its skip-on-ValueError for paths outside
         # project_root -- such files contribute no chunks either way.
-        n_probes = 0
+        #
+        # n_chunks is *every* chunk (this precomputed total), which is not
+        # the same count as the runtime "n_probes" tallied inside _session():
+        # that one only counts chunks that survive _find_def_position (module
+        # -level 0-0 chunks and split_block continuations are skipped into
+        # n_null_prepares instead), so it always finishes below n_chunks.
+        # Progress ticks at the top of the inner loop, before that check, so
+        # they share this same total -- see _session().
+        n_chunks = 0
         for fn in py_files:
             try:
                 rel = str(Path(fn).resolve().relative_to(project_root)).replace(
@@ -653,13 +662,13 @@ class LSPResolver:
                 )
             except ValueError:
                 continue
-            n_probes += len(raw_line_map.get(rel, []))
+            n_chunks += len(raw_line_map.get(rel, []))
 
         budget = min(
             self._cap_seconds,
             max(
                 self._max_total_seconds,
-                _LSP_STARTUP_SECONDS + self._seconds_per_chunk * n_probes,
+                _LSP_STARTUP_SECONDS + self._seconds_per_chunk * n_chunks,
             ),
         )
 
@@ -667,7 +676,7 @@ class LSPResolver:
             "[LSP] Querying basedpyright-langserver for %d files, %d chunks "
             "(per-request timeout=%.1fs, aggregate budget=%.1fs [floor=%.1fs, cap=%.1fs])...",
             len(py_files),
-            n_probes,
+            n_chunks,
             self._timeout,
             budget,
             self._max_total_seconds,
@@ -675,7 +684,9 @@ class LSPResolver:
         )
 
         try:
-            return self._run_lsp(py_files, project_root, raw_line_map, logger, budget)
+            return self._run_lsp(
+                py_files, project_root, raw_line_map, logger, budget, n_chunks
+            )
         except Exception as exc:  # noqa: BLE001 - resilience: LSP resolver is an optional recall booster, fall back to no edges
             logger.warning("[LSP] LSP pass failed (%s) — falling back to []", exc)
             return []
@@ -691,6 +702,7 @@ class LSPResolver:
         raw_line_map: dict[str, list[tuple[int, int, str]]],
         logger: logging.Logger,
         budget: float,
+        n_chunks: int,
     ) -> list[ResolvedEdge]:
         """Run the full LSP session and collect outgoing-call edges."""
         assert _LSP_BINARY is not None  # guarded above
@@ -703,7 +715,7 @@ class LSPResolver:
             logger=logger,
         ) as client:
             result = self._session(
-                client, py_files, project_root, raw_line_map, logger, budget
+                client, py_files, project_root, raw_line_map, logger, budget, n_chunks
             )
 
             if client.deadline_exceeded:
@@ -734,6 +746,7 @@ class LSPResolver:
         raw_line_map: dict[str, list[tuple[int, int, str]]],
         logger: logging.Logger,
         budget: float,
+        n_chunks: int,
     ) -> list[ResolvedEdge]:
         """Drive the LSP session: initialize → didOpen + callHierarchy → results."""
 
@@ -772,141 +785,153 @@ class LSPResolver:
         n_dropped_no_chunk = 0
         max_uri_debug = 10
 
-        for fn in py_files:
-            if client.deadline_exceeded:
-                logger.warning(
-                    "[LSP] Aggregate timeout (%.1fs) reached mid-pass — stopping "
-                    "early (not all of %d files processed)",
-                    budget,
-                    len(py_files),
-                )
-                break
-
-            fn_path = Path(fn).resolve()
-            file_uri = _path_to_uri(fn_path)
-            try:
-                rel = str(fn_path.relative_to(project_root)).replace("\\", "/")
-            except ValueError:
-                continue
-
-            file_chunks = raw_line_map.get(rel, [])
-            if not file_chunks:
-                continue
-
-            # didOpen
-            source = fn_path.read_text(encoding="utf-8", errors="replace")
-            source_lines = source.splitlines()
-            client.notify(
-                "textDocument/didOpen",
-                {
-                    "textDocument": {
-                        "uri": file_uri,
-                        "languageId": "python",
-                        "version": 1,
-                        "text": source,
-                    }
-                },
-            )
-
-            # For each function/class chunk, query call hierarchy.
-            for start_line, end_line, caller_id in file_chunks:
+        with heartbeat(logger, "[LSP]", n_chunks, unit="chunks") as tick:
+            for fn in py_files:
                 if client.deadline_exceeded:
+                    logger.warning(
+                        "[LSP] Aggregate timeout (%.1fs) reached mid-pass — stopping "
+                        "early (not all of %d files processed)",
+                        budget,
+                        len(py_files),
+                    )
                     break
 
-                # Locate the exact position of the def/class *name* token.
-                # Module-level (0-0) chunks and split_block continuations have
-                # no def/class line and must be skipped — probing column 0
-                # returns null from basedpyright for every such chunk.
-                def_pos = _find_def_position(source_lines, start_line, end_line)
-                if def_pos is None:
-                    n_null_prepares += 1
+                fn_path = Path(fn).resolve()
+                file_uri = _path_to_uri(fn_path)
+                try:
+                    rel = str(fn_path.relative_to(project_root)).replace("\\", "/")
+                except ValueError:
                     continue
 
-                probe_line, probe_char = def_pos
-                n_probes += 1
+                file_chunks = raw_line_map.get(rel, [])
+                if not file_chunks:
+                    continue
 
-                # prepareCallHierarchy at the function/class name position
-                ch_resp = client.request(
-                    "textDocument/prepareCallHierarchy",
+                # didOpen
+                source = fn_path.read_text(encoding="utf-8", errors="replace")
+                source_lines = source.splitlines()
+                client.notify(
+                    "textDocument/didOpen",
                     {
-                        "textDocument": {"uri": file_uri},
-                        "position": {
-                            "line": probe_line,
-                            "character": probe_char,
-                        },
+                        "textDocument": {
+                            "uri": file_uri,
+                            "languageId": "python",
+                            "version": 1,
+                            "text": source,
+                        }
                     },
                 )
 
-                if ch_resp is None:
-                    continue
-                items = ch_resp.get("result") or []
-                if not isinstance(items, list):
-                    continue
-
-                n_items += len(items)
-
-                for item in items:
+                # For each function/class chunk, query call hierarchy.
+                for start_line, end_line, caller_id in file_chunks:
                     if client.deadline_exceeded:
                         break
 
-                    # outgoingCalls for each call hierarchy item
-                    oc_resp = client.request(
-                        "callHierarchy/outgoingCalls", {"item": item}
+                    # Tick before the _find_def_position check, on the same
+                    # unit as n_chunks (every chunk) -- the runtime n_probes
+                    # counter below only counts chunks that survive that
+                    # check, so it never reaches n_chunks and can't be used
+                    # as the progress denominator.
+                    tick()
+
+                    # Locate the exact position of the def/class *name* token.
+                    # Module-level (0-0) chunks and split_block continuations have
+                    # no def/class line and must be skipped — probing column 0
+                    # returns null from basedpyright for every such chunk.
+                    def_pos = _find_def_position(source_lines, start_line, end_line)
+                    if def_pos is None:
+                        n_null_prepares += 1
+                        continue
+
+                    probe_line, probe_char = def_pos
+                    n_probes += 1
+
+                    # prepareCallHierarchy at the function/class name position
+                    ch_resp = client.request(
+                        "textDocument/prepareCallHierarchy",
+                        {
+                            "textDocument": {"uri": file_uri},
+                            "position": {
+                                "line": probe_line,
+                                "character": probe_char,
+                            },
+                        },
                     )
 
-                    if oc_resp is None:
+                    if ch_resp is None:
                         continue
-                    calls = oc_resp.get("result") or []
-                    if not isinstance(calls, list):
+                    items = ch_resp.get("result") or []
+                    if not isinstance(items, list):
                         continue
 
-                    n_outgoing_calls += len(calls)
+                    n_items += len(items)
 
-                    for call in calls:
-                        callee_item = call.get("to", {})
-                        callee_uri = callee_item.get("uri", "")
-                        callee_range = callee_item.get("range", {})
-                        callee_line = callee_range.get("start", {}).get("line", 0) + 1
+                    for item in items:
+                        if client.deadline_exceeded:
+                            break
 
-                        # Map callee URI to a relative path using proper URI
-                        # parsing — the old string-replace approach turned
-                        # file:///F:/... into /F:/... on Windows, causing
-                        # Path.resolve() to produce garbage.
-                        callee_path = _uri_to_path(callee_uri)
-                        if callee_path is None:
-                            n_dropped_non_file_uri += 1
-                            if n_dropped_non_file_uri <= max_uri_debug:
-                                logger.debug(
-                                    "[LSP] Dropped callee — non-file URI: %s",
-                                    callee_uri,
-                                )
-                            continue
-                        try:
-                            callee_rel = str(
-                                callee_path.resolve().relative_to(project_root)
-                            ).replace("\\", "/")
-                        except (ValueError, OSError):
-                            n_dropped_outside_root += 1
-                            if n_dropped_outside_root <= max_uri_debug:
-                                logger.debug(
-                                    "[LSP] Dropped callee — outside project root: %s",
-                                    callee_path,
-                                )
-                            continue
-
-                        callee_id = find_enclosing_chunk(
-                            raw_line_map, callee_rel, callee_line
+                        # outgoingCalls for each call hierarchy item
+                        oc_resp = client.request(
+                            "callHierarchy/outgoingCalls", {"item": item}
                         )
-                        if callee_id is None:
-                            n_dropped_no_chunk += 1
+
+                        if oc_resp is None:
                             continue
-                        if caller_id == callee_id:
+                        calls = oc_resp.get("result") or []
+                        if not isinstance(calls, list):
                             continue
 
-                        is_method = (
-                            ":method:" in caller_id or ":classmethod:" in caller_id
-                        )
-                        raw_edges.add((caller_id, callee_id, callee_line, is_method))
+                        n_outgoing_calls += len(calls)
+
+                        for call in calls:
+                            callee_item = call.get("to", {})
+                            callee_uri = callee_item.get("uri", "")
+                            callee_range = callee_item.get("range", {})
+                            callee_line = (
+                                callee_range.get("start", {}).get("line", 0) + 1
+                            )
+
+                            # Map callee URI to a relative path using proper URI
+                            # parsing — the old string-replace approach turned
+                            # file:///F:/... into /F:/... on Windows, causing
+                            # Path.resolve() to produce garbage.
+                            callee_path = _uri_to_path(callee_uri)
+                            if callee_path is None:
+                                n_dropped_non_file_uri += 1
+                                if n_dropped_non_file_uri <= max_uri_debug:
+                                    logger.debug(
+                                        "[LSP] Dropped callee — non-file URI: %s",
+                                        callee_uri,
+                                    )
+                                continue
+                            try:
+                                callee_rel = str(
+                                    callee_path.resolve().relative_to(project_root)
+                                ).replace("\\", "/")
+                            except (ValueError, OSError):
+                                n_dropped_outside_root += 1
+                                if n_dropped_outside_root <= max_uri_debug:
+                                    logger.debug(
+                                        "[LSP] Dropped callee — outside project root: %s",
+                                        callee_path,
+                                    )
+                                continue
+
+                            callee_id = find_enclosing_chunk(
+                                raw_line_map, callee_rel, callee_line
+                            )
+                            if callee_id is None:
+                                n_dropped_no_chunk += 1
+                                continue
+                            if caller_id == callee_id:
+                                continue
+
+                            is_method = (
+                                ":method:" in caller_id or ":classmethod:" in caller_id
+                            )
+                            raw_edges.add(
+                                (caller_id, callee_id, callee_line, is_method)
+                            )
 
         result = [
             ResolvedEdge(
