@@ -997,6 +997,7 @@ if not exist "%new_project_path%\*" (
     goto index_new_project
 )
 
+:index_new_project_filters
 REM Prompt for directory filters (optional)
 echo.
 echo === Directory Filters (Optional) ===
@@ -1008,13 +1009,19 @@ echo   a/b            -^> root-anchored (matches only project_root/a/b)
 echo   foo*           -^> matches "foo*" at ANY depth, plus its subfolders
 echo   D:\full\path   -^> absolute paths are resolved against the project root
 echo.
-echo An include pattern OVERRIDES default exclusions (venv, site-packages,
-echo node_modules, etc.) for that specific target - other default-ignored
-echo directories stay excluded unless you include them too.
+echo Include behaves differently depending on what you name:
+echo   - A path reaching into venv, site-packages, node_modules, etc. is
+echo     ADDITIVE - added on top of your normal project scope, other
+echo     source folders still get indexed as usual.
+echo   - Any other path is NARROWING - indexing is restricted to ONLY the
+echo     path(s) you name (e.g. "src/core" alone means ONLY src/core).
+echo Mixing both types unions them. Exclude is always ADDITIVE - it adds
+echo to the built-in exclusions, it never replaces them.
 echo.
 echo Examples:
-echo   Include: src/core,lib/utils
-echo   Include: venv/Lib/site-packages/torch,venv/Lib/site-packages/transformers
+echo   Include: src/core,lib/utils                     -^> ONLY these (narrowing)
+echo   Include: venv/Lib/site-packages/torch            -^> your source + torch (additive)
+echo   Include: src/core,venv/Lib/site-packages/torch   -^> src/core + torch (mixed)
 echo   Exclude: tests,vendor,docs
 echo.
 echo Pressing Enter for BOTH fields clears any filters stored from a
@@ -1022,8 +1029,8 @@ echo previous index of this project (this menu always indexes "new").
 echo.
 set "include_filter="
 set "exclude_filter="
-set /p include_filter="Include directories (comma-separated, Enter=all): "
-set /p exclude_filter="Exclude directories (comma-separated, Enter=none): "
+set /p include_filter="Include directories (comma-separated; non-dependency paths NARROW to just them, Enter=index everything): "
+set /p exclude_filter="Exclude directories (comma-separated, added to built-in exclusions, Enter=none): "
 
 REM Strip spaces after commas for proper argument parsing
 if defined include_filter set "include_filter=!include_filter:, =,!"
@@ -1040,6 +1047,27 @@ if defined exclude_filter if not "!exclude_filter!"=="" (
     ) else (
         set "filter_args=--exclude-dirs !exclude_filter!"
     )
+)
+
+echo.
+set "preview_choice="
+set /p preview_choice="Preview this filter set before indexing? Recommended when including dependency-tree paths (y/N): "
+if /i "!preview_choice!"=="y" (
+    echo.
+    echo === Filter Preview [dry run - no files indexed, no changes made] ===
+    echo.
+    ".\.venv\Scripts\python.exe" tools\batch_index.py --path "!new_project_path!" --mode new !filter_args! --dry-run
+    set "dry_run_rc=!ERRORLEVEL!"
+    echo.
+    if not "!dry_run_rc!"=="0" (
+        echo [WARN] The preview above reported a problem with this filter set -
+        echo [WARN] review the ADDITIVE/NARROWING breakdown and any [ERROR]/[WARN] lines.
+        echo.
+    )
+    set "proceed_choice="
+    set /p proceed_choice="Proceed with indexing using these filters? ^(Y/n, or E to edit filters^): "
+    if /i "!proceed_choice!"=="n" goto project_management_menu
+    if /i "!proceed_choice!"=="e" goto index_new_project_filters
 )
 
 echo.

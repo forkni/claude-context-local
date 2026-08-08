@@ -54,6 +54,8 @@ class IncrementalIndexer:
         snapshot_manager: SnapshotManager | None = None,
         include_dirs: list | None = None,
         exclude_dirs: list | None = None,
+        *,
+        include_exclusive: bool = False,
     ):
         """Initialize incremental indexer.
 
@@ -64,7 +66,14 @@ class IncrementalIndexer:
             snapshot_manager: Snapshot manager instance
             include_dirs: Optional list of directories to include
             exclude_dirs: Optional list of directories to exclude
+            include_exclusive: When True, every include_dirs pattern is treated
+                as narrowing (whitelist-only), even ones that reach into a
+                dependency tree (venv, site-packages, node_modules, ...) — the
+                escape hatch back to the pre-additive behaviour. Forwarded to
+                the chunker, the change detector, and every MerkleDAG built
+                during a full or incremental pass.
         """
+        self.include_exclusive = include_exclusive
         if indexer is None:
             # Create indexer with temporary storage directory for testing
             temp_dir = tempfile.mkdtemp(prefix="incremental_index_")
@@ -81,6 +90,7 @@ class IncrementalIndexer:
             include_dirs=include_dirs,
             exclude_dirs=exclude_dirs,
             enable_entity_tracking=config.performance.enable_entity_tracking,
+            include_exclusive=include_exclusive,
         )
         self.snapshot_manager = snapshot_manager or SnapshotManager()
 
@@ -104,6 +114,7 @@ class IncrementalIndexer:
             include_dirs,
             exclude_dirs,
             supported_extensions=self.supported_extensions,
+            include_exclusive=include_exclusive,
         )
 
         # Load parallel chunking configuration
@@ -179,7 +190,10 @@ class IncrementalIndexer:
             from search.filters import PathFilter
 
             self._path_filter = PathFilter(
-                self.include_dirs, self.exclude_dirs, project_path
+                self.include_dirs,
+                self.exclude_dirs,
+                project_path,
+                include_exclusive=self.include_exclusive,
             )
         return self._path_filter
 
@@ -698,6 +712,15 @@ class IncrementalIndexer:
                         logger.info(
                             f"[FULL_INDEX] Recovered include_dirs from snapshot: {self.include_dirs}"
                         )
+                        # include_exclusive only means something alongside
+                        # include_dirs, so recover it under the same condition.
+                        if old_snapshot.path_filter:
+                            self.include_exclusive = (
+                                old_snapshot.path_filter.include_exclusive
+                            )
+                            logger.info(
+                                f"[FULL_INDEX] Recovered include_exclusive from snapshot: {self.include_exclusive}"
+                            )
                     if (
                         self.exclude_dirs is None
                         and old_snapshot.directory_filter.exclude_dirs
@@ -716,6 +739,7 @@ class IncrementalIndexer:
                 self.include_dirs,
                 self.exclude_dirs,
                 supported_extensions=self.supported_extensions,
+                include_exclusive=self.include_exclusive,
             )
             dag.build()
             all_files = dag.get_all_files()
@@ -747,6 +771,37 @@ class IncrementalIndexer:
                 )
                 logger.error(f"[FULL_INDEX] {error}")
                 return self._zero_result(start_time, success=False, error=error)
+
+            # Backstop for the residual failure mode Part 1's additive-by-default
+            # classification can't catch: a *narrowing* include pattern (or the
+            # include_exclusive escape hatch, which forces every pattern back to
+            # narrowing) that happens to resolve entirely inside a dependency
+            # tree, silently wiping first-party source the same way the
+            # original incident did. Checked here — before delete_snapshot/
+            # clear_index below — so a bad filter is caught without first
+            # destroying a good, existing index.
+            if self._path_filter.only_dependency_paths_matched(supported_files):
+                segments = self._path_filter.dependency_segments(supported_files)
+                error = (
+                    f"Every matched file lies inside a dependency tree "
+                    f"{segments} — include_dirs={self.include_dirs} narrowed "
+                    "the whole project down to library code only, with no "
+                    "first-party source surviving."
+                )
+                if self.include_exclusive:
+                    logger.warning(
+                        f"[FULL_INDEX] {error} include_exclusive=True was passed "
+                        "deliberately, so proceeding — this index will contain "
+                        "dependency code only."
+                    )
+                else:
+                    error += (
+                        " Aborting before touching the existing index/snapshot. "
+                        "If a dependency-only index is intentional, pass "
+                        "include_exclusive=True to acknowledge and proceed."
+                    )
+                    logger.error(f"[FULL_INDEX] {error}")
+                    return self._zero_result(start_time, success=False, error=error)
 
             # Delete old Merkle snapshot for current model only (preserves other models)
             logger.info(

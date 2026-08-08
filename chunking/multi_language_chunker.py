@@ -73,6 +73,8 @@ class MultiLanguageChunker:
         exclude_dirs: list | None = None,
         enable_entity_tracking: bool = False,
         relation_filter: Optional["RepositoryRelationFilter"] = None,
+        *,
+        include_exclusive: bool = False,
     ):
         """Initialize multi-language chunker.
 
@@ -82,10 +84,16 @@ class MultiLanguageChunker:
             exclude_dirs: Optional list of directories to exclude
             enable_entity_tracking: Enable P4-5 entity extractors (enums, defaults, context managers). Default False.
             relation_filter: Optional RepositoryRelationFilter for import classification
+            include_exclusive: Forwarded to PathFilter (via chunk_directory) — when
+                True, every include pattern is treated as narrowing (whitelist-only),
+                even ones that reach into a dependency tree. Kept in sync with the
+                MerkleDAG/IncrementalIndexer filter so direct chunk_directory() callers
+                see the same scope as the live index path.
         """
         self.root_path = root_path
         self.enable_entity_tracking = enable_entity_tracking
         self.relation_filter = relation_filter
+        self.include_exclusive = include_exclusive
         # All languages, including Python, route through tree-sitter.
         # chunking/python_ast_chunker.py holds only the shared CodeChunk
         # dataclass — it is not a separate Python chunking path.
@@ -125,6 +133,7 @@ class MultiLanguageChunker:
         exclude_dirs: list | None = None,
         *,
         enable_entity_tracking: bool = False,
+        include_exclusive: bool = False,
     ) -> "MultiLanguageChunker":
         """Build a project chunker with import classification wired in.
 
@@ -148,6 +157,7 @@ class MultiLanguageChunker:
             exclude_dirs,
             enable_entity_tracking=enable_entity_tracking,
             relation_filter=relation_filter,
+            include_exclusive=include_exclusive,
         )
 
     def _init_thread_extractors(self) -> None:
@@ -966,6 +976,7 @@ class MultiLanguageChunker:
             self.directory_filter.include_dirs,
             self.directory_filter.exclude_dirs,
             effective_root,
+            include_exclusive=self.include_exclusive,
         )
 
         file_paths = []

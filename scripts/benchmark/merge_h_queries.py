@@ -179,7 +179,7 @@ H_QUERIES: dict[str, tuple[str, list[str], str]] = {
     ),
     "H033": (
         "fix the storage-directory resolver logging a spurious error when the active model belongs to a different pool",
-        ["mcp_server/storage_manager.py:function:get_project_storage_dir"],
+        ["mcp_server/storage_manager.py:method:get_project_storage_dir"],
         "train",
     ),
     "H034": (

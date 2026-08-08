@@ -7,10 +7,12 @@ import contextlib
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import cast
 
+from chunking.language_registry import DEPENDENCY_TREE_DIRS
 from mcp_server.services import get_state
 from search.config import (
     MODEL_REGISTRY,
@@ -37,8 +39,13 @@ STORAGE_SENTINEL = ".claude_code_search_storage"
 # gitignore-style matching (search/filters.py PathFilter/DirPattern): a
 # separator-free pattern now matches at ANY depth instead of root-only, and an
 # include_dirs pattern can override a default-ignored directory (e.g. "venv",
-# "site-packages"). See check_filter_semantics_migration().
-FILTER_SEMANTICS_VERSION = 2
+# "site-packages"). Version 3 = include_dirs patterns that reach into a
+# dependency tree (venv, site-packages, node_modules, ...) are now ADDITIVE —
+# re-admitted on top of the normal root-down source scope — instead of
+# narrowing the whole project to just the named paths; pass
+# include_exclusive=true to keep the old whitelist-only behavior. See
+# check_filter_semantics_migration().
+FILTER_SEMANTICS_VERSION = 3
 
 # Project-root markers — if any ancestor of the candidate path contains
 # one of these (excluding the home dir itself), the path is inside a
@@ -208,6 +215,8 @@ def get_project_storage_dir(
     project_path: str,
     include_dirs: list | None = None,
     exclude_dirs: list | None = None,
+    *,
+    include_exclusive: bool = False,
 ) -> Path:
     """Get or create project-specific storage directory with per-model dimension suffix.
 
@@ -215,6 +224,10 @@ def get_project_storage_dir(
         project_path: Path to the project
         include_dirs: Optional list of directories to include during indexing
         exclude_dirs: Optional list of directories to exclude during indexing
+        include_exclusive: Only used on first creation of project_info.json —
+            when True, every include_dirs pattern is stored as narrowing
+            (whitelist-only), the escape hatch back to the pre-additive
+            behavior. See search/filters.py's is_dependency_pattern().
 
     Returns:
         Path to the project-specific storage directory
@@ -300,6 +313,7 @@ def get_project_storage_dir(
             "user_excluded_dirs": exclude_dirs,
             "default_included_dirs": None,
             "user_included_dirs": include_dirs,
+            "include_exclusive": include_exclusive,
             "filter_semantics_version": FILTER_SEMANTICS_VERSION,
         }
         with open(project_info_file, "w") as f:
@@ -361,6 +375,26 @@ def get_canonical_project_info(project_path: str) -> Path | None:
     return None
 
 
+def _patterns_touching_dependency_tree(patterns: list) -> list:
+    """Return the raw patterns whose path segments name a dependency-tree dir.
+
+    Lightweight, standalone re-implementation of
+    ``search.filters.is_dependency_pattern`` for use here: this runs against
+    raw stored strings with no project root available, and must not emit the
+    "absolute pattern given without a project root" warning that
+    ``parse_dir_pattern(raw, None)`` would log for every absolute pattern —
+    this is a metadata heads-up check, not real filter resolution.
+    """
+    hits = []
+    for raw in patterns:
+        if not raw:
+            continue
+        segments = [s for s in re.split(r"[\\/]+", raw.strip()) if s]
+        if any(seg in DEPENDENCY_TREE_DIRS for seg in segments):
+            hits.append(raw)
+    return hits
+
+
 def check_filter_semantics_migration(project_info: dict) -> None:
     """Warn when stored filters predate the current pattern-matching semantics.
 
@@ -373,6 +407,15 @@ def check_filter_semantics_migration(project_info: dict) -> None:
     behavior — warn loudly rather than let the next full reindex silently
     change what gets matched.
 
+    ``filter_semantics_version`` 3 changed include_dirs patterns that reach
+    into a dependency tree (venv, site-packages, node_modules, ...) from
+    narrowing (whitelist-only — everything else is dropped) to additive
+    (re-admitted on top of the normal root-down source scope). A project
+    with such patterns, stored before this change and not opted into
+    ``include_exclusive``, will index MORE files on its next full reindex —
+    a benign widening, never a loss, but it must be announced rather than
+    silently changing an existing index.
+
     Args:
         project_info: Parsed project_info.json contents.
     """
@@ -380,28 +423,50 @@ def check_filter_semantics_migration(project_info: dict) -> None:
     if stored_version is not None and stored_version >= FILTER_SEMANTICS_VERSION:
         return
 
-    patterns = list(project_info.get("user_included_dirs") or []) + list(
-        project_info.get("user_excluded_dirs") or []
-    )
-    separator_free = [p for p in patterns if p and "/" not in p and "\\" not in p]
-    if separator_free:
-        logger.warning(
-            "[FILTER_SEMANTICS] This project's stored include/exclude patterns "
-            "were saved before filter_semantics_version=%d. Separator-free "
-            "patterns %r now match at ANY depth (gitignore-style), not just at "
-            "the project root — the next full reindex may match a different "
-            "file set than before. Anchor a pattern with a leading '/' (e.g. "
-            "'/%s') to keep the old root-only behavior.",
-            FILTER_SEMANTICS_VERSION,
-            separator_free,
-            separator_free[0],
-        )
+    effective_stored = stored_version or 0
+    included = list(project_info.get("user_included_dirs") or [])
+    excluded = list(project_info.get("user_excluded_dirs") or [])
+
+    if effective_stored < 2:
+        separator_free = [
+            p for p in included + excluded if p and "/" not in p and "\\" not in p
+        ]
+        if separator_free:
+            logger.warning(
+                "[FILTER_SEMANTICS] This project's stored include/exclude patterns "
+                "were saved before filter_semantics_version=2. Separator-free "
+                "patterns %r now match at ANY depth (gitignore-style), not just at "
+                "the project root — the next full reindex may match a different "
+                "file set than before. Anchor a pattern with a leading '/' (e.g. "
+                "'/%s') to keep the old root-only behavior.",
+                separator_free,
+                separator_free[0],
+            )
+
+    if effective_stored < 3:
+        include_exclusive = bool(project_info.get("include_exclusive", False))
+        dependency_hits = _patterns_touching_dependency_tree(included)
+        if dependency_hits and not include_exclusive:
+            logger.warning(
+                "[FILTER_SEMANTICS] This project's stored include_dirs patterns "
+                "were saved before filter_semantics_version=3. Pattern(s) %r "
+                "reach into a dependency tree (venv, site-packages, node_modules, "
+                "...) and will now be treated as ADDITIVE on the next full "
+                "reindex — re-admitted on top of the normal root-down source "
+                "scope, instead of narrowing the whole project down to just "
+                "these paths. This means MORE files will be indexed, never "
+                "fewer. Pass include_exclusive=true to keep the old "
+                "whitelist-only behavior.",
+                dependency_hits,
+            )
 
 
 def update_project_filters(
     project_path: str,
     include_dirs: list | None = None,
     exclude_dirs: list | None = None,
+    *,
+    include_exclusive: bool | None = None,
 ) -> None:
     """Update filters in project_info.json after filter change with full reindex.
 
@@ -409,6 +474,10 @@ def update_project_filters(
         project_path: Path to the project
         include_dirs: New include_dirs filter
         exclude_dirs: New exclude_dirs filter
+        include_exclusive: New include_exclusive setting. None means "caller
+            didn't specify" — the stored value is kept, mirroring the
+            include_dirs/exclude_dirs None-means-unspecified convention below.
+            Pass True/False explicitly to change it.
     """
     project_storage = get_project_storage_dir(project_path)
     project_info_file = project_storage / "project_info.json"
@@ -455,6 +524,10 @@ def update_project_filters(
             exclude_dirs = stored_exclude
         project_info["user_excluded_dirs"] = exclude_dirs
 
+        if include_exclusive is None:
+            include_exclusive = bool(project_info.get("include_exclusive", False))
+        project_info["include_exclusive"] = include_exclusive
+
         # Clean up obsolete field names
         project_info.pop("include_dirs", None)
         project_info.pop("exclude_dirs", None)
@@ -464,7 +537,8 @@ def update_project_filters(
             json.dump(project_info, f, indent=2)
 
         logger.info(
-            f"[PROJECT_INFO] Updated filters: user_include={include_dirs}, user_exclude={exclude_dirs}"
+            f"[PROJECT_INFO] Updated filters: user_include={include_dirs}, "
+            f"user_exclude={exclude_dirs}, include_exclusive={include_exclusive}"
         )
     except Exception as e:  # noqa: BLE001 - parse-recovery: project_info.json read/update, skip on failure
         logger.warning(f"[PROJECT_INFO] Failed to update filters: {e}")

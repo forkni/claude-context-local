@@ -2952,13 +2952,13 @@
       "category": "H",
       "split": "train",
       "expected": [
-        "mcp_server/storage_manager.py:function:get_project_storage_dir"
+        "mcp_server/storage_manager.py:method:get_project_storage_dir"
       ],
       "expected_primary": [
-        "mcp_server/storage_manager.py:function:get_project_storage_dir"
+        "mcp_server/storage_manager.py:method:get_project_storage_dir"
       ],
       "relevance_grades": {
-        "mcp_server/storage_manager.py:function:get_project_storage_dir": 3
+        "mcp_server/storage_manager.py:method:get_project_storage_dir": 3
       }
     },
     {

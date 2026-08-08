@@ -320,12 +320,16 @@ class TestUserFilterPreservation:
                 exclude_dirs=None,
                 *,
                 enable_entity_tracking=False,
+                include_exclusive=False,
             ):
                 # Capture args in the same positional form the assertion expects
                 chunker_calls.append(
                     (
                         (root_path, include_dirs, exclude_dirs),
-                        {"enable_entity_tracking": enable_entity_tracking},
+                        {
+                            "enable_entity_tracking": enable_entity_tracking,
+                            "include_exclusive": include_exclusive,
+                        },
                     )
                 )
                 return cls.__new__(cls)

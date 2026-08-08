@@ -18,6 +18,7 @@ from mcp_server.search_factory import (
 )
 from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import (
+    FILTER_SEMANTICS_VERSION,
     check_filter_semantics_migration,
     get_canonical_project_info,
     get_project_storage_dir,
@@ -28,7 +29,12 @@ from mcp_server.storage_manager import (
 from mcp_server.tools import responses
 from mcp_server.tools.decorators import error_handler, with_mutation_lock
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
-from search.filters import compute_drive_agnostic_hash, compute_legacy_hash
+from search.filters import (
+    compute_drive_agnostic_hash,
+    compute_legacy_hash,
+    is_dependency_pattern,
+    parse_dir_pattern,
+)
 from search.incremental_indexer import IncrementalIndexer
 
 
@@ -121,6 +127,7 @@ def _run_indexing(
     incremental: bool,
     include_dirs=None,
     exclude_dirs=None,
+    include_exclusive: bool = False,
 ) -> dict:
     """Run the indexing process and return results.
 
@@ -132,6 +139,9 @@ def _run_indexing(
         incremental: Whether to do incremental indexing
         include_dirs: Optional list of directories to include
         exclude_dirs: Optional list of directories to exclude
+        include_exclusive: When True, every include_dirs pattern is treated as
+            narrowing (whitelist-only), even ones that reach into a dependency
+            tree — the escape hatch back to the pre-additive behavior.
 
     Returns:
         dict: Indexing results with files/chunks counts and timing
@@ -142,6 +152,7 @@ def _run_indexing(
         chunker=chunker,
         include_dirs=include_dirs,
         exclude_dirs=exclude_dirs,
+        include_exclusive=include_exclusive,
     )
 
     start_time = datetime.now()
@@ -183,6 +194,7 @@ def _build_index_response(
     incremental: bool,
     include_dirs: list[str] | None = None,
     exclude_dirs: list[str] | None = None,
+    include_exclusive: bool = False,
 ) -> dict:
     """Build the final index response.
 
@@ -195,6 +207,9 @@ def _build_index_response(
             can tell at a glance whether a corpus-size surprise traces back to
             an unexpected filter instead of having to re-derive it.
         exclude_dirs: Effective exclude-dirs filter actually used for this run
+        include_exclusive: Effective include_exclusive setting actually used
+            for this run — surfaced only when True (narrowing-only mode),
+            since False is the default and adds no information.
 
     Returns:
         dict: Complete response with success status and statistics. An
@@ -238,6 +253,7 @@ def _build_index_response(
         # the response itself, not just inferred from the chunk count.
         include_dirs=include_dirs if include_dirs else None,
         exclude_dirs=exclude_dirs if exclude_dirs else None,
+        include_exclusive=include_exclusive if include_exclusive else None,
         # Visible, not fatal: resolvers are optional (pyan/libcst require the
         # [callgraph] extra), so call_edges_injected == 0 is a legitimate
         # outcome for some installs and projects with no cross-module calls.
@@ -697,6 +713,26 @@ async def _start_index_directory_job(arguments: dict[str, Any]) -> dict:
     )
 
 
+def _includes_touch_dependency_tree(
+    include_dirs: list[str] | None, root_path: Path
+) -> bool:
+    """Whether any include pattern re-admits a slice of a dependency tree.
+
+    Used to scope the FILTER_SEMANTICS_VERSION 3 forced-reindex to the only
+    group it actually affects (search/filters.py PathFilter._classify):
+    projects with no include_dirs, or with only narrowing (non-dependency)
+    patterns, are byte-identical under the old and new semantics, so forcing
+    a full reindex for them would be pure churn.
+    """
+    if not include_dirs:
+        return False
+    for raw in include_dirs:
+        parsed = parse_dir_pattern(raw, root_path)
+        if parsed is not None and is_dependency_pattern(parsed):
+            return True
+    return False
+
+
 async def _run_index_directory(arguments: dict[str, Any]) -> dict:
     """Do the actual indexing work (the body formerly inline in the handler).
 
@@ -709,6 +745,7 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
     incremental = arguments.get("incremental", True)
     include_dirs = arguments.get("include_dirs")
     exclude_dirs = arguments.get("exclude_dirs")
+    include_exclusive = arguments.get("include_exclusive")
 
     # Guarantee mcp_server.server's logging setup (_configure_logging(), which
     # raises the root logger from Python's default WARNING to DEBUG and
@@ -762,6 +799,8 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
     # Load stored filters if project exists — file read blocks, offload.
     stored_include = None
     stored_exclude = None
+    stored_include_exclusive = False
+    stored_filter_semantics_version = None
     if project_info_file.exists():
 
         def _read_project_info() -> dict[str, Any]:
@@ -771,30 +810,67 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
         project_info = await asyncio.to_thread(_read_project_info)
         stored_include = project_info.get("user_included_dirs")
         stored_exclude = project_info.get("user_excluded_dirs")
+        stored_include_exclusive = bool(project_info.get("include_exclusive", False))
+        stored_filter_semantics_version = project_info.get("filter_semantics_version")
         check_filter_semantics_migration(project_info)
 
     # Determine effective filters
     # If user didn't provide filters, use stored filters (auto-reindex case)
     effective_include = include_dirs if include_dirs is not None else stored_include
     effective_exclude = exclude_dirs if exclude_dirs is not None else stored_exclude
+    effective_include_exclusive = (
+        include_exclusive if include_exclusive is not None else stored_include_exclusive
+    )
+
+    # FILTER_SEMANTICS_VERSION 3 made dependency-tree include patterns
+    # additive instead of narrowing. A stored index built under an older
+    # version, with such patterns and not opted into include_exclusive, was
+    # indexed under the old (narrowing) semantics — force one full reindex
+    # so it picks up the newly re-admitted source tree, rather than silently
+    # staying stale until some unrelated filter edit triggers it. Scoped to
+    # only the affected group (see _includes_touch_dependency_tree) so every
+    # other stored project — the overwhelming majority — isn't forced
+    # through a needless full reindex just for a version bump that changes
+    # nothing for them.
+    semantics_stale = (
+        stored_filter_semantics_version is not None
+        and stored_filter_semantics_version < FILTER_SEMANTICS_VERSION
+        and not effective_include_exclusive
+        and _includes_touch_dependency_tree(effective_include, directory_path)
+    )
 
     # Check for filter change
     filters_changed = project_info_file.exists() and (
-        effective_include != stored_include or effective_exclude != stored_exclude
+        effective_include != stored_include
+        or effective_exclude != stored_exclude
+        or effective_include_exclusive != stored_include_exclusive
+        or semantics_stale
     )
 
     # Force full reindex if filters changed during incremental
     if filters_changed and incremental:
+        reason = (
+            "filter_semantics_version stale (dependency-tree include patterns "
+            "now additive)"
+            if semantics_stale
+            and effective_include == stored_include
+            and effective_exclude == stored_exclude
+            and effective_include_exclusive == stored_include_exclusive
+            else "filters changed"
+        )
         logger.warning(
-            f"[FILTER_CHANGE] Filters changed, forcing full reindex\n"
-            f"  Old: include={stored_include}, exclude={stored_exclude}\n"
-            f"  New: include={effective_include}, exclude={effective_exclude}"
+            f"[FILTER_CHANGE] {reason}, forcing full reindex\n"
+            f"  Old: include={stored_include}, exclude={stored_exclude}, "
+            f"include_exclusive={stored_include_exclusive}\n"
+            f"  New: include={effective_include}, exclude={effective_exclude}, "
+            f"include_exclusive={effective_include_exclusive}"
         )
         incremental = False  # Force full reindex
 
     # Use effective filters for indexing
     include_dirs = effective_include
     exclude_dirs = effective_exclude
+    include_exclusive = effective_include_exclusive
 
     # Save/update filters in project_info.json
     if not project_info_file.exists() or filters_changed:
@@ -803,9 +879,15 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
             str(directory_path),
             include_dirs=include_dirs,
             exclude_dirs=exclude_dirs,
+            include_exclusive=include_exclusive,
         )
 
-        update_project_filters(str(directory_path), include_dirs, exclude_dirs)
+        update_project_filters(
+            str(directory_path),
+            include_dirs,
+            exclude_dirs,
+            include_exclusive=include_exclusive,
+        )
 
     # Set as current project (using setter for proper cross-module sync)
     set_current_project(str(directory_path))
@@ -849,6 +931,7 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
                 include_dirs,
                 exclude_dirs,
                 enable_entity_tracking=config.performance.enable_entity_tracking,
+                include_exclusive=include_exclusive,
             )
 
             # Capture loop-local values before entering the thread.
@@ -857,6 +940,7 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
             _incremental = incremental
             _include = include_dirs
             _exclude = exclude_dirs
+            _include_exclusive = include_exclusive
 
             # get_embedder() and get_searcher() can trigger multi-second model/
             # index loads on first use — offload together with the indexing work
@@ -881,6 +965,7 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
                     _incremental,
                     _include,
                     _exclude,
+                    _include_exclusive,
                 )
 
             result = await asyncio.to_thread(_setup_and_run)
@@ -922,4 +1007,5 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
                 incremental=incremental,
                 include_dirs=include_dirs,
                 exclude_dirs=exclude_dirs,
+                include_exclusive=include_exclusive,
             )

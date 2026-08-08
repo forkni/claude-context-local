@@ -51,6 +51,8 @@ class MerkleDAG:
         include_dirs=None,
         exclude_dirs=None,
         supported_extensions: set[str] | None = None,
+        *,
+        include_exclusive: bool = False,
     ) -> None:
         """Initialize Merkle DAG for a directory tree.
 
@@ -61,6 +63,9 @@ class MerkleDAG:
             supported_extensions: If provided, files whose suffix is NOT in this
                 set get a cheap stat-based hash instead of a full content hash,
                 saving ~95% of I/O on projects with many non-code assets.
+            include_exclusive: Forwarded to PathFilter — when True, every
+                include pattern is treated as narrowing (whitelist-only),
+                even ones that reach into a dependency tree.
         """
         self.root_path = Path(root_path).resolve()
         self.nodes: dict[str, MerkleNode] = {}
@@ -76,7 +81,12 @@ class MerkleDAG:
         from search.filters import DirectoryFilter, PathFilter
 
         self.directory_filter = DirectoryFilter(include_dirs, exclude_dirs)
-        self.path_filter = PathFilter(include_dirs, exclude_dirs, self.root_path)
+        self.path_filter = PathFilter(
+            include_dirs,
+            exclude_dirs,
+            self.root_path,
+            include_exclusive=include_exclusive,
+        )
 
         # File-specific patterns not covered by PathFilter (which only decides
         # directory admission + default-ignore basenames). Multi-segment
@@ -335,6 +345,9 @@ class MerkleDAG:
             "exclude_dirs": (
                 self.directory_filter.exclude_dirs if self.directory_filter else None
             ),
+            "include_exclusive": (
+                self.path_filter.include_exclusive if self.path_filter else False
+            ),
         }
 
     @classmethod
@@ -352,6 +365,7 @@ class MerkleDAG:
             data["root_path"],
             include_dirs=data.get("include_dirs"),
             exclude_dirs=data.get("exclude_dirs"),
+            include_exclusive=data.get("include_exclusive", False),
         )
         if data["root_node"]:
             dag.root_node = MerkleNode.from_dict(data["root_node"])

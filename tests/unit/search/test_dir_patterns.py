@@ -16,6 +16,7 @@ from search.filters import (
     DEFAULT_IGNORED_DIRS,
     MatchKind,
     PathFilter,
+    is_dependency_pattern,
     match_pattern,
     parse_dir_pattern,
 )
@@ -230,16 +231,30 @@ class TestPathFilterPrecedence(TestCase):
         assert pf.should_index_file("__pycache__/x.pyc") is False
 
     def test_include_rescues_default_ignored_dir(self):
+        # venv/site-packages is a dependency-tree pattern -> additive by
+        # default: the target is re-admitted on top of the normal
+        # root-down scope, other first-party files are NOT discarded.
         pf = PathFilter(["venv/Lib/site-packages/pkg"], None, self.root)
         assert pf.should_index_file("venv/Lib/site-packages/pkg/mod.py") is True
         # A different default-ignored dir the include didn't name stays out.
         assert pf.should_index_file("__pycache__/cache.pyc") is False
-        # Files outside the include target are excluded once include_dirs
-        # is non-empty.
+        # First-party files survive -- this is the whole point of additive.
+        assert pf.should_index_file("README.md") is True
+
+    def test_include_exclusive_disables_additive_rescue(self):
+        # The escape hatch forces the same dependency-tree pattern back to
+        # narrowing -- today's pre-additive whitelist-only behavior.
+        pf = PathFilter(
+            ["venv/Lib/site-packages/pkg"], None, self.root, include_exclusive=True
+        )
+        assert pf.should_index_file("venv/Lib/site-packages/pkg/mod.py") is True
+        assert pf.should_index_file("__pycache__/cache.pyc") is False
         assert pf.should_index_file("README.md") is False
 
-    def test_include_admits_only_its_own_target_not_ancestors(self):
-        pf = PathFilter(["A/venv/Lib/site-packages"], None, self.root)
+    def test_include_exclusive_admits_only_its_own_target_not_ancestors(self):
+        pf = PathFilter(
+            ["A/venv/Lib/site-packages"], None, self.root, include_exclusive=True
+        )
         assert pf.should_index_file("A/top_level.py") is False
         assert pf.should_index_file("root_file.py") is False
         assert pf.should_index_file("A/venv/Lib/site-packages/pkg/mod.py") is True
@@ -248,6 +263,15 @@ class TestPathFilterPrecedence(TestCase):
         assert pf.should_traverse_dir("A") is True
         assert pf.should_traverse_dir("A/venv") is True
         assert pf.should_traverse_dir("A/venv/Lib/site-packages") is True
+
+    def test_dependency_include_admits_target_plus_normal_scope(self):
+        # Same pattern, default (additive) semantics: the target is
+        # admitted AND the rest of the project's normal root-down scope
+        # survives -- this is the fix for the reported incident.
+        pf = PathFilter(["A/venv/Lib/site-packages"], None, self.root)
+        assert pf.should_index_file("A/top_level.py") is True
+        assert pf.should_index_file("root_file.py") is True
+        assert pf.should_index_file("A/venv/Lib/site-packages/pkg/mod.py") is True
 
     def test_exclude_beats_include(self):
         pf = PathFilter(
@@ -311,9 +335,14 @@ class TestPathFilterPrecedence(TestCase):
 
 
 class TestPathFilterRegression(TestCase):
-    """Direct regression test for the originally reported bug: files at the
-    project root and in ancestor directories of the include target must
-    never be selected, and the target's own files must be."""
+    """Direct regression test for the originally reported ancestor-leak bug
+    (files at the project root and in ancestor directories of the include
+    target selected instead of just the target) -- pinned via
+    include_exclusive=True, which reproduces that whitelist-only behavior
+    exactly. The companion test below covers the *later* incident this
+    module's additive-by-default change fixes: the same dependency-tree
+    pattern must NOT discard first-party source once include_exclusive is
+    no longer forced."""
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -322,9 +351,12 @@ class TestPathFilterRegression(TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
-    def test_only_target_subtree_is_selected(self):
+    def test_only_target_subtree_is_selected_with_include_exclusive(self):
         pf = PathFilter(
-            ["StreamDiffusion/venv/Lib/site-packages/diffusers"], None, self.root
+            ["StreamDiffusion/venv/Lib/site-packages/diffusers"],
+            None,
+            self.root,
+            include_exclusive=True,
         )
 
         # Root-level files (the "14 files" from the report).
@@ -344,6 +376,39 @@ class TestPathFilterRegression(TestCase):
 
         # A sibling package under the same doubly-default-ignored prefix
         # that was NOT named in include_dirs stays excluded.
+        assert (
+            pf.should_index_file(
+                "StreamDiffusion/venv/Lib/site-packages/torch/__init__.py"
+            )
+            is False
+        )
+
+    def test_dependency_pattern_is_additive_by_default(self):
+        # Same pattern, no include_exclusive: this is the actual incident
+        # shape (D:\dev\SDTD_040_Beta, 8 site-packages-only include
+        # patterns). First-party source at the root and under
+        # StreamDiffusion/ is indexed as usual, on top of the requested
+        # target -- nothing about the project is silently discarded.
+        pf = PathFilter(
+            ["StreamDiffusion/venv/Lib/site-packages/diffusers"], None, self.root
+        )
+
+        for f in ("README.md", "setup.py", ".upstream_builder_dotsimulate.py"):
+            assert pf.should_index_file(f) is True, f
+
+        assert pf.should_index_file("StreamDiffusion/setup.py") is True
+
+        assert (
+            pf.should_index_file(
+                "StreamDiffusion/venv/Lib/site-packages/diffusers/__init__.py"
+            )
+            is True
+        )
+
+        # A sibling package under the same dependency tree that was NOT
+        # named in include_dirs still stays excluded -- additive widens
+        # scope to the normal source tree plus the named target(s), it
+        # does not turn into "index everything under site-packages".
         assert (
             pf.should_index_file(
                 "StreamDiffusion/venv/Lib/site-packages/torch/__init__.py"
@@ -383,3 +448,128 @@ class TestConstants(TestCase):
         # Overridable defaults must NOT be in the never-rescuable set.
         assert "venv" not in ALWAYS_IGNORED_DIRS
         assert "site-packages" not in ALWAYS_IGNORED_DIRS
+
+
+class TestPatternClassification(TestCase):
+    """Additive-vs-narrowing classification (is_dependency_pattern) and its
+    effect through PathFilter -- the fix for the D:\\dev\\SDTD_040_Beta
+    incident: 8 include patterns, all pointing into
+    StreamDiffusion/venv/Lib/site-packages, silently discarded every
+    first-party file (IPAdapterModule, engine_manager.py, wrapper.py, ...)
+    because a whitelist-only include_dirs treated re-admission and
+    narrowing as the same operation."""
+
+    INCIDENT_PATTERNS = [
+        "StreamDiffusion/venv/Lib/site-packages/diffusers*",
+        "StreamDiffusion/venv/Lib/site-packages/insightface",
+        "StreamDiffusion/venv/Lib/site-packages/huggingface_hub",
+        "StreamDiffusion/venv/Lib/site-packages/polygraphy",
+        "StreamDiffusion/venv/Lib/site-packages/onnx*",
+        "StreamDiffusion/venv/Lib/site-packages/accelerate",
+        "StreamDiffusion/venv/Lib/site-packages/peft",
+        "StreamDiffusion/venv/Lib/site-packages/controlnet_aux",
+    ]
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_incident_patterns_all_classify_additive(self):
+        pf = PathFilter(self.INCIDENT_PATTERNS, None, self.root)
+        assert len(pf.additive_patterns) == len(self.INCIDENT_PATTERNS)
+        assert pf.narrowing_patterns == []
+        for pat in pf.include_patterns:
+            assert is_dependency_pattern(pat) is True
+
+    def test_incident_patterns_admit_first_party_source(self):
+        pf = PathFilter(self.INCIDENT_PATTERNS, None, self.root)
+        # The exact symbols from the report that went unsearchable.
+        assert pf.should_index_file("StreamDiffusion/src/wrapper.py") is True
+        assert pf.should_index_file("StreamDiffusionTD/engine_manager.py") is True
+        assert pf.should_index_file("Scripts/build.py") is True
+        # The requested libraries are still admitted.
+        assert (
+            pf.should_index_file(
+                "StreamDiffusion/venv/Lib/site-packages/diffusers_ipadapter/mod.py"
+            )
+            is True
+        )
+        # A library NOT in the 8 patterns stays excluded.
+        assert (
+            pf.should_index_file("StreamDiffusion/venv/Lib/site-packages/torch/mod.py")
+            is False
+        )
+
+    def test_incident_patterns_with_include_exclusive_restores_whitelist(self):
+        # The escape hatch reproduces the ORIGINAL incident exactly: only
+        # the 8 named libraries survive, first-party source is discarded.
+        pf = PathFilter(self.INCIDENT_PATTERNS, None, self.root, include_exclusive=True)
+        assert pf.narrowing_patterns == pf.include_patterns
+        assert pf.additive_patterns == []
+        assert pf.should_index_file("StreamDiffusion/src/wrapper.py") is False
+        assert (
+            pf.should_index_file(
+                "StreamDiffusion/venv/Lib/site-packages/diffusers_ipadapter/mod.py"
+            )
+            is True
+        )
+
+    def test_plain_source_pattern_stays_narrowing(self):
+        pat = parse_dir_pattern("src/core", self.root)
+        assert is_dependency_pattern(pat) is False
+        pf = PathFilter(["src/core"], None, self.root)
+        assert pf.narrowing_patterns == pf.include_patterns
+        assert pf.additive_patterns == []
+        assert pf.should_index_file("src/core/mod.py") is True
+        assert pf.should_index_file("src/other/mod.py") is False
+        assert pf.should_index_file("README.md") is False
+
+    def test_mixed_list_unions_narrowing_and_additive(self):
+        pf = PathFilter(["src/core", "venv/Lib/site-packages/torch"], None, self.root)
+        assert len(pf.narrowing_patterns) == 1
+        assert len(pf.additive_patterns) == 1
+        # src/core: narrowing pattern's own target.
+        assert pf.should_index_file("src/core/mod.py") is True
+        # torch: additive pattern's own target.
+        assert pf.should_index_file("venv/Lib/site-packages/torch/mod.py") is True
+        # A source file outside src/core is excluded -- the narrowing
+        # pattern still restricts the non-dependency portion of the scope.
+        assert pf.should_index_file("src/other/mod.py") is False
+        # An unnamed dependency stays excluded too.
+        assert pf.should_index_file("venv/Lib/site-packages/numpy/mod.py") is False
+
+    def test_build_output_dirs_are_not_treated_as_dependency_trees(self):
+        # "out" and "src" are both plausible source-directory names --
+        # DEPENDENCY_TREE_DIRS deliberately excludes build/dist/out/public
+        # so a pattern naming them stays narrowing and never silently
+        # widens back out to the whole project.
+        pat = parse_dir_pattern("out/src", self.root)
+        assert is_dependency_pattern(pat) is False
+        pf = PathFilter(["out/src"], None, self.root)
+        assert pf.narrowing_patterns == pf.include_patterns
+        assert pf.should_index_file("out/src/mod.py") is True
+        assert pf.should_index_file("README.md") is False
+
+    def test_backslash_pattern_classifies_additive(self):
+        # Windows-native separators must resolve to the same segments as
+        # forward slashes -- parse_dir_pattern normalizes both, and
+        # is_dependency_pattern must see the normalized segments, not the
+        # raw backslash-joined string (which would never match a
+        # DEPENDENCY_TREE_DIRS member).
+        pat = parse_dir_pattern(
+            "StreamDiffusion\\venv\\Lib\\site-packages\\diffusers", self.root
+        )
+        assert is_dependency_pattern(pat) is True
+        pf = PathFilter(
+            ["StreamDiffusion\\venv\\Lib\\site-packages\\diffusers"], None, self.root
+        )
+        assert pf.should_index_file("StreamDiffusion/src/wrapper.py") is True
+        assert (
+            pf.should_index_file(
+                "StreamDiffusion/venv/Lib/site-packages/diffusers/mod.py"
+            )
+            is True
+        )

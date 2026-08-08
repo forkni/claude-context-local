@@ -63,6 +63,7 @@ def _is_index_stale(project_path: str, max_age_minutes: float) -> bool:
 
     include_dirs = None
     exclude_dirs = None
+    include_exclusive = False
     if project_info_file.exists():
         try:
             with open(project_info_file) as f:
@@ -70,7 +71,9 @@ def _is_index_stale(project_path: str, max_age_minutes: float) -> bool:
 
             from search.filters import get_effective_filters
 
-            include_dirs, exclude_dirs = get_effective_filters(project_info)
+            include_dirs, exclude_dirs, include_exclusive = get_effective_filters(
+                project_info
+            )
         except Exception as e:  # noqa: BLE001 - parse-recovery: project_info.json read, fall back to no filters
             logger.warning(f"[AUTO_REINDEX] Failed to load filters: {e}")
 
@@ -80,6 +83,7 @@ def _is_index_stale(project_path: str, max_age_minutes: float) -> bool:
         include_dirs,
         exclude_dirs,
         supported_extensions=set(TreeSitterChunker.get_supported_extensions()),
+        include_exclusive=include_exclusive,
     )
 
     if snapshot_mgr.has_snapshot(project_path):
@@ -124,6 +128,7 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
 
     include_dirs = None
     exclude_dirs = None
+    include_exclusive = False
     project_info = None
     if project_info_file.exists():
         try:
@@ -133,10 +138,13 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
             # Resolve effective filters (default + user-defined)
             from search.filters import get_effective_filters
 
-            include_dirs, exclude_dirs = get_effective_filters(project_info)
+            include_dirs, exclude_dirs, include_exclusive = get_effective_filters(
+                project_info
+            )
             if include_dirs or exclude_dirs:
                 logger.info(
-                    f"[AUTO_REINDEX] Loaded filters: include={include_dirs}, exclude={exclude_dirs}"
+                    f"[AUTO_REINDEX] Loaded filters: include={include_dirs}, "
+                    f"exclude={exclude_dirs}, include_exclusive={include_exclusive}"
                 )
         except Exception as e:  # noqa: BLE001 - parse-recovery: project_info.json read, fall back to no filters
             logger.warning(f"[AUTO_REINDEX] Failed to load filters: {e}")
@@ -179,6 +187,7 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
         include_dirs,
         exclude_dirs,
         enable_entity_tracking=config.performance.enable_entity_tracking,
+        include_exclusive=include_exclusive,
     )
     incremental_indexer = IncrementalIndexer(
         indexer=indexer,
@@ -186,6 +195,7 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
         chunker=chunker,
         include_dirs=include_dirs,
         exclude_dirs=exclude_dirs,
+        include_exclusive=include_exclusive,
     )
 
     # Temporarily disable allow_ram_fallback during auto-reindex for performance

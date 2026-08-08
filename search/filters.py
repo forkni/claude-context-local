@@ -17,7 +17,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from chunking.language_registry import DEFAULT_IGNORED_DIRS
+from chunking.language_registry import DEFAULT_IGNORED_DIRS, DEPENDENCY_TREE_DIRS
 from utils.path_utils import normalize_path
 
 
@@ -301,6 +301,23 @@ def parse_dir_pattern(raw: str, root_path: str | Path | None) -> DirPattern | No
     )
 
 
+def is_dependency_pattern(pattern: DirPattern) -> bool:
+    """Whether an include pattern reaches into a dependency/package tree.
+
+    A pattern is "additive" (re-admits a slice of a normally-ignored
+    dependency tree on top of the regular root-down scope) iff any of its
+    path segments names a dependency-tree directory, e.g.
+    "venv/Lib/site-packages/torch" contains both "venv" and "site-packages".
+    A pattern with no such segment (e.g. "src/core") is "narrowing" — it
+    restricts the whole indexed scope to just the paths it names.
+
+    Deliberately conservative: a bare "torch" (no dependency segment) stays
+    narrowing, since there's no way to tell whether it means
+    "site-packages/torch" or a source directory named "torch".
+    """
+    return any(seg in DEPENDENCY_TREE_DIRS for seg in pattern.segments)
+
+
 def _segment_matches(pattern_seg: str, path_seg: str) -> bool:
     """Match one path segment against one pattern segment.
 
@@ -406,8 +423,15 @@ class PathFilter:
     only the include requirement in step 3 differs):
       1. Basename in ALWAYS_IGNORED_DIRS -> reject, unconditionally.
       2. Any exclude pattern is INSIDE -> reject (exclude beats include).
-      3. If include patterns are configured: a file requires INSIDE; a
-         directory requires INSIDE or ANCESTOR. Otherwise -> reject.
+      3. If narrowing include patterns are configured: a file requires
+         INSIDE; a directory requires INSIDE or ANCESTOR. Otherwise ->
+         reject. "Narrowing" patterns are include patterns that do NOT
+         reach into a dependency tree (see is_dependency_pattern) — e.g.
+         "src/core". Patterns that DO (e.g. "venv/Lib/site-packages/torch")
+         are "additive" and skip this step entirely, so they only ever
+         widen scope via step 4, never restrict it. `include_exclusive=True`
+         disables this distinction and treats every include pattern as
+         narrowing, matching pre-additive behavior exactly.
       4. Basename in `defaults` -> reject, UNLESS the path is INSIDE or
          ANCESTOR of an include pattern (this is what lets an explicit
          include re-admit "venv", "site-packages", etc.).
@@ -421,6 +445,7 @@ class PathFilter:
         root_path: str | Path,
         *,
         defaults: set[str] | None = None,
+        include_exclusive: bool = False,
     ) -> None:
         """Build a filter for one project root.
 
@@ -431,11 +456,28 @@ class PathFilter:
                 as the base for relative-segment matching.
             defaults: Overridable default-ignored basenames. Defaults to
                 DEFAULT_IGNORED_DIRS (chunking/language_registry.py).
+            include_exclusive: When True, every include pattern is treated
+                as narrowing (the whitelist-only behavior from before
+                additive dependency-tree patterns existed), even ones that
+                reach into a dependency tree. Escape hatch for "index ONLY
+                these libraries" — a case additive-by-default can no longer
+                express on its own.
         """
         self.root_path = Path(root_path)
         self._defaults = defaults if defaults is not None else DEFAULT_IGNORED_DIRS
+        self.include_exclusive = include_exclusive
         self.include_patterns = self._parse_all(include_dirs)
         self.exclude_patterns = self._parse_all(exclude_dirs)
+        if include_exclusive:
+            self.narrowing_patterns = self.include_patterns
+            self.additive_patterns: list[DirPattern] = []
+        else:
+            self.narrowing_patterns = [
+                p for p in self.include_patterns if not is_dependency_pattern(p)
+            ]
+            self.additive_patterns = [
+                p for p in self.include_patterns if is_dependency_pattern(p)
+            ]
         # Per-pattern hit counters, used for zero-match diagnostics (a pattern
         # that never matched anything — e.g. a typo'd package name — must be
         # reported loudly, not silently dropped).
@@ -499,12 +541,21 @@ class PathFilter:
                 self.exclude_hits[exclude_pat.raw] += 1
             return False, None, MatchKind.NONE
 
+        # include_kind/include_pat are always matched against ALL include
+        # patterns (narrowing + additive combined) — step 4's re-admission
+        # below needs to see additive patterns even when no narrowing
+        # pattern is configured. Only the requirement gate immediately below
+        # is conditional, and it's gated on narrowing_patterns specifically:
+        # an all-additive include list (e.g. the site-packages-only case)
+        # must NOT force every file to match one of those patterns, or the
+        # whole point of "additive" collapses back into "whitelist".
         include_kind = MatchKind.NONE
         include_pat = None
         if self.include_patterns:
             include_kind, include_pat = self._best_match(
                 self.include_patterns, rel_parts
             )
+        if self.narrowing_patterns:
             required = (
                 (MatchKind.INSIDE, MatchKind.ANCESTOR)
                 if is_dir
@@ -544,6 +595,52 @@ class PathFilter:
         return bool(self.include_patterns) and all(
             count == 0 for count in self.include_hits.values()
         )
+
+    def only_dependency_paths_matched(self, rel_paths: list[str]) -> bool:
+        """True if narrowing is active and every matched path is dependency-only.
+
+        The residual failure mode Part 1's additive-by-default classification
+        cannot catch: a *narrowing* include pattern (e.g. bare "torch", which
+        has no dependency-tree segment of its own so isn't classified as
+        additive) — or the ``include_exclusive`` escape hatch, which forces
+        *every* pattern back to narrowing — can still happen to resolve
+        entirely inside a dependency tree, silently wiping first-party
+        source exactly like the original incident.
+
+        Short-circuits on the first path that does NOT contain a
+        dependency-tree segment (a first-party file survived — nothing to
+        guard against). Vacuously False when no narrowing patterns are
+        active (Part 1 already guarantees additive-only include sets can't
+        discard source) or when ``rel_paths`` is empty (an empty result is
+        ``all_includes_unmatched``'s problem, not this one's).
+
+        Args:
+            rel_paths: The final matched/supported file paths for this run
+                (OS-native separators are fine — routed through
+                ``_rel_parts``/``normalize_path`` same as everywhere else).
+        """
+        if not self.narrowing_patterns or not rel_paths:
+            return False
+        for rel_path in rel_paths:
+            if not any(
+                part in DEPENDENCY_TREE_DIRS for part in self._rel_parts(rel_path)
+            ):
+                return False
+        return True
+
+    def dependency_segments(self, rel_paths: list[str]) -> list[str]:
+        """Dependency-tree segment names actually present across rel_paths.
+
+        For an actionable guard message naming exactly what swallowed the
+        project (e.g. ``["site-packages", "venv"]``) instead of a generic
+        "nothing but libraries matched".
+        """
+        found: set[str] = set()
+        for rel_path in rel_paths:
+            for part in self._rel_parts(rel_path):
+                if part in DEPENDENCY_TREE_DIRS:
+                    found.add(part)
+        return sorted(found)
 
 
 def matches_directory_filter(
@@ -915,7 +1012,7 @@ def get_effective_filters(project_info: dict) -> tuple:
         project_info: Dictionary containing filter information from project_info.json
 
     Returns:
-        Tuple of (effective_include_dirs, effective_exclude_dirs)
+        Tuple of (effective_include_dirs, effective_exclude_dirs, include_exclusive)
         - effective_include_dirs: List of include directories or None
         - effective_exclude_dirs: List of exclude directories or None
 
@@ -935,14 +1032,17 @@ def get_effective_filters(project_info: dict) -> tuple:
     """
     # Check for old structure (backward compatibility)
     if "exclude_dirs" in project_info and "user_excluded_dirs" not in project_info:
-        # Old structure: treat as user-defined only
+        # Old structure: treat as user-defined only. Predates include_exclusive
+        # entirely, so it defaults to False (today's additive-for-dependency-
+        # trees behavior applies rather than the pre-migration whitelist-only one).
         include_dirs = project_info.get("include_dirs")
         exclude_dirs = project_info.get("exclude_dirs")
-        return include_dirs, exclude_dirs
+        return include_dirs, exclude_dirs, False
 
     # New structure: return only the user's own raw lists. Defaults are
     # applied inside PathFilter, not laundered in here.
     exclude_dirs = project_info.get("user_excluded_dirs") or None
     include_dirs = project_info.get("user_included_dirs") or None
+    include_exclusive = bool(project_info.get("include_exclusive", False))
 
-    return include_dirs, exclude_dirs
+    return include_dirs, exclude_dirs, include_exclusive
