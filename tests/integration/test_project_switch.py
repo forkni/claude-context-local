@@ -1,5 +1,6 @@
 """Integration tests for project selection and switching."""
 
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -97,7 +98,12 @@ async def test_switch_project_shows_correct_index(sample_codebase, tmp_path):
     assert status_after["index_statistics"]["total_chunks"] > 0, (
         "Should show indexed chunks after switch"
     )
-    assert status_after["current_project"] == project_path
+    # handle_switch_project resolves the incoming path (Path(...).resolve())
+    # before storing it as current_project, so compare against the resolved
+    # form here too — on Windows CI runners resolve() can normalize the
+    # profile directory's 8.3 short name (RUNNER~1) differently than the raw
+    # tmp_path-derived string, which made a direct string comparison flaky.
+    assert status_after["current_project"] == str(Path(project_path).resolve())
 
     # Verify the chunk count is reasonable for the sample codebase
     # sample_codebase has 4 modules (auth, database, api, utils) + __init__ files
