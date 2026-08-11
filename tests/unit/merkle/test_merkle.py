@@ -346,8 +346,12 @@ class TestMerkleDAG(TestCase):
         # Serialize
         data = dag1.to_dict()
 
-        # Verify structure
-        assert data["root_path"] == str(self.test_path)
+        # Verify structure. Compare against a resolved path, not the raw
+        # tempfile.mkdtemp() string: MerkleDAG stores Path(root_path).resolve(),
+        # and on Windows CI runners resolve() can normalize the profile
+        # directory's 8.3 short name (RUNNER~1) differently than the raw
+        # string reports it, making a direct string comparison flaky.
+        assert data["root_path"] == str(self.test_path.resolve())
         assert data["root_node"] is not None
         assert data["file_count"] == 4
         assert data["total_size"] > 0
@@ -504,7 +508,12 @@ class TestSnapshotManager(TestCase):
         assert metadata is not None
         assert metadata["version"] == "1.0"
         assert metadata["author"] == "test"
-        assert metadata["project_path"] == str(self.test_path)
+        # project_path comes from dag.root_path, which is Path(...).resolve()'d
+        # in MerkleDAG.__init__ — resolve the expected side too so this isn't
+        # flaky on Windows CI runners where resolve() can normalize the
+        # profile directory's 8.3 short name (RUNNER~1) differently than the
+        # raw tempfile.mkdtemp() string.
+        assert metadata["project_path"] == str(self.test_path.resolve())
         assert metadata["file_count"] == 1
 
     def test_snapshot_existence_check(self):
