@@ -41,7 +41,6 @@ Essential documentation for setup and initial use.
 | ---------- | ------------- |
 | **[INSTALLATION_GUIDE.md](INSTALLATION_GUIDE.md)** | Complete installation process for Windows |
 | **[CLAUDE_DESKTOP_SETUP.md](CLAUDE_DESKTOP_SETUP.md)** | Connect the MCP server to the Claude Desktop app (via `mcp-remote` bridge) |
-| **[LOCAL_LLM_GUIDE.md](LOCAL_LLM_GUIDE.md)** | Use local LLMs via LM Studio instead of Anthropic API |
 | **[CLAUDE_MD_TEMPLATE.md](CLAUDE_MD_TEMPLATE.md)** | CLAUDE.md template for project setup |
 | **[PYTORCH_COMPATIBILITY.md](PYTORCH_COMPATIBILITY.md)** | PyTorch version requirements & installation |
 
