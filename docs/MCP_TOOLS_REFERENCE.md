@@ -56,6 +56,30 @@ excluded dir") is detected against the stored snapshot and **forces a full, non-
 reindex** even if `incremental=True` was requested — `batch_index.py` prints the effective
 filters before indexing starts so you can confirm the full list took effect.
 
+**`index_directory`'s pattern syntax is gitignore-style, not prefix matching** (this differs
+from `search_code`'s `include_dirs`/`exclude_dirs` below, which are pure path-prefix filters
+over an already-built index). A pattern with **no `/`** matches its basename at **any depth**
+— `include_dirs=["diffusers"]` matches every directory named `diffusers` anywhere under the
+project root, not just at the top level. A pattern **containing `/`** (or a leading `/`) is
+**root-anchored** — `include_dirs=["src/core"]` matches only `<root>/src/core`. Wildcards
+(`*`, `?`, `[abc]`, and `**` for "zero or more segments") are supported in either form.
+Absolute paths are accepted and resolved against the project root; an absolute path that
+doesn't resolve under the root is dropped with a loud warning rather than silently ignored.
+
+**An include pattern overrides a default-ignored directory for that target only.**
+Directories like `venv`, `site-packages`, `node_modules`, and `build` are excluded by
+default (`chunking/language_registry.py`), but an explicit include re-admits exactly the
+path(s) it names — e.g. `include_dirs=["venv/Lib/site-packages/torch"]` indexes `torch` even
+though both `venv` and `site-packages` are default-ignored; every *other* default-ignored
+directory stays excluded. `exclude_dirs` always wins over `include_dirs` on a matching path.
+
+**Zero-match patterns are never silent.** Any include or exclude pattern that matches zero
+files/directories is logged as a warning naming the exact pattern. If **every** include
+pattern matches zero files, indexing aborts with an error instead of writing an empty index
+over a working one. To preview a filter set before paying for a full index, use
+`python tools/batch_index.py --path <dir> --mode new --dry-run --include-dirs "a,b,c"` —
+it prints a per-pattern file-count/size breakdown and exits without indexing.
+
 ---
 
 ## Filter Parameters for search_code
@@ -542,9 +566,9 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 - `enable_large_node_splitting` (bool): Enable AST block splitting for large functions (default: True)
 - `max_chunk_lines` (int): Maximum lines per chunk before splitting at AST boundaries (10-1000, default: 100)
 - `split_size_method` (str): Size method for splitting - "lines" or "characters" (default: "characters")
-- `max_split_chars` (int): Maximum characters per split chunk (1000-10000, default: 1600)
+- `max_split_chars` (int): Maximum characters per split chunk (1000-10000, default: 3000)
 - `enable_file_summaries` (bool): Generate file-level module summary chunks (A2 feature, default: True)
-- `sizing_mode` (str): Chunk sizing algorithm - "fixed" or "adaptive" (repo-profiled P75 + complexity, default: "fixed")
+- `sizing_mode` (str): Chunk sizing algorithm - "fixed" or "adaptive" (repo-profiled P75 + complexity, default: "adaptive")
 - `adaptive_multiplier_max` (float): T_max multiplier for low-complexity functions (1.0-2.0, default: 1.3)
 - `adaptive_multiplier_min` (float): T_min multiplier for high-complexity functions (0.1-1.0, default: 0.5)
 - `max_complexity_cap` (int): Cyclomatic complexity ceiling for normalization (5-100, default: 30)

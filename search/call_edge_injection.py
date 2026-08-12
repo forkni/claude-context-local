@@ -106,10 +106,45 @@ def inject_call_edges(
             else {"pyan", "libcst"}
         )
 
+        # `resolvers` governs Stages 1-2 only; Stage 3 (LSP) is governed
+        # solely by the separate `lsp_enabled` bool below and is silently
+        # ignored if named here (2026-08-06 config-liveness audit, D3).
+        unknown_names = enabled_names - {"pyan", "libcst"}
+        if unknown_names:
+            if "lsp" in unknown_names:
+                logger.warning(
+                    "[CALL_EDGES] call_graph.resolvers contains 'lsp', which "
+                    "has no effect — Stage 3 (LSP) is enabled solely via "
+                    "call_graph.lsp_enabled, not the resolvers list"
+                )
+                unknown_names = unknown_names - {"lsp"}
+            if unknown_names:
+                logger.warning(
+                    "[CALL_EDGES] call_graph.resolvers contains unrecognized "
+                    "name(s) %s — ignored (valid: 'pyan', 'libcst')",
+                    sorted(unknown_names),
+                )
+
         resolvers: list[CallEdgeResolver] = []
         resolver_names: list[str] = []
         if "pyan" in enabled_names:
-            resolvers.append(PyanResolver())
+            resolvers.append(
+                PyanResolver(
+                    max_total_seconds=(
+                        cg_cfg.pyan_total_timeout_seconds
+                        if cg_cfg is not None
+                        else 600.0
+                    ),
+                    seconds_per_file=(
+                        cg_cfg.pyan_seconds_per_file if cg_cfg is not None else 2.5
+                    ),
+                    cap_seconds=(
+                        cg_cfg.pyan_total_timeout_cap_seconds
+                        if cg_cfg is not None
+                        else 3600.0
+                    ),
+                )
+            )
             resolver_names.append("pyan")
         # Stage 2 — LibCST FQN resolver (MIT, default in [callgraph] extra):
         if "libcst" in enabled_names:
@@ -132,6 +167,8 @@ def inject_call_edges(
                 LSPResolver(
                     timeout=cg_cfg.lsp_timeout_seconds,
                     max_total_seconds=cg_cfg.lsp_total_timeout_seconds,
+                    seconds_per_chunk=cg_cfg.lsp_seconds_per_chunk,
+                    cap_seconds=cg_cfg.lsp_total_timeout_cap_seconds,
                 )
             )
             resolver_names.append("lsp")

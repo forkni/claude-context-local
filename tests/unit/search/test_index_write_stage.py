@@ -442,6 +442,83 @@ class TestInjectCallEdgesResolverSelection:
             f"Expected pyan+libcst (2 resolvers) with resolvers=None; got {resolver_instances}"
         )
 
+    def test_lsp_in_resolvers_list_warns_and_has_no_effect(self, caplog) -> None:
+        """resolvers=["pyan", "libcst", "lsp"] must warn that "lsp" has no
+        effect there (2026-08-06 config-liveness audit, D3) and build an
+        identical resolver ladder to resolvers=["pyan", "libcst"] at the same
+        lsp_enabled=False - "lsp" in the list neither enables nor duplicates
+        Stage 3, which is governed solely by the separate lsp_enabled bool.
+        """
+        import logging
+
+        from search.config import CallGraphConfig
+
+        stage, storage = self._make_stage_for_injection()
+
+        cg_cfg = CallGraphConfig(resolvers=["pyan", "libcst", "lsp"], lsp_enabled=False)
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.call_edge_injection.run_resolvers", return_value={}
+            ) as mock_run_resolvers,
+            caplog.at_level(logging.WARNING, logger="search.call_edge_injection"),
+        ):
+            stage._inject_call_edges("/fake/project")
+
+        mock_run_resolvers.assert_called_once()
+        resolver_instances = mock_run_resolvers.call_args.args[0]
+        assert len(resolver_instances) == 2, (
+            "Expected pyan+libcst (2 resolvers) with resolvers=[..., 'lsp'], "
+            f"lsp_enabled=False; got {resolver_instances}"
+        )
+        assert any(
+            "lsp" in rec.message and "lsp_enabled" in rec.message
+            for rec in caplog.records
+        ), f"Expected a warning naming 'lsp'/'lsp_enabled'; got {caplog.records}"
+
+    def test_unrecognized_resolver_name_warns(self, caplog) -> None:
+        """A garbage name in resolvers=[...] must warn and be ignored, not
+        silently dropped -- the failure mode a typo'd config value shares
+        with the historical inert-guardrail bug class."""
+        import logging
+
+        from search.config import CallGraphConfig
+
+        stage, storage = self._make_stage_for_injection()
+
+        cg_cfg = CallGraphConfig(
+            resolvers=["pyan", "not-a-real-resolver"], lsp_enabled=False
+        )
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.call_edge_injection.run_resolvers", return_value={}
+            ) as mock_run_resolvers,
+            caplog.at_level(logging.WARNING, logger="search.call_edge_injection"),
+        ):
+            stage._inject_call_edges("/fake/project")
+
+        mock_run_resolvers.assert_called_once()
+        resolver_instances = mock_run_resolvers.call_args.args[0]
+        assert len(resolver_instances) == 1, (
+            f"Expected only pyan (1 resolver); got {resolver_instances}"
+        )
+        assert any("not-a-real-resolver" in rec.message for rec in caplog.records), (
+            f"Expected a warning naming the unrecognized resolver; got {caplog.records}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # MultiDiGraph edge-injection correctness (#3 follow-up)

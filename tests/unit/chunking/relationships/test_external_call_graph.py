@@ -476,3 +476,323 @@ class TestPyanWildcardNamespaceGuards:
         # The important thing is no exception is raised by the new guard code.
         edges = _run_resolver_with_fake_edges(tmp_path, monkeypatch, caller, callee)
         assert isinstance(edges, list)  # no exception; guard logic reached mapping step
+
+
+# ---------------------------------------------------------------------------
+# Part 1 — lambda-in-anonymous-scope "Unknown scope" crash
+#
+# Real-world repro: accelerate/utils/megatron_lm.py:986 --
+#   config.param_sync_func = [lambda x: self.optimizer.finish_param_sync(i, x)
+#                              for i in range(len(self.module))]
+# pyan's analyze_scopes() registers a lambda nested inside another anonymous
+# scope (comprehension, lambda) UNNUMBERED, but the visitor's
+# _next_anon_scope_name() always numbers it -- so ExecuteInInnerScope raises
+# ValueError("Unknown scope ...") and aborts the ENTIRE pyan pass, not just
+# the one file. See external_call_graph.py's _TrackedVisitor.visit_Lambda.
+# ---------------------------------------------------------------------------
+
+
+class TestLambdaInAnonymousScope:
+    """visit_Lambda must synthesize the scope pyan's own numbering scheme drops."""
+
+    def _pyan_files(self, tmp_path: Path) -> list[str]:
+        from chunking.relationships.external_call_graph import _gather_py_files
+
+        return _gather_py_files(tmp_path)
+
+    @requires_pyan
+    def test_lambda_in_listcomp_does_not_raise(self, tmp_path: Path) -> None:
+        """Minimised repro of the megatron_lm.py crash: lambda inside a
+        listcomp, nested inside a method, closing over ``self``.
+
+        ``visitor.uses_edges`` alone is NOT a valid RED signal here: pyan's
+        ``analyze_comprehension`` visits the generator's iterable (``range``,
+        ``len``, ``modules``) *before* it visits ``elt`` (where the lambda
+        lives), so edges exist even when the crash is unfixed -- and Part 1b's
+        own ``process_one`` try/except silently swallows the raise, so
+        construction doesn't raise either. Confirmed empirically: with
+        ``visit_Lambda`` removed, this exact fixture still produces 5 edges
+        (all from the comprehension's ``for`` clause) and does not raise.
+        The only signal that actually distinguishes "crashed and was caught"
+        from "resolved cleanly" is (a) the file must not land in
+        ``_failed_files``, and (b) an edge must originate FROM the lambda's
+        own numbered scope (``...listcomp.0.lambda.0``) -- proving
+        ``ExecuteInInnerScope`` entered it. The crash happens at scope-entry,
+        before the lambda body is ever visited, so a caught crash always
+        produces zero edges from that scope.
+        """
+        import logging
+
+        from chunking.relationships.external_call_graph import _TrackedVisitor
+
+        src = tmp_path / "trainer.py"
+        src.write_text(
+            dedent("""\
+            class Trainer:
+                def get_module_config(self, modules):
+                    funcs = [
+                        lambda x, i=i: self.helper(i, x) for i in range(len(modules))
+                    ]
+                    return funcs
+
+                def helper(self, i, x):
+                    return i, x
+            """)
+        )
+        py_files = self._pyan_files(tmp_path)
+        log = logging.getLogger("test_lambda_anon_scope")
+
+        visitor = _TrackedVisitor(py_files, root=str(tmp_path), logger=log)
+
+        assert not visitor._failed_files, (
+            f"pyan silently swallowed a crash in {visitor._failed_files} -- "
+            "the lambda-in-listcomp scope mismatch was not fixed"
+        )
+        lambda_scope_edges = [
+            (f, t)
+            for f, ts in visitor.uses_edges.items()
+            for t in ts
+            if ".lambda.0" in str(f)
+        ]
+        assert lambda_scope_edges, (
+            "Expected at least one edge originating from the lambda's own "
+            "numbered scope -- proves ExecuteInInnerScope entered it instead "
+            "of raising before the lambda body was ever visited"
+        )
+
+    @requires_pyan
+    def test_lambda_in_lambda_does_not_raise(self, tmp_path: Path) -> None:
+        """The other anon-parent shape the same fix covers: lambda-in-lambda.
+
+        Unlike the listcomp case, this fixture has no confounding edge
+        source (no generator iterable), so an unfixed crash leaves
+        ``uses_edges`` genuinely empty -- confirmed empirically -- making
+        both assertions here real RED signals, not just ``is not None``.
+        """
+        import logging
+
+        from chunking.relationships.external_call_graph import _TrackedVisitor
+
+        src = tmp_path / "nested_lambda.py"
+        src.write_text(
+            dedent("""\
+            def make_adder():
+                return lambda x: (lambda y: helper(x, y))
+
+            def helper(x, y):
+                return x + y
+            """)
+        )
+        py_files = self._pyan_files(tmp_path)
+        log = logging.getLogger("test_lambda_anon_scope")
+
+        visitor = _TrackedVisitor(py_files, root=str(tmp_path), logger=log)
+
+        assert not visitor._failed_files, (
+            f"pyan silently swallowed a crash in {visitor._failed_files} -- "
+            "the lambda-in-lambda scope mismatch was not fixed"
+        )
+        assert visitor.uses_edges, (
+            "Expected at least one recorded call edge (helper(x, y) from "
+            "inside the nested lambda) -- construction succeeded but "
+            "produced nothing"
+        )
+
+    @requires_pyan
+    def test_module_and_function_level_lambdas_still_resolve(
+        self, tmp_path: Path
+    ) -> None:
+        """Control: lambdas whose nearest enclosing scope is NOT anonymous
+        (module level, or inside a plain function) must keep working --
+        proves the override doesn't change the healthy path."""
+        import logging
+
+        from chunking.relationships.external_call_graph import _TrackedVisitor
+
+        src = tmp_path / "plain_lambdas.py"
+        src.write_text(
+            dedent("""\
+            def helper(x):
+                return x
+
+            module_level = lambda x: helper(x)
+
+
+            def wrapper():
+                inner = lambda x: helper(x)
+                return inner(1)
+            """)
+        )
+        py_files = self._pyan_files(tmp_path)
+        log = logging.getLogger("test_lambda_anon_scope")
+
+        visitor = _TrackedVisitor(py_files, root=str(tmp_path), logger=log)
+
+        assert visitor.uses_edges, (
+            "Control case regressed: plain module/function-level lambdas "
+            "should still produce call edges"
+        )
+
+    @requires_pyan
+    def test_one_bad_file_does_not_abort_the_pass(
+        self, tmp_path: Path, caplog, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """process_one isolation: a file that still fails analysis (any
+        exception, not just the scope bug) must not cost the other files'
+        edges, and PyanResolver.resolve logs exactly one summary line."""
+        import logging
+
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+
+        (pkg / "a.py").write_text(
+            dedent("""\
+            def helper():
+                pass
+            """)
+        )
+        (pkg / "b.py").write_text(
+            dedent("""\
+            from pkg.a import helper
+
+            def caller():
+                helper()
+            """)
+        )
+
+        raw_line_map = {
+            "pkg/a.py": [(1, 2, "pkg/a.py:1-2:function:helper")],
+            "pkg/b.py": [(3, 4, "pkg/b.py:3-4:function:caller")],
+        }
+        log = logging.getLogger("test_ecg_isolation")
+
+        import chunking.relationships.external_call_graph as ecg
+
+        # Monkeypatch _CallGraphVisitor.process_one (the method _TrackedVisitor
+        # wraps via super()) to raise for b.py -- this exercises
+        # _TrackedVisitor's own try/except in process_one, not a stand-in.
+        original_process_one = ecg._CallGraphVisitor.process_one
+
+        def _raising_process_one(self, filename):
+            if filename.endswith("b.py"):
+                raise ValueError("simulated pyan analysis failure")
+            return original_process_one(self, filename)
+
+        monkeypatch.setattr(ecg._CallGraphVisitor, "process_one", _raising_process_one)
+        with caplog.at_level(logging.WARNING, logger="pyan"):
+            edges = ecg.build_call_edges(tmp_path, raw_line_map, log)
+
+        # a.py's side must be unaffected by b.py's failure -- but since b.py
+        # is the caller here, assert instead that construction did not raise
+        # and that pyan's own logger recorded the skip.
+        assert isinstance(edges, list)
+        skip_lines = [
+            r.message for r in caplog.records if "[PYAN] skipping" in r.message
+        ]
+        assert skip_lines, "Expected a '[PYAN] skipping ...' warning for b.py"
+        assert any("b.py" in line for line in skip_lines)
+
+
+# ---------------------------------------------------------------------------
+# Part 3 — pyan cooperative deadline (runaway-runtime budget)
+# ---------------------------------------------------------------------------
+
+
+class TestPyanCooperativeDeadline:
+    """A deadline already in the past must be honoured cooperatively at each
+    of the four checkpoints (_prescan_one, process_one, resolve_base_classes,
+    postprocess) -- draining the pass in milliseconds instead of running to
+    completion, and without raising through pyan's constructor."""
+
+    @requires_pyan
+    def test_construction_with_past_deadline_aborts_without_raising(
+        self, tmp_path: Path
+    ) -> None:
+        """visitor._aborted must be True and construction must not raise.
+
+        Does NOT assert on .expanded_edges -- postprocess() only sets that
+        attribute on normal loop completion (the ``self.expanded_edges = {...}``
+        assignment sits after the per-step loop), and an aborted postprocess
+        returns early via _past_deadline() before ever reaching it.
+        """
+        import logging
+        import time
+
+        from chunking.relationships.external_call_graph import _TrackedVisitor
+
+        (tmp_path / "a.py").write_text("def helper():\n    pass\n", encoding="utf-8")
+        py_files = [str(tmp_path / "a.py")]
+        pyan_logger = logging.getLogger("pyan")
+
+        visitor = _TrackedVisitor(
+            py_files,
+            root=str(tmp_path),
+            logger=pyan_logger,
+            deadline=time.monotonic() - 1000.0,
+        )
+
+        assert visitor._aborted is True
+
+    @requires_pyan
+    def test_resolve_abandons_pyan_tier_when_deadline_already_exceeded(
+        self, two_module_project: dict, monkeypatch: pytest.MonkeyPatch, caplog
+    ) -> None:
+        """PyanResolver.resolve() must return [] and log the abandon warning
+        when real time jumps past the derived deadline before the first
+        _past_deadline() check inside the constructor -- simulating a
+        runaway pass caught by the budget rather than run to completion."""
+        import logging
+
+        import chunking.relationships.external_call_graph as ecg
+
+        project_root = two_module_project["project_root"]
+        raw_line_map = two_module_project["raw_line_map"]
+
+        class _JumpingClock:
+            """First call (the deadline computation in resolve()) returns
+            t0=0.0; every call after (inside _past_deadline()) returns a
+            value far past any plausible deadline."""
+
+            def __init__(self) -> None:
+                self._calls = 0
+
+            def __call__(self) -> float:
+                self._calls += 1
+                return 0.0 if self._calls == 1 else 1_000_000.0
+
+        monkeypatch.setattr(ecg.time, "monotonic", _JumpingClock())
+
+        log = logging.getLogger("test_ecg_deadline_resolve")
+        with caplog.at_level(logging.WARNING, logger=log.name):
+            edges = ecg.PyanResolver(
+                max_total_seconds=0.01, seconds_per_file=0.0
+            ).resolve(project_root, raw_line_map, log)
+
+        assert edges == []
+        abandon_lines = [
+            r.message for r in caplog.records if "abandoning pyan tier" in r.message
+        ]
+        assert abandon_lines, (
+            f"Expected an 'abandoning pyan tier' warning; got "
+            f"{[r.message for r in caplog.records]}"
+        )
+
+    @requires_pyan
+    def test_future_deadline_matches_no_deadline_baseline(
+        self, two_module_project: dict
+    ) -> None:
+        """A deadline far in the future must be inert -- identical output to
+        a resolver whose default budget is never approached."""
+        import logging
+
+        project_root = two_module_project["project_root"]
+        raw_line_map = two_module_project["raw_line_map"]
+        log = logging.getLogger("test_ecg_deadline_inert")
+
+        baseline = PyanResolver().resolve(project_root, raw_line_map, log)
+        with_future_deadline = PyanResolver(max_total_seconds=10_000.0).resolve(
+            project_root, raw_line_map, log
+        )
+
+        assert set(baseline) == set(with_future_deadline)

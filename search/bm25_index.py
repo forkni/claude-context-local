@@ -774,10 +774,13 @@ class BM25Index:
                         f"⚠️  Stopwords config mismatch: index={saved_stopwords}, current={self.use_stopwords}"
                     )
 
-                # k1/b are query-time scoring parameters — unlike tokenizer
-                # settings they can be changed without re-indexing, so the
-                # configured values are applied to the unpickled index rather
-                # than warned about.
+                # k1/b are read once here at index load (and again at build/
+                # rebuild) — not per query — so unlike tokenizer settings they
+                # can be changed without re-indexing: the configured values are
+                # applied to the unpickled index rather than warned about. A
+                # live SearchConfig mutation is still inert until this load
+                # path (or a HybridSearcher rebuild) runs again; see
+                # config.py's bm25_k1/bm25_b (construction_baked=True).
                 saved_k1 = metadata.get("k1", 1.5)
                 saved_b = metadata.get("b", 0.75)
                 if saved_k1 != self.k1 or saved_b != self.b:

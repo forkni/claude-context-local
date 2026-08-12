@@ -1,6 +1,6 @@
 # Call-Graph Resolver Tuning Reference
 
-> **Version**: v0.14.0 | **Updated**: 2026-06-03
+> **Version**: v0.23.0 | **Updated**: 2026-08-07
 >
 > Covers both **pyan3 2.6.0** and **LibCST** APIs as used by the layered
 > call-graph resolver pipeline.  Includes accuracy-limitation matrices,
@@ -25,16 +25,26 @@
 `run_resolvers()` in `chunking/relationships/call_edge_resolver.py` runs four
 resolver tiers in ascending confidence order and merges them by
 **confidence-precedence** (higher confidence wins on the same `(caller, callee)`
-key):
+key). **AST edges are not one of these tiers** — they ride a separate
+`extract_calls()` / `add_call_edge` rail written during chunking, before
+`run_resolvers()` ever runs (see `call_edge_resolver.py`'s module docstring
+for the authoritative "two namespaces" explanation):
 
 | Tier | Module | Confidence | Always on? | Notes |
 |------|--------|-----------|------------|-------|
-| AST (definition) | `ast_call_graph.py` | 0.5 | ✅ | Same-file calls only |
-| AST (cross-file) | `ast_call_graph.py` | 0.7 | ✅ | FQN-based cross-file |
+| AST (in-house) | `chunking/relationships/call_graph_extractor.py` | tag: `"exact"` / `"ambiguous"` / `"recovered"` (qualitative, **not** numeric) | ✅ | Same-file + import-resolved calls, single pass; not a `CallEdgeResolver`, not part of the keep-max merge |
 | pyan wildcard fan-out | `external_call_graph.py` | **0.6** | ✅ (but tagged by `_TrackedVisitor`) | `expand_unknowns` residue, demoted |
 | pyan direct | `external_call_graph.py` | 0.75 | via `resolvers` config | Cross-module, graph-inferred |
 | LibCST FQN | `libcst_call_graph.py` | 0.90 | via `resolvers` config | Import-aware, per-file |
 | LSP / basedpyright | `lsp_call_graph.py` | 0.98 | `lsp_enabled=True` | Most precise; opt-in |
+
+**Two distinct confidence namespaces** (do not conflate): the AST rail's
+`CallEdge.confidence` (a float, always `1.0`, set at extraction time and not
+graph-consumed the way resolver confidence is) is unrelated to the qualitative
+`"exact"`/`"ambiguous"`/`"recovered"` string tag assigned during graph
+injection based on resolution certainty (unique match vs. multiple same-named
+candidates) — and both are unrelated to `resolver_confidence`, the numeric
+score written by the resolver pipeline below.
 
 Config is read from `CallGraphConfig` (see `search/config.py`).
 
@@ -290,8 +300,7 @@ relationships captured.
 
 | Tier | Confidence | Accuracy | Recall | Primary gap |
 |------|-----------|----------|--------|-------------|
-| AST in-file | 0.5 | ≈ 90% | Low — same-file only | Cross-module calls missed |
-| AST cross-file | 0.7 | ≈ 85% | Medium | Dynamic dispatch, re-exports |
+| AST (in-house) | qualitative tag, not numeric — see §1 | Not measured on this scale (baseline rail, not a `run_resolvers()` tier) | Same-file + import-resolved cross-file | Dynamic dispatch, re-exports, shadowed names (§5.3) |
 | pyan wildcard fan-out | **0.6** | ≈ 40% | High | Many phantom edges; demoted |
 | pyan direct | 0.75 | ≈ 75% | High | Same-name collisions; duck typing |
 | LibCST FQN | 0.90 | ≈ 92% | Medium–high | Re-exports; type-polymorphic calls |
@@ -425,13 +434,74 @@ Health signals:
 - Large `dropped_no_chunk` is **normal** — most callees land in `.venv/` site-packages which are not indexed.
 - Zero resolved edges with `items > 0` and `dropped_uri = 0` — basedpyright stderr tail is logged at WARNING.
 
-### 6.5 Recommended Defaults by Use Case
+### 6.5 pyan Budget
+
+```json
+"call_graph": {
+  "pyan_total_timeout_seconds": 600.0,
+  "pyan_seconds_per_file": 2.5,
+  "pyan_total_timeout_cap_seconds": 3600.0
+}
+```
+
+Mirrors the LSP budget trio in §6.4, same derivation shape:
+`budget = min(cap, max(floor, seconds_per_file * n_files))`, computed in
+`PyanResolver.resolve()` from the scoped file count.
+
+Unlike LSP's partial results, **a pyan pass that hits its deadline is
+abandoned entirely** — `resolve()` returns `[]` and logs:
+
+```text
+[PYAN] budget 600.0s exceeded after 842/1483 files — abandoning pyan tier (libcst/lsp edges unaffected)
+```
+
+This is deliberate: without a completed `postprocess()`, `uses_edges` still
+holds unresolved imports and wildcard placeholders left over from
+`expand_unknowns`, so a partial pass is not comparable to a complete one the
+way partial LSP results are (LSP only ever *upgrades confidence* on edges
+the earlier tiers already produced). Increase `pyan_seconds_per_file` if a
+large project legitimately needs more than the default ~2.5s/file; the
+default floor (600s) already covers most projects, and the cap (3600s) is a
+runaway guard, not a throttle — raising it only matters for projects larger
+than the cap would otherwise allow.
+
+The deadline is checked cooperatively at each file boundary
+(`_prescan_one`, `process_one`) and at the top of the two whole-project
+stages (`resolve_base_classes`, `postprocess`) — not via a hard kill, since
+force-terminating the child process mid-analysis could leave pyan's internal
+scope state inconsistent. `expand_unknowns` and its postprocess siblings
+have no interior polling point, so the budget can overshoot by up to one
+postprocess step.
+
+**Progress observability.** Both pyan and LibCST run in a child process and
+previously produced no log output there at all — the parent's `Logger`
+cannot cross the process boundary, so every `[PYAN]`/`[LIBCST]` line was
+silently dropped. All three resolvers (pyan, LibCST, LSP) now emit
+throttled heartbeat lines (at most one per ~15s) to stderr for every
+long-running phase:
+
+```text
+[PYAN] pass 1: 302/1483 files (20%), 24s elapsed, ~1m35s remaining
+[PYAN] resolve_base_classes: 3.2s elapsed
+[PYAN] postprocess: expand_unknowns took 41.7s
+[LIBCST] resolve_cache: 1.1s elapsed
+[LIBCST] 890/1483 files (60%), 52s elapsed, ~35s remaining
+[LSP] 12000/18892 chunks (63%), 94s elapsed, ~55s remaining
+```
+
+pyan reports five distinct phases, matching `process()`'s structure
+(§2.2): `prescan`, `pass 1`, `pass 2` (all per-file), plus the two
+whole-project stages `resolve_base_classes` and `postprocess` (five named
+sub-steps). No gap in that sequence should exceed the ~15s heartbeat
+interval on a healthy run.
+
+### 6.6 Recommended Defaults by Use Case
 
 | Use case | Settings |
 |----------|---------|
 | **Fast indexing, any precision** | `resolvers: ["pyan"]`, `min_confidence: 0.0` |
-| **Balanced (default)** | `resolvers: ["pyan", "libcst"]`, `min_confidence: 0.0` |
-| **High precision** | `resolvers: ["pyan", "libcst"]`, `min_confidence: 0.65` |
+| **Balanced (default)** | `resolvers: ["pyan", "libcst"]`, `min_confidence: 0.65` |
+| **High precision** | `resolvers: ["pyan", "libcst"]`, `min_confidence: 0.80` (drops all pyan; §6.1) |
 | **Highest precision (slow)** | `resolvers: ["pyan", "libcst"]`, `lsp_enabled: true`, `min_confidence: 0.80` |
 | **Src-layout project** | Add `use_pyproject_toml: true` to any of the above |
 
@@ -447,4 +517,3 @@ These were evaluated and deliberately excluded from the implementation:
 | Fan-out cap per caller | Deferred until evidence of need; add to `_TrackedVisitor` if required |
 | `pyan.Flavor.is_method_call` | `is_method` flag in `ResolvedEdge` is caller-flavor-based, not receiver-based — note in future refactor |
 | LSP per-request timeout thread leak | Pre-existing concern, separate tracking item |
-| `character: 0` LSP probe position | Pre-existing; affects accuracy but not scope of this work |

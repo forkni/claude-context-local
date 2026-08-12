@@ -9,8 +9,225 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-08-12
+
+119 non-merge commits since the `v0.23.0` content landed on `main` (2026-08-02) — `v0.23.0` had
+never been tagged despite `pyproject.toml`/`server.py`/`CHANGELOG.md` all declaring it shipped, so
+this release retroactively tags `v0.23.0` at that point and rolls everything since into `v0.24.0`.
+Headline: call-graph resolver pipeline hardening, two new ADRs (0034 pyan GPL-2.0-or-later license
+quarantine, 0035 C/C++ call-edge tier scope), ADR-0036 additive/narrowing `include_dirs` semantics,
+ADR-0032 config-field liveness audit, and a full documentation/skill resync against `development`.
+
+### Added
+
+- **Heartbeat progress logging for long-running relationship extraction** (`utils/progress.py`,
+  part of the call-graph resolver hardening pass below) — surfaces periodic progress on large
+  projects where extraction previously ran silently for minutes at a time.
+- **SSCG benchmark harness can measure the per-request ego-graph path for the first time** — new
+  `--ego-per-request` flag sets `plan.ego_graph_enabled` on `SearchOrchestrator.run()`'s arguments
+  dict, distinct from the pre-existing `--ego-graph on|off`, which only overrides the *config
+  field* `ego_graph.enabled` (already `True` by default) and never reached this path. This is the
+  only way to exercise `_intent_ego_thresholds` (QW5, `search/effective_config.py`), which fires
+  when both `plan.ego_graph_enabled` and `plan.intent_decision` are set — a path production MCP
+  callers exercise by default (`mcp_server/tool_registry.py`) but no benchmark capture had ever
+  measured. Four-view 63q capture (ego-off/on × intent-off/on) isolates `D − C` (QW5 alone) as
+  flat: MRR +0.0013, driven by one already-known boundary-riding query, recall@10 −0.0053 — fed
+  ADR-0031's deletion of the two intent policy tables (see Changed, below). Pure harness/test
+  addition, no production source touched; `canon_i1` remains the published canon. See
+  `evaluation/EGO_PER_REQUEST_VIEW_20260805.md`.
+
+### Fixed
+
+- **Documentation/skill resync against `development`** — stale test counts (5,540 → 5,801
+  collected unit cases) corrected across `README.md`, `docs/DOCUMENTATION_INDEX.md`,
+  `docs/VERSION_HISTORY.md`, and `tests/TESTING_GUIDE.md`; benchmark figures in `README.md`,
+  `docs/VERSION_HISTORY.md`, and `docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md` re-pinned from the
+  one-generation-stale `canon_h1` to the current `canon_l1` (ADR-0033); the `mcp-search-tool`
+  skill's `references/tool-index.md` and `references/parameters.md` updated with ADR-0036's
+  additive/narrowing `include_dirs` semantics (skill was last resynced before that ADR landed) and
+  bumped to `version: 0.24.0`.
+- **Windows short/long path mismatch resolved in 3 flaky tests** (`710a16e`) — tests comparing
+  paths against a project root captured via different Windows path-normalization forms
+  (`\\?\`-prefixed long paths vs. 8.3 short paths) intermittently failed depending on which form
+  the OS returned first; both sides now normalize through the same resolver before comparison.
+- **Call-graph resolver pipeline hardened** (`5af6589`, plus the three preceding fixes it
+  consolidates) — pyan's `visit_Lambda` now self-heals the same way `analyze_comprehension`
+  already did for a lambda nested inside another anonymous scope (`analyze_scopes()` doesn't
+  number that case but `_next_anon_scope_name()` always does, so `ExecuteInInnerScope` previously
+  raised and aborted the entire pyan pass for the project); `process_one` now isolates any
+  remaining per-file pyan failure so one bad file no longer costs the whole tier; the LSP
+  resolver's aggregate wall-clock budget is no longer a static 180s regardless of project size —
+  `LSPResolver.resolve()` now derives `budget = min(cap, max(floor, 2.0 + seconds_per_chunk *
+  n_probes))` from indexed chunk count, with `lsp_seconds_per_chunk`/`lsp_total_timeout_cap_seconds`
+  as new `CallGraphConfig` fields (a 2,177-file/~32k-chunk project needed ~240s but was previously
+  killed at the 180s floor); relationship extraction no longer runs all 16 extractors per chunk
+  inside one try block — a single extractor raising (e.g. a positional-only-parameter `IndexError`)
+  previously discarded every edge the other 15 extractors collected for that chunk, not just the
+  raising extractor's own contribution, and per-extractor failures are now tallied and
+  escalation-logged instead of silently dropped; `default_param_extractor.py`/`type_extractor.py`
+  now index into `posonlyargs + args` combined (PEP 570's right-alignment for `ast.arguments.
+  defaults`) instead of `args.args` alone, fixing an `IndexError` (or silent misattribution) on any
+  positional-only parameter carrying a default, confirmed against real third-party signatures in
+  torch's `custom_ops.py`.
+- **`index_directory`'s `include_dirs`/`exclude_dirs` filtering corrected** (`c95730d`) — filters
+  now apply correctly against both absolute and relative paths, wildcard patterns are supported,
+  and `exclude_dirs` reliably beats `include_dirs` on a conflicting path; zero-match patterns now
+  log a loud per-pattern warning instead of failing silently, and a new `--dry-run` mode previews
+  the effective filter set before paying for a full index.
+- **pyan3 license mislabeled `GPL-2.0-only` instead of `GPL-2.0-or-later`** (ADR-0034,
+  `8345055`) — inverted the Apache-2.0 compatibility read for the optional `[callgraph]` extra;
+  `pyproject.toml` corrected, and `external_call_graph.py` (which subclasses pyan in-process) now
+  carries its own `GPL-2.0-or-later` header with a `NOTICE` file added, rather than inheriting the
+  project's blanket Apache-2.0 license text. Also fixed along the way: `docs/CALL_GRAPH_TUNING.md`
+  cited a nonexistent `ast_call_graph.py` module and a stale `min_confidence` default; `docs/adr/
+  README.md` was missing the ADR-0033 row.
+- **Config-field liveness audit closed** (ADR-0032, `75eb4ba`/`5c1fbc1`/`179b227`) — a two-question
+  audit (search_config/example sync, and full 124-field liveness via the ADR-0020 three-method
+  methodology) found zero dead fields but five defects, now fixed: `start_mcp_server.cmd`'s
+  GPU-acceleration submenu text incorrectly implied `prefer_gpu` selects the device (it only gates
+  dynamic embedding batch sizing — CUDA runs whenever available either way);
+  `CallGraphConfig.resolvers` accepting `'lsp'` or other unrecognized values silently had no
+  effect (Stage 3 is gated solely by `lsp_enabled`) and now warns; `reranker.batch_size`/
+  `reranker.instruction` were untagged `construction_baked`, so `requires_rebuild()` silently
+  ignored benchmark-arm overrides on them; two stale doc claims fixed
+  (`docs/MCP_TOOLS_REFERENCE.md`'s `configure_chunking` defaults, `docs/
+  HYBRID_SEARCH_CONFIGURATION_GUIDE.md`'s now-false `multi_hop.expansion` divergence claim).
+- **Six BM25/worker config fields could be silently ignored by a benchmark arm** (ADR-0030) —
+  `bm25_k1`, `bm25_b`, `bm25_use_stopwords`, `bm25_use_stemming`, `bm25_tokenizer`, and
+  `max_parallel_workers` are read once into `HybridSearcher`/`BM25Index` at construction, but
+  were untagged in `spec()`, so `evaluation/arm_overrides.py::requires_rebuild()` returned
+  `False` for them — an arm overriding e.g. `search_mode.bm25_k1` would mutate the live config
+  in place, the cached `HybridSearcher` would be reused, and the arm would measure the
+  pre-override value instead of its own. All six now carry `construction_baked=True`, forcing a
+  rebuild; a corrected code comment states the true liveness (inert until index reload or
+  searcher rebuild, not query-time). No published benchmark result used any of these six as an
+  A/B'd knob, so the hazard was latent, not realized.
+- **`find_similar` redirects no longer anchor on a trailing prose word** (ADR-0029) —
+  `_extract_symbol_from_query`'s fallback scanned `reversed(query.split())` and accepted any
+  non-blocklisted lowercase word as the redirect's target symbol, so queries like "find code
+  similar to `InheritanceExtractor._extract_from_tree` hook" redirected on `'hook'` instead of the
+  actual symbol (also: dotted names truncated at the dot, leading-underscore privates and
+  UPPER_CONST constants matched nothing). Rewritten to reuse `_detect_code_symbols`'s
+  dot-preserving tokenizer and predicate-precedence ranking (promoted to a shared
+  `search/tokenization.py` helper), returning `None` — no redirect, normal ranked search — when no
+  token qualifies. Nine golden-query regression tests pin the exact anchor each must extract.
+- **`search_code` no longer returns an empty result set for path-shaped queries** (ADR-0028) —
+  the `find_path` redirect's extractor (`_extract_path_endpoints`) regex-matched ordinary prose
+  (e.g. "strip line range **from** chunk_id **to get** stable normalized identifier" parsed as a
+  `source`/`target` path query), and the redirect carried `fallback_on_error=False`, so a misfire
+  returned nothing instead of falling back to ranked search. ADR-0026 found no query in either
+  golden dataset ever benefited from this branch, so it is removed outright — construction branch,
+  execution arm, extractor, and its dedicated tests — rather than left disabled behind a flag.
+  `QueryIntent.PATH_TRACING` itself is unaffected; it still selects a QW5 ego threshold and an A1
+  edge-weight profile.
+- **`find_connections` no longer silently drops non-primary relationship edges** (ADR-0027) — a
+  `(u, v)` node pair can carry more than one relationship type (e.g. `implements` + `uses_constant`,
+  which collide whenever a base class is ALL_CAPS such as `abc.ABC`), but both graph traversals
+  called `get_edge_data` with no type filter and kept only the single primary edge it selects. The
+  loss was not confined to filtered calls — `analyze_impact` never passes `relation_types`, so every
+  unfiltered `find_connections` call lost non-primary types during bucketing.
+  `RelationshipEntry` now carries every parallel edge (via the previously-orphaned
+  `get_all_edge_data`), and the analyzer fans out over all of them before bucketing.
+  `direct_callers`/`direct_callees`/`total_impacted`/`dependency_graph` are provably unchanged on the
+  unfiltered path (a `calls` edge always wins the primary selection when one exists); only the
+  `relationships` buckets gain the previously-dropped rows.
+
 ### Changed
 
+- **`index_directory`'s `include_dirs` is additive for dependency-tree paths, narrowing for
+  everything else** (ADR-0036, `aa65a92`) — `include_exclusive` threaded through `PathFilter`,
+  `get_effective_filters` (2-tuple → 3-tuple), `MerkleDAG`, the incremental indexer, and the
+  index/search MCP handlers: naming a dependency-tree path (`venv`, `site-packages`,
+  `node_modules`, `.tox`, … — `DEPENDENCY_TREE_DIRS` in `chunking/language_registry.py`, 13
+  entries) now re-admits that path *on top of* normal project scope instead of narrowing the whole
+  project down to just it; any other include path still narrows as before. The H033 golden-dataset
+  gold is retargeted to the split_block-collapsed `method:` kind, causally coupled to this change
+  (`get_project_storage_dir` only crosses the character-based split threshold once this diff's
+  params land) and must ship together with it.
+- **C/C++ call-edge resolver tier scope formalized, no code change** (ADR-0035) — documents the
+  intended coverage boundary for the C/C++ resolver tier in the layered call-graph pipeline.
+- **ML stack bumped (retrieval libs + torch 2.11.0); SSCG canon re-pinned to `canon_l1`**
+  (ADR-0033) — three independently-gated stages: transformers 5.13.0→5.14.1,
+  sentence-transformers 5.6.1→5.7.0, faiss-cpu 1.14.3→1.15.0, huggingface-hub 1.22.0→1.26.1,
+  hf-xet 1.5.1→1.6.0 (stage 1, byte-identical retrieval outcome, 0 queries moved), then torch
+  2.8.0+cu128→2.10.0+cu128 (stage 2, all five paired 95% CIs include zero — gate passes), then
+  torch 2.10.0+cu128→2.11.0+cu128 (stage 3, correcting a factual error discovered in stage 2's own
+  CVE claims — see Security below; also byte-identical retrieval outcome, 0 queries moved). The
+  `torch<2.9.0` ceiling's stated rationale (ModernBERT `torch.compile` inductor conflict) was
+  verified dead: the embedder it protected was deleted in `24f6b8c` and `transformers>=5.3.0`
+  removed ModernBERT's `reference_compile` path entirely. New ceiling `<2.12.0` reflects the
+  pinned `cu128` wheel index's current publish maximum, not a known regression. Re-pin: intent-on
+  arm mrr 0.8603 (63q, unchanged) / 0.6789 (133q), F-via-similar mrr 0.9021, superseding
+  `canon_j1`'s figures (0.8603/0.6869/0.8836) — deltas attributed to torch's kernel-level
+  floating-point reordering, not a functional change. See `docs/adr/0033-lift-torch-ceiling.md`.
+- **Deleted the two intent policy tables (QW5 + A1); SSCG canon re-pinned to `canon_j1`**
+  (ADR-0031) — `_intent_ego_thresholds` (`search/effective_config.py`) and
+  `INTENT_EDGE_WEIGHT_PROFILES` (`graph/graph_storage.py`) were measured inert by ADR-0026 and
+  isolated as flat on the per-request ego-graph path by a prior harness round
+  (`evaluation/EGO_PER_REQUEST_VIEW_20260805.md`); both are now deleted. Every intent-on request
+  (the shipped default) carrying only `intent_decision` — no ego, no parent — now gets its
+  `SearchConfig` back from `build_effective_config` by identity instead of a `copy.deepcopy`.
+  A pre-registered difference-of-differences gate (revert threshold: either metric < −0.02 on
+  either dataset) passed cleanly on both MRR and recall@10, both datasets (all four deltas within
+  ±0.004 of zero); a follow-up capture with `--ego-per-request` confirmed 0 per-query diffs against
+  the plain arm across all 63 queries, proving nothing but QW5 rode that flag. Re-pin: intent-on
+  arm mrr 0.8603 (63q) / 0.6869 (133q), superseding `canon_i1`'s figures (0.8524/0.6879). See
+  `docs/adr/0031-delete-intent-policy-tables.md`.
+- **Config→searcher seam deepened; SSCG canon re-pinned to `canon_i1`** (ADR-0030) — unified two
+  architectural-review candidates: `SearchOrchestrator._search`'s five raw
+  `isinstance(searcher, HybridSearcher)` checks now route through the previously-uncalled
+  `SearcherView.is_hybrid`; its per-request config assembly is extracted into
+  `build_effective_config()` (new module `search/effective_config.py`); and
+  `HybridSearcher`/`IndexSynchronizer` construction now preserves the whole `SearchConfig` object
+  instead of unpacking seven fields into primitives that ten dead `self.` copies never read.
+  Pure refactor, 0 behaviour change. Re-pin: intent-on arm mrr 0.8524 (63q) / 0.6879 (133q),
+  superseding `canon_h1`'s figures (0.8418/0.6750) — 0 flips measured, deltas attributed to
+  substrate drift from six intervening commits, not the refactor. See
+  `evaluation/CANON_20260805_CONFIG_SEAM_REPIN.md`.
+- **Intent classification defaults back on; `find_similar` re-gated live; SSCG canon re-pinned to
+  `canon_h1`** (ADR-0029) — after the extractor repair (see Fixed, above), a pre-registered gate on
+  the 9 similarity-category golden queries required the intent-on arm's MRR to exceed the
+  normal-path mean and its recall@20 to not fall below the `find_similar` correct-anchor ceiling,
+  on both the 63q and 133q datasets. Both passed (MRR 0.4594 → 0.5593, recall@20 0.7185 ceiling vs.
+  0.7418 arm), so `IntentConfig.enabled`'s default flips back `False` → `True`
+  (`search/config.py`, `search_config.json.example`). Re-pin: intent-on arm mrr 0.8418 (63q) /
+  0.6750 (133q), superseding `canon_g1`'s intent-off figures as the published baseline (kept
+  alongside as the intent-off reference). See `evaluation/CANON_20260804_INTENT_ON_REPAIRED.md`.
+- **Intent classification defaults off; SSCG canon re-pinned to `canon_g1`** (ADR-0028) — following
+  ADR-0026's measurement that the intent layer's non-redirect machinery is inert (+0.0005 MRR,
+  bit-identical pools) and one of its two redirects is a pure regression (see Fixed, above),
+  `IntentConfig.enabled`'s default flips `True` → `False` (`search/config.py`). The `find_similar`
+  redirect is untouched but stays gated off pending a repair-and-gate round. Re-pin: mrr 0.8352
+  (63q) / 0.6667 (133q) / F-view whole-aggregate 0.8915, F-only mean 0.8519 — bit-identical to
+  `canon_f1`'s F-only figure, confirming the ~0.01 MRR shift on the other two views is substrate
+  drift from the `find_path` deletion, not the default flip (the benchmark harness already
+  re-asserted `intent.enabled=False` per query on every non-arm capture, so `canon_f1` was already
+  measuring this condition). See `evaluation/CANON_20260804_INTENT_OFF.md` for full numbers.
+- **MCP config-field liveness closed for `search_mode`/`performance` fields, project-activation
+  pairing unified, a dead config-locator wrapper removed.** `SearchModeConfig.bm25_weight`/
+  `.dense_weight` and `PerformanceConfig.use_parallel_search` are MCP-settable but carried no `mcp=`
+  tag; both field maps now derive from the same `mcp=` declaration ADR-0022 established, plus a new
+  ratchet test asserting no MCP-settable field is ever `construction_baked`. The existing
+  `_bind_active_project_overrides` helper — previously inlined at two handler call sites instead of
+  called — is now shared and non-swallowing there, so a bind failure surfaces via `@error_handler`
+  instead of silently leaving the previous project's `search_overrides.json` active.
+  `get_config_via_service_locator` (11 call sites, all invoked with no arguments, its `key`/`default`
+  lookup dead) is deleted in favor of a direct `get_search_config()` import.
+- **SSCG benchmark harness measures the intent layer's redirect behavior** — `run_single`'s
+  unconditional per-query intent-off re-pin now stands down when an arm's own overrides set
+  `intent.enabled`, and `find_path`/`find_similar` redirects are scored as a distinct outcome
+  (`mrr_excl_redirect`, `redirect_rate`, `redirect_ids`, per-query `redirect_kind`) rather than
+  silently as a zero or an already-fair fallback. Discharges ADR-0023's `canon_B1b` gate.
+- **SSCG canon re-pinned to `canon_f1`** (ADR-0026) — the four fixes/refactors above edit indexed
+  source, so the canon is re-measured: mrr 0.8458 (63q, up from `canon_e1`'s 0.8362) / 0.6692 (133q).
+  The `canon_B1b` intent-on arm is captured for the first time and matches its pre-registered
+  falsifiability table exactly, but reveals the intent layer's entire measurable effect is two
+  redirect branches: `find_path` is a pure regression (both instances are prose misfires returning
+  empty results), while `find_similar` is a real, sabotaged capability (mean mrr 0.4577 normal →
+  0.2315 buggy redirect → 0.8519 correct anchor) with no config-only fix. Disposition: flip
+  `intent.enabled` off by default and remove `find_path` as a stopgap, then repair the symbol
+  extractor and re-measure `find_similar` against a pre-registered gate before deciding to keep or
+  remove it. See `evaluation/CANON_20260804_B1B.md` for full numbers.
 - **SSCG benchmark harness routes through `SearchOrchestrator.run()`** (ADR-0023) —
   `run_sscg_benchmark.py` previously called `HybridSearcher.search()` directly, one layer
   below the path the MCP `search_code` tool actually serves, forcing two hand-written replays
@@ -47,6 +264,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md`, `docs/VERSION_HISTORY.md`) still cited the
   pre-`canon_B1` figure (`0.7987`) — none had been updated when `canon_B1` landed — and are
   updated directly to `canon_C3`. See `evaluation/CANON_20260803.md` for full numbers.
+- **SSCG canon re-pinned to `canon_d1`/`canon_d2`** — 34 commits landed on top of `canon_C3`
+  (ADR-0025 index-clearing rework, two new relationship extractors in `e99ecef`, `ImpactReport`
+  consolidation), none of which changed retrieval mechanics but all of which touch indexed
+  corpus and/or graph edges feeding multi-hop expansion. `canon_d1` (code drift only, captured
+  pre-dataset-edit): MRR 0.8339 (63q, down 0.0009 from `canon_C3`, inside the ±0.02 noise band) /
+  0.6654 (131q, down 0.0162, describing the same 145-query dataset `canon_C3` measured) / 0.8915
+  whole-aggregate F-view (F-only mean 0.8519, unchanged). Also re-graded four previously-excluded
+  commit-mined candidates (H035/H060/H061/H068) under the ADR-0021 determinism pin, since the
+  bf16-non-determinism rationale their exclusion cited was disproven by that ADR: H035 promoted
+  as a genuine, reproducible hard case (stable `POOL_MISS`) and H068 promoted with a corrected
+  gold (its originally-mined gold predated the batched method the query actually describes);
+  H060/H061 stay excluded on query-quality/gold-defensibility grounds, unrelated to determinism.
+  `canon_d2` (dataset change only, 145→147 queries / 131→133 non-D post top-up): MRR 0.6591 — a further
+  −0.0063 from promoting two queries that were excluded specifically for being hard, not a
+  retrieval regression (0 flips, same code/index as `canon_d1`). Also fixes a mislabeled
+  `file_recall@5` in the F-category-only benchmark row (it was the whole-aggregate figure) and
+  corrects a split-count citation (train/val/test figures previously cited full-file counts
+  including the out-of-scope category D; the actually-scored counts are smaller). Five
+  user-facing docs updated to the new figures. See `evaluation/CANON_20260804.md` for full
+  numbers, the per-category/per-split breakdown, and the frontier disposition
+  (`evaluation/CATEGORY_G_DESCOPE_20260804.md` for the Category G descope).
+
+### Security
+
+- **`gitpython` bumped 3.1.57 → 3.1.58** (`bef99e6`, routine dependabot patch release, no CVE
+  tracked against 3.1.57 at time of bump).
+- **torch 2.8.0+cu128 → 2.11.0+cu128 closes 7 of 8 tracked CVEs** (ADR-0033), including both
+  CVSS 8.8 vulnerabilities: `CVE-2026-24747` (a `weights_only` unpickler bypass) and
+  `CVE-2025-3001` (a `torch.lstm_cell` memory-corruption bug — not a second `weights_only`
+  bypass, correcting an earlier mischaracterization in this project's own tracking notes), plus
+  `CVE-2026-4538` (`PYSEC-2026-139`, a `pt2` loader deserialization issue). Remaining 1:
+  `CVE-2025-3000` (fixed in 2.13.0, which the pinned `cu128` wheel index does not yet publish).
+  See `pyproject.toml`'s "Deferred (no upstream fix)" tracking comment and
+  `docs/adr/0033-lift-torch-ceiling.md`.
+- **Correction**: an intermediate pass of this same audit (torch 2.10.0) claimed
+  `CVE-2026-4538` had "no upstream fix at any version" and closed the ledger at 6 of 8. That was
+  wrong — `pip-audit`'s default OSV lookup silently drops findings for local-version wheels like
+  `torch==2.10.0+cu128` (no `skip_reason`, the entry is just absent from the report). Querying the
+  OSV API directly (`https://api.osv.dev/v1/vulns/PYSEC-2026-139`) shows `last_affected: "2.10.0"`
+  with a merged fix PR (`pytorch/pytorch#176791`) — `2.10.0` was still vulnerable, `2.11.0` closes
+  it. New standing rule: always cross-check torch CVE claims against the raw OSV API, not just
+  `pip-audit`'s report, when the installed wheel carries a local version suffix.
 
 ---
 
@@ -325,8 +584,8 @@ plus an MCP SDK major-version migration; see `### Removed` for the breaking chan
   `n_dropped_non_file_uri`/`n_dropped_outside_root`; legitimately-empty files no longer warn;
   scan counters now sum (`scanned + skipped + empty == supported`); a GLSL call-graph log line
   that was discarded at source by a too-late logging configuration now reaches a handler; recovery-
-  ladder probe misses no longer warn; `[PARSE_ERROR]` downgrades to DEBUG when the surrounding
-  content survives chunking.
+  ladder probe misses no longer warn; `[PARSE_WARN]` (formerly `[PARSE_ERROR]`) downgrades to
+  DEBUG when the surrounding content survives chunking.
 - Minor: safer futures-dict typing, tmp-file cleanup no longer raises out of
   `ChunkEmbeddingCache.save()`, and a corrected pyrefly suppression category.
 

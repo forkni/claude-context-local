@@ -54,6 +54,8 @@ class ChangeDetector:
         include_dirs: list[str] | None = None,
         exclude_dirs: list[str] | None = None,
         supported_extensions: set[str] | None = None,
+        *,
+        include_exclusive: bool = False,
     ):
         """Initialize change detector.
 
@@ -66,11 +68,20 @@ class ChangeDetector:
                 This must match the scheme used when the stored snapshot was
                 built, otherwise non-indexed files will appear as "modified" on
                 every incremental run.
+            include_exclusive: Forwarded to the MerkleDAG built for comparison —
+                when True, every include pattern is treated as narrowing
+                (whitelist-only). Must match the value the stored snapshot was
+                built with, or every file will appear changed/removed on the
+                next incremental run; when *include_dirs* is None this is
+                overridden by whatever the loaded snapshot itself recorded
+                (see :meth:`_build_current_dag`), the same inheritance rule
+                already applied to include_dirs/exclude_dirs above.
         """
         self.snapshot_manager = snapshot_manager or SnapshotManager()
         self.include_dirs = include_dirs
         self.exclude_dirs = exclude_dirs
         self.supported_extensions = supported_extensions
+        self.include_exclusive = include_exclusive
 
     def _add_snapshot_ignore(self, dag: MerkleDAG, project_path: str) -> None:
         """Add the snapshot directory to *dag*'s ignore patterns.
@@ -101,6 +112,7 @@ class ChangeDetector:
         """
         include_dirs = self.include_dirs
         exclude_dirs = self.exclude_dirs
+        include_exclusive = self.include_exclusive
 
         if old_dag is not None:
             if (
@@ -112,6 +124,15 @@ class ChangeDetector:
                 logger.debug(
                     f"[CHANGE_DETECTOR] Inheriting include_dirs from snapshot: {include_dirs}"
                 )
+                # include_exclusive only means something alongside include_dirs,
+                # so it inherits under the same condition — otherwise a snapshot
+                # built with include_exclusive=True would silently compare
+                # against an additive-classified current DAG on every run.
+                if old_dag.path_filter:
+                    include_exclusive = old_dag.path_filter.include_exclusive
+                    logger.debug(
+                        f"[CHANGE_DETECTOR] Inheriting include_exclusive from snapshot: {include_exclusive}"
+                    )
             if (
                 exclude_dirs is None
                 and old_dag.directory_filter
@@ -127,6 +148,7 @@ class ChangeDetector:
             include_dirs,
             exclude_dirs,
             supported_extensions=self.supported_extensions,
+            include_exclusive=include_exclusive,
         )
         self._add_snapshot_ignore(current_dag, project_path)
         current_dag.build()

@@ -3,6 +3,7 @@
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -48,6 +49,15 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class _FailureTally:
+    """Per-(extractor, exception type) failure count for one chunking pass."""
+
+    count: int = 0
+    first_chunk_id: str = ""
+    first_message: str = ""
+
+
 class MultiLanguageChunker:
     """Unified chunker supporting multiple programming languages."""
 
@@ -63,6 +73,8 @@ class MultiLanguageChunker:
         exclude_dirs: list | None = None,
         enable_entity_tracking: bool = False,
         relation_filter: Optional["RepositoryRelationFilter"] = None,
+        *,
+        include_exclusive: bool = False,
     ):
         """Initialize multi-language chunker.
 
@@ -72,10 +84,16 @@ class MultiLanguageChunker:
             exclude_dirs: Optional list of directories to exclude
             enable_entity_tracking: Enable P4-5 entity extractors (enums, defaults, context managers). Default False.
             relation_filter: Optional RepositoryRelationFilter for import classification
+            include_exclusive: Forwarded to PathFilter (via chunk_directory) — when
+                True, every include pattern is treated as narrowing (whitelist-only),
+                even ones that reach into a dependency tree. Kept in sync with the
+                MerkleDAG/IncrementalIndexer filter so direct chunk_directory() callers
+                see the same scope as the live index path.
         """
         self.root_path = root_path
         self.enable_entity_tracking = enable_entity_tracking
         self.relation_filter = relation_filter
+        self.include_exclusive = include_exclusive
         # All languages, including Python, route through tree-sitter.
         # chunking/python_ast_chunker.py holds only the shared CodeChunk
         # dataclass — it is not a separate Python chunking path.
@@ -95,6 +113,14 @@ class MultiLanguageChunker:
         # _ensure_thread_extractors() concurrently on their first chunk_file() call.
         self._extractor_log_lock = threading.Lock()
         self._extractor_init_logged = False
+        # Guards `_extractor_failures` below -- worker threads can race into
+        # _record_extractor_failure() concurrently. Instance-scoped (not
+        # module-scoped) so two concurrent indexes on different projects can't
+        # cross-contaminate each other's tallies. Mutated only in the `except`
+        # branch of the extractor loop, a cold path, so the lock costs nothing
+        # on the hot path.
+        self._extractor_failure_lock = threading.Lock()
+        self._extractor_failures: dict[tuple[str, str], _FailureTally] = {}
         # Pre-populate the main thread's slot so callers on the main thread never
         # trigger a lazy-init on the hot path.
         self._init_thread_extractors()
@@ -107,6 +133,7 @@ class MultiLanguageChunker:
         exclude_dirs: list | None = None,
         *,
         enable_entity_tracking: bool = False,
+        include_exclusive: bool = False,
     ) -> "MultiLanguageChunker":
         """Build a project chunker with import classification wired in.
 
@@ -130,6 +157,7 @@ class MultiLanguageChunker:
             exclude_dirs,
             enable_entity_tracking=enable_entity_tracking,
             relation_filter=relation_filter,
+            include_exclusive=include_exclusive,
         )
 
     def _init_thread_extractors(self) -> None:
@@ -190,6 +218,78 @@ class MultiLanguageChunker:
         """Lazily initialize per-thread extractors for worker threads."""
         if not hasattr(self._local, "call_graph_extractor"):
             self._init_thread_extractors()
+
+    def reset_extractor_failures(self) -> None:
+        """Clear per-pass relationship-extractor failure tallies.
+
+        Call before a chunking pass starts (``ParallelChunker.chunk_files``,
+        ``chunk_directory``) so a second index in the same process -- or a
+        retried full index -- never inherits stale counts from a prior pass.
+        """
+        with self._extractor_failure_lock:
+            self._extractor_failures.clear()
+
+    def log_extractor_failure_summary(self) -> None:
+        """Emit one ``[REL_EXTRACT]`` line per (extractor, exception type)
+        that failed during the pass. No-op when there were no failures.
+
+        Call once, after the pass's chunking work has fully joined (e.g.
+        after the ``ThreadPoolExecutor`` context manager exits), so the
+        tally is final.
+        """
+        with self._extractor_failure_lock:
+            failures = dict(self._extractor_failures)
+
+        for (extractor_name, exc_name), tally in failures.items():
+            logger.warning(
+                f"[REL_EXTRACT] {extractor_name}: {tally.count} chunks failed "
+                f"({exc_name}) — first: {tally.first_chunk_id}: {tally.first_message}"
+            )
+
+    def _record_extractor_failure(
+        self, extractor: object, exc: Exception, chunk_id: str
+    ) -> None:
+        """Record one extractor's failure and log it per the escalation policy.
+
+        | occurrence                       | level                        |
+        |-----------------------------------|-------------------------------|
+        | 1st per (extractor, exc type)     | WARNING, with traceback       |
+        | 2nd-3rd                           | WARNING, single line          |
+        | 4th+                              | DEBUG, tallied only           |
+        | any "recursion depth mismatch"    | DEBUG always, still counted   |
+
+        The recursion-depth-mismatch case mirrors the CPython 3.11.0-3.11.3
+        AST limitation special-cased in the outer handler of
+        ``_extract_phase3_relationships`` -- if an extractor hits the same
+        bug independently (e.g. via its own recursive AST walk), it stays at
+        DEBUG here too rather than newly surfacing as a WARNING now that
+        isolation lets each extractor fail on its own.
+        """
+        extractor_name = type(extractor).__name__
+        exc_name = type(exc).__name__
+        key = (extractor_name, exc_name)
+        is_recursion_bug = "recursion depth mismatch" in str(exc)
+
+        with self._extractor_failure_lock:
+            tally = self._extractor_failures.setdefault(key, _FailureTally())
+            tally.count += 1
+            if tally.count == 1:
+                tally.first_chunk_id = chunk_id
+                tally.first_message = str(exc)
+            occurrence = tally.count
+
+        if is_recursion_bug:
+            logger.debug(
+                f"Skipping {extractor_name} for {chunk_id} (Python 3.11 AST limitation)"
+            )
+        elif occurrence == 1:
+            logger.warning(
+                f"{extractor_name} failed for {chunk_id}: {exc}", exc_info=True
+            )
+        elif occurrence <= 3:
+            logger.warning(f"{extractor_name} failed for {chunk_id}: {exc}")
+        else:
+            logger.debug(f"{extractor_name} failed for {chunk_id}: {exc}")
 
     def is_supported(self, file_path: str) -> bool:
         """Check if file type is supported.
@@ -662,9 +762,13 @@ class MultiLanguageChunker:
 
             if ast_tree is not None:
                 for extractor in relationship_extractors:
-                    edges = extractor.extract_from_tree(
-                        ast_tree, dedented_content, chunk_metadata
-                    )
+                    try:
+                        edges = extractor.extract_from_tree(
+                            ast_tree, dedented_content, chunk_metadata
+                        )
+                    except Exception as exc:  # noqa: BLE001 - per-extractor isolation: one extractor raising must cost only its own edges; the other 15 still contribute and chunk.relationships is still assigned below
+                        self._record_extractor_failure(extractor, exc, chunk_id)
+                        continue
                     all_relationships.extend(edges)
 
             chunk.relationships = all_relationships
@@ -833,8 +937,17 @@ class MultiLanguageChunker:
 
         Returns:
             List of CodeChunk objects from all files
+
+        Note:
+            No production caller uses this method (both live index paths go
+            through ``ParallelChunker.chunk_files`` instead, which wires the
+            same reset/flush around ``_chunk_files_parallel`` /
+            ``_add_new_chunks``). The reset/flush calls here exist for API
+            completeness so a direct caller still gets a correct, non-leaking
+            ``[REL_EXTRACT]`` summary.
         """
         all_chunks = []
+        self.reset_extractor_failures()
         dir_path = Path(directory_path)
 
         if not dir_path.exists() or not dir_path.is_dir():
@@ -847,41 +960,44 @@ class MultiLanguageChunker:
         else:
             valid_extensions = self.SUPPORTED_EXTENSIONS
 
-        # Collect all file paths first
+        # Collect all file paths, applying the single include/exclude/default
+        # precedence resolver (PathFilter) — replaces the old two-stage
+        # basename-ignore + strict-mode DirectoryFilter check, which could not
+        # let an include_dirs pattern override a default-ignored directory
+        # (e.g. "venv", "site-packages"). Relative paths are computed against
+        # self.root_path when set (so a chunk_directory call scanning a
+        # subdirectory, e.g. an include_dirs target, still resolves patterns
+        # against the project root) and fall back to the scan directory
+        # itself otherwise.
+        from search.filters import PathFilter
+
+        effective_root = Path(self.root_path) if self.root_path else dir_path
+        path_filter = PathFilter(
+            self.directory_filter.include_dirs,
+            self.directory_filter.exclude_dirs,
+            effective_root,
+            include_exclusive=self.include_exclusive,
+        )
+
         file_paths = []
+        skipped = 0
         for ext in valid_extensions:
             for file_path in dir_path.rglob(f"*{ext}"):
-                # Skip common large/build/tooling directories.
-                # Scope the check to components *relative to the scan root*
-                # so ancestor directories named "build", "env", etc. don't
-                # suppress the entire project (#12).
                 try:
-                    rel_parts = file_path.relative_to(dir_path).parts
+                    relative_path = str(file_path.relative_to(effective_root))
                 except ValueError:
-                    rel_parts = file_path.parts
-                if any(part in self.DEFAULT_IGNORED_DIRS for part in rel_parts):
+                    # File not under the effective root; skip it.
+                    skipped += 1
                     continue
-                file_paths.append(file_path)
+                if path_filter.should_index_file(relative_path):
+                    file_paths.append(file_path)
+                else:
+                    skipped += 1
 
-        # Apply custom directory filters (include_dirs/exclude_dirs)
-        if self.root_path and self.directory_filter:
-            root = Path(self.root_path)
-            filtered_paths = []
-            for file_path in file_paths:
-                try:
-                    relative_path = str(file_path.relative_to(root))
-                    # Use strict mode for file filtering (no ancestor passthrough)
-                    if self.directory_filter.matches_for_file(relative_path):
-                        filtered_paths.append(file_path)
-                except ValueError:
-                    # File not under root, skip it
-                    continue
-            logger.info(
-                f"Applied directory filters: {len(file_paths)} files -> {len(filtered_paths)} files"
-            )
-            file_paths = filtered_paths
+        for unmatched in path_filter.unmatched_patterns():
+            logger.warning(f"Directory filter pattern matched 0 files: {unmatched!r}")
 
-        logger.info(f"Found {len(file_paths)} files to chunk")
+        logger.info(f"Found {len(file_paths)} files to chunk ({skipped} filtered out)")
 
         # Process files in parallel or sequentially
         if enable_parallel and len(file_paths) > 1:
@@ -890,6 +1006,7 @@ class MultiLanguageChunker:
             all_chunks = self._chunk_files_sequential(file_paths)
 
         logger.info(f"Total chunks from directory: {len(all_chunks)}")
+        self.log_extractor_failure_summary()
         return all_chunks
 
     def _chunk_files_sequential(self, file_paths: list[Path]) -> list[CodeChunk]:

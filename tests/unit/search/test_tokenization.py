@@ -24,6 +24,7 @@ from search.tokenization import (
     is_snake_or_dunder,
     is_upper_const,
     normalize_to_tokens,
+    tokenize_dotted_identifiers,
 )
 
 
@@ -144,6 +145,39 @@ class TestNormalizeToTokensCentralityMode:
         assert "does" in result
         # single-char tokens from "do" → "do" is 2 chars so kept
         assert "do" in result
+
+
+# ---------------------------------------------------------------------------
+# Dotted-identifier tokenizer (Round C: intent_classifier's shared tokenizer)
+# ---------------------------------------------------------------------------
+
+
+class TestTokenizeDottedIdentifiers:
+    """Case-preserving, dot-preserving tokenizer shared by intent_classifier's
+    _detect_code_symbols and _extract_symbol_from_query."""
+
+    def test_preserves_case(self):
+        assert tokenize_dotted_identifiers("HybridSearcher BM25") == [
+            "HybridSearcher",
+            "BM25",
+        ]
+
+    def test_preserves_dotted_symbol_as_one_token(self):
+        assert tokenize_dotted_identifiers("PythonChunker.__init__") == [
+            "PythonChunker.__init__"
+        ]
+
+    def test_splits_on_whitespace_and_punctuation(self):
+        assert tokenize_dotted_identifiers("find code similar to X.method!") == [
+            "find",
+            "code",
+            "similar",
+            "to",
+            "X.method",
+        ]
+
+    def test_empty_string(self):
+        assert tokenize_dotted_identifiers("") == []
 
 
 # ---------------------------------------------------------------------------

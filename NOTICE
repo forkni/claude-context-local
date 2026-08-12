@@ -1,0 +1,25 @@
+claude-context-local
+Copyright 2025 forkni
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE),
+with one file-level exception:
+
+  chunking/relationships/external_call_graph.py
+      Licensed under GPL-2.0-or-later instead of Apache-2.0.
+
+Why: this file subclasses pyan3's CallGraphVisitor in-process and imports
+pyan.anutils / pyan.postprocessor directly, rather than treating pyan3 as an
+arm's-length subprocess. pyan3 (the Technologicat fork, PyPI package
+`pyan3`) is itself GPL-2.0-or-later. Combining Apache-2.0 code with GPLv2
+code is only viable one-way and only because of pyan3's "or-later" grant
+(Apache-2.0 is compatible with GPLv3, not with GPLv2-only); this single file
+is licensed to match the code it derives from rather than relying on that
+compatibility path.
+
+pyan3 is never bundled or distributed with this project. It is an optional
+`callgraph` install extra (see `[project.optional-dependencies]` in
+pyproject.toml); users who want the pyan-derived call-graph tier install it
+themselves from PyPI. The rest of this project has no dependency on pyan3
+and remains Apache-2.0 as declared in LICENSE.
+
+See docs/adr/0034-pyan-gpl-quarantine.md for the full decision record.

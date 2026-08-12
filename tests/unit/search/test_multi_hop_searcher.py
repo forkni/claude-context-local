@@ -17,7 +17,7 @@ def _request(query="test query", k=2, search_mode="hybrid", config=None, filters
     """Build a RetrievalRequest for MultiHopSearcher.search tests.
 
     config defaults to a bare MagicMock — search() no longer calls
-    _get_config_via_service_locator() itself, so a test that used to patch
+    get_search_config() itself, so a test that used to patch
     that function now sets up its config Mock and hands it here instead.
     """
     return RetrievalRequest(

@@ -13,10 +13,10 @@ The project has **three distinct graph-aware subsystems** that are often confuse
 
 - Retrieval Funnel & Reranker Budget (v0.21.0 — per-leg pool sizing, graph cap)
 - Multi-Hop Search (always-on — semantic + graph expansion, tags `multi_hop`/`graph_hop`)
-- Ego-Graph Expansion (**opt-in** via `ego_graph_enabled`, default `false`)
+- Ego-Graph Expansion (**always-on** — `ego_graph_enabled` only widens it, never gates it)
 - Centrality Reranking (always-on when graph data exists)
 - BM25 Snowball Stemming (inactive under the default `bm25_tokenizer="whole"`)
-- A1: Intent-Adaptive Edge Weights (internal)
+- Intent Classification: Effects That Still Exist (on by default — ADR-0029)
 - A2: File-Level Summary Chunks (configurable)
 - **pyan3 Cross-Module Caller Edges** (v0.13.0 — injected at full-index time)
 
@@ -69,7 +69,7 @@ lexical/dense retrieval.
 | `search` | Direct lexical / dense match to the query |
 | `multi_hop` | Reached by semantic expansion of an initial hit |
 | `graph_hop` | Reached by call / import graph traversal from an initial hit |
-| `ego_graph` | Reached by the opt-in ego-graph k-hop retriever (see below) |
+| `ego_graph` | Reached by the always-on ego-graph k-hop retriever (see below — the tool argument only widens it, it doesn't gate it) |
 
 You cannot disable multi-hop via tool parameters. For debugging, edit `search_config.json` and restart.
 
@@ -78,30 +78,36 @@ You cannot disable multi-hop via tool parameters. For debugging, edit `search_co
 
 ---
 
-## Ego-Graph Expansion (opt-in)
+## Ego-Graph Expansion (always-on; the tool argument only widens it)
 
-**Status:** **Opt-in.** Default `ego_graph_enabled=false` in the `code-search:search_code` tool schema. Separate subsystem from multi-hop above — the
-two are not the same thing.
+**Status:** **Always-on, and cannot be disabled from the MCP boundary.** `EgoGraphConfig.enabled` defaults to `True` in the dataclass
+(`search/config.py`), and `search/effective_config.py`'s `build_effective_config()` only ever *turns ego-graph on*
+(`if plan.ego_graph_enabled: replace(..., enabled=True)`) — there is no branch that sets `enabled=False`. The `ego_graph_enabled` tool argument
+(schema default `false`) does not gate the feature; it only raises `ego_graph_k_hops`/`ego_graph_max_neighbors_per_hop` when `true`. Confirmed
+empirically: a plain `search_code` call with `ego_graph_enabled` omitted still returns rows carrying `"source": "ego_graph"`. Separate subsystem from
+multi-hop above — the two are not the same thing, but neither one is actually optional today.
 
-**Purpose:** Explicitly fetch k-hop neighbors of the top result(s) via weighted BFS, with configurable hop depth and neighbor caps. Useful when you
-know you want a local neighborhood of related code rather than the engine's default expansion.
+**Purpose:** Fetch k-hop neighbors of the top result(s) via weighted BFS, with configurable hop depth and neighbor caps. Useful when you know you
+want a local neighborhood of related code rather than the engine's default expansion.
 
 **Observable behavior:**
 
 1. Run normal search (which already includes always-on multi-hop above).
-2. **If `ego_graph_enabled=true`**, take top result(s) and do weighted BFS out to `ego_graph_k_hops` (default `2`) with edge weights `calls=1.0`,
-   `imports=0.3`, others intermediate.
+2. Ego-graph BFS always runs, taking top result(s) out to `ego_graph_k_hops` (default `2`) with edge weights `calls=1.0`, `imports=0.3`, others
+   intermediate. Passing `ego_graph_enabled=true` raises this to a wider neighborhood — it does not switch on something that wasn't already running.
 3. Cap neighbors per hop via `ego_graph_max_neighbors_per_hop` (default `10`).
 4. An **additional** post-expansion neural rerank (to unify scoring across the original results + the ego-graph-added results on a single
-   cross-encoder scale) runs only when this gate is open. The standard neural reranker used by hybrid search is independent of `ego_graph_enabled` and
-   continues to run as configured via `code-search:configure_reranking`.
+   cross-encoder scale) runs whenever ego-graph neighbors are present — which, per the above, is effectively always. The standard neural reranker used
+   by hybrid search is independent of this and continues to run as configured via `code-search:configure_reranking`.
 
-> **Implementation notes (may drift — 2026-04-11):** default declared in `mcp_server/tool_registry.py` `search_code` schema; core logic in
-> `search/ego_graph_retriever.py`; gated inside `HybridSearcher.search()` in `search/hybrid_searcher.py` on `effective_config.ego_graph.enabled`.
+> **Implementation notes (may drift — 2026-08-06):** dataclass default in `search/config.py` (`EgoGraphConfig.enabled`); the ON-only merge logic is
+> `search/effective_config.py`'s `build_effective_config()`; core BFS logic in `search/ego_graph_retriever.py`; consumed inside
+> `HybridSearcher.search()` in `search/hybrid_searcher.py` via `effective_config.ego_graph.enabled`.
 
-**To enable:** `code-search:search_code(..., ego_graph_enabled=true, ego_graph_k_hops=2)`
+**To widen it:** `code-search:search_code(..., ego_graph_enabled=true, ego_graph_k_hops=2)` — there is no argument that narrows or disables it.
 
-**When to use:** contextual / local-neighborhood queries ("show me everything that touches this class"). Overkill for simple symbol lookups.
+**When to use the wider setting:** contextual / local-neighborhood queries ("show me everything that touches this class"). The narrower always-on
+default already adds neighbor rows to every result set; `ego_graph_enabled=true` is for when that isn't enough context.
 
 ### `relation_types` in `ego_graph` config
 
@@ -154,37 +160,49 @@ routes through `_tokenize_identifiers()` instead — that path does **not** stem
 
 ---
 
-## A1: Intent-Adaptive Edge Weights
+## Intent Classification: Effects That Still Exist
 
-**Status:** Internal to the search engine. NOT directly exposed at the MCP boundary.
+**Status:** On by default (`intent.enabled=true`, ADR-0029) — re-enabled after ADR-0028 had turned it off pending a repair of the SIMILARITY-intent
+symbol extractor (`_extract_symbol_from_query`), which was misfiring on trailing prose words instead of the query's actual anchor symbol. NOT
+directly exposed at the MCP boundary — there is no tool argument that reads intent classification results.
 
-**What it does:** Classifies queries into 7 intent categories using a keyword + anchor-embedding ensemble, then adjusts graph traversal edge weights
-and search parameters accordingly.
+**What this page used to document, and why it doesn't anymore:** an earlier version documented a 7-row table of per-intent graph-traversal
+edge-weight adjustments (`INTENT_EDGE_WEIGHT_PROFILES` in `graph/graph_storage.py`) plus a separate `_intent_ego_thresholds` policy in
+`search/effective_config.py`. **Both were deleted** (ADR-0031, `4a93c65`) — ADR-0026 had measured the edge-weight table as inert on the canonical
+benchmark (pool composition bit-identical whether it fired or not, net +0.0005 MRR), and a later measurement (QW5) found the CONTEXTUAL
+ego-threshold policy produced 0 diffs across all 63 canonical queries. A repo-wide grep for either name now returns zero production hits;
+`effective_config.py` is 77 lines with no `graph` import at all. **Both were already tried and measured inert — don't re-add either without new
+evidence.**
 
-**⚠️ Note on automatic routing:** The intent classifier may internally redirect `search_code` to `find_path` (path_tracing intent) or
-`find_similar_code` (similarity intent) when confidence ≥ 0.35. This routing is transparent — the MCP dispatcher does NOT change which tool is called
-on the wire. If you need deterministic behavior, call `code-search:find_path` or `code-search:find_similar_code` directly.
+**What intent classification actually still does** (`mcp_server/tools/search_orchestrator.py`), each with its own evidence status:
 
-**Intent categories and adjustments (for reference):**
+1. **`SIMILARITY` intent + confidence ≥ 0.4 + an extractable symbol → redirects `search_code` to `find_similar_code`** instead of running the normal
+   search path (`fallback_on_error=True` — a redirect failure falls back to normal search rather than erroring out). **The only effect with positive
+   measured evidence:** the repaired extractor's redirect beats the normal ranked path on MRR for the 9 similarity queries in the golden set, on both
+   the 63q and 133q datasets (ADR-0029).
+2. **`CONTEXTUAL` intent → forces `ego_graph_enabled=True`** for that search. **Present in code but proven inert** — ego-graph expansion is already
+   always-on regardless of this flag (see above), so this effect currently changes nothing observable.
+3. **`GLOBAL` intent → suggests `k=10`**, applied only when greater than the caller's `k` (plus suggests `search_mode=HYBRID`).
+4. **Any intent whose `suggested_params` includes `search_mode="auto"` → applies that suggested `search_mode`** to the actual search call.
+5. **`NAVIGATIONAL` intent writes `symbol_name`/`relationship_types` into `suggested_params` that nothing consumes.** `PlanRedirect` only ever
+   constructs `kind="find_similar"` — there is no `find_connections` redirect path for these values to feed into. This is dead code that computes a
+   result and discards it, not a documented feature; don't expect `NAVIGATIONAL` classification to do anything beyond whichever of effects 3/4 above
+   also apply.
 
-| Intent | Graph weight adjustments | Automatic action |
-|--------|--------------------------|-----------------|
-| `local` | calls=1.0, inherits=1.0, imports=0.1 | Standard search |
-| `global` | imports=0.7, uses_type=0.9, instantiates=0.8 | k expanded |
-| `navigational` | calls=1.0, inherits=0.9, imports=0.5 | Standard search |
-| `path_tracing` | uniform 0.7 base, calls=1.0, inherits=0.9 | Internal redirect to find_path |
-| `similarity` | uses_type=0.9, decorates=0.7, defines_class_attr=0.7 | Internal redirect to find_similar_code |
-| `contextual` | all weights raised to min 0.5 | ego_graph enabled |
-| `hybrid` | default weights | Standard search |
+**`path_tracing` intent no longer redirects to `find_path`** — that branch was removed outright (ADR-0028): both of its live golden-dataset firings
+were regex misfires of `_extract_path_endpoints` on ordinary prose, and `fallback_on_error=False` turned each into an empty result set with no
+upside case ever observed. `find_path` remains available as a standalone MCP tool (`code-search:find_path`); only the automatic `search_code`
+redirect to it is gone.
 
-**Semantic enhancement** (opt-in, default off):
+**How a query gets its intent label** (the classification mechanism itself, separate from the four effects above):
 
-- `semantic_enabled=false` by default; `semantic_weight=0.3`
-- Ensemble: `0.7 × keyword_score + 0.3 × anchor_embedding_score`
-- Anchor queries: 8–10 representative phrases per intent, defined in `config/intent_anchors.yaml`
-- Confidence threshold: 0.35 (queries below fall back to HYBRID intent)
-- Enable via `search_config.json` (`IntentConfig.semantic_enabled = true`); **not** exposed through any MCP config tool (`configure_search_mode` does
-  not accept `semantic_enabled`)
+- Classifies queries into 7 categories (`LOCAL`, `GLOBAL`, `NAVIGATIONAL`, `PATH_TRACING`, `SIMILARITY`, `CONTEXTUAL`, `HYBRID` —
+  `search/intent_classifier.py`) using a keyword + anchor-embedding ensemble: `0.7 × keyword_score + 0.3 × anchor_embedding_score`
+  (`semantic_enabled=true`, `semantic_weight=0.3` by default).
+- Anchor queries: 8–10 representative phrases per intent, defined in `config/intent_anchors.yaml`.
+- Confidence threshold: 0.4 (queries below fall back to `HYBRID` intent).
+- Configure via `search_config.json` (`IntentConfig`, 6 fields: `enabled`, `confidence_threshold`, `default_intent`, `log_classifications`,
+  `semantic_enabled`, `semantic_weight`); **not** exposed through any MCP config tool (`configure_search_mode` does not accept any `intent_*` field).
 
 ---
 
@@ -210,7 +228,7 @@ query to filter them out.
 
 `code-search:configure_chunking` exposes many options beyond just file summaries:
 
-- `sizing_mode`: "fixed" (default) or "adaptive" (adjusts chunk size by complexity)
+- `sizing_mode`: "adaptive" (default — adjusts chunk size by complexity) or "fixed"
 - `adaptive_multiplier_max` / `adaptive_multiplier_min`: bounds for adaptive sizing
 - `max_complexity_cap`: cap on complexity-based growth
 - `max_phantom_degree`: limit on phantom node degree
@@ -222,8 +240,9 @@ These are advanced tuning options. For most projects, defaults are correct.
 
 ## Layered Call-Graph Resolver Pipeline (v0.14.0)
 
-**Status:** Runs at full-index time via `_inject_call_edges`. Core (AST) is always-on; pyan3/LibCST require `pip install -e ".[callgraph]"`; LSP
-requires `pip install -e ".[lsp]"` plus `lsp_enabled=true` in `search_config.json`.
+**Status:** Runs at full-index time via `search/call_edge_injection.py`'s `inject_call_edges()`. Core (AST) is always-on; pyan3/LibCST require
+`pip install -e ".[callgraph]"` **and** their names present in `call_graph.resolvers`; LSP requires `pip install -e ".[lsp]"` and is gated by the
+separate `lsp_enabled` flag, which now **defaults to `true`** — not by `call_graph.resolvers` (see the trap below).
 
 **Purpose:** Improve `find_connections` cross-module caller/callee recall. Each resolver adds edges with a confidence score; a higher-confidence
 resolver can upgrade an edge already contributed by a lower one.
@@ -244,21 +263,28 @@ resolver can upgrade an edge already contributed by a lower one.
 {
   "call_graph": {
     "resolvers": ["pyan", "libcst"],
-    "lsp_enabled": false,
+    "lsp_enabled": true,
     "lsp_timeout_seconds": 30.0,
-    "min_confidence": 0.0,
+    "min_confidence": 0.65,
     "use_pyproject_toml": false
   }
 }
 ```
 
-`min_confidence` (default `0.0` — accepts all edges): raise it to drop edges below the threshold before injection — e.g. `0.65` discards pyan wildcard
-fan-out edges (tagged 0.60) while keeping direct pyan edges (0.75); trade recall for precision without reindexing. See `docs/CALL_GRAPH_TUNING.md`
-§6.1. `use_pyproject_toml` (default `false`): pass to LibCST `FullRepoManager` for src-layout package discovery.
+`min_confidence` (default **`0.65`** — this is the shipped precision/recall tradeoff, not a suggestion to raise toward): edges below the threshold are
+dropped before injection — e.g. `0.65` discards pyan wildcard fan-out edges (tagged 0.60) while keeping direct pyan edges (0.75) and everything from
+LibCST/LSP. Lower it toward `0.0` to accept all edges (more recall, more noise) without reindexing. See `docs/CALL_GRAPH_TUNING.md` §6.1.
+`use_pyproject_toml` (default `false`): pass to LibCST `FullRepoManager` for src-layout package discovery.
+
+**⚠️ Trap: `resolvers` and `lsp_enabled` are two independent gates.** `call_graph.resolvers` governs the pyan3/LibCST resolvers **only** — putting
+`"lsp"` in that list is accepted but is a no-op that just logs a warning (`search/call_edge_injection.py`). The LSP/basedpyright resolver (Stage 3) is
+gated solely by the separate `lsp_enabled` boolean, independent of what `resolvers` contains.
 
 **How it works:**
 
-1. At full-index time, `_inject_call_edges()` (`search/index_write_stage.py`) reads `CallGraphConfig`, instantiates enabled + available resolvers.
+1. At full-index time, `search/call_edge_injection.py`'s `inject_call_edges()` reads `CallGraphConfig` and instantiates the enabled + available
+   resolvers (subject to the `resolvers`-vs-`lsp_enabled` trap above). `search/index_write_stage.py`'s `_inject_call_edges` now only handles
+   collaborator resolution before delegating to `inject_call_edges()` — it is not where resolver instantiation happens anymore.
 2. `run_resolvers()` (`chunking/relationships/call_edge_resolver.py`) runs all resolvers in ascending confidence order; the merged result keeps the
    highest-confidence edge per `(caller_id, callee_id)` pair.
 3. Edges carry provenance: `resolver_source` (`"ast"|"pyan"|"libcst"|"lsp"`) and `resolver_confidence` (float).

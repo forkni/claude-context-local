@@ -457,6 +457,62 @@ def connect(timeout=DEFAULT_TIMEOUT, retries=3, config=None):
         assert len(edges) == 1
         assert edges[0].target_name == "DEFAULT_TIMEOUT"
 
+    def test_all_regular_defaults_control(self, extractor, chunk_metadata):
+        """Control case: all-regular-args signature must keep working unchanged."""
+        code = """
+def g(x=CONST_X, y=CONST_Y):
+    pass
+"""
+        edges = extractor.extract(code, chunk_metadata)
+
+        assert len(edges) == 2
+        pairs = {(e.target_name, e.metadata["parameter"]) for e in edges}
+        assert pairs == {("CONST_X", "x"), ("CONST_Y", "y")}
+
+    def test_positional_only_default(self, extractor, chunk_metadata):
+        """PEP 570: a positional-only param with a default must not raise.
+
+        `ast.arguments.defaults` is right-aligned across `posonlyargs + args`
+        combined, not `args` alone -- indexing into `args.args` for a
+        posonly-only signature goes negative and raises IndexError.
+        """
+        code = """
+def get_device_capability(device=DEFAULT_DEVICE, /):
+    pass
+"""
+        edges = extractor.extract(code, chunk_metadata)
+
+        assert len(edges) == 1
+        assert edges[0].target_name == "DEFAULT_DEVICE"
+        assert edges[0].metadata["parameter"] == "device"
+
+    def test_positional_only_and_keyword_only_defaults(self, extractor, chunk_metadata):
+        """Positional-only default combined with keyword-only defaults."""
+        code = """
+def custom_op(name, fn=SENTINEL, /, *, mutates_args, device_types=NONE_T):
+    pass
+"""
+        edges = extractor.extract(code, chunk_metadata)
+
+        assert len(edges) == 2
+        pairs = {(e.target_name, e.metadata["parameter"]) for e in edges}
+        assert pairs == {("SENTINEL", "fn"), ("NONE_T", "device_types")}
+
+    def test_positional_only_and_regular_defaults_attribution(
+        self, extractor, chunk_metadata
+    ):
+        """Positional-only + regular defaults must attribute to the correct
+        parameter -- not silently shift onto the wrong one."""
+        code = """
+def f(a=CONST_A, /, b=CONST_B):
+    pass
+"""
+        edges = extractor.extract(code, chunk_metadata)
+
+        assert len(edges) == 2
+        pairs = {(e.target_name, e.metadata["parameter"]) for e in edges}
+        assert pairs == {("CONST_A", "a"), ("CONST_B", "b")}
+
     def test_async_function(self, extractor, chunk_metadata):
         """Test async function defaults."""
         code = """

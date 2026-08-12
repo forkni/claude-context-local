@@ -24,9 +24,7 @@ except ImportError:
     SentenceTransformer = None
 
 from embeddings.model_cache import ModelCacheManager
-from mcp_server.utils.config_helpers import (
-    get_config_via_service_locator as _get_config_via_service_locator,
-)
+from search.config import get_search_config
 
 
 # Dummy text representative of a typical code chunk (~512 tokens).
@@ -193,8 +191,7 @@ class ModelLoader:
         if torch is None or not torch.cuda.is_available():
             return None  # CPU: use fp32 default
 
-        # Use ServiceLocator helper instead of inline import
-        config = _get_config_via_service_locator()
+        config = get_search_config()
 
         if not config.performance.enable_fp16:
             return None  # fp16 disabled: use fp32

@@ -42,8 +42,10 @@ import subprocess
 import sys
 import time
 from collections import Counter
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from statistics import mean
+from statistics import mean, stdev
 from typing import Any
 
 
@@ -104,6 +106,7 @@ from evaluation.metrics import (  # noqa: E402
     resolve_chunk_ids_to_ranges,
     to_file_entries,
 )
+from search.config import SearchConfig  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +135,345 @@ RERANKER_SWEEP: list[dict[str, Any]] = [
 
 
 # ---------------------------------------------------------------------------
+# Knob table (ADR-0018 Part 2 / C1) — single source of truth for the named
+# CLI override flags, replacing five separate restatements (CLI flag,
+# `_apply_*_override` wrapper, `run_single` keyword param, console print
+# line, `config_metadata` entry) with one row per knob, consumed by
+# `_overrides_from_args`, `_build_config_metadata`, and `_print_overrides`.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Knob:
+    """One row = one benchmark override knob.
+
+    ``arg`` is the argparse dest on the parsed ``Namespace``. ``key`` is the
+    dotted ``SearchConfig`` field the (possibly ``to_config``-converted)
+    value is written to via ``evaluation.arm_overrides.apply_overrides``;
+    ``None`` means the knob is not routed through that seam — either because
+    it mutates an undeclared ``EgoGraphConfig`` field via legacy raw
+    ``setattr`` (``community_bounded``, ``cross_community_penalty`` — see
+    ``_apply_legacy_ego_overrides``), or because it isn't a config field at
+    all (``f_via_similar`` selects a scoring view, not a mutation).
+
+    ``meta`` is the ``config_metadata`` key the knob's raw CLI value is
+    recorded under; ``None`` means deliberately not recorded — a
+    pre-existing gap (the two reranker doc-budget knobs) kept as-is rather
+    than silently closed by this refactor. ``label`` is the console print
+    grouping. ``to_config``/``from_config`` are the (rare) raw-CLI-value <->
+    config-value conversion pair — e.g. ``"on"`` <-> ``True`` for
+    ``ego_graph`` — needed because ``config_metadata`` must keep recording
+    the raw value even though ``overrides`` (this table's other consumer)
+    only carries the converted one. ``only_if_true`` marks ``store_true``
+    flags, which apply when truthy rather than when non-``None``.
+    """
+
+    arg: str
+    key: str | None
+    meta: str | None
+    label: str | None
+    to_config: Callable[[Any], Any] | None = None
+    from_config: Callable[[Any], Any] | None = None
+    only_if_true: bool = False
+
+
+_KNOBS: tuple[_Knob, ...] = (
+    _Knob("bm25_weight", "search_mode.bm25_weight", "bm25_weight", "Weights"),
+    _Knob("dense_weight", "search_mode.dense_weight", "dense_weight", "Weights"),
+    # No console line pre-refactor either (search_mode only ever appeared
+    # grouped under "Weights" via bm25_weight/dense_weight presence).
+    _Knob("search_mode", "search_mode.default_mode", "search_mode", None),
+    _Knob("reranker_model", "reranker.model_name", "reranker_model", "Reranker"),
+    _Knob(
+        "reranker_enabled",
+        "reranker.enabled",
+        "reranker_enabled",
+        "Reranker",
+        to_config=lambda v: v == "true",
+    ),
+    _Knob(
+        "top_k_candidates",
+        "reranker.top_k_candidates",
+        "top_k_candidates",
+        "Reranker pool budget",
+    ),
+    _Knob(
+        "reranker_doc_max_chars",
+        "reranker.doc_max_chars",
+        None,  # preserve the pre-existing config_metadata gap
+        "Reranker doc budget",
+    ),
+    _Knob(
+        "reranker_listwise_doc_max_chars",
+        "reranker.listwise_doc_max_chars",
+        None,  # preserve the pre-existing config_metadata gap
+        "Reranker doc budget",
+    ),
+    _Knob(
+        "reranker_dtype", "reranker.listwise_dtype", "reranker_dtype", "Reranker dtype"
+    ),
+    _Knob("rrf_k", "search_mode.rrf_k_parameter", "rrf_k", "RRF fusion constant"),
+    _Knob(
+        "bm25_reserved_slots",
+        "search_mode.bm25_reserved_slots",
+        "bm25_reserved_slots",
+        "BM25 reserved pool slots",
+    ),
+    _Knob(
+        "multi_hop_expansion",
+        "multi_hop.expansion",
+        "multi_hop_expansion",
+        "Multi-hop expansion factor",
+    ),
+    _Knob(
+        "hop1_reserved_slots",
+        "reranker.hop1_reserved_slots",
+        "hop1_reserved_slots",
+        "Hop1 reserved rerank-window slots",
+    ),
+    _Knob(
+        "query_expansion",
+        "query_expansion.enabled",
+        "query_expansion",
+        "Query expansion",
+        only_if_true=True,
+    ),
+    _Knob(
+        "ego_graph",
+        "ego_graph.enabled",
+        "ego_graph",
+        "Ego-graph expansion",
+        to_config=lambda v: v == "on",
+        from_config=lambda v: "on" if v else "off",
+    ),
+    _Knob(
+        "community_bounded",
+        None,  # undeclared EgoGraphConfig field - legacy raw setattr
+        "community_bounded",
+        "Community-bounded ego truncation",
+    ),
+    _Knob(
+        "cross_community_penalty",
+        None,  # undeclared EgoGraphConfig field - legacy raw setattr
+        "cross_community_penalty",
+        "Cross-community penalty",
+    ),
+    _Knob(
+        "expansion_mode",
+        "ego_graph.expansion_mode",
+        "expansion_mode",
+        "Ego expansion mode",
+    ),
+    _Knob(
+        "f_via_similar",
+        None,  # not a SearchConfig field - selects a scoring view
+        "f_via_similar",
+        "F-via-similar",
+        only_if_true=True,
+    ),
+)
+
+# Reserved (non-dotted, non-section-name) key `_overrides_from_args` uses to
+# carry the two legacy ego fields alongside the dotted overrides dict, so
+# both travel through one `arm_overrides.merge_overrides` call. Callers must
+# `.pop()` it before handing the rest to `arm_overrides.apply_overrides`
+# (`run_single` does this) - left in, it would be misread as an attempt to
+# override the `ego_graph` *section* and rejected by `normalize_overrides`.
+_LEGACY_EGO_KEY = "__legacy_ego__"
+
+
+def _overrides_from_args(
+    args: argparse.Namespace, *, exclude: frozenset[str] = frozenset()
+) -> dict[str, Any]:
+    """Build one merge-ready overrides dict from a parsed CLI ``Namespace``.
+
+    Reads each ``_KNOBS`` row off *args* by its ``arg`` (the argparse dest),
+    applies ``to_config`` where declared, and keys the result by dotted
+    ``SearchConfig`` path - ready for ``arm_overrides.merge_overrides``/
+    ``apply_overrides``. Knobs the caller didn't supply (``None``, or falsy
+    for ``only_if_true`` rows) are omitted entirely, matching every
+    ``_apply_*_override`` wrapper's all-``None``-means-no-op guard. The two
+    undeclared ``EgoGraphConfig`` fields ride under ``_LEGACY_EGO_KEY``
+    instead of a dotted path (see its docstring); ``f_via_similar`` isn't a
+    config field, so it never appears here at all.
+
+    *exclude* skips the named knobs in ``{knob.arg}`` entirely - used by
+    ``main_async``'s sweep loops, which supply those specific fields from a
+    ``SWEEP_CONFIGS``/``RERANKER_SWEEP`` delta (see ``_sweep_delta``) instead
+    of the CLI flag, and must not silently fall back to it, matching the
+    pre-refactor sweep loops (which never read ``args.bm25_weight`` /
+    ``args.reranker_model`` inside a sweep iteration).
+    """
+    overrides: dict[str, Any] = {}
+    legacy_ego: dict[str, Any] = {}
+    for knob in _KNOBS:
+        if knob.arg in exclude:
+            continue
+        value = getattr(args, knob.arg, None)
+        if knob.only_if_true:
+            if not value:
+                continue
+        elif value is None:
+            continue
+        if knob.key is not None:
+            overrides[knob.key] = knob.to_config(value) if knob.to_config else value
+        elif knob.arg in ("community_bounded", "cross_community_penalty"):
+            legacy_ego[knob.arg] = value
+    if legacy_ego:
+        overrides[_LEGACY_EGO_KEY] = legacy_ego
+    return overrides
+
+
+def _sweep_delta(sweep_cfg: dict[str, Any]) -> dict[str, Any]:
+    """Convert one ``SWEEP_CONFIGS``/``RERANKER_SWEEP`` entry into a dotted-
+    key overrides delta, ready to merge via ``arm_overrides.merge_overrides``.
+
+    Unlike ``_overrides_from_args``, sweep-dict values are already final
+    ``SearchConfig``-typed (e.g. ``reranker_enabled: False`` is a literal
+    ``bool``, not the raw CLI string ``"false"``) — so this applies the
+    ``_KNOBS``-table ``key`` mapping directly, with no ``to_config``
+    conversion. ``"config_name"`` and any key without a table entry (or
+    whose entry doesn't route through ``apply_overrides``) are ignored.
+    """
+    knobs_by_arg = {knob.arg: knob for knob in _KNOBS if knob.key is not None}
+    return {
+        knobs_by_arg[arg_name].key: value
+        for arg_name, value in sweep_cfg.items()
+        if arg_name in knobs_by_arg
+    }
+
+
+def _apply_legacy_ego_overrides(
+    cfg: SearchConfig,
+    community_bounded: str | None,
+    cross_community_penalty: float | None,
+) -> None:
+    """Set the two undeclared ``EgoGraphConfig`` fields via raw ``setattr``.
+
+    ``community_bounded``/``cross_community_penalty`` are not declared
+    ``EgoGraphConfig`` fields (confirmed by introspection - vestigial from
+    the since-rejected community-merge experiment) and are not read anywhere
+    in ``search/``. Routing them through ``arm_overrides.apply_overrides``
+    would turn that silent no-op into a hard ``ArmOverrideError`` ("unknown
+    field") - a real behavior change this refactor must not make, so they
+    keep the original raw ``setattr``, unchanged from the pre-refactor
+    ``_apply_ego_graph_overrides``.
+    """
+    if community_bounded is None and cross_community_penalty is None:
+        return
+    try:
+        if community_bounded is not None:
+            cfg.ego_graph.community_bounded = community_bounded == "on"
+        if cross_community_penalty is not None:
+            cfg.ego_graph.cross_community_penalty = cross_community_penalty
+    except Exception as e:
+        print(f"[WARN] Could not apply ego-graph overrides: {e}", file=sys.stderr)
+
+
+def _build_config_metadata(
+    *,
+    project_path: str,
+    k: int,
+    category_filter: str | None,
+    overrides: dict[str, Any],
+    legacy_ego: dict[str, Any],
+    f_via_similar: bool,
+    split_filter: str | None = None,
+    ego_per_request: bool = False,
+) -> dict[str, Any]:
+    """Build ``config_metadata`` from the same *overrides* dict used to
+    mutate ``SearchConfig``, recovering each knob's raw CLI value (never the
+    ``to_config``-converted one) via ``_Knob.from_config``.
+
+    *overrides* must already have ``_LEGACY_EGO_KEY`` popped into
+    *legacy_ego* (see ``_overrides_from_args``). Base fields
+    (``project_path``/``k``/``category_filter``) and
+    ``peak_vram_reserved_gb`` are not knobs - callers add the latter
+    themselves when available.
+
+    ``ego_per_request`` records whether this run set the per-request
+    ``ego_graph_enabled`` plan argument (distinct from the ``--ego-graph``
+    config-field override, which is already captured via ``overrides``).
+    """
+    metadata: dict[str, Any] = {
+        "project_path": project_path,
+        "k": k,
+        "category_filter": category_filter,
+        "split_filter": split_filter,
+    }
+    knobs_by_key = {knob.key: knob for knob in _KNOBS if knob.key is not None}
+    for dotted_key, config_value in overrides.items():
+        knob = knobs_by_key.get(dotted_key)
+        if knob is None or knob.meta is None:
+            continue
+        metadata[knob.meta] = (
+            knob.from_config(config_value) if knob.from_config else config_value
+        )
+    if legacy_ego.get("community_bounded") is not None:
+        metadata["community_bounded"] = legacy_ego["community_bounded"]
+    if legacy_ego.get("cross_community_penalty") is not None:
+        metadata["cross_community_penalty"] = legacy_ego["cross_community_penalty"]
+    if f_via_similar:
+        metadata["f_via_similar"] = True
+    if ego_per_request:
+        metadata["ego_per_request"] = True
+    return metadata
+
+
+def _print_overrides(
+    overrides: dict[str, Any],
+    legacy_ego: dict[str, Any],
+    f_via_similar: bool,
+    ego_per_request: bool = False,
+) -> None:
+    """Print one console line per supplied override, grouped by label.
+
+    Sourced from *overrides* (the dotted-key, post-``to_config`` values)
+    rather than ``config_metadata`` so the two doc-budget knobs - which are
+    deliberately absent from ``config_metadata`` (see ``_Knob``) - still get
+    a console line, matching the pre-refactor output. *overrides* must
+    already have ``_LEGACY_EGO_KEY`` popped into *legacy_ego*. Any dotted key
+    with no ``_KNOBS`` entry - i.e. it can only have arrived via ``--set``,
+    since every named-flag/sweep-delta key is tabled - prints under a
+    catch-all line instead of being silently dropped, preserving the
+    visibility the old ``print(f"  --set overrides: {set_overrides}")`` gave
+    arbitrary fields with no dedicated flag.
+    """
+    knobs_by_key = {knob.key: knob for knob in _KNOBS if knob.key is not None}
+    lines: dict[str, list[str]] = {}
+    untabled: dict[str, Any] = {}
+    for dotted_key, value in overrides.items():
+        knob = knobs_by_key.get(dotted_key)
+        if knob is None:
+            untabled[dotted_key] = value
+            continue
+        if knob.label is None:
+            continue
+        text = f"{knob.meta or knob.arg}={value}"
+        lines.setdefault(knob.label, []).append(text)
+    for arg_name in ("community_bounded", "cross_community_penalty"):
+        value = legacy_ego.get(arg_name)
+        if value is None:
+            continue
+        knob = next(k for k in _KNOBS if k.arg == arg_name)
+        lines.setdefault(knob.label, []).append(f"{knob.meta}={value}")
+    if f_via_similar:
+        lines.setdefault("F-via-similar", []).append(
+            "ON (anchored F queries scored via find_similar_to_chunk; "
+            "secondary view, not the official aggregate)"
+        )
+    if ego_per_request:
+        lines.setdefault("Ego-per-request", []).append(
+            "ON (plan.ego_graph_enabled=True on every query; "
+            "distinct from --ego-graph's config-field override)"
+        )
+    for label, parts in lines.items():
+        print(f"  {label}: {'  '.join(parts)}")
+    if untabled:
+        print(f"  --set overrides: {untabled}")
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -153,255 +495,14 @@ def _setup_project(project_path: str) -> None:
         print("[WARN] Proceeding — project may already be loaded.", file=sys.stderr)
 
 
-def _non_none_overrides(pairs: dict[str, Any]) -> dict[str, Any]:
-    """Drop ``None``-valued entries.
-
-    The eleven ``_apply_*_override`` functions below share one contract:
-    only override the fields the caller actually passed a value for. Each
-    used to encode that as its own hand-written ``if X is None and Y is
-    None...: return`` guard; ``apply_overrides({})`` is already a no-op, so
-    filtering here is sufficient — expressed once instead of eleven times.
-    """
-    return {key: value for key, value in pairs.items() if value is not None}
-
-
-def _apply_weight_overrides(
-    bm25_weight: float | None,
-    dense_weight: float | None,
-    search_mode: str | None,
-) -> None:
-    """Override BM25/dense weights in the in-memory search config singleton."""
-    overrides = _non_none_overrides(
-        {
-            "search_mode.bm25_weight": bm25_weight,
-            "search_mode.dense_weight": dense_weight,
-            "search_mode.default_mode": search_mode,
-        }
-    )
-    if not overrides:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(get_search_config(), overrides)
-
-
-def _apply_reranker_override(
-    reranker_model: str | None,
-    reranker_enabled: bool | None,
-) -> None:
-    """Override the reranker model/enabled flag in the in-memory search config singleton.
-
-    In-memory only (no file write): does not touch ``search_config.json``, so it survives
-    the config-revert hook and never bumps the file mtime that ``SearchConfigManager``
-    watches for reload. ``RerankingEngine._ensure_reranker()`` picks up the change on the
-    next search and hot-swaps the loaded model (cleanup + rebuild) when ``model_name``
-    differs from what is currently loaded.
-    """
-    overrides = _non_none_overrides(
-        {
-            "reranker.model_name": reranker_model,
-            "reranker.enabled": reranker_enabled,
-        }
-    )
-    if not overrides:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(get_search_config(), overrides)
-
-
-def _apply_reranker_budget_override(top_k_candidates: int | None) -> None:
-    """Override the reranker candidate-pool budget in the in-memory config singleton.
-
-    In-memory only, like ``_apply_reranker_override``. ``top_k_candidates`` is read
-    live from config on every search (``search_executor.py``), so no searcher reset
-    is needed between runs with different values.
-    """
-    if top_k_candidates is None:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(
-        get_search_config(), {"reranker.top_k_candidates": top_k_candidates}
-    )
-
-
-def _apply_reranker_doc_max_chars_override(
-    doc_max_chars: int | None,
-    listwise_doc_max_chars: int | None,
-) -> None:
-    """Override the per-reranker document budgets in the in-memory config singleton.
-
-    Unlike ``top_k_candidates``, these are baked into the reranker instance at
-    construction (``create_reranker(...)`` in ``RerankingEngine._ensure_reranker``)
-    and only reloaded there when ``model_name`` changes — so, like ``rrf_k``,
-    callers must reset the cached searcher afterwards for a same-model override
-    to take effect (see ``_maybe_reset_for_construction_overrides``).
-    """
-    overrides = _non_none_overrides(
-        {
-            "reranker.doc_max_chars": doc_max_chars,
-            "reranker.listwise_doc_max_chars": listwise_doc_max_chars,
-        }
-    )
-    if not overrides:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(get_search_config(), overrides)
-
-
-def _apply_reranker_dtype_override(reranker_dtype: str | None) -> None:
-    """Override the listwise reranker weight dtype in the in-memory config singleton.
-
-    Like the doc budgets, ``listwise_dtype`` is baked into the JinaRerankerV3
-    instance at construction (``create_reranker(...)`` in
-    ``RerankingEngine._ensure_reranker``) and the swap branch there reloads only
-    on ``model_name`` change — a dtype-only override silently no-ops without a
-    searcher reset (see ``_maybe_reset_for_construction_overrides``).
-    """
-    if reranker_dtype is None:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(
-        get_search_config(), {"reranker.listwise_dtype": reranker_dtype}
-    )
-
-
-def _apply_reserved_slots_override(reserved_slots: int | None) -> None:
-    """Override the BM25 reserved fused-pool slots in the in-memory config.
-
-    In-memory only. Read live from config on every search
-    (``search_executor.py``), so no searcher reset is needed between runs.
-    """
-    if reserved_slots is None:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(
-        get_search_config(), {"search_mode.bm25_reserved_slots": reserved_slots}
-    )
-
-
-def _apply_multi_hop_expansion_override(expansion: float | None) -> None:
-    """Override the multi-hop expansion factor in the in-memory config singleton.
-
-    In-memory only. Read live from config on every search
-    (``multi_hop_searcher.py``), so no searcher reset is needed between runs.
-    """
-    if expansion is None:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(
-        get_search_config(), {"multi_hop.expansion": expansion}
-    )
-
-
-def _apply_hop1_reserved_slots_override(reserved_slots: int | None) -> None:
-    """Override the hop1-reserve rerank-window knob in the in-memory config.
-
-    In-memory only. Read live from config on every search
-    (``multi_hop_searcher.py``), so no searcher reset is needed between runs.
-    """
-    if reserved_slots is None:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(
-        get_search_config(), {"reranker.hop1_reserved_slots": reserved_slots}
-    )
-
-
-def _apply_query_expansion_override(enabled: bool) -> None:
-    """Enable curated-vocabulary query expansion in the in-memory config.
-
-    In-memory only. Read live from config on every search
-    (``search_executor.py``), so no searcher reset is needed between runs.
-    """
-    if not enabled:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(
-        get_search_config(), {"query_expansion.enabled": True}
-    )
-
-
-def _apply_ego_graph_overrides(
-    ego_graph: str | None,
-    community_bounded: str | None,
-    cross_community_penalty: float | None,
-    expansion_mode: str | None,
-) -> None:
-    """Override ego-graph knobs in the in-memory config singleton.
-
-    In-memory only, like ``_apply_query_expansion_override``. ``enabled`` and
-    ``expansion_mode`` are real ``EgoGraphConfig`` fields, read live per
-    search — ``HybridSearcher.search()`` re-reads ``effective_config.ego_graph``
-    on every call — so no searcher reset is needed between runs.
-
-    ``community_bounded``/``cross_community_penalty`` are pre-existing here
-    but are **not** declared ``EgoGraphConfig`` fields and are not read
-    anywhere in ``search/`` (confirmed by grep — likely vestigial from the
-    since-rejected community-merge experiment; see project memory
-    ``project_benchmark_noise_and_pool_hit``). Migrating this pair through
-    ``arm_overrides.apply_overrides`` would turn that silent no-op into a
-    hard ``ArmOverrideError`` ("unknown field"), a real behavior change this
-    refactor must not make — so they keep the original raw ``setattr``.
-    """
-    if ego_graph is not None or expansion_mode is not None:
-        from search.config import get_search_config
-
-        arm_overrides.apply_overrides(
-            get_search_config(),
-            _non_none_overrides(
-                {
-                    "ego_graph.enabled": ego_graph == "on"
-                    if ego_graph is not None
-                    else None,
-                    "ego_graph.expansion_mode": expansion_mode,
-                }
-            ),
-        )
-
-    if community_bounded is not None or cross_community_penalty is not None:
-        try:
-            from search.config import get_search_config
-
-            cfg = get_search_config()
-            if community_bounded is not None:
-                cfg.ego_graph.community_bounded = community_bounded == "on"
-            if cross_community_penalty is not None:
-                cfg.ego_graph.cross_community_penalty = cross_community_penalty
-        except Exception as e:
-            print(f"[WARN] Could not apply ego-graph overrides: {e}", file=sys.stderr)
-
-
-def _apply_rrf_k_override(rrf_k: int | None) -> None:
-    """Override the RRF fusion constant in the in-memory config singleton.
-
-    Unlike ``top_k_candidates``, ``rrf_k_parameter`` is baked into ``RRFReranker``
-    at HybridSearcher construction (``search_factory.py``) — callers must reset
-    the cached searcher afterwards for the value to take effect.
-    """
-    if rrf_k is None:
-        return
-    from search.config import get_search_config
-
-    arm_overrides.apply_overrides(
-        get_search_config(), {"search_mode.rrf_k_parameter": rrf_k}
-    )
-
-
 def _reset_cached_searcher() -> None:
     """Drop the cached ``HybridSearcher`` in server state.
 
-    Shared by ``_maybe_reset_for_construction_overrides`` (the 32 named
-    flags) and ``run_single``'s ``--set`` handling — both need the same
-    reset once a construction-baked field has changed underneath a cached
-    searcher.
+    Needed once a construction-baked field (``rrf_k``, the reranker document
+    budgets, ``listwise_dtype``) has changed underneath a cached searcher —
+    see ``arm_overrides.apply_overrides``'s return value, which callers
+    (``run_single``) check via ``arm_overrides.requires_rebuild`` before
+    calling this.
     """
     try:
         from mcp_server.services import get_state
@@ -409,48 +510,6 @@ def _reset_cached_searcher() -> None:
         get_state().reset_searcher()
     except Exception as e:
         print(f"[WARN] Could not reset cached searcher: {e}", file=sys.stderr)
-
-
-def _maybe_reset_for_construction_overrides(
-    bm25_weight: float | None,
-    dense_weight: float | None,
-    rrf_k: int | None,
-    doc_max_chars: int | None = None,
-    listwise_doc_max_chars: int | None = None,
-    reranker_dtype: str | None = None,
-) -> None:
-    """Drop the cached HybridSearcher when construction-baked params are overridden.
-
-    ``search_factory.get_searcher()`` caches the searcher in server state, and
-    rrf_k, the reranker document budgets, and the listwise reranker dtype are
-    baked in at construction — without this reset, a ``--sweep`` silently
-    reuses the first iteration's params for every subsequent config
-    (Blocker B). The decision is derived from ``arm_overrides.requires_rebuild``,
-    which reads the same ``spec(construction_baked=True)`` flag (ADR-0022) that
-    every other seam caller reads — one source of truth for "which fields are
-    baked in at construction" instead of a second, hand-maintained one that
-    could silently drift from it.
-
-    bm25_weight/dense_weight are accepted here for backward-compatible call
-    sites but are NOT construction-baked (Phase 2a, ADR-0018 follow-on):
-    ``HybridSearcher`` takes no weight parameters and resolves both live from
-    the effective config on every ``search()`` call
-    (``hybrid_searcher.py:731-739``) — so touching only these two no longer
-    triggers a reset, and a ``--sweep`` over ``SWEEP_CONFIGS`` (bm25/dense
-    weight arms) stops paying a spurious searcher reset + reranker reload.
-    """
-    touched = _non_none_overrides(
-        {
-            "search_mode.bm25_weight": bm25_weight,
-            "search_mode.dense_weight": dense_weight,
-            "search_mode.rrf_k_parameter": rrf_k,
-            "reranker.doc_max_chars": doc_max_chars,
-            "reranker.listwise_doc_max_chars": listwise_doc_max_chars,
-            "reranker.listwise_dtype": reranker_dtype,
-        }
-    )
-    if arm_overrides.requires_rebuild(touched):
-        _reset_cached_searcher()
 
 
 class _EgoConfoundRecorder(logging.Handler):
@@ -494,6 +553,52 @@ def _attach_ego_confound_recorder() -> _EgoConfoundRecorder:
     ego_logger.addHandler(recorder)
     if ego_logger.getEffectiveLevel() > logging.DEBUG:
         ego_logger.setLevel(logging.DEBUG)
+    return recorder
+
+
+class _IntentSignalRecorder(logging.Handler):
+    """Capture the GLOBAL-intent suggested_k bump from log records (B1b).
+
+    ``SearchOrchestrator.run()`` returns no plan/intent metadata to its
+    caller, so -- same technique as ``_EgoConfoundRecorder`` -- this listens
+    to the ``mcp_server.tools.search_orchestrator`` logger instead of editing
+    that contract. ``SearchPlanner.plan()`` logs
+    ``"[INTENT] Increasing k from {k} to {suggested_k} for GLOBAL query"``
+    only when it actually bumps k (``suggested_k > k``); at the harness's
+    canonical ``k=10``, ``_extract_suggested_params`` hardcodes
+    ``suggested_k=10`` for GLOBAL, so ``10 > 10`` never fires and this
+    recorder is structurally silent in the k=10 canon arms (recorded as a
+    known instrument limit, not fixed here). The loop resets this recorder
+    before every query.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.INFO)
+        self.k_bump: tuple[int, int] | None = None
+
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = record.getMessage()
+        if not msg.startswith("[INTENT] Increasing k from "):
+            return
+        try:
+            rest = msg[len("[INTENT] Increasing k from ") :]
+            from_str, rest2 = rest.split(" to ", 1)
+            to_str = rest2.split(" for ", 1)[0]
+            self.k_bump = (int(from_str), int(to_str))
+        except (ValueError, IndexError):
+            pass
+
+    def reset(self) -> None:
+        self.k_bump = None
+
+
+def _attach_intent_signal_recorder() -> _IntentSignalRecorder:
+    """Attach an ``_IntentSignalRecorder`` to the search-orchestrator logger."""
+    orch_logger = logging.getLogger("mcp_server.tools.search_orchestrator")
+    recorder = _IntentSignalRecorder()
+    orch_logger.addHandler(recorder)
+    if orch_logger.getEffectiveLevel() > logging.INFO:
+        orch_logger.setLevel(logging.INFO)
     return recorder
 
 
@@ -548,7 +653,9 @@ async def _run_query(
     query: str,
     k: int,
     search_mode: str | None = None,
-) -> tuple[list[Any], float]:
+    pin_intent_off: bool = True,
+    ego_per_request: bool = False,
+) -> tuple[list[Any], float, str | None]:
     """Execute a single query through ``SearchOrchestrator.run()`` (ADR-0023).
 
     Routes through the same pipeline the MCP ``search_code`` tool serves,
@@ -562,9 +669,10 @@ async def _run_query(
     (its guard is ``> 0``), so the full ranked list survives — matching what
     ``HybridSearcher.search()`` returned before. ``search_mode`` is always
     passed as a concrete string, never bare ``"auto"``, so intent-based mode
-    re-derivation can't silently change what is measured (with intent pinned
-    off for this arm it would be a no-op anyway, but this keeps the harness
-    correct if a future arm flips intent back on).
+    re-derivation can't silently change what is measured when intent is
+    pinned off; the B1b arm (``pin_intent_off=False``) deliberately measures
+    the intent layer instead, so that guarantee is scoped to this arm's mode
+    argument only, not to intent-driven redirects/k adjustments.
 
     ``run()`` returns thin formatted dicts (``result_view._format_search_results``)
     with no ``metadata`` field, so each result is rehydrated from the shared
@@ -584,6 +692,27 @@ async def _run_query(
             ``orchestrator``.
         search_mode: Threaded into the ``run()`` arguments dict. ``None``
             defaults to ``"hybrid"`` (matches the prior harness default).
+        pin_intent_off: Re-assert ``intent.enabled = False`` before this call
+            (see the comment below). ``run_single`` passes ``False`` (B1b)
+            when the arm's overrides already set ``intent.enabled`` via
+            ``arm_overrides.apply_overrides`` — otherwise this per-query
+            re-pin would silently undo the arm's override every query.
+        ego_per_request: Set ``ego_graph_enabled=True`` in the ``run()``
+            arguments dict, the per-request ``SearchPlan`` flag that gates
+            ``build_effective_config``'s QW5 intent-adaptive ego similarity
+            threshold (``effective_config.py``). Distinct from
+            ``ego_graph.enabled`` (the config field toggled by
+            ``--ego-graph``): ``EgoGraphConfig.enabled`` already defaults to
+            ``True``, so ego expansion itself runs regardless of this flag —
+            this only controls whether QW5's per-intent threshold override
+            fires. Default ``False`` matches every prior capture, which never
+            set this key.
+
+    Returns:
+        ``(results, latency_ms, redirect_kind)``. ``redirect_kind`` is
+        ``"find_path"`` or ``"find_similar"`` when ``SearchOrchestrator.run()``
+        served a ``PlanRedirect`` instead of ordinary ``search_code`` results
+        (B1b), else ``None``.
     """
     start = time.perf_counter()
     arguments: dict[str, Any] = {
@@ -593,17 +722,21 @@ async def _run_query(
         "include_context": True,
         "max_context_tokens": 0,
     }
+    if ego_per_request:
+        arguments["ego_graph_enabled"] = True
     # The B1 (ADR-0023) intent-off pin (main():~1939) mutates a single
     # mtime-cached SearchConfig singleton once, at startup. get_search_config()
     # does an unconditional stat() on every call (search/config.py:1682-1689),
     # so any config-file write during the run -- e.g. a concurrent MCP server
     # process reading/writing the same project's search_config.json -- silently
     # reloads from disk and undoes the pin for the rest of the process. Re-assert
-    # per query so an external write can't flip intent back on mid-run. Revisit
-    # this when a future arm deliberately measures intent turned on.
+    # per query so an external write can't flip intent back on mid-run --
+    # UNLESS the B1b arm already turned intent on via arm_overrides, in which
+    # case re-asserting False here would defeat the arm (pin_intent_off=False).
     from search.config import get_search_config
 
-    get_search_config().intent.enabled = False
+    if pin_intent_off:
+        get_search_config().intent.enabled = False
     response = await orchestrator.run(arguments)
     latency_ms = (time.perf_counter() - start) * 1000.0
 
@@ -613,15 +746,28 @@ async def _run_query(
         getattr(searcher, "dense_index", None), "metadata_store", None
     )
     results: list[Any] = []
+    redirect_kind: str | None = None
     # A find_similar_code-style redirect (SearchOrchestrator's intent-based
-    # PlanRedirect can still route here if the pin above ever fails to hold)
-    # returns {"reference_chunk", "similar_chunks"} instead of {"results"} --
-    # reading only "results" silently produced retrieved=[] with no error or
-    # log (observed: all 9 category-F queries went empty in one 131q round).
-    # Fall back to "similar_chunks" so a redirect is scored, not dropped.
+    # PlanRedirect can still route here if the pin above ever fails to hold,
+    # or deliberately when the B1b arm turns intent on) returns
+    # {"reference_chunk", "similar_chunks"} instead of {"results"} -- reading
+    # only "results" silently produced retrieved=[] with no error or log
+    # (observed: all 9 category-F queries went empty in one 131q round). Fall
+    # back to "similar_chunks" so a redirect is scored, not dropped.
     formatted_list = response.get("results")
     if formatted_list is None:
-        formatted_list = response.get("similar_chunks") or []
+        formatted_list = response.get("similar_chunks")
+        if formatted_list is not None:
+            redirect_kind = "find_similar"
+        elif "path_found" in response:
+            # handle_find_path's response shape (B1b): a source->target node
+            # path, not a ranked chunk list -- nothing here is comparable to
+            # golden chunk IDs, so this query legitimately contributes 0 to
+            # "mrr" (unchanged, comparable to the existing canon chain).
+            # "mrr_excl_redirect" (run_single) is the fair comparison that
+            # drops find_path-redirected queries instead of zero-scoring them.
+            redirect_kind = "find_path"
+        formatted_list = formatted_list or []
     for formatted in formatted_list:
         chunk_id = formatted.get("chunk_id", "")
         entry = metadata_store.get(chunk_id) if metadata_store is not None else None
@@ -634,7 +780,7 @@ async def _run_query(
                 source=formatted.get("source", "unknown"),
             )
         )
-    return results, latency_ms
+    return results, latency_ms, redirect_kind
 
 
 def _extract_ranges_from_results(
@@ -826,6 +972,7 @@ async def run_benchmark(
     k: int,
     category_filter: str | None,
     verbose: bool,
+    split_filter: str | None = None,
     line_lookup: dict[str, tuple[str, int, int]] | None = None,
     search_mode: str | None = None,
     merged_membership: dict[str, tuple[str, frozenset[str]]] | None = None,
@@ -833,6 +980,9 @@ async def run_benchmark(
     confound_recorder: "_EgoConfoundRecorder | None" = None,
     rerank_calls: list[tuple[int | None, int]] | None = None,
     community_lookup: dict[str, Any] | None = None,
+    intent_pinned_by_arm: bool = False,
+    intent_signal_recorder: "_IntentSignalRecorder | None" = None,
+    ego_per_request: bool = False,
 ) -> tuple[list[dict[str, Any]], list[float]]:
     """Run all queries and return (per_query_results, latencies).
 
@@ -850,6 +1000,10 @@ async def run_benchmark(
             (default), category D is excluded automatically — the pure-searcher
             cannot traverse the call graph and D rows would score ~0 recall,
             polluting the A/B/C aggregate.  Pass ``"D"`` explicitly to benchmark D.
+        split_filter: If set, only run queries whose golden-dataset ``split`` field
+            equals this value (``"train"``/``"val"``/``"test"``). Composes with
+            ``category_filter`` rather than replacing it. ``None`` (default) runs
+            every split, matching every published canon figure.
         verbose: Print per-query details.
         line_lookup: Pre-built ``{normalized_chunk_id: (path, start, end)}`` lookup
             from ``_build_line_lookup``. When provided, line-overlap metrics
@@ -879,6 +1033,21 @@ async def run_benchmark(
             ``file_recall_strict`` / ``file_recall_expanded`` (both at the
             run's k), plus the secondary ``mrr_community_credit`` when the
             index contains community chunks (omitted otherwise — N/A, not 0.0).
+        intent_pinned_by_arm: B1b — True when the current arm's overrides set
+            ``intent.enabled`` (``run_single`` checks ``"intent.enabled" in
+            overrides``), so ``_run_query``'s per-query intent-off re-pin must
+            be skipped (``pin_intent_off=False``) or it would silently undo
+            the arm's override every query.
+        intent_signal_recorder: Shared recorder from
+            ``_attach_intent_signal_recorder``; when provided, each per-query
+            row gains a ``"suggested_k_mismatch"`` dict whenever
+            ``SearchPlanner.plan()`` logged a GLOBAL-intent k bump for that
+            query (see ``_IntentSignalRecorder`` for why this is silent at
+            the harness's canonical k=10).
+        ego_per_request: Threaded to ``_run_query`` — sets the per-request
+            ``ego_graph_enabled`` plan argument on every non-anchor query
+            (see ``_run_query``'s docstring). Anchor (F-via-similar) queries
+            bypass ``_run_query`` entirely and are unaffected.
 
     Every successful query also gains ``file_recall@{5,10}`` /
     ``file_acc@{5,10}`` (SweRank max-pool rollup of the ordinary chunk-level
@@ -904,6 +1073,14 @@ async def run_benchmark(
                 f"  Excluded {d_count} category-D queries (use --category D to include)"
             )
 
+    if split_filter:
+        pre_split_count = len(filtered)
+        filtered = [q for q in filtered if q.get("split") == split_filter]
+        print(
+            f"  Filtered to {len(filtered)} queries in split '{split_filter}' "
+            f"(from {pre_split_count})"
+        )
+
     per_query: list[dict[str, Any]] = []
     latencies: list[float] = []
     anchor_lookup = _build_anchor_lookup(searcher) if f_via_similar else {}
@@ -912,6 +1089,7 @@ async def run_benchmark(
         qid = item["id"]
         query = item["query"]
         category = item.get("category", "?")
+        split = item.get("split", "unknown")
         # Already normalized in golden_dataset.json
         expected: list[str] = item["expected"]
         expected_primary: list[str] = item.get("expected_primary") or expected
@@ -929,6 +1107,8 @@ async def run_benchmark(
             confound_recorder.reset()
         if rerank_calls is not None:
             rerank_calls.clear()
+        if intent_signal_recorder is not None:
+            intent_signal_recorder.reset()
 
         anchor = (
             item.get("anchor_chunk_id") if f_via_similar and category == "F" else None
@@ -945,15 +1125,26 @@ async def run_benchmark(
                     exclude_same_file=item.get("similar_exclude_same_file", False),
                 )
                 latency_ms = (time.perf_counter() - start) * 1000.0
+                redirect_kind = None
             else:
-                raw_results, latency_ms = await _run_query(
+                raw_results, latency_ms, redirect_kind = await _run_query(
                     orchestrator,
                     searcher,
                     query,
                     k=k,
                     search_mode=search_mode,
+                    pin_intent_off=not intent_pinned_by_arm,
+                    ego_per_request=ego_per_request,
                 )
             latencies.append(latency_ms)
+
+            # B1b: GLOBAL-intent k-bump signal (suggested_k != requested k),
+            # captured via _IntentSignalRecorder -- see its docstring for why
+            # this is structurally silent at the harness's canonical k=10.
+            suggested_k_mismatch: dict[str, int] | None = None
+            if intent_signal_recorder is not None and intent_signal_recorder.k_bump:
+                from_k, to_k = intent_signal_recorder.k_bump
+                suggested_k_mismatch = {"requested_k": from_k, "suggested_k": to_k}
 
             # Confound signals for this query (0f): the ego-gated secondary
             # rerank pass is the hybrid_searcher default-path call with
@@ -1126,6 +1317,7 @@ async def run_benchmark(
                     "id": qid,
                     "query": query,
                     "category": category,
+                    "split": split,
                     "retrieved": retrieved[:k],
                     "expected": expected,
                     "expected_primary": expected_primary,
@@ -1133,6 +1325,12 @@ async def run_benchmark(
                     **({"f_via_similar": True} if anchor else {}),
                     **({"containment_credits": containment} if containment else {}),
                     **({"confounds": confounds} if confounds else {}),
+                    **({"redirect_kind": redirect_kind} if redirect_kind else {}),
+                    **(
+                        {"suggested_k_mismatch": suggested_k_mismatch}
+                        if suggested_k_mismatch
+                        else {}
+                    ),
                     **metrics,
                     **file_rollup_metrics,
                     **file_metrics,
@@ -1148,6 +1346,7 @@ async def run_benchmark(
                     "id": qid,
                     "query": query,
                     "category": category,
+                    "split": split,
                     "error": str(exc),
                     "hit": False,
                     "hit@7": False,
@@ -1315,6 +1514,42 @@ def print_per_query_drilldown(
 # ---------------------------------------------------------------------------
 
 
+# Metrics reported by the paired-CI summary in compare_runs(). Kept in sync
+# with aggregate_by_slice.py's METRICS so the two post-hoc report tools agree.
+_PAIRED_CI_METRICS = ("mrr", "recall@5", "recall@10", "ndcg@5", "hit")
+
+# Below this many non-zero-delta pairs, a normal-approximation CI is not
+# meaningful (a single moved query can already look "significant") -- print
+# the point estimate and n_moved but flag the CI as unreliable instead of a
+# ±0.0000 or divide-by-zero.
+_PAIRED_CI_MIN_N = 2
+
+
+def _paired_delta_summary(
+    q1: dict[str, dict], q2: dict[str, dict], metric: str
+) -> tuple[float, float, float, int, int] | None:
+    """Return (mean_delta, se, ci95_halfwidth, n_moved, n_pairs) for one metric,
+    or ``None`` if fewer than two queries carry the metric in both runs.
+
+    Uses a normal approximation (z=1.96) rather than Student's t — the harness
+    has no scipy dependency and this is a diagnostic, not a publication stat.
+    """
+    deltas = [
+        float(q.get(metric, 0.0)) - float(q1[qid].get(metric, 0.0))
+        for qid, q in q2.items()
+        if qid in q1 and metric in q and metric in q1[qid]
+    ]
+    n = len(deltas)
+    if n < _PAIRED_CI_MIN_N:
+        return None
+    n_moved = sum(1 for d in deltas if abs(d) > 1e-9)
+    mean_delta = mean(deltas)
+    sd = stdev(deltas)
+    se = sd / (n**0.5)
+    ci95 = 1.96 * se
+    return mean_delta, se, ci95, n_moved, n
+
+
 def compare_runs(result_files: list[str]) -> None:
     """Load saved benchmark JSONs and print a comparison leaderboard."""
     runs = []
@@ -1333,6 +1568,29 @@ def compare_runs(result_files: list[str]) -> None:
         r1, r2 = runs[0], runs[1]
         q1 = {q["id"]: q for q in r1.get("per_query", [])}
         q2 = {q["id"]: q for q in r2.get("per_query", [])}
+
+        # Paired-delta summary (methodology rule 7, RECALL_CAMPAIGN_CLOSEOUT_20260802.md):
+        # arms are decided on this, not the prose "±0.02 noise band" -- the arms
+        # share queries, so a paired statistic is the correct one.
+        print(
+            f"\n--- Paired delta: '{r1['config_name']}' -> '{r2['config_name']}' "
+            f"(n={len(set(q1) & set(q2))} shared queries) ---"
+        )
+        header = f"{'metric':<12}{'mean_d':>10}{'SE':>9}  {'95% CI':>19}{'n_moved':>9}{'n':>6}"
+        print(header)
+        print("-" * len(header))
+        for metric in _PAIRED_CI_METRICS:
+            summary = _paired_delta_summary(q1, q2, metric)
+            if summary is None:
+                print(f"{metric:<12}{'(< 2 paired queries carry this metric)':>52}")
+                continue
+            mean_delta, se, ci95, n_moved, n = summary
+            ci_str = f"[{mean_delta - ci95:+.4f}, {mean_delta + ci95:+.4f}]"
+            print(
+                f"{metric:<12}{mean_delta:>+10.4f}{se:>9.4f}  {ci_str:>19}"
+                f"{n_moved:>9}{n:>6}"
+            )
+
         deltas = []
         for qid, q in q2.items():
             if qid in q1:
@@ -1396,6 +1654,17 @@ def build_parser() -> argparse.ArgumentParser:
             "'A,B,C'. Category D is excluded by default because this runner uses "
             "search_code only and cannot traverse the call graph; pass --category D to "
             "run it explicitly (expect low recall — use find_connections for D queries)."
+        ),
+    )
+    parser.add_argument(
+        "--split",
+        choices=("train", "val", "test"),
+        help=(
+            "Restrict to one golden-dataset split (composes with --category; "
+            "default: all splits, matching every published canon figure). Each "
+            "query's `split` field is joined in from evaluation/golden_dataset.json "
+            "(or the expanded dataset). Tuning should consult train+val only — "
+            "test is for re-pinning, not for choosing an arm."
         ),
     )
     parser.add_argument(
@@ -1539,6 +1808,20 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--ego-per-request",
+        action="store_true",
+        help=(
+            "Set the per-request plan.ego_graph_enabled flag on every query "
+            "(SearchOrchestrator's arguments dict), enabling QW5's "
+            "intent-adaptive ego similarity threshold in "
+            "build_effective_config. NOT the same as --ego-graph, which "
+            "overrides the config field ego_graph.enabled (already True by "
+            "default, so ego expansion runs either way) -- this flag is the "
+            "only way to exercise QW5, which no prior capture has measured. "
+            "Default: off, matching every prior capture."
+        ),
+    )
+    parser.add_argument(
         "--rrf-k",
         type=int,
         help=(
@@ -1630,59 +1913,45 @@ async def run_single(
     dataset: dict[str, Any],
     config_name: str,
     k: int,
-    bm25_weight: float | None,
-    dense_weight: float | None,
-    search_mode: str | None,
     category_filter: str | None,
     verbose: bool,
-    reranker_model: str | None = None,
-    reranker_enabled: bool | None = None,
-    top_k_candidates: int | None = None,
-    rrf_k: int | None = None,
-    bm25_reserved_slots: int | None = None,
-    reranker_doc_max_chars: int | None = None,
-    reranker_listwise_doc_max_chars: int | None = None,
-    reranker_dtype: str | None = None,
+    overrides: dict[str, Any],
+    split_filter: str | None = None,
     f_via_similar: bool = False,
-    query_expansion: bool = False,
-    multi_hop_expansion: float | None = None,
-    hop1_reserved_slots: int | None = None,
-    ego_graph: str | None = None,
-    community_bounded: str | None = None,
-    cross_community_penalty: float | None = None,
-    expansion_mode: str | None = None,
-    set_overrides: dict[str, Any] | None = None,
+    ego_per_request: bool = False,
 ) -> dict[str, Any]:
-    """Execute one benchmark run and return the result dict."""
-    _apply_weight_overrides(bm25_weight, dense_weight, search_mode)
-    _apply_reranker_override(reranker_model, reranker_enabled)
-    _apply_reranker_budget_override(top_k_candidates)
-    _apply_reranker_doc_max_chars_override(
-        reranker_doc_max_chars, reranker_listwise_doc_max_chars
-    )
-    _apply_reranker_dtype_override(reranker_dtype)
-    _apply_rrf_k_override(rrf_k)
-    _apply_reserved_slots_override(bm25_reserved_slots)
-    _apply_multi_hop_expansion_override(multi_hop_expansion)
-    _apply_hop1_reserved_slots_override(hop1_reserved_slots)
-    _apply_query_expansion_override(query_expansion)
-    _apply_ego_graph_overrides(
-        ego_graph, community_bounded, cross_community_penalty, expansion_mode
-    )
-    _maybe_reset_for_construction_overrides(
-        bm25_weight,
-        dense_weight,
-        rrf_k,
-        reranker_doc_max_chars,
-        reranker_listwise_doc_max_chars,
-        reranker_dtype,
-    )
-    if set_overrides:
-        from search.config import get_search_config
+    """Execute one benchmark run and return the result dict.
 
-        if arm_overrides.apply_overrides(get_search_config(), set_overrides):
-            _reset_cached_searcher()
-        print(f"  --set overrides: {set_overrides}")
+    *overrides* is one merge-ready dotted-key dict — the caller's
+    already-merged combination of named-flag overrides
+    (``_overrides_from_args``), any sweep-arm delta (``_sweep_delta``), and
+    ``--set`` overrides (``arm_overrides.parse_set_flags``), all folded
+    together via ``arm_overrides.merge_overrides`` before this call. May
+    carry ``_LEGACY_EGO_KEY`` for the two undeclared ``EgoGraphConfig``
+    fields, popped here before the rest reaches ``apply_overrides``.
+
+    ``ego_per_request`` is threaded straight to ``run_benchmark`` /
+    ``_run_query`` — it sets a per-query plan argument, not a config
+    override, so it never reaches ``apply_overrides``.
+    """
+    overrides = dict(overrides)
+    legacy_ego = overrides.pop(_LEGACY_EGO_KEY, {})
+
+    # B1b (ADR-0023): an arm that sets intent.enabled must survive
+    # _run_query's per-query intent-off re-pin, or the arm's own override
+    # would be silently undone on every query.
+    intent_pinned_by_arm = "intent.enabled" in overrides
+
+    from search.config import get_search_config
+
+    cfg = get_search_config()
+    if arm_overrides.apply_overrides(cfg, overrides):
+        _reset_cached_searcher()
+    _apply_legacy_ego_overrides(
+        cfg,
+        legacy_ego.get("community_bounded"),
+        legacy_ego.get("cross_community_penalty"),
+    )
 
     try:
         searcher = _get_searcher(project_path)
@@ -1701,62 +1970,16 @@ async def run_single(
 
     queries = dataset["queries"]
     print(f"\nRunning: {config_name} | k={k} | {len(queries)} queries")
-    if bm25_weight is not None or dense_weight is not None:
-        print(
-            f"  Weights: BM25={bm25_weight or 'default'}  dense={dense_weight or 'default'}"
-        )
-    if reranker_model is not None or reranker_enabled is not None:
-        print(
-            f"  Reranker: model={reranker_model or 'default'}  "
-            f"enabled={reranker_enabled if reranker_enabled is not None else 'default'}"
-        )
-    if top_k_candidates is not None:
-        print(f"  Reranker pool budget: top_k_candidates={top_k_candidates}")
-    if (
-        reranker_doc_max_chars is not None
-        or reranker_listwise_doc_max_chars is not None
-    ):
-        print(
-            f"  Reranker doc budget: doc_max_chars={reranker_doc_max_chars or 'default'}  "
-            f"listwise_doc_max_chars={reranker_listwise_doc_max_chars or 'default'}"
-        )
-    if reranker_dtype is not None:
-        print(f"  Reranker dtype: listwise_dtype={reranker_dtype}")
-    if rrf_k is not None:
-        print(f"  RRF fusion constant: rrf_k={rrf_k}")
-    if bm25_reserved_slots is not None:
-        print(f"  BM25 reserved pool slots: {bm25_reserved_slots}")
-    if multi_hop_expansion is not None:
-        print(f"  Multi-hop expansion factor: {multi_hop_expansion}")
-    if hop1_reserved_slots is not None:
-        print(f"  Hop1 reserved rerank-window slots: {hop1_reserved_slots}")
-    if ego_graph is not None:
-        print(f"  Ego-graph expansion: {ego_graph}")
-    if community_bounded is not None:
-        print(f"  Community-bounded ego truncation: {community_bounded}")
-    if cross_community_penalty is not None:
-        print(f"  Cross-community penalty: {cross_community_penalty}")
-    if expansion_mode is not None:
-        print(f"  Ego expansion mode: {expansion_mode}")
-    if f_via_similar:
-        print(
-            "  F-via-similar: ON (anchored F queries scored via "
-            "find_similar_to_chunk; secondary view, not the official aggregate)"
-        )
-    if query_expansion:
-        print(
-            "  Query expansion: ON (curated-vocabulary variant legs, "
-            "config/query_expansion_variants.yaml)"
-        )
+    _print_overrides(overrides, legacy_ego, f_via_similar, ego_per_request)
 
     # Reset peak VRAM stats and issue a warm-up search so a reranker model swap's
     # (or dtype swap's) first-call load/download cost lands here, not in the
     # timed latency average.
     torch_module = None
     if (
-        reranker_model is not None
-        or reranker_enabled is not None
-        or reranker_dtype is not None
+        "reranker.model_name" in overrides
+        or "reranker.enabled" in overrides
+        or "reranker.listwise_dtype" in overrides
     ):
         try:
             import torch
@@ -1780,6 +2003,8 @@ async def run_single(
     # Confound instrumentation (0f)
     confound_recorder = _attach_ego_confound_recorder()
     rerank_calls = _instrument_rerank_calls(searcher)
+    # B1b intent-signal instrumentation
+    intent_signal_recorder = _attach_intent_signal_recorder()
 
     # Build line-range lookup for line-overlap metrics (one-time scan of MetadataStore)
     line_lookup = _build_line_lookup(searcher)
@@ -1795,21 +2020,61 @@ async def run_single(
         k=k,
         category_filter=category_filter,
         verbose=verbose,
+        split_filter=split_filter,
         line_lookup=line_lookup,
-        search_mode=search_mode,
+        search_mode=overrides.get("search_mode.default_mode"),
         merged_membership=merged_membership,
         f_via_similar=f_via_similar,
         confound_recorder=confound_recorder,
         rerank_calls=rerank_calls,
         community_lookup=community_lookup,
+        intent_pinned_by_arm=intent_pinned_by_arm,
+        intent_signal_recorder=intent_signal_recorder,
+        ego_per_request=ego_per_request,
     )
 
-    # Detach the recorder so repeated run_single calls (sweeps) don't stack handlers
+    # Detach the recorders so repeated run_single calls (sweeps) don't stack handlers
     logging.getLogger("search.ego_graph_retriever").removeHandler(confound_recorder)
+    logging.getLogger("mcp_server.tools.search_orchestrator").removeHandler(
+        intent_signal_recorder
+    )
 
     dataset_thresholds = dataset.get("thresholds") or {}
     agg = aggregate_metrics(per_query, thresholds=dataset_thresholds)
     avg_lat = round(mean(latencies), 1) if latencies else 0.0
+
+    # B1b (ADR-0023): find_path redirects can't be scored against golden
+    # chunk IDs (a path result has no ranked chunk list), so they silently
+    # scored 0 in the published `mrr`. Report both: `mrr` stays comparable to
+    # the whole canon chain, `mrr_excl_redirect` excludes only `find_path`
+    # redirects. `find_similar` redirects stay in `mrr` unmodified -- they're
+    # already fairly scored via the existing similar_chunks fallback.
+    redirect_ids = [q["id"] for q in per_query if q.get("redirect_kind") == "find_path"]
+    if agg and per_query:
+        non_redirect_mrr = [
+            float(q.get("mrr", 0.0))
+            for q in per_query
+            if q.get("redirect_kind") != "find_path"
+        ]
+        agg["mrr_excl_redirect"] = (
+            round(mean(non_redirect_mrr), 4) if non_redirect_mrr else 0.0
+        )
+        agg["redirect_rate"] = round(len(redirect_ids) / len(per_query), 4)
+        if redirect_ids:
+            print(
+                f"\n  Redirects: {len(redirect_ids)}/{len(per_query)} queries "
+                f"({agg['redirect_rate']:.1%}) resolved via find_path; "
+                f"mrr={agg['mrr']:.4f} mrr_excl_redirect={agg['mrr_excl_redirect']:.4f}"
+            )
+
+    # B1b: GLOBAL-intent suggested_k mismatches (see _IntentSignalRecorder --
+    # structurally silent at the harness's canonical k=10).
+    k_mismatches = [q for q in per_query if q.get("suggested_k_mismatch")]
+    if k_mismatches:
+        print(
+            f"  Intent k-bumps: {len(k_mismatches)}/{len(per_query)} queries "
+            "had suggested_k != requested_k"
+        )
 
     # Confound summary (0f): an A1 null result is only interpretable if we
     # know the gated machinery actually fired ("penalty useless" vs "penalty
@@ -1843,45 +2108,16 @@ async def run_single(
         )
 
     # Config metadata for comparison / experiment tracking (Lesson 4 pattern)
-    config_metadata: dict[str, Any] = {
-        "project_path": project_path,
-        "k": k,
-        "category_filter": category_filter,
-    }
-    if bm25_weight is not None:
-        config_metadata["bm25_weight"] = bm25_weight
-    if dense_weight is not None:
-        config_metadata["dense_weight"] = dense_weight
-    if search_mode is not None:
-        config_metadata["search_mode"] = search_mode
-    if reranker_model is not None:
-        config_metadata["reranker_model"] = reranker_model
-    if reranker_enabled is not None:
-        config_metadata["reranker_enabled"] = reranker_enabled
-    if top_k_candidates is not None:
-        config_metadata["top_k_candidates"] = top_k_candidates
-    if reranker_dtype is not None:
-        config_metadata["reranker_dtype"] = reranker_dtype
-    if rrf_k is not None:
-        config_metadata["rrf_k"] = rrf_k
-    if bm25_reserved_slots is not None:
-        config_metadata["bm25_reserved_slots"] = bm25_reserved_slots
-    if multi_hop_expansion is not None:
-        config_metadata["multi_hop_expansion"] = multi_hop_expansion
-    if hop1_reserved_slots is not None:
-        config_metadata["hop1_reserved_slots"] = hop1_reserved_slots
-    if f_via_similar:
-        config_metadata["f_via_similar"] = True
-    if query_expansion:
-        config_metadata["query_expansion"] = True
-    if ego_graph is not None:
-        config_metadata["ego_graph"] = ego_graph
-    if community_bounded is not None:
-        config_metadata["community_bounded"] = community_bounded
-    if cross_community_penalty is not None:
-        config_metadata["cross_community_penalty"] = cross_community_penalty
-    if expansion_mode is not None:
-        config_metadata["expansion_mode"] = expansion_mode
+    config_metadata = _build_config_metadata(
+        project_path=project_path,
+        k=k,
+        category_filter=category_filter,
+        overrides=overrides,
+        legacy_ego=legacy_ego,
+        f_via_similar=f_via_similar,
+        split_filter=split_filter,
+        ego_per_request=ego_per_request,
+    )
     if torch_module is not None:
         config_metadata["peak_vram_reserved_gb"] = round(
             torch_module.cuda.max_memory_reserved() / 1e9, 2
@@ -1894,6 +2130,7 @@ async def run_single(
         "avg_latency_ms": avg_lat,
         "config_metadata": config_metadata,
         **({"confound_summary": confound_summary} if confound_summary else {}),
+        **({"redirect_ids": redirect_ids} if redirect_ids else {}),
         **(
             {"community_stats": community_lookup["stats"]}
             if community_lookup.get("stats")
@@ -1960,9 +2197,6 @@ async def main_async(args: argparse.Namespace) -> None:
 
     dataset = _load_golden_dataset(Path(args.golden_dataset))
     verbose = not args.quiet
-    reranker_enabled = (
-        None if args.reranker_enabled is None else args.reranker_enabled == "true"
-    )
     # Parse once, up front, so a malformed --set fails before any search run
     # (and before any sweep iteration) rather than mid-sweep.
     set_overrides = arm_overrides.parse_set_flags(args.set_overrides)
@@ -1976,33 +2210,24 @@ async def main_async(args: argparse.Namespace) -> None:
         print(f"{'=' * 70}")
         reranker_results: list[dict[str, Any]] = []
         for sweep_cfg in RERANKER_SWEEP:
+            overrides = arm_overrides.merge_overrides(
+                _overrides_from_args(
+                    args, exclude=frozenset({"reranker_model", "reranker_enabled"})
+                ),
+                _sweep_delta(sweep_cfg),
+                set_overrides,
+            )
             result = await run_single(
                 project_path=project_path,
                 dataset=dataset,
                 config_name=sweep_cfg["config_name"],
                 k=args.k,
-                bm25_weight=args.bm25_weight,
-                dense_weight=args.dense_weight,
-                search_mode=args.search_mode,
                 category_filter=args.category,
                 verbose=False,  # quiet during sweep
-                reranker_model=sweep_cfg.get("reranker_model"),
-                reranker_enabled=sweep_cfg.get("reranker_enabled"),
-                top_k_candidates=args.top_k_candidates,
-                reranker_doc_max_chars=args.reranker_doc_max_chars,
-                reranker_listwise_doc_max_chars=args.reranker_listwise_doc_max_chars,
-                reranker_dtype=args.reranker_dtype,
-                rrf_k=args.rrf_k,
-                bm25_reserved_slots=args.bm25_reserved_slots,
-                multi_hop_expansion=args.multi_hop_expansion,
-                hop1_reserved_slots=args.hop1_reserved_slots,
+                overrides=overrides,
+                split_filter=args.split,
                 f_via_similar=args.f_via_similar,
-                query_expansion=args.query_expansion,
-                ego_graph=args.ego_graph,
-                community_bounded=args.community_bounded,
-                cross_community_penalty=args.cross_community_penalty,
-                expansion_mode=args.expansion_mode,
-                set_overrides=set_overrides,
+                ego_per_request=args.ego_per_request,
             )
             reranker_results.append(result)
 
@@ -2029,33 +2254,24 @@ async def main_async(args: argparse.Namespace) -> None:
         print(f"{'=' * 70}")
         sweep_results: list[dict[str, Any]] = []
         for sweep_cfg in SWEEP_CONFIGS:
+            overrides = arm_overrides.merge_overrides(
+                _overrides_from_args(
+                    args, exclude=frozenset({"bm25_weight", "dense_weight"})
+                ),
+                _sweep_delta(sweep_cfg),
+                set_overrides,
+            )
             result = await run_single(
                 project_path=project_path,
                 dataset=dataset,
                 config_name=sweep_cfg["config_name"],
                 k=args.k,
-                bm25_weight=sweep_cfg["bm25_weight"],
-                dense_weight=sweep_cfg["dense_weight"],
-                search_mode=args.search_mode,
                 category_filter=args.category,
                 verbose=False,  # quiet during sweep
-                reranker_model=args.reranker_model,
-                reranker_enabled=reranker_enabled,
-                top_k_candidates=args.top_k_candidates,
-                reranker_doc_max_chars=args.reranker_doc_max_chars,
-                reranker_listwise_doc_max_chars=args.reranker_listwise_doc_max_chars,
-                reranker_dtype=args.reranker_dtype,
-                rrf_k=args.rrf_k,
-                bm25_reserved_slots=args.bm25_reserved_slots,
-                multi_hop_expansion=args.multi_hop_expansion,
-                hop1_reserved_slots=args.hop1_reserved_slots,
+                overrides=overrides,
+                split_filter=args.split,
                 f_via_similar=args.f_via_similar,
-                query_expansion=args.query_expansion,
-                ego_graph=args.ego_graph,
-                community_bounded=args.community_bounded,
-                cross_community_penalty=args.cross_community_penalty,
-                expansion_mode=args.expansion_mode,
-                set_overrides=set_overrides,
+                ego_per_request=args.ego_per_request,
             )
             sweep_results.append(result)
 
@@ -2076,33 +2292,18 @@ async def main_async(args: argparse.Namespace) -> None:
     # -----------------------------------------------------------------------
     # Single run
     # -----------------------------------------------------------------------
+    overrides = arm_overrides.merge_overrides(_overrides_from_args(args), set_overrides)
     result = await run_single(
         project_path=project_path,
         dataset=dataset,
         config_name=args.config_name,
         k=args.k,
-        bm25_weight=args.bm25_weight,
-        dense_weight=args.dense_weight,
-        search_mode=args.search_mode,
         category_filter=args.category,
         verbose=verbose,
-        reranker_model=args.reranker_model,
-        reranker_enabled=reranker_enabled,
-        top_k_candidates=args.top_k_candidates,
-        reranker_doc_max_chars=args.reranker_doc_max_chars,
-        reranker_listwise_doc_max_chars=args.reranker_listwise_doc_max_chars,
-        reranker_dtype=args.reranker_dtype,
-        rrf_k=args.rrf_k,
-        bm25_reserved_slots=args.bm25_reserved_slots,
-        multi_hop_expansion=args.multi_hop_expansion,
-        hop1_reserved_slots=args.hop1_reserved_slots,
+        overrides=overrides,
+        split_filter=args.split,
         f_via_similar=args.f_via_similar,
-        query_expansion=args.query_expansion,
-        ego_graph=args.ego_graph,
-        community_bounded=args.community_bounded,
-        cross_community_penalty=args.cross_community_penalty,
-        expansion_mode=args.expansion_mode,
-        set_overrides=set_overrides,
+        ego_per_request=args.ego_per_request,
     )
 
     # Print leaderboard (single row)

@@ -129,11 +129,16 @@ class EmbeddingConfig:
         ),
     )
     dimension: int = field(
-        default=1024,
+        default=1024,  # Derived, not configured: overwritten from
+        # MODEL_REGISTRY[model_name] on every from_dict() and save_config() call
+        # (_apply_model_registry_dimension). Editing this value in the JSON file
+        # has no effect.
         metadata=spec(flat_alias="model_dimension", reader="embeddings/embedder.py"),
     )
     batch_size: int = field(
-        default=64,  # Dynamic based on model, see MODEL_REGISTRY
+        default=64,  # Dynamic based on model, see MODEL_REGISTRY. Used only
+        # when performance.enable_dynamic_batch_size is False or no CUDA GPU
+        # is available — otherwise calculate_optimal_batch_size() overrides it.
         metadata=spec(
             flat_alias="embedding_batch_size",
             env="CLAUDE_EMBEDDING_BATCH_SIZE",
@@ -242,6 +247,7 @@ class SearchModeConfig:
             range=(0.0, 1.0),
             flat_alias="bm25_weight",
             env="CLAUDE_BM25_WEIGHT",
+            mcp="search_mode",
             reader="search/hybrid_searcher.py",
         ),
     )
@@ -251,40 +257,69 @@ class SearchModeConfig:
             range=(0.0, 1.0),
             flat_alias="dense_weight",
             env="CLAUDE_DENSE_WEIGHT",
+            mcp="search_mode",
             reader="search/hybrid_searcher.py",
         ),
     )
 
     # BM25 Configuration
     # Okapi BM25 scoring parameters (rank_bm25 defaults). k1 controls term-
-    # frequency saturation; b controls document-length normalization. Applied
-    # at query time — changing them takes effect on next load, no re-index
-    # needed. (Replaces the dead ``bm25_k_parameter`` field, which was never
-    # read by any scoring path.)
+    # frequency saturation; b controls document-length normalization. No
+    # re-index needed — bm25_index.py re-applies configured k1/b against the
+    # saved corpus stats on load. But they are read once at HybridSearcher
+    # construction (BM25Index build/load/rebuild), not at query time: mutating
+    # a live SearchConfig singleton is inert until the index reloads or the
+    # searcher is rebuilt (construction_baked=True below drives
+    # arm_overrides.requires_rebuild() accordingly). Both are also in
+    # index_probe.py's FORBIDDEN_AUTO_TUNE_KEYS — fusion sweep saturated, do
+    # not re-sweep; that frozenset governs whether the ADR-0014 auto-tuning
+    # probe may write a key, a different question from whether a benchmark
+    # arm must rebuild the cached searcher. (Replaces the dead
+    # ``bm25_k_parameter`` field, which was never read by any scoring path.)
     bm25_k1: float = field(
         default=1.5,
-        metadata=spec(flat_alias="bm25_k1", reader="search/index_sync.py"),
+        metadata=spec(
+            flat_alias="bm25_k1",
+            reader="search/hybrid_searcher.py",
+            construction_baked=True,
+        ),
     )
     bm25_b: float = field(
         default=0.75,
-        metadata=spec(flat_alias="bm25_b", reader="search/index_sync.py"),
+        metadata=spec(
+            flat_alias="bm25_b",
+            reader="search/hybrid_searcher.py",
+            construction_baked=True,
+        ),
     )
+    # Also in FORBIDDEN_AUTO_TUNE_KEYS (A/B 2026-08-01: removing regresses
+    # recall@5/MRR) — read once at construction, same rebuild caveat as k1/b.
     bm25_use_stopwords: bool = field(
         default=True,
-        metadata=spec(flat_alias="bm25_use_stopwords", reader="search/index_sync.py"),
+        metadata=spec(
+            flat_alias="bm25_use_stopwords",
+            reader="search/hybrid_searcher.py",
+            construction_baked=True,
+        ),
     )
+    # Not in FORBIDDEN_AUTO_TUNE_KEYS — covered by neither guardrail today.
+    # Read once at construction like the other four BM25 tuning knobs.
     bm25_use_stemming: bool = field(
         default=True,  # Snowball stemmer for word normalization
         metadata=spec(
             flat_alias="bm25_use_stemming",
             env="CLAUDE_BM25_USE_STEMMING",
-            reader="search/index_sync.py",
+            reader="search/hybrid_searcher.py",
+            construction_baked=True,
         ),
     )
     # Tokenizer variant (arXiv 2605.18561): "legacy" = destructive camel/snake
     # split + stemming; "whole" = identifiers kept intact, no stemming;
     # "additive" = whole identifiers + camel/snake sub-tokens. Changing this
-    # requires a re-index (index/query tokenization must match).
+    # requires a re-index (index/query tokenization must match) — also read
+    # once at construction (construction_baked=True) and in
+    # FORBIDDEN_AUTO_TUNE_KEYS (INDEX_VERSION 4, identifier-preserving
+    # "whole" tokenizer).
     # Default "whole": +0.05/+0.07 Recall@5, +0.09/+0.10 MRR vs legacy on the
     # 96q/63q golden sets (BM25-standalone, bm25_tokenizer_ab.py 2026-07-26).
     bm25_tokenizer: str = field(
@@ -292,7 +327,8 @@ class SearchModeConfig:
         metadata=spec(
             choices=("legacy", "whole", "additive"),
             flat_alias="bm25_tokenizer",
-            reader="search/index_sync.py",
+            reader="search/hybrid_searcher.py",
+            construction_baked=True,
         ),
     )
     # Reserved fused-pool slots for BM25-unique candidates. Under weighted RRF
@@ -317,7 +353,7 @@ class SearchModeConfig:
         default=100,
         metadata=spec(
             flat_alias="rrf_k_parameter",
-            reader="mcp_server/search_factory.py",
+            reader="search/hybrid_searcher.py",
             construction_baked=True,
         ),
     )
@@ -358,13 +394,19 @@ class PerformanceConfig:
         metadata=spec(
             flat_alias="use_parallel_search",
             env="CLAUDE_USE_PARALLEL",
+            mcp="performance_search",
             reader="mcp_server/tools/search_orchestrator.py",
         ),
     )
+    # Read once at HybridSearcher construction (ThreadPoolExecutor max_workers);
+    # not in index_probe.py's FORBIDDEN_AUTO_TUNE_KEYS — covered by neither
+    # guardrail today, same gap as bm25_use_stemming above.
     max_parallel_workers: int = field(
         default=2,
         metadata=spec(
-            flat_alias="max_parallel_workers", reader="mcp_server/search_factory.py"
+            flat_alias="max_parallel_workers",
+            reader="search/hybrid_searcher.py",
+            construction_baked=True,
         ),
     )
 
@@ -395,6 +437,10 @@ class PerformanceConfig:
     )
 
     # GPU Configuration
+    # Gates dynamic embedding-batch-size calculation only (embed_chunks());
+    # does NOT select the compute device. CUDA is used whenever available
+    # regardless of this flag — disabling it falls back to the fixed
+    # embedding.batch_size, not to CPU.
     prefer_gpu: bool = field(
         default=True,
         metadata=spec(
@@ -531,7 +577,7 @@ class MultiHopConfig:
         ),
     )
     edge_weights: dict[str, float] | None = field(
-        default=None,  # Intent-specific weights (None = DEFAULT_EDGE_WEIGHTS)
+        default=None,  # None = DEFAULT_EDGE_WEIGHTS
         metadata=spec(reader="search/hybrid_searcher.py"),
     )
 
@@ -541,6 +587,12 @@ class IntentConfig:
     """Intent classification settings (6 fields)."""
 
     enabled: bool = field(
+        # Default on: ADR-0028 took this off pending a repair of the SIMILARITY-intent symbol
+        # extractor (_extract_symbol_from_query), which was misfiring on trailing prose words
+        # instead of the query's actual anchor symbol. ADR-0029 repaired the extractor and
+        # re-gated it: on the same substrate, the find_similar redirect now beats the normal
+        # ranked path on MRR for the 9 similarity queries without falling below the find_similar
+        # ceiling on recall@20, on both the 63q and 133q golden datasets. See ADR-0029.
         default=True,  # Enable intent classification for query routing
         metadata=spec(
             flat_alias="intent_enabled",
@@ -618,7 +670,9 @@ class RerankerConfig:
         ),
     )
     min_vram_gb: float = field(
-        default=2.0,  # Auto-disable below this threshold (reranker uses ~1.5GB)
+        default=2.0,  # Auto-disable below this threshold (reranker uses ~1.5GB).
+        # Bypassed entirely when performance.allow_ram_fallback=True — that
+        # check short-circuits first in should_enable_neural_reranking().
         metadata=spec(
             flat_alias="reranker_min_vram_gb",
             env="CLAUDE_RERANKER_MIN_VRAM_GB",
@@ -627,12 +681,15 @@ class RerankerConfig:
         ),
     )
     batch_size: int = field(
-        default=16,  # Reranker inference batch size
+        default=16,  # NeuralReranker/GenerativeReranker inference batch size.
+        # Ignored by JinaRerankerV3 (the deployed default), which batches
+        # internally and never reads this field.
         metadata=spec(
             flat_alias="reranker_batch_size",
             env="CLAUDE_RERANKER_BATCH_SIZE",
             mcp="reranker_echo",
             reader="search/reranking_engine.py",
+            construction_baked=True,
         ),
     )
     dedupe_split_blocks: bool = field(
@@ -661,6 +718,7 @@ class RerankerConfig:
             flat_alias="reranker_instruction",
             env="CLAUDE_RERANKER_INSTRUCTION",
             reader="search/reranking_engine.py",
+            construction_baked=True,
         ),
     )
     doc_max_chars: int = field(
@@ -1136,18 +1194,22 @@ class QueryExpansionConfig:
 
 @dataclass
 class CallGraphConfig:
-    """Call-graph resolver pipeline settings (6 fields).
+    """Call-graph resolver pipeline settings (11 fields).
 
     Controls which static-analysis backends run at full-index time to inject
     cross-module ``calls`` edges into the code graph.
 
-    Resolver names map to concrete classes in the ``chunking/relationships/``
-    package.  Only resolvers that are also *available* (i.e. their optional
-    dependency is installed) are executed::
+    ``resolvers`` below governs Stages 1-2 only. Names map to concrete classes
+    in the ``chunking/relationships/`` package; only resolvers that are also
+    *available* (i.e. their optional dependency is installed) are executed::
 
         "pyan"   → PyanResolver   (pyan3>=2.6.0, optional extra [callgraph])
         "libcst" → LibCSTResolver (libcst>=1.8.6, optional extra [callgraph])
-        "lsp"    → LSPResolver    (basedpyright>=1.21, optional extra [lsp])
+
+    Stage 3 (LSP/basedpyright) is governed **solely** by ``lsp_enabled``
+    below — it is not a ``resolvers`` entry, and ``resolvers: []`` does not
+    disable it. Any name in ``resolvers`` other than ``"pyan"``/``"libcst"``
+    is silently ignored (``search/call_edge_injection.py``).
 
     The ``"ast"`` entry is a documentation placeholder — in-house AST edges are
     produced during chunking and are already in the graph before the injection
@@ -1161,7 +1223,8 @@ class CallGraphConfig:
     """Resolver names to attempt in the injection pipeline.
 
     Default: ``["pyan", "libcst"]`` (both in the ``[callgraph]`` extra).
-    Set to ``["pyan"]`` to disable LibCST (Stage 2), ``[]`` to skip entirely.
+    Set to ``["pyan"]`` to disable LibCST (Stage 2), ``[]`` to skip both.
+    Does **not** affect the LSP resolver (Stage 3) — see ``lsp_enabled``.
     """
 
     lsp_enabled: bool = field(
@@ -1189,13 +1252,87 @@ class CallGraphConfig:
         default=180.0,
         metadata=spec(reader="search/call_edge_injection.py"),
     )
-    """Aggregate wall-clock budget for the *entire* LSP pass (seconds).
+    """**Floor** for the aggregate wall-clock budget of the *entire* LSP pass
+    (seconds) — the pass never gets *less* time than this, regardless of
+    project size.
 
     Unlike ``lsp_timeout_seconds`` (per JSON-RPC request), this bounds the
     whole ``resolve()`` call across all files. If exceeded, the basedpyright
     subprocess is force-killed and edges collected so far are returned —
     partial LSP results are safe because LSP only *upgrades confidence* on
     edges the pyan/libcst resolvers already produced.
+
+    The effective budget scales above this floor with project size — see
+    ``lsp_seconds_per_chunk`` and ``lsp_total_timeout_cap_seconds``.
+    """
+
+    lsp_seconds_per_chunk: float = field(
+        default=0.012,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
+    """Marginal LSP budget added per indexed chunk (seconds/chunk).
+
+    ``LSPResolver.resolve()`` derives the effective aggregate budget as
+    ``startup + lsp_seconds_per_chunk * n_probes`` (one ``prepareCallHierarchy``
+    probe per chunk), then clamps it to
+    ``[lsp_total_timeout_seconds, lsp_total_timeout_cap_seconds]``. The
+    default is calibrated ~1.5x above the worst measured rate (0.0079 s/chunk
+    on a deep third-party type graph) so a static under-count doesn't
+    silently truncate the pass. Over-budgeting is free — the pass exits as
+    soon as it finishes, so this only matters when it is too low.
+    """
+
+    lsp_total_timeout_cap_seconds: float = field(
+        default=1800.0,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
+    """Upper bound on the derived LSP aggregate budget (seconds), regardless
+    of how many chunks ``lsp_seconds_per_chunk`` would otherwise imply.
+
+    Caps how long a pathologically large project can occupy the LSP stage.
+    Partial results below the cap are safe for the same reason a mid-pass
+    timeout is safe — see ``lsp_total_timeout_seconds``.
+    """
+
+    pyan_total_timeout_seconds: float = field(
+        default=600.0,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
+    """**Floor** for the aggregate wall-clock budget of the *entire* pyan
+    pass (seconds) — the pass never gets *less* time than this, regardless
+    of project size.
+
+    Mirrors ``lsp_total_timeout_seconds``. If exceeded, ``PyanResolver``
+    abandons the tier entirely and returns ``[]`` — unlike LSP, a partial
+    pyan pass is not safe to keep: without a completed ``postprocess()``,
+    ``uses_edges`` still holds unresolved imports and wildcard placeholders.
+    libcst/lsp edges are unaffected.
+
+    The effective budget scales above this floor with project size — see
+    ``pyan_seconds_per_file`` and ``pyan_total_timeout_cap_seconds``.
+    """
+
+    pyan_seconds_per_file: float = field(
+        default=2.5,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
+    """Marginal pyan budget added per analysed file (seconds/file).
+
+    ``PyanResolver.resolve()`` derives the effective aggregate budget as
+    ``max(pyan_total_timeout_seconds, pyan_seconds_per_file * len(py_files))``,
+    then clamps it to ``pyan_total_timeout_cap_seconds``. Mirrors
+    ``lsp_seconds_per_chunk``.
+    """
+
+    pyan_total_timeout_cap_seconds: float = field(
+        default=3600.0,
+        metadata=spec(reader="search/call_edge_injection.py"),
+    )
+    """Upper bound on the derived pyan aggregate budget (seconds), regardless
+    of how many files ``pyan_seconds_per_file`` would otherwise imply.
+
+    Caps how long a pathologically large project can occupy the pyan stage.
+    Mirrors ``lsp_total_timeout_cap_seconds``.
     """
 
     use_pyproject_toml: bool = field(
@@ -2091,8 +2228,8 @@ def get_model_slug(model_name: str) -> str:
         'bge-m3'
         >>> get_model_slug("Qwen/Qwen3-Embedding-0.6B")
         'qwen3-0.6b'
-        >>> get_model_slug("nomic-ai/CodeRankEmbed")
-        'coderankembed'
+        >>> get_model_slug("codefuse-ai/F2LLM-v2-0.6B")
+        'f2llm-v2-0.6b'
         >>> get_model_slug("google/embeddinggemma-300m")
         'gemma-300m'
     """

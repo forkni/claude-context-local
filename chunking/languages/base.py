@@ -295,8 +295,8 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
 
         `get_node_complexity` is correct and already overridden by chunkers
         that support it (Python, GLSL), but was previously consumed only by
-        adaptive sizing (`chunk_parsed` below, `repo_profiler.py`) — inert
-        under the default `sizing_mode="fixed"` — and never written into the
+        adaptive sizing (`chunk_parsed` below, `repo_profiler.py`) — live
+        under the default `sizing_mode="adaptive"` — and never written into the
         chunk's own metadata, so `CodeChunk.complexity_score`
         (`multi_language_chunker.py`, read from
         `tchunk.metadata["complexity_score"]`) silently stayed 0 for every

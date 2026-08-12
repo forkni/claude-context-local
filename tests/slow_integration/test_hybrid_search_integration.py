@@ -722,12 +722,13 @@ class TestHybridSearchConfigIntegration:
         searcher = HybridSearcher(
             storage_dir=str(self.temp_dir / "indices"),
             config=config,
-            rrf_k=config.search_mode.rrf_k_parameter,
         )
 
         # C2 removed the instance-level bm25_weight/dense_weight fields —
         # HybridSearcher now stores whatever SearchConfig it was given
         # (self.config) instead of copying the weights onto its own attrs.
+        # C4 (ADR-0030) removed rrf_k too — the reranker reads
+        # config.search_mode.rrf_k_parameter directly at construction.
         assert searcher.config.search_mode.bm25_weight == 0.7
         assert searcher.config.search_mode.dense_weight == 0.3
         assert searcher.reranker.k == 50

@@ -36,9 +36,11 @@ When absent, :class:`LibCSTResolver` logs one INFO message and returns
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 from evaluation.chunk_mapping import chunk_id_from_fqn
+from utils.progress import heartbeat
 
 from .call_edge_resolver import (
     ResolvedEdge,
@@ -311,8 +313,15 @@ class LibCSTResolver:
             # Warm the shared FullRepoManager cache once up-front so each
             # MetadataWrapper construction below reuses it instead of
             # recomputing per-file (resolve_cache() itself is cheap/near-free;
-            # the real cost is the per-file metadata resolution below).
+            # the real cost is the per-file metadata resolution below). The
+            # one opaque call in this resolver that can stall without the
+            # per-file loop below ever running, so it gets its own bracket.
+            cache_start = time.monotonic()
             manager.resolve_cache()
+            logger.info(
+                "[LIBCST] resolve_cache: %.1fs elapsed",
+                time.monotonic() - cache_start,
+            )
         except Exception as exc:  # noqa: BLE001 - resilience: libcst resolver is an optional recall booster, skip it on init failure
             logger.warning(
                 "[LIBCST] FullRepoManager initialisation failed (%s) — skipping",
@@ -320,51 +329,60 @@ class LibCSTResolver:
             )
             return []
 
-        for key, rel_label in zip(abs_keys, rel_labels, strict=False):
-            try:
-                # Bypass get_metadata_wrapper_for_path — it calls read_text()
-                # without specifying encoding, which fails on Windows cp1252
-                # locales for UTF-8 source files.  Read explicitly with utf-8.
-                source = Path(key).read_text(encoding="utf-8")
-                module = cst.parse_module(source)
-                cache = manager.get_cache_for_path(key)
-                wrapper = MetadataWrapper(module, True, cache)
-            except Exception as exc:  # noqa: BLE001 - resilience: one file's CST wrapper failing shouldn't break the libcst resolver pass
-                logger.warning(
-                    "[LIBCST] Skipping %s (wrapper error: %s)", rel_label, exc
-                )
-                skipped += 1
-                continue
+        with heartbeat(logger, "[LIBCST]", len(abs_keys), unit="files") as tick:
+            for key, rel_label in zip(abs_keys, rel_labels, strict=False):
+                try:
+                    try:
+                        # Bypass get_metadata_wrapper_for_path — it calls
+                        # read_text() without specifying encoding, which fails
+                        # on Windows cp1252 locales for UTF-8 source files.
+                        # Read explicitly with utf-8.
+                        source = Path(key).read_text(encoding="utf-8")
+                        module = cst.parse_module(source)
+                        cache = manager.get_cache_for_path(key)
+                        wrapper = MetadataWrapper(module, True, cache)
+                    except Exception as exc:  # noqa: BLE001 - resilience: one file's CST wrapper failing shouldn't break the libcst resolver pass
+                        logger.warning(
+                            "[LIBCST] Skipping %s (wrapper error: %s)", rel_label, exc
+                        )
+                        skipped += 1
+                        continue
 
-            visitor = _CallVisitor()
-            try:
-                wrapper.visit(visitor)
-            except Exception as exc:  # noqa: BLE001 - resilience: one file's visitor failing shouldn't break the libcst resolver pass
-                logger.warning(
-                    "[LIBCST] Skipping %s (visitor error: %s)", rel_label, exc
-                )
-                skipped += 1
-                continue
+                    visitor = _CallVisitor()
+                    try:
+                        wrapper.visit(visitor)
+                    except Exception as exc:  # noqa: BLE001 - resilience: one file's visitor failing shouldn't break the libcst resolver pass
+                        logger.warning(
+                            "[LIBCST] Skipping %s (visitor error: %s)", rel_label, exc
+                        )
+                        skipped += 1
+                        continue
 
-            for caller_fqn, callee_fqn, lineno in visitor.edges:
-                caller_id = chunk_id_from_fqn(caller_fqn, raw_line_map, project_root)
-                if caller_id is None:
-                    skipped += 1
-                    continue
+                    for caller_fqn, callee_fqn, lineno in visitor.edges:
+                        caller_id = chunk_id_from_fqn(
+                            caller_fqn, raw_line_map, project_root
+                        )
+                        if caller_id is None:
+                            skipped += 1
+                            continue
 
-                callee_id = chunk_id_from_fqn(callee_fqn, raw_line_map, project_root)
-                if callee_id is None:
-                    skipped += 1
-                    continue
+                        callee_id = chunk_id_from_fqn(
+                            callee_fqn, raw_line_map, project_root
+                        )
+                        if callee_id is None:
+                            skipped += 1
+                            continue
 
-                if caller_id == callee_id:
-                    skipped += 1
-                    continue  # skip self-loops
+                        if caller_id == callee_id:
+                            skipped += 1
+                            continue  # skip self-loops
 
-                # Infer whether the caller is a method from its FQN depth.
-                is_method = caller_fqn.count(".") >= 2
+                        # Infer whether the caller is a method from its FQN depth.
+                        is_method = caller_fqn.count(".") >= 2
 
-                raw_edges.add((caller_id, callee_id, lineno, is_method))
+                        raw_edges.add((caller_id, callee_id, lineno, is_method))
+                finally:
+                    tick()
 
         result = [
             ResolvedEdge(

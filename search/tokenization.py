@@ -9,6 +9,10 @@ Public API
 normalize_to_tokens(text, *, split_acronyms, split_dots, min_len, as_set)
     Single splitting core with knobs that reproduce both pre-existing variants exactly.
 
+tokenize_dotted_identifiers(text)
+    Case-preserving, dot-preserving tokenizer shared by
+    intent_classifier._detect_code_symbols and _extract_symbol_from_query.
+
 is_camelcase(token) / is_upper_const(token) / is_snake_or_dunder(token) / is_dotted_symbol(token)
     Case-sensitive predicates used by intent_classifier._detect_code_symbols; extracted
     verbatim so the regex lives once.
@@ -102,6 +106,28 @@ def normalize_to_tokens(
     if as_set:
         return set(tokens)
     return tokens
+
+
+# ---------------------------------------------------------------------------
+# Dotted-identifier tokenizer (case-preserving, unlike normalize_to_tokens)
+# ---------------------------------------------------------------------------
+
+
+def tokenize_dotted_identifiers(text: str) -> list[str]:
+    """Split text into word/underscore/dot runs, preserving case and dots.
+
+    The only tokenizer in the repo that keeps ``.`` inside a token, so a
+    qualified symbol like ``module.Class`` or ``self.__init__`` survives as
+    one token instead of being split at the dot (contrast
+    ``normalize_to_tokens``, which lowercases and can split *on* dots via
+    ``split_dots``). Case is preserved so the symbol predicates below
+    (``is_camelcase``, ``is_upper_const``, ``is_snake_or_dunder``,
+    ``is_dotted_symbol``) can run against the original token.
+
+    Used by ``intent_classifier._detect_code_symbols`` and
+    ``_extract_symbol_from_query`` to recognize code symbols inside a query.
+    """
+    return re.findall(r"[\w.]+", text)
 
 
 # ---------------------------------------------------------------------------

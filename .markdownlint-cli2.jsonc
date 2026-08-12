@@ -9,7 +9,9 @@
     ".venv",
     "benchmark_results",
     "logs",
-    ".claude/Charlie_DOC.md"
+    "audit_reports",
+    ".claude/Charlie_DOC.md",
+    "SESSION_LOG.md"
   ],
 
   // Rule configuration

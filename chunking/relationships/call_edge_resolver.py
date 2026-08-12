@@ -336,6 +336,7 @@ def _resolve_in_subprocess(
     project_root: Path,
     raw_line_map: dict[str, list[tuple[int, int, str]]],
     py_files: list[str] | None,
+    log_level: int,
 ) -> list[ResolvedEdge]:
     """Process-pool entry point for CPU-bound resolvers (pyan, LibCST).
 
@@ -344,10 +345,19 @@ def _resolve_in_subprocess(
     object would fail to submit. The parent's ``logging.Logger`` is never
     passed across the process boundary either: its ancestor loggers can carry
     ``Handler`` objects holding a ``threading.RLock``, which pickle rejects,
-    so the child builds its own logger by name instead.
+    so the child builds its own logger by name instead — and, since the child
+    otherwise has no handlers at all (logging is configured once, as an
+    import side effect in ``mcp_server/server.py``, which this worker never
+    imports), :func:`utils.progress.configure_child_logging` gives it one so
+    its progress lines actually reach the console instead of being dropped.
+    ``log_level`` is a plain int (unlike a ``Logger``) so it survives the
+    pickling that submitting this function to the pool requires.
     """
     import logging
 
+    from utils.progress import configure_child_logging
+
+    configure_child_logging(log_level)
     child_logger = logging.getLogger(f"{__name__}.subprocess.{resolver.name}")
     return resolver.resolve(project_root, raw_line_map, child_logger, py_files)
 
@@ -425,6 +435,11 @@ def run_resolvers(
     # each of pyan/libcst/lsp). A resolver still falls back to computing its
     # own scope if this comes back None (e.g. no files at all under the root).
     py_files = prepare_scoped_files(project_root, raw_line_map, logger, "RESOLVERS")
+    logger.info(
+        "[RESOLVERS] Dispatching %d resolver(s) over %d file(s)...",
+        len(available_resolvers),
+        len(py_files) if py_files is not None else 0,
+    )
 
     process_resolvers = [
         r for r in available_resolvers if isinstance(r, process_isolated_classes)
@@ -440,14 +455,23 @@ def run_resolvers(
 
         if process_resolvers:
             process_executor = ProcessPoolExecutor(max_workers=len(process_resolvers))
+            log_level = logger.getEffectiveLevel()
             for resolver in process_resolvers:
-                futures_by_resolver[resolver] = process_executor.submit(
-                    _resolve_in_subprocess,
-                    resolver,
-                    project_root,
-                    raw_line_map,
-                    py_files,
-                )
+                try:
+                    futures_by_resolver[resolver] = process_executor.submit(
+                        _resolve_in_subprocess,
+                        resolver,
+                        project_root,
+                        raw_line_map,
+                        py_files,
+                        log_level,
+                    )
+                except Exception:  # noqa: BLE001 - resilience: a submit failure (e.g. a broken process pool) must not take down thread-pool resolvers submitted below
+                    logger.warning(
+                        "[RESOLVERS] %s resolver failed to submit (non-fatal):\n%s",
+                        resolver.name,
+                        traceback.format_exc(),
+                    )
 
         if thread_resolvers:
             thread_executor = ThreadPoolExecutor(max_workers=len(thread_resolvers))
@@ -464,7 +488,10 @@ def run_resolvers(
         # submitted in, so merge precedence is unaffected by which finishes
         # first or which pool (thread vs process) ran it.
         for resolver in available_resolvers:
-            future = futures_by_resolver[resolver]
+            future = futures_by_resolver.get(resolver)
+            if future is None:
+                # Already logged above — submit() itself failed for this resolver.
+                continue
             try:
                 edges = future.result()
             except Exception:  # noqa: BLE001 - resilience: an optional resolver failing must not break the overall call-graph build

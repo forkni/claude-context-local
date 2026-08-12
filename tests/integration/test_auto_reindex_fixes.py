@@ -320,12 +320,16 @@ class TestUserFilterPreservation:
                 exclude_dirs=None,
                 *,
                 enable_entity_tracking=False,
+                include_exclusive=False,
             ):
                 # Capture args in the same positional form the assertion expects
                 chunker_calls.append(
                     (
                         (root_path, include_dirs, exclude_dirs),
-                        {"enable_entity_tracking": enable_entity_tracking},
+                        {
+                            "enable_entity_tracking": enable_entity_tracking,
+                            "include_exclusive": include_exclusive,
+                        },
                     )
                 )
                 return cls.__new__(cls)
@@ -388,8 +392,10 @@ class TestUserFilterPreservation:
         exclude_passed = kwargs.get("exclude_dirs") or (
             args[2] if len(args) > 2 else None
         )
-        # get_effective_filters merges user exclusions with default dirs, so the result is a
-        # superset of ["assets"] — verify "assets" is present rather than checking exact equality
+        # get_effective_filters returns only the user's raw exclude list — defaults are
+        # applied later inside PathFilter, not laundered in here (see search/filters.py) —
+        # so exclude_passed should be exactly ["assets"]. Checked via membership (not exact
+        # equality) to keep this test focused on filter propagation, not filter internals.
         assert exclude_passed is not None and "assets" in exclude_passed, (
             "MultiLanguageChunker must receive exclude_dirs containing stored user exclusions; "
             f"got args={args}, kwargs={kwargs}"

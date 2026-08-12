@@ -202,6 +202,7 @@ def test_wrap_in_context_propagates_to_thread():
 
 
 @pytest.mark.slow
+@pytest.mark.allow_network  # needs the real bge-m3 model from HF Hub, cached in CI
 @pytest.mark.asyncio
 async def test_index_full_span_via_mcp_handler(sample_codebase, tmp_path):
     """Full index run must emit an `index.full` span via the MCP handler."""
@@ -218,6 +219,7 @@ async def test_index_full_span_via_mcp_handler(sample_codebase, tmp_path):
 
 
 @pytest.mark.slow
+@pytest.mark.allow_network  # needs the real bge-m3 model from HF Hub, cached in CI
 @pytest.mark.asyncio
 async def test_search_span_hierarchy_via_mcp_handlers(sample_codebase):
     """After indexing, a search must emit search.hybrid + bm25/dense child spans."""

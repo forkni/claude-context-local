@@ -27,6 +27,7 @@ from search.tokenization import (
     is_dotted_symbol,
     is_snake_or_dunder,
     is_upper_const,
+    tokenize_dotted_identifiers,
 )
 
 
@@ -534,7 +535,7 @@ class IntentClassifier:
             0.0   # No symbols detected
         """
         boost = 0.0
-        tokens = re.findall(r"[\w.]+", query)  # Split preserving dots and underscores
+        tokens = tokenize_dotted_identifiers(query)  # preserves dots and underscores
 
         for token in tokens:
             # Skip common programming terms (not actual symbol names)
@@ -592,13 +593,6 @@ class IntentClassifier:
             if rel_types:
                 params["relationship_types"] = rel_types
 
-        elif intent == QueryIntent.PATH_TRACING:
-            # Extract source and target for find_path
-            source, target = self._extract_path_endpoints(query)
-            if source and target:
-                params["source"] = source
-                params["target"] = target
-
         elif intent == QueryIntent.SIMILARITY:
             # Extract reference symbol for find_similar_code
             reference = self._extract_symbol_from_query(query)
@@ -616,65 +610,66 @@ class IntentClassifier:
         return params
 
     def _extract_symbol_from_query(self, query: str) -> str | None:
-        """Extract symbol name from navigational queries.
+        """Extract symbol name from navigational/similarity/contextual queries.
 
         Examples:
             "what calls handle_search_code" → "handle_search_code"
             "who uses QueryRouter" → "QueryRouter"
             "dependencies of CodeIndexManager" → "CodeIndexManager"
+            "what calls PythonChunker.__init__" → "PythonChunker.__init__"
 
         Args:
-            query: Navigational query string.
+            query: Navigational/similarity/contextual query string.
 
         Returns:
             Extracted symbol name or None if not found.
         """
         query = query.strip()
 
-        # Pattern 1: "what calls/uses X"
-        match = re.search(r"what\s+(calls|uses|depends\s+on)\s+(\w+)", query, re.I)
+        # Pattern 1: "what calls/uses X" (dots allowed so qualified names survive)
+        match = re.search(r"what\s+(calls|uses|depends\s+on)\s+([\w.]+)", query, re.I)
         if match:
-            return match.group(2)
+            return match.group(2).rstrip(".")
 
         # Pattern 2: "who calls/uses X"
-        match = re.search(r"who\s+(calls|uses)\s+(\w+)", query, re.I)
+        match = re.search(r"who\s+(calls|uses)\s+([\w.]+)", query, re.I)
         if match:
-            return match.group(2)
+            return match.group(2).rstrip(".")
 
         # Pattern 3: "callers of X" / "dependencies of X"
-        match = re.search(r"(callers?|dependencies)\s+of\s+(\w+)", query, re.I)
+        match = re.search(r"(callers?|dependencies)\s+of\s+([\w.]+)", query, re.I)
         if match:
-            return match.group(2)
+            return match.group(2).rstrip(".")
 
         # Pattern 4: "X callers" / "X dependencies"
-        match = re.search(r"(\w+)\s+(callers?|dependencies)", query, re.I)
+        match = re.search(r"([\w.]+)\s+(callers?|dependencies)", query, re.I)
         if match:
-            return match.group(1)
+            return match.group(1).rstrip(".")
 
-        # Pattern 5: Last CamelCase or snake_case word (3-pass with blocklist)
-        words = query.split()
+        # Pattern 5: highest-signal code symbol anywhere in the query. Shares
+        # its tokenizer and predicates with _detect_code_symbols so the two
+        # stay consistent; precedence follows that method's own boost table
+        # (camelcase/dotted 0.25 > snake_or_dunder 0.20 > upper_const 0.15).
+        # Ties go to the later occurrence. No qualifying token → None, the
+        # safe default (no symbol means no redirect, i.e. normal ranked search).
+        best_token: str | None = None
+        best_rank = -1
+        for token in tokenize_dotted_identifiers(query):
+            if token in _CODE_TERM_BLOCKLIST:
+                continue
+            if is_camelcase(token) or is_dotted_symbol(token):
+                rank = 2
+            elif is_snake_or_dunder(token):
+                rank = 1
+            elif is_upper_const(token):
+                rank = 0
+            else:
+                continue
+            if rank >= best_rank:
+                best_rank = rank
+                best_token = token
 
-        # First pass: prefer words with underscores (strong symbol signal)
-        for word in reversed(words):
-            word = word.rstrip(".,!?;:")
-            if "_" in word and re.match(r"^[a-z][a-z0-9_]+$", word):
-                return word
-
-        # Second pass: CamelCase (always a symbol)
-        for word in reversed(words):
-            word = word.rstrip(".,!?;:")
-            if re.match(r"^[A-Z][a-zA-Z0-9]+$", word):
-                return word
-
-        # Third pass: plain lowercase (but not blocklisted)
-        for word in reversed(words):
-            word = word.rstrip(".,!?;:")
-            if word.lower() not in _CODE_TERM_BLOCKLIST and re.match(
-                r"^[a-z][a-z0-9_]+$", word
-            ):
-                return word
-
-        return None
+        return best_token
 
     def _detect_relationship_types(self, query: str) -> list[str]:
         """Detect which relationship_types filter to suggest based on query.
@@ -742,46 +737,6 @@ class IntentClassifier:
             types.append("instantiates")
 
         return types
-
-    def _extract_path_endpoints(self, query: str) -> tuple[str | None, str | None]:
-        """Extract source and target symbols from path-tracing queries.
-
-        Args:
-            query: Path tracing query string.
-
-        Returns:
-            Tuple of (source, target) or (None, None) if not found.
-
-        Examples:
-            >>> classifier = IntentClassifier()
-            >>> classifier._extract_path_endpoints("trace path from login to database")
-            ('login', 'database')
-            >>> classifier._extract_path_endpoints("how does UserModel connect to API")
-            ('UserModel', 'API')
-        """
-        query = query.strip()
-
-        # Pattern 1: "from X to Y"
-        match = re.search(r"from\s+(\w+)\s+to\s+(\w+)", query, re.I)
-        if match:
-            return match.group(1), match.group(2)
-
-        # Pattern 2: "between X and Y"
-        match = re.search(r"between\s+(\w+)\s+and\s+(\w+)", query, re.I)
-        if match:
-            return match.group(1), match.group(2)
-
-        # Pattern 3: "how does X connect to Y"
-        match = re.search(r"how\s+does\s+(\w+)\s+connect\s+to\s+(\w+)", query, re.I)
-        if match:
-            return match.group(1), match.group(2)
-
-        # Pattern 4: "X to Y path/connection"
-        match = re.search(r"(\w+)\s+to\s+(\w+)\s+(path|connection)", query, re.I)
-        if match:
-            return match.group(1), match.group(2)
-
-        return None, None
 
     def get_intent_patterns(self, intent: QueryIntent) -> dict | None:
         """Get pattern details for a specific intent type.

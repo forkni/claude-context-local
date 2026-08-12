@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -64,6 +65,20 @@ class TestLSPResolverProtocol:
 
     def test_custom_max_total_seconds(self) -> None:
         assert LSPResolver(max_total_seconds=45.0)._max_total_seconds == 45.0
+
+    def test_default_seconds_per_chunk(self) -> None:
+        assert LSPResolver()._seconds_per_chunk == pytest.approx(0.012)
+
+    def test_custom_seconds_per_chunk(self) -> None:
+        assert LSPResolver(seconds_per_chunk=0.02)._seconds_per_chunk == pytest.approx(
+            0.02
+        )
+
+    def test_default_cap_seconds(self) -> None:
+        assert LSPResolver()._cap_seconds == pytest.approx(1800.0)
+
+    def test_custom_cap_seconds(self) -> None:
+        assert LSPResolver(cap_seconds=600.0)._cap_seconds == pytest.approx(600.0)
 
     def test_available_returns_bool(self) -> None:
         assert isinstance(LSPResolver().available(), bool)
@@ -133,6 +148,230 @@ class TestLSPSubprocessFailure:
 
         edges = LSPResolver().resolve(tmp_path, {}, _LOG)
         assert edges == []
+
+
+# ---------------------------------------------------------------------------
+# Dynamic aggregate-budget derivation (pure arithmetic, no subprocess)
+# ---------------------------------------------------------------------------
+
+
+class TestLSPResolverBudgetDerivation:
+    """LSPResolver.resolve() derives its aggregate budget from the number of
+    indexed chunks (raw_line_map entries), not files. No basedpyright
+    subprocess runs here -- _run_lsp() is monkeypatched to capture the
+    derived budget it would otherwise pass to _LspClient."""
+
+    def _capture_budget(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        raw_line_map: dict[str, list[tuple[int, int, str]]],
+        resolver: LSPResolver,
+        py_files: list[str] | None = None,
+    ) -> dict:
+        import chunking.relationships.lsp_call_graph as lcg
+
+        monkeypatch.setattr(lcg, "_LSP_AVAILABLE", True)
+        monkeypatch.setattr(lcg, "_LSP_BINARY", "/fake/basedpyright-langserver")
+
+        captured: dict = {}
+
+        def _fake_run_lsp(
+            py_files_arg, project_root, raw_line_map_arg, logger, budget, n_chunks
+        ):
+            captured["budget"] = budget
+            captured["n_files"] = len(py_files_arg)
+            captured["n_chunks"] = n_chunks
+            return []
+
+        monkeypatch.setattr(resolver, "_run_lsp", _fake_run_lsp)
+        edges = resolver.resolve(tmp_path, raw_line_map, _LOG, py_files=py_files)
+        captured["edges"] = edges
+        return captured
+
+    def test_small_project_floors_at_max_total_seconds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A handful of chunks must not scale the budget below the floor."""
+        (tmp_path / "mod.py").write_text("def foo(): pass\n")
+        raw_line_map = {"mod.py": [(1, 2, "mod.py:1-2:function:foo")]}
+
+        resolver = LSPResolver(max_total_seconds=180.0, seconds_per_chunk=0.012)
+        captured = self._capture_budget(monkeypatch, tmp_path, raw_line_map, resolver)
+
+        assert captured["budget"] == pytest.approx(180.0)
+
+    def test_large_project_scales_above_the_floor(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Enough chunks push the derived budget above the floor."""
+        (tmp_path / "mod.py").write_text("def foo(): pass\n")
+        # 20,000 chunks -> 2.0 + 0.012 * 20000 = 242.0s, above the 180.0 floor.
+        raw_line_map = {
+            "mod.py": [
+                (i, i + 1, f"mod.py:{i}-{i + 1}:function:f{i}") for i in range(20_000)
+            ]
+        }
+
+        resolver = LSPResolver(max_total_seconds=180.0, seconds_per_chunk=0.012)
+        captured = self._capture_budget(monkeypatch, tmp_path, raw_line_map, resolver)
+
+        assert captured["budget"] == pytest.approx(2.0 + 0.012 * 20_000)
+
+    def test_pathological_project_clamps_at_the_cap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An extreme chunk count must not push the budget past cap_seconds."""
+        (tmp_path / "mod.py").write_text("def foo(): pass\n")
+        raw_line_map = {
+            "mod.py": [
+                (i, i + 1, f"mod.py:{i}-{i + 1}:function:f{i}")
+                for i in range(1_000_000)
+            ]
+        }
+
+        resolver = LSPResolver(
+            max_total_seconds=180.0, seconds_per_chunk=0.012, cap_seconds=1800.0
+        )
+        captured = self._capture_budget(monkeypatch, tmp_path, raw_line_map, resolver)
+
+        assert captured["budget"] == pytest.approx(1800.0)
+
+    def test_n_probes_counts_chunks_not_files(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two files x 100 chunks each must scale as 200 probes, not 2."""
+        (tmp_path / "a.py").write_text("def foo(): pass\n")
+        (tmp_path / "b.py").write_text("def bar(): pass\n")
+        raw_line_map = {
+            "a.py": [(i, i + 1, f"a.py:{i}-{i + 1}:function:f{i}") for i in range(100)],
+            "b.py": [(i, i + 1, f"b.py:{i}-{i + 1}:function:f{i}") for i in range(100)],
+        }
+
+        resolver = LSPResolver(
+            max_total_seconds=1.0, seconds_per_chunk=1.0, cap_seconds=10_000.0
+        )
+        captured = self._capture_budget(monkeypatch, tmp_path, raw_line_map, resolver)
+
+        # 200 probes * 1.0 s/chunk + 2.0s startup = 202.0s -- if this counted
+        # files instead of chunks it would be 2.0s (1 file) or 4.0s (2 files).
+        assert captured["budget"] == pytest.approx(202.0)
+
+    def test_file_outside_project_root_is_skipped_not_raised(
+        self,
+        tmp_path: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A py_files entry outside project_root must be skipped
+        (relative_to() raises ValueError), not propagate and abort resolve()."""
+        inside = tmp_path / "mod.py"
+        inside.write_text("def foo(): pass\n")
+        outside_dir = tmp_path_factory.mktemp("lsp_budget_outside")
+        outside_file = outside_dir / "outside.py"
+        outside_file.write_text("def bar(): pass\n")
+
+        raw_line_map = {"mod.py": [(1, 2, "mod.py:1-2:function:foo")]}
+        resolver = LSPResolver(max_total_seconds=180.0, seconds_per_chunk=0.012)
+
+        captured = self._capture_budget(
+            monkeypatch,
+            tmp_path,
+            raw_line_map,
+            resolver,
+            py_files=[str(inside), str(outside_file)],
+        )
+
+        assert captured["edges"] == []
+        # Only the in-root file's 1 chunk counts; the out-of-root file
+        # contributes nothing and does not raise.
+        assert captured["budget"] == pytest.approx(180.0)
+
+
+# ---------------------------------------------------------------------------
+# Tick-unit property: heartbeat's denominator must be n_chunks (every
+# indexed chunk), not the runtime n_probes counter (only chunks that
+# survive _find_def_position) -- ticking on n_probes would report a
+# percentage that never reaches 100%.
+# ---------------------------------------------------------------------------
+
+
+class TestLSPTickUnitProperty:
+    class _FakeLspClient:
+        """Stand-in for _LspClient -- no subprocess, just enough surface
+        for _session() to drive: deadline_exceeded, request(), notify()."""
+
+        def __init__(self) -> None:
+            self.deadline_exceeded = False
+            self.stderr_tail: list[str] = []
+
+        def request(self, method, params, req_id=None):
+            return {"result": None}
+
+        def notify(self, method, params) -> None:
+            return None
+
+    def test_tick_count_equals_n_chunks_and_exceeds_n_probes(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """One rejected module-level chunk, one accepted function chunk, and
+        one rejected split_block continuation -- tick() must fire for all
+        three (n_chunks), while n_probes (parsed from the summary log) only
+        counts the one that survived _find_def_position."""
+        import chunking.relationships.lsp_call_graph as lcg
+
+        mod_path = tmp_path / "mod.py"
+        mod_path.write_text(
+            "import os\nimport sys\n\ndef foo():\n    pass\n", encoding="utf-8"
+        )
+
+        raw_line_map = {
+            "mod.py": [
+                (1, 2, "mod.py:1-2:module"),  # rejected: no def/class line
+                (4, 5, "mod.py:4-5:function:foo"),  # accepted
+                (5, 5, "mod.py:5-5:split_block:foo"),  # rejected: continuation
+            ]
+        }
+        n_chunks = len(raw_line_map["mod.py"])
+
+        calls: list[int] = []
+
+        @contextmanager
+        def fake_heartbeat(logger, prefix, total, *, unit, interval=15.0):
+            assert total == n_chunks
+
+            def tick(n: int = 1, phase: str | None = None) -> None:
+                calls.append(n)
+
+            yield tick
+
+        monkeypatch.setattr(lcg, "heartbeat", fake_heartbeat)
+
+        resolver = LSPResolver()
+        client = self._FakeLspClient()
+
+        with caplog.at_level(logging.INFO, logger=_LOG.name):
+            resolver._session(
+                client,
+                [str(mod_path)],
+                tmp_path,
+                raw_line_map,
+                _LOG,
+                100.0,
+                n_chunks,
+            )
+
+        assert len(calls) == n_chunks == 3
+
+        probes_line = next(
+            r.message for r in caplog.records if r.message.startswith("[LSP] probes=")
+        )
+        n_probes = int(probes_line.split("probes=")[1].split()[0])
+        assert n_probes == 1
+        assert n_probes < len(calls)
 
 
 # ---------------------------------------------------------------------------

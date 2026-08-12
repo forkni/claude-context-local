@@ -61,7 +61,7 @@ class DefaultParameterExtractor(BaseRelationshipExtractor):
         Extract default values that are names (not literals).
 
         Processes:
-        - Regular args with defaults: def foo(x=DEFAULT)
+        - Positional-only and regular args with defaults: def foo(x=DEFAULT, /)
         - Keyword-only args with defaults: def foo(*, x=DEFAULT)
         - Excludes None, True, False, numeric/string literals
 
@@ -71,11 +71,14 @@ class DefaultParameterExtractor(BaseRelationshipExtractor):
         """
         args = node.args
 
-        # Regular args with defaults
-        # Defaults are aligned right (last N args have defaults)
-        defaults_offset = len(args.args) - len(args.defaults)
+        # Positional-only and regular args with defaults
+        # PEP 570: `defaults` is right-aligned across `posonlyargs + args`
+        # COMBINED, not `args` alone. Indexing into `args.args` gives a
+        # negative offset whenever positional-only params carry the defaults.
+        positional = args.posonlyargs + args.args
+        defaults_offset = len(positional) - len(args.defaults)
         for i, default in enumerate(args.defaults):
-            arg_name = args.args[defaults_offset + i].arg
+            arg_name = positional[defaults_offset + i].arg
             self._extract_default_value(default, arg_name, chunk_metadata, node.lineno)
 
         # Keyword-only args with defaults

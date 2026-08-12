@@ -412,124 +412,6 @@ def audit_produced_chunks(
 
 
 # ---------------------------------------------------------------------------
-# Pass 3: dormant-merge simulation
-# ---------------------------------------------------------------------------
-
-
-def _measure_merge_output(ts_chunks: list, counter: TokenCounter) -> dict:
-    reals = counter.count_many([c.content for c in ts_chunks])
-    merged_count = sum(1 for c in ts_chunks if c.node_type == "merged")
-    return {
-        "chunks": len(ts_chunks),
-        "merged_chunks": merged_count,
-        "real_tokens": dist(reals),
-        "under_150_real": sum(1 for r in reals if r < 150),
-        "under_50_real": sum(1 for r in reals if r < 50),
-        "over_800_real": sum(1 for r in reals if r > 800),
-        "over_2048_real": sum(1 for r in reals if r > 2048),
-    }
-
-
-def simulate_merges(
-    code_chunks: list, community_map: dict[str, int] | None, counter: TokenCounter
-) -> dict:
-    """Run the real merge code paths (dormant live) with several parameter sets."""
-    from chunking.community_remerge import (
-        assign_community_ids,
-        to_treesitter_chunks,
-    )
-    from chunking.languages.python import PythonChunker
-
-    merger = PythonChunker()._greedy_merge_small_chunks
-    results: dict[str, dict] = {}
-
-    # Variant A: production Step B semantics — community-boundary merge with
-    # live params (what flipping enable_community_merge=true would run today).
-    if community_map:
-        with_ids = assign_community_ids(code_chunks, community_map)
-        ts = to_treesitter_chunks(with_ids)
-        merged, orig, final = merger(
-            ts,
-            min_tokens=50,
-            max_merged_tokens=1000,
-            token_method="whitespace",
-            use_community_boundary=True,
-            size_method="tokens",
-        )
-        results["community_live_params"] = _measure_merge_output(merged, counter)
-        results["community_live_params"]["reduction_pct"] = round(
-            100 * (orig - final) / orig, 1
-        )
-
-    # Variant B: sibling-boundary (parent_class) merge with live params —
-    # the classic cAST merge without needing communities.
-    ts_plain = to_treesitter_chunks(code_chunks)
-    merged_b, orig_b, final_b = merger(
-        ts_plain,
-        min_tokens=50,
-        max_merged_tokens=1000,
-        token_method="whitespace",
-        use_community_boundary=False,
-        size_method="tokens",
-    )
-    results["sibling_live_params"] = _measure_merge_output(merged_b, counter)
-    results["sibling_live_params"]["reduction_pct"] = round(
-        100 * (orig_b - final_b) / orig_b, 1
-    )
-
-    # Variant C: sibling merge with code-default params (min 50 / max 400).
-    ts_plain_c = to_treesitter_chunks(code_chunks)
-    merged_c, orig_c, final_c = merger(
-        ts_plain_c,
-        min_tokens=50,
-        max_merged_tokens=400,
-        token_method="whitespace",
-        use_community_boundary=False,
-        size_method="tokens",
-    )
-    results["sibling_default_params"] = _measure_merge_output(merged_c, counter)
-    results["sibling_default_params"]["reduction_pct"] = round(
-        100 * (orig_c - final_c) / orig_c, 1
-    )
-
-    # Variants D/E: calibration-corrected budgets. The whitespace estimator
-    # under-counts F2LLM tokens ~2.37x (measured), so a 150-real-token floor is
-    # ~63 ws tokens and an ~838-real-token ceiling (clamp(p90_func*1.2)) is
-    # ~354 ws tokens. These show what a real-token-aware budget would produce.
-    if community_map:
-        with_ids_d = assign_community_ids(code_chunks, community_map)
-        ts_d = to_treesitter_chunks(with_ids_d)
-        merged_d, orig_d, final_d = merger(
-            ts_d,
-            min_tokens=63,
-            max_merged_tokens=354,
-            token_method="whitespace",
-            use_community_boundary=True,
-            size_method="tokens",
-        )
-        results["community_calibrated"] = _measure_merge_output(merged_d, counter)
-        results["community_calibrated"]["reduction_pct"] = round(
-            100 * (orig_d - final_d) / orig_d, 1
-        )
-
-    ts_plain_e = to_treesitter_chunks(code_chunks)
-    merged_e, orig_e, final_e = merger(
-        ts_plain_e,
-        min_tokens=63,
-        max_merged_tokens=354,
-        token_method="whitespace",
-        use_community_boundary=False,
-        size_method="tokens",
-    )
-    results["sibling_calibrated"] = _measure_merge_output(merged_e, counter)
-    results["sibling_calibrated"]["reduction_pct"] = round(
-        100 * (orig_e - final_e) / orig_e, 1
-    )
-
-    return results
-
-
-# ---------------------------------------------------------------------------
 # Pass 4: call-graph stats + gamma sweep
 # ---------------------------------------------------------------------------
 
@@ -779,16 +661,8 @@ def main() -> int:
     live_chunking = {
         k: getattr(chunking_cfg, k)
         for k in (
-            "min_chunk_tokens",
-            "max_merged_tokens",
-            "enable_community_detection",
-            "enable_community_merge",
-            "community_resolution",
-            "max_phantom_degree",
             "enable_large_node_splitting",
             "max_chunk_lines",
-            "token_estimation",
-            "size_method",
             "split_size_method",
             "max_split_chars",
             "sizing_mode",
@@ -886,10 +760,17 @@ def main() -> int:
             project_id = graph_files[0].name[: -len("_call_graph.json")]
             storage = CodeGraphStorage(project_id, storage_dir=storage_dir)
             if storage.load():
-                community_map = storage.load_community_map()
-                collapsed, collapse_meta = collapse_graph(
-                    storage.graph, chunking_cfg.max_phantom_degree
-                )
+                # Community detection/storage was removed from the codebase
+                # (`35d2f4f` cull + a later graph_storage.py refactor —
+                # `CodeGraphStorage.load_community_map` no longer exists).
+                # community_map stays None; the `if community_map:` branches
+                # below degrade to their documented empty state (0 stored
+                # communities, no budget block) rather than crashing.
+                # max_phantom_degree was a ChunkingConfig field (default 20)
+                # before the community-detection field cull (`35d2f4f`); it is
+                # no longer live-tunable, so this analysis-only pass keeps the
+                # old default as a literal.
+                collapsed, collapse_meta = collapse_graph(storage.graph, 20)
                 import networkx as nx
 
                 graph_result = {
@@ -938,9 +819,6 @@ def main() -> int:
             "communities_fitting_400_real": sum(1 for v in sums.values() if v <= 400),
         }
 
-    # Pass 3: merge simulation
-    merge_sim = simulate_merges(code_chunks, community_map, counter)
-
     # Pass 5: duplication
     dup = duplication_stats(ast_stats["file_token_lists"])
 
@@ -971,7 +849,6 @@ def main() -> int:
         "token_calibration": calibration,
         "comment_docstring_density": density,
         "produced_chunks": produced,
-        "merge_simulation": merge_sim,
         "graph": graph_result,
         "gamma_sweep": gamma_rows,
         "community_token_budget": community_budget,

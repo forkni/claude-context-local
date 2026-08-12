@@ -29,7 +29,7 @@
 
 ## Highlights
 
-- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-07-27, 63 queries, hybrid k=7): **Hit@5 100%, MRR 0.787-0.796, Recall@7 0.719-0.734, Recall@20 0.80-0.81** - [benchmarks](docs/BENCHMARKS.md)
+- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-08-06, 63 queries, hybrid k=10, `canon_l1`): **MRR 0.8603, Recall@5 0.6795, Recall@10 0.7957** - [benchmarks](docs/BENCHMARKS.md)
 - **Neural Reranking**: Cross-encoder models (default: `Alibaba-NLP/gte-reranker-modernbert-base`; alternatives: jinaai/jina-reranker-v3, Qwen3-Reranker-0.6B) improve ranking quality by 15-25% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
 - **SSCG Integration**: Structural-Semantic Code Graph — 21 relationship types, PageRank centrality reranking; see [benchmarks](docs/BENCHMARKS.md) for mode-comparison history
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
@@ -42,7 +42,7 @@
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 5,540 unit tests passing (+102 fast_integration, +19 integration, +108 slow_integration) | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
+**Status**: ✅ Production-ready | 5,800 unit tests passing (+102 fast_integration, +19 integration, +108 slow_integration) | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
 
 *Last reviewed: 2026-08-02*
 
@@ -235,7 +235,7 @@ start_mcp_server.cmd → 3 (Search Configuration)
 
 ## Search Modes
 
-Quality metrics below are from the [SSCG benchmark](#benchmark-results) (2026-06-08, 13-query dataset, k=10) and are **stale** — the canonical golden dataset (`evaluation/golden_dataset.json`) has since grown to 77 queries across 6 categories, and a separate expanded set (`evaluation/golden_dataset_expanded.json`) now holds 145. No per-mode (hybrid/semantic/bm25) A/B has been rerun on either; see [Benchmark Results](#benchmark-results) for the current hybrid-only baseline. This table describes mode performance on the old 13-query benchmark only — not general reliability guarantees.
+Quality metrics below are from the [SSCG benchmark](#benchmark-results) (2026-06-08, 13-query dataset, k=10) and are **stale** — the canonical golden dataset (`evaluation/golden_dataset.json`) has since grown to 77 queries across 6 categories, and a separate expanded set (`evaluation/golden_dataset_expanded.json`) now holds 145. No per-mode (hybrid/semantic/bm25) A/B has been rerun on either; see [Benchmark Results](#benchmark-results) for the current hybrid-only baseline. This table describes mode performance on the old 13-query benchmark only — not general reliability guarantees. The 2026-06-08 figures also predate every comparability break listed under [Benchmark Results](#benchmark-results) (golden-dataset repair, harness rewiring, the ADR-0033 ML-stack bump) — see `docs/BENCHMARKS.md:505,518` — so don't read them against the hybrid-only baseline above as a trend.
 
 | Mode | Description | SSCG Quality (2026-06-08, k=10) | Status |
 |------|-------------|-------------------------------|--------|
@@ -309,7 +309,7 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
   - Qwen3-0.6B: ~2.3GB
   - F2LLM-v2-0.6B: ~2.2GB
 - **Windows**: Windows 10/11 with PowerShell
-- **PyTorch**: `>=2.8.0,<2.9.0` (auto-installed with CUDA 12.8 primary / CUDA 12.4 fallback support; 2.9.x is excluded — it breaks ModernBERT `torch.compile`)
+- **PyTorch**: `>=2.11.0,<2.12.0` (auto-installed with CUDA 12.8 primary / CUDA 12.4 fallback support; ceiling reflects the pinned `cu128` wheel index's current maximum)
 - **GPU** (optional): NVIDIA GPU with CUDA for 8.6x faster indexing
 
 Everything works on CPU if GPU unavailable.
@@ -427,7 +427,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 5,540 unit tests (+102 fast_integration, 19 integration, 108 slow_integration)
+└── tests/             # 5,800 unit tests (+102 fast_integration, 19 integration, 108 slow_integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -440,26 +440,32 @@ claude-context-local/
 
 ## Benchmark Results
 
-### Latest Validation (2026-08-03, hybrid-only, k=10)
+### Latest Validation (2026-08-06, hybrid-only, k=10)
 
-Provenance: `evaluation/CANON_20260803.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`), taken after the C3 searcher-construction dedup and config-metadata fixes (ADR-0024). Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
+Provenance: `docs/adr/0033-lift-torch-ceiling.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`, `intent.enabled=True`). Re-pinned to `canon_l1` after the ML-stack bump (retrieval libraries + torch 2.8.0+cu128 → 2.10.0+cu128 → 2.11.0+cu128, ADR-0033) — all three stages independently gated on a fresh 63q intent-on arm against a same-day pre-side baseline, passing cleanly (stage 1: 0 queries moved, CI zero on 4 of 5 metrics; stage 2: all five paired 95% CIs include zero; stage 3: 0 queries moved, all five CIs exactly `[+0.0000, +0.0000]`, byte-identical to stage 2). The table below cites `canon_l1`'s **intent-on arm** — the figures matching the shipped default — not its intent-off control view. Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
 
 | Dataset | Queries | MRR | Recall@5 | Recall@10 | NDCG@5 | pool_hit_rate |
 |---|---|---|---|---|---|---|
-| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8348** (`canon_C3`, 0 flips r1/r2) | 0.6755 | 0.7919 | 0.6939 | 1.0000 |
-| Expanded (`golden_dataset_expanded.json`, non-D, post H-promotion) | 131 | **0.6816** (`canon_C3`, 0 flips r1/r2) | 0.6619 | 0.7744 | 0.6363 | 0.9771 |
-| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.8907** | 0.6784 | 0.7942 | 0.7064 | 1.0000 |
-| F-via-similar (F-category only, 9 queries) | 9 | **0.8519** | — | file_recall@5 0.8370 | — | — |
+| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8603** (`canon_l1` intent-on arm) | 0.6795 | 0.7957 | 0.7107 | 0.9048 |
+| Expanded (`golden_dataset_expanded.json`, non-D, 133 queries) | 133 | **0.6789** (`canon_l1` intent-on arm) | 0.6507 | 0.7758 | 0.6324 | 0.8797 |
+| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.9021** (`canon_l1`) | 0.6633 | 0.7804 | 0.7047 | 1.0000 |
 
-Run-to-run noise band is **±0.02 MRR**, measured directly via a same-code control (two 94-query runs on unchanged code landed 0.701 and 0.683). Treat any delta smaller than that as noise. Note the two F-via-similar rows above: the whole-63-query aggregate (0.8907) and the true F-category-only mean (0.8519) are different numbers over different query sets — a prior generation of this table published only the whole-aggregate figure under a "9-query" caption; both are shown now to avoid repeating that.
+Run-to-run noise band is **±0.02 MRR**, measured directly via a same-code control (two 94-query runs on unchanged code landed 0.701 and 0.683). Treat any delta smaller than that as noise. The canonical-view and F-via-similar figures are byte-identical to `canon_k1`/`canon_k2` (0 queries moved across both stage 2 and stage 3 gates); the expanded-view deltas vs the prior `canon_j1` figures (0.6869, 0.8836) are within or just outside the noise band and are attributed to torch's kernel-level floating-point reordering measured in ADR-0033's Stage 2 gate, not a functional regression. The separate F-category-only (9-query) sub-row from prior generations is dropped — the whole-63q aggregate is the one actually consumed downstream.
 
 **Comparability breaks** — do not read the numbers above as a trend against older figures in this repo's history:
 
 - ADR-0023 (`canon_B1`, 2026-08-02, mrr 0.8249) routed the harness through `SearchOrchestrator.run()` instead of a direct `HybridSearcher.search()` call — not comparable to anything measured before it.
-- ADR-0024 (`canon_C3`, this table) re-pins after the C3 searcher-construction dedup and config-metadata fixes; see `evaluation/CANON_20260803.md` for the full delta against `canon_B1`.
+- ADR-0024 (`canon_C3`, mrr 0.8348/0.6816/0.8907) re-pinned after the C3 searcher-construction dedup and config-metadata fixes; see `evaluation/CANON_20260803.md`.
+- `canon_d1`/`canon_d2` (`evaluation/CANON_20260804.md`) re-pinned after 34 further commits and a 2-query dataset top-up (H035, H068); MRR moved by less than the ±0.02 noise band on the canonical/F views and by −0.0225 on the expanded view (−0.0162 code drift + −0.0063 dataset change).
+- ADR-0026 (`canon_f1`, `evaluation/CANON_20260804_B1B.md`) re-pinned after further commits and captured `canon_B1b`, the first intent-on arm — the measurement that started the intent-layer disposition below.
+- ADR-0028 (`canon_g1`, `evaluation/CANON_20260804_INTENT_OFF.md`) defaulted `intent.enabled=False` and removed the dead `find_path` redirect as a stopgap while the `find_similar` extractor bug was diagnosed.
+- ADR-0029 (`canon_h1`, `evaluation/CANON_20260804_INTENT_ON_REPAIRED.md`) repaired `_extract_symbol_from_query`, passed the pre-registered similarity-query gate on both datasets, and re-enabled `intent.enabled=True` as the shipped default.
+- ADR-0030 (`canon_i1`) deepened the config→searcher seam and corrected six construction-baked liveness tags; measured 0 flips, all deltas attributed to substrate drift.
+- ADR-0031 (`canon_j1`) deleted the two intent policy tables (both previously measured inert/flat); a pre-registered gate passed cleanly — `canon_j1`'s intent-on arm superseded `canon_i1`.
+- ADR-0033 (`canon_l1`, `docs/adr/0033-lift-torch-ceiling.md`) bumped the ML stack (transformers/sentence-transformers/faiss-cpu/huggingface-hub/hf-xet, then torch 2.8.0+cu128 → 2.10.0+cu128 → 2.11.0+cu128) across three independently-gated stages — `canon_l1`'s intent-on arm is the published baseline above, superseding `canon_j1`/`canon_k1`/`canon_k2`.
 - The 2026-07-28 golden-dataset repair (`6df36db`) changed scoring for 3-part `split_block` chunks; nothing measured before that commit is comparable to what's measured after.
-- The 2026-08-02 H-category promotion grew the expanded set 108→145 queries (94→131 non-D) by adding 37 commit-mined bug-localization queries; the pre-promotion 94-query MRR (0.6815) and the post-promotion 131-query MRR (0.6816) describe different datasets that happen to land close together at this generation — H queries are harder by construction (single-file, ≤2 golds), so treat the two figures as separate measurements, not a before/after comparison.
-- `0.797` in the historical table below (2026-06-08, 13 queries) predates the golden-dataset repair, the H-promotion, the SDK v2 migration, and both ADR-0023/ADR-0024; kept only for continuity.
+- The 2026-08-02 H-category promotion grew the expanded set 108→145 queries (94→131 non-D); the 2026-08-04 top-up grew it further to 147 (133 non-D). H queries are harder by construction (single-file, ≤2 golds), so treat each generation's figure as a separate measurement, not a before/after comparison.
+- `0.797` in the historical table below (2026-06-08, 13 queries) predates the golden-dataset repair, the H-promotion, the SDK v2 migration, and every re-pin since; kept only for continuity.
 
 ### Live MCP pipeline eval (k=7, orchestrator + multi-hop, 2026-08-01)
 
@@ -552,7 +558,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (5,540 unit tests, 100% pass rate)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (5,800 unit tests, 100% pass rate)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 

@@ -10,7 +10,7 @@ argument-hint: "search query or 'status' for index health"
 # requires MCP_EXPOSE_ADVANCED_TOOLS=1 on the server process + reconnect. See "Tool Tiers" below.
 allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources"
 metadata:
-  version: 0.23.0
+  version: 0.24.0
   mcp-server: code-search
 ---
 
@@ -36,39 +36,40 @@ tools.
 Ensures all MCP semantic search operations follow correct workflows for accurate results. The key behavioral rule: **search results are ranked
 candidates, not definitive answers — always scan all returned results.**
 
-**SSCG benchmark (searcher-only, 63-query, 2026-07-26/27, post-Q2-sweep, `top_k_candidates=30`, this deployment's F2LLM-v2-0.6B + jina-reranker-v3):**
-MRR 0.787–0.796, Recall@7 0.719–0.734, Recall@20 0.80–0.81, avg pool ≈26.6, latency 0.97–1.4s. **Hit@5 is typically 1.000 but not always** — one of
-three current-config runs measured 0.9841 (62/63). Recommended operating k: **7** (some targets rank 6–7). Engine default is `k=7`; pass it explicitly
-when correctness matters. Use `k=10` for architectural/global queries. See [references/performance.md](references/performance.md) for full results,
-including the broader 96-query set where pool-hit rate drops to ~97–98%.
+**`docs/BENCHMARKS.md` is the single source of truth for benchmark numbers.** This skill states the current headline once, here, and does not
+duplicate figures elsewhere — every other reference file in this skill points back to `docs/BENCHMARKS.md` instead of restating numbers that will
+drift out of date on the next benchmark run.
 
-**Comparability note (2026-08-02):** the golden dataset has since grown 108→145 queries (94→131 non-D) via the H-category commit-mined promotion
-(commit `988f1f9`). The figures above predate that expansion and were measured on the pre-expansion 63/96-query sets — do not read them as directly
-comparable to any benchmark run against the 145-query set without re-checking dataset size and date.
+**Current headline (`canon_j1`, 2026-08-05, canonical 63-query set, hybrid, k=10, intent-on):** MRR **0.8603**, Recall@5 0.6676, Recall@10 0.7864,
+NDCG@5 0.7052, pool_hit_rate 0.9048. The dataset has been repaired and expanded multiple times since earlier benchmark runs (comparability breaks are
+logged in `docs/BENCHMARKS.md`) — do not compare an older cached number here against a fresh run without checking both the dataset size/date and the
+config it ran under. Engine default is `k=7`; pass it explicitly when correctness matters. Use `k=10` for architectural/global queries.
 
-**DSPy agent eval (historical — subsystem removed, ADR-0016; 2026-06-26, 77-query dataset, 4-tool):** Recall@7=0.9046, MRR=0.8519, Hit@7=1.000,
-tool_sel=1.000 on the held-out test split (18 queries, A–F coverage). Use all 4 tools: search_code, find_connections, find_path, find_similar_code.
-See [references/performance.md](references/performance.md).
+**Note:** `evaluation/golden_dataset.json`'s own `_meta.current_metrics` block still cites a 2026-06-26 DSPy agent eval. That subsystem was removed
+wholesale in v0.23.0 (ADR-0016) — treat that block as stale metadata, not a current benchmark status; `docs/BENCHMARKS.md` is current.
 
 ---
 
 ## Critical: Results Are Candidates, Not Answers
 
-MCP search returns **ranked candidates**, not definitive answers. On the 2026-07-25 63-query SSCG benchmark (hybrid, k=7) Hit@5 = 100% — but the
+MCP search returns **ranked candidates**, not definitive answers. On the canonical benchmark set MRR is well under 1.0 (see the headline above) — the
 correct result is **not always ranked first**, and this is not a general reliability guarantee for arbitrary queries or codebases. Pool-hit
-instrumentation (2026-07-25) makes the scan-all-k rule concrete: the gold chunk **always** reached the (then 50-candidate) rerank pool (pool_hit_rate
-= 1.000), so every benchmark miss was an *ordering* miss — the right answer can legitimately sit at rank 5–7 of an otherwise-correct result set. The
-pool is now sized at `top_k_candidates=30` (see above); this finding is about pool coverage, not the specific size.
+instrumentation makes the scan-all-k rule concrete: on the canonical set essentially every gold chunk reaches the pre-rerank candidate pool
+(pool_hit_rate ≈ 0.90–1.0 depending on the run), so most benchmark misses are *ordering* misses — the right answer can legitimately sit at rank 5–7
+of an otherwise-correct result set, not just missing outright.
 
-**Baseline rule:** **pass `k=7` explicitly when correctness matters.** The dataclass factory default (`search/config.py`) is still `default_k=4`; the
-shipped `search_config.json.example` (and this deployment's config) set it to `7` based on SSCG benchmark findings (MRR +0.093, R@7 +0.122 vs k=4) —
-that config value is what makes k=7 the effective default in practice, not a code change. Targets may still rank 6–7 on complex or multi-target
-queries, so passing `k=7` explicitly is good defensive practice regardless of which default is active. Use `k=10` for architectural / global queries.
+**Baseline rule:** **pass `k=7` explicitly when correctness matters.** The `search_code` tool schema declares `k`'s default as `4`
+(`mcp_server/tool_registry.py`), but the handler falls back to `search_config.search_mode.default_k` whenever `k` is omitted — both the shipped
+`search_config.json.example` and this deployment's config set that to **7**, which is what makes `k=7` the effective default in practice, not the
+schema value. Pass it explicitly regardless: an MCP client isn't guaranteed to omit the field the same way in every context, and targets may still
+rank 6–7 on complex or multi-target queries. Use `k=10` for architectural / global queries.
 
 **Result Interpretation Workflow:**
 
-1. Call `code-search:search_code(query="<your query>", k=7)`. Multi-hop and graph-hop expansion of the initial hits run **always-on**; pass
-   `ego_graph_enabled=true` for opt-in k-hop neighbor expansion. `include_context` has **no effect on the default `HybridSearcher` search path**
+1. Call `code-search:search_code(query="<your query>", k=7)`. Multi-hop, graph-hop, **and ego-graph** expansion of the initial hits all run
+   **always-on**; `ego_graph_enabled` (schema default `false`) does not gate ego-graph expansion, it only *widens* `ego_graph_k_hops`/
+   `ego_graph_max_neighbors_per_hop` when `true` (see Gotchas) — expect `source: "ego_graph"` rows in every result set regardless. `include_context`
+   has **no effect on the default `HybridSearcher` search path**
    (`SearchOrchestrator._search` in `mcp_server/tools/search_orchestrator.py` only threads it through for a non-default searcher) — don't rely on it.
    Use `k=10` for architectural / global queries.
 2. **Scan ALL k results** — results are pre-sorted in relevance order (centrality-reranked blended_score descending) under the server default;
@@ -210,8 +211,9 @@ These are non-obvious traps from real session experience — not things the docs
 |---|---|
 | Results are pre-sorted by `blended_score` descending under the server default (`source_order_output=false`, v0.18.0+); module summaries are demoted to the tail for non-GLOBAL queries | Array position 0 is already the best default-order match. For strict cross-encoder order instead, re-sort by `reranker_score` then `blended_score`: `sorted(results, key=lambda r: (r.get("reranker_score", 0), r.get("blended_score", 0)), reverse=True)`. **Caveat:** this re-promotes demoted summary chunks (e.g. a `module:hybrid_searcher` summary with `reranker_score=0.94` moves from position 28 to position 0) — apply it only when you specifically want pure cross-encoder ranking |
 | `search_code` returns metadata only — `file`, `lines`, `kind`, `score`, `chunk_id`, usually `name` — never a code body (full field list: [references/parameters.md](references/parameters.md)) | Don't spend extra calls "confirming" a candidate's body; names, kinds, and scores are sufficient to judge relevance |
-| `source="ego_graph"` neighbors are interleaved into the main results array (not returned separately) when `ego_graph_enabled=true`, and carry their own `blended_score` | Count them toward your top-k window; don't filter them out before ranking — they're legitimate ranked candidates |
-| The `EgoGraphConfig` dataclass defaults to `enabled=false`, but the deployed `search_config.json` ships `"ego_graph": {"enabled": true}` | The loaded JSON overrides the Python default — don't trust the dataclass default. Verify actual state with `get_search_config().ego_graph.enabled` |
+| **Ego-graph expansion is always-on and cannot be disabled from the MCP boundary.** `EgoGraphConfig.enabled` defaults to `True` in the dataclass (`search/config.py`), and `search/effective_config.py`'s `build_effective_config()` only ever *turns it on* (there is no branch that sets `enabled=False`). The `ego_graph_enabled` tool argument (schema default `false`) does not gate the feature — it only raises `ego_graph_k_hops`/`ego_graph_max_neighbors_per_hop` when `true` | Expect `source="ego_graph"` rows interleaved into every result set, carrying their own `blended_score` — count them toward your top-k window, don't filter them out. `ego_graph_enabled=true` is for *widening* the neighborhood, not switching it on |
+| `k` is not the result count — multi-hop/graph-hop/ego-graph expansion adds rows *after* `k` is applied to the initial retrieval. Measured on the live index, same query: `k=1` → 4 results, `k=5` → 20, `k` omitted (effective 7) → 26 | Don't size a context budget off `k` directly — expect roughly 3–5× more rows back than `k`. Total rows are capped at `k × graph_enhanced.max_results_multiplier` (default 8) |
+| `find_connections`'s `relationship_types` filter only scopes *some* response sections — `direct_callers`, `indirect_callers`, `direct_callees`, and `similar_code` come back unfiltered no matter what you pass; only sections like `uses_types`/`exceptions_caught`/`instantiates` are actually narrowed by it | Don't rely on `relationship_types` to prune caller/callee lists — filter those client-side by their own `resolver_source`/edge-type fields instead |
 | `split_block` pieces of one long function (e.g. `file.py:10-40:split_block:fn` + `file.py:41-80:split_block:fn`) are one logical hit | Normalize/dedupe by stripping the line range (`file.py:10-40:type:name` → `file.py:type:name`) before counting unique chunks in Recall/Hit metrics. Since v0.12.1 they also carry full `uses_type`/`imports` edges, so `find_connections` returns these too |
 | Call edges carry resolver provenance (v0.14.0+): `resolver_source` (`"ast"`/`"pyan"`/`"libcst"`/`"lsp"`), `resolver_confidence` (0.5–0.98), `confidence` tag (`"exact"`/`"recovered"`/`"ambiguous"`) | Higher-confidence resolvers upgrade edges in place — `resolver_source: "lsp"` means basedpyright confirmed the call. Tune via `call_graph.min_confidence`; see `docs/CALL_GRAPH_TUNING.md` |
 | INCLUSION vs ORDERING are separate rules, often conflated (top-2 GEPA-eval failure modes, historical — subsystem removed, ADR-0016) | **INCLUSION:** every relevant chunk you surfaced must appear in your answer regardless of `kind` — ordering never justifies *dropping* one. **ORDERING:** lead with the definition-level chunk (`class`/`method`/`function`) whose name matches the question, even if a `split_block`/`module`/`decorated_definition` fragment scored higher; then include the rest |

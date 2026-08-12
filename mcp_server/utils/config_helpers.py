@@ -6,37 +6,6 @@ Provides utilities for accessing configuration without circular dependencies.
 import logging
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any
-
-
-def get_config_via_service_locator(key: str | None = None, default: Any = None) -> Any:
-    """Retrieve the current SearchConfig (or a sub-key) without circular imports.
-
-    Uses ``get_search_config()`` directly; the name is kept for backward compatibility
-    with callers in ``embeddings/`` and ``search/`` that import it by this name.
-
-    Args:
-        key: Optional configuration key to retrieve. If None, returns entire config.
-        default: Default value if key not found or config unavailable.
-
-    Returns:
-        Configuration value, entire config object, or default.
-
-    Example:
-        >>> config = get_config_via_service_locator()
-        >>> bm25_weight = get_config_via_service_locator("bm25_weight", 0.4)
-    """
-    from search.config import get_search_config
-
-    config = get_search_config()
-
-    if config is None:
-        return default
-
-    if key is None:
-        return config
-
-    return getattr(config, key, default)
 
 
 @contextmanager

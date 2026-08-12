@@ -54,6 +54,8 @@ class IncrementalIndexer:
         snapshot_manager: SnapshotManager | None = None,
         include_dirs: list | None = None,
         exclude_dirs: list | None = None,
+        *,
+        include_exclusive: bool = False,
     ):
         """Initialize incremental indexer.
 
@@ -64,7 +66,14 @@ class IncrementalIndexer:
             snapshot_manager: Snapshot manager instance
             include_dirs: Optional list of directories to include
             exclude_dirs: Optional list of directories to exclude
+            include_exclusive: When True, every include_dirs pattern is treated
+                as narrowing (whitelist-only), even ones that reach into a
+                dependency tree (venv, site-packages, node_modules, ...) — the
+                escape hatch back to the pre-additive behaviour. Forwarded to
+                the chunker, the change detector, and every MerkleDAG built
+                during a full or incremental pass.
         """
+        self.include_exclusive = include_exclusive
         if indexer is None:
             # Create indexer with temporary storage directory for testing
             temp_dir = tempfile.mkdtemp(prefix="incremental_index_")
@@ -81,6 +90,7 @@ class IncrementalIndexer:
             include_dirs=include_dirs,
             exclude_dirs=exclude_dirs,
             enable_entity_tracking=config.performance.enable_entity_tracking,
+            include_exclusive=include_exclusive,
         )
         self.snapshot_manager = snapshot_manager or SnapshotManager()
 
@@ -104,6 +114,7 @@ class IncrementalIndexer:
             include_dirs,
             exclude_dirs,
             supported_extensions=self.supported_extensions,
+            include_exclusive=include_exclusive,
         )
 
         # Load parallel chunking configuration
@@ -119,6 +130,11 @@ class IncrementalIndexer:
         self._summary_stage = SummaryStage()
         self._build_write_pipeline()
         self.repo_profile: RepoProfile | None = None  # Set during _full_index
+        # Set from the active MerkleDAG's own path_filter in _full_index /
+        # incremental_index, so per-file gates below reuse the SAME
+        # precedence resolver (and hit-count diagnostics) the tree walk that
+        # produced the file list already used — see _get_path_filter().
+        self._path_filter = None
 
     def _build_write_pipeline(self) -> None:
         """(Re)build the resource-bound write pipeline.
@@ -160,6 +176,27 @@ class IncrementalIndexer:
         """
         return self.change_detector.detect_changes_from_snapshot(project_path)
 
+    def _get_path_filter(self, project_path: str):
+        """Return the active PathFilter for this indexing run.
+
+        Prefers the PathFilter already built (and hit-counted) by the
+        MerkleDAG walk that produced the current file list — see the
+        `self._path_filter = dag.path_filter` assignments in _full_index and
+        incremental_index. Falls back to building one directly from
+        self.include_dirs/self.exclude_dirs when no DAG-derived filter has
+        been set yet (e.g. a direct/unit-test call to _is_supported_file).
+        """
+        if self._path_filter is None:
+            from search.filters import PathFilter
+
+            self._path_filter = PathFilter(
+                self.include_dirs,
+                self.exclude_dirs,
+                project_path,
+                include_exclusive=self.include_exclusive,
+            )
+        return self._path_filter
+
     def _is_supported_file(self, project_path: str, file_path: str) -> bool:
         """Check if file is supported for indexing.
 
@@ -168,7 +205,10 @@ class IncrementalIndexer:
             file_path: Relative file path
 
         Returns:
-            True if file is supported and not in ignored directories
+            True if file is supported and passes the include/exclude/default
+            precedence resolver (PathFilter) — including any include_dirs
+            override of a default-ignored directory (e.g. "venv",
+            "site-packages").
         """
         full_path = Path(project_path) / file_path
 
@@ -176,12 +216,7 @@ class IncrementalIndexer:
         if not self.chunker.is_supported(str(full_path)):
             return False
 
-        # Check if file is in ignored directory
-        from chunking.multi_language_chunker import MultiLanguageChunker
-
-        ignored_dirs = MultiLanguageChunker.DEFAULT_IGNORED_DIRS
-
-        return not any(part in ignored_dirs for part in Path(file_path).parts)
+        return self._get_path_filter(project_path).should_index_file(file_path)
 
     def incremental_index(
         self,
@@ -233,6 +268,11 @@ class IncrementalIndexer:
             # Detect changes
             logger.info(f"Detecting changes in {project_name}")
             changes, current_dag = self.detect_changes(project_path)
+            # Reuse the DAG's own PathFilter (already recovered from the
+            # snapshot's include/exclude dirs if this call's own values were
+            # None) so _is_supported_file/_add_new_chunks apply the exact
+            # same precedence resolver the change-detection walk just used.
+            self._path_filter = current_dag.path_filter
 
             if not changes.has_changes():
                 logger.info(f"No changes detected in {project_name}")
@@ -672,6 +712,15 @@ class IncrementalIndexer:
                         logger.info(
                             f"[FULL_INDEX] Recovered include_dirs from snapshot: {self.include_dirs}"
                         )
+                        # include_exclusive only means something alongside
+                        # include_dirs, so recover it under the same condition.
+                        if old_snapshot.path_filter:
+                            self.include_exclusive = (
+                                old_snapshot.path_filter.include_exclusive
+                            )
+                            logger.info(
+                                f"[FULL_INDEX] Recovered include_exclusive from snapshot: {self.include_exclusive}"
+                            )
                     if (
                         self.exclude_dirs is None
                         and old_snapshot.directory_filter.exclude_dirs
@@ -680,6 +729,79 @@ class IncrementalIndexer:
                         logger.info(
                             f"[FULL_INDEX] Recovered exclude_dirs from snapshot: {self.exclude_dirs}"
                         )
+
+            # Build DAG for all files. Done BEFORE deleting the old snapshot /
+            # clearing the existing index (below) so a bad filter set (e.g. an
+            # include_dirs typo that matches nothing) can be caught and
+            # reported without first destroying a good, existing index.
+            dag = MerkleDAG(
+                project_path,
+                self.include_dirs,
+                self.exclude_dirs,
+                supported_extensions=self.supported_extensions,
+                include_exclusive=self.include_exclusive,
+            )
+            dag.build()
+            all_files = dag.get_all_files()
+            # Reuse the DAG's own PathFilter (already carrying per-pattern
+            # hit-count diagnostics from the walk that just produced
+            # all_files) for the extension-only re-check below.
+            self._path_filter = dag.path_filter
+
+            # Filter supported files
+            supported_files = self._get_supported_files(project_path, all_files)
+            logger.info(
+                f"Found {len(supported_files)} supported files out of {len(all_files)} total files"
+            )
+
+            # Per-pattern diagnostics: a pattern that matched nothing is the
+            # exact silent-failure class this whole filtering system exists to
+            # catch (e.g. a typo'd or absent package name under
+            # site-packages) — surface it loudly instead of quietly indexing
+            # whatever ancestor files happened to survive.
+            for unmatched in self._path_filter.unmatched_patterns():
+                logger.warning(
+                    f"[FULL_INDEX] Directory filter pattern matched 0 files/dirs: {unmatched!r}"
+                )
+            if self._path_filter.all_includes_unmatched():
+                error = (
+                    f"All include_dirs patterns matched 0 files: {self.include_dirs}. "
+                    "Aborting before touching the existing index/snapshot — nothing "
+                    "would be indexed. Check for typos or absent directories."
+                )
+                logger.error(f"[FULL_INDEX] {error}")
+                return self._zero_result(start_time, success=False, error=error)
+
+            # Backstop for the residual failure mode Part 1's additive-by-default
+            # classification can't catch: a *narrowing* include pattern (or the
+            # include_exclusive escape hatch, which forces every pattern back to
+            # narrowing) that happens to resolve entirely inside a dependency
+            # tree, silently wiping first-party source the same way the
+            # original incident did. Checked here — before delete_snapshot/
+            # clear_index below — so a bad filter is caught without first
+            # destroying a good, existing index.
+            if self._path_filter.only_dependency_paths_matched(supported_files):
+                segments = self._path_filter.dependency_segments(supported_files)
+                error = (
+                    f"Every matched file lies inside a dependency tree "
+                    f"{segments} — include_dirs={self.include_dirs} narrowed "
+                    "the whole project down to library code only, with no "
+                    "first-party source surviving."
+                )
+                if self.include_exclusive:
+                    logger.warning(
+                        f"[FULL_INDEX] {error} include_exclusive=True was passed "
+                        "deliberately, so proceeding — this index will contain "
+                        "dependency code only."
+                    )
+                else:
+                    error += (
+                        " Aborting before touching the existing index/snapshot. "
+                        "If a dependency-only index is intentional, pass "
+                        "include_exclusive=True to acknowledge and proceed."
+                    )
+                    logger.error(f"[FULL_INDEX] {error}")
+                    return self._zero_result(start_time, success=False, error=error)
 
             # Delete old Merkle snapshot for current model only (preserves other models)
             logger.info(
@@ -690,22 +812,6 @@ class IncrementalIndexer:
 
             # Clear existing index
             self.indexer.clear_index()
-
-            # Build DAG for all files
-            dag = MerkleDAG(
-                project_path,
-                self.include_dirs,
-                self.exclude_dirs,
-                supported_extensions=self.supported_extensions,
-            )
-            dag.build()
-            all_files = dag.get_all_files()
-
-            # Filter supported files
-            supported_files = self._get_supported_files(project_path, all_files)
-            logger.info(
-                f"Found {len(supported_files)} supported files out of {len(all_files)} total files"
-            )
 
             # ========== Repository Profiling (Adaptive Sizing) ==========
             repo_profile = None
@@ -963,17 +1069,22 @@ class IncrementalIndexer:
         """
         files_to_index = self.change_detector.get_files_to_reindex(changes)
 
-        # Filter supported files and exclude ignored directories
-        from chunking.multi_language_chunker import MultiLanguageChunker
-
-        ignored_dirs = MultiLanguageChunker.DEFAULT_IGNORED_DIRS
+        # Filter supported files through the same include/exclude/default
+        # precedence resolver used by the tree walk (reused via
+        # self._path_filter — set from the DAG in incremental_index/
+        # _full_index; lazily built here if unset, e.g. direct calls).
+        path_filter = self._get_path_filter(project_path)
 
         supported_files = [
             f
             for f in files_to_index
-            if self.chunker.is_supported(f)
-            and not any(part in ignored_dirs for part in Path(f).parts)
+            if self.chunker.is_supported(f) and path_filter.should_index_file(f)
         ]
+
+        for unmatched in path_filter.unmatched_patterns():
+            logger.warning(
+                f"[INCREMENTAL] Directory filter pattern matched 0 files/dirs: {unmatched!r}"
+            )
 
         # Collect all chunks first, then embed in a single pass
         # Use parallel chunking for improved performance

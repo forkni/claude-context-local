@@ -371,6 +371,42 @@ class TestRunResolvers:
         assert ("a", "b") in result
         assert result[("a", "b")].source == "libcst"
 
+    def test_process_pool_submit_failure_does_not_block_thread_resolvers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A submit() failure for a process-pool resolver must not take down
+        thread-pool resolvers submitted afterwards.
+
+        Regression test for nightly CI run 30986597353 / job 92242674117: an
+        integer-fd bug in tests/conftest.py (see
+        tests/unit/test_conftest_guards.py) made every
+        ProcessPoolExecutor.submit() call for pyan/libcst raise TypeError.
+        That escaped run_resolvers() entirely — via the *submit* call, not
+        future.result() — silently dropping the LSP thread-pool resolver too
+        and leaving call_edges_injected == 0. _make_resolver's stubs are plain
+        objects, never isinstance-matched into the process-pool branch, so
+        this needs a real PyanResolver instance to exercise that branch at all.
+        """
+        from concurrent.futures import ProcessPoolExecutor
+
+        from chunking.relationships.external_call_graph import PyanResolver
+
+        pyan = PyanResolver()
+        monkeypatch.setattr(pyan, "available", lambda: True)
+
+        def _raise_on_submit(self, *args, **kwargs):  # noqa: ARG001
+            raise RuntimeError("process pool broken")
+
+        monkeypatch.setattr(ProcessPoolExecutor, "submit", _raise_on_submit)
+
+        e_thread = ResolvedEdge("a", "b", 0, False, "thread_stub", 0.98)
+        thread_stub = _make_resolver("thread_stub", 0.98, [e_thread])
+
+        result = run_resolvers([pyan, thread_stub], self._root, self._rlm, self._logger)
+
+        assert ("a", "b") in result
+        assert result[("a", "b")].source == "thread_stub"
+
 
 # ---------------------------------------------------------------------------
 # pyan_available / PyanResolver import guard

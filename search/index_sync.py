@@ -26,11 +26,6 @@ class IndexSynchronizer:
         storage_dir: Path,
         bm25_index: BM25Index,
         dense_index: CodeIndexManager,
-        bm25_use_stopwords: bool = True,
-        bm25_use_stemming: bool = True,
-        bm25_tokenizer: str = "legacy",
-        bm25_k1: float = 1.5,
-        bm25_b: float = 0.75,
         project_id: str | None = None,
         config=None,
         embedder=None,
@@ -42,11 +37,6 @@ class IndexSynchronizer:
             storage_dir: Root storage directory
             bm25_index: BM25 sparse index instance
             dense_index: Dense vector index instance
-            bm25_use_stopwords: BM25 stopwords configuration
-            bm25_use_stemming: BM25 stemming configuration
-            bm25_tokenizer: BM25 tokenizer variant (legacy/whole/additive)
-            bm25_k1: Okapi BM25 term-frequency saturation parameter
-            bm25_b: Okapi BM25 document-length normalization parameter
             project_id: Project identifier for index recreation
             config: SearchConfig instance for mmap storage and other settings
             embedder: Code embedder for dimension validation during index recreation
@@ -54,11 +44,6 @@ class IndexSynchronizer:
         self.storage_dir = Path(storage_dir)
         self.bm25_index = bm25_index
         self.dense_index = dense_index
-        self.bm25_use_stopwords = bm25_use_stopwords
-        self.bm25_use_stemming = bm25_use_stemming
-        self.bm25_tokenizer = bm25_tokenizer
-        self.bm25_k1 = bm25_k1
-        self.bm25_b = bm25_b
         self.project_id = project_id
         self.config = config
         self.embedder = embedder

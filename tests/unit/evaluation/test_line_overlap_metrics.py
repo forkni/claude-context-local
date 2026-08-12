@@ -595,150 +595,291 @@ class TestAggregateMetricsThresholds:
 
 
 # ---------------------------------------------------------------------------
-# _apply_reranker_budget_override  (Q2: --top-k-candidates flag)
+# _overrides_from_args + arm_overrides.apply_overrides (ADR-0018 Part 2/C1) -
+# the table-driven path that replaced the eleven hand-written
+# _apply_*_override wrappers these tests used to exercise directly (deleted
+# in the same refactor step that re-pointed these tests onto the new path).
 # ---------------------------------------------------------------------------
 
 
+def _args_with(**overrides):
+    """Build an all-None/all-False argparse.Namespace, with the given knobs
+    set to the supplied values — mirrors a parsed CLI Namespace where only
+    a few flags were actually passed."""
+    import argparse
+
+    base = {
+        "bm25_weight": None,
+        "dense_weight": None,
+        "search_mode": None,
+        "reranker_model": None,
+        "reranker_enabled": None,
+        "top_k_candidates": None,
+        "reranker_doc_max_chars": None,
+        "reranker_listwise_doc_max_chars": None,
+        "reranker_dtype": None,
+        "rrf_k": None,
+        "bm25_reserved_slots": None,
+        "multi_hop_expansion": None,
+        "hop1_reserved_slots": None,
+        "query_expansion": False,
+        "ego_graph": None,
+        "community_bounded": None,
+        "cross_community_penalty": None,
+        "expansion_mode": None,
+        "f_via_similar": False,
+    }
+    base.update(overrides)
+    return argparse.Namespace(**base)
+
+
 class TestApplyRerankerBudgetOverride:
-    """The override must mutate the in-memory config singleton only when a
-    value is supplied; None must be a strict no-op (config never touched)."""
+    """--top-k-candidates (Q2) must mutate the in-memory config singleton
+    only when a value is supplied; unset must be a strict no-op."""
 
-    def _apply(self, value):
-        from scripts.benchmark.run_sscg_benchmark import (
-            _apply_reranker_budget_override,
-        )
+    def _apply(self, value, cfg):
+        from evaluation import arm_overrides
+        from scripts.benchmark.run_sscg_benchmark import _overrides_from_args
 
-        return _apply_reranker_budget_override(value)
+        overrides = _overrides_from_args(_args_with(top_k_candidates=value))
+        return arm_overrides.apply_overrides(cfg, overrides)
 
-    def test_sets_top_k_candidates_on_config(self, monkeypatch):
+    def test_sets_top_k_candidates_on_config(self):
         from search.config import SearchConfig
 
         cfg = SearchConfig()
         assert cfg.reranker.top_k_candidates == 30  # deployed default (Q2 sweep)
-        monkeypatch.setattr("search.config.get_search_config", lambda: cfg)
-        self._apply(50)
+        self._apply(50, cfg)
         assert cfg.reranker.top_k_candidates == 50
 
-    def test_none_is_noop(self, monkeypatch):
-        calls = []
-        monkeypatch.setattr("search.config.get_search_config", lambda: calls.append(1))
-        self._apply(None)
-        assert calls == []
+    def test_none_is_noop(self):
+        from search.config import SearchConfig
+
+        cfg = SearchConfig()
+        original = cfg.reranker.top_k_candidates
+        self._apply(None, cfg)
+        assert cfg.reranker.top_k_candidates == original
 
 
 class TestApplyRrfKOverride:
-    """Q4: --rrf-k must mutate the in-memory config; None is a strict no-op."""
+    """Q4: --rrf-k must mutate the in-memory config; unset is a strict no-op."""
 
-    def _apply(self, value):
-        from scripts.benchmark.run_sscg_benchmark import _apply_rrf_k_override
+    def _apply(self, value, cfg):
+        from evaluation import arm_overrides
+        from scripts.benchmark.run_sscg_benchmark import _overrides_from_args
 
-        return _apply_rrf_k_override(value)
+        overrides = _overrides_from_args(_args_with(rrf_k=value))
+        return arm_overrides.apply_overrides(cfg, overrides)
 
-    def test_sets_rrf_k_parameter_on_config(self, monkeypatch):
+    def test_sets_rrf_k_parameter_on_config(self):
         from search.config import SearchConfig
 
         cfg = SearchConfig()
         assert cfg.search_mode.rrf_k_parameter == 100  # deployed default
-        monkeypatch.setattr("search.config.get_search_config", lambda: cfg)
-        self._apply(60)
+        self._apply(60, cfg)
         assert cfg.search_mode.rrf_k_parameter == 60
 
-    def test_none_is_noop(self, monkeypatch):
-        calls = []
-        monkeypatch.setattr("search.config.get_search_config", lambda: calls.append(1))
-        self._apply(None)
-        assert calls == []
+    def test_none_is_noop(self):
+        from search.config import SearchConfig
+
+        cfg = SearchConfig()
+        original = cfg.search_mode.rrf_k_parameter
+        self._apply(None, cfg)
+        assert cfg.search_mode.rrf_k_parameter == original
 
 
 class TestApplyRerankerDtypeOverride:
-    """--reranker-dtype must mutate the in-memory config; None is a strict no-op."""
+    """--reranker-dtype must mutate the in-memory config; unset is a strict no-op."""
 
-    def _apply(self, value):
-        from scripts.benchmark.run_sscg_benchmark import _apply_reranker_dtype_override
+    def _apply(self, value, cfg):
+        from evaluation import arm_overrides
+        from scripts.benchmark.run_sscg_benchmark import _overrides_from_args
 
-        return _apply_reranker_dtype_override(value)
+        overrides = _overrides_from_args(_args_with(reranker_dtype=value))
+        return arm_overrides.apply_overrides(cfg, overrides)
 
-    def test_sets_listwise_dtype_on_config(self, monkeypatch):
+    def test_sets_listwise_dtype_on_config(self):
         from search.config import SearchConfig
 
         cfg = SearchConfig()
         assert cfg.reranker.listwise_dtype == "auto"  # deployed default
-        monkeypatch.setattr("search.config.get_search_config", lambda: cfg)
-        self._apply("fp32")
+        self._apply("fp32", cfg)
         assert cfg.reranker.listwise_dtype == "fp32"
 
-    def test_none_is_noop(self, monkeypatch):
-        calls = []
-        monkeypatch.setattr("search.config.get_search_config", lambda: calls.append(1))
-        self._apply(None)
-        assert calls == []
+    def test_none_is_noop(self):
+        from search.config import SearchConfig
+
+        cfg = SearchConfig()
+        original = cfg.reranker.listwise_dtype
+        self._apply(None, cfg)
+        assert cfg.reranker.listwise_dtype == original
 
 
 class TestMaybeResetForConstructionOverrides:
-    """Q4 Blocker-B fix: the cached searcher must be dropped whenever a
-    construction-baked param (rrf_k, reranker doc budgets/dtype) is
-    overridden, so each sweep iteration builds a searcher with its own
-    fusion params. bm25/dense weight are NOT construction-baked (Phase 2a,
-    ADR-0018 follow-on) — HybridSearcher resolves them live per search()
-    call, so overriding only those two must NOT reset the cached searcher."""
+    """Q4 Blocker-B fix: `arm_overrides.apply_overrides`'s rebuild flag must
+    be True whenever a construction-baked param (rrf_k, reranker doc
+    budgets/dtype) is overridden through a named benchmark flag, so
+    run_single's `if apply_overrides(...): _reset_cached_searcher()` fires —
+    each sweep iteration then builds a searcher with its own fusion params.
+    bm25/dense weight are NOT construction-baked (Phase 2a, ADR-0018
+    follow-on) — HybridSearcher resolves them live per search() call, so
+    overriding only those two must NOT set the rebuild flag. Exercises the
+    _KNOBS-table mapping end to end (arg -> dotted key -> requires_rebuild),
+    which is distinct from arm_overrides' own construction-baked-fields
+    coverage in test_arm_overrides.py."""
 
-    def _call(self, monkeypatch, **kwargs):
-        from unittest.mock import MagicMock
+    def _rebuild_flag(self, **args_kwargs):
+        from evaluation import arm_overrides
+        from scripts.benchmark.run_sscg_benchmark import _overrides_from_args
+        from search.config import SearchConfig
 
-        from scripts.benchmark.run_sscg_benchmark import (
-            _maybe_reset_for_construction_overrides,
-        )
+        overrides = _overrides_from_args(_args_with(**args_kwargs))
+        overrides.pop("__legacy_ego__", None)
+        return arm_overrides.apply_overrides(SearchConfig(), overrides)
 
-        state = MagicMock()
-        monkeypatch.setattr("mcp_server.services.get_state", lambda: state)
-        _maybe_reset_for_construction_overrides(
-            kwargs.get("bm25_weight"),
-            kwargs.get("dense_weight"),
-            kwargs.get("rrf_k"),
-            reranker_dtype=kwargs.get("reranker_dtype"),
-        )
-        return state
-
-    def test_no_reset_when_only_weights_overridden(self, monkeypatch):
+    def test_no_reset_when_only_weights_overridden(self):
         """bm25_weight/dense_weight are live-read (Phase 2a) - touching only
-        these must not reset the cached searcher."""
-        state = self._call(monkeypatch, bm25_weight=0.5, dense_weight=0.5)
-        state.reset_searcher.assert_not_called()
+        these must not set the rebuild flag."""
+        assert self._rebuild_flag(bm25_weight=0.5, dense_weight=0.5) is False
 
-    def test_resets_when_rrf_k_overridden(self, monkeypatch):
-        state = self._call(monkeypatch, rrf_k=60)
-        state.reset_searcher.assert_called_once()
+    def test_resets_when_rrf_k_overridden(self):
+        assert self._rebuild_flag(rrf_k=60) is True
 
-    def test_resets_when_reranker_dtype_overridden(self, monkeypatch):
-        """A dtype-only override MUST reset the cached searcher —
+    def test_resets_when_reranker_dtype_overridden(self):
+        """A dtype-only override MUST set the rebuild flag —
         _ensure_reranker's swap branch reloads only on model_name change, so
         without the reset --reranker-dtype fp32 silently keeps the bf16 model."""
-        state = self._call(monkeypatch, reranker_dtype="fp32")
-        state.reset_searcher.assert_called_once()
+        assert self._rebuild_flag(reranker_dtype="fp32") is True
 
-    def test_no_reset_without_construction_overrides(self, monkeypatch):
-        state = self._call(monkeypatch)
-        state.reset_searcher.assert_not_called()
+    def test_no_reset_without_construction_overrides(self):
+        assert self._rebuild_flag() is False
 
-    def test_no_reset_across_weight_sweep_iterations(self, monkeypatch):
-        """SWEEP_CONFIGS is a bm25/dense-weight-only sweep. Since neither
-        field is construction-baked (Phase 2a), no iteration should reset
-        the cached searcher — this is the fix's whole point: --sweep no
-        longer pays a spurious searcher reset + reranker reload per arm."""
-        from unittest.mock import MagicMock
+    def test_no_reset_across_weight_sweep_iterations(self):
+        """SWEEP_CONFIGS is a bm25/dense-weight-only sweep delta
+        (_sweep_delta). Since neither field is construction-baked
+        (Phase 2a), no iteration should set the rebuild flag — this is the
+        fix's whole point: --sweep no longer pays a spurious searcher reset
+        + reranker reload per arm."""
+        from evaluation import arm_overrides
+        from scripts.benchmark.run_sscg_benchmark import SWEEP_CONFIGS, _sweep_delta
+        from search.config import SearchConfig
 
-        from scripts.benchmark.run_sscg_benchmark import (
-            SWEEP_CONFIGS,
-            _maybe_reset_for_construction_overrides,
+        for sweep_cfg in SWEEP_CONFIGS:
+            assert (
+                arm_overrides.apply_overrides(SearchConfig(), _sweep_delta(sweep_cfg))
+                is False
+            )
+
+
+# ---------------------------------------------------------------------------
+# _overrides_from_args / _build_config_metadata shape (ADR-0018 Part 2/C1).
+# The eleven legacy _apply_*_override wrappers these tests used to compare
+# against were deleted in the same refactor step that re-pointed these tests
+# — there is no "legacy" path left to equivalence-check against, so these now
+# assert the new table-driven path's own shape directly.
+# ---------------------------------------------------------------------------
+
+
+class TestOverridesFromArgsAndMetadata:
+    """`_overrides_from_args` + `_build_config_metadata` must produce the
+    dotted-key overrides dict and config_metadata shape `run_single`'s
+    table-driven path relies on."""
+
+    def _representative_args(self):
+        return _args_with(
+            bm25_weight=0.3,
+            dense_weight=0.7,
+            search_mode="hybrid",
+            reranker_model="some/model",
+            reranker_enabled="true",
+            top_k_candidates=50,
+            reranker_doc_max_chars=4000,
+            reranker_listwise_doc_max_chars=8000,
+            reranker_dtype="fp32",
+            rrf_k=60,
+            bm25_reserved_slots=6,
+            multi_hop_expansion=0.4,
+            hop1_reserved_slots=8,
+            query_expansion=True,
+            ego_graph="on",
+            community_bounded="on",
+            cross_community_penalty=0.5,
+            expansion_mode="bfs",
+            f_via_similar=True,
         )
 
-        state = MagicMock()
-        monkeypatch.setattr("mcp_server.services.get_state", lambda: state)
-        for sweep_cfg in SWEEP_CONFIGS:
-            _maybe_reset_for_construction_overrides(
-                sweep_cfg["bm25_weight"], sweep_cfg["dense_weight"], None
-            )
-        state.reset_searcher.assert_not_called()
+    def test_config_metadata_matches_legacy_shape(self):
+        """`_build_config_metadata` must reconstruct the same dict the old
+        inline 17-key `if X is not None: config_metadata[...] = X` block in
+        `run_single` produced (before Step 7 deleted it), including
+        recovering raw CLI values (e.g. `ego_graph="on"`, not the config's
+        bool) via `_Knob.from_config`."""
+        from scripts.benchmark import run_sscg_benchmark as mod
+
+        args = self._representative_args()
+
+        legacy_metadata = {
+            "project_path": "/proj",
+            "k": 10,
+            "category_filter": None,
+            "split_filter": None,
+            "bm25_weight": args.bm25_weight,
+            "dense_weight": args.dense_weight,
+            "search_mode": args.search_mode,
+            "reranker_model": args.reranker_model,
+            "reranker_enabled": args.reranker_enabled == "true",
+            "top_k_candidates": args.top_k_candidates,
+            "reranker_dtype": args.reranker_dtype,
+            "rrf_k": args.rrf_k,
+            "bm25_reserved_slots": args.bm25_reserved_slots,
+            "multi_hop_expansion": args.multi_hop_expansion,
+            "hop1_reserved_slots": args.hop1_reserved_slots,
+            "f_via_similar": True,
+            "query_expansion": True,
+            "ego_graph": args.ego_graph,
+            "community_bounded": args.community_bounded,
+            "cross_community_penalty": args.cross_community_penalty,
+            "expansion_mode": args.expansion_mode,
+        }
+
+        overrides = mod._overrides_from_args(args)
+        legacy_ego = overrides.pop(mod._LEGACY_EGO_KEY, {})
+        new_metadata = mod._build_config_metadata(
+            project_path="/proj",
+            k=10,
+            category_filter=None,
+            overrides=overrides,
+            legacy_ego=legacy_ego,
+            f_via_similar=args.f_via_similar,
+        )
+
+        assert new_metadata == legacy_metadata
+
+    def test_none_args_produce_no_overrides(self):
+        """An all-None/all-False Namespace must be a strict no-op: empty
+        overrides dict, and config_metadata containing only the four base
+        keys every run always has."""
+        from scripts.benchmark import run_sscg_benchmark as mod
+
+        args = _args_with()
+
+        overrides = mod._overrides_from_args(args)
+        assert overrides == {}
+
+        metadata = mod._build_config_metadata(
+            project_path="/proj",
+            k=10,
+            category_filter=None,
+            overrides=overrides,
+            legacy_ego={},
+            f_via_similar=False,
+        )
+        assert metadata == {
+            "project_path": "/proj",
+            "k": 10,
+            "category_filter": None,
+            "split_filter": None,
+        }
 
 
 # ---------------------------------------------------------------------------

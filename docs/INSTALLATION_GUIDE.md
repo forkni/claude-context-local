@@ -496,13 +496,13 @@ pip install -e ".[test]"
 
 ### Version Requirements
 
-- **Required range**: `torch>=2.8.0,<2.9.0` — pinned in `pyproject.toml`, installed automatically by `uv sync`
+- **Required range**: `torch>=2.11.0,<2.12.0` — pinned in `pyproject.toml`, installed automatically by `uv sync`
 - **Reason**:
-  - BGE-M3 (default model) needs PyTorch >= 2.6.0; EmbeddingGemma-300m needs >= 2.4.0 (transformers >= 4.51.3) — `>=2.8.0` covers both floors
-  - The `<2.9.0` ceiling is intentional: PyTorch 2.9.x breaks GTE-ModernBERT's `torch.compile(dynamic=True)` on Windows — see `docs/PYTORCH_COMPATIBILITY.md` for the full rationale and deferred-CVE tracking
+  - BGE-M3 (default model) needs PyTorch >= 2.6.0; EmbeddingGemma-300m needs >= 2.4.0 (transformers >= 4.51.3) — `>=2.11.0` covers both floors
+  - The `<2.12.0` ceiling reflects the pinned `cu128` wheel index's current maximum, not a known regression — see `docs/PYTORCH_COMPATIBILITY.md` for the full rationale and CVE tracking
 - **CUDA Compatibility**: `pyproject.toml` pins an explicit `cu128` wheel index (default; required for RTX 50-series, also works on older Ampere/Ada cards) with a `cu124` index kept as a manual fallback for older drivers
 - **Compatible Versions**:
-  - PyTorch: `>=2.8.0,<2.9.0`
+  - PyTorch: `>=2.11.0,<2.12.0`
   - transformers: 4.51.3+ (4.56.0-Embedding-Gemma-preview for EmbeddingGemma)
   - sentence-transformers: 5.1.0+
 
@@ -521,7 +521,7 @@ uv sync
 
 ```bash
 # CUDA 12.8 build (primary index)
-pip install "torch>=2.8.0,<2.9.0" torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+pip install "torch>=2.11.0,<2.12.0" torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 ```
 
 ### CUDA Index URLs
@@ -530,7 +530,7 @@ pip install "torch>=2.8.0,<2.9.0" torchvision torchaudio --index-url https://dow
 - **CUDA 12.4**: `https://download.pytorch.org/whl/cu124` (fallback for systems with an older driver that can't satisfy `cu128`)
 - **CPU only**: `https://download.pytorch.org/whl/cpu`
 
-> **Note**: See `docs/PYTORCH_COMPATIBILITY.md` for the full CUDA index configuration, the `<2.9.0` ceiling rationale, and troubleshooting steps.
+> **Note**: See `docs/PYTORCH_COMPATIBILITY.md` for the full CUDA index configuration, the `<2.12.0` ceiling rationale, and troubleshooting steps.
 
 ## Verification & Testing
 
@@ -861,8 +861,8 @@ These utilities are interactive and will show you what will be deleted before pr
 **Solution**:
 
 ```bash
-# Ensure PyTorch is within the pinned range (>=2.8.0,<2.9.0)
-uv pip install --upgrade "torch>=2.8.0,<2.9.0" --index-url https://download.pytorch.org/whl/cu128
+# Ensure PyTorch is within the pinned range (>=2.11.0,<2.12.0)
+uv pip install --upgrade "torch>=2.11.0,<2.12.0" --index-url https://download.pytorch.org/whl/cu128
 ```
 
 **Cause**: Old PyTorch version incompatible with newer transformers

@@ -347,14 +347,29 @@ def _redirect_test_storage(
 _REAL_HOME = Path.home()
 _REAL_STORAGE_ROOT = (_REAL_HOME / ".claude_code_search").resolve()
 
+# Windows hands out 8.3 short paths (C:\Users\RUNNER~1\...) and macOS symlinks
+# /tmp -> /private/tmp. Production code normalises with Path.resolve(), so a
+# test that compares a stored path against its raw mkdtemp()/tmp_path fixture
+# path fails on CI but passes locally. Pinning the temp root to its resolved
+# form up front makes those resolve() calls a no-op and removes the whole
+# failure class. Must run at module import time, before any test can call
+# tempfile.mkdtemp().
+tempfile.tempdir = str(Path(tempfile.gettempdir()).resolve())
+
 # Process-local ledger of writes that resolved under _REAL_STORAGE_ROOT.
 # Populated by the wrapped primitives _install_real_storage_write_ledger
 # installs for the whole session; drained per-test by _no_real_storage_pollution.
 _real_storage_write_ledger: list[dict[str, str]] = []
 
 
-def _record_if_real_storage(target: "str | Path") -> None:
+def _record_if_real_storage(target: "str | Path | int") -> None:
     """Append a ledger entry if *target* resolves under real home storage."""
+    # builtins.open also accepts an integer fd — multiprocessing's Windows spawn
+    # calls open(wfd, "wb") to talk to the child. An fd has no path to attribute,
+    # and Path(int) raises TypeError, which would otherwise escape into the caller
+    # and break every ProcessPoolExecutor spawn for the rest of the session.
+    if not isinstance(target, (str, bytes, os.PathLike)):
+        return
     try:
         resolved = Path(target).resolve()
     except (OSError, ValueError, RuntimeError):
@@ -397,6 +412,11 @@ def _install_real_storage_write_ledger() -> Generator[None, None, None]:
     call site instead of a bare filename, and a write by some *other* process
     on the machine never passes through these wrappers at all, so it can no
     longer be misattributed to this process's tests.
+
+    _wrapped_open's mode check ("wax+") also matches multiprocessing's Windows
+    spawn, which opens the child's pipe fd via open(wfd, "wb") — an integer,
+    not a path. _record_if_real_storage must tolerate that (see its own
+    isinstance guard) or every ProcessPoolExecutor spawn breaks under pytest.
     """
     real_open = builtins.open
     real_replace = os.replace

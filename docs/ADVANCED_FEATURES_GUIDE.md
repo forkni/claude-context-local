@@ -196,12 +196,17 @@ When a project is indexed with a `project_id`, `search_code()` automatically inc
 
 ### Parameters
 
-| Parameter       | Tools                         | Type  | Description                              |
-|-----------------|-------------------------------|-------|------------------------------------------|
-| `include_dirs`  | search_code                   | array | Only search in these directories         |
-| `exclude_dirs`  | search_code, find_connections | array | Exclude from search                      |
+| Parameter       | Tools                                          | Type  | Description                              |
+|-----------------|-------------------------------------------------|-------|------------------------------------------|
+| `include_dirs`  | search_code, index_directory                    | array | Only search/index these directories       |
+| `exclude_dirs`  | search_code, find_connections, index_directory  | array | Exclude from search/indexing              |
 
-### Path Matching
+**`index_directory` uses different matching rules than `search_code`/`find_connections`** —
+see [Index-Time Filter Semantics](#index-time-filter-semantics) below. The rest of this
+section (prefix matching, post-search precedence) describes the `search_code`/
+`find_connections` behavior only, which filters results from an already-built index.
+
+### Path Matching (search_code / find_connections)
 
 - **Prefix matching**: `"src/"` matches `src/utils/auth.py`
 - **Normalized separators**: Windows backslashes (`\`) converted to forward slashes (`/`)
@@ -240,6 +245,41 @@ find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 - Search k multiplier increased from 3x to 5x when directory filters present
 - Minimal overhead for typical filter sizes
 
+### Index-Time Filter Semantics
+
+**Feature**: `index_directory`'s `include_dirs`/`exclude_dirs` use gitignore-style pattern
+matching, resolved by `PathFilter` (`search/filters.py`) — a single precedence resolver used
+by the Merkle DAG walk, the incremental indexer, and the chunker. This differs from the
+prefix-matching, post-search filters described above for `search_code`/`find_connections`.
+
+**Pattern syntax**:
+
+- A pattern with **no `/`** matches its basename at **any depth** — `"diffusers"` matches
+  every directory named `diffusers` anywhere under the project root.
+- A pattern **containing `/`** (or a leading `/`) is **root-anchored** — `"src/core"` matches
+  only `<root>/src/core`.
+- Wildcards `*`, `?`, `[abc]` are supported per path segment; `**` matches zero or more
+  segments.
+- Absolute paths are accepted and resolved against the project root. An absolute path that
+  doesn't resolve under the root is dropped with a warning, not silently ignored.
+
+**Precedence** (`PathFilter.should_traverse_dir` / `.should_index_file`, evaluated in order):
+
+1. `.git`/`.hg`/`.svn` — always rejected, never re-includable.
+2. Any `exclude_dirs` pattern matching this path — rejected. **Exclude always beats include.**
+3. If `include_dirs` is non-empty, the path must match an include pattern (directly, or be an
+   ancestor of one, so the walk can descend) — otherwise rejected.
+4. The default-ignored set (`chunking/language_registry.py` — `__pycache__`, `.venv`, `venv`,
+   `node_modules`, `site-packages`, `build`, and ~50 more) — rejected **unless** step 3 already
+   matched it. **An include pattern overrides a default exclusion for that target only**; every
+   other default-ignored directory stays excluded.
+5. Otherwise accepted.
+
+**Zero-match patterns are never silent**: any include/exclude pattern that matches nothing is
+logged as a warning naming the pattern; if every include pattern matches nothing, indexing
+aborts with an error rather than silently writing an empty index. Preview a filter set first
+with `python tools/batch_index.py --path <dir> --mode new --dry-run --include-dirs "a,b,c"`.
+
 ### Filter Persistence (v0.5.9+)
 
 **Feature**: User-defined filters are automatically saved and restored across server restarts and re-indexing operations.
@@ -258,15 +298,11 @@ find_connections(symbol_name="UserService", exclude_dirs=["tests/"])
 ```python
 from search.filters import get_effective_filters
 
-# Resolves: default_exclude_dirs + user_included_dirs + user_excluded_dirs
-filters = get_effective_filters(project_info)
+# Returns only the user's raw lists (user_included_dirs, user_excluded_dirs).
+# Defaults are NOT merged in here — they're applied by PathFilter at match time,
+# so an include_dirs entry can still override a default-ignored directory.
+include_dirs, exclude_dirs = get_effective_filters(project_info)
 ```
-
-**Filter Resolution Priority**:
-
-1. **Default excludes** (always applied): `["__pycache__/", ".git/", "node_modules/", ".venv/"]`
-2. **User includes** (from `include_dirs` parameter): Only search in these directories
-3. **User excludes** (from `exclude_dirs` parameter): Additional directories to exclude
 
 **project_info.json Format**:
 
@@ -3387,54 +3423,46 @@ Centrality *annotation* and the blended-score *rerank pass* (`centrality_annotat
 
 ---
 
-## A1: Intent-Adaptive Edge Weight Profiles (v0.9.0+)
+## A1: Intent Classification — Effects That Still Exist
 
 ### Overview
 
-Automatically adjusts graph traversal edge weights based on query intent classification (7 intent categories) for more relevant graph expansion. Based on SOG (USENIX Security '24) ablation study showing different relation types contribute differently to code understanding.
+Queries are classified into 7 intent categories (`LOCAL`, `GLOBAL`, `NAVIGATIONAL`, `PATH_TRACING`, `SIMILARITY`, `CONTEXTUAL`, `HYBRID`,
+`search/intent_classifier.py`) using a keyword + anchor-embedding ensemble. Classification itself is cheap and always runs when `intent.enabled` is
+`true` (the shipped default); what matters is which of the classifier's outputs the search orchestrator actually consumes.
 
-### Query Intent Classification
+An earlier version of this page documented a 7-row per-intent graph-traversal **edge-weight** table (`INTENT_EDGE_WEIGHT_PROFILES` in
+`graph/graph_storage.py`) plus a separate `_intent_ego_thresholds` policy in `search/effective_config.py`. **Both were deleted** (ADR-0031) —
+ADR-0026 had measured the edge-weight table as inert on the canonical benchmark (pool composition bit-identical whether it fired or not, ranking-only
+movement netting +0.0005 MRR), and a later measurement (QW5) found the CONTEXTUAL ego-threshold policy produced 0 diffs across all 63 canonical
+queries. A repo-wide grep for either name now returns zero production hits. **Both were already tried and measured inert — don't re-add either
+without new evidence.**
 
-The system classifies queries into 7 categories:
+### What intent classification actually still does
 
-| Intent | Keyword Examples | Use Case |
-| -------- | ------------------ | ---------- |
-| `local` | "where is", "which file", "find definition" | Focus on direct relationships, suppress cross-file imports |
-| `global` | "how does", "what is", "explain" | Boost cross-file connections for holistic understanding |
-| `navigational` | "find callers", "who uses" | Prioritize call chains |
-| `path_tracing` | "trace", "flow from X to Y" | Balanced traversal |
-| `similarity` | "find similar", "alternatives" | Prioritize structural similarity |
-| `contextual` | Broad context gathering | All weights raised to min 0.5 |
-| `hybrid` | Mixed intent queries | Default weights (fallback) |
+(`mcp_server/tools/search_orchestrator.py`), each with its own evidence status:
 
-### Edge Weight Tables
+1. **`SIMILARITY` intent + confidence ≥ 0.4 + an extractable symbol → redirects `search_code` to `find_similar_code`** instead of running the normal
+   search path (`fallback_on_error=True` — a redirect failure falls back to normal search rather than erroring out). **The only effect with positive
+   measured evidence:** the redirect beats the normal ranked path on MRR for the similarity queries in the golden set, on both the canonical and
+   expanded datasets (ADR-0029).
+2. **`CONTEXTUAL` intent → forces `ego_graph_enabled=True`** for that search. **Present in code but proven inert** — ego-graph expansion is already
+   always-on regardless of this flag (see "Ego-Graph Expansion" above), so this effect currently changes nothing observable.
+3. **`GLOBAL` intent → suggests `k=10`**, applied only when greater than the caller's `k` (plus suggests `search_mode=HYBRID`).
+4. **Any intent whose `suggested_params` includes `search_mode="auto"` → applies that suggested `search_mode`** to the actual search call.
+5. **`NAVIGATIONAL` intent writes `symbol_name`/`relationship_types` into `suggested_params` that nothing consumes.** `PlanRedirect` only ever
+   constructs `kind="find_similar"` — there is no `find_connections` redirect path for these values to feed into. This is dead code that computes a
+   result and discards it, not a documented feature.
 
-**LOCAL Intent** (suppress imports):
-
-- `calls`: 1.0
-- `inherits`: 1.0
-- `imports`: **0.1** (suppressed)
-
-**GLOBAL Intent** (boost cross-file):
-
-- `imports`: **0.7** (boosted)
-- `uses_type`: 0.9
-- `instantiates`: 0.8
-
-**NAVIGATIONAL Intent** (prioritize calls):
-
-- `calls`: 1.0
-- `inherits`: 0.9
-- `imports`: 0.5
-
-### Effect
-
-- **LOCAL queries**: "where is X defined" → suppress noisy stdlib/third-party imports (0.1x weight)
-- **GLOBAL queries**: "how does X work" → boost cross-file connections (0.7x) for comprehensive understanding
+**`path_tracing` intent no longer redirects to `find_path`** — that branch was removed outright (ADR-0028): both of its live golden-dataset firings
+were regex misfires of `_extract_path_endpoints` on ordinary prose, and `fallback_on_error=False` turned each into an empty result set with no
+upside case ever observed. `find_path` remains available as a standalone MCP tool; only the automatic `search_code` redirect to it is gone.
 
 ### Status
 
-**Always-on** with automatic intent detection. No configuration needed.
+**On by default** (`intent.enabled=true`, `search/config.py`) — re-enabled by ADR-0029 after ADR-0028 had turned it off pending a repair of the
+SIMILARITY-intent symbol extractor (`_extract_symbol_from_query`), which had been misfiring on trailing prose words instead of the query's actual
+anchor symbol. Not directly exposed at the MCP boundary — there is no tool argument that reads intent classification results.
 
 ---
 

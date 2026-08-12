@@ -1215,8 +1215,7 @@
         "search/reranking_engine.py:method:RerankingEngine._ensure_reranker",
         "search/reranking_engine.py:method:RerankingEngine._run_rerank",
         "chunking/languages/base.py:method:LanguageChunker._get_chunking_config",
-        "chunking/tree_sitter.py:method:TreeSitterChunker._get_chunking_config",
-        "mcp_server/utils/config_helpers.py:function:get_config_via_service_locator"
+        "chunking/tree_sitter.py:method:TreeSitterChunker._get_chunking_config"
       ],
       "expected_primary": [
         "search/config.py:function:is_hybrid_search_enabled",
@@ -1235,9 +1234,8 @@
         "search/reranking_engine.py:method:RerankingEngine._run_rerank": 3,
         "chunking/languages/base.py:method:LanguageChunker._get_chunking_config": 2,
         "chunking/tree_sitter.py:method:TreeSitterChunker._get_chunking_config": 2,
-        "mcp_server/utils/config_helpers.py:function:get_config_via_service_locator": 2,
         "merkle/snapshot_manager.py:method:SnapshotManager._get_model_slug_and_dimension": 1,
-        "scripts/benchmark/run_sscg_benchmark.py:function:_apply_weight_overrides": 1
+        "scripts/benchmark/run_sscg_benchmark.py:method:run_single": 1
       }
     },
     {

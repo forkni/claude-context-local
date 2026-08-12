@@ -169,6 +169,52 @@ class TestMultiLanguageChunkerThreadIsolation:
                 "Parallel MultiLanguageChunker produced different relationship edges than serial"
             )
 
+    def test_parallel_relationship_edges_match_serial_with_failing_extractor(
+        self, tmp_path, monkeypatch
+    ):
+        """Parity holds even when one extractor raises on every chunk.
+
+        Patches TypeAnnotationExtractor.extract_from_tree (a real extractor,
+        not a stub) to always raise -- every thread's lazily-built per-thread
+        instance picks up the same class-level override, so this exercises
+        per-extractor isolation (#3) across concurrent chunk_file() calls,
+        not just a single-threaded stub.
+        """
+        from chunking.relationships.relationship_extractors.type_extractor import (
+            TypeAnnotationExtractor,
+        )
+
+        def _always_raise(self, tree, code, chunk_metadata):
+            raise ValueError("boom")
+
+        monkeypatch.setattr(TypeAnnotationExtractor, "extract_from_tree", _always_raise)
+
+        py_file = tmp_path / "sample.py"
+        py_file.write_text(_SAMPLE_PYTHON)
+        path_str = str(py_file)
+
+        chunker = _make_chunker(tmp_path)
+
+        serial_chunks = chunker.chunk_file(path_str)
+        serial_edges = _rel_keys(serial_chunks)
+        assert serial_edges, (
+            "sanity: the other extractors must still produce edges despite "
+            "TypeAnnotationExtractor raising on every chunk"
+        )
+
+        n_threads = 8
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_threads) as ex:
+            futures = [
+                ex.submit(chunker.chunk_file, path_str) for _ in range(n_threads)
+            ]
+            results = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+        for thread_result in results:
+            assert _rel_keys(thread_result) == serial_edges, (
+                "Parallel MultiLanguageChunker (with a failing extractor) "
+                "produced different relationship edges than serial"
+            )
+
     def test_different_files_no_cross_contamination(self, tmp_path):
         """Chunks from different files don't bleed across thread boundaries."""
         files = {}

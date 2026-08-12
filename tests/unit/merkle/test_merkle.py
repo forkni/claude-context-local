@@ -223,6 +223,119 @@ class TestMerkleDAG(TestCase):
         # Regular files are unaffected
         assert "README.md" in all_files
 
+    def test_include_dirs_overrides_default_ignored_dir(self):
+        """A dependency-tree include_dirs entry (e.g. venv/site-packages) is now
+        ADDITIVE by default: it re-admits the named target on top of the normal
+        root-down scope, rather than narrowing the whole project down to just
+        that target. See ADR 0036."""
+        self.create_test_files()
+
+        (self.test_path / "venv" / "Lib" / "site-packages" / "pkg").mkdir(parents=True)
+        (
+            self.test_path / "venv" / "Lib" / "site-packages" / "pkg" / "mod.py"
+        ).write_text("x = 1")
+        (self.test_path / "__pycache__").mkdir()
+        (self.test_path / "__pycache__" / "cache.pyc").write_text("cache")
+
+        dag = MerkleDAG(self.temp_dir, include_dirs=["venv/Lib/site-packages/pkg"])
+        dag.build()
+
+        all_files = dag.get_all_files()
+        normalized = {f.replace("\\", "/") for f in all_files}
+
+        assert "venv/Lib/site-packages/pkg/mod.py" in normalized, (
+            "include_dirs must override the default-ignored 'venv'/'site-packages' "
+            f"directories for its own target, got: {normalized}"
+        )
+        # __pycache__ stays default-ignored — the include didn't name it.
+        assert not any("__pycache__" in f for f in normalized)
+        # The normal root-down scope is preserved (additive), not discarded.
+        assert "README.md" in normalized
+        assert any(f.startswith("src/") for f in normalized)
+
+    def test_include_exclusive_overrides_default_ignored_dir_narrowing_only(self):
+        """include_exclusive=True restores the pre-additive whitelist-only
+        behavior pinned by test_include_dirs_overrides_default_ignored_dir
+        before ADR 0036: only the named target is indexed, everything else
+        (including README.md/src/) is dropped."""
+        self.create_test_files()
+
+        (self.test_path / "venv" / "Lib" / "site-packages" / "pkg").mkdir(parents=True)
+        (
+            self.test_path / "venv" / "Lib" / "site-packages" / "pkg" / "mod.py"
+        ).write_text("x = 1")
+        (self.test_path / "__pycache__").mkdir()
+        (self.test_path / "__pycache__" / "cache.pyc").write_text("cache")
+
+        dag = MerkleDAG(
+            self.temp_dir,
+            include_dirs=["venv/Lib/site-packages/pkg"],
+            include_exclusive=True,
+        )
+        dag.build()
+
+        all_files = dag.get_all_files()
+        normalized = {f.replace("\\", "/") for f in all_files}
+
+        assert "venv/Lib/site-packages/pkg/mod.py" in normalized
+        assert not any("__pycache__" in f for f in normalized)
+        # Files outside the include target (root/src/tests) are excluded once
+        # include_exclusive forces narrowing-only semantics.
+        assert "README.md" not in normalized
+        assert not any(f.startswith("src/") for f in normalized)
+
+    def test_include_dirs_excludes_ancestor_files_regression(self):
+        """Regression test for the originally reported bug, pinned via
+        include_exclusive=True: include_dirs=["A/venv/Lib/site-packages"] with
+        narrowing-only semantics must select only files under that target,
+        never files at the project root or in ancestor directories of the
+        target (the original bug indexed 3 ancestor files and zero target
+        files)."""
+        (self.test_path / "A").mkdir()
+        (self.test_path / "A" / "top_level.py").write_text("x = 1")
+        (self.test_path / "root_file.py").write_text("y = 2")
+        target = self.test_path / "A" / "venv" / "Lib" / "site-packages" / "pkg"
+        target.mkdir(parents=True)
+        (target / "mod.py").write_text("z = 3")
+
+        dag = MerkleDAG(
+            self.temp_dir,
+            include_dirs=["A/venv/Lib/site-packages"],
+            include_exclusive=True,
+        )
+        dag.build()
+
+        all_files = {f.replace("\\", "/") for f in dag.get_all_files()}
+
+        assert all_files == {"A/venv/Lib/site-packages/pkg/mod.py"}, (
+            f"Expected only the include target's file, got: {all_files}"
+        )
+
+    def test_dependency_include_dirs_is_additive_by_default(self):
+        """The same pattern as the ancestor-files regression test above, but
+        WITHOUT include_exclusive: since the pattern reaches into a
+        dependency tree (venv/site-packages), it is additive by default —
+        the target's file plus the normal root-down scope (root_file.py,
+        A/top_level.py) are all indexed. This is the fix for the
+        D:\\dev\\SDTD_040_Beta incident (see ADR 0036)."""
+        (self.test_path / "A").mkdir()
+        (self.test_path / "A" / "top_level.py").write_text("x = 1")
+        (self.test_path / "root_file.py").write_text("y = 2")
+        target = self.test_path / "A" / "venv" / "Lib" / "site-packages" / "pkg"
+        target.mkdir(parents=True)
+        (target / "mod.py").write_text("z = 3")
+
+        dag = MerkleDAG(self.temp_dir, include_dirs=["A/venv/Lib/site-packages"])
+        dag.build()
+
+        all_files = {f.replace("\\", "/") for f in dag.get_all_files()}
+
+        assert all_files == {
+            "A/venv/Lib/site-packages/pkg/mod.py",
+            "A/top_level.py",
+            "root_file.py",
+        }, f"Expected the target plus the normal source scope, got: {all_files}"
+
     def test_dag_serialization(self):
         """Test DAG to/from dict conversion."""
         self.create_test_files()

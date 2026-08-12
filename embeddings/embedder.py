@@ -31,11 +31,11 @@ from embeddings.chunk_metadata import ChunkMetadata
 from embeddings.model_cache import ModelCacheManager
 from embeddings.model_loader import ModelLoader
 from embeddings.query_cache import QueryEmbeddingCache
-from mcp_server.utils.config_helpers import (
-    get_config_via_service_locator as _get_config_via_service_locator,
-)
 from search.config import (
     get_indexing_ram_fallback_override as _get_ram_fallback_override,
+)
+from search.config import (
+    get_search_config,
 )
 from search.exceptions import VRAMExhaustedError
 from search.filters import normalize_path
@@ -295,7 +295,7 @@ def set_vram_limit(fraction: float = 0.90) -> bool:
         if override is not None:
             allow_fallback = override
         else:
-            config = _get_config_via_service_locator()
+            config = get_search_config()
             allow_fallback = bool(config and config.performance.allow_ram_fallback)
         if allow_fallback:
             logging.getLogger(__name__).info(
@@ -528,7 +528,7 @@ class CodeEmbedder:
         # This must be called before any CUDA allocations
         # Try to get fraction from config, fallback to 0.90
         try:
-            config = _get_config_via_service_locator()
+            config = get_search_config()
             if config and config.performance:
                 fraction = config.performance.vram_limit_fraction
             else:
@@ -927,9 +927,8 @@ class CodeEmbedder:
         # Prepare clean content without fabricated headers
         content_parts = []
 
-        # Get configuration via ServiceLocator
         try:
-            config = _get_config_via_service_locator()
+            config = get_search_config()
             enable_import_ctx = config.embedding.enable_import_context
             enable_class_ctx = config.embedding.enable_class_context
             max_import_lines = config.embedding.max_import_lines
@@ -1269,7 +1268,7 @@ class CodeEmbedder:
         # allocated VRAM since CodeEmbedder.__init__, which would otherwise let us
         # overcommit and trigger Windows WDDM shared-memory spillover.
         try:
-            _embed_cfg = _get_config_via_service_locator()
+            _embed_cfg = get_search_config()
             if _embed_cfg and _embed_cfg.performance:
                 set_vram_limit(_embed_cfg.performance.vram_limit_fraction)
         except (RuntimeError, AttributeError) as _cap_err:
@@ -1279,8 +1278,7 @@ class CodeEmbedder:
 
         # Load batch size from config if not explicitly provided
         if batch_size is None:
-            # Use ServiceLocator helper instead of inline import
-            config = _get_config_via_service_locator()
+            config = get_search_config()
 
             # Try dynamic GPU-based batch size first
             if (
@@ -1928,58 +1926,3 @@ class CodeEmbedder:
                 finally:
                     # pyrefly: ignore [missing-attribute]
                     self._lifecycle_lock.release()
-
-    # ===== Cache Management Methods (delegated to ModelCacheManager) =====
-
-    def _get_model_cache_path(self) -> Path | None:
-        """Delegate to ModelCacheManager.get_model_cache_path()."""
-        return self._cache_manager.get_model_cache_path()
-
-    def _get_default_hf_cache_path(self) -> Path | None:
-        """Delegate to ModelCacheManager.get_default_hf_cache_path()."""
-        return self._cache_manager.get_default_hf_cache_path()
-
-    def _check_config_at_location(self, cache_path: Path) -> bool:
-        """Delegate to ModelCacheManager.check_config_at_location()."""
-        return self._cache_manager.check_config_at_location(cache_path)
-
-    def _check_weights_at_location(self, cache_path: Path) -> bool:
-        """Delegate to ModelCacheManager.check_weights_at_location()."""
-        return self._cache_manager.check_weights_at_location(cache_path)
-
-    def _ensure_split_cache_symlink(self) -> bool:
-        """Delegate to ModelCacheManager.ensure_split_cache_symlink()."""
-        return self._cache_manager.ensure_split_cache_symlink()
-
-    def _check_cache_at_location(self, cache_path: Path) -> tuple[bool, str]:
-        """Delegate to ModelCacheManager.check_cache_at_location()."""
-        return self._cache_manager.check_cache_at_location(cache_path)
-
-    def _validate_model_cache(self) -> tuple[bool, str]:
-        """Delegate to ModelCacheManager.validate_cache()."""
-        return self._cache_manager.validate_cache()
-
-    def _check_incomplete_downloads(self) -> tuple[bool, str]:
-        """Delegate to ModelCacheManager.check_incomplete_downloads()."""
-        return self._cache_manager.check_incomplete_downloads()
-
-    def _cleanup_incomplete_downloads(self) -> tuple[int, list[str]]:
-        """Delegate to ModelCacheManager.cleanup_incomplete_downloads()."""
-        return self._cache_manager.cleanup_incomplete_downloads()
-
-    def _is_model_cached(self) -> bool:
-        """Delegate to ModelCacheManager.is_cached()."""
-        return self._cache_manager.is_cached()
-
-    def _find_local_model_dir(self) -> Path | None:
-        """Delegate to ModelCacheManager.find_local_model_dir()."""
-        return self._cache_manager.find_local_model_dir()
-
-    def _resolve_device(self, requested: str | None) -> str:
-        """Delegate to ModelLoader.resolve_device()."""
-        if self._model_loader is None:
-            raise RuntimeError(
-                "Embedder has been cleaned up; obtain a fresh instance "
-                "via model_pool_manager.get_embedder()."
-            )
-        return self._model_loader.resolve_device(requested)

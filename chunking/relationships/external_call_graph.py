@@ -1,3 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
+#
+# This file is dual-licensed. Unlike the rest of this Apache-2.0 project, it
+# subclasses pyan3's CallGraphVisitor in-process (_TrackedVisitor below) and
+# imports pyan.anutils / pyan.postprocessor directly rather than shelling out
+# to pyan as a subprocess -- the strongest derivative-work posture available.
+# pyan3 itself is GPL-2.0-or-later (Technologicat fork; verified via wheel
+# METADATA, not the GPL-2.0-only some older docs/comments in this repo used
+# to claim -- "or-later" is what makes an Apache-2.0-adjacent file legally
+# viable at all, since Apache-2.0 is one-way compatible with GPLv3 but not
+# GPLv2-only). This module is licensed under GPL-2.0-or-later; the rest of
+# the project remains Apache-2.0 as declared in the top-level LICENSE file.
+# See NOTICE and docs/adr/0034-pyan-gpl-quarantine.md for the full rationale.
+# pyan3 is never distributed with this project -- it is an optional
+# `[callgraph]` install extra that users pull from PyPI themselves.
 """pyan3-based whole-project call-graph builder.
 
 This module uses **pyan3** (``pip install pyan3``, import ``pyan``) to
@@ -40,9 +55,12 @@ unmatched id silently degrades to "no edge added".
 from __future__ import annotations
 
 import logging
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 from evaluation.chunk_mapping import chunk_id_from_fqn, find_enclosing_chunk
+from utils.progress import heartbeat
 
 from .call_edge_resolver import (
     ResolvedEdge,
@@ -75,6 +93,102 @@ try:
         """
 
         expanded_edges: set[tuple[object, object]]
+        _failed_files: set[str]
+
+        def __init__(
+            self,
+            filenames,
+            root: str | None = None,
+            logger=None,
+            tick: Callable[..., None] | None = None,
+            deadline: float | None = None,
+        ) -> None:
+            # Set *before* super().__init__(), which immediately runs the
+            # full 5-stage process() -- these attrs must exist for the
+            # overrides below to use from the very first callback.
+            self._tick = tick if tick is not None else (lambda *a, **kw: None)
+            self._deadline = deadline
+            self._aborted = False
+            self._seen_files: set[str] = set()
+            self._failed_files: set[str] = set()
+            super().__init__(filenames, root=root, logger=logger)
+
+        def _past_deadline(self) -> bool:
+            if self._aborted:
+                return True
+            if self._deadline is not None and time.monotonic() > self._deadline:
+                self._aborted = True
+                return True
+            return False
+
+        def visit_Lambda(self, node):  # type: ignore[override]  # noqa: N802
+            # pyan's analyze_scopes() does not number an anon scope nested
+            # inside another anon scope, but _next_anon_scope_name() always
+            # does -- so a lambda inside a comprehension (or another lambda)
+            # is registered as e.g. "...listcomp.2.lambda" but requested as
+            # "...listcomp.2.lambda.0", and ExecuteInInnerScope raises
+            # ValueError, aborting the ENTIRE pyan pass for the project.
+            # analyze_comprehension() (pyan/analyzer.py) already self-heals
+            # this exact asymmetry for comprehensions; visit_Lambda does not.
+            # _next_anon_scope_name dedups on (namespace, type, lineno,
+            # col_offset), so calling it here returns the same name super()
+            # will independently compute -- we just make sure it exists first.
+            from pyan.anutils import Scope  # type: ignore[import-untyped]
+
+            numbered = self._next_anon_scope_name("lambda", node)
+            inner_ns = f"{self.get_node_of_current_namespace().get_name()}.{numbered}"
+            if inner_ns not in self.scopes:
+                a = node.args
+                names = {x.arg for x in (*a.posonlyargs, *a.args, *a.kwonlyargs)}
+                names.update(x.arg for x in (a.vararg, a.kwarg) if x is not None)
+                self.scopes[inner_ns] = Scope.from_names(numbered, names)
+            return super().visit_Lambda(node)
+
+        def _prescan_one(self, filename):  # type: ignore[override]
+            # Reads + symtable-analyses + ast.parses every file, once, before
+            # pass 1 even starts (analyzer.py process():286-287) -- without a
+            # tick here this stretch is silent even once pass 1/2 report.
+            if self._past_deadline():
+                return
+            super()._prescan_one(filename)
+            self._tick(phase="prescan")
+
+        def process_one(self, filename):  # type: ignore[override]
+            # One third-party file with a pyan-hostile construct (e.g. the
+            # scope asymmetry above, for constructs visit_Lambda's guard
+            # doesn't cover) must never abort the whole-project pass -- the
+            # other files' edges are still worth having. process() calls
+            # process_one() twice per file (2-pass analysis), so dedupe the
+            # tally by filename and only log the traceback on first sight.
+            pass_no = 2 if filename in self._seen_files else 1
+            self._seen_files.add(filename)
+            if self._past_deadline():
+                return
+            try:
+                super().process_one(filename)
+            except Exception:  # noqa: BLE001 - resilience: one bad file must not cost the whole pyan tier
+                first_sight = filename not in self._failed_files
+                self._failed_files.add(filename)
+                self.logger.warning(
+                    "[PYAN] skipping %s (analysis failed)",
+                    filename,
+                    exc_info=first_sight,
+                )
+            finally:
+                self._tick(phase=f"pass {pass_no}")
+
+        def resolve_base_classes(self):  # type: ignore[override]
+            # Single whole-project call between the two passes
+            # (analyzer.py:293) -- no per-file loop to hang a tick on, so
+            # this is reported as one bracketed start/duration line instead.
+            if self._past_deadline():
+                return
+            start = time.monotonic()
+            super().resolve_base_classes()
+            self.logger.info(
+                "[PYAN] resolve_base_classes: %.1fs elapsed",
+                time.monotonic() - start,
+            )
 
         def postprocess(self) -> None:  # type: ignore[override]
             from pyan.postprocessor import (  # type: ignore[import-untyped]
@@ -85,15 +199,28 @@ try:
                 resolve_imports,
             )
 
-            resolve_imports(self)
-            contract_nonexistents(self)
-            # Snapshot *before* wildcard fan-out.
-            pre: dict[object, frozenset[object]] = {
-                f: frozenset(ts) for f, ts in self.uses_edges.items()
-            }
-            expand_unknowns(self)
-            cull_inherited(self)
-            collapse_inner(self)
+            if self._past_deadline():
+                return
+
+            pre: dict[object, frozenset[object]] = {}
+            steps = (
+                ("resolve_imports", resolve_imports),
+                ("contract_nonexistents", contract_nonexistents),
+                ("expand_unknowns", expand_unknowns),
+                ("cull_inherited", cull_inherited),
+                ("collapse_inner", collapse_inner),
+            )
+            for step_name, step in steps:
+                if step_name == "expand_unknowns":
+                    # Snapshot *before* wildcard fan-out.
+                    pre = {f: frozenset(ts) for f, ts in self.uses_edges.items()}
+                start = time.monotonic()
+                step(self)
+                self.logger.info(
+                    "[PYAN] postprocess: %s took %.1fs",
+                    step_name,
+                    time.monotonic() - start,
+                )
             # Surviving edges that were not in the pre-expansion snapshot.
             self.expanded_edges = {
                 (f, t)
@@ -189,10 +316,30 @@ class PyanResolver:
     Confidence:  0.75 — whole-project name resolution is more accurate than the
     single-file in-house extractor but cannot resolve calls through return values
     or duck-typed dispatch.
+
+    Args:
+        max_total_seconds: **Floor** for the aggregate wall-clock budget of
+            the entire pass -- the pass never gets *less* time than this,
+            regardless of project size.  Default: 600.0.
+        seconds_per_file: Marginal budget added per analysed file, on top of
+            the floor -- see ``resolve()``'s budget derivation.  Default: 2.5.
+        cap_seconds: Upper bound on the derived budget, regardless of how
+            many files ``seconds_per_file`` would otherwise imply.  Default:
+            3600.0.
     """
 
     name: str = "pyan"
     base_confidence: float = ResolverConfidence.PYAN
+
+    def __init__(
+        self,
+        max_total_seconds: float = 600.0,
+        seconds_per_file: float = 2.5,
+        cap_seconds: float = 3600.0,
+    ) -> None:
+        self._max_total_seconds = max_total_seconds
+        self._seconds_per_file = seconds_per_file
+        self._cap_seconds = cap_seconds
 
     def available(self) -> bool:
         """Return True if pyan3 was successfully imported at module load time."""
@@ -234,15 +381,54 @@ class PyanResolver:
         if py_files is None:
             return []
 
-        logger.info("[PYAN] Analysing %d Python files with pyan3...", len(py_files))
+        budget = min(
+            self._cap_seconds,
+            max(self._max_total_seconds, self._seconds_per_file * len(py_files)),
+        )
+        logger.info(
+            "[PYAN] Analysing %d Python files with pyan3 "
+            "(budget=%.1fs [floor=%.1fs, cap=%.1fs])...",
+            len(py_files),
+            budget,
+            self._max_total_seconds,
+            self._cap_seconds,
+        )
 
         # Silence pyan's own verbose logging while letting warnings/errors through.
         pyan_logger = logging.getLogger("pyan")
         pyan_logger.setLevel(logging.WARNING)
 
         # Use _TrackedVisitor to record which edges were added by expand_unknowns
-        # so they can be assigned a lower confidence (0.6 vs 0.75).
-        visitor = _TrackedVisitor(py_files, root=str(project_root), logger=pyan_logger)
+        # so they can be assigned a lower confidence (0.6 vs 0.75). The
+        # constructor runs the entire 5-stage process() synchronously, so the
+        # heartbeat context must wrap construction itself, not a call after it.
+        deadline = time.monotonic() + budget
+        with heartbeat(logger, "[PYAN]", len(py_files), unit="files") as tick:
+            visitor = _TrackedVisitor(
+                py_files,
+                root=str(project_root),
+                logger=pyan_logger,
+                tick=tick,
+                deadline=deadline,
+            )
+
+        if getattr(visitor, "_aborted", False):
+            logger.warning(
+                "[PYAN] budget %.1fs exceeded after %d/%d files — abandoning "
+                "pyan tier (libcst/lsp edges unaffected)",
+                budget,
+                len(getattr(visitor, "_seen_files", ())),
+                len(py_files),
+            )
+            return []
+
+        failed_files = getattr(visitor, "_failed_files", set())
+        if failed_files:
+            logger.warning(
+                "[PYAN] %d of %d files skipped (analysis failed, see warnings above)",
+                len(failed_files),
+                len(py_files),
+            )
         expanded = getattr(visitor, "expanded_edges", set())
         wildcard_confidence: float = (
             ResolverConfidence.PYAN_WILDCARD

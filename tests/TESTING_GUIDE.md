@@ -3,35 +3,33 @@
 ## Overview
 
 This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic
-search system. The project maintains a professional test suite with 5,600+ passing tests
+search system. The project maintains a professional test suite with 5,800+ passing tests
 organized into clear categories for effective quality assurance.
 
 ### Current Test Status
 
-✅ **Full suite green in one process** (re-measured 2026-08-04, deferred test-suite-quality pass —
-see "Fixed (Phase 10.8)" below):
+✅ **Full suite green in one process** (re-measured 2026-08-05, nightly CI fix — see "Fixed
+(Nightly CI, 2026-08-05)" below):
 
-- **Unit Tests**: **5,644 passed, 1 skipped** (`tests/unit/`), ~100s serial / ~52s with
-  `--parallel` (`-n auto --dist loadfile`, matching CI). This is *collected test cases*, not
-  distinct test functions: `tests/unit/evaluation/test_golden_set_guard.py` contributes 2
-  `def test_*` functions but 2,217 collected cases (`--collect-only -q` on that file alone) —
-  one is a single sanity check (`test_guard_detects_corrupted_id`), the other 2,216 are one
-  `@pytest.mark.parametrize`d function (`test_golden_chunk_id_exists_in_live_index`) run once
-  per golden chunk-id across four `evaluation/*golden*.json` files. That single data-driven
-  drift guard is **~39% of the entire `tests/unit/` collected total** (2,216 of 5,645). The
-  protection is real and worth keeping (see Phase 10.6 note below for why it's collection-time
-  live-file-reading, not a fixed count) — but "5,644 unit tests" should not be read as 5,644
-  independent test functions.
+- **Unit Tests**: **5,800 passed, 1 skipped** (`tests/unit/`), ~97s serial. This is *collected
+  test cases*, not distinct test functions: `tests/unit/evaluation/test_golden_set_guard.py`
+  contributes 2 `def test_*` functions but 2,219 collected cases (`--collect-only -q` on that
+  file alone) — one is a single sanity check (`test_guard_detects_corrupted_id`), the other
+  2,218 are one `@pytest.mark.parametrize`d function (`test_golden_chunk_id_exists_in_live_index`)
+  run once per golden chunk-id across four `evaluation/*golden*.json` files. That single
+  data-driven drift guard is **~39% of the entire `tests/unit/` collected total** (2,218 of
+  5,801). The protection is real and worth keeping (see Phase 10.6 note below for why it's
+  collection-time live-file-reading, not a fixed count) — but "5,800 unit tests" should not be
+  read as 5,800 independent test functions.
   - Chunking (incl. relationships): includes `test_call_edge_resolver.py`,
     `test_call_graph_config.py`, `test_libcst_call_graph.py`,
     `test_lsp_call_graph.py` (1 POSIX skip)
   - Embeddings, Graph, Merkle, Search, MCP Server, Evaluation, Benchmark, Utils, Tools
-- **Fast Integration Tests**: **102 passed** (`tests/fast_integration/`), ~19s
-- **Integration Tests**: **16 passed** (`tests/integration/`); 3 pre-existing failures
-  (`test_full_index_injects_real_call_edges`, `test_index_full_span_via_mcp_handler`,
-  `test_search_span_hierarchy_via_mcp_handlers`) reproduce identically on the pre-Phase-10.8
-  baseline too (isolated with `git stash push -- pyproject.toml`) — unrelated to this pass, not
-  fixed here
+- **Fast Integration Tests**: **102 passed** (`tests/fast_integration/`), ~26s
+- **Integration Tests**: **19 passed** (`tests/integration/`) — the 3 failures previously
+  tracked here (`test_full_index_injects_real_call_edges`, `test_index_full_span_via_mcp_handler`,
+  `test_search_span_hierarchy_via_mcp_handlers`) are fixed; see "Fixed (Nightly CI, 2026-08-05)"
+  below
 - **Slow Integration Tests**: **107 passed, 1 skipped** (`tests/slow_integration/`), 2h39m30s
   wall clock — now runs automatically in a weekly CI job (`.github/workflows/weekly.yml`, Phase
   11.1; this tier never ran in any automated job before). The one skip is a runtime
@@ -40,12 +38,14 @@ see "Fixed (Phase 10.8)" below):
   `test_multi_hop_reranking` ~61min) — confirmed genuine real-model download/load work, not
   hangs, since `tests/conftest.py`'s session-wide `CODE_SEARCH_STORAGE` redirect forces a fresh,
   empty model cache for every run of this tier.
-- **Total**: not re-measured as a single `pytest tests/` process this pass; use the per-tier
-  numbers above. Branch coverage (CI-shaped, `--ignore=tests/slow_integration/`) was last
-  measured at **75.03%** on 2026-08-04 (5,762 passed, 1 skipped, 3 pre-existing failures noted
-  above) against `fail_under = 73` — see "Measuring and gating coverage" below for why this
-  dropped from the prior 83.52%/81 baseline (Phase 11.3 honestly added `tools/`'s mostly-untested
-  CLI scripts to the measured source set).
+- **Total**: `tests/ --ignore=tests/slow_integration` in one process — **5,797 passed, 1
+  skipped, 0 failed** in 470.16s (2026-08-05). Branch coverage (CI-shaped, same scope) is
+  **76.24%** (re-measured 2026-08-05, up from 75.03% on 2026-08-04 — the C2 fix's new
+  per-resolver `except` branch in `call_edge_resolver.py` is covered by its regression test, and
+  the process-pool resolver path executing for the first time under pytest exercises code that
+  was previously dead in every test run) against `fail_under = 73` — see "Measuring and gating
+  coverage" below for why the 2026-08-04 figure itself dropped from the prior 83.52%/81 baseline
+  (Phase 11.3 honestly added `tools/`'s mostly-untested CLI scripts to the measured source set).
 - **Resolved (Phase 10.2)**: the intermittent failure previously tracked here in
   `tests/unit/search/test_index_write_stage.py::TestInjectCallEdgesResolverSelection::test_none_resolvers_falls_back_to_default_pair`
   did not reproduce once across 22+ randomized whole-suite runs during the Phase 10 hardening
@@ -142,7 +142,7 @@ see "Fixed (Phase 10.8)" below):
   Phase 10.5 write-ledger) a write into real `~/.claude_code_search` home storage, every run. Fixed
   by constructing `HybridSearcher` with an explicit stub embedder and a test-owned
   `SearchConfig(reranker.enabled=False)` (`_stub_search_deps()` helper, reusing the
-  `_get_config_via_service_locator` patch pattern `test_weight_change_takes_effect_without_rebuild`
+  `get_search_config` patch pattern `test_weight_change_takes_effect_without_rebuild`
   already established) instead of the after-the-fact `patch("embeddings.embedder.CodeEmbedder")`
   that never touched the reranker's separate load path.
   `test_search_dense_creates_embedder_lazily_when_none` is untouched — it deliberately exercises
@@ -208,28 +208,55 @@ see "Fixed (Phase 10.8)" below):
   Run this before pushing any change that touches model loading or `tests/conftest.py`'s
   network guard.
 
+- **Fixed (Nightly CI, 2026-08-05)**: the 6-test failure in nightly run 30986597353 (job
+  `92242674117`, windows-latest) traced to three root causes, all fixed, none a production
+  defect:
+  - **`tests/conftest.py`'s write-ledger crashed on integer file descriptors.** The session-wide
+    autouse `_install_real_storage_write_ledger` wraps `builtins.open`; multiprocessing's Windows
+    `spawn` opens the child pipe via `open(wfd, "wb", closefd=True)` where `wfd` is a raw int, and
+    `_record_if_real_storage` unconditionally called `Path(target).resolve()` on it, raising
+    `TypeError`. This escaped `ProcessPoolExecutor.submit()` in `run_resolvers()`
+    (`chunking/relationships/call_edge_resolver.py`) — silently disabling every process-pool call
+    graph resolver (pyan, libcst) under pytest, locally and in CI, with zero prior unit coverage
+    of that code path (`TestRunResolvers`'s stubs are never `isinstance`-matched into the
+    process-pool branch). Fixed with an `isinstance` guard in `_record_if_real_storage`; regression
+    test in `tests/unit/test_conftest_guards.py` (new file — the conftest guards had no prior test
+    coverage at all). A second, defensive fix wraps the process-pool submit loop in its own
+    per-resolver `try/except` so a future submit failure can't take the thread-pool (LSP) resolvers
+    down with it; regression test in `TestRunResolvers` using a real `PyanResolver` instance.
+  - **Windows 8.3 short paths** (`C:\Users\RUNNER~1\...` vs. the `Path.resolve()`d
+    `C:\Users\runneradmin\...` production code actually stores) broke three raw
+    `tempfile.mkdtemp()`-based path comparisons (`test_merkle.py` ×2,
+    `test_project_switch.py::test_switch_project_shows_correct_index`). Fixed by pinning
+    `tempfile.tempdir` to its resolved form at `tests/conftest.py` module load, before any test
+    can call `mkdtemp()` — removes the whole failure class rather than patching the three tests.
+  - **No Hugging Face cache in `nightly.yml`** blocked the real `BAAI/bge-m3` download the two
+    `@pytest.mark.slow` observability tests need (`test_observability_e2e.py`). Added the same
+    `actions/cache` step `weekly.yml` already has, and `@pytest.mark.allow_network` (registered
+    but, until now, never actually used anywhere in the suite) to both tests.
+
+  Verified: targeted suite green, `test_call_edge_injection_integration.py` confirmed injecting
+  real pyan/libcst/LSP edges under pytest for the first time (previously always silently 0), full
+  `tests/ --ignore=tests/slow_integration` green in one process — see "Reproducible baseline"
+  below for exact counts.
+
 **Note**: Run `uv run pytest tests/ --ignore=tests/slow_integration -q` for the fast CI subset
 (excludes GPU-dependent slow tests, ~2 min).
 
-### Reproducible baseline (Phase 12.3)
+### Reproducible baseline (Phase 12.3, re-measured 2026-08-05)
 
 Every count and percentage quoted above and in the root `CLAUDE.md` Quick Reference is
-reproducible from one of these commands, all run 2026-08-04:
+reproducible from one of these commands, re-run 2026-08-05 after the nightly CI fix above:
 
 | Metric | Value | Command |
 | ------ | ----- | ------- |
-| Unit collected cases | 5,645 (5,644 passed, 1 skipped) | `bash scripts/test/run_tests.sh tests/unit/ -q` |
+| Unit collected cases | 5,801 (5,800 passed, 1 skipped) | `bash scripts/test/run_tests.sh tests/unit/ -q` |
 | Fast integration | 102 passed | `bash scripts/test/run_tests.sh tests/fast_integration/ -q` |
-| Integration | 19 collected, 16 passed, 3 pre-existing failures | `bash scripts/test/run_tests.sh tests/integration/ -q` |
+| Integration | 19 collected, 19 passed, 0 failed | `bash scripts/test/run_tests.sh tests/integration/ -q` |
 | Slow integration | 108 collected (107 passed, 1 skipped) | `bash scripts/test/run_tests.sh tests/slow_integration/ -v --tb=short --no-cov` (~2h39m wall clock) |
-| CI-shaped coverage | 75.03% (5,762 passed, 1 skipped, 3 pre-existing failures) vs. `fail_under = 73` | `bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration/ --cov --cov-branch --cov-report=term-missing` |
-| Golden-set guard share | 2,216 of 5,645 unit cases (~39%) from one parametrized function | `.venv/Scripts/python.exe -m pytest tests/unit/evaluation/test_golden_set_guard.py --collect-only -q` |
-
-The three pre-existing `tests/integration/` failures
-(`test_full_index_injects_real_call_edges`, `test_index_full_span_via_mcp_handler`,
-`test_search_span_hierarchy_via_mcp_handlers`) reproduce identically on the pre-Phase-10.8
-baseline too (see "Current Test Status" above) — unrelated to the Phase 10–12 work, not fixed
-as part of this campaign.
+| Full CI-shaped subset | 5,921 passed, 1 skipped, 0 failed (unit + fast_integration + integration; duration not re-measured at this count) | `bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration -q` |
+| CI-shaped coverage | 76.24% vs. `fail_under = 73` (up from 75.03% on 2026-08-04) | `bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration/ --cov --cov-branch --cov-report=term-missing` |
+| Golden-set guard share | 2,218 of 5,801 unit cases (~38%) from one parametrized function | `.venv/Scripts/python.exe -m pytest tests/unit/evaluation/test_golden_set_guard.py --collect-only -q` |
 
 ## Recommended Testing Approach
 

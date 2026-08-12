@@ -30,6 +30,17 @@ for avoiding re-litigating settled questions.
 | [0022](0022-config-field-spec-and-liveness-ratchet.md) | Config field spec table and liveness ratchet | accepted | 2026-08-02 |
 | [0023](0023-benchmark-routes-through-orchestrator.md) | Route the SSCG benchmark through `SearchOrchestrator` | accepted | 2026-08-02 |
 | [0024](0024-repin-sscg-canon-post-c3.md) | Re-pin the SSCG canon after the C3 searcher-construction / config-metadata fixes | accepted | 2026-08-03 |
+| [0025](0025-clear-index-directory-in-place.md) | Clear and resync index objects in place instead of replacing them | accepted | 2026-08-03 |
+| [0026](0026-canon-repin-and-b1b-intent-arm.md) | Re-pin the SSCG canon to `canon_f1` and capture the `canon_B1b` intent-on arm | accepted | 2026-08-04 |
+| [0027](0027-parallel-edge-bucketing.md) | Parallel edges carry through `find_connections` instead of collapsing to one primary type | accepted | 2026-08-04 |
+| [0028](0028-intent-off-by-default-and-remove-find-path-redirect.md) | Default intent classification off; remove the `find_path` redirect | accepted | 2026-08-04 |
+| [0029](0029-repair-symbol-extraction-and-regate-find-similar.md) | Repair `_extract_symbol_from_query` and re-gate the `find_similar` redirect | accepted | 2026-08-04 |
+| [0030](0030-deepen-config-searcher-seam.md) | Deepen the config→searcher seam (C3 + C4) | accepted | 2026-08-05 |
+| [0031](0031-delete-intent-policy-tables.md) | Delete the two intent policy tables (QW5 + A1) | accepted | 2026-08-05 |
+| [0032](0032-config-liveness-audit.md) | Config liveness audit: 124/124 fields live, five defects fixed | accepted | 2026-08-06 |
+| [0033](0033-lift-torch-ceiling.md) | Lift the torch `<2.9.0` ceiling, bump the ML stack | accepted | 2026-08-06 |
+| [0034](0034-pyan-gpl-quarantine.md) | GPL-2.0-or-later quarantine for the pyan call-graph tier | accepted | 2026-08-07 |
+| [0035](0035-cpp-call-edge-tier-scope.md) | C/C++ call-edge strategy: tree-sitter tier only, sequenced behind chunking parity | accepted | 2026-08-07 |
 
 ## Adding a new ADR
 

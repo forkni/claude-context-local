@@ -199,6 +199,28 @@ def process(user: User, count: int, data: str) -> None:
     assert "str" in type_names
 
 
+def test_type_annotation_positional_only_parameter(chunk_metadata):
+    """PEP 570: an annotated positional-only param must yield a type edge
+    like every other parameter kind -- the parameter loop only walked
+    `args.args` + `kwonlyargs`, silently dropping `posonlyargs`."""
+    code = """
+def process(user: User, /, count: int) -> None:
+    pass
+"""
+
+    extractor = TypeAnnotationExtractor()
+    edges = extractor.extract(code, chunk_metadata)
+
+    type_names = {edge.target_name for edge in edges}
+
+    assert "User" in type_names
+    assert "int" in type_names
+
+    user_edge = next(e for e in edges if e.target_name == "User")
+    assert user_edge.metadata["annotation_location"] == "parameter"
+    assert user_edge.metadata["parameter_name"] == "user"
+
+
 def test_type_annotation_return_type(chunk_metadata):
     """Test extraction of return type hints."""
     code = """

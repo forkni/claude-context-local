@@ -503,6 +503,76 @@ def test_unknown_relationship_type_skipped(impact_analyzer):
     assert all(len(v) == 0 for v in result.values())
 
 
+def test_parallel_edges_fan_out_to_multiple_buckets(impact_analyzer):
+    """Test that a single entry's parallel_edges fan out into every matching
+    relationship-type bucket, not just the type the entry happens to be
+    labeled with (the parallel-edge-collapse fix, ADR-0027).
+
+    Scenario:
+        - Our chunk: test.py:1-10:class:Concrete
+        - Target base.py:1-5:class:ABC is reached by BOTH an 'implements'
+          edge and a 'uses_constant' edge (the ALL_CAPS-base-class repro:
+          both extractors fire on the same node pair).
+        - The primary edge is 'uses_constant' (whichever type
+          get_edge_data() would pick), but both types must be bucketed.
+    """
+    chunk_id = "test.py:1-10:class:Concrete"
+    target_id = "base.py:1-5:class:ABC"
+
+    outbound = [
+        RelationshipEntry(
+            chunk_id=target_id,
+            relationship_type="uses_constant",  # primary; irrelevant to fan-out
+            direction="outbound",
+            depth=1,
+            edge_data={"line_number": 3, "confidence": 1.0},
+            parallel_edges=[
+                {
+                    "relationship_type": "uses_constant",
+                    "line_number": 3,
+                    "confidence": 1.0,
+                },
+                {
+                    "relationship_type": "implements",
+                    "line_number": 3,
+                    "confidence": 1.0,
+                },
+            ],
+        )
+    ]
+
+    result = impact_analyzer._build_graph_relationships(chunk_id, [], outbound, None)
+
+    assert len(result["uses_constants"]) == 1
+    assert len(result["implements_protocols"]) == 1
+    assert result["uses_constants"][0]["relationship_type"] == "uses_constant"
+    assert result["implements_protocols"][0]["relationship_type"] == "implements"
+
+
+def test_no_parallel_edges_falls_back_to_single_type(impact_analyzer):
+    """Test that an entry with an empty parallel_edges list (e.g. a
+    hand-built test fixture that never populated it) still buckets under
+    its own relationship_type — the fan-out helper's fallback path."""
+    chunk_id = "test.py:1-10:class:Concrete"
+    target_id = "base.py:1-5:class:ABC"
+
+    outbound = [
+        RelationshipEntry(
+            chunk_id=target_id,
+            relationship_type="implements",
+            direction="outbound",
+            depth=1,
+            edge_data={"line_number": 3, "confidence": 1.0},
+        )
+    ]
+
+    result = impact_analyzer._build_graph_relationships(chunk_id, [], outbound, None)
+
+    assert len(result["implements_protocols"]) == 1
+    assert "uses_constants" in result
+    assert len(result["uses_constants"]) == 0
+
+
 def test_skip_legacy_calls_relationships(impact_analyzer):
     """Test that 'calls' relationship entries are skipped (handled by caller enrichment)."""
     chunk_id = "test.py:1-10:function:test"

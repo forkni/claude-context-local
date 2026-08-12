@@ -52,6 +52,42 @@ class TestSearchConfig:
         assert config.search_mode.dense_weight == 0.7
         assert config.search_mode.enable_hybrid is True  # Default value
 
+    def test_from_dict_embedding_dimension_is_derived_not_configured(self):
+        """embedding.dimension is not a real user-settable value - it is
+        overwritten from MODEL_REGISTRY[model_name] by
+        _apply_model_registry_dimension on every from_dict/save_config call
+        (2026-08-06 config-liveness audit, D1). A hand-edited JSON value must
+        never survive: feeding dimension=1 alongside a real registry model
+        name must yield that model's true dimension, not 1.
+        """
+        data = {
+            "embedding": {
+                "model_name": "BAAI/bge-m3",  # registry dimension: 1024
+                "dimension": 1,
+            }
+        }
+
+        config = SearchConfig.from_dict(data)
+        assert config.embedding.dimension == 1024
+
+    def test_from_dict_embedding_dimension_unmodified_without_registry_model(self):
+        """Negative control for the derivation above: an unrecognized
+        model_name has no MODEL_REGISTRY entry, so
+        _apply_model_registry_dimension is a no-op and the supplied value
+        passes through unchanged - proving the previous test's override is
+        the registry lookup firing, not from_dict discarding dimension
+        unconditionally.
+        """
+        data = {
+            "embedding": {
+                "model_name": "not-a-registered-model",
+                "dimension": 1,
+            }
+        }
+
+        config = SearchConfig.from_dict(data)
+        assert config.embedding.dimension == 1
+
 
 class TestSearchConfigManager:
     """Test SearchConfigManager class."""

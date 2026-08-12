@@ -10,6 +10,7 @@ calls CodeGraphStorage directly.
 from __future__ import annotations
 
 import builtins
+import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -241,6 +242,15 @@ class RelationshipAnalyzer:
         Outbound entries → forward fields (parent_classes, uses_types, …).
         Inbound entries  → reverse fields (child_classes, used_as_type_in, …).
         'calls' edges are handled separately (direct/indirect callers) and skipped here.
+
+        A node pair can carry more than one relationship type in parallel (e.g. an
+        `implements` edge to a target also reached by a `uses_constant` edge) — each
+        entry's ``parallel_edges`` (populated by ``GraphQueryEngine._traverse_*`` from
+        ``CodeGraphStorage.get_all_edge_data``) carries every one of them, not just the
+        single type the entry happens to be labeled with. Fanning out over
+        ``parallel_edges`` here — rather than only reading ``entry.relationship_type``
+        — buckets every parallel type instead of just the primary edge's, on both the
+        filtered and the unfiltered path.
         """
         from chunking.relationships.relationship_types import (
             get_relationship_field_mapping,
@@ -265,25 +275,45 @@ class RelationshipAnalyzer:
             f"outbound={len(outbound_1hop)} inbound={len(inbound_1hop)}"
         )
 
+        def _fanout(entry: RelationshipEntry) -> list[RelationshipEntry]:
+            """One entry per parallel edge type, or just the entry itself when
+            ``parallel_edges`` wasn't populated (e.g. hand-built test fixtures)."""
+            if not entry.parallel_edges:
+                return [entry]
+            return [
+                dataclasses.replace(
+                    entry,
+                    relationship_type=d.get("relationship_type", "unknown"),
+                    edge_data=d,
+                )
+                for d in entry.parallel_edges
+            ]
+
         for entry in outbound_1hop:
-            if entry.relationship_type == "calls":
-                continue
-            fwd_field, _ = field_mapping.get(entry.relationship_type, (None, None))
-            if not fwd_field or fwd_field not in result:
-                continue
-            enriched = self._enrich_forward(entry, _should_include)
-            if enriched is not None:
-                result[fwd_field].append(enriched)
+            for typed_entry in _fanout(entry):
+                if typed_entry.relationship_type == "calls":
+                    continue
+                fwd_field, _ = field_mapping.get(
+                    typed_entry.relationship_type, (None, None)
+                )
+                if not fwd_field or fwd_field not in result:
+                    continue
+                enriched = self._enrich_forward(typed_entry, _should_include)
+                if enriched is not None:
+                    result[fwd_field].append(enriched)
 
         for entry in inbound_1hop:
-            if entry.relationship_type == "calls":
-                continue
-            _, rev_field = field_mapping.get(entry.relationship_type, (None, None))
-            if not rev_field or rev_field not in result:
-                continue
-            enriched = self._enrich_reverse(entry, _should_include)
-            if enriched is not None:
-                result[rev_field].append(enriched)
+            for typed_entry in _fanout(entry):
+                if typed_entry.relationship_type == "calls":
+                    continue
+                _, rev_field = field_mapping.get(
+                    typed_entry.relationship_type, (None, None)
+                )
+                if not rev_field or rev_field not in result:
+                    continue
+                enriched = self._enrich_reverse(typed_entry, _should_include)
+                if enriched is not None:
+                    result[rev_field].append(enriched)
 
         return result
 

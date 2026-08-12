@@ -103,6 +103,35 @@ DEFAULT_IGNORED_DIRS: set[str] = {
 }
 
 
+# Strict subset of DEFAULT_IGNORED_DIRS naming dependency/package-manager
+# trees specifically (as opposed to build output, caches, or scratch dirs).
+# search/filters.py uses this to classify an include_dirs pattern as
+# "additive" — re-admitting a slice of a dependency tree on top of the
+# normal root-down scope — versus "narrowing" — restricting the whole
+# indexed scope to just the named paths. Deliberately excludes "build",
+# "dist", "out", "public", "target", "bin", "obj": those are plausible
+# real source-directory names, and misclassifying them as additive would
+# make it impossible to narrow into one.
+DEPENDENCY_TREE_DIRS: set[str] = {
+    "site-packages",
+    "node_modules",
+    "venv",
+    ".venv",
+    "env",
+    ".env",
+    ".direnv",
+    ".yarn",
+    ".pnpm-store",
+    ".gradle",
+    ".mvn",
+    ".tox",
+    ".uv-cache",
+}
+assert DEPENDENCY_TREE_DIRS <= DEFAULT_IGNORED_DIRS, (
+    "DEPENDENCY_TREE_DIRS must stay a strict subset of DEFAULT_IGNORED_DIRS"
+)
+
+
 # Node type to chunk type mapping (tree-sitter → CodeChunk)
 NODE_TYPE_MAP: dict[str, str] = {
     "function_declaration": "function",
