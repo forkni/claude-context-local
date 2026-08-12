@@ -2,17 +2,58 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-08-02)
+## Current Status: All Features Operational (2026-08-12)
 
-- **Version**: 0.23.0
+- **Version**: 0.24.0
 - **Status**: Production-ready, concurrency-safe
-- **Test Coverage**: 5,540 unit tests · 102 fast_integration · 19 integration · 108 slow_integration (2026-08-02)
+- **Test Coverage**: 5,800 unit tests · 102 fast_integration · 19 integration · 108 slow_integration (2026-08-12)
 - **Dependencies**: 36 direct (`pyproject.toml`) + optional `[callgraph]` / `[lsp]` / `[test]` / `[dev]` / `[gpu]` / `[otel]` extras
-- **SSCG Benchmark**: MRR 0.8418 (canonical, 63q, k=10, `canon_h1` intent-on arm, shipped default) / 0.6750 (expanded, 133 non-D, k=10, `canon_h1` intent-on arm) — see `evaluation/CANON_20260804_INTENT_ON_REPAIRED.md` for full provenance (ADR-0029 re-pin, superseding `canon_d1`/`canon_d2`/`canon_f1`/`canon_g1`); the README's k=7 headline (MRR 0.787-0.796, 2026-07-27) is a separate operating point, not directly comparable
+- **SSCG Benchmark**: MRR 0.8603 (canonical, 63q, k=10, `canon_l1` intent-on arm, shipped default) / 0.6789 (expanded, 133 non-D, k=10, `canon_l1` intent-on arm) — see `docs/BENCHMARKS.md` for full provenance (ADR-0033 re-pin after the ML-stack/torch bump, superseding `canon_h1`/`canon_i1`/`canon_j1`/`canon_k1`/`canon_k2`); README's Highlights headline cites the same `canon_l1` figures
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: v0.23.0 — MCP Python SDK v1→v2 migration, community/DSPy/ONNX subsystems removed (86 commits since v0.22.0, three models dropped from the registries), per-project config overrides (ADR-0014), config field liveness audit (ADR-0020); v0.22.0 — GLSL indexing parity, persistent chunk embedding cache (43× reindex speedup), BM25 path/symbol augmentation (MRR +0.113), `HybridSearcher.clear_index()` truthiness fix (was discarding 100% of resolver-derived call edges); v0.21.0 — MCPB extension bundle, module-preamble chunks, core/advanced MCP tool tiering, default embedder corrected to `BAAI/bge-m3`, Qwen3-Reranker official-template fix (MRR 0.311→0.754)
+- **Recent**: v0.24.0 — retro-tagged v0.23.0, documentation/skill sync against `development` (test counts, benchmark re-pin, ADR-0036 `include_dirs` semantics), call-graph resolver hardening, pyan GPL-2.0-or-later quarantine (ADR-0034), C++ call-edge tier scope (ADR-0035), additive/narrowing `include_dirs` for dependency trees (ADR-0036); v0.23.0 — MCP Python SDK v1→v2 migration, community/DSPy/ONNX subsystems removed (86 commits since v0.22.0, three models dropped from the registries), per-project config overrides (ADR-0014), config field liveness audit (ADR-0020); v0.22.0 — GLSL indexing parity, persistent chunk embedding cache (43× reindex speedup), BM25 path/symbol augmentation (MRR +0.113), `HybridSearcher.clear_index()` truthiness fix (was discarding 100% of resolver-derived call edges)
 
 ---
+
+## v0.24.0 - v0.23.0 Retro-Tag, Documentation Sync, Call-Graph Hardening (2026-08-12)
+
+119 non-merge commits since the `v0.23.0` content landed on `main` (2026-08-02) — `v0.23.0` had
+never been tagged despite `pyproject.toml`/`server.py`/`CHANGELOG.md` all declaring it shipped;
+`v0.23.0` is retro-tagged at the commit that carries that content, and this release picks up
+everything after it. Full CHANGELOG entry: `CHANGELOG.md` `[0.24.0]`.
+
+### Added
+
+- **ADR-0036 — additive/narrowing `include_dirs`** (`aa65a92`) — naming a dependency-tree path
+  (`venv`, `site-packages`, `node_modules`, `.tox`, …; see `DEPENDENCY_TREE_DIRS` in
+  `chunking/language_registry.py`) now adds it *on top of* normal project scope via
+  `include_exclusive`, threaded through `PathFilter`, `MerkleDAG`, the incremental indexer, and the
+  index/search MCP handlers; any other include path still narrows to just what it names.
+  `exclude_dirs` still wins over `include_dirs` on a matching path.
+- **`batch_index --dry-run` file/folder listing** (`197c2d6`, reverted same day by `2fea377` — net
+  no-op, listed for completeness).
+- **LSP aggregate timeout scales to project chunk count** (`1b60ce7`).
+
+### Fixed
+
+- **`index_directory`'s `include`/`exclude` directory filtering** (`c95730d`) — corrected filter
+  application order; regression coverage added (`30ef6fb`).
+- **Call-graph resolver pipeline hardened** (`5af6589`) — per-extractor failure isolation
+  (`befc65c`), survives a pyan lambda-in-anonymous-scope failure without aborting the whole file
+  (`f8ce309`), positional-only parameter handling corrected in relationship extractors (`667d37a`).
+- **Parse-loss reporting** (`64c311c`) — reported by impact instead of flooding the log.
+- **Windows short/long path mismatch** in 3 flaky tests (`710a16e`).
+
+### Changed
+
+- **ADR-0032** — config field liveness audit follow-up (`75eb4ba`).
+- **ADR-0034** — pyan quarantined behind the optional `[callgraph]` extra as GPL-2.0-or-later
+  (was miscategorized), keeping the core install Apache-2.0-clean; **ADR-0035** scopes C++
+  call-edge resolution to the tiers pyan actually supports (`8345055`).
+- **Documentation and `mcp-search-tool` skill resynced** against measured `development` state:
+  test counts (5,540 → 5,800 unit), benchmark figures re-pinned from `canon_h1` to `canon_l1`
+  (`docs/BENCHMARKS.md`'s published baseline since ADR-0033), and the skill's `include_dirs`
+  reference updated for ADR-0036's additive semantics.
+- **gitpython** 3.1.57 → 3.1.58 (`bef99e6`).
 
 ## v0.23.0 - SDK v2 Migration, Three Subsystems Removed, Config Liveness Audit (2026-08-02)
 

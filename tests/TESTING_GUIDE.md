@@ -3,7 +3,7 @@
 ## Overview
 
 This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic
-search system. The project maintains a professional test suite with 5,600+ passing tests
+search system. The project maintains a professional test suite with 5,800+ passing tests
 organized into clear categories for effective quality assurance.
 
 ### Current Test Status
@@ -11,16 +11,16 @@ organized into clear categories for effective quality assurance.
 ✅ **Full suite green in one process** (re-measured 2026-08-05, nightly CI fix — see "Fixed
 (Nightly CI, 2026-08-05)" below):
 
-- **Unit Tests**: **5,676 passed, 1 skipped** (`tests/unit/`), ~97s serial. This is *collected
+- **Unit Tests**: **5,800 passed, 1 skipped** (`tests/unit/`), ~97s serial. This is *collected
   test cases*, not distinct test functions: `tests/unit/evaluation/test_golden_set_guard.py`
   contributes 2 `def test_*` functions but 2,219 collected cases (`--collect-only -q` on that
   file alone) — one is a single sanity check (`test_guard_detects_corrupted_id`), the other
   2,218 are one `@pytest.mark.parametrize`d function (`test_golden_chunk_id_exists_in_live_index`)
   run once per golden chunk-id across four `evaluation/*golden*.json` files. That single
   data-driven drift guard is **~39% of the entire `tests/unit/` collected total** (2,218 of
-  5,677). The protection is real and worth keeping (see Phase 10.6 note below for why it's
-  collection-time live-file-reading, not a fixed count) — but "5,676 unit tests" should not be
-  read as 5,676 independent test functions.
+  5,801). The protection is real and worth keeping (see Phase 10.6 note below for why it's
+  collection-time live-file-reading, not a fixed count) — but "5,800 unit tests" should not be
+  read as 5,800 independent test functions.
   - Chunking (incl. relationships): includes `test_call_edge_resolver.py`,
     `test_call_graph_config.py`, `test_libcst_call_graph.py`,
     `test_lsp_call_graph.py` (1 POSIX skip)
@@ -250,13 +250,13 @@ reproducible from one of these commands, re-run 2026-08-05 after the nightly CI 
 
 | Metric | Value | Command |
 | ------ | ----- | ------- |
-| Unit collected cases | 5,677 (5,676 passed, 1 skipped) | `bash scripts/test/run_tests.sh tests/unit/ -q` |
+| Unit collected cases | 5,801 (5,800 passed, 1 skipped) | `bash scripts/test/run_tests.sh tests/unit/ -q` |
 | Fast integration | 102 passed | `bash scripts/test/run_tests.sh tests/fast_integration/ -q` |
 | Integration | 19 collected, 19 passed, 0 failed | `bash scripts/test/run_tests.sh tests/integration/ -q` |
 | Slow integration | 108 collected (107 passed, 1 skipped) | `bash scripts/test/run_tests.sh tests/slow_integration/ -v --tb=short --no-cov` (~2h39m wall clock) |
-| Full CI-shaped subset | 5,797 passed, 1 skipped, 0 failed in 470.16s | `bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration -q` |
+| Full CI-shaped subset | 5,921 passed, 1 skipped, 0 failed (unit + fast_integration + integration; duration not re-measured at this count) | `bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration -q` |
 | CI-shaped coverage | 76.24% vs. `fail_under = 73` (up from 75.03% on 2026-08-04) | `bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration/ --cov --cov-branch --cov-report=term-missing` |
-| Golden-set guard share | 2,218 of 5,677 unit cases (~39%) from one parametrized function | `.venv/Scripts/python.exe -m pytest tests/unit/evaluation/test_golden_set_guard.py --collect-only -q` |
+| Golden-set guard share | 2,218 of 5,801 unit cases (~38%) from one parametrized function | `.venv/Scripts/python.exe -m pytest tests/unit/evaluation/test_golden_set_guard.py --collect-only -q` |
 
 ## Recommended Testing Approach
 

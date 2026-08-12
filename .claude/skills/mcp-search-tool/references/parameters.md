@@ -28,7 +28,7 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 | `k` | schema **4**, effective **7** | Schema default is `4` (`mcp_server/tool_registry.py`); `search_orchestrator.py` falls back to `search_config.search_mode.default_k` when omitted, and both the shipped `search_config.json.example` and this machine's local config set `default_k: 7`. **Recommended: pass `k=7` explicitly** — targets may rank 6–7 on complex queries (SSCG benchmark: Hit@5=100% at k=7). Use `k=10` for architectural queries. |
 | `search_mode` | "auto" | "hybrid", "semantic", "bm25", "auto" |
 | `file_pattern` | — | Filter by filename/path substring (e.g., "auth", "models") |
-| `include_dirs` | — | Whitelist directories, e.g. `["src/"]` |
+| `include_dirs` | — | Whitelist directories, e.g. `["src/"]` — a pure path-prefix narrowing filter over the already-built index. Distinct from `index_directory`'s `include_dirs` (see [tool-index.md](tool-index.md), replace-wholesale + ADR-0036 additive dependency-tree semantics); this one has no additive case. |
 | `exclude_dirs` | — | Blacklist directories, e.g. `["tests/"]` |
 | `chunk_type` | — | Filter by structure type (see below) |
 | `include_context` | true | Include similar chunks and relationships |

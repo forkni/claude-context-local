@@ -167,7 +167,7 @@ Test suite documentation and validation reports.
 
 | Document | Description |
 |----------|-------------|
-| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (5,540 unit tests · 102 fast_integration · 19 integration · 108 slow_integration) |
+| **[tests/TESTING_GUIDE.md](../tests/TESTING_GUIDE.md)** | Comprehensive testing documentation (5,800 unit tests · 102 fast_integration · 19 integration · 108 slow_integration) |
 | **[tests/README.md](../tests/README.md)** | Test suite organization and best practices |
 
 ### Testing Tools (scripts/test/)
@@ -214,10 +214,11 @@ Detailed technical documentation.
 
 | Document | Description |
 |----------|-------------|
-| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.23.0 |
+| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.24.0 |
 
 ### Key Versions
 
+- **v0.24.0** (2026-08-12): Retro-tagged v0.23.0, documentation/skill sync against `development` (test counts, benchmark re-pin to `canon_l1`, ADR-0036 `include_dirs` semantics), call-graph resolver hardening, pyan GPL-2.0-or-later quarantine (ADR-0034), C++ call-edge tier scope (ADR-0035), additive/narrowing `include_dirs` for dependency trees (ADR-0036)
 - **v0.23.0** (2026-08-02): MCP Python SDK v1→v2 migration, community-detection + DSPy-eval + ONNX subsystems removed, per-project config overrides (ADR-0014), `exclude_same_file`, richer evaluation metrics, config field liveness audit (ADR-0020); three models dropped from the registries (breaking)
 - **v0.22.0** (2026-07-27): GLSL indexing parity, persistent chunk embedding cache (43× reindex speedup), BM25 path-token augmentation (`INDEX_VERSION` 4), widened retrieval funnel, `mcp-search-tool` skill reinstated
 - **v0.21.0** (2026-07-23): MCP-server hardening, default embedder corrected to `BAAI/bge-m3` in docs, Qwen3-reranker fix
@@ -307,4 +308,4 @@ Detailed technical documentation.
 
 ---
 
-**Last Updated**: 2026-08-02 (v0.23.0 — MCP SDK v2 migration, community/DSPy/ONNX subsystems removed, config field liveness audit (ADR-0020); 5,540 unit tests)
+**Last Updated**: 2026-08-12 (v0.24.0 — documentation and skill sync, benchmark re-pin to `canon_l1`, CHANGELOG roll-up; 5,800 unit tests)

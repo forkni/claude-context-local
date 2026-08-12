@@ -9,8 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-08-12
+
+119 non-merge commits since the `v0.23.0` content landed on `main` (2026-08-02) — `v0.23.0` had
+never been tagged despite `pyproject.toml`/`server.py`/`CHANGELOG.md` all declaring it shipped, so
+this release retroactively tags `v0.23.0` at that point and rolls everything since into `v0.24.0`.
+Headline: call-graph resolver pipeline hardening, two new ADRs (0034 pyan GPL-2.0-or-later license
+quarantine, 0035 C/C++ call-edge tier scope), ADR-0036 additive/narrowing `include_dirs` semantics,
+ADR-0032 config-field liveness audit, and a full documentation/skill resync against `development`.
+
 ### Added
 
+- **Heartbeat progress logging for long-running relationship extraction** (`utils/progress.py`,
+  part of the call-graph resolver hardening pass below) — surfaces periodic progress on large
+  projects where extraction previously ran silently for minutes at a time.
 - **SSCG benchmark harness can measure the per-request ego-graph path for the first time** — new
   `--ego-per-request` flag sets `plan.ego_graph_enabled` on `SearchOrchestrator.run()`'s arguments
   dict, distinct from the pre-existing `--ego-graph on|off`, which only overrides the *config
@@ -26,6 +38,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Documentation/skill resync against `development`** — stale test counts (5,540 → 5,801
+  collected unit cases) corrected across `README.md`, `docs/DOCUMENTATION_INDEX.md`,
+  `docs/VERSION_HISTORY.md`, and `tests/TESTING_GUIDE.md`; benchmark figures in `README.md`,
+  `docs/VERSION_HISTORY.md`, and `docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md` re-pinned from the
+  one-generation-stale `canon_h1` to the current `canon_l1` (ADR-0033); the `mcp-search-tool`
+  skill's `references/tool-index.md` and `references/parameters.md` updated with ADR-0036's
+  additive/narrowing `include_dirs` semantics (skill was last resynced before that ADR landed) and
+  bumped to `version: 0.24.0`.
+- **Windows short/long path mismatch resolved in 3 flaky tests** (`710a16e`) — tests comparing
+  paths against a project root captured via different Windows path-normalization forms
+  (`\\?\`-prefixed long paths vs. 8.3 short paths) intermittently failed depending on which form
+  the OS returned first; both sides now normalize through the same resolver before comparison.
+- **Call-graph resolver pipeline hardened** (`5af6589`, plus the three preceding fixes it
+  consolidates) — pyan's `visit_Lambda` now self-heals the same way `analyze_comprehension`
+  already did for a lambda nested inside another anonymous scope (`analyze_scopes()` doesn't
+  number that case but `_next_anon_scope_name()` always does, so `ExecuteInInnerScope` previously
+  raised and aborted the entire pyan pass for the project); `process_one` now isolates any
+  remaining per-file pyan failure so one bad file no longer costs the whole tier; the LSP
+  resolver's aggregate wall-clock budget is no longer a static 180s regardless of project size —
+  `LSPResolver.resolve()` now derives `budget = min(cap, max(floor, 2.0 + seconds_per_chunk *
+  n_probes))` from indexed chunk count, with `lsp_seconds_per_chunk`/`lsp_total_timeout_cap_seconds`
+  as new `CallGraphConfig` fields (a 2,177-file/~32k-chunk project needed ~240s but was previously
+  killed at the 180s floor); relationship extraction no longer runs all 16 extractors per chunk
+  inside one try block — a single extractor raising (e.g. a positional-only-parameter `IndexError`)
+  previously discarded every edge the other 15 extractors collected for that chunk, not just the
+  raising extractor's own contribution, and per-extractor failures are now tallied and
+  escalation-logged instead of silently dropped; `default_param_extractor.py`/`type_extractor.py`
+  now index into `posonlyargs + args` combined (PEP 570's right-alignment for `ast.arguments.
+  defaults`) instead of `args.args` alone, fixing an `IndexError` (or silent misattribution) on any
+  positional-only parameter carrying a default, confirmed against real third-party signatures in
+  torch's `custom_ops.py`.
+- **`index_directory`'s `include_dirs`/`exclude_dirs` filtering corrected** (`c95730d`) — filters
+  now apply correctly against both absolute and relative paths, wildcard patterns are supported,
+  and `exclude_dirs` reliably beats `include_dirs` on a conflicting path; zero-match patterns now
+  log a loud per-pattern warning instead of failing silently, and a new `--dry-run` mode previews
+  the effective filter set before paying for a full index.
+- **pyan3 license mislabeled `GPL-2.0-only` instead of `GPL-2.0-or-later`** (ADR-0034,
+  `8345055`) — inverted the Apache-2.0 compatibility read for the optional `[callgraph]` extra;
+  `pyproject.toml` corrected, and `external_call_graph.py` (which subclasses pyan in-process) now
+  carries its own `GPL-2.0-or-later` header with a `NOTICE` file added, rather than inheriting the
+  project's blanket Apache-2.0 license text. Also fixed along the way: `docs/CALL_GRAPH_TUNING.md`
+  cited a nonexistent `ast_call_graph.py` module and a stale `min_confidence` default; `docs/adr/
+  README.md` was missing the ADR-0033 row.
+- **Config-field liveness audit closed** (ADR-0032, `75eb4ba`/`5c1fbc1`/`179b227`) — a two-question
+  audit (search_config/example sync, and full 124-field liveness via the ADR-0020 three-method
+  methodology) found zero dead fields but five defects, now fixed: `start_mcp_server.cmd`'s
+  GPU-acceleration submenu text incorrectly implied `prefer_gpu` selects the device (it only gates
+  dynamic embedding batch sizing — CUDA runs whenever available either way);
+  `CallGraphConfig.resolvers` accepting `'lsp'` or other unrecognized values silently had no
+  effect (Stage 3 is gated solely by `lsp_enabled`) and now warns; `reranker.batch_size`/
+  `reranker.instruction` were untagged `construction_baked`, so `requires_rebuild()` silently
+  ignored benchmark-arm overrides on them; two stale doc claims fixed
+  (`docs/MCP_TOOLS_REFERENCE.md`'s `configure_chunking` defaults, `docs/
+  HYBRID_SEARCH_CONFIGURATION_GUIDE.md`'s now-false `multi_hop.expansion` divergence claim).
 - **Six BM25/worker config fields could be silently ignored by a benchmark arm** (ADR-0030) —
   `bm25_k1`, `bm25_b`, `bm25_use_stopwords`, `bm25_use_stemming`, `bm25_tokenizer`, and
   `max_parallel_workers` are read once into `HybridSearcher`/`BM25Index` at construction, but
@@ -68,6 +134,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`index_directory`'s `include_dirs` is additive for dependency-tree paths, narrowing for
+  everything else** (ADR-0036, `aa65a92`) — `include_exclusive` threaded through `PathFilter`,
+  `get_effective_filters` (2-tuple → 3-tuple), `MerkleDAG`, the incremental indexer, and the
+  index/search MCP handlers: naming a dependency-tree path (`venv`, `site-packages`,
+  `node_modules`, `.tox`, … — `DEPENDENCY_TREE_DIRS` in `chunking/language_registry.py`, 13
+  entries) now re-admits that path *on top of* normal project scope instead of narrowing the whole
+  project down to just it; any other include path still narrows as before. The H033 golden-dataset
+  gold is retargeted to the split_block-collapsed `method:` kind, causally coupled to this change
+  (`get_project_storage_dir` only crosses the character-based split threshold once this diff's
+  params land) and must ship together with it.
+- **C/C++ call-edge resolver tier scope formalized, no code change** (ADR-0035) — documents the
+  intended coverage boundary for the C/C++ resolver tier in the layered call-graph pipeline.
 - **ML stack bumped (retrieval libs + torch 2.11.0); SSCG canon re-pinned to `canon_l1`**
   (ADR-0033) — three independently-gated stages: transformers 5.13.0→5.14.1,
   sentence-transformers 5.6.1→5.7.0, faiss-cpu 1.14.3→1.15.0, huggingface-hub 1.22.0→1.26.1,
@@ -210,6 +288,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **`gitpython` bumped 3.1.57 → 3.1.58** (`bef99e6`, routine dependabot patch release, no CVE
+  tracked against 3.1.57 at time of bump).
 - **torch 2.8.0+cu128 → 2.11.0+cu128 closes 7 of 8 tracked CVEs** (ADR-0033), including both
   CVSS 8.8 vulnerabilities: `CVE-2026-24747` (a `weights_only` unpickler bypass) and
   `CVE-2025-3001` (a `torch.lstm_cell` memory-corruption bug — not a second `weights_only`
