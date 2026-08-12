@@ -3,8 +3,12 @@
 Two tiers:
   Fast (no model) — verify @timed, error_handler, and traced_block emit
                     the right span names without loading any ML model.
-  Slow            — full index + search through MCP handlers with the real
-                    embedding model; verifies the complete span hierarchy.
+  Slow            — full index + search through MCP handlers, with the
+                    embedding model mocked out (see _mock_model_load below);
+                    verifies the complete span hierarchy. Span names are
+                    emitted by the pipeline stages themselves, not by the
+                    embedding model, so a fake model exercises the same
+                    code paths without a real HuggingFace Hub download.
 
 OTel provider is installed once at module level because OTel >= 1.x forbids
 re-setting the global TracerProvider after the first call.
@@ -12,6 +16,9 @@ re-setting the global TracerProvider after the first call.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
+import numpy as np
 import pytest
 
 
@@ -197,8 +204,42 @@ def test_wrap_in_context_propagates_to_thread():
 
 
 # ---------------------------------------------------------------------------
-# Slow tier — requires embedding model to be loaded
+# Slow tier — full index/search pipeline, embedding model mocked out
 # ---------------------------------------------------------------------------
+
+
+class _FakeEmbeddingModel:
+    max_seq_length = 512
+    device = "cpu"
+
+    def encode(
+        self, sentences, show_progress_bar=False, convert_to_tensor=False, **kwargs
+    ):
+        n = 1 if isinstance(sentences, str) else len(sentences)
+        return np.zeros((n, 768), dtype=np.float32)
+
+    def get_sentence_embedding_dimension(self):
+        return 768
+
+
+@pytest.fixture(autouse=True)
+def _mock_model_load():
+    """Prevent real model downloads in the slow-tier tests below.
+
+    These tests only assert on span *names* emitted by the indexing/search
+    pipeline stages (index.full, search.hybrid, bm25_search/dense_search),
+    never on embedding correctness, so a fake model exercises the exact same
+    code paths as the real one — mirrors tests/integration/test_auto_reindex_fixes.py.
+    Without this, the tests depend on outbound network access to HuggingFace
+    Hub to download BAAI/bge-m3, which is unavailable on some CI runners and
+    was the source of a flake (see tests/integration/test_project_switch.py's
+    fixture of the same name for the same pattern).
+    """
+    with patch(
+        "embeddings.model_loader.ModelLoader.load",
+        return_value=(_FakeEmbeddingModel(), "cpu"),
+    ):
+        yield
 
 
 @pytest.mark.slow
