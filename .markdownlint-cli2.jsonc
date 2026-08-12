@@ -9,6 +9,7 @@
     ".venv",
     "benchmark_results",
     "logs",
+    "audit_reports",
     ".claude/Charlie_DOC.md",
     "SESSION_LOG.md"
   ],
