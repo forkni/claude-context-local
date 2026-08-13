@@ -813,6 +813,44 @@ class MultiLanguageChunker:
                     exc_info=True,
                 )
 
+    @staticmethod
+    def _resolve_parent_chunk_id(
+        spans: list[tuple[int, int, str]] | None, start_line: int
+    ) -> str | None:
+        """Resolve the innermost enclosing container span for a child chunk.
+
+        `spans` is every same-named container chunk registered so far (see
+        `class_chunk_map` in `_convert_tree_chunks`), in traversal order.
+        Among those whose line range contains `start_line`, picks the one
+        with the greatest `start_line` -- the most deeply nested, i.e.
+        innermost, enclosing match. This is what disambiguates same-named
+        nested containers (e.g. a reopened C++ namespace) instead of always
+        returning whichever container was registered last.
+
+        Falls back to the last-registered span when none contains
+        `start_line`: Python's `split_block` chunks can truncate a class's
+        own recorded span short of a method's actual line (the class header
+        chunk ends before the method starts), so a strict containment
+        requirement would silently drop `parent_chunk_id` for that
+        pre-existing, non-colliding case. This fallback keeps that case
+        exactly as it behaved before this fix.
+
+        Args:
+            spans: (start_line, end_line, chunk_id) tuples for every chunk
+                registered under the same (relative_path, name) key so far,
+                or None if no container with that name has been seen.
+            start_line: The child chunk's start line.
+
+        Returns:
+            The resolved parent chunk_id, or None if `spans` is empty/None.
+        """
+        if not spans:
+            return None
+        enclosing = [span for span in spans if span[0] <= start_line <= span[1]]
+        if enclosing:
+            return max(enclosing, key=lambda span: span[0])[2]
+        return spans[-1][2]
+
     def _convert_tree_chunks(
         self, tree_chunks: list[TreeSitterChunk], file_path: str
     ) -> list[CodeChunk]:
@@ -838,9 +876,24 @@ class MultiLanguageChunker:
         path = Path(file_path)
 
         # Build class chunk_id lookup map for parent-child linking
-        # Maps (relative_path, class_name) -> class_chunk_id
-        # Classes are processed before their methods in tree traversal order
-        class_chunk_map: dict[tuple[str, str], str] = {}
+        # Maps (relative_path, class_name) -> list of (start_line, end_line,
+        # chunk_id) spans, in traversal order. Classes are processed before
+        # their methods in tree traversal order.
+        #
+        # This was a flat (relative_path, class_name) -> chunk_id dict until
+        # PR #57 review surfaced a collision: same-named nested containers
+        # (most reachable via C++ namespaces reopened at different nesting
+        # depths, e.g. `namespace A { namespace A { void f(); } void g(); }`)
+        # silently resolved every lookup to whichever container was
+        # registered *last* in traversal order -- last-write-wins, not
+        # innermost-enclosing. `g`'s real parent is the outer `A`, but once
+        # the inner `A` is visited a flat dict's lookup returns the inner
+        # namespace's chunk_id for every subsequent same-named lookup,
+        # including `g`'s. Storing every same-named span and resolving via
+        # `_resolve_parent_chunk_id` (innermost span whose range contains the
+        # child, by start_line) fixes this while leaving every
+        # non-colliding case -- the overwhelming majority -- unchanged.
+        class_chunk_map: dict[tuple[str, str], list[tuple[int, int, str]]] = {}
 
         for tchunk in tree_chunks:
             # Extract metadata
@@ -888,13 +941,19 @@ class MultiLanguageChunker:
             # containers -- before that, struct/union members never chunked
             # separately, so this gap was unreachable.
             if chunk_type in ("class", "struct", "union", "namespace") and name:
-                class_chunk_map[(relative_path, name)] = chunk_id
+                class_chunk_map.setdefault((relative_path, name), []).append(
+                    (tchunk.start_line, tchunk.end_line, chunk_id)
+                )
 
             # Determine parent_chunk_id for methods
             parent_chunk_id = None
             if parent_name and chunk_type in ("method", "function"):
-                # Look up the enclosing class's chunk_id
-                parent_chunk_id = class_chunk_map.get((relative_path, parent_name))
+                # Look up the enclosing class's chunk_id (innermost span
+                # containing this chunk, among same-named containers)
+                parent_chunk_id = self._resolve_parent_chunk_id(
+                    class_chunk_map.get((relative_path, parent_name)),
+                    tchunk.start_line,
+                )
 
             # Create CodeChunk with parent_chunk_id
             chunk = CodeChunk(

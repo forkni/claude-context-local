@@ -5,8 +5,9 @@ Date: 2026-08-12
 
 ## Context
 
-`docs/plans/CPP_CHUNKING_PARITY.md` (Phases 1–4, shipped this change) registers seven new C/C++
-header extensions (`.h .hpp .hh .hxx .inl .ipp .tpp`), widens `LANGUAGE_SPECS["cpp"]
+This change (implementing the `development`-only `docs/plans/CPP_CHUNKING_PARITY.md`, Phases 1–4)
+registers seven new C/C++ header extensions (`.h .hpp .hh .hxx .inl .ipp .tpp`), widens
+`LANGUAGE_SPECS["cpp"]
 .splittable_node_types` to include `field_declaration`/`declaration`/`alias_declaration`, and
 fixes the container-traversal seam so C++ classes and namespaces stop swallowing their members
 into unnamed blobs (see [ADR-0038](0038-cpp-only-container-traversal-seam.md)). Every one of

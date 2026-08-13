@@ -89,3 +89,23 @@ class TestDeclaratorIsFunctionShaped:
         reaching a `function_declarator`."""
         node = _FakeNode("pointer_declarator", children=[])
         assert declarator_is_function_shaped(node) is False
+
+    def test_pointer_declarator_wrapping_function_declarator_returns_true(self):
+        """`int (*getPtr())();` -- a pointer-returning-function's declarator
+        chain: `pointer_declarator` (with a `declarator` field) ->
+        `function_declarator`. `test_chain_ending_in_none_returns_false`
+        only reaches `_next_declarator`'s None-field fallback branch; this
+        exercises the field-found branch through this caller."""
+        func = _FakeNode("function_declarator")
+        node = _FakeNode("pointer_declarator", declarator=func)
+        assert declarator_is_function_shaped(node) is True
+
+    def test_reference_declarator_wrapping_function_declarator_via_fallback(self):
+        """`reference_declarator` has no `declarator` *field* in
+        tree-sitter-cpp's grammar (see `_next_declarator`'s docstring) -- this
+        exercises the None-field fallback-to-first-named-child branch
+        successfully reaching a `function_declarator`, rather than dead-
+        ending like `test_chain_ending_in_none_returns_false`."""
+        func = _FakeNode("function_declarator")
+        node = _FakeNode("reference_declarator", children=[func])
+        assert declarator_is_function_shaped(node) is True

@@ -214,6 +214,14 @@ class TestMultiLanguageChunker:
         field-lookup-returns-None fallback branch for both node types (a
         *named* namespace/enum resolves via `child_by_field_name("name")`
         directly and never reaches the fallback scan).
+
+        Also documents a Copilot PR #57 review comment that flagged this as
+        a bug (`child_by_field_name("name")` returning a MISSING
+        error-recovery placeholder, forcing `metadata["name"] = ""`).
+        Verified false against live tree-sitter-cpp output: an anonymous
+        namespace/enum has no name child at all -- `child_by_field_name`
+        returns plain `None`, not a MISSING node -- so `metadata["name"]` is
+        never set and `chunk.name` stays `None`, never `""`.
         """
         source = tmp_path / "anon.cpp"
         source.write_text(
@@ -224,6 +232,12 @@ class TestMultiLanguageChunker:
         assert len(chunks) > 0, "C++ parser produced no chunks"
         chunk_names = {chunk.name for chunk in chunks if chunk.name}
         assert "helper" in chunk_names
+
+        anon_namespace = next((c for c in chunks if c.chunk_type == "namespace"), None)
+        assert anon_namespace is not None, "Anonymous namespace should still chunk"
+        assert anon_namespace.name is None, (
+            "Anonymous namespace should have name=None, never name=''"
+        )
 
     def test_chunk_cpp_reference_returning_declaration(self, chunker, tmp_path):
         """Header-only reference-returning method declaration (`int& getRef();`).
@@ -367,6 +381,112 @@ class TestMultiLanguageChunker:
         assert go_chunk.parent_chunk_id == struct_chunk.chunk_id, (
             "Struct member should have parent_chunk_id pointing at the struct"
         )
+
+    def test_chunk_cpp_nested_same_named_namespace_parent_linkage(
+        self, chunker, tmp_path
+    ):
+        """Same-named nested namespaces resolve parent_chunk_id by innermost
+        enclosing span, not by traversal-order last-write-wins (PR #57 review).
+
+        Regression guard: `_convert_tree_chunks`'s `class_chunk_map` used to be
+        a flat `(relative_path, name) -> chunk_id` dict. For a reopened
+        namespace (`namespace A { namespace A { void f(); } void g(); }`),
+        registering the inner `A` overwrote the outer `A`'s entry, so `g` --
+        whose real parent is the *outer* `A` -- resolved to the *inner* `A`'s
+        chunk_id once the inner namespace had been visited. `f`'s lookup
+        happened to still be correct (it's inside the inner namespace, which
+        was the most-recently-registered entry at that point), masking the
+        bug for the common case.
+        """
+        source = tmp_path / "nested_ns.cpp"
+        source.write_text(
+            "namespace A {\n"
+            "    namespace A {\n"
+            "        void f() { }\n"
+            "    }\n"
+            "    void g() { }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        chunks = chunker.chunk_file(str(source))
+
+        outer_ns = next(
+            (c for c in chunks if c.chunk_type == "namespace" and c.start_line == 1),
+            None,
+        )
+        inner_ns = next(
+            (c for c in chunks if c.chunk_type == "namespace" and c.start_line == 2),
+            None,
+        )
+        f_chunk = next((c for c in chunks if c.name == "f"), None)
+        g_chunk = next((c for c in chunks if c.name == "g"), None)
+        assert outer_ns is not None and inner_ns is not None
+        assert f_chunk is not None and g_chunk is not None
+
+        assert f_chunk.parent_chunk_id == inner_ns.chunk_id, (
+            "f is a direct child of the inner (reopened) namespace"
+        )
+        assert g_chunk.parent_chunk_id == outer_ns.chunk_id, (
+            "g is a direct child of the outer namespace, not the inner one "
+            "it happens to share a name with"
+        )
+
+    def test_chunk_cpp_templated_prototype_and_alias_naming(self, chunker, tmp_path):
+        """Templated header-only prototypes and aliases get a name.
+
+        Regression guard: `extract_metadata`'s `template_declaration` child
+        scan looked for `function_definition | class_specifier |
+        struct_specifier | union_specifier` -- but `should_chunk_node`
+        already returns False for a template_declaration wrapping a
+        class/struct/union, so those three branches were unreachable dead
+        code, and the scan never matched `declaration` (a templated
+        prototype, e.g. `template<typename T> void proto(T v);`) or
+        `alias_declaration` (a templated alias, e.g.
+        `template<class T> using Ptr = T*;`) -- both chunked with
+        name=None despite `extract_metadata` already having working
+        handlers for both node types via its `declaration`/`alias_declaration`
+        branches.
+        """
+        source = tmp_path / "templates.hpp"
+        source.write_text(
+            "template<typename T> void proto(T v);\n"
+            "template<class T> using Ptr = T*;\n"
+            "template<typename T> T add(T a, T b) { return a + b; }\n",
+            encoding="utf-8",
+        )
+        chunks = chunker.chunk_file(str(source))
+
+        chunk_names = {chunk.name for chunk in chunks if chunk.name}
+        assert "proto" in chunk_names
+        assert "Ptr" in chunk_names
+        assert "add" in chunk_names
+
+    def test_chunk_pure_c_header_under_cpp_grammar(self, chunker, tmp_path):
+        """Pure-C-only constructs parse cleanly under the cpp grammar in a
+        `.h` file, with no ERROR/MISSING recovery nodes.
+
+        Both PR #57 reviews flagged that routing all header extensions to
+        the C++ grammar (chunking/tree_sitter.py) means pure-C headers using
+        C-only syntax get parsed by tree_sitter_cpp instead of tree_sitter_c.
+        Verified empirically (not just asserted) against `_Generic`, a
+        flexible array member, a `restrict`-qualified VLA parameter, and a
+        C99 designated initializer -- tree-sitter-cpp parses all of them
+        without error, and every declaration still gets a name.
+        """
+        source = tmp_path / "legacy.h"
+        source.write_text(
+            "#define MAX(a,b) _Generic((a), int: imax, default: dmax)(a,b)\n"
+            "int imax(int a, int b);\n"
+            "struct Buf { int n; char data[]; };\n"
+            "void copy(int n, int m, double a[restrict n][m]);\n"
+            "static const struct Cfg cfg = { .width = 4, .height = 8 };\n",
+            encoding="utf-8",
+        )
+        chunks = chunker.chunk_file(str(source))
+
+        assert len(chunks) > 0, "Pure-C header produced no chunks"
+        chunk_names = {chunk.name for chunk in chunks if chunk.name}
+        assert {"imax", "Buf", "copy", "Cfg"} <= chunk_names
 
     def test_cpp_function_node_types(self):
         """Only `function_definition` counts as a function for the adaptive-

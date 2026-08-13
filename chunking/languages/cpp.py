@@ -191,17 +191,27 @@ class CppChunker(LanguageChunker):
                 metadata["name"] = self.get_node_text(name_node, source)
 
         # Check for template parameters (only reached for a
-        # template_declaration wrapping a free function -- should_chunk_node
-        # returns False for one wrapping a class/struct/union, so that case
-        # never produces a chunk here).
+        # template_declaration wrapping a free function, header-only
+        # prototype, or alias -- should_chunk_node returns False for one
+        # wrapping a class/struct/union, so that case never produces a chunk
+        # here; the container itself gets its own chunk and name directly
+        # instead. `class_specifier`/`struct_specifier`/`union_specifier`
+        # were in this tuple until PR #57 review flagged them as dead code:
+        # a template_declaration reaching this point can never wrap one of
+        # those three types, so branches for them were unreachable).
+        # `declaration` covers a templated header-only prototype
+        # (`template<typename T> void proto(T v);`), `alias_declaration`
+        # covers a templated alias (`template<class T> using Ptr = T*;`) --
+        # both previously fell through this scan unmatched and chunked
+        # nameless despite `extract_metadata` already having working
+        # handlers for both node types.
         if node.type == "template_declaration":
             metadata["is_template"] = True
             for child in node.children:
                 if child.type in (
                     "function_definition",
-                    "class_specifier",
-                    "struct_specifier",
-                    "union_specifier",
+                    "declaration",
+                    "alias_declaration",
                 ):
                     child_metadata = self.extract_metadata(child, source)
                     if "name" in child_metadata:

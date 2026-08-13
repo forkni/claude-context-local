@@ -11,8 +11,11 @@ methods (`T& operator=`), and out-of-class qualified definitions
 Modeled on `GLSLChunker._unwrap_declarator_name` (chunking/languages/glsl.py)
 but generalized for the C-family's wider declarator vocabulary -- GLSL's
 narrower copy is intentionally left untouched since its own snapshot must
-stay byte-identical. See `docs/plans/CPP_CHUNKING_PARITY.md` for the grammar
-facts this was verified against.
+stay byte-identical. Verified against tree-sitter-cpp's and tree-sitter-c's
+actual grammar output (not just their published grammar.js) -- see
+`docs/adr/0037-decline-index-version-bump-for-cpp-parity.md` and
+`docs/adr/0038-cpp-only-container-traversal-seam.md` for the chunking
+capability this unlocked.
 """
 
 from __future__ import annotations
@@ -51,6 +54,35 @@ _WRAPPER_DECLARATOR_TYPES = frozenset(
 )
 
 
+def _next_declarator(node: Any) -> Any | None:
+    """Descend one level through a wrapper declarator to its inner declarator.
+
+    Tries the `declarator` field first, falling back to the first named
+    child when the field lookup returns None. `reference_declarator` and
+    `parenthesized_declarator` have no `declarator` *field* in
+    tree-sitter-cpp's grammar -- `child_by_field_name("declarator")` returns
+    None for both, even though the inner declarator is present as an
+    ordinary (unnamed-field) child. The fallback is load-bearing, not
+    defensive: without it, `T& operator=`, reference-returning fluent-API
+    methods, and function-pointer members/typedefs (`void (*cb)(int);`) all
+    resolve to a dead end. Shared by `unwrap_declarator_name` (which needs
+    the terminal name) and `declarator_is_function_shaped` (which only needs
+    to know whether a `function_declarator` appears in the chain).
+
+    Args:
+        node: A wrapper declarator node (`pointer_declarator`,
+            `reference_declarator`, `function_declarator`, or
+            `parenthesized_declarator`).
+
+    Returns:
+        The inner declarator node, or None if `node` has no named children.
+    """
+    inner = node.child_by_field_name("declarator")
+    if inner is None:
+        inner = next((child for child in node.children if child.is_named), None)
+    return inner
+
+
 def unwrap_declarator_name(
     node: Any | None,
     get_text: Callable[[Any], str],
@@ -59,17 +91,10 @@ def unwrap_declarator_name(
     """Recursively unwrap a declarator to its identifier name.
 
     Peels `pointer_declarator` / `reference_declarator` / `function_declarator`
-    / `parenthesized_declarator` wrappers via their `declarator` field until
+    / `parenthesized_declarator` wrappers via `_next_declarator` until
     reaching a terminal name node (`_TERMINAL_DECLARATOR_TYPES`, widened by
-    `extra_terminals` for this call).
-
-    `reference_declarator` and `parenthesized_declarator` have no `declarator`
-    *field* in tree-sitter-cpp's grammar -- `child_by_field_name("declarator")`
-    returns None for both, even though the inner declarator is present as an
-    ordinary (unnamed-field) child. The fallback to the first named child on a
-    None field lookup is load-bearing, not defensive: without it, `T&
-    operator=`, reference-returning fluent-API methods, and function-pointer
-    members/typedefs (`void (*cb)(int);`) all resolve to `name=None`.
+    `extra_terminals` for this call). See `_next_declarator`'s docstring for
+    why the field-lookup fallback it performs is load-bearing.
 
     Args:
         node: The declarator node to unwrap (may itself already be terminal).
@@ -95,10 +120,7 @@ def unwrap_declarator_name(
     while node is not None and node.type not in terminals:
         if node.type not in _WRAPPER_DECLARATOR_TYPES:
             return None
-        inner = node.child_by_field_name("declarator")
-        if inner is None:
-            inner = next((child for child in node.children if child.is_named), None)
-        node = inner
+        node = _next_declarator(node)
     if node is not None and not node.is_missing:
         return get_text(node)
     return None
@@ -125,8 +147,5 @@ def declarator_is_function_shaped(node: Any | None) -> bool:
             return True
         if node.type not in ("pointer_declarator", "reference_declarator"):
             return False
-        inner = node.child_by_field_name("declarator")
-        if inner is None:
-            inner = next((child for child in node.children if child.is_named), None)
-        node = inner
+        node = _next_declarator(node)
     return False

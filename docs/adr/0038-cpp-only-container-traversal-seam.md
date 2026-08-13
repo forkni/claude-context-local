@@ -5,7 +5,8 @@ Date: 2026-08-12
 
 ## Context
 
-`docs/plans/CPP_CHUNKING_PARITY.md` (Phases 2–3) fixes a traversal bug in C++ chunking: when the
+This change (implementing the `development`-only `docs/plans/CPP_CHUNKING_PARITY.md`, Phases 2–3)
+fixes a traversal bug in C++ chunking: when the
 chunker reaches a node that itself gets chunked as a single unit (e.g. a `class_specifier` or
 `namespace_definition`), the pre-existing code stopped traversing into its children entirely.
 Every method inside the class, every function inside the namespace, collapsed into that one

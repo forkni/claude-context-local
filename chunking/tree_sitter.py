@@ -290,7 +290,8 @@ class TreeSitterChunker:
         ".c++": (EXT_TO_LANGUAGE[".c++"], lambda lang: CppChunker(lang)),
         # Headers route to cpp (not c) -- tree_sitter_cpp parses both C and
         # C++ headers cleanly; tree_sitter_c errors on C++ headers. See
-        # docs/plans/CPP_CHUNKING_PARITY.md.
+        # docs/adr/0037-decline-index-version-bump-for-cpp-parity.md and
+        # docs/adr/0038-cpp-only-container-traversal-seam.md.
         ".h": (EXT_TO_LANGUAGE[".h"], lambda lang: CppChunker(lang)),
         ".hpp": (EXT_TO_LANGUAGE[".hpp"], lambda lang: CppChunker(lang)),
         ".hh": (EXT_TO_LANGUAGE[".hh"], lambda lang: CppChunker(lang)),
