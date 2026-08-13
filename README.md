@@ -42,7 +42,7 @@
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 5,800 unit tests passing (+102 fast_integration, +19 integration, +108 slow_integration) | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
+**Status**: ✅ Production-ready | 5,823 unit tests passing (+102 fast_integration, +19 integration, +108 slow_integration) | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
 
 *Last reviewed: 2026-08-02*
 
@@ -427,7 +427,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 5,800 unit tests (+102 fast_integration, 19 integration, 108 slow_integration)
+└── tests/             # 5,823 unit tests (+102 fast_integration, 19 integration, 108 slow_integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -558,7 +558,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (5,800 unit tests, 100% pass rate)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (5,823 unit tests, 100% pass rate)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 
