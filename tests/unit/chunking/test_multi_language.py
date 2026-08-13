@@ -208,6 +208,51 @@ class TestMultiLanguageChunker:
         assert "Widget" in chunk_names
         assert "draw" in chunk_names
 
+    def test_chunk_cpp_anonymous_namespace_and_enum(self, chunker, tmp_path):
+        """Anonymous namespace/enum have no `name`/`namespace_identifier`/
+        `type_identifier` child at all -- exercises extract_metadata's
+        field-lookup-returns-None fallback branch for both node types (a
+        *named* namespace/enum resolves via `child_by_field_name("name")`
+        directly and never reaches the fallback scan).
+        """
+        source = tmp_path / "anon.cpp"
+        source.write_text(
+            "namespace { void helper() {} }\nenum { X, Y };\n", encoding="utf-8"
+        )
+        chunks = chunker.chunk_file(str(source))
+
+        assert len(chunks) > 0, "C++ parser produced no chunks"
+        chunk_names = {chunk.name for chunk in chunks if chunk.name}
+        assert "helper" in chunk_names
+
+    def test_chunk_cpp_reference_returning_declaration(self, chunker, tmp_path):
+        """Header-only reference-returning method declaration (`int& getRef();`).
+
+        `reference_declarator` has no `declarator` field in tree-sitter-cpp's
+        grammar, so `declarator_is_function_shaped`'s None-field fallback (the
+        gate `should_chunk_node` uses to narrow `field_declaration` down to
+        function-shaped ones) is only reachable from a node like this one --
+        `T& operator=`-style function_definitions go through the base
+        splittable-node path instead and never call it.
+        """
+        source = tmp_path / "ref_getter.h"
+        source.write_text(
+            "class Shape {\npublic:\n    int& getRef();\n};\n", encoding="utf-8"
+        )
+        chunks = chunker.chunk_file(str(source))
+
+        chunk_names = {chunk.name for chunk in chunks if chunk.name}
+        assert "getRef" in chunk_names
+
+    def test_cpp_function_node_types(self):
+        """Only `function_definition` counts as a function for the adaptive-
+        sizing profiler -- containers and the header-only declaration types
+        added alongside them must not skew its size-percentile baseline.
+        """
+        from chunking.languages.cpp import CppChunker
+
+        assert CppChunker().function_node_types == frozenset({"function_definition"})
+
     def test_chunk_csharp_file(self, chunker, test_data_dir):
         """Test chunking C# file."""
         file_path = test_data_dir / "Calculator.cs"
