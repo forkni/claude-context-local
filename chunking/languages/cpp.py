@@ -8,6 +8,25 @@ from ._c_family import declarator_is_function_shaped, unwrap_declarator_name
 from .base import LanguageChunker
 
 
+def _anonymous_typedef_name(node: Any) -> Any | None:
+    """Recover a name for an anonymous class/struct/union/enum specifier.
+
+    `type_definition` is not in cpp's `splittable_node_types` (unlike C's),
+    so `typedef struct { ... } Vec3;` only chunks its anonymous inner
+    specifier -- the alias name `Vec3` is a direct child of the *parent*
+    `type_definition`, not of `node` itself. Returns None if `node`'s parent
+    isn't a `type_definition` (i.e. this specifier isn't part of a typedef
+    at all) or has no name child.
+    """
+    parent = node.parent
+    if parent is None or parent.type != "type_definition":
+        return None
+    for child in reversed(parent.children):
+        if child.type in ("type_identifier", "identifier"):
+            return child
+    return None
+
+
 class CppChunker(LanguageChunker):
     """C++-specific chunker using tree-sitter."""
 
@@ -71,6 +90,11 @@ class CppChunker(LanguageChunker):
            declarator ultimately wraps a `function_declarator` --
            `declarator_is_function_shaped` walks the same pointer/reference
            unwrap chain `unwrap_declarator_name` uses for the name itself.
+           `declaration` also naturally covers free-standing function
+           prototypes at namespace/global scope (`void foo(int);` in a
+           header) -- intentional, not just an incidental side effect: it
+           makes header prototype indexing work the same way member
+           declarations do.
         2. `template_declaration` wrapping a class/struct/union -- return
            False so traversal falls through to the wrapped container
            directly. The container then gets its own name and its members
@@ -116,6 +140,19 @@ class CppChunker(LanguageChunker):
                 if child.type in ("type_identifier", "identifier"):
                     metadata["name"] = self.get_node_text(child, source)
                     break
+            if "name" not in metadata:
+                # Anonymous specifier, e.g. `typedef struct { ... } Vec3;` --
+                # unlike C (where `type_definition` is itself splittable and
+                # picks up its own trailing type_identifier), C++'s
+                # splittable_node_types has no `type_definition` entry, so
+                # only this anonymous inner specifier chunks. Its name lives
+                # one level up, as a direct child of the parent
+                # `type_definition`. A *named* `typedef struct Point {...}
+                # Point_t;` never reaches here -- the scan above already
+                # found `Point`.
+                name = _anonymous_typedef_name(node)
+                if name is not None:
+                    metadata["name"] = self.get_node_text(name, source)
 
         elif node.type == "namespace_definition":
             # `namespace math {}`'s name child is `namespace_identifier` --
@@ -140,6 +177,10 @@ class CppChunker(LanguageChunker):
                 name_node = next(
                     (c for c in node.children if c.type == "type_identifier"), None
                 )
+            if name_node is None:
+                # Anonymous `typedef enum { ... } Color;` -- same rationale
+                # as the class/struct/union branch above.
+                name_node = _anonymous_typedef_name(node)
             if name_node is not None:
                 metadata["name"] = self.get_node_text(name_node, source)
 

@@ -35,37 +35,64 @@ _TERMINAL_DECLARATOR_TYPES = frozenset(
 )
 
 #: Wrapper node types this unwraps through via their `declarator` field.
+#: parenthesized_declarator: the grouping parens around a function-pointer's
+#: name, e.g. `void (*cb)(int);` parses as
+#: `function_declarator -> parenthesized_declarator -> pointer_declarator ->
+#: field_identifier "cb"`. Like `reference_declarator`, it has no
+#: `declarator` *field* -- the existing None-field fallback to the first
+#: named child already peels it correctly, so no fallback logic changed.
 _WRAPPER_DECLARATOR_TYPES = frozenset(
-    {"pointer_declarator", "reference_declarator", "function_declarator"}
+    {
+        "pointer_declarator",
+        "reference_declarator",
+        "function_declarator",
+        "parenthesized_declarator",
+    }
 )
 
 
 def unwrap_declarator_name(
-    node: Any | None, get_text: Callable[[Any], str]
+    node: Any | None,
+    get_text: Callable[[Any], str],
+    extra_terminals: frozenset[str] = frozenset(),
 ) -> str | None:
     """Recursively unwrap a declarator to its identifier name.
 
     Peels `pointer_declarator` / `reference_declarator` / `function_declarator`
-    wrappers via their `declarator` field until reaching a terminal name node
-    (see `_TERMINAL_DECLARATOR_TYPES`).
+    / `parenthesized_declarator` wrappers via their `declarator` field until
+    reaching a terminal name node (`_TERMINAL_DECLARATOR_TYPES`, widened by
+    `extra_terminals` for this call).
 
-    `reference_declarator` has no `declarator` *field* in tree-sitter-cpp's
-    grammar -- `child_by_field_name("declarator")` returns None for it, even
-    though the inner declarator is present as an ordinary (unnamed-field)
-    child. The fallback to the first named child on a None field lookup is
-    load-bearing, not defensive: without it, `T& operator=` and every
-    reference-returning fluent-API method resolve to `name=None`.
+    `reference_declarator` and `parenthesized_declarator` have no `declarator`
+    *field* in tree-sitter-cpp's grammar -- `child_by_field_name("declarator")`
+    returns None for both, even though the inner declarator is present as an
+    ordinary (unnamed-field) child. The fallback to the first named child on a
+    None field lookup is load-bearing, not defensive: without it, `T&
+    operator=`, reference-returning fluent-API methods, and function-pointer
+    members/typedefs (`void (*cb)(int);`) all resolve to `name=None`.
 
     Args:
         node: The declarator node to unwrap (may itself already be terminal).
         get_text: Callable that slices node text from source, e.g.
             ``lambda n: self.get_node_text(n, source)``.
+        extra_terminals: Additional terminal node types to accept for this
+            call, unioned with `_TERMINAL_DECLARATOR_TYPES`. Used by typedef
+            unwrapping, where the name terminal is `type_identifier` (e.g.
+            `typedef void (*Callback)(int);`) -- a type not accepted as a
+            terminal in the general case, since it would incorrectly treat a
+            declaration's *type* as its name for shapes where `type_identifier`
+            appears earlier in the chain.
 
     Returns:
         The unwrapped name, or None if no terminal name node is reached, or
         the terminal is a MISSING error-recovery placeholder.
     """
-    while node is not None and node.type not in _TERMINAL_DECLARATOR_TYPES:
+    terminals = (
+        _TERMINAL_DECLARATOR_TYPES
+        if not extra_terminals
+        else _TERMINAL_DECLARATOR_TYPES | extra_terminals
+    )
+    while node is not None and node.type not in terminals:
         if node.type not in _WRAPPER_DECLARATOR_TYPES:
             return None
         inner = node.child_by_field_name("declarator")

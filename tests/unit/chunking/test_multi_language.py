@@ -244,6 +244,130 @@ class TestMultiLanguageChunker:
         chunk_names = {chunk.name for chunk in chunks if chunk.name}
         assert "getRef" in chunk_names
 
+    def test_chunk_cpp_anonymous_typedef_struct_union_enum(self, chunker, tmp_path):
+        """Anonymous struct/union/enum typedefs get a name on the cpp path (P0).
+
+        Regression guard: `type_definition` is in c's `splittable_node_types`
+        but not cpp's (chunking/language_registry.py), so
+        `typedef struct {...} Vec3;` only chunks its anonymous inner
+        `struct_specifier` under the cpp grammar -- the alias name lives one
+        level up, as a direct child of the parent `type_definition`, not a
+        child of the specifier itself. Before the fix all three chunked with
+        name=None despite this exact idiom being the most common C-header
+        declaration shape (the path this PR's `.h` routing feature targets).
+        A *named* `typedef struct Point {...} Point_t;` is unaffected --
+        covered separately by not regressing test_chunk_cpp_header_file.
+        """
+        source = tmp_path / "shapes.h"
+        source.write_text(
+            "typedef struct { int x; int y; int z; } Vec3;\n"
+            "typedef union { int i; float f; } Word;\n"
+            "typedef enum { RED, GREEN, BLUE } Color;\n",
+            encoding="utf-8",
+        )
+        chunks = chunker.chunk_file(str(source))
+
+        assert len(chunks) > 0, "C++ parser produced no chunks"
+        nameless = [c for c in chunks if c.name is None]
+        assert not nameless, f"Expected zero nameless chunks, got {nameless}"
+        chunk_names = {chunk.name for chunk in chunks}
+        assert {"Vec3", "Word", "Color"} <= chunk_names
+
+    def test_chunk_cpp_member_function_pointer(self, chunker, tmp_path):
+        """C-style function-pointer struct/class member gets a name (P1).
+
+        Regression guard: `void (*cb)(int,int);`'s declarator chain is
+        `function_declarator -> parenthesized_declarator ->
+        pointer_declarator -> field_identifier "cb"`.
+        `parenthesized_declarator` was missing from `_WRAPPER_DECLARATOR_TYPES`,
+        so `unwrap_declarator_name` stopped dead there and returned None, even
+        though `declarator_is_function_shaped` correctly chunked the member
+        (it short-circuits True on the outer `function_declarator` before ever
+        reaching the parenthesized wrapper). Members chunk as chunk_type
+        "method" (parent_type="class" promotion), not "function".
+        """
+        source = tmp_path / "table.h"
+        source.write_text(
+            "struct Table {\n    void (*cb)(int, int);\n};\n", encoding="utf-8"
+        )
+        chunks = chunker.chunk_file(str(source))
+
+        cb_chunk = next((c for c in chunks if c.name == "cb"), None)
+        assert cb_chunk is not None, (
+            f"Expected a chunk named 'cb', got names {[c.name for c in chunks]}"
+        )
+        assert cb_chunk.chunk_type == "method"
+
+    def test_chunk_cpp_global_function_pointer(self, chunker, tmp_path):
+        """Global (non-member) function-pointer declaration gets a name (P1).
+
+        Same `parenthesized_declarator` gap as the member case, but on a
+        `declaration` node (not `field_declaration`) at global/namespace
+        scope -- exercises the same unwrap chain from a different splittable
+        node type.
+        """
+        source = tmp_path / "handler.h"
+        source.write_text("void (*g_handler)(int);\n", encoding="utf-8")
+        chunks = chunker.chunk_file(str(source))
+
+        chunk_names = {chunk.name for chunk in chunks if chunk.name}
+        assert "g_handler" in chunk_names
+
+    def test_chunk_cpp_function_returning_function_pointer(self, chunker, tmp_path):
+        """A real function *definition* returning a function pointer gets a
+        name (P1) -- `void (*getHandler(int))(int) {...}` has the same
+        `parenthesized_declarator`-wrapped name deep in its declarator chain,
+        but as an actual `function_definition` rather than a bare
+        declaration.
+        """
+        source = tmp_path / "factory.cpp"
+        source.write_text(
+            "void (*getHandler(int x))(int) { return nullptr; }\n", encoding="utf-8"
+        )
+        chunks = chunker.chunk_file(str(source))
+
+        chunk_names = {chunk.name for chunk in chunks if chunk.name}
+        assert "getHandler" in chunk_names
+
+    def test_chunk_c_function_pointer_typedef(self, chunker, tmp_path):
+        """`typedef void (*Callback)(int);` gets a name on the c path (P1).
+
+        Regression guard: the direct-child scan in c.py's `type_definition`
+        branch finds no `identifier`/`type_identifier` direct child for this
+        shape (the name is nested inside the declarator chain), so it falls
+        back to `unwrap_declarator_name` with `extra_terminals={"type_identifier"}`.
+        A bare fallback without widening the terminal set still returns None,
+        since the chain terminates at `type_identifier`, which
+        `_TERMINAL_DECLARATOR_TYPES` does not include by default.
+        """
+        source = tmp_path / "callback.c"
+        source.write_text("typedef void (*Callback)(int);\n", encoding="utf-8")
+        chunks = chunker.chunk_file(str(source))
+
+        chunk_names = {chunk.name for chunk in chunks if chunk.name}
+        assert "Callback" in chunk_names
+
+    def test_chunk_cpp_struct_member_parent_chunk_id(self, chunker, tmp_path):
+        """Struct members get `parent_chunk_id` pointing at the struct (P2).
+
+        Regression guard: `_convert_tree_chunks`'s `class_chunk_map`
+        registration gate only covered `("class", "namespace")`, but
+        `struct_specifier` became a container in this PR (C++ header parity)
+        -- so struct members now chunk separately, each with
+        `parent_chunk_id=None`, unlike an equivalent `class`'s methods.
+        """
+        source = tmp_path / "plain.h"
+        source.write_text("struct Plain {\n    void go();\n};\n", encoding="utf-8")
+        chunks = chunker.chunk_file(str(source))
+
+        struct_chunk = next((c for c in chunks if c.name == "Plain"), None)
+        go_chunk = next((c for c in chunks if c.name == "go"), None)
+        assert struct_chunk is not None, "Struct chunk should exist"
+        assert go_chunk is not None, "Method chunk should exist"
+        assert go_chunk.parent_chunk_id == struct_chunk.chunk_id, (
+            "Struct member should have parent_chunk_id pointing at the struct"
+        )
+
     def test_cpp_function_node_types(self):
         """Only `function_definition` counts as a function for the adaptive-
         sizing profiler -- containers and the header-only declaration types

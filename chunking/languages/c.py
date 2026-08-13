@@ -54,5 +54,21 @@ class CChunker(LanguageChunker):
                     identifiers.append(self.get_node_text(child, source))
             if identifiers:
                 metadata["name"] = identifiers[-1]
+            else:
+                # Direct-child scan finds nothing for a nested-declarator
+                # typedef, e.g. `typedef void (*Callback)(int);` -- the name
+                # is `type_identifier` inside a
+                # function_declarator/parenthesized_declarator/
+                # pointer_declarator chain, not a direct child. Falls back to
+                # the shared unwrap, widening the terminal set to
+                # `type_identifier` since that's the typedef's name terminal
+                # (not its type, as `type_identifier` reads elsewhere).
+                name = unwrap_declarator_name(
+                    node.child_by_field_name("declarator"),
+                    lambda n: self.get_node_text(n, source),
+                    extra_terminals=frozenset({"type_identifier"}),
+                )
+                if name is not None:
+                    metadata["name"] = name
 
         return metadata

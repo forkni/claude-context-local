@@ -43,3 +43,18 @@ int* Foo::getPtr() {
 enum class Color { Red, Green, Blue };
 
 using Number = int;
+
+// Plain struct (not class) with a C-style function-pointer member --
+// exercises both the parenthesized_declarator unwrap fix and struct-member
+// parent_chunk_id linkage.
+struct Table {
+    void (*cb)(int, int);
+};
+
+// Anonymous struct typedef -- exercises the cpp-path anonymous-typedef
+// naming fallback (name lives on the parent type_definition, not this
+// specifier).
+typedef struct {
+    int x;
+    int y;
+} Vec3;

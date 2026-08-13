@@ -171,6 +171,41 @@
     "type": "alias_declaration"
   },
   {
+    "content": "struct Table {\n    void (*cb)(int, int);\n}",
+    "end_line": 52,
+    "language": "cpp",
+    "metadata": {
+      "name": "Table",
+      "node_type": "struct_specifier"
+    },
+    "start_line": 50,
+    "type": "struct_specifier"
+  },
+  {
+    "content": "void (*cb)(int, int);",
+    "end_line": 51,
+    "language": "cpp",
+    "metadata": {
+      "name": "cb",
+      "node_type": "field_declaration",
+      "parent_name": "Table",
+      "parent_type": "class"
+    },
+    "start_line": 51,
+    "type": "field_declaration"
+  },
+  {
+    "content": "struct {\n    int x;\n    int y;\n}",
+    "end_line": 60,
+    "language": "cpp",
+    "metadata": {
+      "name": "Vec3",
+      "node_type": "struct_specifier"
+    },
+    "start_line": 57,
+    "type": "struct_specifier"
+  },
+  {
     "content": "// Tiny C++ fixture: template function, class, namespace.",
     "end_line": 1,
     "language": "cpp",

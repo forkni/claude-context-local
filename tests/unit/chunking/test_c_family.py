@@ -53,6 +53,34 @@ class TestUnwrapDeclaratorName:
         node = _FakeNode("reference_declarator", children=[])
         assert unwrap_declarator_name(node, _text) is None
 
+    def test_parenthesized_declarator_unwraps_to_inner_name(self):
+        """`void (*cb)(int);` parses as
+        `function_declarator -> parenthesized_declarator ->
+        pointer_declarator -> field_identifier "cb"`. Like
+        `reference_declarator`, `parenthesized_declarator` has no
+        `declarator` *field* in tree-sitter-cpp's grammar -- this exercises
+        the None-field fallback to the first named child through two nested
+        wrapper levels."""
+        name = _FakeNode("field_identifier")
+        pointer = _FakeNode("pointer_declarator", children=[name])
+        parens = _FakeNode("parenthesized_declarator", children=[pointer])
+        func = _FakeNode("function_declarator", declarator=parens)
+        assert unwrap_declarator_name(func, _text) == "field_identifier"
+
+    def test_extra_terminals_widens_accepted_terminal_set(self):
+        """A typedef's name terminal is `type_identifier`, which
+        `_TERMINAL_DECLARATOR_TYPES` deliberately excludes by default (it
+        reads as a declaration's *type* in the general case). Without
+        `extra_terminals`, this same chain returns None."""
+        node = _FakeNode("type_identifier")
+        assert unwrap_declarator_name(node, _text) is None
+        assert (
+            unwrap_declarator_name(
+                node, _text, extra_terminals=frozenset({"type_identifier"})
+            )
+            == "type_identifier"
+        )
+
 
 class TestDeclaratorIsFunctionShaped:
     def test_chain_ending_in_none_returns_false(self):

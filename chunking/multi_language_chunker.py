@@ -877,13 +877,17 @@ class MultiLanguageChunker:
                 qualified_name,
             )
 
-            # Track class (and namespace) chunks for parent-child linking.
-            # Namespace-scoped free functions carry parent_type="namespace"
-            # (base.py's container traversal) and stay chunk_type "function"
-            # rather than being promoted to "method" -- registering the
-            # namespace chunk here lets the parent_chunk_id lookup below
-            # resolve for them instead of dead-ending.
-            if chunk_type in ("class", "namespace") and name:
+            # Track class/struct/union (and namespace) chunks for
+            # parent-child linking. Namespace-scoped free functions carry
+            # parent_type="namespace" (base.py's container traversal) and
+            # stay chunk_type "function" rather than being promoted to
+            # "method" -- registering the namespace chunk here lets the
+            # parent_chunk_id lookup below resolve for them instead of
+            # dead-ending. "struct"/"union" were added alongside C++ header
+            # parity, which made `struct_specifier`/`union_specifier`
+            # containers -- before that, struct/union members never chunked
+            # separately, so this gap was unreachable.
+            if chunk_type in ("class", "struct", "union", "namespace") and name:
                 class_chunk_map[(relative_path, name)] = chunk_id
 
             # Determine parent_chunk_id for methods
