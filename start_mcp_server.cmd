@@ -2989,7 +2989,7 @@ echo   - Single-Model: selectable from 4 models ^(BGE-M3, EmbeddingGemma, Qwen3-
 echo   - Neural Reranking: Cross-encoder model ^(15-25%% quality boost^)
 echo   - Hybrid Search: BM25 + Semantic for optimal accuracy
 echo   - 85-95%% Token Reduction: Validated benchmark results
-echo   - Multi-language Support: 9 languages, 20 extensions
+echo   - Multi-language Support: 9 languages, 27 extensions
 echo   - Local Processing: No API calls, complete privacy
 echo.
 echo Quick Start:

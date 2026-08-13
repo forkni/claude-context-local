@@ -2,17 +2,43 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-08-12)
+## Current Status: All Features Operational (2026-08-13)
 
-- **Version**: 0.24.0
+- **Version**: 0.25.0
 - **Status**: Production-ready, concurrency-safe
-- **Test Coverage**: 5,800 unit tests · 102 fast_integration · 19 integration · 108 slow_integration (2026-08-12)
+- **Test Coverage**: 5,823 unit tests · 102 fast_integration · 19 integration · 108 slow_integration (2026-08-13)
 - **Dependencies**: 36 direct (`pyproject.toml`) + optional `[callgraph]` / `[lsp]` / `[test]` / `[dev]` / `[gpu]` / `[otel]` extras
 - **SSCG Benchmark**: MRR 0.8603 (canonical, 63q, k=10, `canon_l1` intent-on arm, shipped default) / 0.6789 (expanded, 133 non-D, k=10, `canon_l1` intent-on arm) — see `docs/BENCHMARKS.md` for full provenance (ADR-0033 re-pin after the ML-stack/torch bump, superseding `canon_h1`/`canon_i1`/`canon_j1`/`canon_k1`/`canon_k2`); README's Highlights headline cites the same `canon_l1` figures
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: v0.24.0 — retro-tagged v0.23.0, documentation/skill sync against `development` (test counts, benchmark re-pin, ADR-0036 `include_dirs` semantics), call-graph resolver hardening, pyan GPL-2.0-or-later quarantine (ADR-0034), C++ call-edge tier scope (ADR-0035), additive/narrowing `include_dirs` for dependency trees (ADR-0036); v0.23.0 — MCP Python SDK v1→v2 migration, community/DSPy/ONNX subsystems removed (86 commits since v0.22.0, three models dropped from the registries), per-project config overrides (ADR-0014), config field liveness audit (ADR-0020); v0.22.0 — GLSL indexing parity, persistent chunk embedding cache (43× reindex speedup), BM25 path/symbol augmentation (MRR +0.113), `HybridSearcher.clear_index()` truthiness fix (was discarding 100% of resolver-derived call edges)
+- **Recent**: v0.25.0 — C++ chunking parity (20 → 27 file extensions, headers now indexed for the
+  first time), nested same-named container `parent_chunk_id` linkage fix, templated header-only
+  prototype/alias naming fix; v0.24.0 — retro-tagged v0.23.0, documentation/skill sync against
+  `development` (test counts, benchmark re-pin, ADR-0036 `include_dirs` semantics), call-graph
+  resolver hardening, pyan GPL-2.0-or-later quarantine (ADR-0034), C++ call-edge tier scope
+  (ADR-0035), additive/narrowing `include_dirs` for dependency trees (ADR-0036); v0.23.0 — MCP
+  Python SDK v1→v2 migration, community/DSPy/ONNX subsystems removed (86 commits since v0.22.0,
+  three models dropped from the registries), per-project config overrides (ADR-0014), config field
+  liveness audit (ADR-0020); v0.22.0 — GLSL indexing parity, persistent chunk embedding cache (43×
+  reindex speedup), BM25 path/symbol augmentation (MRR +0.113), `HybridSearcher.clear_index()`
+  truthiness fix (was discarding 100% of resolver-derived call edges)
 
 ---
+
+## v0.25.0 - C++ Chunking Parity, Headers Indexed (2026-08-13)
+
+Headers route to the `cpp` tree-sitter grammar for the first time (20 → 27 file extensions:
+`.h .hpp .hh .hxx .inl .ipp .tpp`), so header-only C/C++ code is chunked and searchable. New
+container-node traversal seam lets C++ classes/structs/unions/namespaces stop swallowing their
+members into one opaque blob (ADR-0038, C++-only — Rust/C# analogues verified live and
+deliberately deferred); `INDEX_VERSION` bump declined as unnecessary (ADR-0037). Closes out PR #57
+review findings before merge: nested same-named container `parent_chunk_id` collisions fixed
+(reopened-namespace/class linkage no longer resolves to the wrong container), templated
+header-only prototypes/aliases (`template<typename T> void proto(T v);`,
+`template<class T> using Ptr = T*;`) fixed from nameless to correctly named, a duplicated
+declarator-descent fallback deduplicated, plus two reviewer claims verified and closed with
+evidence rather than silently accepted or ignored (pure-C headers parse cleanly under the `cpp`
+grammar; anonymous namespace/enum `name` is correctly absent, never `""`). Full CHANGELOG entry:
+`CHANGELOG.md` `[0.25.0]`.
 
 ## v0.24.0 - v0.23.0 Retro-Tag, Documentation Sync, Call-Graph Hardening (2026-08-12)
 

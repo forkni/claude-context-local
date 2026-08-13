@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 from .dedent_utils import smart_dedent as _smart_dedent
 from .language_registry import (
     DEFAULT_IGNORED_DIRS,
+    LANGUAGE_NODE_TYPE_OVERRIDES,
     NODE_TYPE_MAP,
     SUPPORTED_EXTENSIONS,
 )
@@ -325,21 +326,44 @@ class MultiLanguageChunker:
             logger.error(f"Failed to chunk file {file_path}: {e}", exc_info=True)
             return []
 
-    def _map_node_type(self, node_type: str, parent_name: str | None) -> str:
+    def _map_node_type(
+        self,
+        node_type: str,
+        parent_name: str | None,
+        parent_type: str | None = None,
+        language: str | None = None,
+    ) -> str:
         """Map tree-sitter node type to chunk type.
 
         Args:
             node_type: Tree-sitter node type
             parent_name: Parent class name (if any)
+            parent_type: Kind of the enclosing container ("class", "namespace",
+                or None for no container) -- distinguishes a class member from
+                a namespace-scoped free function so the latter isn't promoted
+                to "method". Defaults to None, which preserves pre-v0.24
+                behaviour (promote whenever parent_name is truthy).
+            language: Chunk's language, used to look up
+                LANGUAGE_NODE_TYPE_OVERRIDES before falling back to the
+                global NODE_TYPE_MAP -- needed because some languages map the
+                same node_type to different chunk types (e.g. cpp's
+                `declaration` is a function, GLSL's is not).
 
         Returns:
             Mapped chunk type (function, method, class, etc.)
         """
-        # Get base chunk type from mapping
-        chunk_type = self.NODE_TYPE_MAP.get(node_type, node_type)
+        # Get base chunk type from mapping -- language-scoped override first,
+        # then the global mapping.
+        overrides = LANGUAGE_NODE_TYPE_OVERRIDES.get(language, {}) if language else {}
+        if node_type in overrides:
+            chunk_type = overrides[node_type]
+        else:
+            chunk_type = self.NODE_TYPE_MAP.get(node_type, node_type)
 
-        # If we have a parent_name and it's a function, it's actually a method
-        if parent_name and chunk_type == "function":
+        # A function directly inside a class (or a language with no
+        # container-type distinction, i.e. parent_type is None) is a method.
+        # A function inside a namespace stays a function.
+        if parent_name and chunk_type == "function" and parent_type in (None, "class"):
             chunk_type = "method"
 
         return chunk_type
@@ -789,6 +813,44 @@ class MultiLanguageChunker:
                     exc_info=True,
                 )
 
+    @staticmethod
+    def _resolve_parent_chunk_id(
+        spans: list[tuple[int, int, str]] | None, start_line: int
+    ) -> str | None:
+        """Resolve the innermost enclosing container span for a child chunk.
+
+        `spans` is every same-named container chunk registered so far (see
+        `class_chunk_map` in `_convert_tree_chunks`), in traversal order.
+        Among those whose line range contains `start_line`, picks the one
+        with the greatest `start_line` -- the most deeply nested, i.e.
+        innermost, enclosing match. This is what disambiguates same-named
+        nested containers (e.g. a reopened C++ namespace) instead of always
+        returning whichever container was registered last.
+
+        Falls back to the last-registered span when none contains
+        `start_line`: Python's `split_block` chunks can truncate a class's
+        own recorded span short of a method's actual line (the class header
+        chunk ends before the method starts), so a strict containment
+        requirement would silently drop `parent_chunk_id` for that
+        pre-existing, non-colliding case. This fallback keeps that case
+        exactly as it behaved before this fix.
+
+        Args:
+            spans: (start_line, end_line, chunk_id) tuples for every chunk
+                registered under the same (relative_path, name) key so far,
+                or None if no container with that name has been seen.
+            start_line: The child chunk's start line.
+
+        Returns:
+            The resolved parent chunk_id, or None if `spans` is empty/None.
+        """
+        if not spans:
+            return None
+        enclosing = [span for span in spans if span[0] <= start_line <= span[1]]
+        if enclosing:
+            return max(enclosing, key=lambda span: span[0])[2]
+        return spans[-1][2]
+
     def _convert_tree_chunks(
         self, tree_chunks: list[TreeSitterChunk], file_path: str
     ) -> list[CodeChunk]:
@@ -814,9 +876,24 @@ class MultiLanguageChunker:
         path = Path(file_path)
 
         # Build class chunk_id lookup map for parent-child linking
-        # Maps (relative_path, class_name) -> class_chunk_id
-        # Classes are processed before their methods in tree traversal order
-        class_chunk_map: dict[tuple[str, str], str] = {}
+        # Maps (relative_path, class_name) -> list of (start_line, end_line,
+        # chunk_id) spans, in traversal order. Classes are processed before
+        # their methods in tree traversal order.
+        #
+        # This was a flat (relative_path, class_name) -> chunk_id dict until
+        # PR #57 review surfaced a collision: same-named nested containers
+        # (most reachable via C++ namespaces reopened at different nesting
+        # depths, e.g. `namespace A { namespace A { void f(); } void g(); }`)
+        # silently resolved every lookup to whichever container was
+        # registered *last* in traversal order -- last-write-wins, not
+        # innermost-enclosing. `g`'s real parent is the outer `A`, but once
+        # the inner `A` is visited a flat dict's lookup returns the inner
+        # namespace's chunk_id for every subsequent same-named lookup,
+        # including `g`'s. Storing every same-named span and resolving via
+        # `_resolve_parent_chunk_id` (innermost span whose range contains the
+        # child, by start_line) fixes this while leaving every
+        # non-colliding case -- the overwhelming majority -- unchanged.
+        class_chunk_map: dict[tuple[str, str], list[tuple[int, int, str]]] = {}
 
         for tchunk in tree_chunks:
             # Extract metadata
@@ -826,9 +903,12 @@ class MultiLanguageChunker:
 
             # Extract parent class from chunk (prefer explicit field, fallback to metadata)
             parent_name = tchunk.parent_class or tchunk.metadata.get("parent_name")
+            parent_type = tchunk.metadata.get("parent_type")
 
             # Map node type to chunk type (handles parent class logic)
-            chunk_type = self._map_node_type(tchunk.node_type, parent_name)
+            chunk_type = self._map_node_type(
+                tchunk.node_type, parent_name, parent_type, tchunk.language
+            )
 
             # Build qualified name for methods/functions inside classes
             qualified_name = f"{parent_name}.{name}" if parent_name and name else name
@@ -850,15 +930,30 @@ class MultiLanguageChunker:
                 qualified_name,
             )
 
-            # Track class chunks for parent-child linking
-            if chunk_type == "class" and name:
-                class_chunk_map[(relative_path, name)] = chunk_id
+            # Track class/struct/union (and namespace) chunks for
+            # parent-child linking. Namespace-scoped free functions carry
+            # parent_type="namespace" (base.py's container traversal) and
+            # stay chunk_type "function" rather than being promoted to
+            # "method" -- registering the namespace chunk here lets the
+            # parent_chunk_id lookup below resolve for them instead of
+            # dead-ending. "struct"/"union" were added alongside C++ header
+            # parity, which made `struct_specifier`/`union_specifier`
+            # containers -- before that, struct/union members never chunked
+            # separately, so this gap was unreachable.
+            if chunk_type in ("class", "struct", "union", "namespace") and name:
+                class_chunk_map.setdefault((relative_path, name), []).append(
+                    (tchunk.start_line, tchunk.end_line, chunk_id)
+                )
 
             # Determine parent_chunk_id for methods
             parent_chunk_id = None
             if parent_name and chunk_type in ("method", "function"):
-                # Look up the enclosing class's chunk_id
-                parent_chunk_id = class_chunk_map.get((relative_path, parent_name))
+                # Look up the enclosing class's chunk_id (innermost span
+                # containing this chunk, among same-named containers)
+                parent_chunk_id = self._resolve_parent_chunk_id(
+                    class_chunk_map.get((relative_path, parent_name)),
+                    tchunk.start_line,
+                )
 
             # Create CodeChunk with parent_chunk_id
             chunk = CodeChunk(

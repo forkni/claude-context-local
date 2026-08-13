@@ -1171,7 +1171,7 @@ def process_order(order: Order, payment: PaymentGateway):
 
 ## Supported Features
 
-- **Languages**: Python, JavaScript, TypeScript, Go, Rust, C, C++, C#, GLSL (9 languages, 20 extensions)
+- **Languages**: Python, JavaScript, TypeScript, Go, Rust, C, C++, C#, GLSL (9 languages, 27 extensions)
 - **Parsing**: AST (Python) + Tree-sitter (all others)
 - **Search Modes**: Semantic, BM25, Hybrid
 - **Chunking**: Functions, classes, methods, interfaces, enums, modules, etc.

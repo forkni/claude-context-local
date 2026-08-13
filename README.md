@@ -36,13 +36,13 @@
 - **Layered Call-Graph Resolver Pipeline**: `find_connections` returns callers **and** callees with per-entry provenance (`resolver_source`, `resolver_confidence`). Confidence ladder: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98. Install `pip install -e ".[callgraph]"` for pyan3 + LibCST; core is Apache-2.0-clean — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
 - **OTel Tracing** (opt-in): Zero-overhead `traced_block` / `@timed` spans across the search and index pipeline — export to Jaeger, Tempo, or any OTLP collector. See [Observability](docs/OBSERVABILITY.md).
 - **Persistent Chunk Embedding Cache**: content-hash-keyed cache of chunk embedding vectors cuts a full reindex's embedding phase from ~34s to well under 1s once the codebase is unchanged; invalidates automatically on model or precision/backend changes - [configuration](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md#chunk-embedding-cache-configuration)
-- **20 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
+- **27 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
 - **18 MCP Tools** (10 core + 8 advanced, gated behind `MCP_EXPOSE_ADVANCED_TOOLS`): Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 - **Source-Position Reranking** (opt-in, `source_order_output=true`): Groups results by file, sorted by line number instead of relevance — LLMs read code in logical order (+5.3% accuracy, DOS RAG); relevance order is the default since v0.18.0
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 5,800 unit tests passing (+102 fast_integration, +19 integration, +108 slow_integration) | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
+**Status**: ✅ Production-ready | 5,823 unit tests passing (+102 fast_integration, +19 integration, +108 slow_integration) | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
 
 *Last reviewed: 2026-08-02*
 
@@ -293,11 +293,11 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
 | Go | `.go` | Tree-sitter |
 | Rust | `.rs` | Tree-sitter |
 | C | `.c` | Tree-sitter |
-| C++ | `.cpp`, `.cc`, `.cxx`, `.c++` | Tree-sitter |
+| C++ | `.cpp`, `.cc`, `.cxx`, `.c++`, `.h`, `.hpp`, `.hh`, `.hxx`, `.inl`, `.ipp`, `.tpp` | Tree-sitter |
 | C# | `.cs` | Tree-sitter |
 | GLSL | `.glsl`, `.frag`, `.vert`, `.comp`, `.geom`, `.tesc`, `.tese`, `.glslinc` | Tree-sitter |
 
-**Total**: 20 file extensions across 9 programming languages
+**Total**: 27 file extensions across 9 programming languages
 
 ## Requirements
 
@@ -427,7 +427,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 5,800 unit tests (+102 fast_integration, 19 integration, 108 slow_integration)
+└── tests/             # 5,823 unit tests (+102 fast_integration, 19 integration, 108 slow_integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -558,7 +558,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (5,800 unit tests, 100% pass rate)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (5,823 unit tests, 100% pass rate)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 

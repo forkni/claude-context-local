@@ -7,7 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.25.0] - 2026-08-13
+
+Closes out PR #57 review findings before merge: two real chunking bugs fixed (nested same-named
+container linkage, templated prototype/alias naming), one reviewer claim disproven with evidence
+(pure-C headers parse cleanly under the `cpp` grammar), one false positive documented with a
+regression assertion (anonymous namespace/enum name is absent, never `""`), and a minor
+declarator-descent dedup — on top of the C++ chunking parity work itself (20 → 27 file
+extensions, headers now indexed).
+
+### Added
+
+- **C++ chunking parity** (20 → 27 file extensions) — `.h`, `.hpp`, `.hh`, `.hxx`, `.inl`, `.ipp`,
+  `.tpp` now route to the `cpp` tree-sitter grammar (`chunking/language_registry.py`), so C++
+  headers are chunked and searchable for the first time; previously none of these extensions were
+  supported at all (`is_supported()` returned `False` for every one of them), so entire
+  header-only codebases were invisible to search. New container-node traversal seam
+  (`_CONTAINER_NODE_TYPES`, `chunking/languages/base.py`) lets `CppChunker` register
+  `class_specifier`, `struct_specifier`, `union_specifier`, and `namespace_definition` as
+  containers whose nested methods chunk
+  separately instead of being swallowed into one opaque blob — see ADR-0038 for why this is
+  scoped to C++ only, with the equivalent Rust (`impl_item`) and C# (`namespace_declaration`)
+  swallowing bugs verified live and deliberately deferred. `chunking/languages/cpp.py` rewritten
+  from a 57-line stub: declarator-unwrapping name extraction shared with C via new
+  `chunking/languages/_c_family.py` (`unwrap_declarator_name`), function/container node-type
+  overrides, and a `should_chunk_node` narrowing so template-wrapped classes still chunk once
+  instead of twice.
+
+### Fixed
+
+- **C name extraction gaps** (`chunking/languages/c.py`) — pointer-returning function
+  definitions (e.g. `int* getPtr()`) previously returned `name=None` because the old direct-child
+  scan only matched a bare `function_declarator`, not one wrapped in `pointer_declarator`; now
+  unwrapped via the shared `_c_family.unwrap_declarator_name`. Anonymous struct/enum typedef
+  metadata (`typedef struct {...} Color;`) previously returned `name=None` because only plain
+  `identifier` children were checked; the new type name is a `type_identifier` child, which is
+  now also checked.
+- **`INDEX_VERSION` bump declined** for this change (ADR-0037) — the field is BM25-document-format-
+  scoped and warn-only (`bm25_index.py`); bumping it here would false-alarm every indexed
+  Python-only project for an unrelated C++ chunking change. The `chunker_version` snapshot marker
+  proposed alongside it is deferred, not rejected — recorded so it isn't re-litigated.
+- **Nested same-named container `parent_chunk_id` collisions** (`chunking/multi_language_chunker.py`)
+  — a C++ file with two same-named containers at different nesting depths (e.g. a reopened
+  `namespace A { namespace A { ... } ... }`) resolved every child's `parent_chunk_id` to whichever
+  container was chunked *last*, regardless of actual nesting. `class_chunk_map` now keys each name
+  to a list of `(start_line, end_line, chunk_id)` spans and resolves to the innermost span that
+  actually encloses the child, falling back to the last-registered span when no span contains it
+  (load-bearing: Python `split_block` chunks can truncate a class span short of a method's real
+  start line, so strict containment alone would silently drop `parent_chunk_id` for that
+  pre-existing, non-colliding case).
+- **Templated header-only prototypes and aliases chunked nameless** (`chunking/languages/cpp.py`)
+  — `template<typename T> void proto(T v);` and `template<class T> using Ptr = T*;` both chunked
+  with `name=None`. The `template_declaration` metadata scan only matched
+  `function_definition`/`class_specifier`/`struct_specifier`/`union_specifier` as template
+  children, and the latter three were unreachable there (`should_chunk_node` already returns
+  `False` for a template-wrapped class/struct/union, so those chunk directly and never reach this
+  branch). Now matches `function_definition`/`declaration`/`alias_declaration` — the two dead
+  branches are replaced with the two node types that actually needed handling.
+- **Deduplicated declarator-descent fallback** (`chunking/languages/_c_family.py`) — the
+  `declarator` field-then-first-named-child fallback was implemented twice, once each in
+  `unwrap_declarator_name` and `declarator_is_function_shaped`; extracted into a shared
+  `_next_declarator()` helper used by both. No behavior change.
 
 ## [0.24.0] - 2026-08-12
 

@@ -214,10 +214,11 @@ Detailed technical documentation.
 
 | Document | Description |
 |----------|-------------|
-| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.24.0 |
+| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.25.0 |
 
 ### Key Versions
 
+- **v0.25.0** (2026-08-13): C++ chunking parity (20 → 27 file extensions, headers now indexed), nested same-named container `parent_chunk_id` linkage fix, templated header-only prototype/alias naming fix, container-node traversal seam (ADR-0038), `INDEX_VERSION` bump declined (ADR-0037)
 - **v0.24.0** (2026-08-12): Retro-tagged v0.23.0, documentation/skill sync against `development` (test counts, benchmark re-pin to `canon_l1`, ADR-0036 `include_dirs` semantics), call-graph resolver hardening, pyan GPL-2.0-or-later quarantine (ADR-0034), C++ call-edge tier scope (ADR-0035), additive/narrowing `include_dirs` for dependency trees (ADR-0036)
 - **v0.23.0** (2026-08-02): MCP Python SDK v1→v2 migration, community-detection + DSPy-eval + ONNX subsystems removed, per-project config overrides (ADR-0014), `exclude_same_file`, richer evaluation metrics, config field liveness audit (ADR-0020); three models dropped from the registries (breaking)
 - **v0.22.0** (2026-07-27): GLSL indexing parity, persistent chunk embedding cache (43× reindex speedup), BM25 path-token augmentation (`INDEX_VERSION` 4), widened retrieval funnel, `mcp-search-tool` skill reinstated
@@ -308,4 +309,4 @@ Detailed technical documentation.
 
 ---
 
-**Last Updated**: 2026-08-12 (v0.24.0 — documentation and skill sync, benchmark re-pin to `canon_l1`, CHANGELOG roll-up; 5,800 unit tests)
+**Last Updated**: 2026-08-13 (v0.25.0 — C++ chunking parity, headers now indexed, PR #57 review fixes; 5,823 unit tests)

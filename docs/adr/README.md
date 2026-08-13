@@ -41,6 +41,9 @@ for avoiding re-litigating settled questions.
 | [0033](0033-lift-torch-ceiling.md) | Lift the torch `<2.9.0` ceiling, bump the ML stack | accepted | 2026-08-06 |
 | [0034](0034-pyan-gpl-quarantine.md) | GPL-2.0-or-later quarantine for the pyan call-graph tier | accepted | 2026-08-07 |
 | [0035](0035-cpp-call-edge-tier-scope.md) | C/C++ call-edge strategy: tree-sitter tier only, sequenced behind chunking parity | accepted | 2026-08-07 |
+| [0036](0036-include-dirs-additive-for-dependency-trees.md) | Make `include_dirs` additive for dependency trees, narrowing for source | accepted | 2026-08-07 |
+| [0037](0037-decline-index-version-bump-for-cpp-parity.md) | Decline an `INDEX_VERSION` bump for C++ chunking parity | accepted | 2026-08-12 |
+| [0038](0038-cpp-only-container-traversal-seam.md) | Fix the container-traversal seam for C++ only; defer the Rust/C# analogues | accepted | 2026-08-12 |
 
 ## Adding a new ADR
 

@@ -1,0 +1,111 @@
+"""Direct branch coverage for the shared C-family declarator unwrap helpers.
+
+These exercise edge cases that either can't occur through a valid tree-sitter
+parse (an unknown node type breaking the unwrap chain) or would require
+contrived/degenerate source to reach through real parsing (a wrapper node with
+no `declarator` field and no named children at all). Fake nodes make both
+directly reachable without fighting the grammar.
+"""
+
+from chunking.languages._c_family import (
+    declarator_is_function_shaped,
+    unwrap_declarator_name,
+)
+
+
+class _FakeNode:
+    def __init__(self, node_type, children=None, is_missing=False, declarator=None):
+        self.type = node_type
+        self.children = children or []
+        self.is_named = True
+        self.is_missing = is_missing
+        self._declarator = declarator
+
+    def child_by_field_name(self, name):
+        if name == "declarator":
+            return self._declarator
+        return None
+
+
+def _text(node):
+    return node.type
+
+
+class TestUnwrapDeclaratorName:
+    def test_terminal_returns_name(self):
+        node = _FakeNode("identifier")
+        assert unwrap_declarator_name(node, _text) == "identifier"
+
+    def test_missing_terminal_returns_none(self):
+        node = _FakeNode("identifier", is_missing=True)
+        assert unwrap_declarator_name(node, _text) is None
+
+    def test_unknown_declarator_type_returns_none(self):
+        """`array_declarator` is neither a terminal name node nor a wrapper
+        this unwraps through -- e.g. `int arr[10];`'s declarator chain."""
+        node = _FakeNode("array_declarator")
+        assert unwrap_declarator_name(node, _text) is None
+
+    def test_wrapper_with_no_named_children_returns_none(self):
+        """Degenerate case: a wrapper node with a None `declarator` field and
+        no named children at all, so both the field lookup and the fallback
+        scan fail and the chain terminates on None."""
+        node = _FakeNode("reference_declarator", children=[])
+        assert unwrap_declarator_name(node, _text) is None
+
+    def test_parenthesized_declarator_unwraps_to_inner_name(self):
+        """`void (*cb)(int);` parses as
+        `function_declarator -> parenthesized_declarator ->
+        pointer_declarator -> field_identifier "cb"`. Like
+        `reference_declarator`, `parenthesized_declarator` has no
+        `declarator` *field* in tree-sitter-cpp's grammar -- this exercises
+        the None-field fallback to the first named child through two nested
+        wrapper levels."""
+        name = _FakeNode("field_identifier")
+        pointer = _FakeNode("pointer_declarator", children=[name])
+        parens = _FakeNode("parenthesized_declarator", children=[pointer])
+        func = _FakeNode("function_declarator", declarator=parens)
+        assert unwrap_declarator_name(func, _text) == "field_identifier"
+
+    def test_extra_terminals_widens_accepted_terminal_set(self):
+        """A typedef's name terminal is `type_identifier`, which
+        `_TERMINAL_DECLARATOR_TYPES` deliberately excludes by default (it
+        reads as a declaration's *type* in the general case). Without
+        `extra_terminals`, this same chain returns None."""
+        node = _FakeNode("type_identifier")
+        assert unwrap_declarator_name(node, _text) is None
+        assert (
+            unwrap_declarator_name(
+                node, _text, extra_terminals=frozenset({"type_identifier"})
+            )
+            == "type_identifier"
+        )
+
+
+class TestDeclaratorIsFunctionShaped:
+    def test_chain_ending_in_none_returns_false(self):
+        """Same degenerate no-field/no-named-children case as above, on the
+        other unwrap loop -- the chain terminates on None without ever
+        reaching a `function_declarator`."""
+        node = _FakeNode("pointer_declarator", children=[])
+        assert declarator_is_function_shaped(node) is False
+
+    def test_pointer_declarator_wrapping_function_declarator_returns_true(self):
+        """`int (*getPtr())();` -- a pointer-returning-function's declarator
+        chain: `pointer_declarator` (with a `declarator` field) ->
+        `function_declarator`. `test_chain_ending_in_none_returns_false`
+        only reaches `_next_declarator`'s None-field fallback branch; this
+        exercises the field-found branch through this caller."""
+        func = _FakeNode("function_declarator")
+        node = _FakeNode("pointer_declarator", declarator=func)
+        assert declarator_is_function_shaped(node) is True
+
+    def test_reference_declarator_wrapping_function_declarator_via_fallback(self):
+        """`reference_declarator` has no `declarator` *field* in
+        tree-sitter-cpp's grammar (see `_next_declarator`'s docstring) -- this
+        exercises the None-field fallback-to-first-named-child branch
+        successfully reaching a `function_declarator`, rather than dead-
+        ending like `test_chain_ending_in_none_returns_false`."""
+        func = _FakeNode("function_declarator")
+        node = _FakeNode("reference_declarator", children=[func])
+        assert declarator_is_function_shaped(node) is True

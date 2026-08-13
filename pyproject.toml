@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claude-context-local"
-version = "0.24.0"
+version = "0.25.0"
 description = "Local semantic code search for Claude Code (MCP) using FAISS, hybrid BM25+semantic search, and AST/tree-sitter chunking. 100% local embeddings and indexing."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -241,23 +241,31 @@ include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "sear
 # pyjwt>=2.13.0            # Fixes CVE-2026-32597 (2.12.0), 4× CVEs (2.13.0: 48522/48524/48525/48526)
 # python-multipart>=0.0.32 # Fixes CVE-2026-24486, CVE-2026-40347, CVE-2026-42561, CVE-2026-53538, CVE-2026-53539, CVE-2026-53540 (DoS)
 # requests>=2.34.2         # Fixes CVE-2026-25645 (predictable tempfile name)
-# setuptools>=83.0.0       # Fixes CVE-2026-59890 (MANIFEST.in path traversal); enforced via [build-system].requires.
-#                          # Also present in uv.lock as a transitive dep (torch python_full_version>=3.12,
-#                          # triton on linux) — [build-system].requires does not constrain the lock, so that
-#                          # entry floated to 82.0.1 until bumped 2026-08-04 via `uv lock --upgrade-package
-#                          # setuptools`. This is the entry GitHub's Dependabot alerts flag (manifest uv.lock),
-#                          # not the build-system one.
-#                          # NOTE (2026-08-06): torch 2.11.0 declares `setuptools<82` as a real runtime
-#                          # Requires-Dist, so `pip install torch==2.11.0` downgrades the venv's *installed*
-#                          # setuptools to 78.1.0 -- below the fix versions for both PYSEC-2025-49/CVE-2025-47273
-#                          # (fixed 78.1.1) and CVE-2026-59890 above (fixed 83.0.0). Forcing the venv's
-#                          # setuptools back to 83.0.0 was tested and works (torch still imports, CUDA intact),
-#                          # but leaves a standing `pip check` conflict against torch's declared constraint that
-#                          # a future `pip install`/`uv sync` would likely silently re-resolve away -- not done.
-#                          # Accepted as build-time-only exposure instead: no module in this codebase imports
-#                          # `setuptools`/`pkg_resources` at runtime (verified via grep), and
-#                          # `[build-system].requires>=83.0.0` above still governs actual package builds via PEP
-#                          # 517 isolation, unaffected by the venv's installed version. See
+# setuptools>=83.0.0       # Fixes CVE-2026-59890 (MANIFEST.in path traversal); enforced via [build-system].requires,
+#                          # which governs real builds via PEP 517 isolation regardless of the venv/lock version below.
+#                          # Also present in uv.lock as a transitive dep of torch 2.11.0 (both platform splits,
+#                          # uv.lock:4127/4165) — [build-system].requires does not constrain the lock. That entry is
+#                          # PINNED at 81.0.0: torch 2.11.0 declares an unconditional runtime Requires-Dist of
+#                          # `setuptools<82`, so `uv lock --upgrade-package setuptools` is a no-op (81.0.0 is the
+#                          # ceiling under <82). History: 4819bc06 bumped the lock entry to 83.0.0; eb7bac28
+#                          # (2026-08-06, torch -> 2.11.0) pulled it back to 81.0.0. No near-term escape: torch
+#                          # 2.12.0 also declares setuptools<82; only 2.13.0 relaxes it (setuptools>=77.0.3), and the
+#                          # pinned cu128 index tops out at 2.11.0 while pyproject caps torch<2.12.0 (same reopening
+#                          # condition already tracked below for CVE-2025-3000).
+#                          # This is the entry GitHub's Dependabot alerts flag (manifest uv.lock, alert #11), and
+#                          # because the bump is unsatisfiable, the weekly Dependabot *security* job for setuptools
+#                          # fails every run with `RuntimeError: No files have changed!` (uv FileUpdater finds no
+#                          # manifest line to rewrite and the lock re-resolves identically). `ignore:` in
+#                          # dependabot.yml cannot suppress this -- security jobs always run with
+#                          # ignore-conditions=[] (verified: the torch ignore rule was live on main during the
+#                          # 2026-08-04 torch security job, which still ran unignored).
+#                          # Dismissed alert #11 as not_used on 2026-08-12: no MANIFEST.in in this repo, no sdist
+#                          # ever built (nothing in .github/ runs build/uv build/twine; release.yml only publishes a
+#                          # GitHub Release), and no module imports setuptools/pkg_resources at runtime (verified
+#                          # via grep). Reopen when the cu128 index publishes torch>=2.13.0.
+#                          # Prior note (2026-08-06): forcing the *venv's installed* setuptools to 83.0.0 (separate
+#                          # from the lock) was tested and works (torch still imports, CUDA intact), but leaves a
+#                          # standing `pip check` conflict against torch's declared `setuptools<82` -- not done. See
 #                          # docs/PYTORCH_COMPATIBILITY.md and docs/adr/0033-lift-torch-ceiling.md.
 # urllib3>=2.7.0           # Fixes CVE-2026-44431 (cross-origin redirect), CVE-2026-44432 (decompression)
 # uv>=0.11.24              # Fixes GHSA-4gg8-gxpx-9rph (0.11.15, malicious-wheel path traversal), GHSA-pjjw-68hj-v9mw (0.11.6, arbitrary file deletion via RECORD entries)

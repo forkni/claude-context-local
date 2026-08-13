@@ -12,8 +12,8 @@
     "type": "template_declaration"
   },
   {
-    "content": "class Vector {\npublic:\n    float x, y;\n    Vector(float xi, float yi) : x(xi), y(yi) {}\n}",
-    "end_line": 12,
+    "content": "class Vector {\npublic:\n    float x, y;\n    Vector(float xi, float yi) : x(xi), y(yi) {}\n    Vector& operator=(const Vector& other) {\n        x = other.x;\n        y = other.y;\n        return *this;\n    }\n}",
+    "end_line": 17,
     "language": "cpp",
     "metadata": {
       "name": "Vector",
@@ -23,14 +23,187 @@
     "type": "class_specifier"
   },
   {
-    "content": "namespace math {\n    int square(int n) {\n        return n * n;\n    }\n}",
-    "end_line": 18,
+    "content": "Vector(float xi, float yi) : x(xi), y(yi) {}",
+    "end_line": 11,
     "language": "cpp",
     "metadata": {
+      "complexity_score": 1,
+      "name": "Vector",
+      "node_type": "function_definition",
+      "parent_name": "Vector",
+      "parent_type": "class"
+    },
+    "start_line": 11,
+    "type": "function_definition"
+  },
+  {
+    "content": "Vector& operator=(const Vector& other) {\n        x = other.x;\n        y = other.y;\n        return *this;\n    }",
+    "end_line": 16,
+    "language": "cpp",
+    "metadata": {
+      "complexity_score": 1,
+      "name": "operator=",
+      "node_type": "function_definition",
+      "parent_name": "Vector",
+      "parent_type": "class"
+    },
+    "start_line": 12,
+    "type": "function_definition"
+  },
+  {
+    "content": "namespace math {\n    int square(int n) {\n        return n * n;\n    }\n}",
+    "end_line": 23,
+    "language": "cpp",
+    "metadata": {
+      "name": "math",
       "node_type": "namespace_definition"
     },
-    "start_line": 14,
+    "start_line": 19,
     "type": "namespace_definition"
+  },
+  {
+    "content": "int square(int n) {\n        return n * n;\n    }",
+    "end_line": 22,
+    "language": "cpp",
+    "metadata": {
+      "complexity_score": 1,
+      "name": "square",
+      "node_type": "function_definition",
+      "parent_name": "math",
+      "parent_type": "namespace"
+    },
+    "start_line": 20,
+    "type": "function_definition"
+  },
+  {
+    "content": "class Shape {\npublic:\n    void draw();\n    virtual ~Shape();\n}",
+    "end_line": 31,
+    "language": "cpp",
+    "metadata": {
+      "name": "Shape",
+      "node_type": "class_specifier"
+    },
+    "start_line": 27,
+    "type": "class_specifier"
+  },
+  {
+    "content": "void draw();",
+    "end_line": 29,
+    "language": "cpp",
+    "metadata": {
+      "name": "draw",
+      "node_type": "field_declaration",
+      "parent_name": "Shape",
+      "parent_type": "class"
+    },
+    "start_line": 29,
+    "type": "field_declaration"
+  },
+  {
+    "content": "virtual ~Shape();",
+    "end_line": 30,
+    "language": "cpp",
+    "metadata": {
+      "name": "~Shape",
+      "node_type": "declaration",
+      "parent_name": "Shape",
+      "parent_type": "class"
+    },
+    "start_line": 30,
+    "type": "declaration"
+  },
+  {
+    "content": "class Foo {\npublic:\n    int* getPtr();\n}",
+    "end_line": 37,
+    "language": "cpp",
+    "metadata": {
+      "name": "Foo",
+      "node_type": "class_specifier"
+    },
+    "start_line": 34,
+    "type": "class_specifier"
+  },
+  {
+    "content": "int* getPtr();",
+    "end_line": 36,
+    "language": "cpp",
+    "metadata": {
+      "name": "getPtr",
+      "node_type": "field_declaration",
+      "parent_name": "Foo",
+      "parent_type": "class"
+    },
+    "start_line": 36,
+    "type": "field_declaration"
+  },
+  {
+    "content": "int* Foo::getPtr() {\n    return nullptr;\n}",
+    "end_line": 41,
+    "language": "cpp",
+    "metadata": {
+      "complexity_score": 1,
+      "name": "Foo::getPtr",
+      "node_type": "function_definition"
+    },
+    "start_line": 39,
+    "type": "function_definition"
+  },
+  {
+    "content": "enum class Color { Red, Green, Blue }",
+    "end_line": 43,
+    "language": "cpp",
+    "metadata": {
+      "name": "Color",
+      "node_type": "enum_specifier"
+    },
+    "start_line": 43,
+    "type": "enum_specifier"
+  },
+  {
+    "content": "using Number = int;",
+    "end_line": 45,
+    "language": "cpp",
+    "metadata": {
+      "name": "Number",
+      "node_type": "alias_declaration"
+    },
+    "start_line": 45,
+    "type": "alias_declaration"
+  },
+  {
+    "content": "struct Table {\n    void (*cb)(int, int);\n}",
+    "end_line": 52,
+    "language": "cpp",
+    "metadata": {
+      "name": "Table",
+      "node_type": "struct_specifier"
+    },
+    "start_line": 50,
+    "type": "struct_specifier"
+  },
+  {
+    "content": "void (*cb)(int, int);",
+    "end_line": 51,
+    "language": "cpp",
+    "metadata": {
+      "name": "cb",
+      "node_type": "field_declaration",
+      "parent_name": "Table",
+      "parent_type": "class"
+    },
+    "start_line": 51,
+    "type": "field_declaration"
+  },
+  {
+    "content": "struct {\n    int x;\n    int y;\n}",
+    "end_line": 60,
+    "language": "cpp",
+    "metadata": {
+      "name": "Vec3",
+      "node_type": "struct_specifier"
+    },
+    "start_line": 57,
+    "type": "struct_specifier"
   },
   {
     "content": "// Tiny C++ fixture: template function, class, namespace.",
