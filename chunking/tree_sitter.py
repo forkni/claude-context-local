@@ -9,7 +9,7 @@ Supported languages (9, all via tree-sitter):
 - Go (.go)
 - Rust (.rs)
 - C (.c)
-- C++ (.cpp, .cc, .cxx, .c++)
+- C++ (.cpp, .cc, .cxx, .c++, .h, .hpp, .hh, .hxx, .inl, .ipp, .tpp)
 - C# (.cs)
 - GLSL (.glsl, .frag, .vert, .comp, .geom, .tesc, .tese, .glslinc)
 - Python (.py)
@@ -288,6 +288,16 @@ class TreeSitterChunker:
         ".cc": (EXT_TO_LANGUAGE[".cc"], lambda lang: CppChunker(lang)),
         ".cxx": (EXT_TO_LANGUAGE[".cxx"], lambda lang: CppChunker(lang)),
         ".c++": (EXT_TO_LANGUAGE[".c++"], lambda lang: CppChunker(lang)),
+        # Headers route to cpp (not c) -- tree_sitter_cpp parses both C and
+        # C++ headers cleanly; tree_sitter_c errors on C++ headers. See
+        # docs/plans/CPP_CHUNKING_PARITY.md.
+        ".h": (EXT_TO_LANGUAGE[".h"], lambda lang: CppChunker(lang)),
+        ".hpp": (EXT_TO_LANGUAGE[".hpp"], lambda lang: CppChunker(lang)),
+        ".hh": (EXT_TO_LANGUAGE[".hh"], lambda lang: CppChunker(lang)),
+        ".hxx": (EXT_TO_LANGUAGE[".hxx"], lambda lang: CppChunker(lang)),
+        ".inl": (EXT_TO_LANGUAGE[".inl"], lambda lang: CppChunker(lang)),
+        ".ipp": (EXT_TO_LANGUAGE[".ipp"], lambda lang: CppChunker(lang)),
+        ".tpp": (EXT_TO_LANGUAGE[".tpp"], lambda lang: CppChunker(lang)),
         ".cs": (EXT_TO_LANGUAGE[".cs"], lambda lang: CSharpChunker(lang)),
         ".glsl": (EXT_TO_LANGUAGE[".glsl"], lambda lang: GLSLChunker(lang)),
         ".frag": (EXT_TO_LANGUAGE[".frag"], lambda lang: GLSLChunker(lang)),

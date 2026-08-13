@@ -27,6 +27,7 @@
     "end_line": 16,
     "language": "c",
     "metadata": {
+      "name": "Color",
       "node_type": "type_definition"
     },
     "start_line": 12,

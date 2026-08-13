@@ -31,6 +31,13 @@ EXT_TO_LANGUAGE: dict[str, str] = {
     ".cc": "cpp",
     ".cxx": "cpp",
     ".c++": "cpp",
+    ".h": "cpp",
+    ".hpp": "cpp",
+    ".hh": "cpp",
+    ".hxx": "cpp",
+    ".inl": "cpp",
+    ".ipp": "cpp",
+    ".tpp": "cpp",
     ".cs": "csharp",
     ".glsl": "glsl",
     ".frag": "glsl",
@@ -173,6 +180,27 @@ NODE_TYPE_MAP: dict[str, str] = {
     "preproc_function_def": "macro",  # GLSL/C function-like #define
     "preproc_include": "include",  # GLSL/C #include
     "preproc_ifdef": "preproc_conditional",  # GLSL/C #ifdef and #ifndef
+}
+
+
+# Per-language overrides consulted *before* NODE_TYPE_MAP by
+# MultiLanguageChunker._map_node_type. Needed because a handful of tree-sitter
+# node types map to a different chunk kind depending on which language's
+# grammar produced them — e.g. GLSL also chunks a bare "declaration" node
+# (LANGUAGE_SPECS["glsl"].splittable_node_types above) but that occurrence
+# must NOT be remapped to "function" the way C++'s is. Keeping this
+# language-scoped (rather than widening NODE_TYPE_MAP itself) is what keeps
+# the GLSL parity snapshot byte-identical.
+LANGUAGE_NODE_TYPE_OVERRIDES: dict[str, dict[str, str]] = {
+    "cpp": {
+        # Both are in-class function-shaped declarations once
+        # CppChunker.should_chunk_node has narrowed them (data members never
+        # reach here): field_declaration = `int m();` / `virtual void f() = 0;`,
+        # declaration = `Foo();` / `~Foo();` constructor/destructor decls.
+        "field_declaration": "function",
+        "declaration": "function",
+        "alias_declaration": "type",  # `using X = Y;`
+    },
 }
 
 
@@ -380,6 +408,14 @@ LANGUAGE_SPECS: dict[str, LanguageSpec] = {
             "namespace_definition",
             "template_declaration",
             "concept_definition",
+            # Header-only declarations (v0.24 header parity): in-class method
+            # declarations (`int m();`), constructor/destructor declarations
+            # (`Foo(); ~Foo();`), and `using X = Y;` type aliases. Narrowed to
+            # function-shaped declarators by CppChunker.should_chunk_node —
+            # data members (`int x;`) never reach this set.
+            "field_declaration",
+            "declaration",
+            "alias_declaration",
         },
         install_hint="pip install tree-sitter-cpp",
     ),

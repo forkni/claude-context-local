@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **C++ chunking parity** (20 → 27 file extensions) — `.h`, `.hpp`, `.hh`, `.hxx`, `.inl`, `.ipp`,
+  `.tpp` now route to the `cpp` tree-sitter grammar (`chunking/language_registry.py`), so C++
+  headers are chunked and searchable for the first time; previously `is_supported()` reported
+  `True` for no header extension at all, so entire header-only codebases were invisible to
+  search. New container-node traversal seam (`_CONTAINER_NODE_TYPES`,
+  `chunking/languages/base.py`) lets `CppChunker` register `class_specifier`, `struct_specifier`,
+  `union_specifier`, and `namespace_definition` as containers whose nested methods chunk
+  separately instead of being swallowed into one opaque blob — see ADR-0038 for why this is
+  scoped to C++ only, with the equivalent Rust (`impl_item`) and C# (`namespace_declaration`)
+  swallowing bugs verified live and deliberately deferred. `chunking/languages/cpp.py` rewritten
+  from a 57-line stub: declarator-unwrapping name extraction shared with C via new
+  `chunking/languages/_c_family.py` (`unwrap_declarator_name`), function/container node-type
+  overrides, and a `should_chunk_node` narrowing so template-wrapped classes still chunk once
+  instead of twice.
+
+### Fixed
+
+- **C name extraction gaps** (`chunking/languages/c.py`) — pointer-returning function
+  definitions (e.g. `int* getPtr()`) previously returned `name=None` because the old direct-child
+  scan only matched a bare `function_declarator`, not one wrapped in `pointer_declarator`; now
+  unwrapped via the shared `_c_family.unwrap_declarator_name`. Anonymous struct/enum typedef
+  metadata (`typedef struct {...} Color;`) previously returned `name=None` because only plain
+  `identifier` children were checked; the new type name is a `type_identifier` child, which is
+  now also checked.
+- **`INDEX_VERSION` bump declined** for this change (ADR-0037) — the field is BM25-document-format-
+  scoped and warn-only (`bm25_index.py`); bumping it here would false-alarm every indexed
+  Python-only project for an unrelated C++ chunking change. The `chunker_version` snapshot marker
+  proposed alongside it is deferred, not rejected — recorded so it isn't re-litigated.
+
 ## [0.24.0] - 2026-08-12
 
 119 non-merge commits since the `v0.23.0` content landed on `main` (2026-08-02) — `v0.23.0` had

@@ -34,6 +34,13 @@ class TestMultiLanguageChunker:
         assert chunker.is_supported("test.cc")
         assert chunker.is_supported("test.cxx")
         assert chunker.is_supported("test.c++")
+        assert chunker.is_supported("test.h")
+        assert chunker.is_supported("test.hpp")
+        assert chunker.is_supported("test.hh")
+        assert chunker.is_supported("test.hxx")
+        assert chunker.is_supported("test.inl")
+        assert chunker.is_supported("test.ipp")
+        assert chunker.is_supported("test.tpp")
         assert chunker.is_supported("test.cs")
         assert chunker.is_supported("test.rs")
         assert chunker.is_supported("test.glsl")
@@ -149,6 +156,25 @@ class TestMultiLanguageChunker:
             for name in ["calculate_sum", "get_result", "apply_operation"]
         )
 
+    def test_chunk_c_typedef_name(self, chunker, test_data_dir):
+        """Test that anonymous-struct/enum typedefs get a name.
+
+        Regression guard: `type_definition`'s name lives on a
+        `type_identifier` child (e.g. `typedef struct {...} Calculator;`),
+        not a plain `identifier` -- c.py's extract_metadata only checked
+        `identifier`, so every anonymous-struct/enum typedef silently
+        chunked with name=None. Found via the C++ chunking parity plan's
+        live gate verification, unrelated to that plan's declarator-unwrap
+        fix (which only covers `function_definition`).
+        """
+        file_path = test_data_dir / "calculator.c"
+        chunks = chunker.chunk_file(str(file_path))
+
+        typedef_names = {
+            chunk.name for chunk in chunks if chunk.chunk_type == "type_definition"
+        }
+        assert typedef_names == {"Calculator", "Operation"}
+
     def test_chunk_cpp_file(self, chunker, test_data_dir):
         """Test chunking C++ file."""
         file_path = test_data_dir / "Calculator.cpp"
@@ -159,6 +185,28 @@ class TestMultiLanguageChunker:
         assert len(chunks) > 0, "C++ parser produced no chunks"
         chunk_names = {chunk.name for chunk in chunks if chunk.name}
         assert any(name in chunk_names for name in ["Point", "main"])
+
+    def test_chunk_cpp_header_file(self, chunker, tmp_path):
+        """Test chunking a .h header file end-to-end.
+
+        Regression guard: `.h` was added to SUPPORTED_EXTENSIONS /
+        EXT_TO_LANGUAGE (Phase 1) but `TreeSitterChunker.LANGUAGE_MAP` --
+        a separate suffix -> chunker-factory dict in tree_sitter.py -- was
+        not updated alongside it, so `get_chunker(".h")` silently returned
+        None and headers produced zero chunks despite is_supported()
+        reporting True. is_supported() alone would not catch this; only an
+        actual chunk_file() call does.
+        """
+        header = tmp_path / "widget.h"
+        header.write_text(
+            "class Widget {\npublic:\n    void draw();\n};\n", encoding="utf-8"
+        )
+        chunks = chunker.chunk_file(str(header))
+
+        assert len(chunks) > 0, "Header parser produced no chunks"
+        chunk_names = {chunk.name for chunk in chunks if chunk.name}
+        assert "Widget" in chunk_names
+        assert "draw" in chunk_names
 
     def test_chunk_csharp_file(self, chunker, test_data_dir):
         """Test chunking C# file."""

@@ -194,6 +194,20 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         }
     )
 
+    #: AST node types whose traversal should *continue* into their children
+    #: (to pick up methods/members as separate chunks) instead of stopping,
+    #: the way every other chunked node does. Distinct from
+    #: `_CLASS_LEVEL_NODE_TYPES` above — that seam is consumed by the
+    #: adaptive-sizing profiler's function-vs-class split; this one gates the
+    #: traverse() early-return in `chunk_tree`. Default matches the
+    #: pre-v0.24 hardcoded check byte-for-byte, so every existing language's
+    #: parity snapshot is unaffected. Override in a leaf chunker (e.g.
+    #: CppChunker, for `namespace_definition`/`struct_specifier`/
+    #: `union_specifier`) to widen it.
+    _CONTAINER_NODE_TYPES: frozenset[str] = frozenset(
+        {"class_definition", "class_declaration"}
+    )
+
     @property
     def function_node_types(self) -> frozenset[str]:
         """AST node types that represent a measurable function/method.
@@ -970,13 +984,18 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
                 )
                 chunks.append(chunk)
 
-                # For classes, continue traversing to find methods
-                # For other chunked nodes, stop traversal
-                if node.type in ["class_definition", "class_declaration"]:
-                    # Pass class info to children
+                # For containers (classes and, in overriding leaves,
+                # namespaces/structs/unions), continue traversing to find
+                # members. For other chunked nodes, stop traversal.
+                if node.type in self._CONTAINER_NODE_TYPES:
+                    # Pass container info to children
                     class_info = {
                         "parent_name": metadata.get("name"),
-                        "parent_type": "class",
+                        "parent_type": (
+                            "namespace"
+                            if node.type == "namespace_definition"
+                            else "class"
+                        ),
                     }
                     for child in node.children:
                         traverse(child, depth + 1, class_info)

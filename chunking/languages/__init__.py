@@ -10,7 +10,7 @@ Supported languages (9 total, all via tree-sitter):
 - Go (.go)
 - Rust (.rs)
 - C (.c)
-- C++ (.cpp, .cc, .cxx, .c++)
+- C++ (.cpp, .cc, .cxx, .c++, .h, .hpp, .hh, .hxx, .inl, .ipp, .tpp)
 - C# (.cs)
 - GLSL (.glsl, .frag, .vert, .comp, .geom, .tesc, .tese, .glslinc)
 

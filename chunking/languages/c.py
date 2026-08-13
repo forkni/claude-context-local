@@ -4,6 +4,7 @@ from typing import Any
 
 from tree_sitter import Language
 
+from ._c_family import unwrap_declarator_name
 from .base import LanguageChunker
 
 
@@ -17,18 +18,18 @@ class CChunker(LanguageChunker):
         """Extract C-specific metadata."""
         metadata = {"node_type": node.type}
 
-        # Extract function name
+        # Extract function name. Unwraps pointer_declarator (pointer-returning
+        # functions, e.g. `int* getPtr()`) instead of the pre-v0.24 direct-
+        # child scan, which only matched a bare `function_declarator` child
+        # and silently returned name=None for every pointer-returning
+        # function -- see chunking/languages/_c_family.py.
         if node.type == "function_definition":
-            # Look for function_declarator
-            for child in node.children:
-                if child.type == "function_declarator":
-                    for declarator_child in child.children:
-                        if declarator_child.type == "identifier":
-                            metadata["name"] = self.get_node_text(
-                                declarator_child, source
-                            )
-                            break
-                    break
+            name = unwrap_declarator_name(
+                node.child_by_field_name("declarator"),
+                lambda n: self.get_node_text(n, source),
+            )
+            if name is not None:
+                metadata["name"] = name
 
         # Extract struct/union/enum name
         elif node.type in ["struct_specifier", "union_specifier", "enum_specifier"]:
@@ -39,10 +40,17 @@ class CChunker(LanguageChunker):
 
         # Extract typedef name
         elif node.type == "type_definition":
-            # Look for the last identifier which is the new type name
+            # Look for the last identifier which is the new type name. The
+            # new type name is a `type_identifier` node (e.g.
+            # `typedef struct {...} Color;` -> Color), not a plain
+            # `identifier` -- the bare-`identifier` check alone always
+            # missed it, silently leaving every anonymous-struct/enum
+            # typedef nameless. Mirrors the struct/union/enum branch above,
+            # which already checks both kinds. Found via the C++ chunking
+            # parity plan's live gate verification for calculator.c.
             identifiers = []
             for child in node.children:
-                if child.type == "identifier":
+                if child.type in ("identifier", "type_identifier"):
                     identifiers.append(self.get_node_text(child, source))
             if identifiers:
                 metadata["name"] = identifiers[-1]

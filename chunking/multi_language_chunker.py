@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 from .dedent_utils import smart_dedent as _smart_dedent
 from .language_registry import (
     DEFAULT_IGNORED_DIRS,
+    LANGUAGE_NODE_TYPE_OVERRIDES,
     NODE_TYPE_MAP,
     SUPPORTED_EXTENSIONS,
 )
@@ -325,21 +326,44 @@ class MultiLanguageChunker:
             logger.error(f"Failed to chunk file {file_path}: {e}", exc_info=True)
             return []
 
-    def _map_node_type(self, node_type: str, parent_name: str | None) -> str:
+    def _map_node_type(
+        self,
+        node_type: str,
+        parent_name: str | None,
+        parent_type: str | None = None,
+        language: str | None = None,
+    ) -> str:
         """Map tree-sitter node type to chunk type.
 
         Args:
             node_type: Tree-sitter node type
             parent_name: Parent class name (if any)
+            parent_type: Kind of the enclosing container ("class", "namespace",
+                or None for no container) -- distinguishes a class member from
+                a namespace-scoped free function so the latter isn't promoted
+                to "method". Defaults to None, which preserves pre-v0.24
+                behaviour (promote whenever parent_name is truthy).
+            language: Chunk's language, used to look up
+                LANGUAGE_NODE_TYPE_OVERRIDES before falling back to the
+                global NODE_TYPE_MAP -- needed because some languages map the
+                same node_type to different chunk types (e.g. cpp's
+                `declaration` is a function, GLSL's is not).
 
         Returns:
             Mapped chunk type (function, method, class, etc.)
         """
-        # Get base chunk type from mapping
-        chunk_type = self.NODE_TYPE_MAP.get(node_type, node_type)
+        # Get base chunk type from mapping -- language-scoped override first,
+        # then the global mapping.
+        overrides = LANGUAGE_NODE_TYPE_OVERRIDES.get(language, {}) if language else {}
+        if node_type in overrides:
+            chunk_type = overrides[node_type]
+        else:
+            chunk_type = self.NODE_TYPE_MAP.get(node_type, node_type)
 
-        # If we have a parent_name and it's a function, it's actually a method
-        if parent_name and chunk_type == "function":
+        # A function directly inside a class (or a language with no
+        # container-type distinction, i.e. parent_type is None) is a method.
+        # A function inside a namespace stays a function.
+        if parent_name and chunk_type == "function" and parent_type in (None, "class"):
             chunk_type = "method"
 
         return chunk_type
@@ -826,9 +850,12 @@ class MultiLanguageChunker:
 
             # Extract parent class from chunk (prefer explicit field, fallback to metadata)
             parent_name = tchunk.parent_class or tchunk.metadata.get("parent_name")
+            parent_type = tchunk.metadata.get("parent_type")
 
             # Map node type to chunk type (handles parent class logic)
-            chunk_type = self._map_node_type(tchunk.node_type, parent_name)
+            chunk_type = self._map_node_type(
+                tchunk.node_type, parent_name, parent_type, tchunk.language
+            )
 
             # Build qualified name for methods/functions inside classes
             qualified_name = f"{parent_name}.{name}" if parent_name and name else name
@@ -850,8 +877,13 @@ class MultiLanguageChunker:
                 qualified_name,
             )
 
-            # Track class chunks for parent-child linking
-            if chunk_type == "class" and name:
+            # Track class (and namespace) chunks for parent-child linking.
+            # Namespace-scoped free functions carry parent_type="namespace"
+            # (base.py's container traversal) and stay chunk_type "function"
+            # rather than being promoted to "method" -- registering the
+            # namespace chunk here lets the parent_chunk_id lookup below
+            # resolve for them instead of dead-ending.
+            if chunk_type in ("class", "namespace") and name:
                 class_chunk_map[(relative_path, name)] = chunk_id
 
             # Determine parent_chunk_id for methods
