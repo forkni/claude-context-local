@@ -30,6 +30,10 @@ from the window's pre-rerank tail (the ``_apply_hop1_reserve`` semantics).
 - V2  raw-dense top-3 carry-forward
 - V3  merged-rerank ranks 11-15 protected
 - V1+V3 combined
+- V4  graph-hop channel top-3 (candidates with ``source == "graph_hop"`` in
+  the multi-hop *merged* pool, pool order — A1's arm data showed these are
+  the only channel reaching H034/H066-class golds; see
+  evaluation/TRACK_A_AB_20260814.md and the A3 reopening condition)
 
 A gold is "window-rescued" when it enters the new window; a query is
 "collateral" when a gold currently *in* the window gets evicted. Membership is
@@ -63,7 +67,13 @@ from evaluation.metrics import normalize_chunk_id  # noqa: E402
 # Stable misses + boundary flappers from evaluation/STABLE_MISS_DIAGNOSIS_20260802.md.
 WATCHLIST = ("Q119", "Q121", "Q122", "Q133", "H063")
 
-VARIANT_SOURCES = ("v1_bm25_top3", "v2_dense_top3", "v3_merged_11_15", "v1_plus_v3")
+VARIANT_SOURCES = (
+    "v1_bm25_top3",
+    "v2_dense_top3",
+    "v3_merged_11_15",
+    "v1_plus_v3",
+    "v4_graph_hop",
+)
 
 
 def load_queries(dataset_path: Path, query_ids: list[str] | None) -> list[dict]:
@@ -126,6 +136,14 @@ def instrument_rerank(engine) -> list[dict[str, Any]]:
                 "hop1_slots": state["hop1_slots"],
                 "k": k,
                 "pool_ids": [normalize_chunk_id(r.chunk_id) for r in candidates],
+                # Provenance-preserving view of the pool: graph-hop expansion
+                # candidates carry source == "graph_hop" (tested contract, see
+                # test_multi_hop_searcher.py) and survive un-fused into the
+                # merged pool — the v4 variant selects on this.
+                "pool_sources": [
+                    (normalize_chunk_id(r.chunk_id), getattr(r, "source", None))
+                    for r in candidates
+                ],
                 "window_ids": [
                     normalize_chunk_id(cid) for cid in (engine.last_window_ids or [])
                 ],
@@ -244,11 +262,21 @@ def probe_query(searcher, item: dict, k: int, probe_depth: int) -> dict[str, Any
     )
     currently_hit = best_final is not None and best_final <= k
 
+    # Graph-hop channel: pool order is the ranking proxy — graph candidates all
+    # score 0.0 under the current default (A1 not adopted), so the merged pool's
+    # stable sort preserves discovery order.
+    graph_hop_ids = [
+        cid
+        for cid, source in (merged["pool_sources"] if merged else [])
+        if source == "graph_hop"
+    ]
+
     sources = {
         "v1_bm25_top3": bm25_ids[:3],
         "v2_dense_top3": dense_ids[:3],
         "v3_merged_11_15": merged_out[k : k + 5],
         "v1_plus_v3": bm25_ids[:3] + merged_out[k : k + 5],
+        "v4_graph_hop": graph_hop_ids[:3],
     }
     variants: dict[str, Any] = {}
     for name, source in sources.items():
@@ -292,6 +320,7 @@ def summarize(reports: list[dict[str, Any]]) -> dict[str, Any]:
     for name in VARIANT_SOURCES:
         rescued_q: list[str] = []
         rescued_miss_q: list[str] = []
+        rescued_miss_no_final_q: list[str] = []
         rescued_watch: list[str] = []
         collateral_q: list[str] = []
         for rep in reports:
@@ -302,6 +331,14 @@ def summarize(reports: list[dict[str, Any]]) -> dict[str, Any]:
                 rescued_q.append(rep["id"])
                 if not rep.get("currently_hit", False):
                     rescued_miss_q.append(rep["id"])
+                    # Stratified gate (A3): the simulation targets the FINAL
+                    # call's window, but a merged-call-only reserve build can
+                    # only deliver rescues on queries where the merged output
+                    # IS final (no separate post-ego rerank ran). Rescues on
+                    # had_final_pass=True queries require also threading the
+                    # reserve through the hybrid_searcher final call sites.
+                    if not rep.get("had_final_pass", True):
+                        rescued_miss_no_final_q.append(rep["id"])
                 if rep["id"] in WATCHLIST:
                     rescued_watch.append(rep["id"])
             if var["evicted_golds"] and rep.get("currently_hit", False):
@@ -309,6 +346,7 @@ def summarize(reports: list[dict[str, Any]]) -> dict[str, Any]:
         summary[name] = {
             "queries_with_rescued_gold": rescued_q,
             "currently_miss_rescued": rescued_miss_q,
+            "currently_miss_rescued_no_final_pass": rescued_miss_no_final_q,
             "watchlist_rescued": rescued_watch,
             "collateral_hit_queries": collateral_q,
         }
@@ -334,6 +372,10 @@ def print_summary(reports: list[dict[str, Any]], summary: dict[str, Any]) -> Non
         s = summary[name]
         print(f"\n{name}:")
         print(f"  miss-rescued: {', '.join(s['currently_miss_rescued']) or '-'}")
+        print(
+            "  ^ no-final-pass (merged-only build reachable): "
+            + (", ".join(s["currently_miss_rescued_no_final_pass"]) or "-")
+        )
         print(f"  watchlist:    {', '.join(s['watchlist_rescued']) or '-'}")
         print(f"  collateral:   {', '.join(s['collateral_hit_queries']) or '-'}")
 
