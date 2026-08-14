@@ -682,8 +682,9 @@ class RerankerConfig:
     )
     batch_size: int = field(
         default=16,  # NeuralReranker/GenerativeReranker inference batch size.
-        # Ignored by JinaRerankerV3 (the deployed default), which batches
-        # internally and never reads this field.
+        # Ignored by the Jina listwise rerankers (v3/v3.5, class JinaRerankerV3;
+        # v3 is the deployed default), which batch internally and never read
+        # this field.
         metadata=spec(
             flat_alias="reranker_batch_size",
             env="CLAUDE_RERANKER_BATCH_SIZE",
@@ -732,14 +733,19 @@ class RerankerConfig:
         ),
     )
     listwise_doc_max_chars: int = field(
-        default=1000,  # JinaRerankerV3 only (listwise — ALL
-        # candidates share one context window, so cost is O(n^2) in the packed
-        # sequence length via attention activation memory — not context-window
-        # occupancy). A 4-run SSCG sweep at 4000 measured peak_vram_reserved_gb
-        # 27.66 on a 24GB card (WDDM shared-memory spill, no OOM raised — see
-        # allow_ram_fallback), 42-45/96 queries stalling past 8s (max 354.9s),
-        # and every quality metric flat-to-negative within the +/-0.02 MRR noise
-        # floor vs this default. See docs/adr/0011-listwise-reranker-doc-cap.md.
+        default=1000,  # Jina listwise rerankers only (v3/v3.5, class
+        # JinaRerankerV3) — ALL candidates share one context window, so cost
+        # scales with the packed sequence length via attention activation
+        # memory — not context-window occupancy. A 4-run SSCG sweep at 4000
+        # measured peak_vram_reserved_gb 27.66 on a 24GB card (WDDM
+        # shared-memory spill, no OOM raised — see allow_ram_fallback), 42-45/96
+        # queries stalling past 8s (max 354.9s), and every quality metric
+        # flat-to-negative within the +/-0.02 MRR noise floor vs this default.
+        # Measured on v3 (docs/adr/0011-listwise-reranker-doc-cap.md); v3's
+        # cost model is O(n^2) full attention, v3.5's hybrid sliding-window
+        # attention may not reproduce this cliff at the same value — a v3.5
+        # cap sweep is a follow-up only if v3.5 wins its own head-to-head
+        # (see evaluation/JINA_V35_AB_*.md).
         metadata=spec(
             flat_alias="reranker_listwise_doc_max_chars",
             env="CLAUDE_RERANKER_LISTWISE_DOC_MAX_CHARS",
@@ -756,8 +762,8 @@ class RerankerConfig:
             reader="search/reranking_engine.py",
             construction_baked=True,
         ),
-    )  # JinaRerankerV3 only. Weight dtype for the
-    # listwise reranker: "auto" (checkpoint default — bf16), "fp32", "bf16",
+    )  # Jina listwise rerankers only (v3/v3.5, class JinaRerankerV3). Weight
+    # dtype for the listwise reranker: "auto" (checkpoint default — bf16), "fp32", "bf16",
     # or "fp16". bf16 listwise scoring is run-to-run non-deterministic at
     # ranking boundaries (4-5 golden queries flip between identical SSCG
     # runs); "fp32" trades ~2x reranker VRAM (~2.4 GB for the 0.6B model)
@@ -1077,6 +1083,28 @@ class GraphEnhancedConfig:
         default=8,
         metadata=spec(
             flat_alias="max_results_multiplier", reader="search/graph_scoring_stage.py"
+        ),
+    )
+    # RepoScope-style call-evidence scoring for graph-hop candidates (A1):
+    # _graph_expand assigns min(anchor·cosine + λ·log2(1 + shared hop-1 call
+    # links), anchor) instead of the flat 0.0 that sorted graph candidates
+    # below every other score scale at the rerank-window cut. Ships disabled
+    # pending paired-CI A/B (docs/plans/RAG_IMPROVEMENT_ROADMAP_20260814.md).
+    graph_hop_call_evidence_enabled: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="graph_hop_call_evidence_enabled",
+            reader="search/multi_hop_searcher.py",
+        ),
+    )
+    # λ per log2 unit of shared-reference call links. The paper's λ1:λ2 = 1:2
+    # ratio rescaled to this pipeline's score range (anchor·cosine typically
+    # ~0.1-0.5); tuned only via the A/B arms, never hand-tuned.
+    graph_hop_call_evidence_lambda: float = field(
+        default=0.05,
+        metadata=spec(
+            flat_alias="graph_hop_call_evidence_lambda",
+            reader="search/multi_hop_searcher.py",
         ),
     )
 

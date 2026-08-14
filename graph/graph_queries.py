@@ -5,6 +5,7 @@ Provides high-level query operations on code graphs.
 """
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -450,6 +451,53 @@ class GraphQueryEngine:
             "calls_made": len(set(self.storage.graph.successors(chunk_id))),
             "called_by_count": len(set(self.storage.graph.predecessors(chunk_id))),
         }
+
+    def score_call_evidence(
+        self,
+        chunk_id: str,
+        reference_ids: frozenset[str] | set[str],
+        lambda_weight: float,
+    ) -> float:
+        """
+        Query-conditioned call-evidence score for a candidate chunk.
+
+        Returns ``lambda_weight * log2(1 + shared)`` where ``shared`` is the
+        number of distinct *reference_ids* (typically the hop-1 result set)
+        that *chunk_id* shares a ``calls``-keyed edge with, in either
+        direction. Returns 0.0 when the chunk is not in the graph, the
+        reference set is empty, or no call link to any reference exists.
+
+        Deliberately counts distinct reference links, NOT global fan-in:
+        graph-hop candidates are call-adjacent to their own anchor by
+        construction, so a fan-in term would collapse into a static
+        popularity boost (the measured-and-rejected centrality_alpha
+        failure mode). Breadth of support from what the query already
+        surfaced is what keeps this signal query-conditioned.
+
+        Args:
+            chunk_id: Candidate chunk ID to score
+            reference_ids: Chunk IDs the score is conditioned on
+            lambda_weight: Multiplier per log2 unit of shared call links
+
+        Returns:
+            Call-evidence score >= 0.0
+        """
+        graph = self.storage.graph
+        if lambda_weight <= 0.0 or not reference_ids or chunk_id not in graph:
+            return 0.0
+
+        call_neighbors: set[str] = set()
+        for _, target, key in graph.out_edges(chunk_id, keys=True):
+            if key == "calls":
+                call_neighbors.add(target)
+        for source, _, key in graph.in_edges(chunk_id, keys=True):
+            if key == "calls":
+                call_neighbors.add(source)
+
+        shared = len(call_neighbors.intersection(reference_ids))
+        if shared == 0:
+            return 0.0
+        return lambda_weight * math.log2(1 + shared)
 
     def find_entry_points(self) -> list[str]:
         """

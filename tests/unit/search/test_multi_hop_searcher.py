@@ -6,6 +6,7 @@ Extracted from test_hybrid_search.py (Phase 3.4 refactoring).
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 from search.config import SearchConfig
 from search.multi_hop_searcher import MultiHopSearcher
@@ -652,6 +653,9 @@ class TestMultiHopSearcher:
         config.multi_hop.initial_k_multiplier = 2.0
         config.multi_hop.multi_hop_mode = "graph"
         config.reranker.single_pass = False
+        # Mock configs must disable A1 scoring explicitly — a truthy Mock attr
+        # would otherwise route _graph_expand into the scoring path.
+        config.graph_enhanced.graph_hop_call_evidence_enabled = False
 
         # Provide initial results from hop 1
         self.mock_single_hop_callback.return_value = [
@@ -787,3 +791,182 @@ class TestIntentAdaptiveWeights:
             assert mock_expand.called
             call_args = mock_expand.call_args
             assert call_args.kwargs.get("edge_weights") == custom_weights
+
+
+class TestCallEvidenceScoring:
+    """Tests for A1: call-evidence scoring of graph-hop candidates.
+
+    Default-off contract: with graph_hop_call_evidence_enabled=False (or no
+    config threaded at all), _graph_expand assigns the legacy 0.0 score.
+    Enabled: score = min(anchor * cosine + call_evidence, anchor), with
+    cosines from batched FAISS reconstruction and a 0.5 decay fallback.
+    """
+
+    NEIGHBOR = "src/b.py:20-30:function:bar"
+    ANCHOR = "src/a.py:1-10:function:foo"
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.mock_embedder = MagicMock()
+        self.mock_dense_index = MagicMock()
+        self.mock_single_hop_callback = MagicMock()
+        self.mock_reranking_engine = MagicMock()
+        self.mock_graph_storage = MagicMock()
+
+        self.searcher = MultiHopSearcher(
+            embedder=self.mock_embedder,
+            dense_index=self.mock_dense_index,
+            single_hop_callback=self.mock_single_hop_callback,
+            reranking_engine=self.mock_reranking_engine,
+            graph_storage=self.mock_graph_storage,
+        )
+
+    def _expand(self, config=None, query_embedding=None, anchor_score=0.8):
+        """Run _graph_expand over one anchor with one graph neighbor."""
+        initial_results = [
+            SearchResult(chunk_id=self.ANCHOR, score=anchor_score, metadata={}),
+        ]
+        all_chunk_ids = {self.ANCHOR}
+        all_results = {self.ANCHOR: initial_results[0]}
+
+        self.mock_graph_storage.get_neighbors.return_value = {self.NEIGHBOR}
+        self.mock_dense_index.get_chunk_by_id.return_value = {"file": "src/b.py"}
+
+        self.searcher._graph_expand(
+            initial_results=initial_results,
+            all_chunk_ids=all_chunk_ids,
+            all_results=all_results,
+            expansion_k=5,
+            k=5,
+            query_embedding=query_embedding,
+            config=config,
+        )
+        return all_results
+
+    def test_default_config_scores_zero(self):
+        """Byte-identity: real default config keeps the legacy 0.0 score and
+        never enters the scoring helper."""
+        with patch.object(self.searcher, "_score_graph_candidates") as mock_score:
+            all_results = self._expand(config=SearchConfig())
+        assert all_results[self.NEIGHBOR].score == 0.0
+        assert all_results[self.NEIGHBOR].source == "graph_hop"
+        mock_score.assert_not_called()
+
+    def test_no_config_scores_zero(self):
+        """Byte-identity: legacy callers that thread no config get 0.0."""
+        all_results = self._expand(config=None)
+        assert all_results[self.NEIGHBOR].score == 0.0
+
+    def test_enabled_scores_on_anchor_scale(self):
+        """Enabled: score = anchor * cosine + evidence, below the anchor cap."""
+        config = SearchConfig()
+        config.graph_enhanced.graph_hop_call_evidence_enabled = True
+        config.graph_enhanced.graph_hop_call_evidence_lambda = 0.05
+
+        query_embedding = np.array([1.0, 0.0, 0.0])
+        self.mock_dense_index.chunk_ids = [self.NEIGHBOR]
+        self.mock_dense_index._faiss_index.reconstruct.return_value = np.array(
+            [0.25, 0.5, 0.0]
+        )
+
+        with patch("graph.graph_queries.GraphQueryEngine") as mock_engine_cls:
+            mock_engine_cls.return_value.score_call_evidence.return_value = 0.1
+            all_results = self._expand(
+                config=config, query_embedding=query_embedding, anchor_score=0.8
+            )
+
+        # 0.8 * 0.25 + 0.1 = 0.3, under the 0.8 anchor cap
+        assert all_results[self.NEIGHBOR].score == pytest.approx(0.3)
+        # Evidence is conditioned on the hop-1 snapshot, not other candidates
+        evidence_call = mock_engine_cls.return_value.score_call_evidence.call_args
+        assert evidence_call.args[0] == self.NEIGHBOR
+        assert evidence_call.args[1] == frozenset({self.ANCHOR})
+
+    def test_enabled_caps_at_anchor_score(self):
+        """A candidate never outranks its own anchor, however large the
+        evidence term is."""
+        config = SearchConfig()
+        config.graph_enhanced.graph_hop_call_evidence_enabled = True
+
+        query_embedding = np.array([1.0, 0.0, 0.0])
+        self.mock_dense_index.chunk_ids = [self.NEIGHBOR]
+        self.mock_dense_index._faiss_index.reconstruct.return_value = np.array(
+            [1.0, 0.0, 0.0]
+        )
+
+        with patch("graph.graph_queries.GraphQueryEngine") as mock_engine_cls:
+            mock_engine_cls.return_value.score_call_evidence.return_value = 5.0
+            all_results = self._expand(
+                config=config, query_embedding=query_embedding, anchor_score=0.8
+            )
+
+        assert all_results[self.NEIGHBOR].score == pytest.approx(0.8)
+
+    def test_enabled_bm25_mode_uses_decay_fallback(self):
+        """query_embedding is None in BM25 mode: cosine falls back to the
+        0.5 decay, evidence still applies — no crash."""
+        config = SearchConfig()
+        config.graph_enhanced.graph_hop_call_evidence_enabled = True
+
+        with patch("graph.graph_queries.GraphQueryEngine") as mock_engine_cls:
+            mock_engine_cls.return_value.score_call_evidence.return_value = 0.1
+            all_results = self._expand(
+                config=config, query_embedding=None, anchor_score=0.8
+            )
+
+        # 0.8 * 0.5 + 0.1 = 0.5
+        assert all_results[self.NEIGHBOR].score == pytest.approx(0.5)
+
+    def test_scoring_failure_falls_back_to_zero(self):
+        """A scoring crash degrades to the legacy 0.0, never fails the search."""
+        config = SearchConfig()
+        config.graph_enhanced.graph_hop_call_evidence_enabled = True
+
+        with patch.object(
+            self.searcher, "_score_graph_candidates", side_effect=RuntimeError("boom")
+        ):
+            all_results = self._expand(config=config)
+
+        assert all_results[self.NEIGHBOR].score == 0.0
+
+    def test_similarities_missing_id_gets_fallback(self):
+        """Ids absent from the dense index get the 0.5 decay; mapped ids get
+        their reconstructed cosine."""
+        self.mock_dense_index.chunk_ids = ["known"]
+        self.mock_dense_index._faiss_index.reconstruct.return_value = np.array(
+            [0.9, 0.0]
+        )
+
+        sims = self.searcher._graph_candidate_similarities(
+            ["known", "unknown"], np.array([1.0, 0.0])
+        )
+
+        assert sims[0] == pytest.approx(0.9)
+        assert sims[1] == 0.5
+
+    def test_search_threads_query_embedding_and_config(self):
+        """search() threads the pre-computed query embedding and config into
+        _graph_expand (hybrid mode dispatches through _hybrid_expand)."""
+        config = SearchConfig()
+        query_emb = np.array([1.0, 0.0, 0.0])
+        self.mock_embedder.embed_query.return_value = query_emb
+
+        self.mock_single_hop_callback.return_value = [
+            SearchResult(chunk_id=self.ANCHOR, score=0.9, metadata={}),
+        ]
+        self.mock_reranking_engine.rerank_by_query.side_effect = lambda **kwargs: (
+            kwargs["results"]
+        )
+        self.mock_graph_storage.get_neighbors.return_value = set()
+
+        with patch.object(self.searcher, "_graph_expand") as mock_expand:
+            mock_expand.return_value = {}
+            self.searcher.search(
+                _request(query="test", k=5, search_mode="hybrid", config=config),
+                hops=2,
+            )
+
+        assert mock_expand.called
+        kwargs = mock_expand.call_args.kwargs
+        assert np.array_equal(kwargs["query_embedding"], query_emb)
+        assert kwargs["config"] is config
