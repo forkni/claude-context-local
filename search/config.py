@@ -1107,6 +1107,27 @@ class GraphEnhancedConfig:
             reader="search/multi_hop_searcher.py",
         ),
     )
+    # DyCoder-style confidence-weighted traversal (A2): drop graph edges whose
+    # resolver_confidence falls below this floor during _graph_expand's
+    # get_neighbors BFS. Edges without the float attribute count as 1.0 and
+    # always survive. Ships as 0.0 = byte-identical no-op pending A/B.
+    min_traversal_confidence: float = field(
+        default=0.0,
+        metadata=spec(
+            flat_alias="min_traversal_confidence",
+            reader="search/multi_hop_searcher.py",
+        ),
+    )
+    # Weighted BFS only: multiply each edge's type-weight by its
+    # resolver_confidence so ambiguous-AST edges (0.5) stop competing equally
+    # with resolver-validated edges (0.98) for expansion priority.
+    traversal_confidence_weighting_enabled: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="traversal_confidence_weighting_enabled",
+            reader="search/multi_hop_searcher.py",
+        ),
+    )
 
 
 @dataclass

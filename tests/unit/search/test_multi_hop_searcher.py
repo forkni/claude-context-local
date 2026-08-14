@@ -654,8 +654,11 @@ class TestMultiHopSearcher:
         config.multi_hop.multi_hop_mode = "graph"
         config.reranker.single_pass = False
         # Mock configs must disable A1 scoring explicitly — a truthy Mock attr
-        # would otherwise route _graph_expand into the scoring path.
+        # would otherwise route _graph_expand into the scoring path. A2's
+        # traversal knobs likewise need real values, not Mock attrs.
         config.graph_enhanced.graph_hop_call_evidence_enabled = False
+        config.graph_enhanced.min_traversal_confidence = 0.0
+        config.graph_enhanced.traversal_confidence_weighting_enabled = False
 
         # Provide initial results from hop 1
         self.mock_single_hop_callback.return_value = [
@@ -943,6 +946,33 @@ class TestCallEvidenceScoring:
 
         assert sims[0] == pytest.approx(0.9)
         assert sims[1] == 0.5
+
+    def test_traversal_confidence_defaults_are_noop(self):
+        """A2 byte-identity: a default config threads floor 0.0 and weighting
+        False into get_neighbors."""
+        self._expand(config=SearchConfig())
+        kwargs = self.mock_graph_storage.get_neighbors.call_args.kwargs
+        assert kwargs["min_confidence"] == 0.0
+        assert kwargs["confidence_weighting"] is False
+
+    def test_no_config_traversal_defaults(self):
+        """Legacy callers threading no config get the same no-op traversal."""
+        self._expand(config=None)
+        kwargs = self.mock_graph_storage.get_neighbors.call_args.kwargs
+        assert kwargs["min_confidence"] == 0.0
+        assert kwargs["confidence_weighting"] is False
+
+    def test_traversal_confidence_threaded_from_config(self):
+        """A2: config values reach get_neighbors on every anchor expansion."""
+        config = SearchConfig()
+        config.graph_enhanced.min_traversal_confidence = 0.7
+        config.graph_enhanced.traversal_confidence_weighting_enabled = True
+
+        self._expand(config=config)
+
+        kwargs = self.mock_graph_storage.get_neighbors.call_args.kwargs
+        assert kwargs["min_confidence"] == 0.7
+        assert kwargs["confidence_weighting"] is True
 
     def test_search_threads_query_embedding_and_config(self):
         """search() threads the pre-computed query embedding and config into

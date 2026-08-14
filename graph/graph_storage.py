@@ -450,6 +450,8 @@ class CodeGraphStorage:
         max_depth: int = 1,
         exclude_import_categories: list[str] | None = None,
         edge_weights: dict[str, float] | None = None,
+        min_confidence: float = 0.0,
+        confidence_weighting: bool = False,
     ) -> set[str]:
         """
         Get all related chunks within max_depth hops.
@@ -465,6 +467,15 @@ class CodeGraphStorage:
             edge_weights: Optional edge-type weights for weighted BFS (higher weight = higher priority).
                 When None, uses unweighted BFS (default behavior). When provided, uses priority queue
                 to expand higher-weight edges first.
+            min_confidence: Drop edges whose ``resolver_confidence`` falls below
+                this floor (both BFS modes). Edges without the float attribute
+                (non-call, legacy, unresolved) count as 1.0 and always survive.
+                Default 0.0 = no-op. Drops edges, not nodes — a neighbor also
+                reachable through a surviving edge is still returned.
+            confidence_weighting: Weighted BFS only — multiply each edge's
+                type-weight by its ``resolver_confidence`` so unvalidated
+                (ambiguous-AST) edges stop competing equally with resolver-
+                validated ones for expansion priority. Default False = no-op.
 
         Returns:
             Set of related chunk IDs
@@ -492,9 +503,14 @@ class CodeGraphStorage:
                 current_id, depth = queue.popleft()
                 if depth >= max_depth:
                     continue
-                for neighbor, _edge_type in self._iter_matching_neighbors(
+                for neighbor, _edge_type, edge_data in self._iter_matching_neighbors(
                     current_id, relation_types, exclude_import_categories
                 ):
+                    if (
+                        min_confidence > 0.0
+                        and self._edge_confidence(edge_data) < min_confidence
+                    ):
+                        continue  # Drop this edge; neighbor may arrive via another
                     if neighbor not in visited:
                         neighbors.add(neighbor)
                         visited.add(neighbor)
@@ -512,32 +528,55 @@ class CodeGraphStorage:
                 _neg_weight, _, current_id, depth = heapq.heappop(pq)
                 if depth >= max_depth:
                     continue
-                for neighbor, edge_type in self._iter_matching_neighbors(
+                for neighbor, edge_type, edge_data in self._iter_matching_neighbors(
                     current_id, relation_types, exclude_import_categories
                 ):
+                    confidence = self._edge_confidence(edge_data)
+                    if min_confidence > 0.0 and confidence < min_confidence:
+                        continue  # Drop this edge; neighbor may arrive via another
                     if neighbor not in visited:
                         neighbors.add(neighbor)
                         visited.add(neighbor)
                         # Get weight for the forward edge type (not reverse)
                         weight = edge_weights.get(edge_type, 0.5)
+                        if confidence_weighting:
+                            weight *= confidence
                         counter += 1
                         heapq.heappush(pq, (-weight, counter, neighbor, depth + 1))
 
         return neighbors
+
+    @staticmethod
+    def _edge_confidence(edge_data: dict) -> float:
+        """Resolver confidence of an edge for traversal decisions.
+
+        Reads only the float ``resolver_confidence`` the resolver pipeline
+        writes onto calls edges. Edges without it (non-call relationship
+        edges, legacy edges, unresolved calls) default to 1.0 so they
+        traverse exactly as before. Never parses the legacy string
+        ``confidence`` tags ("exact"/"ambiguous"/"recovered") — those are
+        display tokens preserved as strings by design.
+        """
+        confidence = edge_data.get("resolver_confidence", 1.0)
+        if isinstance(confidence, (int, float)):
+            return float(confidence)
+        return 1.0
 
     def _iter_matching_neighbors(
         self,
         current_id: str,
         relation_types: list[str],
         exclude_import_categories: list[str] | None,
-    ) -> Iterator[tuple[str, str]]:
-        """Yield ``(neighbor_id, edge_type)`` for each edge of ``current_id`` that matches.
+    ) -> Iterator[tuple[str, str, dict]]:
+        """Yield ``(neighbor_id, edge_type, edge_data)`` for each matching edge of ``current_id``.
 
         Forward (outgoing) edges are yielded first, then reverse (incoming) edges — the
         same order the BFS bodies in :meth:`get_neighbors` relied on.  ``edge_type`` is
         always the *forward* (stored) relationship type, so callers can compute edge
         weights from it (preserving the "weight for the forward edge type, not reverse"
-        invariant used by the weighted BFS).
+        invariant used by the weighted BFS).  ``edge_data`` is the edge's attribute
+        dict, so callers can additionally read per-edge attributes such as
+        ``resolver_confidence`` (confidence-weighted traversal) without re-querying.
 
         This is the single source of truth for edge-type resolution, requested-type
         matching, and the ``imports`` exclusion filter that was previously duplicated
@@ -564,7 +603,7 @@ class CodeGraphStorage:
                     )
                 ):
                     continue
-                yield target, edge_type
+                yield target, edge_type, edge_data
         # Reverse (incoming) relationships — reverse type matched, forward type yielded
         for source, _, edge_data in self.graph.in_edges(current_id, data=True):
             edge_type = edge_relation_type(edge_data)
@@ -583,7 +622,7 @@ class CodeGraphStorage:
                     )
                 ):
                     continue
-                yield source, edge_type
+                yield source, edge_type, edge_data
 
     def _get_reverse_relation_type(self, relation_type: str) -> str:
         """

@@ -211,12 +211,21 @@ class MultiHopSearcher:
         # (neighbor_id, metadata, anchor_score) awaiting score assignment
         pending: list[tuple[str, dict, float]] = []
 
+        ge_cfg = getattr(config, "graph_enhanced", None) if config is not None else None
+        min_confidence = 0.0
+        confidence_weighting = False
+        if ge_cfg is not None:
+            min_confidence = ge_cfg.min_traversal_confidence
+            confidence_weighting = ge_cfg.traversal_confidence_weighting_enabled
+
         for result in source_results:
             # Weighted BFS -- prioritizes calls (1.0) over imports (0.3)
             neighbors: set[str] = self.graph_storage.get_neighbors(
                 chunk_id=result.chunk_id,
                 max_depth=1,
                 edge_weights=edge_weights or DEFAULT_EDGE_WEIGHTS,
+                min_confidence=min_confidence,
+                confidence_weighting=confidence_weighting,
             )
 
             added_for_source = 0
@@ -242,7 +251,6 @@ class MultiHopSearcher:
                 hop_discovered += 1
                 added_for_source += 1
 
-        ge_cfg = getattr(config, "graph_enhanced", None) if config is not None else None
         if pending and ge_cfg is not None and ge_cfg.graph_hop_call_evidence_enabled:
             try:
                 scores = self._score_graph_candidates(

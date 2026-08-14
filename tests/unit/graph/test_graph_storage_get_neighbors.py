@@ -5,7 +5,9 @@ Tests verify that get_neighbors() supports all 21 relationship types beyond the
 original "calls"/"called_by" limitation.
 """
 
+import heapq
 import tempfile
+from unittest.mock import patch
 
 import pytest
 
@@ -452,3 +454,136 @@ def test_exclude_import_categories_with_weighted_bfs(graph_storage):
         edge_weights=edge_weights,
     )
     assert filtered_imports == {"local.py:1-10:module:local_module"}
+
+
+class TestConfidenceTraversal:
+    """Tests for A2: confidence-weighted traversal in get_neighbors.
+
+    ``min_confidence`` drops edges whose float ``resolver_confidence`` falls
+    below the floor (both BFS modes); edges without the float (non-call,
+    legacy, unresolved) count as 1.0 and always survive. The legacy string
+    ``confidence`` tags are never parsed. ``confidence_weighting`` multiplies
+    the weighted-BFS type-weight by the edge's confidence.
+    """
+
+    A = "test.py:1-10:function:A"
+    B = "test.py:20-30:function:B"
+    C = "test.py:40-50:function:C"
+    D = "test.py:60-70:function:D"
+
+    @pytest.fixture
+    def confidence_graph(self, graph_storage):
+        """A calls B (ambiguous 0.5), C (LSP 0.98), D (legacy string tag only)."""
+        for chunk_id, name in [
+            (self.A, "A"),
+            (self.B, "B"),
+            (self.C, "C"),
+            (self.D, "D"),
+        ]:
+            graph_storage.add_node(
+                chunk_id=chunk_id,
+                name=name,
+                chunk_type="function",
+                file_path="test.py",
+            )
+        graph_storage.graph.add_edge(
+            self.A, self.B, relationship_type="calls", resolver_confidence=0.5
+        )
+        graph_storage.graph.add_edge(
+            self.A, self.C, relationship_type="calls", resolver_confidence=0.98
+        )
+        graph_storage.graph.add_edge(
+            self.A, self.D, relationship_type="calls", confidence="ambiguous"
+        )
+        return graph_storage
+
+    def test_default_floor_is_byte_identical(self, confidence_graph):
+        """min_confidence=0.0 (default) returns every edge, however low its
+        resolver_confidence."""
+        neighbors = confidence_graph.get_neighbors(self.A, relation_types=["calls"])
+        assert neighbors == {self.B, self.C, self.D}
+
+    def test_floor_drops_low_confidence_unweighted(self, confidence_graph):
+        """Unweighted BFS: the 0.5 ambiguous edge is dropped at floor 0.6;
+        the LSP edge and the confidence-free edge (counts as 1.0) survive."""
+        neighbors = confidence_graph.get_neighbors(
+            self.A, relation_types=["calls"], min_confidence=0.6
+        )
+        assert neighbors == {self.C, self.D}
+
+    def test_floor_drops_low_confidence_weighted(self, confidence_graph):
+        """Weighted BFS applies the same floor."""
+        neighbors = confidence_graph.get_neighbors(
+            self.A,
+            relation_types=["calls"],
+            min_confidence=0.6,
+            edge_weights={"calls": 1.0},
+        )
+        assert neighbors == {self.C, self.D}
+
+    def test_legacy_string_tag_never_parsed(self, confidence_graph):
+        """An edge carrying only the string tag ("ambiguous") counts as 1.0 —
+        it survives a floor that drops even the 0.98 LSP edge."""
+        neighbors = confidence_graph.get_neighbors(
+            self.A, relation_types=["calls"], min_confidence=0.99
+        )
+        assert neighbors == {self.D}
+
+    def test_floor_drops_edges_not_nodes(self, confidence_graph):
+        """A neighbor whose low-confidence edge is dropped is still returned
+        when another surviving edge reaches it."""
+        # Forward edge A->B (0.5) is floored out on its own...
+        assert self.B not in confidence_graph.get_neighbors(
+            self.A, relation_types=["calls", "called_by"], min_confidence=0.6
+        )
+        # ...but a reverse call edge B->A (no float attr -> 1.0) revives B.
+        confidence_graph.graph.add_edge(self.B, self.A, relationship_type="calls")
+        neighbors = confidence_graph.get_neighbors(
+            self.A, relation_types=["calls", "called_by"], min_confidence=0.6
+        )
+        assert self.B in neighbors
+
+    def _captured_push_weights(self, storage, confidence_weighting):
+        """Run a weighted BFS and capture the priority-queue weight per neighbor."""
+        pushes = []
+        # Bind before patching: graph_storage shares this module object, so
+        # calling heapq.heappush inside the spy would recurse into the patch.
+        original_push = heapq.heappush
+
+        def spy(pq, item):
+            pushes.append(item)
+            original_push(pq, item)
+
+        with patch("graph.graph_storage.heapq.heappush", side_effect=spy):
+            storage.get_neighbors(
+                self.A,
+                relation_types=["calls"],
+                edge_weights={"calls": 1.0},
+                confidence_weighting=confidence_weighting,
+            )
+        return {item[2]: -item[0] for item in pushes}
+
+    def test_confidence_weighting_multiplies_push_weight(self, confidence_graph):
+        """Enabled: expansion priority = type-weight * resolver_confidence;
+        edges without the float keep the bare type-weight."""
+        weights = self._captured_push_weights(
+            confidence_graph, confidence_weighting=True
+        )
+        assert weights[self.B] == pytest.approx(0.5)  # 1.0 * 0.5 ambiguous
+        assert weights[self.C] == pytest.approx(0.98)  # 1.0 * 0.98 LSP
+        assert weights[self.D] == pytest.approx(1.0)  # no float attr
+
+    def test_confidence_weighting_disabled_keeps_type_weight(self, confidence_graph):
+        """Disabled (default): every calls edge pushes at the bare type-weight."""
+        weights = self._captured_push_weights(
+            confidence_graph, confidence_weighting=False
+        )
+        assert weights == {self.B: 1.0, self.C: 1.0, self.D: 1.0}
+
+    def test_edge_confidence_reads_only_float(self, graph_storage):
+        """_edge_confidence: floats/ints pass through, everything else -> 1.0."""
+        assert graph_storage._edge_confidence({"resolver_confidence": 0.75}) == 0.75
+        assert graph_storage._edge_confidence({"resolver_confidence": 1}) == 1.0
+        assert graph_storage._edge_confidence({}) == 1.0
+        assert graph_storage._edge_confidence({"confidence": "ambiguous"}) == 1.0
+        assert graph_storage._edge_confidence({"resolver_confidence": "0.5"}) == 1.0
