@@ -404,6 +404,46 @@ class TestRerankingEngine:
 
         assert mock_create_reranker.call_args.kwargs["listwise_dtype"] == "fp32"
 
+    @patch("search.reranking_engine.torch")
+    @patch("search.reranking_engine.create_reranker")
+    def test_ensure_reranker_threads_doc_representation_mode_from_config(
+        self, mock_create_reranker, mock_torch
+    ):
+        """_ensure_reranker must pass reranker.doc_representation_mode.
+
+        The A4 pilot knob (RerankerConfig.doc_representation_mode) is
+        construction-baked — if this kwarg is dropped, a deployed
+        "signature_head" silently builds full-body documents and the
+        setting is a no-op.
+        """
+        mock_torch.cuda.is_available.return_value = True
+        mock_torch.cuda.mem_get_info.return_value = (
+            5 * 1024**3,  # 5 GB free
+            8 * 1024**3,  # 8 GB total
+        )
+        instance = MagicMock()
+        instance.model_name = "jinaai/jina-reranker-v3"
+        mock_create_reranker.return_value = instance
+
+        config = SearchConfig(
+            reranker=RerankerConfig(
+                enabled=True,
+                model_name="jinaai/jina-reranker-v3",
+                doc_representation_mode="signature_head",
+                min_vram_gb=4.0,
+            )
+        )
+        with patch("search.reranking_engine.get_search_config") as mock_config:
+            mock_config.return_value = config
+            results = [SearchResult(chunk_id="chunk1", score=0.5, metadata={})]
+            instance.rerank.return_value = results
+            self.engine.rerank_by_query("test query", results, k=1)
+
+        assert (
+            mock_create_reranker.call_args.kwargs["doc_representation_mode"]
+            == "signature_head"
+        )
+
     # ------------------------------------------------------------------
     # R1: single config fetch per rerank pass (direct proof)
     # ------------------------------------------------------------------

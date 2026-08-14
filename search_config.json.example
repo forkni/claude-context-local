@@ -75,6 +75,7 @@
     "doc_max_chars": 4000,
     "listwise_doc_max_chars": 1000,
     "listwise_dtype": "auto",
+    "doc_representation_mode": "full",
     "hop1_reserved_slots": 6
   },
   "query_expansion": {

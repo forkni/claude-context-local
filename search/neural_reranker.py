@@ -84,8 +84,15 @@ def _resolve_single_token_id(tokenizer: "AutoModel", text: str) -> int:
     )
 
 
-def _build_rerank_document(candidate, max_chars: int) -> str:
-    """Full chunk text with structural context, capped to the reranker's budget.
+# signature_head mode caps (see _build_rerank_document): head-line count is
+# roughly "signature + decorators + first statements"; the docstring cap keeps
+# a long module docstring from consuming the whole body budget.
+_SIGNATURE_HEAD_LINES = 12
+_SIGNATURE_HEAD_DOCSTRING_CAP = 300
+
+
+def _build_rerank_document(candidate, max_chars: int, mode: str = "full") -> str:
+    """Chunk text with structural context, capped to the reranker's budget.
 
     Fallback chain, highest fidelity first: ``bm25_text`` (full raw chunk
     source, persisted per-chunk so ``resync_bm25_from_dense`` can rebuild BM25
@@ -103,19 +110,56 @@ def _build_rerank_document(candidate, max_chars: int) -> str:
     Args:
         candidate: SearchResult with ``.chunk_id`` and ``.metadata``
         max_chars: Maximum length of the document body (header excluded)
+        mode: Document representation (``RerankerConfig.doc_representation_mode``).
+            ``"full"`` — the full source body (behaviour unchanged, byte-identical
+            to the pre-A4 builder). ``"signature_head"`` — body-light A4 pilot:
+            ``path: .. | parent: ..`` line + capped docstring + first
+            ``_SIGNATURE_HEAD_LINES`` source lines, all sharing ``max_chars``.
 
     Returns:
         ``"ID: {chunk_id}\\n{body}"``, body truncated to ``max_chars``
 
+    Raises:
+        ValueError: On an unrecognized ``mode`` (RerankerConfig's ``choices``
+            validation normally catches this upstream).
+
     Note: the ``ID:`` header is prepended *after* truncation, so it is never
-    counted against ``max_chars`` — the real per-document payload handed to
-    the reranker is ``max_chars`` plus header length. Harmless at today's
-    values, but any future packed-sequence budget arithmetic (see
-    ``JinaRerankerV3.__init__`` and ADR-0011) should account for it.
+    counted against ``max_chars`` in EITHER mode — the real per-document
+    payload handed to the reranker is ``max_chars`` plus header length.
+    Harmless at today's values, but any future packed-sequence budget
+    arithmetic (see ``JinaRerankerV3.__init__`` and ADR-0011) should account
+    for it.
     """
-    body = candidate.metadata.get("bm25_text") or candidate.metadata.get(
+    if mode not in ("full", "signature_head"):
+        raise ValueError(
+            f"Unsupported doc_representation_mode {mode!r}; "
+            "expected 'full' or 'signature_head'"
+        )
+
+    source = candidate.metadata.get("bm25_text") or candidate.metadata.get(
         "content_preview", ""
     )
+
+    if mode == "signature_head":
+        parts: list[str] = []
+        context_bits: list[str] = []
+        path = candidate.metadata.get("relative_path", "")
+        parent = candidate.metadata.get("parent_name", "")
+        if path:
+            context_bits.append(f"path: {path}")
+        if parent:
+            context_bits.append(f"parent: {parent}")
+        if context_bits:
+            parts.append(" | ".join(context_bits))
+        docstring = candidate.metadata.get("docstring", "")
+        if docstring:
+            parts.append(docstring[:_SIGNATURE_HEAD_DOCSTRING_CAP])
+        if source:
+            parts.append("\n".join(source.splitlines()[:_SIGNATURE_HEAD_LINES]))
+        body = "\n".join(parts)
+    else:
+        body = source
+
     if not body:
         body = candidate.chunk_id
     if len(body) > max_chars:
@@ -460,6 +504,7 @@ class GenerativeReranker(BaseReranker):
         instruction: str | None = None,
         batch_size: int = 16,
         doc_max_chars: int = 4000,
+        doc_representation_mode: str = "full",
     ):
         """Initialize GenerativeReranker with lazy loading.
 
@@ -476,6 +521,9 @@ class GenerativeReranker(BaseReranker):
                 ``_build_rerank_document``). Pointwise architecture — cost scales
                 with ``batch_size * doc_max_chars`` per forward pass, so this can
                 afford a larger budget than the listwise ``JinaRerankerV3``.
+            doc_representation_mode: How ``_build_rerank_document`` renders each
+                candidate ("full" or "signature_head"); see
+                ``RerankerConfig.doc_representation_mode``. Construction-baked.
         """
         self.model_name = model_name
         self.instruction = (
@@ -483,6 +531,7 @@ class GenerativeReranker(BaseReranker):
         )
         self.batch_size = batch_size
         self.doc_max_chars = doc_max_chars
+        self.doc_representation_mode = doc_representation_mode
         self._model = None
         self._tokenizer = None
         # Resolved once in _ensure_loaded() and reused by rerank()'s autocast call so
@@ -614,7 +663,9 @@ class GenerativeReranker(BaseReranker):
         # (chat-wrapped <Instruct>/<Query>/<Document> fields; see module-level constants).
         prompts = []
         for candidate in candidates:
-            content = _build_rerank_document(candidate, self.doc_max_chars)
+            content = _build_rerank_document(
+                candidate, self.doc_max_chars, mode=self.doc_representation_mode
+            )
             prompt = (
                 f"{_QWEN_RERANK_SYSTEM_PREFIX}"
                 f"<Instruct>: {self.instruction}\n<Query>: {query}\n<Document>: {content}"
@@ -771,6 +822,7 @@ class JinaRerankerV3(BaseReranker):
         device: str | None = None,
         doc_max_chars: int = 1000,
         dtype: str = "auto",
+        doc_representation_mode: str = "full",
     ):
         """Initialize JinaRerankerV3 with lazy loading.
 
@@ -809,6 +861,9 @@ class JinaRerankerV3(BaseReranker):
                 worth the cost above. Aligned with
                 ``GenerativeReranker.doc_max_chars`` in neither value nor
                 rationale — that budget is pointwise and stays at 4000.
+            doc_representation_mode: How ``_build_rerank_document`` renders each
+                candidate ("full" or "signature_head"); see
+                ``RerankerConfig.doc_representation_mode``. Construction-baked.
         """
         if dtype not in self.DTYPE_MAP:
             raise ValueError(
@@ -818,6 +873,7 @@ class JinaRerankerV3(BaseReranker):
         self.model_name = model_name
         self.doc_max_chars = doc_max_chars
         self.dtype = dtype
+        self.doc_representation_mode = doc_representation_mode
         self._model = None
         # Memoizes _resolve_length_kwargs(); reset by _cleanup_extra() so a
         # cleanup() -> reload cycle re-introspects (e.g. after a model_name swap).
@@ -1068,7 +1124,9 @@ class JinaRerankerV3(BaseReranker):
 
         # Extract document texts for Jina API
         documents = [
-            _build_rerank_document(candidate, self.doc_max_chars)
+            _build_rerank_document(
+                candidate, self.doc_max_chars, mode=self.doc_representation_mode
+            )
             for candidate in candidates
         ]
 
@@ -1171,6 +1229,7 @@ def create_reranker(
     doc_max_chars: int = 4000,
     listwise_doc_max_chars: int = 1000,
     listwise_dtype: str = "auto",
+    doc_representation_mode: str = "full",
 ) -> "NeuralReranker | GenerativeReranker | JinaRerankerV3":
     """Factory function to create appropriate reranker based on model name.
 
@@ -1202,6 +1261,12 @@ def create_reranker(
         listwise_dtype: Only used for the Jina listwise rerankers (v3/v3.5)
             — weight dtype ("auto", "fp32", "bf16", "fp16"); see
             ``JinaRerankerV3.__init__``.
+        doc_representation_mode: Used by GenerativeReranker and the Jina
+            listwise rerankers — how ``_build_rerank_document`` renders each
+            candidate ("full" or "signature_head"); see
+            ``RerankerConfig.doc_representation_mode``. Ignored by
+            NeuralReranker, which builds pairs from ``content_preview``
+            directly and never calls the document builder.
 
     Returns:
         NeuralReranker, GenerativeReranker, or JinaRerankerV3 instance
@@ -1219,6 +1284,7 @@ def create_reranker(
             instruction=instruction,
             batch_size=batch_size,
             doc_max_chars=doc_max_chars,
+            doc_representation_mode=doc_representation_mode,
         )
     if model_name in JINA_LISTWISE_RERANKERS:
         return JinaRerankerV3(
@@ -1226,6 +1292,7 @@ def create_reranker(
             device,
             doc_max_chars=listwise_doc_max_chars,
             dtype=listwise_dtype,
+            doc_representation_mode=doc_representation_mode,
         )  # Listwise reranker
     if model_name.startswith("jinaai/"):
         # RerankerConfig.model_name has no `choices` constraint, and

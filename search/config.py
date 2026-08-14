@@ -637,7 +637,7 @@ class IntentConfig:
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (12 fields)."""
+    """Neural reranker settings (13 fields)."""
 
     enabled: bool = field(
         default=True,  # Enabled by default (Quality First)
@@ -772,6 +772,25 @@ class RerankerConfig:
     # config change needs a searcher reset to take effect (the SSCG
     # benchmark's --reranker-dtype handles this via
     # _maybe_reset_for_construction_overrides).
+    doc_representation_mode: str = field(
+        default="full",
+        metadata=spec(
+            choices=("full", "signature_head"),
+            flat_alias="reranker_doc_representation_mode",
+            env="CLAUDE_RERANKER_DOC_REPRESENTATION_MODE",
+            reader="search/neural_reranker.py",
+            construction_baked=True,
+        ),
+    )  # A4 pilot (docs/plans/RAG_IMPROVEMENT_ROADMAP_20260814.md): how
+    # _build_rerank_document renders each candidate for the listwise/generative
+    # rerankers. "full" = current behaviour (byte-identical). "signature_head" =
+    # ID header + path/parent line + capped docstring + ~12 head lines — a
+    # body-light representation probing whether full-body documents *dilute*
+    # listwise ranking. Default stays "full" unless the consolidated A/B
+    # campaign passes its recall CI gate. Construction-baked: the SSCG
+    # --reranker-sweep mode iterates configs within ONE process and
+    # _ensure_reranker() reloads only on model_name change — a mode-only
+    # change between sweep entries silently no-ops; use one process per arm.
     hop1_reserved_slots: int = field(
         default=6,  # Reserve up to N hop-1-ranked candidates into
         # the multi-hop rerank window (rerank_by_query) when hop-2 expansion pushes

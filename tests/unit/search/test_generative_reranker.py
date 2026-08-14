@@ -745,6 +745,174 @@ class TestBuildRerankDocument:
         assert result == "ID: a\nshort"
 
 
+class TestBuildRerankDocumentSignatureHead:
+    """A4 pilot: mode="signature_head" composition + mode="full" byte-identity."""
+
+    @staticmethod
+    def _legacy_build(candidate, max_chars):
+        """The pre-A4 builder algorithm, verbatim — byte-identity reference."""
+        body = candidate.metadata.get("bm25_text") or candidate.metadata.get(
+            "content_preview", ""
+        )
+        if not body:
+            body = candidate.chunk_id
+        if len(body) > max_chars:
+            body = body[:max_chars]
+        return f"ID: {candidate.chunk_id}\n{body}"
+
+    def test_full_mode_byte_identical_to_legacy_builder(self):
+        """mode="full" (explicit and default) must be character-identical to
+        the pre-A4 algorithm across the fallback chain and truncation."""
+        from search.neural_reranker import _build_rerank_document
+
+        cases = [
+            SearchResult(
+                chunk_id="a.py:1-10:function:f",
+                score=1.0,
+                metadata={"bm25_text": "def f():\n    pass", "content_preview": "p"},
+            ),
+            SearchResult(
+                chunk_id="b", score=1.0, metadata={"content_preview": "preview only"}
+            ),
+            SearchResult(chunk_id="empty_meta", score=1.0, metadata={}),
+            SearchResult(
+                chunk_id="long", score=1.0, metadata={"bm25_text": "y" * 5000}
+            ),
+        ]
+        for candidate in cases:
+            expected = self._legacy_build(candidate, 100)
+            assert _build_rerank_document(candidate, max_chars=100) == expected
+            assert (
+                _build_rerank_document(candidate, max_chars=100, mode="full")
+                == expected
+            )
+
+    def test_signature_head_composes_all_sections(self):
+        from search.neural_reranker import _build_rerank_document
+
+        source = "\n".join(f"line{i}" for i in range(20))
+        candidate = SearchResult(
+            chunk_id="pkg/mod.py:1-40:function:f",
+            score=1.0,
+            metadata={
+                "bm25_text": source,
+                "relative_path": "pkg/mod.py",
+                "parent_name": "MyClass",
+                "docstring": "Does the thing.",
+            },
+        )
+        result = _build_rerank_document(
+            candidate, max_chars=4000, mode="signature_head"
+        )
+        header, _, body = result.partition("\n")
+        assert header == "ID: pkg/mod.py:1-40:function:f"
+        expected_head = "\n".join(f"line{i}" for i in range(12))
+        assert (
+            body
+            == f"path: pkg/mod.py | parent: MyClass\nDoes the thing.\n{expected_head}"
+        )
+
+    def test_signature_head_caps_head_lines_at_12(self):
+        from search.neural_reranker import _build_rerank_document
+
+        source = "\n".join(f"line{i}" for i in range(30))
+        candidate = SearchResult(
+            chunk_id="a", score=1.0, metadata={"bm25_text": source}
+        )
+        result = _build_rerank_document(
+            candidate, max_chars=4000, mode="signature_head"
+        )
+        _, _, body = result.partition("\n")
+        assert "line11" in body
+        assert "line12" not in body
+
+    def test_signature_head_caps_docstring_at_300(self):
+        from search.neural_reranker import _build_rerank_document
+
+        candidate = SearchResult(
+            chunk_id="a",
+            score=1.0,
+            metadata={"docstring": "d" * 500, "bm25_text": "code"},
+        )
+        result = _build_rerank_document(
+            candidate, max_chars=4000, mode="signature_head"
+        )
+        _, _, body = result.partition("\n")
+        assert body == "d" * 300 + "\ncode"
+
+    def test_signature_head_missing_parent_omits_parent_segment(self):
+        from search.neural_reranker import _build_rerank_document
+
+        candidate = SearchResult(
+            chunk_id="a",
+            score=1.0,
+            metadata={"relative_path": "x.py", "bm25_text": "code"},
+        )
+        result = _build_rerank_document(
+            candidate, max_chars=4000, mode="signature_head"
+        )
+        _, _, body = result.partition("\n")
+        assert body == "path: x.py\ncode"
+
+    def test_signature_head_missing_path_and_parent_omits_context_line(self):
+        from search.neural_reranker import _build_rerank_document
+
+        candidate = SearchResult(
+            chunk_id="a", score=1.0, metadata={"bm25_text": "code"}
+        )
+        result = _build_rerank_document(
+            candidate, max_chars=4000, mode="signature_head"
+        )
+        assert result == "ID: a\ncode"
+
+    def test_signature_head_falls_back_to_content_preview(self):
+        from search.neural_reranker import _build_rerank_document
+
+        candidate = SearchResult(
+            chunk_id="a", score=1.0, metadata={"content_preview": "preview"}
+        )
+        result = _build_rerank_document(
+            candidate, max_chars=4000, mode="signature_head"
+        )
+        assert result == "ID: a\npreview"
+
+    def test_signature_head_empty_metadata_falls_back_to_chunk_id(self):
+        from search.neural_reranker import _build_rerank_document
+
+        candidate = SearchResult(chunk_id="chunk_x", score=1.0, metadata={})
+        result = _build_rerank_document(
+            candidate, max_chars=4000, mode="signature_head"
+        )
+        assert result == "ID: chunk_x\nchunk_x"
+
+    def test_signature_head_composed_body_truncated_to_max_chars(self):
+        from search.neural_reranker import _build_rerank_document
+
+        candidate = SearchResult(
+            chunk_id="a",
+            score=1.0,
+            metadata={
+                "relative_path": "pkg/mod.py",
+                "docstring": "d" * 300,
+                "bm25_text": "c" * 500,
+            },
+        )
+        result = _build_rerank_document(candidate, max_chars=50, mode="signature_head")
+        header, _, body = result.partition("\n")
+        assert header == "ID: a"
+        assert len(body) == 50
+        assert body.startswith("path: pkg/mod.py")
+
+    def test_unknown_mode_raises_value_error(self):
+        import pytest
+
+        from search.neural_reranker import _build_rerank_document
+
+        candidate = SearchResult(chunk_id="a", score=1.0, metadata={})
+        with pytest.raises(ValueError, match="doc_representation_mode"):
+            _build_rerank_document(candidate, max_chars=100, mode="signature")
+
+
 class TestTokenIdValidation:
     """Tests for _resolve_single_token_id helper."""
 
@@ -940,6 +1108,37 @@ class TestCreateRerankerFactory:
         context-dependent-scoring problem; pointwise rerankers are unaffected)."""
         reranker = create_reranker("BAAI/bge-reranker-v2-m3", listwise_dtype="fp32")
         assert not hasattr(reranker, "dtype")
+
+    def test_doc_representation_mode_passthrough_to_generative_reranker(self):
+        """doc_representation_mode must land on GenerativeReranker (A4 pilot)."""
+        reranker = create_reranker(
+            "Qwen/Qwen3-Reranker-0.6B", doc_representation_mode="signature_head"
+        )
+        assert isinstance(reranker, GenerativeReranker)
+        assert reranker.doc_representation_mode == "signature_head"
+
+    def test_doc_representation_mode_passthrough_to_jina(self):
+        """doc_representation_mode must land on JinaRerankerV3 (A4 pilot)."""
+        from search.neural_reranker import JinaRerankerV3
+
+        reranker = create_reranker(
+            "jinaai/jina-reranker-v3", doc_representation_mode="signature_head"
+        )
+        assert isinstance(reranker, JinaRerankerV3)
+        assert reranker.doc_representation_mode == "signature_head"
+
+    def test_doc_representation_mode_defaults_to_full(self):
+        for model in ("Qwen/Qwen3-Reranker-0.6B", "jinaai/jina-reranker-v3"):
+            reranker = create_reranker(model)
+            assert reranker.doc_representation_mode == "full"
+
+    def test_doc_representation_mode_ignored_for_cross_encoder(self):
+        """NeuralReranker builds pairs from content_preview directly and never
+        calls the document builder — the factory must not forward the mode."""
+        reranker = create_reranker(
+            "BAAI/bge-reranker-v2-m3", doc_representation_mode="signature_head"
+        )
+        assert not hasattr(reranker, "doc_representation_mode")
 
 
 class TestGenerativeRerankerIntegration:

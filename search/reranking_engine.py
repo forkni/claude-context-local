@@ -165,6 +165,7 @@ class RerankingEngine:
                 doc_max_chars=config.reranker.doc_max_chars,
                 listwise_doc_max_chars=config.reranker.listwise_doc_max_chars,
                 listwise_dtype=config.reranker.listwise_dtype,
+                doc_representation_mode=config.reranker.doc_representation_mode,
             )
             self._logger.debug(f"{log_prefix} Neural reranker initialized")
         elif (
@@ -187,6 +188,7 @@ class RerankingEngine:
                 doc_max_chars=config.reranker.doc_max_chars,
                 listwise_doc_max_chars=config.reranker.listwise_doc_max_chars,
                 listwise_dtype=config.reranker.listwise_dtype,
+                doc_representation_mode=config.reranker.doc_representation_mode,
             )
         elif not should_enable and self.neural_reranker is not None:
             self.neural_reranker.cleanup()
