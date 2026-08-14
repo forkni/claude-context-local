@@ -631,3 +631,137 @@ class TestImpactReportToDictKeyOrder(TestCase):
         report = self._make_report()
         d = report.to_dict()
         self.assertFalse(set(_RELATIONSHIP_FIELDS_TODAY) & d.keys())
+
+
+# ---------------------------------------------------------------------------
+# Tests: filter_ambiguous_edges — hide_ambiguous display filter (B1)
+# ---------------------------------------------------------------------------
+
+
+def _edge(cid: str, confidence: str) -> dict[str, Any]:
+    return {"chunk_id": cid, "confidence": confidence, "resolver_confidence": 0.5}
+
+
+class TestFilterAmbiguousEdges(TestCase):
+    """filter_ambiguous_edges drops string-tagged ambiguous call edges only."""
+
+    def _make_report_dict(self, **kwargs) -> dict[str, Any]:
+        from search.types import ImpactReport
+
+        defaults = {
+            "symbol": {"name": "t"},
+            "chunk_id": "src/t.py:function:t",
+            "direct_callers": [],
+            "indirect_callers": [],
+            "similar_code": [],
+            "total_impacted": 0,
+            "unique_files": set(),
+            "dependency_graph": {},
+        }
+        defaults.update(kwargs)
+        return ImpactReport(**defaults).to_dict()
+
+    def test_drops_ambiguous_from_all_three_call_lists(self):
+        """Ambiguous entries removed from direct_callers, direct_callees, AND
+        indirect_callers (the last is never routed through
+        _dedup_and_sort_edges, so the filter must cover it independently)."""
+        from search.relationship_analyzer import filter_ambiguous_edges
+
+        d = self._make_report_dict(
+            direct_callers=[
+                _edge("a.py:1-2:function:a", "exact"),
+                _edge("b.py:1-2:function:b", "ambiguous"),
+            ],
+            indirect_callers=[
+                _edge("c.py:1-2:function:c", "ambiguous"),
+                _edge("d.py:1-2:function:d", "recovered"),
+            ],
+            direct_callees=[_edge("e.py:1-2:function:e", "exact")],
+        )
+        out = filter_ambiguous_edges(d)
+        self.assertEqual(
+            [e["chunk_id"] for e in out["direct_callers"]], ["a.py:1-2:function:a"]
+        )
+        self.assertEqual(
+            [e["chunk_id"] for e in out["indirect_callers"]], ["d.py:1-2:function:d"]
+        )
+        self.assertEqual(
+            [e["chunk_id"] for e in out["direct_callees"]], ["e.py:1-2:function:e"]
+        )
+
+    def test_emptied_list_key_is_removed(self):
+        """A list that becomes empty is dropped entirely, matching
+        to_dict()'s omit-empty contract."""
+        from search.relationship_analyzer import filter_ambiguous_edges
+
+        d = self._make_report_dict(
+            direct_callees=[_edge("f.py:1-2:function:f", "ambiguous")],
+        )
+        out = filter_ambiguous_edges(d)
+        self.assertNotIn("direct_callees", out)
+
+    def test_totals_and_confidence_counters_untouched(self):
+        """total_impacted / file_count / caller+callee confidence breakdowns
+        stay pre-filter — the breakdown is the 'N were hidden' signal."""
+        from search.relationship_analyzer import filter_ambiguous_edges
+
+        d = self._make_report_dict(
+            direct_callers=[
+                _edge("a.py:1-2:function:a", "exact"),
+                _edge("b.py:1-2:function:b", "ambiguous"),
+            ],
+            total_impacted=2,
+            unique_files={"a.py", "b.py"},
+            direct_callers_exact=1,
+            direct_callers_ambiguous=1,
+        )
+        out = filter_ambiguous_edges(d)
+        self.assertEqual(out["total_impacted"], 2)
+        self.assertEqual(out["file_count"], 2)
+        self.assertEqual(out["caller_confidence"]["ambiguous"], 1)
+        self.assertEqual(out["caller_confidence"]["exact"], 1)
+
+    def test_float_confidence_relationship_buckets_untouched(self):
+        """The 'confidence' key is polymorphic — float on non-call buckets.
+        Those lists must pass through unfiltered."""
+        from search.relationship_analyzer import filter_ambiguous_edges
+
+        d = self._make_report_dict(
+            relationships={
+                "parent_classes": [{"chunk_id": "g.py:1-2:class:G", "confidence": 0.9}],
+                "imports": [{"chunk_id": "h.py:1-2:module:h", "confidence": 0.5}],
+            },
+        )
+        out = filter_ambiguous_edges(d)
+        self.assertEqual(len(out["parent_classes"]), 1)
+        self.assertEqual(len(out["imports"]), 1)
+
+    def test_no_ambiguous_entries_is_identity(self):
+        """A report with no ambiguous edges comes back equal to the input."""
+        from search.relationship_analyzer import filter_ambiguous_edges
+
+        d = self._make_report_dict(
+            direct_callers=[_edge("a.py:1-2:function:a", "exact")],
+        )
+        self.assertEqual(filter_ambiguous_edges(d), d)
+
+    def test_input_dict_not_mutated(self):
+        """Pure function: the caller's dict and its lists are unchanged."""
+        from search.relationship_analyzer import filter_ambiguous_edges
+
+        d = self._make_report_dict(
+            direct_callers=[
+                _edge("a.py:1-2:function:a", "exact"),
+                _edge("b.py:1-2:function:b", "ambiguous"),
+            ],
+        )
+        before = [e["chunk_id"] for e in d["direct_callers"]]
+        filter_ambiguous_edges(d)
+        self.assertEqual([e["chunk_id"] for e in d["direct_callers"]], before)
+
+    def test_missing_call_lists_tolerated(self):
+        """Reports with no caller/callee keys at all pass through unchanged."""
+        from search.relationship_analyzer import filter_ambiguous_edges
+
+        d = self._make_report_dict()
+        self.assertEqual(filter_ambiguous_edges(d), d)

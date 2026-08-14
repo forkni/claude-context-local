@@ -26,7 +26,7 @@ from search.exceptions import DimensionMismatchError
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
 from search.metadata import MetadataStore
-from search.relationship_analyzer import RelationshipAnalyzer
+from search.relationship_analyzer import RelationshipAnalyzer, filter_ambiguous_edges
 
 
 logger = logging.getLogger(__name__)
@@ -369,6 +369,7 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
     max_depth = arguments.get("max_depth", 3)
     exclude_dirs = arguments.get("exclude_dirs")
     relationship_types = arguments.get("relationship_types")
+    hide_ambiguous = arguments.get("hide_ambiguous", False)
 
     # Validate inputs
     if not chunk_id and not symbol_name:
@@ -401,6 +402,9 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
 
     # Convert to dict
     response = report.to_dict()
+
+    if hide_ambiguous:
+        response = filter_ambiguous_edges(response)
 
     # Add system message
     response = add_system_message(

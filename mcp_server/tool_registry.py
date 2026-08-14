@@ -668,6 +668,8 @@ RETURNS:
     - resolver_confidence: float (0.5–0.98, higher = more trusted)
 - direct_callees: list of chunks this symbol calls (outbound), same fields
 - caller_confidence / callee_confidence: breakdown (exact/recovered/ambiguous counts)
+  (always pre-filter totals — unaffected by hide_ambiguous, so a hidden-edge
+  count remains visible)
 - indirect_callers: multi-hop callers up to max_depth
 - similar_code: semantically similar implementations
 - dependency_graph: DOT-format graph for visualization
@@ -706,6 +708,11 @@ resolution no-ops unless the `[lsp]` extra is installed.""",
                     "type": "array",
                     "items": {"type": "string"},
                     "description": 'Filter to only include specific relationship types (e.g., ["inherits", "imports", "decorates"]). If not provided, all relationship types are included. Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager. Note: uses_global and asserts_type require entity tracking (enable_entity_tracking, default True) and a reindex to populate on an existing index.',
+                },
+                "hide_ambiguous": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": 'Hide call edges tagged confidence="ambiguous" from direct_callers, direct_callees, and indirect_callers (default: False). Display-layer filter only: total_impacted, affected_files, and the caller_confidence/callee_confidence breakdowns remain pre-filter totals, so the ambiguous count stays visible even when the edges are hidden.',
                 },
                 "output_format": {
                     "type": "string",

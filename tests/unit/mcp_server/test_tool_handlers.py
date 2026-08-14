@@ -764,6 +764,112 @@ async def test_handle_find_similar_code_default_k_from_config():
 
 
 # ============================================================================
+# FIND_CONNECTIONS TESTS - hide_ambiguous display filter
+# ============================================================================
+
+
+def _make_impact_report_with_ambiguous():
+    """Real ImpactReport containing one exact and one ambiguous direct caller."""
+    from search.types import ImpactReport
+
+    return ImpactReport(
+        symbol={"name": "target"},
+        chunk_id="src/t.py:function:target",
+        direct_callers=[
+            {
+                "chunk_id": "a.py:1-2:function:a",
+                "confidence": "exact",
+                "resolver_confidence": 0.9,
+            },
+            {
+                "chunk_id": "b.py:1-2:function:b",
+                "confidence": "ambiguous",
+                "resolver_confidence": 0.5,
+            },
+        ],
+        indirect_callers=[],
+        similar_code=[],
+        total_impacted=2,
+        unique_files={"a.py", "b.py"},
+        dependency_graph={},
+        direct_callers_exact=1,
+        direct_callers_ambiguous=1,
+    )
+
+
+def _patch_find_connections_deps():
+    """Common patch stack for handle_find_connections tests."""
+    return (
+        patch("mcp_server.tools.search_handlers.get_searcher"),
+        patch("mcp_server.tools.search_handlers.get_state"),
+        patch("mcp_server.tools.decorators.get_state"),
+        patch("mcp_server.tools.search_handlers.RelationshipAnalyzer"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_find_connections_default_keeps_ambiguous():
+    """Omitted hide_ambiguous defaults to False — byte-identical response."""
+    p_searcher, p_state, p_dec_state, p_analyzer = _patch_find_connections_deps()
+    with (
+        p_searcher,
+        p_state as mock_get_state,
+        p_dec_state as mock_dec_state,
+        p_analyzer as mock_analyzer_cls,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
+
+        mock_analyzer = Mock()
+        mock_analyzer.analyze_impact.return_value = _make_impact_report_with_ambiguous()
+        mock_analyzer_cls.from_searcher.return_value = mock_analyzer
+
+        result = await tool_handlers.handle_find_connections(
+            {"chunk_id": "src/t.py:function:target"}
+        )
+
+        assert [e["chunk_id"] for e in result["direct_callers"]] == [
+            "a.py:1-2:function:a",
+            "b.py:1-2:function:b",
+        ]
+        assert result["caller_confidence"]["ambiguous"] == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_find_connections_hide_ambiguous_filters_edges():
+    """hide_ambiguous=True drops ambiguous call edges but keeps the
+    pre-filter caller_confidence breakdown and total_impacted."""
+    p_searcher, p_state, p_dec_state, p_analyzer = _patch_find_connections_deps()
+    with (
+        p_searcher,
+        p_state as mock_get_state,
+        p_dec_state as mock_dec_state,
+        p_analyzer as mock_analyzer_cls,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
+
+        mock_analyzer = Mock()
+        mock_analyzer.analyze_impact.return_value = _make_impact_report_with_ambiguous()
+        mock_analyzer_cls.from_searcher.return_value = mock_analyzer
+
+        result = await tool_handlers.handle_find_connections(
+            {"chunk_id": "src/t.py:function:target", "hide_ambiguous": True}
+        )
+
+        assert [e["chunk_id"] for e in result["direct_callers"]] == [
+            "a.py:1-2:function:a"
+        ]
+        # Pre-filter totals remain the "N were hidden" signal
+        assert result["caller_confidence"]["ambiguous"] == 1
+        assert result["total_impacted"] == 2
+
+
+# ============================================================================
 # COMPLEX TOOLS TESTS (Simplified - full integration testing elsewhere)
 # ============================================================================
 
