@@ -39,6 +39,7 @@ def _make_plan(
     auto_reindex=True,
     max_age_minutes=5.0,
     max_context_tokens=0,
+    include_top_callers=False,
 ):
     from mcp_server.tools.search_orchestrator import SearchPlan
 
@@ -59,6 +60,7 @@ def _make_plan(
         auto_reindex=auto_reindex,
         max_age_minutes=max_age_minutes,
         max_context_tokens=max_context_tokens,
+        include_top_callers=include_top_callers,
     )
 
 
@@ -590,6 +592,38 @@ class TestBuildResponse:
             response = SearchOrchestrator._build_response(plan, [], subgraph_data)
         assert "subgraph_nodes" in response
         assert "subgraph_order" not in response
+
+
+class TestAssembleTopCallersGate:
+    """_assemble (Block E): top-caller enrichment runs iff plan opts in."""
+
+    def _run_assemble(self, plan):
+        orch = SearchOrchestrator()
+        orch._graph_scoring_stage = Mock()
+        orch._graph_scoring_stage.run.return_value = ([], None)
+        outcome = _make_outcome()
+        with (
+            patch(
+                "mcp_server.guidance.add_system_message",
+                side_effect=lambda r, **kw: r,
+            ),
+            patch(
+                "mcp_server.tools.result_view._enrich_results_with_top_callers",
+                side_effect=lambda results, *a, **kw: results,
+            ) as mock_enrich,
+        ):
+            orch._assemble(plan, outcome)
+        return mock_enrich
+
+    def test_default_off_skips_enrichment(self):
+        """include_top_callers=False (default): enrichment is never called —
+        byte-identity with pre-B4 behavior."""
+        mock_enrich = self._run_assemble(_make_plan())
+        mock_enrich.assert_not_called()
+
+    def test_opt_in_calls_enrichment(self):
+        mock_enrich = self._run_assemble(_make_plan(include_top_callers=True))
+        mock_enrich.assert_called_once()
 
 
 class TestApplySourceOrderAndBudget:

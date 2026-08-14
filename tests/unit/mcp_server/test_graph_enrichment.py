@@ -11,6 +11,7 @@ import pytest
 
 from graph.schema import REVERSE_RELATIONS
 from mcp_server.tools.result_view import (
+    _enrich_results_with_top_callers,
     _get_graph_data_for_chunk,
     _get_reverse_relation_name,
 )
@@ -184,3 +185,184 @@ def test_node_not_in_graph(mock_index_manager):
         mock_index_manager, "nonexistent.py:1-5:function:nope"
     )
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _enrich_results_with_top_callers (B4 top-caller hints)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def multidigraph_index_manager():
+    """Mock index manager backed by a MultiDiGraph (production graph type)."""
+    manager = MagicMock()
+    storage = MagicMock()
+    g = nx.MultiDiGraph()
+
+    # Target chunk + its bare symbol-name node (unresolved AST edges land there)
+    g.add_node(
+        "auth.py:10-50:function:login", name="login", type="function", file="auth.py"
+    )
+    g.add_node("login", name="login", type="symbol_name", is_target_name=True)
+
+    # Callers
+    for cid, name in [
+        ("api.py:10-30:function:handle_request", "handle_request"),
+        ("cli.py:5-15:function:main", "main"),
+        ("jobs.py:1-9:function:cron_login", "cron_login"),
+    ]:
+        g.add_node(cid, name=name, type="function")
+
+    storage.graph = g
+    manager.graph_storage = storage
+    return manager
+
+
+def _result(chunk_id="auth.py:10-50:function:login"):
+    return {"chunk_id": chunk_id, "kind": "function", "score": 0.9}
+
+
+def test_top_callers_basic_attach(multidigraph_index_manager):
+    """A single calls-edge caller is attached as {name, file}."""
+    g = multidigraph_index_manager.graph_storage.graph
+    g.add_edge(
+        "api.py:10-30:function:handle_request",
+        "auth.py:10-50:function:login",
+        key="calls",
+        type="calls",
+    )
+    results = _enrich_results_with_top_callers([_result()], multidigraph_index_manager)
+    assert results[0]["top_callers"] == [{"name": "handle_request", "file": "api.py"}]
+
+
+def test_top_callers_cap_at_max(multidigraph_index_manager):
+    """Three callers are cut to max_callers=2."""
+    g = multidigraph_index_manager.graph_storage.graph
+    for cid in [
+        "api.py:10-30:function:handle_request",
+        "cli.py:5-15:function:main",
+        "jobs.py:1-9:function:cron_login",
+    ]:
+        g.add_edge(cid, "auth.py:10-50:function:login", key="calls", type="calls")
+    results = _enrich_results_with_top_callers([_result()], multidigraph_index_manager)
+    assert len(results[0]["top_callers"]) == 2
+
+
+def test_top_callers_confidence_ordering(multidigraph_index_manager):
+    """resolver_confidence floats rank ahead of confidence-less edges,
+    higher float first."""
+    g = multidigraph_index_manager.graph_storage.graph
+    g.add_edge(
+        "api.py:10-30:function:handle_request",
+        "auth.py:10-50:function:login",
+        key="calls",
+        type="calls",
+    )
+    g.add_edge(
+        "cli.py:5-15:function:main",
+        "auth.py:10-50:function:login",
+        key="calls",
+        type="calls",
+        resolver_confidence=0.9,
+    )
+    g.add_edge(
+        "jobs.py:1-9:function:cron_login",
+        "auth.py:10-50:function:login",
+        key="calls",
+        type="calls",
+        resolver_confidence=0.75,
+    )
+    results = _enrich_results_with_top_callers([_result()], multidigraph_index_manager)
+    assert [c["name"] for c in results[0]["top_callers"]] == ["main", "cron_login"]
+
+
+def test_top_callers_insertion_order_fallback(multidigraph_index_manager):
+    """Without any resolver_confidence floats, discovery order is kept."""
+    g = multidigraph_index_manager.graph_storage.graph
+    g.add_edge(
+        "cli.py:5-15:function:main",
+        "auth.py:10-50:function:login",
+        key="calls",
+        type="calls",
+    )
+    g.add_edge(
+        "api.py:10-30:function:handle_request",
+        "auth.py:10-50:function:login",
+        key="calls",
+        type="calls",
+    )
+    results = _enrich_results_with_top_callers([_result()], multidigraph_index_manager)
+    assert [c["name"] for c in results[0]["top_callers"]] == [
+        "main",
+        "handle_request",
+    ]
+
+
+def test_top_callers_symbol_name_lookup(multidigraph_index_manager):
+    """Unresolved edges targeting the bare symbol-name node are found."""
+    g = multidigraph_index_manager.graph_storage.graph
+    g.add_edge("cli.py:5-15:function:main", "login", key="calls", type="calls")
+    results = _enrich_results_with_top_callers([_result()], multidigraph_index_manager)
+    assert results[0]["top_callers"] == [{"name": "main", "file": "cli.py"}]
+
+
+def test_top_callers_dedup_across_both_lookups(multidigraph_index_manager):
+    """A caller with edges to BOTH the chunk_id node and the symbol-name node
+    appears once."""
+    g = multidigraph_index_manager.graph_storage.graph
+    g.add_edge(
+        "api.py:10-30:function:handle_request",
+        "auth.py:10-50:function:login",
+        key="calls",
+        type="calls",
+    )
+    g.add_edge(
+        "api.py:10-30:function:handle_request", "login", key="calls", type="calls"
+    )
+    results = _enrich_results_with_top_callers([_result()], multidigraph_index_manager)
+    assert results[0]["top_callers"] == [{"name": "handle_request", "file": "api.py"}]
+
+
+def test_top_callers_non_calls_edges_filtered(multidigraph_index_manager):
+    """Parallel non-calls edges (MultiDiGraph) don't produce caller entries."""
+    g = multidigraph_index_manager.graph_storage.graph
+    g.add_edge(
+        "api.py:10-30:function:handle_request",
+        "auth.py:10-50:function:login",
+        key="imports",
+        type="imports",
+    )
+    results = _enrich_results_with_top_callers([_result()], multidigraph_index_manager)
+    assert "top_callers" not in results[0]
+
+
+def test_top_callers_self_edge_excluded(multidigraph_index_manager):
+    """A recursive self-call does not list the chunk as its own caller."""
+    g = multidigraph_index_manager.graph_storage.graph
+    g.add_edge(
+        "auth.py:10-50:function:login",
+        "auth.py:10-50:function:login",
+        key="calls",
+        type="calls",
+    )
+    results = _enrich_results_with_top_callers([_result()], multidigraph_index_manager)
+    assert "top_callers" not in results[0]
+
+
+def test_top_callers_missing_node_no_op(multidigraph_index_manager):
+    """Chunk absent from the graph: result passes through without the key."""
+    results = _enrich_results_with_top_callers(
+        [_result("ghost.py:1-5:function:ghost")], multidigraph_index_manager
+    )
+    assert "top_callers" not in results[0]
+
+
+def test_top_callers_no_index_manager_no_op():
+    """None index_manager (or missing graph storage) is a silent no-op."""
+    results = _enrich_results_with_top_callers([_result()], None)
+    assert "top_callers" not in results[0]
+
+    manager = MagicMock()
+    manager.graph_storage = None
+    results = _enrich_results_with_top_callers([_result()], manager)
+    assert "top_callers" not in results[0]

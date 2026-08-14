@@ -210,6 +210,87 @@ def _reorder_by_source_position(results: list[dict]) -> list[dict]:
     return reordered
 
 
+def _enrich_results_with_top_callers(
+    results: list[dict],
+    index_manager: CodeIndexManager | None,
+    max_callers: int = 2,
+) -> list[dict]:
+    """Attach a ``top_callers`` hint (up to ``max_callers``) to each result.
+
+    Per result, scans raw incoming ``calls``-type edges on the MultiDiGraph.
+    Unresolved AST call edges target the bare symbol-name node rather than the
+    chunk_id node (see ``graph_storage.add_call_edge``) — the common case when
+    the ``[callgraph]`` extras are absent — so both nodes are scanned, mirroring
+    ``_get_graph_data_for_chunk``'s two-lookup pattern, with callers deduped
+    across the two scans before the cut.
+
+    Ranking is ``resolver_confidence`` descending where the float exists,
+    insertion order otherwise (most in-file AST edges lack the float — this is
+    a hint, not a confidence-ranked guarantee). Skips silently when the graph
+    or node is absent.
+
+    Args:
+        results: List of formatted result dicts
+        index_manager: Index manager with graph storage
+        max_callers: Maximum caller entries per result (default: 2)
+
+    Returns:
+        Results with ``top_callers: [{name, file}]`` added where callers exist
+    """
+    if not index_manager or index_manager.graph_storage is None:
+        return results
+
+    graph = index_manager.graph_storage.graph
+
+    for item in results:
+        chunk_id = item.get("chunk_id")
+        if not chunk_id:
+            continue
+        try:
+            normalized = normalize_path(chunk_id)
+            symbol_name = normalized.rsplit(":", 1)[-1] if ":" in normalized else None
+
+            lookup_nodes = [normalized]
+            if symbol_name and symbol_name != normalized:
+                lookup_nodes.append(symbol_name)
+
+            candidates: list[tuple[str, dict]] = []
+            seen: set[str] = set()
+            for node in lookup_nodes:
+                if node not in graph:
+                    continue
+                for source, _, edge_data in graph.in_edges(node, data=True):
+                    if edge_data.get("type", "calls") != "calls":
+                        continue
+                    if source in seen or source == normalized:
+                        continue
+                    seen.add(source)
+                    candidates.append((source, edge_data))
+
+            if not candidates:
+                continue
+
+            # Stable sort: float-confident edges first (desc), the rest keep
+            # discovery order via missing-confidence -> 0.0.
+            candidates.sort(key=lambda c: -(c[1].get("resolver_confidence") or 0.0))
+
+            top_callers = []
+            for source, _ in candidates[:max_callers]:
+                node_name = graph.nodes[source].get("name") if source in graph else None
+                top_callers.append(
+                    {
+                        "name": node_name
+                        or (source.rsplit(":", 1)[-1] if ":" in source else source),
+                        "file": source.split(":")[0] if ":" in source else "",
+                    }
+                )
+            item["top_callers"] = top_callers
+        except Exception as e:  # noqa: BLE001 - resilience: optional hint enrichment, degrade to no top_callers
+            logger.debug(f"Failed to get top callers for {chunk_id}: {e}")
+
+    return results
+
+
 def _enrich_results_with_graph_data(
     results: list[dict], index_manager: CodeIndexManager | None
 ) -> list[dict]:

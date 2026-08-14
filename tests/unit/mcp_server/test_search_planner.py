@@ -150,6 +150,16 @@ class TestSearchPlannerFieldExtraction:
             plan = SearchPlanner().plan({"query": "test"})
         assert plan.include_parent is False
 
+    def test_include_top_callers_defaults_false(self):
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test"})
+        assert plan.include_top_callers is False
+
+    def test_include_top_callers_passthrough(self):
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test", "include_top_callers": True})
+        assert plan.include_top_callers is True
+
     def test_ego_graph_defaults_false(self):
         with _patch_planner_deps():
             plan = SearchPlanner().plan({"query": "test"})

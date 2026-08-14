@@ -63,6 +63,7 @@ class SearchPlan:
     auto_reindex: bool
     max_age_minutes: float
     max_context_tokens: int
+    include_top_callers: bool = False
     redirect: PlanRedirect | None = None
 
 
@@ -227,6 +228,7 @@ class SearchPlanner:
             ego_graph_k_hops=ego_graph_k_hops,
             ego_graph_max_neighbors=ego_graph_max_neighbors,
             include_parent=bool(arguments.get("include_parent", False)),
+            include_top_callers=bool(arguments.get("include_top_callers", False)),
             file_pattern=arguments.get("file_pattern"),
             include_dirs=arguments.get("include_dirs"),
             exclude_dirs=arguments.get("exclude_dirs"),
@@ -534,6 +536,10 @@ class SearchOrchestrator:
         formatted_results = result_view._format_search_results(outcome.results)
         if output_cfg.include_result_graph:
             formatted_results = result_view._enrich_results_with_graph_data(
+                formatted_results, index_manager
+            )
+        if plan.include_top_callers:
+            formatted_results = result_view._enrich_results_with_top_callers(
                 formatted_results, index_manager
             )
 

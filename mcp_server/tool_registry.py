@@ -178,6 +178,11 @@ RETURNS:
                     "default": False,
                     "description": "Enable parent chunk retrieval (default: False). When a method is matched, also retrieves its enclosing class for fuller context. Implements 'Match Small, Retrieve Big' pattern for improved comprehension.",
                 },
+                "include_top_callers": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Attach up to 2 top callers per result as top_callers: [{name, file}] (default: False). Callers come from the code graph's incoming call edges — context agents cannot derive from the result text alone. Ordering prefers resolver-confident edges when available; otherwise discovery order (hint, not a guarantee).",
+                },
                 "max_context_tokens": {
                     "type": "integer",
                     "default": 0,
