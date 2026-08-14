@@ -67,7 +67,8 @@ GLSL_EXTENSIONS = frozenset(
 # fusion weights/rrf_k/bm25_k1/bm25_b saturated; bm25_use_stopwords A/B'd;
 # centrality_alpha 0.0 replicated; single_pass kills recall; hop1_reserved_slots
 # ADR-0013; bm25_reserved_slots rejected; query_expansion ADR-0012 closed FAIL;
-# bm25_tokenizer is INDEX_VERSION 4; multi_hop tuned. See BENCHMARK_LOCK_CITATIONS
+# bm25_tokenizer is INDEX_VERSION 4; multi_hop tuned; doc_representation_mode
+# rejected 2026-08-14. See BENCHMARK_LOCK_CITATIONS
 # below for the per-key citation (ADR-0022) shown in start_mcp_server.cmd's
 # ":tuned_parameters" menu.
 FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
@@ -83,6 +84,7 @@ FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
         "graph_enhanced.centrality_alpha",
         "reranker.single_pass",
         "reranker.hop1_reserved_slots",
+        "reranker.doc_representation_mode",
         "query_expansion.enabled",
         "multi_hop.expansion",
         "multi_hop.multi_hop_mode",
@@ -109,6 +111,10 @@ BENCHMARK_LOCK_CITATIONS: dict[str, str] = {
     "graph_enhanced.centrality_alpha": "higher alphas cost recall (replicated)",
     "reranker.single_pass": "kills recall; latency knob only, not quality",
     "reranker.hop1_reserved_slots": "ADR-0013",
+    "reranker.doc_representation_mode": (
+        "signature_head rejected 2026-08-14 (REMAINING_LEVERS_AB: recall@10/20 "
+        "CI-negative on 133q, 11 pool_hit losses vs 2 gains)"
+    ),
     "query_expansion.enabled": "ADR-0012 re-eval closed 2026-08-02, stays disabled",
     "multi_hop.expansion": "expansion_factor stays 0.5 (0.25 arm rejected 2026-08-02)",
     "multi_hop.multi_hop_mode": "tuned; do not re-tune without a new A/B",

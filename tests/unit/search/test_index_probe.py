@@ -90,6 +90,7 @@ class TestGuardrails:
             "graph_enhanced.centrality_alpha",
             "reranker.single_pass",
             "reranker.hop1_reserved_slots",
+            "reranker.doc_representation_mode",
             "query_expansion.enabled",
             "multi_hop.expansion",
             "multi_hop.multi_hop_mode",
