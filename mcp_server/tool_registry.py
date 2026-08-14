@@ -778,7 +778,9 @@ RETURNS:
 
 Args:
     enabled: Enable/disable neural reranking (default: True)
-    model_name: Cross-encoder model to use (default: Alibaba-NLP/gte-reranker-modernbert-base)
+    model_name: Reranker model to use (default: Alibaba-NLP/gte-reranker-modernbert-base).
+        Also supports the Jina listwise rerankers jinaai/jina-reranker-v3 and
+        jinaai/jina-reranker-v3.5, Qwen/Qwen3-Reranker-0.6B, and BAAI/bge-reranker-v2-m3.
     top_k_candidates: Number of candidates to rerank (default: 30)
 
 NOTE: this changes global server config (one active setting at a time). On the
@@ -797,7 +799,12 @@ RETURNS:
                 },
                 "model_name": {
                     "type": "string",
-                    "description": "Cross-encoder model name",
+                    "description": (
+                        "Reranker model name, e.g. "
+                        "Alibaba-NLP/gte-reranker-modernbert-base, "
+                        "jinaai/jina-reranker-v3, jinaai/jina-reranker-v3.5, "
+                        "Qwen/Qwen3-Reranker-0.6B, BAAI/bge-reranker-v2-m3."
+                    ),
                 },
                 "top_k_candidates": {
                     "type": "integer",

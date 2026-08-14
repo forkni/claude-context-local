@@ -1888,10 +1888,15 @@ if "!reranker_choice!"=="4" (
     echo      ~1.5GB base VRAM ^(grows with candidate count, up to ~10GB^), ~750ms/search, MRR 0.85
     echo      License: CC-BY-NC-4.0 ^(non-commercial^)
     echo.
+    echo   4. Jina Reranker v3.5 ^(jinaai/jina-reranker-v3.5^)
+    echo      Best for: 12GB+ VRAM, v3 successor - latency/quality: TBD ^(pending SSCG A/B^)
+    echo      ~1.5GB base VRAM ^(grows with candidate count^)
+    echo      License: CC-BY-NC-4.0 ^(non-commercial^), requires transformers ^>= 5.x
+    echo.
     echo   0. Cancel
     echo.
     set "model_sel="
-    set /p model_sel="Select model (0-3): "
+    set /p model_sel="Select model (0-4): "
 
     if "!model_sel!"=="1" (
         echo.
@@ -1919,6 +1924,17 @@ if "!reranker_choice!"=="4" (
         echo.
         echo [INFO] Setting reranker to Jina v3...
         ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.model_name = 'jinaai/jina-reranker-v3'; mgr.save_config(cfg); print('[OK] Reranker set to Jina v3 (jina-reranker-v3)')" 2>nul
+        if errorlevel 1 (
+            echo [ERROR] Failed to save configuration
+        ) else (
+            REM Notify running MCP server to reload config
+            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
+        )
+    )
+    if "!model_sel!"=="4" (
+        echo.
+        echo [INFO] Setting reranker to Jina v3.5...
+        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.model_name = 'jinaai/jina-reranker-v3.5'; mgr.save_config(cfg); print('[OK] Reranker set to Jina v3.5 (jina-reranker-v3.5)')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Failed to save configuration
         ) else (

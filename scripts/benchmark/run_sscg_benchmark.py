@@ -128,6 +128,7 @@ RERANKER_SWEEP: list[dict[str, Any]] = [
         "reranker_model": "Alibaba-NLP/gte-reranker-modernbert-base",
     },
     {"config_name": "jina_v3", "reranker_model": "jinaai/jina-reranker-v3"},
+    {"config_name": "jina_v3_5", "reranker_model": "jinaai/jina-reranker-v3.5"},
     {"config_name": "qwen_0.6b", "reranker_model": "Qwen/Qwen3-Reranker-0.6B"},
     {"config_name": "bge_v2_m3", "reranker_model": "BAAI/bge-reranker-v2-m3"},
     {"config_name": "none", "reranker_enabled": False},
@@ -1550,8 +1551,17 @@ def _paired_delta_summary(
     return mean_delta, se, ci95, n_moved, n
 
 
-def compare_runs(result_files: list[str]) -> None:
-    """Load saved benchmark JSONs and print a comparison leaderboard."""
+def compare_runs(result_files: list[str], split: str | None = None) -> None:
+    """Load saved benchmark JSONs and print a comparison leaderboard.
+
+    ``split`` (train/val/test), when given, restricts the paired-delta
+    summary and the per-query change list to golden queries carrying that
+    ``split`` value -- the leaderboard above still covers the full set. This
+    lets the paired-CI adoption gate (methodology rule 7,
+    RECALL_CAMPAIGN_CLOSEOUT_20260802.md) be evaluated per-split from an
+    existing full-set capture pair, with zero extra benchmark runs, since
+    every per_query record already carries its split.
+    """
     runs = []
     for f in result_files:
         with open(f, encoding="utf-8") as fh:
@@ -1568,13 +1578,17 @@ def compare_runs(result_files: list[str]) -> None:
         r1, r2 = runs[0], runs[1]
         q1 = {q["id"]: q for q in r1.get("per_query", [])}
         q2 = {q["id"]: q for q in r2.get("per_query", [])}
+        if split is not None:
+            q1 = {qid: q for qid, q in q1.items() if q.get("split") == split}
+            q2 = {qid: q for qid, q in q2.items() if q.get("split") == split}
 
         # Paired-delta summary (methodology rule 7, RECALL_CAMPAIGN_CLOSEOUT_20260802.md):
         # arms are decided on this, not the prose "±0.02 noise band" -- the arms
         # share queries, so a paired statistic is the correct one.
+        split_str = f", split={split}" if split else ""
         print(
             f"\n--- Paired delta: '{r1['config_name']}' -> '{r2['config_name']}' "
-            f"(n={len(set(q1) & set(q2))} shared queries) ---"
+            f"(n={len(set(q1) & set(q2))} shared queries{split_str}) ---"
         )
         header = f"{'metric':<12}{'mean_d':>10}{'SE':>9}  {'95% CI':>19}{'n_moved':>9}{'n':>6}"
         print(header)
@@ -1600,7 +1614,7 @@ def compare_runs(result_files: list[str]) -> None:
                     deltas.append((qid, q["query"][:40], delta_mrr, delta_r5))
         if deltas:
             print(
-                f"\n--- Changes from '{r1['config_name']}' -> '{r2['config_name']}' ---"
+                f"\n--- Changes from '{r1['config_name']}' -> '{r2['config_name']}'{split_str} ---"
             )
             print(f"{'ID':<5} {'dMRR':>7} {'dR@5':>7} Query")
             print("-" * 60)
@@ -1691,8 +1705,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--reranker-model",
         help=(
             "Override the reranker model for this run (e.g. "
-            "'jinaai/jina-reranker-v3', 'Qwen/Qwen3-Reranker-0.6B', "
-            "'Alibaba-NLP/gte-reranker-modernbert-base'). Default: use config value."
+            "'jinaai/jina-reranker-v3', 'jinaai/jina-reranker-v3.5', "
+            "'Qwen/Qwen3-Reranker-0.6B', 'Alibaba-NLP/gte-reranker-modernbert-base'). "
+            "Default: use config value."
         ),
     )
     parser.add_argument(
@@ -1893,6 +1908,17 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         metavar="RESULT_JSON",
         help="Compare two or more saved benchmark result JSON files (no search run)",
+    )
+    parser.add_argument(
+        "--compare-split",
+        choices=["train", "val", "test"],
+        help=(
+            "With --compare: restrict the paired-delta summary and change "
+            "list to golden queries whose 'split' field matches (train/val/"
+            "test); the leaderboard above still covers the full set. Lets "
+            "the paired-CI adoption gate be evaluated per-split from an "
+            "existing full-set capture pair, no extra runs needed."
+        ),
     )
     parser.add_argument(
         "--quiet",
@@ -2149,7 +2175,7 @@ def main() -> None:
     # Compare mode: just load saved JSONs and print comparison
     # -----------------------------------------------------------------------
     if args.compare:
-        compare_runs(args.compare)
+        compare_runs(args.compare, split=args.compare_split)
         return
 
     # -----------------------------------------------------------------------

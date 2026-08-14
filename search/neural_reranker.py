@@ -2,6 +2,7 @@
 
 import abc
 import contextlib
+import inspect
 import logging
 import os
 import threading
@@ -22,13 +23,33 @@ RERANKER_MODELS = {
     "lightweight": "Alibaba-NLP/gte-reranker-modernbert-base",  # ~0.3GB VRAM, efficient
     "generative": "Qwen/Qwen3-Reranker-0.6B",  # ~1.5GB VRAM, +8.7 pts over BGE (generative)
     "jina-v3": "jinaai/jina-reranker-v3",  # ~1.5GB VRAM, code-optimized listwise (CoIR 70.64)
+    "jina-v3.5": "jinaai/jina-reranker-v3.5",  # ~1.5GB VRAM, hybrid sliding-window listwise
+    # (BEIR 63.20, MIRACL 74.11, RTEB 70.95, Struct-IR 48.3 vs v3's 62.10/72.20/68.01/38.7;
+    # no CoIR/code-retrieval number published — unmeasured for this workload, see SSCG A/B)
 }
 
 # Generative rerankers (auto-detected by model name)
 GENERATIVE_RERANKERS = {"Qwen/Qwen3-Reranker-0.6B"}
 
-# Jina v3 rerankers (listwise architecture)
-JINA_V3_RERANKERS = {"jinaai/jina-reranker-v3"}
+# Jina listwise rerankers (shared class: JinaRerankerV3). Membership here selects
+# the CLASS, not the API contract — v3 and v3.5 have different rerank() signatures
+# (see _PINNED_RERANK_LENGTH_KWARGS / _resolve_length_kwargs below), resolved by
+# introspecting the loaded checkpoint rather than branching on the model name.
+JINA_LISTWISE_RERANKERS = frozenset(
+    {"jinaai/jina-reranker-v3", "jinaai/jina-reranker-v3.5"}
+)
+
+# rerank() kwargs pinned on checkpoints that declare them (currently v3 only).
+# These values are IDENTICAL to v3's own declared defaults (verified against its
+# modeling.py: max_doc_length=2048, max_query_length=512) — the pin is anti-drift
+# insurance against a future upstream default change, not a behaviour change.
+# v3.5 removed both parameters and hardcodes 8192/1024 internally; passing them
+# raises TypeError, which is why they are applied conditionally
+# (see JinaRerankerV3._resolve_length_kwargs).
+_PINNED_RERANK_LENGTH_KWARGS: dict[str, int] = {
+    "max_doc_length": 2048,
+    "max_query_length": 512,
+}
 
 
 def _resolve_single_token_id(tokenizer: "AutoModel", text: str) -> int:
@@ -693,7 +714,13 @@ class GenerativeReranker(BaseReranker):
 
 
 class JinaRerankerV3(BaseReranker):
-    """Jina v3 listwise reranker with 'last but not late' interaction.
+    """Jina listwise reranker (v3 / v3.5) with 'last but not late' interaction.
+
+    This class serves both ``jinaai/jina-reranker-v3`` and
+    ``jinaai/jina-reranker-v3.5`` (see ``JINA_LISTWISE_RERANKERS``) — same
+    class, loader, output shape and license; the ``rerank()`` API differs
+    per checkpoint and is resolved by introspection (see
+    ``_resolve_length_kwargs``), never by branching on ``model_name`` here.
 
     This reranker processes ALL candidates together in one shared context
     window (a single forward pass with full cross-document attention), scoring
@@ -703,8 +730,9 @@ class JinaRerankerV3(BaseReranker):
     itself (``format_docs_prompts_func``, incl. its special embedding-marker
     tokens); this class must never construct that sandwich prompt by hand.
 
-    Performance (measured at doc_max_chars=1000, SSCG gate run, 30-candidate
-    pool, RTX 4090):
+    Performance (measured on ``jinaai/jina-reranker-v3`` at doc_max_chars=1000,
+    SSCG gate run, 30-candidate pool, RTX 4090 — v3.5 numbers are unmeasured
+    pending its own SSCG A/B, see docs/adr/0039):
         - VRAM: ~13.2GB peak (reserved-memory ratchet across a session —
           see the ``empty_cache()`` policy note in ``rerank()``'s ``finally``)
         - Latency: ~4000ms/query at 30 candidates x ~1000-char documents
@@ -715,6 +743,14 @@ class JinaRerankerV3(BaseReranker):
           24GB card (WDDM spill to host RAM, no OOM) and ~3x latency with
           42-45/96 queries stalling past 8s. See
           docs/adr/0011-listwise-reranker-doc-cap.md.
+
+    v3.5 architecture note: 28-layer hybrid 3L2G attention schedule
+    (``sliding_window=1024`` on most layers, a few global). On this stack
+    (transformers, sdpa, no flash-attn) the window is enforced via
+    ``create_sliding_window_causal_mask`` — correctness engages, but the
+    published FlashAttention-2 speedup does not transfer to sdpa. Per-doc
+    token ceiling is 8192 (vs v3's 2048); ``listwise_doc_max_chars`` is the
+    binding truncation on this corpus either way (see ``__init__``).
 
     Example:
         >>> reranker = JinaRerankerV3()
@@ -754,8 +790,9 @@ class JinaRerankerV3(BaseReranker):
                 occupancy alone looks safe raising this to 4000 — the
                 30-doc shared context only grows ~5.4K -> ~8.8K tokens of
                 the 131K window, and 0% of docs hit the model's own
-                2048-token per-doc ceiling at either cap — but that is not
-                the binding resource: attention activation memory scales
+                per-doc token ceiling at either cap (2048 on v3, 8192 on
+                v3.5) — but that is not the binding resource: attention
+                activation memory scales
                 O(n^2) in the packed sequence length, and the paper's own
                 Table 5 lists an "Effective Sequence Length" of 8,192 as a
                 figure distinct from the 131K Context Length — the ~8.8K
@@ -782,6 +819,9 @@ class JinaRerankerV3(BaseReranker):
         self.doc_max_chars = doc_max_chars
         self.dtype = dtype
         self._model = None
+        # Memoizes _resolve_length_kwargs(); reset by _cleanup_extra() so a
+        # cleanup() -> reload cycle re-introspects (e.g. after a model_name swap).
+        self._length_kwargs: dict[str, int] | None = None
         self._logger = logging.getLogger(__name__)
         self._load_lock = threading.Lock()
         # Serializes model.rerank() calls — the underlying HF Rust fast tokenizer
@@ -948,6 +988,54 @@ class JinaRerankerV3(BaseReranker):
         os.environ.pop("HF_HUB_OFFLINE", None)
         os.environ.pop("TRANSFORMERS_OFFLINE", None)
 
+    def _cleanup_extra(self) -> None:
+        """Reset the memoized length-kwargs so a reload re-introspects."""
+        self._length_kwargs = None
+
+    def _resolve_length_kwargs(self, model) -> dict[str, int]:
+        """Return the subset of ``_PINNED_RERANK_LENGTH_KWARGS`` this checkpoint's
+        ``rerank()`` actually declares, memoized on ``self._length_kwargs``.
+
+        v3 declares both ``max_doc_length``/``max_query_length`` (defaults
+        identical to our pins — see the module-level comment on
+        ``_PINNED_RERANK_LENGTH_KWARGS``). v3.5 removed both parameters and
+        hardcodes 8192/1024 internally; passing them raises ``TypeError``.
+        Introspecting the loaded model rather than branching on
+        ``self.model_name`` means a future v3 republish that drops them, or a
+        v3.5.x that restores them, is handled without a code change.
+
+        A parameter only counts if it is explicit and not a ``*args``/``**kwargs``
+        catch-all — ``inspect.signature(MagicMock().rerank)`` resolves to
+        ``(*args, **kwargs)``, which would otherwise look like "supports everything".
+        """
+        if self._length_kwargs is not None:
+            return self._length_kwargs
+        try:
+            params = inspect.signature(model.rerank).parameters
+        except (TypeError, ValueError) as e:
+            # Some C-extension/functools.partial callables refuse introspection;
+            # omitting the pins is the safe default (see module-level comment).
+            self._logger.debug(
+                f"rerank() signature unavailable, omitting length pins: {e}"
+            )
+            self._length_kwargs = {}
+            return self._length_kwargs
+        non_var_kinds = (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        )
+        resolved = {
+            name: value
+            for name, value in _PINNED_RERANK_LENGTH_KWARGS.items()
+            if name in params and params[name].kind not in non_var_kinds
+        }
+        self._logger.info(
+            f"Jina {self.model_name} rerank() accepts length pins: "
+            f"{sorted(resolved) or 'none'}"
+        )
+        self._length_kwargs = resolved
+        return self._length_kwargs
+
     def rerank(
         self,
         query: str,
@@ -986,24 +1074,31 @@ class JinaRerankerV3(BaseReranker):
 
         # Call Jina's native rerank method (listwise) with error handling.
         # top_n=None returns every candidate ranked (see docstring above).
-        # max_doc_length/max_query_length passed explicitly rather than
-        # relying on jina's defaults (2048/512) — our doc_max_chars (chars)
-        # is the binding truncation on this corpus; measured mean ~3.4
-        # chars/token means even doc_max_chars=4000 stays well under 2048
-        # tokens (0% of documents hit that ceiling at any cap tested). That
-        # only rules out the per-doc token ceiling as the limit, though —
-        # it does NOT mean 4000 is safe: attention activation memory scales
-        # O(n^2) in the packed sequence and empirically spills VRAM well
-        # before this ceiling (docs/adr/0011-listwise-reranker-doc-cap.md).
+        #
+        # max_doc_length/max_query_length are applied ONLY when the loaded
+        # checkpoint's rerank() actually declares them (_resolve_length_kwargs).
+        # v3 declares both, with defaults identical to our pins (2048/512) — so
+        # the pin is anti-drift insurance against an upstream default change,
+        # not a behaviour change. v3.5 removed both parameters and hardcodes
+        # 8192/1024 internally; passing them raises TypeError. Neither ceiling
+        # binds on this corpus: our char-level doc_max_chars is the truncation
+        # that bites (~3.4 chars/token measured; 0% of docs hit even the 2048
+        # ceiling at any cap tested). That only rules out the per-doc TOKEN
+        # ceiling — it does NOT make a larger cap safe: attention activation
+        # memory scales O(n^2) in the packed sequence on v3's full attention
+        # and empirically spills VRAM well before this ceiling
+        # (docs/adr/0011-listwise-reranker-doc-cap.md, measured on v3; v3.5's
+        # sliding-window layers change that scaling and the cap is re-open
+        # for it — see the class docstring).
         model = self.model  # resolve (lazy load under _load_lock) before _infer_lock
+        length_kwargs = self._resolve_length_kwargs(model)
         try:
             with self._infer_lock, torch.no_grad():
                 jina_results = model.rerank(
                     query,
                     documents,
                     top_n=None,
-                    max_doc_length=2048,
-                    max_query_length=512,
+                    **length_kwargs,
                 )
         except torch.cuda.OutOfMemoryError as e:
             self._logger.error(f"CUDA OOM during reranking: {e}")
@@ -1091,19 +1186,22 @@ def create_reranker(
         instruction: Only used for GenerativeReranker — see its docstring.
         doc_max_chars: Only used for GenerativeReranker (pointwise — cost scales
             with batch_size, so it can afford a larger per-document budget).
-        listwise_doc_max_chars: Only used for JinaRerankerV3 (listwise — ALL
-            candidates share one context window, so cost is O(n^2) in the
-            packed sequence via attention activation memory). Raising this
-            from 1000 to 4000 clears the context-window and per-doc-token
-            checks fine, but a 4-run SSCG sweep at 4000 measured
-            peak_vram_reserved_gb 27.66 on a 24GB card (WDDM spill, no OOM),
-            42-45/96 queries stalling past 8s, and no quality gain outside
-            the noise floor — see
-            docs/adr/0011-listwise-reranker-doc-cap.md. Not aligned with
-            ``doc_max_chars`` above by default; the two budgets are
-            independent on purpose.
-        listwise_dtype: Only used for JinaRerankerV3 — weight dtype ("auto",
-            "fp32", "bf16", "fp16"); see ``JinaRerankerV3.__init__``.
+        listwise_doc_max_chars: Only used for the Jina listwise rerankers
+            (v3/v3.5 — ALL candidates share one context window, so cost is
+            O(n^2) in the packed sequence via attention activation memory).
+            Raising this from 1000 to 4000 clears the context-window and
+            per-doc-token checks fine, but a 4-run SSCG sweep at 4000
+            measured peak_vram_reserved_gb 27.66 on a 24GB card (WDDM spill,
+            no OOM), 42-45/96 queries stalling past 8s, and no quality gain
+            outside the noise floor — see
+            docs/adr/0011-listwise-reranker-doc-cap.md. That sweep was
+            measured on v3's full attention; v3.5's hybrid sliding-window
+            schedule changes the O(n^2) term, so the cap is a live A/B knob
+            for that arm. Not aligned with ``doc_max_chars`` above by
+            default; the two budgets are independent on purpose.
+        listwise_dtype: Only used for the Jina listwise rerankers (v3/v3.5)
+            — weight dtype ("auto", "fp32", "bf16", "fp16"); see
+            ``JinaRerankerV3.__init__``.
 
     Returns:
         NeuralReranker, GenerativeReranker, or JinaRerankerV3 instance
@@ -1111,6 +1209,7 @@ def create_reranker(
     Example:
         >>> reranker = create_reranker("Qwen/Qwen3-Reranker-0.6B")  # Returns GenerativeReranker
         >>> reranker = create_reranker("jinaai/jina-reranker-v3")   # Returns JinaRerankerV3
+        >>> reranker = create_reranker("jinaai/jina-reranker-v3.5") # Returns JinaRerankerV3
         >>> reranker = create_reranker("BAAI/bge-reranker-v2-m3")   # Returns NeuralReranker
     """
     if model_name in GENERATIVE_RERANKERS:
@@ -1121,11 +1220,22 @@ def create_reranker(
             batch_size=batch_size,
             doc_max_chars=doc_max_chars,
         )
-    if model_name in JINA_V3_RERANKERS:
+    if model_name in JINA_LISTWISE_RERANKERS:
         return JinaRerankerV3(
             model_name,
             device,
             doc_max_chars=listwise_doc_max_chars,
             dtype=listwise_dtype,
         )  # Listwise reranker
+    if model_name.startswith("jinaai/"):
+        # RerankerConfig.model_name has no `choices` constraint, and
+        # JINA_LISTWISE_RERANKERS now holds two near-identical ids — an id
+        # typo (e.g. "jina-reranker-v3-5") would otherwise fall through
+        # silently to NeuralReranker, which tries to load a Jina checkpoint
+        # as a sentence-transformers CrossEncoder and fails confusingly.
+        logging.getLogger(__name__).warning(
+            f"Reranker model {model_name!r} starts with 'jinaai/' but is not "
+            f"in JINA_LISTWISE_RERANKERS ({sorted(JINA_LISTWISE_RERANKERS)}); "
+            "falling back to NeuralReranker (CrossEncoder) — check for a typo."
+        )
     return NeuralReranker(model_name, device, batch_size)
