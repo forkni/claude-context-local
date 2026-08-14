@@ -19,8 +19,8 @@ set. This keeps the advertised tool count small without removing the capability.
 
 | Tool | Priority | Purpose | Parameters |
 | ------ | ---------- | --------- | ------------ |
-| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=4 (schema default; `search_config.json.example` sets the effective default to 7), search_mode="hybrid", file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0 |
-| **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types |
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=4 (schema default; `search_config.json.example` sets the effective default to 7), search_mode="hybrid", file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0, include_top_callers=False |
+| **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types, hide_ambiguous=False |
 | **find_path** | 🟡 **IMPACT** | Trace shortest path between code entities in relationship graph | source OR source_chunk_id, target OR target_chunk_id, edge_types, max_hops=10 |
 | **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), project_name, incremental=True, wait=True, include_dirs, exclude_dirs |
 | **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=4, exclude_same_file=False (set true for cross-file analogues — sibling implementations in other files; leave false for neighbors within the reference chunk's own file, e.g. other methods of the same class) |
@@ -310,6 +310,45 @@ Parent chunks are marked in results with:
 
 ---
 
+## Top-Caller Hints (opt-in, 2026-08-14)
+
+**Feature**: `include_top_callers=True` on `search_code` attaches up to 2 caller hints to each result.
+
+**Purpose**: Callers are the highest-utility context an agent cannot derive from the result itself. This surfaces "who calls this?" inline instead of requiring a follow-up `find_connections` call.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `include_top_callers` | boolean | false | Attach `top_callers` (≤2 entries) to each search result |
+
+### Behavior
+
+- Each entry is `{"name": <caller symbol>, "file": <caller file>}`, ranked by resolver confidence when available (insertion order otherwise — most in-file AST edges carry no float confidence, so ordering is a hint, not a guarantee).
+- Looks up both the chunk-id graph node and the bare symbol-name node (unresolved AST call edges target the latter), deduplicated before the top-2 cut.
+- Silently absent when the graph is unavailable or the result has no incoming call edges. Default off is byte-identical to prior output.
+
+```python
+search_code("rerank candidates", include_top_callers=True)
+# result gains: "top_callers": [{"name": "search", "file": "search/hybrid_searcher.py"}, ...]
+```
+
+---
+
+## Ambiguous-Edge Filtering for find_connections (opt-in, 2026-08-14)
+
+**Feature**: `hide_ambiguous=True` on `find_connections` drops call-edge entries whose confidence tag is `"ambiguous"`.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `hide_ambiguous` | boolean | false | Hide `"ambiguous"`-tagged entries from `direct_callers`, `direct_callees`, and `indirect_callers` |
+
+### Behavior
+
+- Display-layer filter scoped to the three call-edge lists only. `"exact"` and `"recovered"` entries are always kept; non-call relationship buckets (which carry float confidences) are untouched.
+- **`caller_confidence`/`callee_confidence` breakdowns and `total_impacted` intentionally remain pre-filter totals** — the counters tell you how many entries existed before filtering (e.g. `ambiguous: 5` with an empty list means 5 were hidden).
+- `dependency_graph` output is not filtered — hidden entries can still appear there.
+
+---
+
 ## Search Result Fields
 
 The `search_code` tool returns results with the following fields:
@@ -326,6 +365,7 @@ The `search_code` tool returns results with the following fields:
 | `complexity_score` | integer | ⚠️ Optional | Cyclomatic complexity (functions/methods only) |
 | `reranker_score` | float | ⚠️ Optional | Neural reranker score (when reranking enabled, rounded to 4 decimals) |
 | `graph` | object | ⚠️ Optional | Call relationships (`calls`, `called_by` arrays) |
+| `top_callers` | array | ⚠️ Optional | Up to 2 `{name, file}` caller hints (only with `include_top_callers=True`) |
 
 ### Field Details
 

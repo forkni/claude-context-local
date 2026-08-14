@@ -2,15 +2,19 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-08-13)
+## Current Status: All Features Operational (2026-08-14)
 
-- **Version**: 0.25.0
+- **Version**: 0.25.0 (+ unreleased 2026-08-14 retrieval-campaign commits, see below)
 - **Status**: Production-ready, concurrency-safe
-- **Test Coverage**: 5,823 unit tests · 102 fast_integration · 19 integration · 108 slow_integration (2026-08-13)
+- **Test Coverage**: 5,892 unit tests · 102 fast_integration · 19 integration · 108 slow_integration (2026-08-14)
 - **Dependencies**: 36 direct (`pyproject.toml`) + optional `[callgraph]` / `[lsp]` / `[test]` / `[dev]` / `[gpu]` / `[otel]` extras
-- **SSCG Benchmark**: MRR 0.8603 (canonical, 63q, k=10, `canon_l1` intent-on arm, shipped default) / 0.6789 (expanded, 133 non-D, k=10, `canon_l1` intent-on arm) — see `docs/BENCHMARKS.md` for full provenance (ADR-0033 re-pin after the ML-stack/torch bump, superseding `canon_h1`/`canon_i1`/`canon_j1`/`canon_k1`/`canon_k2`); README's Highlights headline cites the same `canon_l1` figures
+- **SSCG Benchmark**: MRR 0.8722 (canonical, 63q, k=10, deterministic, r1==r2 bit-identical) / 0.6843 (expanded, 133 non-D, k=10) — 2026-08-14 remaining-levers re-pin, superseding `canon_l1`'s 0.8603/0.6789; see `docs/BENCHMARKS.md` and `evaluation/REMAINING_LEVERS_AB_20260814.md`
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: v0.25.0 — C++ chunking parity (20 → 27 file extensions, headers now indexed for the
+- **Recent**: Unreleased (2026-08-14) — Track A + remaining-levers retrieval campaigns closed: B1
+  `hide_ambiguous` (find_connections) and B4 `include_top_callers` (search_code) shipped as opt-in
+  display-layer params; A1/A2/A4 knobs shipped default-off and measured-rejected; jina-reranker-v3.5
+  supported but rejected as default; new deterministic benchmark canons; v0.25.0 — C++ chunking
+  parity (20 → 27 file extensions, headers now indexed for the
   first time), nested same-named container `parent_chunk_id` linkage fix, templated header-only
   prototype/alias naming fix; v0.24.0 — retro-tagged v0.23.0, documentation/skill sync against
   `development` (test counts, benchmark re-pin, ADR-0036 `include_dirs` semantics), call-graph
@@ -23,6 +27,49 @@ Complete version history and feature timeline for claude-context-local MCP serve
   truthiness fix (was discarding 100% of resolver-derived call edges)
 
 ---
+
+## Unreleased - Retrieval Campaigns: Track A + Remaining Levers (2026-08-14)
+
+Two pre-registered A/B campaigns after v0.25.0, closing out the RAG-improvement roadmap's A-side
+levers. Every quality claim is paired-CI gated on the deterministic (PYTHONHASHSEED=0) harness.
+Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
+`evaluation/GRAPH_RESERVE_PROBE_20260814.md`, `evaluation/JINA_V35_AB_20260814.md`.
+
+### Added (shipped, opt-in, default-off, byte-identical)
+
+- **B1 `hide_ambiguous` on `find_connections`** (`63c1840`) — display-layer filter dropping
+  `"ambiguous"`-tagged entries from `direct_callers`/`direct_callees`/`indirect_callers`.
+  Confidence breakdowns and `total_impacted` intentionally remain pre-filter totals;
+  `dependency_graph` is not filtered. Live MCP end-to-end verified 2026-08-14.
+- **B4 `include_top_callers` on `search_code`** (`a20c805`) — attaches up to 2 `{name, file}`
+  caller hints per result via raw call-graph in-edges (chunk-id + bare-symbol-name node lookup,
+  deduplicated). Live MCP end-to-end verified 2026-08-14.
+- **jina-reranker-v3.5 support** (`a245c79`) — version-aware length kwargs; the model is
+  selectable but **rejected as default** (A/B: no recall upside vs jina-reranker-v3, see
+  `evaluation/JINA_V35_AB_20260814.md`).
+
+### Measured and rejected (mechanisms remain in the codebase, default-off)
+
+- **A1 call-evidence scoring for graph-hop candidates** (`2ca05f9`) — NOT adopted: fails the
+  recall CI gate via seed displacement (scored graph candidates compete with hop-1 seeds).
+- **A2 confidence-weighted graph traversal** (`3b04c3b`) — NOT adopted: structurally inert at
+  depth-1 with floor ≤0.65; first-bite threshold 0.8 is neutral.
+- **A4 `reranker.doc_representation_mode="signature_head"`** (`9b2b917` mechanism, rejected
+  2026-08-14) — 133q recall@10 −0.0789 / recall@20 −0.0736, both paired 95% CIs excluding zero on
+  the loss side; 11 pool_hit losses vs 2 gains; 63q guard-rail also violated. Compressed documents
+  reshape pool *membership*, not just ordering. Only win: −19% reranker latency — documented as a
+  priced-in opt-in (same disposition shape as PPR), never default. Knob settled into
+  `FORBIDDEN_AUTO_TUNE_KEYS`.
+- **A3 final-pool graph reserve** (`6cc7caf`) — NOT BUILT: read-only probe gate failed (build
+  scope empty by construction; unscored graph channel evicts 5 in-window golds to buy 2 rescues).
+
+### Benchmarks
+
+- **New deterministic canons** (post-campaign substrate): 63q MRR **0.8722** (r1==r2
+  bit-identical, 0 movers), 133q MRR **0.6843** / recall@10 0.7898 / pool_hit 0.9248 — supersede
+  `canon_l1`'s 0.8603/0.6789. The 63q run-pair identity doubles as proof the implementation
+  commits were quality-neutral at their defaults. Hard-miss cohort is substrate-dependent
+  (H034/H066 exited the miss set without intervention) — re-derive before targeting.
 
 ## v0.25.0 - C++ Chunking Parity, Headers Indexed (2026-08-13)
 

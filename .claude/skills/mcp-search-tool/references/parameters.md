@@ -40,6 +40,7 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 | `include_parent` | false | Also retrieve enclosing class when matching methods |
 | `output_format` | schema `"compact"`, effective `"ultra"` | If omitted, `handle_call_tool` (`mcp_server/server.py`) falls back to `config.output.format`, which ships as **`"ultra"`** (`OutputConfig.format` in `search/config.py`, for 45-55% token reduction). Pass `output_format="compact"` or `"verbose"` explicitly to override. |
 | `max_context_tokens` | schema **0**, effective **0** | If omitted, falls back to `config.search_mode.default_max_context_tokens` — dataclass default is also `0` (no cap), so schema and effective values agree today. Same drift risk as `auto_reindex` above if a project overrides the config value. |
+| `include_top_callers` | false | (2026-08-14) Attach `top_callers` — up to 2 `{name, file}` caller hints per result from raw call-graph in-edges. Ranked by resolver confidence when present, insertion order otherwise (most in-file AST edges carry no confidence float — treat ordering as a hint). Silently absent when the graph or incoming call edges are missing. |
 
 **chunk_type values (12):** "function", "class", "method", "module", "module_preamble", "decorated_definition", "interface", "enum", "struct", "type",
 "merged", "split_block"
@@ -52,7 +53,8 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 **Result fields (optional):** `name` (chunk has a name), `summary` (module chunks with a docstring), `reranker_score` (neural reranking ran),
 `complexity_score` (functions with a computed score), `source` (present whenever the underlying result object carries a non-empty `source`
 attribute — in practice this covers essentially every result path (`hybrid`/`multi_hop`/`graph_hop`/`ego_graph`/`direct_lookup`), but it is not a
-schema-guaranteed field, so check for its presence rather than assuming it).
+schema-guaranteed field, so check for its presence rather than assuming it), `top_callers` (only with `include_top_callers=true` — up to 2
+`{name, file}` caller hints).
 
 **Source values:** `"search"` (direct lexical/dense match), `"multi_hop"` (always-on semantic expansion of initial hits), `"graph_hop"` (always-on
 call/import graph expansion of initial hits), `"ego_graph"` (always-on k-hop neighbors — `ego_graph_enabled=true` widens the neighborhood, it doesn't
@@ -96,6 +98,7 @@ code-search:search_code("how does the indexing pipeline work", k=10)
 | `max_depth` | 3 | Max depth for dependency traversal (range 1-5) |
 | `exclude_dirs` | — | Directories to exclude, e.g. `["tests/"]` |
 | `relationship_types` | — | Filter to specific types (see list below) |
+| `hide_ambiguous` | false | (2026-08-14) Drop `"ambiguous"`-tagged entries from `direct_callers`/`direct_callees`/`indirect_callers` only. `caller_confidence`/`callee_confidence` breakdowns and `total_impacted` intentionally stay **pre-filter totals** (e.g. `ambiguous: 5` alongside a shorter list means 5 were hidden); `dependency_graph` is not filtered and can still show hidden entries. |
 | `output_format` | "compact" | "compact" / "verbose" / "ultra" |
 
 **Valid relationship_types (21 enum members; only 19 actually route to a response field):**

@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+Track A + remaining-levers retrieval campaigns (2026-08-14), closing out the RAG-improvement
+roadmap's A-side levers with pre-registered, paired-CI-gated A/B runs on the deterministic
+harness. Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
+`evaluation/GRAPH_RESERVE_PROBE_20260814.md`, `evaluation/JINA_V35_AB_20260814.md`.
+
+### Added
+
+- **`hide_ambiguous` on `find_connections`** (opt-in, default `false`) — hides
+  `"ambiguous"`-tagged entries from `direct_callers`/`direct_callees`/`indirect_callers`;
+  confidence breakdowns and `total_impacted` intentionally remain pre-filter totals, and
+  `dependency_graph` is unfiltered. Display-layer only, byte-identical when off.
+- **`include_top_callers` on `search_code`** (opt-in, default `false`) — attaches up to 2
+  `{name, file}` caller hints per result from raw call-graph in-edges (chunk-id and
+  bare-symbol-name node lookups, deduplicated before the top-2 cut).
+- **jina-reranker-v3.5 support** — version-aware length kwargs; model selectable but rejected as
+  the default reranker after A/B showed no recall upside over jina-reranker-v3.
+- **Rejected-but-shipped mechanisms (all default-off, measured, do not enable without re-gating)**:
+  A1 `graph_hop_call_evidence_enabled` (seed displacement fails the recall gate), A2
+  `traversal_confidence_weighting_enabled`/`min_traversal_confidence` (structurally inert at
+  shipped depth/floor), A4 `reranker.doc_representation_mode="signature_head"` (CI-negative recall
+  on both datasets; −19% reranker latency is the only win — priced-in opt-in, settled into
+  `FORBIDDEN_AUTO_TUNE_KEYS`). A3 final-pool graph reserve was NOT built (probe gate failed).
+
+### Changed
+
+- **Benchmark canons re-pinned** (deterministic, PYTHONHASHSEED=0): 63q MRR **0.8722** (r1==r2
+  bit-identical), 133q MRR **0.6843** — supersede `canon_l1`'s 0.8603/0.6789 (substrate drift
+  across the campaign's implementation commits; no default behavior changed). See
+  `docs/BENCHMARKS.md`.
+
 ## [0.25.0] - 2026-08-13
 
 Closes out PR #57 review findings before merge: two real chunking bugs fixed (nested same-named

@@ -18,7 +18,7 @@ for improved accuracy and efficiency. This guide explains how to configure and c
 
 - **Reciprocal Rank Fusion (RRF)** combines results from multiple search methods
 - **Complementary strengths**: BM25 for exact text matches, dense search for semantic similarity
-- **Proven quality metrics**: MRR 0.8603 on the 63-query canonical golden set, k=10, hybrid mode (`canon_l1` intent-on arm, 2026-08-06 baseline, shipped default; see [SSCG Retrieval Benchmark](BENCHMARKS.md#sscg-retrieval-benchmark) for the full provenance-stamped tables and comparability notes)
+- **Proven quality metrics**: MRR 0.8722 on the 63-query canonical golden set, k=10, hybrid mode (2026-08-14 deterministic re-pin, shipped default; see [SSCG Retrieval Benchmark](BENCHMARKS.md#sscg-retrieval-benchmark) for the full provenance-stamped tables and comparability notes)
 - **Configurable weights** to tune for your specific use case
 - **Auto-mode detection** based on query characteristics
 
@@ -229,6 +229,23 @@ survive to the deep-recall window. Known replicated per-query losses: Q51
 Verify after switching: benchmark or spot-check with `confounds.ppr_fallback`
 = 0 (a nonzero count means the graph lacks PPR support and BFS silently took
 over — the latency win will not materialize).
+
+### Latency Profile: Compressed Reranker Documents (opt-in, larger recall debit)
+
+`reranker.doc_representation_mode: "signature_head"` (default `"full"`) feeds
+the listwise reranker a compressed document (path/parent context line +
+docstring + first ~12 source lines) instead of the full chunk body. Measured
+2026-08-14 (`evaluation/REMAINING_LEVERS_AB_20260814.md`, deterministic
+harness): **−19% query latency** (63q 3944→3204 ms, 133q 4185→3391 ms) at a
+**CI-negative recall cost** — 133q recall@10 −0.0789 and recall@20 −0.0736
+(paired 95% CIs exclude zero), pool_hit −0.0677 (11 golds lost vs 2 gained),
+and the 63q guard-rail set also loses recall@5. The compression reshapes pool
+*membership* (the rerank cuts run over the same documents), not just final
+ordering, so this debit is structural. It is a rejected default settled into
+`FORBIDDEN_AUTO_TUNE_KEYS` — enable per project via `search_overrides.json`
+only if latency genuinely outweighs recall, with the debit above priced in.
+The knob is construction-baked (read once at reranker construction; a running
+server needs a restart to pick up a change).
 
 ---
 

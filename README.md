@@ -29,7 +29,7 @@
 
 ## Highlights
 
-- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-08-06, 63 queries, hybrid k=10, `canon_l1`): **MRR 0.8603, Recall@5 0.6795, Recall@10 0.7957** - [benchmarks](docs/BENCHMARKS.md)
+- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-08-14, 63 queries, hybrid k=10, deterministic): **MRR 0.8722, Recall@5 0.7002, Recall@10 0.8089** - [benchmarks](docs/BENCHMARKS.md)
 - **Neural Reranking**: Cross-encoder models (default: `Alibaba-NLP/gte-reranker-modernbert-base`; alternatives: jinaai/jina-reranker-v3, Qwen3-Reranker-0.6B) improve ranking quality by 15-25% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
 - **SSCG Integration**: Structural-Semantic Code Graph — 21 relationship types, PageRank centrality reranking; see [benchmarks](docs/BENCHMARKS.md) for mode-comparison history
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
@@ -440,17 +440,17 @@ claude-context-local/
 
 ## Benchmark Results
 
-### Latest Validation (2026-08-06, hybrid-only, k=10)
+### Latest Validation (2026-08-14, hybrid-only, k=10, deterministic)
 
-Provenance: `docs/adr/0033-lift-torch-ceiling.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`, `intent.enabled=True`). Re-pinned to `canon_l1` after the ML-stack bump (retrieval libraries + torch 2.8.0+cu128 → 2.10.0+cu128 → 2.11.0+cu128, ADR-0033) — all three stages independently gated on a fresh 63q intent-on arm against a same-day pre-side baseline, passing cleanly (stage 1: 0 queries moved, CI zero on 4 of 5 metrics; stage 2: all five paired 95% CIs include zero; stage 3: 0 queries moved, all five CIs exactly `[+0.0000, +0.0000]`, byte-identical to stage 2). The table below cites `canon_l1`'s **intent-on arm** — the figures matching the shipped default — not its intent-off control view. Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
+Provenance: `evaluation/REMAINING_LEVERS_AB_20260814.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`, `--set intent.enabled=true` matching the shipped default), PYTHONHASHSEED=0 deterministic harness (ADR-0021). These are the base runs of the 2026-08-14 remaining-levers campaign; the 63q run was repeated twice and came back **bit-identical (0 per-query movers)**. Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
 
 | Dataset | Queries | MRR | Recall@5 | Recall@10 | NDCG@5 | pool_hit_rate |
 |---|---|---|---|---|---|---|
-| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8603** (`canon_l1` intent-on arm) | 0.6795 | 0.7957 | 0.7107 | 0.9048 |
-| Expanded (`golden_dataset_expanded.json`, non-D, 133 queries) | 133 | **0.6789** (`canon_l1` intent-on arm) | 0.6507 | 0.7758 | 0.6324 | 0.8797 |
-| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.9021** (`canon_l1`) | 0.6633 | 0.7804 | 0.7047 | 1.0000 |
+| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8722** | 0.7002 | 0.8089 | 0.7219 | 0.9206 |
+| Expanded (`golden_dataset_expanded.json`, non-D, 133 queries) | 133 | **0.6843** | 0.6668 | 0.7898 | 0.6460 | 0.9248 |
+| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.9021** (`canon_l1`, 2026-08-06 — not re-measured this generation) | 0.6633 | 0.7804 | 0.7047 | 1.0000 |
 
-Run-to-run noise band is **±0.02 MRR**, measured directly via a same-code control (two 94-query runs on unchanged code landed 0.701 and 0.683). Treat any delta smaller than that as noise. The canonical-view and F-via-similar figures are byte-identical to `canon_k1`/`canon_k2` (0 queries moved across both stage 2 and stage 3 gates); the expanded-view deltas vs the prior `canon_j1` figures (0.6869, 0.8836) are within or just outside the noise band and are attributed to torch's kernel-level floating-point reordering measured in ADR-0033's Stage 2 gate, not a functional regression. The separate F-category-only (9-query) sub-row from prior generations is dropped — the whole-63q aggregate is the one actually consumed downstream.
+Deltas vs the prior `canon_l1` figures (0.8603/0.6789, 2026-08-06) are substrate drift across the intervening commits, not attributable to any single change — the 63q run-pair identity doubles as proof the campaign's implementation commits were quality-neutral at their defaults. See `docs/BENCHMARKS.md` for the full comparability-break log.
 
 **Comparability breaks** — do not read the numbers above as a trend against older figures in this repo's history:
 
@@ -462,7 +462,8 @@ Run-to-run noise band is **±0.02 MRR**, measured directly via a same-code contr
 - ADR-0029 (`canon_h1`, `evaluation/CANON_20260804_INTENT_ON_REPAIRED.md`) repaired `_extract_symbol_from_query`, passed the pre-registered similarity-query gate on both datasets, and re-enabled `intent.enabled=True` as the shipped default.
 - ADR-0030 (`canon_i1`) deepened the config→searcher seam and corrected six construction-baked liveness tags; measured 0 flips, all deltas attributed to substrate drift.
 - ADR-0031 (`canon_j1`) deleted the two intent policy tables (both previously measured inert/flat); a pre-registered gate passed cleanly — `canon_j1`'s intent-on arm superseded `canon_i1`.
-- ADR-0033 (`canon_l1`, `docs/adr/0033-lift-torch-ceiling.md`) bumped the ML stack (transformers/sentence-transformers/faiss-cpu/huggingface-hub/hf-xet, then torch 2.8.0+cu128 → 2.10.0+cu128 → 2.11.0+cu128) across three independently-gated stages — `canon_l1`'s intent-on arm is the published baseline above, superseding `canon_j1`/`canon_k1`/`canon_k2`.
+- ADR-0033 (`canon_l1`, `docs/adr/0033-lift-torch-ceiling.md`) bumped the ML stack (transformers/sentence-transformers/faiss-cpu/huggingface-hub/hf-xet, then torch 2.8.0+cu128 → 2.10.0+cu128 → 2.11.0+cu128) across three independently-gated stages — `canon_l1`'s intent-on arm was the published baseline from 2026-08-06 to 2026-08-14, superseding `canon_j1`/`canon_k1`/`canon_k2`.
+- The 2026-08-14 remaining-levers campaign (`evaluation/REMAINING_LEVERS_AB_20260814.md`) re-pinned both canons on the post-Track-A/B1/B4/A4/A3-probe substrate: 63q **0.8722**, 133q **0.6843** — the published baseline above, superseding `canon_l1`. No defaults flipped: the campaign shipped only the opt-in `hide_ambiguous` (find_connections) and `include_top_callers` (search_code) display params; A1/A2/A4 mechanisms and jina-reranker-v3.5 were measured and rejected as defaults.
 - The 2026-07-28 golden-dataset repair (`6df36db`) changed scoring for 3-part `split_block` chunks; nothing measured before that commit is comparable to what's measured after.
 - The 2026-08-02 H-category promotion grew the expanded set 108→145 queries (94→131 non-D); the 2026-08-04 top-up grew it further to 147 (133 non-D). H queries are harder by construction (single-file, ≤2 golds), so treat each generation's figure as a separate measurement, not a before/after comparison.
 - `0.797` in the historical table below (2026-06-08, 13 queries) predates the golden-dataset repair, the H-promotion, the SDK v2 migration, and every re-pin since; kept only for continuity.

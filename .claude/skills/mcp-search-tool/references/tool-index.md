@@ -33,7 +33,8 @@ Find code with natural language query or direct chunk lookup. Use for all initia
 `ego_graph_enabled` (schema default false — **does not gate ego-graph expansion, which always runs**; only widens hop depth/neighbor cap when
 `true`), `ego_graph_k_hops` (default 2, range 1-5), `ego_graph_max_neighbors_per_hop` (default 10, range 1-50), `include_parent` (default false),
 `output_format` (schema default "compact", effective default **"ultra"** via `config.output.format`), `max_context_tokens` (token-budget cap, default
-0/no cap). Full parameter reference (with the schema-vs-effective fallback chains) in [parameters.md](parameters.md).
+0/no cap), `include_top_callers` (default false — attach up to 2 `{name, file}` caller hints per result, 2026-08-14). Full parameter reference (with
+the schema-vs-effective fallback chains) in [parameters.md](parameters.md).
 
 **chunk_type values (12):** see [parameters.md](parameters.md) (omit the field to match any chunk type)
 
@@ -43,7 +44,7 @@ Find code with natural language query or direct chunk lookup. Use for all initia
 **Present whenever the project has an indexed call graph** (on by default — `GraphEnhancedConfig.centrality_annotation`/`centrality_reranking` in
 `search/config.py`): `centrality`, `blended_score` (with the default `centrality_alpha=0.0`, `blended_score` is numerically identical to `score`).
 **Result fields (optional):** `name` (chunk has a name), `summary` (module chunks with a docstring), `reranker_score` (neural reranking ran),
-`complexity_score` (functions with a computed score).
+`complexity_score` (functions with a computed score), `top_callers` (only with `include_top_callers=true`).
 
 ### code-search:find_connections
 
@@ -51,7 +52,8 @@ Find all callers, callees, dependencies, and relationships for a given symbol. R
 per-entry provenance (`resolver_source`, `resolver_confidence`). Preferred over Grep for caller/dependency discovery.
 
 **Key options:** `chunk_id` (preferred), `symbol_name` (fallback — may be ambiguous), `max_depth` (default 3, range 1-5), `exclude_dirs`,
-`relationship_types`, `output_format`
+`relationship_types`, `hide_ambiguous` (default false — hide `"ambiguous"`-tagged call edges; confidence counters stay pre-filter totals, 2026-08-14),
+`output_format`
 
 **Valid relationship types (21 enum members, only 19 route to a response field — `assigns_to`/`reads_from` don't):** see
 [parameters.md](parameters.md)
