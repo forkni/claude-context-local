@@ -325,6 +325,11 @@ class MultiHopSearcher:
         """
         from graph.graph_queries import GraphQueryEngine
 
+        # Only called from _graph_expand's ge_cfg branch, which is
+        # reached exclusively after that method's own `if not
+        # self.graph_storage: return` guard -- narrow here since pyrefly
+        # can't see that invariant across methods.
+        assert self.graph_storage is not None
         engine = GraphQueryEngine(self.graph_storage)
         similarities = self._graph_candidate_similarities(
             [chunk_id for chunk_id, _, _ in pending], query_embedding

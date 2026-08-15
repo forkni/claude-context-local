@@ -100,7 +100,7 @@ offline clustering, no new index artifact, no INDEX_VERSION bump).
 - A/B gate: 63q + 131q, 2 rounds, deterministic harness. Primary **recall@10/recall@20**,
   MRR secondary; paired CI excludes zero; quality-neutral control arm; fresh re-baseline
   immediately before running.
-- Risks: hot path (O(1) lookups only); mis-tuned λ2 = config-resweep failure mode (tune
+- Risks: hot path (O(1) lookups only); mistuned λ2 = config-resweep failure mode (tune
   only via A/B); real graph scores add window competition for hop-1 seeds
   (`hop1_reserved_slots=6` still protects the top; gate catches regression);
   `_graph_expand` serves both `multi_hop_mode="graph"` and `"hybrid"` — full regression
