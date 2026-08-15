@@ -91,6 +91,7 @@ class TestGuardrails:
             "reranker.single_pass",
             "reranker.hop1_reserved_slots",
             "reranker.doc_representation_mode",
+            "reranker.merged_pool_policy",
             "query_expansion.enabled",
             "multi_hop.expansion",
             "multi_hop.multi_hop_mode",
