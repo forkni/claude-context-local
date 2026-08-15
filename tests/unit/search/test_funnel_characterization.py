@@ -463,6 +463,296 @@ def test_dedupe_split_blocks_can_return_fewer_than_k():
 
 
 # ---------------------------------------------------------------------------
+# merged_pool_policy: ordering + eviction fix (reranking_engine.py:294-380)
+#
+# Repairs finding (E) — the merged multi-hop pool's raw-.score sort mixes
+# three incomparable scales (hop-1 jina relevance, semantic-expansion raw
+# FAISS cosine, graph-expansion literal 0.0), so hop1_reserved_slots' blind
+# tail eviction can evict a BETTER-ranked hop-1 survivor to make room for a
+# worse-ranked one. See docs/adr/0013-hop1-reserve-at-final-pool.md and
+# evaluation/POOL_ORDER_AB_20260815.md.
+# ---------------------------------------------------------------------------
+
+
+def test_merged_pool_policy_default_is_score():
+    """merged_pool_policy="score" (default) is byte-identical to the
+    pre-existing sort — negatives, ties, and zero scores all sort purely by
+    .score descending, independent of source/metadata. Ties preserve
+    original (stable-sort) order."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)
+    cfg = _cfg(top_k_candidates=10)
+    candidates = [
+        SearchResult(chunk_id="neg", score=-0.5, metadata={}, source="multi_hop"),
+        SearchResult(chunk_id="zero_a", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(
+            chunk_id="zero_b", score=0.0, metadata={"hop1_rank": 1}, source="unknown"
+        ),
+        SearchResult(chunk_id="hi", score=0.9, metadata={}, source="multi_hop"),
+        SearchResult(chunk_id="tie_a", score=0.4, metadata={}, source="graph_hop"),
+        SearchResult(
+            chunk_id="tie_b", score=0.4, metadata={"hop1_rank": 2}, source="unknown"
+        ),
+    ]
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query("q", candidates, k=6)
+
+    assert [r.chunk_id for r in out] == [
+        "hi",
+        "tie_a",
+        "tie_b",
+        "zero_a",
+        "zero_b",
+        "neg",
+    ]
+
+
+def test_merged_pool_policy_ego_tail_call_site_unaffected():
+    """rerank_by_query's merged_pool_policy defaults to "score" — calls that
+    don't pass it explicitly (the ego-graph/parent-expansion tail in
+    HybridSearcher) stay on the plain score sort regardless of what
+    config.reranker.merged_pool_policy holds, because the policy is a
+    call-scoped argument, not something read off config internally."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)
+    cfg = _cfg(top_k_candidates=10)
+    candidates = [
+        SearchResult(chunk_id="hi", score=0.9, metadata={}, source="graph_hop"),
+        SearchResult(
+            chunk_id="hop1_best",
+            score=-0.5,
+            metadata={"hop1_rank": 1},
+            source="unknown",
+        ),
+    ]
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query(
+            "q", candidates, k=2
+        )  # no merged_pool_policy kwarg
+
+    # Plain score sort — graph_hop's 0.9 beats hop1's -0.5, exactly as
+    # today, regardless of the policy live in config.
+    assert [r.chunk_id for r in out] == ["hi", "hop1_best"]
+
+
+def test_channel_priority_orders_hop1_then_semantic_then_graph():
+    """channel_priority never compares across scales: hop-1 survivors (by
+    hop1_rank ascending) sort ahead of semantic expansion (by score
+    descending), which sorts ahead of graph expansion (insertion order) —
+    even when the hop-1 entries have the lowest raw scores in the fixture."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)
+    cfg = _cfg(top_k_candidates=10)
+    candidates = [
+        SearchResult(chunk_id="graph_a", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(
+            chunk_id="semantic_hi", score=0.9, metadata={}, source="multi_hop"
+        ),
+        SearchResult(
+            chunk_id="hop1_worst",
+            score=-0.9,
+            metadata={"hop1_rank": 2},
+            source="unknown",
+        ),
+        SearchResult(chunk_id="graph_b", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(
+            chunk_id="semantic_lo", score=0.5, metadata={}, source="multi_hop"
+        ),
+        SearchResult(
+            chunk_id="hop1_best",
+            score=-0.95,
+            metadata={"hop1_rank": 1},
+            source="unknown",
+        ),
+    ]
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query(
+            "q", candidates, k=6, merged_pool_policy="channel_priority"
+        )
+
+    assert [r.chunk_id for r in out] == [
+        "hop1_best",
+        "hop1_worst",
+        "semantic_hi",
+        "semantic_lo",
+        "graph_a",
+        "graph_b",
+    ]
+
+
+def test_channel_priority_makes_hop1_reserve_inert():
+    """Under channel_priority, all hop-1 candidates already sit in tier 0
+    (ahead of top_k_candidates), so _apply_hop1_reserve's tail scan finds no
+    hop1-tagged tail entries and hits its early return — passing a non-zero
+    hop1_reserved_slots changes nothing versus 0 (retires the analytical
+    confound noted in the plan's Phase 2)."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)
+    cfg = _cfg(top_k_candidates=3)
+    candidates = [
+        SearchResult(
+            chunk_id=f"hop1_{i}",
+            score=float(i),
+            metadata={"hop1_rank": i},
+            source="unknown",
+        )
+        for i in range(3)
+    ] + [
+        SearchResult(
+            chunk_id=f"semantic_{i}",
+            score=float(9 - i),
+            metadata={},
+            source="multi_hop",
+        )
+        for i in range(5)
+    ]
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        without_reserve = engine.rerank_by_query(
+            "q",
+            candidates,
+            k=8,
+            merged_pool_policy="channel_priority",
+            hop1_reserved_slots=0,
+        )
+        with_reserve = engine.rerank_by_query(
+            "q",
+            candidates,
+            k=8,
+            merged_pool_policy="channel_priority",
+            hop1_reserved_slots=5,
+        )
+
+    assert [r.chunk_id for r in without_reserve] == [r.chunk_id for r in with_reserve]
+
+
+def test_hop1_reserve_tail_eviction_drops_top_hop1_characterization():
+    """Characterizes finding (E): under the default "score"/"tail" eviction,
+    promoting a worse-ranked hop-1 candidate can evict a BETTER-ranked hop-1
+    candidate already sitting in the window's score-sorted tail — because
+    the score sort puts every hop-1 survivor below every semantic-expansion
+    candidate, the window's tail IS the hop-1 region."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)
+    cfg = _cfg(top_k_candidates=4, hop1_reserved_slots=1)
+    candidates = [
+        # Window (top 4 by score): 3 semantic winners + hop1 rank-1 (best),
+        # sitting in the window's lowest-scored (tail) slot.
+        SearchResult(chunk_id="semantic_a", score=0.9, metadata={}, source="multi_hop"),
+        SearchResult(chunk_id="semantic_b", score=0.8, metadata={}, source="multi_hop"),
+        SearchResult(chunk_id="semantic_c", score=0.7, metadata={}, source="multi_hop"),
+        SearchResult(
+            chunk_id="hop1_rank1",
+            score=0.6,
+            metadata={"hop1_rank": 1},
+            source="unknown",
+        ),
+        # Outside the window: a WORSE-ranked hop1 candidate, lower score.
+        SearchResult(
+            chunk_id="hop1_rank2",
+            score=0.1,
+            metadata={"hop1_rank": 2},
+            source="unknown",
+        ),
+    ]
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query("q", candidates, k=5, hop1_reserved_slots=1)
+
+    out_ids = [r.chunk_id for r in out]
+    assert "hop1_rank2" in out_ids  # promoted, as intended
+    assert "hop1_rank1" not in out_ids  # but the BETTER-ranked survivor got evicted
+
+
+def test_score_reserve_fix_evicts_lowest_non_hop1():
+    """merged_pool_policy="score_reserve_fix" keeps the score sort but fixes
+    finding (E): eviction prefers the window's lowest-scored NON-hop1 entry,
+    so a hop-1 promotion no longer evicts a better-ranked hop-1 incumbent.
+    Also pins the permutation contract via Counter — no items are silently
+    duplicated or dropped beyond the intended eviction."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)
+    cfg = _cfg(top_k_candidates=4, hop1_reserved_slots=1)
+    candidates = [
+        SearchResult(chunk_id="semantic_a", score=0.9, metadata={}, source="multi_hop"),
+        SearchResult(chunk_id="semantic_b", score=0.8, metadata={}, source="multi_hop"),
+        SearchResult(chunk_id="semantic_c", score=0.7, metadata={}, source="multi_hop"),
+        SearchResult(
+            chunk_id="hop1_rank1",
+            score=0.6,
+            metadata={"hop1_rank": 1},
+            source="unknown",
+        ),
+        SearchResult(
+            chunk_id="hop1_rank2",
+            score=0.1,
+            metadata={"hop1_rank": 2},
+            source="unknown",
+        ),
+    ]
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query(
+            "q",
+            candidates,
+            k=5,
+            hop1_reserved_slots=1,
+            merged_pool_policy="score_reserve_fix",
+        )
+
+    out_ids = [r.chunk_id for r in out]
+    assert "hop1_rank1" in out_ids  # the better-ranked hop1 survivor is kept
+    assert "hop1_rank2" in out_ids  # the promoted candidate is present too
+    assert "semantic_c" not in out_ids  # lowest-scored non-hop1 entry evicted instead
+
+    from collections import Counter
+
+    assert Counter(out_ids) == Counter(
+        ["semantic_a", "semantic_b", "hop1_rank1", "hop1_rank2"]
+    )
+
+
+def test_order_merged_pool_score_returns_plain_sorted_by_score():
+    """_order_merged_pool("score") is the literal pre-existing sort
+    expression — direct unit check independent of rerank_by_query's
+    surrounding config/reranker plumbing."""
+    candidates = [
+        SearchResult(chunk_id="lo", score=-1.0, metadata={}),
+        SearchResult(chunk_id="hi", score=1.0, metadata={}),
+        SearchResult(chunk_id="mid", score=0.0, metadata={}),
+    ]
+
+    out = RerankingEngine._order_merged_pool(candidates, "score")
+
+    assert [r.chunk_id for r in out] == ["hi", "mid", "lo"]
+    assert out == sorted(candidates, key=lambda r: r.score, reverse=True)
+
+
+def test_order_merged_pool_unknown_policy_raises():
+    """Guards against a typo'd --set arm silently no-op'ing on an unknown
+    merged_pool_policy value."""
+    with pytest.raises(ValueError, match="Unknown merged_pool_policy"):
+        RerankingEngine._order_merged_pool([], "bogus")
+
+
+def test_apply_hop1_reserve_unknown_evict_policy_raises():
+    """Guards against a typo'd evict_policy value silently no-op'ing."""
+    candidates = [
+        SearchResult(chunk_id=f"c{i}", score=float(9 - i), metadata={})
+        for i in range(10)
+    ]
+    candidates[9].metadata["hop1_rank"] = 1
+
+    with pytest.raises(ValueError, match="Unknown evict_policy"):
+        RerankingEngine._apply_hop1_reserve(
+            candidates, top_k_candidates=5, reserved_slots=1, evict_policy="bogus"
+        )
+
+
+# ---------------------------------------------------------------------------
 # HybridSearcher: ego cap + parent cap (:887-889, :942-946)
 # ---------------------------------------------------------------------------
 

@@ -298,7 +298,11 @@ class MultiHopSearcher:
         score = min(anchor_score * cosine(query, candidate) + call_evidence,
         anchor_score) — anchored to the hop-1 scale so the merged pool's
         raw-score sort in RerankingEngine.rerank_by_query compares like with
-        like, and capped so a candidate never outranks its own anchor.
+        like, and capped so a candidate never outranks its own anchor. This
+        anchoring only matters under merged_pool_policy="score" (or
+        "score_reserve_fix", same sort) — "channel_priority" ignores raw
+        score for graph_hop placement entirely (stable insertion order
+        within its own tier), so this scoring's benefit is inert there.
         call_evidence = lambda_weight * log2(1 + distinct reference_ids the
         candidate shares a calls-edge with); see
         GraphQueryEngine.score_call_evidence for the query-conditioning
@@ -632,6 +636,7 @@ class MultiHopSearcher:
                 k=k,
                 search_mode=search_mode,
                 hop1_reserved_slots=config.reranker.hop1_reserved_slots,
+                merged_pool_policy=config.reranker.merged_pool_policy,
                 config=config,
             )
 

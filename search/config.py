@@ -847,10 +847,45 @@ class RerankerConfig:
         # on the 96q set). N=6: MRR flat within +/-0.02 noise on 96q and 63q,
         # recall@20/recall@50/pool_hit_rate all positive on both, no latency cost.
         # 0 disables (byte-identical to pre-fix behaviour). See
-        # docs/adr/0013-hop1-reserve-at-final-pool.md.
+        # docs/adr/0013-hop1-reserve-at-final-pool.md. NOTE: under the tail
+        # eviction this reserve has always used, promoting a rank-3..N hop-1
+        # candidate can evict a *better*-ranked (rank 1-2) hop-1 candidate
+        # already sitting in the window's score-sorted tail — see
+        # merged_pool_policy's "score_reserve_fix" evict_policy below, which
+        # targets this specific defect.
         metadata=spec(
             flat_alias="reranker_hop1_reserved_slots",
             env="CLAUDE_RERANKER_HOP1_RESERVED_SLOTS",
+            reader="search/multi_hop_searcher.py",
+        ),
+    )
+    merged_pool_policy: str = field(
+        default="score",  # How RerankingEngine.rerank_by_query orders the
+        # merged multi-hop pool before the top_k_candidates cut. "score"
+        # (default, byte-identical) sorts by raw .score across three
+        # incommensurable scales -- hop-1 survivors carry an overwritten jina
+        # relevance score (~-0.12..+0.22), semantic-expansion candidates carry
+        # raw FAISS cosine (~0.5-0.9), graph-expansion candidates carry
+        # literal 0.0 -- so every expansion candidate structurally outranks
+        # every hop-1 winner regardless of actual relevance (see
+        # docs/adr/0013-hop1-reserve-at-final-pool.md and
+        # evaluation/POOL_ORDER_AB_20260815.md). "score_reserve_fix" keeps the
+        # score sort but changes hop1_reserved_slots' eviction target from the
+        # window's blind score-sorted tail to the lowest-scored non-hop1
+        # entries, so promoting a hop-1 candidate can no longer evict a
+        # better-ranked one. "channel_priority" replaces the sort entirely
+        # with a three-tier ordering (hop-1 by hop1_rank asc, then
+        # source=="multi_hop" by score desc, then source=="graph_hop" by
+        # insertion order) that never compares across scales; under this
+        # policy hop1_reserved_slots is provably inert (all hop-1 candidates
+        # already sit in tier 0). Only MultiHopSearcher's Pass-2 rerank call
+        # reads this; the ego-graph/parent-expansion tail rerank calls
+        # (hybrid_searcher.py's two rerank_by_query call sites) don't pass it
+        # and always take the "score" default. Not construction_baked -- live
+        # per call, valid as a --set arm with no searcher rebuild required.
+        metadata=spec(
+            choices=("score", "score_reserve_fix", "channel_priority"),
+            flat_alias="reranker_merged_pool_policy",
             reader="search/multi_hop_searcher.py",
         ),
     )

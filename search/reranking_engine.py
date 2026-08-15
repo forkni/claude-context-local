@@ -33,6 +33,12 @@ except ImportError:  # pragma: no mutate
 from .neural_reranker import create_reranker
 
 
+# merged_pool_policy="channel_priority" tier map for non-hop1 candidates.
+# Tier 0 (hop-1 survivors, metadata["hop1_rank"] is not None) is handled
+# separately in _order_merged_pool since it isn't keyed by `source`.
+_CHANNEL_TIER = {"multi_hop": 1, "graph_hop": 2}
+
+
 class RerankingEngine:
     """Coordinates score-based sorting and neural reranking for search results."""
 
@@ -253,10 +259,45 @@ class RerankingEngine:
             return candidates
 
     @staticmethod
+    def _order_merged_pool(results: list, policy: str) -> list:
+        """Order the merged multi-hop pool before the ``top_k_candidates`` cut.
+
+        ``"score"`` (default) is the literal pre-existing behaviour — sort by
+        raw ``.score`` descending — kept as its own branch so the default
+        path is provably byte-identical to before this policy existed. It
+        mixes three incomparable scales (see module docstring context in
+        ``rerank_by_query``'s docstring and ADR-0013); ``"score_reserve_fix"``
+        uses the same sort (the fix lives in ``_apply_hop1_reserve``'s
+        ``evict_policy``, not here). ``"channel_priority"`` replaces the sort
+        with a three-tier ordering that never compares across scales: tier 0
+        = hop-1 survivors (``metadata["hop1_rank"]`` is not None) ordered by
+        that rank ascending; tier 1 = ``source == "multi_hop"`` ordered by
+        score descending; tier 2 = ``source == "graph_hop"`` in stable
+        insertion order; tier 3 = anything else, stable insertion order.
+        """
+        if policy in ("score", "score_reserve_fix"):
+            return sorted(results, key=lambda r: r.score, reverse=True)
+        if policy == "channel_priority":
+
+            def _sort_key(item: tuple[int, object]) -> tuple[int, float, int]:
+                index, r = item
+                hop1_rank = r.metadata.get("hop1_rank")
+                if hop1_rank is not None:
+                    return (0, hop1_rank, index)
+                tier = _CHANNEL_TIER.get(r.source, 3)
+                if tier == 1:
+                    return (tier, -r.score, index)
+                return (tier, 0.0, index)
+
+            return [r for _, r in sorted(enumerate(results), key=_sort_key)]
+        raise ValueError(f"Unknown merged_pool_policy: {policy!r}")
+
+    @staticmethod
     def _apply_hop1_reserve(
         sorted_results: list,
         top_k_candidates: int,
         reserved_slots: int,
+        evict_policy: str = "tail",
     ) -> list:
         """Promote hop-1-ranked candidates cut from the rerank window back in.
 
@@ -272,6 +313,25 @@ class RerankingEngine:
         Intra-window order doesn't matter — the listwise model re-scores the
         whole window. No-op when the pool doesn't exceed the window or no
         tail candidate is hop1-tagged.
+
+        Args:
+            evict_policy: ``"tail"`` (default) evicts from the window's
+                score-sorted tail — the pre-existing behaviour. Because the
+                caller's score sort puts every hop-1 survivor below every
+                semantic-expansion candidate (see module context above), the
+                window's tail *is* the hop-1 region: promoting a rank-3..N
+                hop-1 candidate can evict a better-ranked (rank 1-2) one
+                already sitting there. ``"lowest_non_hop1"`` instead evicts
+                the window's lowest-scored entries that are *not*
+                hop1-tagged first, so a hop-1 promotion prefers evicting a
+                non-hop1 incumbent over a hop-1 one; only falls back to
+                evicting hop1 window entries if there aren't enough non-hop1
+                ones to make room (rare: window is almost entirely
+                hop1-tagged). Both policies evict exactly
+                ``min(reserved_slots-worth-of-promotions, len(window))``
+                window entries, so total output length is identical between
+                the two — they differ only in *which* window entries are
+                dropped.
         """
         if reserved_slots <= 0 or len(sorted_results) <= top_k_candidates:
             return sorted_results
@@ -291,8 +351,31 @@ class RerankingEngine:
         promote = [r for _, _, r in tail_hop1[:reserved_slots]]
         promote_ids = {r.chunk_id for r in promote}
         remaining_tail = [r for r in tail if r.chunk_id not in promote_ids]
+        num_evict = len(promote)
 
-        kept_window = window[: max(0, len(window) - len(promote))]
+        if evict_policy == "lowest_non_hop1":
+            # window is score-sorted descending; prefer evicting the
+            # lowest-scored entries that aren't hop1-tagged (tail-up), only
+            # falling back to hop1-tagged window entries (also tail-up) if
+            # there aren't enough non-hop1 ones to make room. This keeps the
+            # total eviction count identical to "tail" (min(num_evict,
+            # len(window))) — the two policies differ only in target choice.
+            non_hop1_tail_first = [
+                r for r in reversed(window) if r.metadata.get("hop1_rank") is None
+            ]
+            hop1_tail_first = [
+                r for r in reversed(window) if r.metadata.get("hop1_rank") is not None
+            ]
+            evict_ids = {
+                r.chunk_id for r in (non_hop1_tail_first + hop1_tail_first)[:num_evict]
+            }
+            kept_window = [r for r in window if r.chunk_id not in evict_ids]
+            return kept_window + promote + remaining_tail
+
+        if evict_policy != "tail":
+            raise ValueError(f"Unknown evict_policy: {evict_policy!r}")
+
+        kept_window = window[: max(0, len(window) - num_evict)]
         return kept_window + promote + remaining_tail
 
     def rerank_by_query(
@@ -302,6 +385,7 @@ class RerankingEngine:
         k: int,
         search_mode: str = SearchMode.HYBRID,
         hop1_reserved_slots: int = 0,
+        merged_pool_policy: str = "score",
         config: "SearchConfig | None" = None,
     ) -> list:
         """
@@ -318,6 +402,20 @@ class RerankingEngine:
                 0 (default) is a no-op — only ``MultiHopSearcher.search``
                 passes a non-zero value; the ego-graph/parent-expansion tail
                 call sites stay byte-identical.
+            merged_pool_policy: How to order the merged pool before the
+                ``top_k_candidates`` cut — see ``_order_merged_pool`` and
+                ``SearchConfig.reranker.merged_pool_policy``.
+                ``"score"`` (default) is byte-identical to the pre-existing
+                sort. ``"score_reserve_fix"`` keeps that sort but changes
+                ``_apply_hop1_reserve``'s eviction target from the window's
+                blind tail to its lowest-scored non-hop1 entries.
+                ``"channel_priority"`` replaces the sort with a tiered
+                ordering that never compares across incomparable score
+                scales; under it, ``hop1_reserved_slots`` is provably inert
+                (all hop-1 candidates already sit in the window's tier 0).
+                Only ``MultiHopSearcher``'s Pass-2 call passes a non-default
+                value; the ego-graph/parent-expansion tail call sites stay
+                on ``"score"``.
             config: Optional pre-fetched SearchConfig snapshot — the effective
                 config for this request (see ADR-0018). Callers that already
                 hold one pass it through so the whole rerank pass reads a
@@ -330,18 +428,30 @@ class RerankingEngine:
         if not results:
             return []
 
-        # Sort by score (descending)
-        sorted_results = sorted(results, key=lambda r: r.score, reverse=True)
-        self.last_candidate_ids = [r.chunk_id for r in sorted_results]
-
-        # Neural reranking (Quality First mode) — always re-check config for runtime
-        # changes. Fetch once per pass (R1) and thread through both helpers instead
-        # of each independently re-fetching (was 3 fetches/call, now 1).
+        # Fetch once per pass (R1) and thread through every helper below
+        # instead of each independently re-fetching. Hoisted above the sort
+        # (was previously fetched only after) so merged_pool_policy — itself
+        # config-driven when callers pass config.reranker.merged_pool_policy
+        # through — is available before ordering runs.
         if config is None:
             config = get_search_config()
+
+        sorted_results = self._order_merged_pool(results, merged_pool_policy)
+        self.last_candidate_ids = [r.chunk_id for r in sorted_results]
+
+        # Neural reranking (Quality First mode) — always re-check config for
+        # runtime changes.
         if hop1_reserved_slots > 0:
+            evict_policy = (
+                "lowest_non_hop1"
+                if merged_pool_policy == "score_reserve_fix"
+                else "tail"
+            )
             sorted_results = self._apply_hop1_reserve(
-                sorted_results, config.reranker.top_k_candidates, hop1_reserved_slots
+                sorted_results,
+                config.reranker.top_k_candidates,
+                hop1_reserved_slots,
+                evict_policy=evict_policy,
             )
         if sorted_results and self._ensure_reranker("[RERANK]", config=config):
             sorted_results = self._run_rerank(
