@@ -753,6 +753,179 @@ def test_apply_hop1_reserve_unknown_evict_policy_raises():
 
 
 # ---------------------------------------------------------------------------
+# graph_hop_window_cap: caps zero-signal graph_hop occupancy in the rerank
+# window (reranking_engine.py:296-344). Reopening direction (b) from
+# evaluation/POOL_ORDER_AB_20260815.md, gated by
+# evaluation/POOL_ORDER_CAP_PROBE_20260815.md — a standalone knob, not a
+# fourth merged_pool_policy choice, since that key is verdict-locked.
+# ---------------------------------------------------------------------------
+
+
+def test_graph_hop_window_cap_zero_is_noop_same_object():
+    """cap<=0 is the deployed default -- must return the identical input
+    object (no copy), same contract as _order_merged_pool's byte-identical
+    "score" path."""
+    candidates = [
+        SearchResult(chunk_id=f"g{i}", score=0.0, metadata={}, source="graph_hop")
+        for i in range(40)
+    ]
+
+    out = RerankingEngine._apply_graph_hop_window_cap(
+        candidates, top_k_candidates=30, cap=0
+    )
+
+    assert out is candidates
+
+
+def test_graph_hop_window_cap_small_pool_is_noop_same_object():
+    """Pool not exceeding top_k_candidates never needs capping -- identical
+    input object returned even with cap>0."""
+    candidates = [
+        SearchResult(chunk_id=f"g{i}", score=0.0, metadata={}, source="graph_hop")
+        for i in range(5)
+    ]
+
+    out = RerankingEngine._apply_graph_hop_window_cap(
+        candidates, top_k_candidates=30, cap=2
+    )
+
+    assert out is candidates
+
+
+def test_graph_hop_window_cap_permutation_invariant():
+    """Output is always a permutation of the input -- nothing silently
+    duplicated or dropped, regardless of channel mix."""
+    from collections import Counter
+
+    candidates = [
+        SearchResult(chunk_id=f"g{i}", score=0.0, metadata={}, source="graph_hop")
+        for i in range(10)
+    ] + [
+        SearchResult(
+            chunk_id=f"s{i}", score=float(10 - i), metadata={}, source="multi_hop"
+        )
+        for i in range(25)
+    ]
+
+    out = RerankingEngine._apply_graph_hop_window_cap(
+        candidates, top_k_candidates=30, cap=3
+    )
+
+    assert len(out) == len(candidates)
+    assert Counter(r.chunk_id for r in out) == Counter(r.chunk_id for r in candidates)
+
+
+def test_graph_hop_window_cap_admits_exactly_cap_and_backfills():
+    """Admits the first `cap` graph_hop entries (insertion order) into the
+    window, defers the rest just below it preserving their relative order,
+    and backfills the freed slots with the next non-graph candidates in
+    scan order -- the unscanned tail is appended last, untouched."""
+    candidates = [
+        SearchResult(chunk_id="s0", score=0.9, metadata={}, source="multi_hop"),
+        SearchResult(chunk_id="g0", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="g1", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="g2", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="s1", score=-0.1, metadata={}, source="multi_hop"),
+        SearchResult(chunk_id="g3", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="s2", score=-0.2, metadata={}, source="multi_hop"),
+        SearchResult(chunk_id="s3", score=-0.3, metadata={}, source="multi_hop"),
+    ]
+
+    out = RerankingEngine._apply_graph_hop_window_cap(
+        candidates, top_k_candidates=5, cap=2
+    )
+
+    # window (first 5): s0, g0, g1 admitted; g2 deferred so s1, s2 backfill
+    # the freed slot instead. deferred (g2, g3) sits just below the window,
+    # order preserved. Unscanned tail (s3) is appended last.
+    assert [r.chunk_id for r in out] == [
+        "s0",
+        "g0",
+        "g1",
+        "s1",
+        "s2",
+        "g2",
+        "g3",
+        "s3",
+    ]
+
+
+def test_graph_hop_window_cap_degenerate_all_graph_no_backfill_source():
+    """When there's nothing but graph_hop to backfill with, deferred flows
+    straight back into the same positions it vacated -- the cap changes
+    nothing about the effective window content, only confirming it never
+    drops or reorders items when there's no non-graph candidate to promote
+    in its place."""
+    candidates = [
+        SearchResult(chunk_id=f"g{i}", score=0.0, metadata={}, source="graph_hop")
+        for i in range(40)
+    ]
+
+    out = RerankingEngine._apply_graph_hop_window_cap(
+        candidates, top_k_candidates=30, cap=2
+    )
+
+    assert [r.chunk_id for r in out] == [c.chunk_id for c in candidates]
+
+
+def test_graph_hop_window_cap_ego_tail_call_site_unaffected():
+    """rerank_by_query's graph_hop_window_cap defaults to 0 -- calls that
+    don't pass it explicitly (the ego-graph/parent-expansion tail in
+    HybridSearcher) stay on the plain score sort regardless of what
+    config.reranker.graph_hop_window_cap holds, because the cap is a
+    call-scoped argument, not something read off config internally."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)
+    cfg = _cfg(top_k_candidates=3)
+    candidates = [
+        SearchResult(chunk_id="g0", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="g1", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="g2", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="s0", score=-0.1, metadata={}, source="multi_hop"),
+    ]
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query("q", candidates, k=4)  # no cap kwarg
+
+    assert [r.chunk_id for r in out] == ["g0", "g1", "g2", "s0"]
+
+
+def test_graph_hop_window_cap_applied_before_hop1_reserve():
+    """graph_hop_window_cap runs after _order_merged_pool and before
+    hop1_reserved_slots' eviction -- capping graph_hop's window occupancy
+    can keep a candidate the blind tail-eviction reserve would otherwise
+    drop entirely (finding E), by never letting it sit in the pre-reserve
+    window in the first place."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)
+    cfg = _cfg(top_k_candidates=3, hop1_reserved_slots=1)
+    candidates = [
+        SearchResult(chunk_id="s0", score=0.9, metadata={}, source="multi_hop"),
+        SearchResult(chunk_id="g0", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="g1", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(
+            chunk_id="hop1_a", score=-0.5, metadata={"hop1_rank": 1}, source="unknown"
+        ),
+    ]
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        without_cap = engine.rerank_by_query(
+            "q", candidates, k=4, hop1_reserved_slots=1
+        )
+        with_cap = engine.rerank_by_query(
+            "q", candidates, k=4, hop1_reserved_slots=1, graph_hop_window_cap=1
+        )
+
+    # Without the cap: window = [s0, g0, g1], hop1_a promotes in via the
+    # blind tail eviction -- g1 is dropped entirely, not merely demoted.
+    assert [r.chunk_id for r in without_cap] == ["s0", "g0", "hop1_a"]
+    # With cap=1: g0 admits, g1 defers and hop1_a backfills the freed slot
+    # during the cap pass itself -- the reserve then finds no hop1-tagged
+    # tail entry left to promote (early return) and g1 survives in the tail.
+    assert [r.chunk_id for r in with_cap] == ["s0", "g0", "hop1_a", "g1"]
+
+
+# ---------------------------------------------------------------------------
 # HybridSearcher: ego cap + parent cap (:887-889, :942-946)
 # ---------------------------------------------------------------------------
 

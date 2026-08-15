@@ -80,7 +80,8 @@
     "listwise_dtype": "auto",
     "doc_representation_mode": "full",
     "hop1_reserved_slots": 6,
-    "merged_pool_policy": "score"
+    "merged_pool_policy": "score",
+    "graph_hop_window_cap": 0
   },
   "query_expansion": {
     "enabled": false,

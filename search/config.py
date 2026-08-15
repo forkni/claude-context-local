@@ -683,7 +683,7 @@ class IntentConfig:
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (13 fields)."""
+    """Neural reranker settings (14 fields)."""
 
     enabled: bool = field(
         default=True,  # Enabled by default (Quality First)
@@ -886,6 +886,28 @@ class RerankerConfig:
         metadata=spec(
             choices=("score", "score_reserve_fix", "channel_priority"),
             flat_alias="reranker_merged_pool_policy",
+            reader="search/multi_hop_searcher.py",
+        ),
+    )
+    graph_hop_window_cap: int = field(
+        default=0,  # Cap how many source=="graph_hop" candidates occupy the
+        # top_k_candidates rerank window (RerankingEngine._apply_graph_hop_window_cap),
+        # applied after _order_merged_pool's sort and before hop1_reserved_slots'
+        # eviction. 0 disables (byte-identical -- the static returns the input
+        # object unchanged). Every graph_hop candidate carries a literal 0.0
+        # score, so "first N admitted" == insertion order -- the cap never
+        # compares scores across channels, unlike merged_pool_policy's
+        # "channel_priority" (rejected, evaluation/POOL_ORDER_AB_20260815.md).
+        # Standalone knob, not a merged_pool_policy choice, since that key is
+        # locked in index_probe.py's FORBIDDEN_AUTO_TUNE_KEYS. Offline replay
+        # probe (evaluation/POOL_ORDER_CAP_PROBE_20260815.md) gated cap=2/3 for
+        # the Phase 3 A/B before this field existed. Only MultiHopSearcher's
+        # Pass-2 rerank call reads this; hybrid_searcher.py's tail rerank calls
+        # don't pass it and always take the 0 default.
+        metadata=spec(
+            range=(0, 30),
+            flat_alias="reranker_graph_hop_window_cap",
+            env="CLAUDE_RERANKER_GRAPH_HOP_WINDOW_CAP",
             reader="search/multi_hop_searcher.py",
         ),
     )

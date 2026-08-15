@@ -430,6 +430,41 @@ class TestMultiHopSearcher:
         call_kwargs = self.mock_reranking_engine.rerank_by_query.call_args.kwargs
         assert call_kwargs["merged_pool_policy"] == "channel_priority"
 
+    def test_search_multi_hop_threads_graph_hop_window_cap(self):
+        """The merge-pool rerank call passes config.reranker.graph_hop_window_cap
+        through to RerankingEngine.rerank_by_query — the only call site that
+        does (ego-tail calls in HybridSearcher keep the parameter's 0
+        default)."""
+        config = MagicMock()
+        config.multi_hop.initial_k_multiplier = 2.0
+        config.reranker.single_pass = False
+        config.reranker.graph_hop_window_cap = 3
+
+        query_emb = np.array([1.0, 0.0, 0.0])
+        self.mock_embedder.embed_query.return_value = query_emb
+
+        initial_results = [
+            SearchResult(chunk_id="chunk1", score=0.9, metadata={}),
+            SearchResult(chunk_id="chunk2", score=0.8, metadata={}),
+        ]
+        self.mock_single_hop_callback.return_value = initial_results
+
+        batched_results = {
+            "chunk1": [("chunk3", 0.7, {"file": "test.py"})],
+            "chunk2": [("chunk4", 0.6, {"file": "test.py"})],
+        }
+        self.mock_dense_index.get_similar_chunks_batched.return_value = batched_results
+        self.mock_reranking_engine.rerank_by_query.return_value = initial_results
+
+        self.searcher.search(
+            _request(query="test query", k=2, search_mode="hybrid", config=config),
+            hops=2,
+            expansion_factor=0.3,
+        )
+
+        call_kwargs = self.mock_reranking_engine.rerank_by_query.call_args.kwargs
+        assert call_kwargs["graph_hop_window_cap"] == 3
+
     def test_search_multi_hop_single_pass_skips_rerank(self):
         """Q3 single_pass: merge keeps fusion/expansion score order and
         truncates to k without calling the neural reranker."""

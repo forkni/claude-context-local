@@ -437,6 +437,7 @@ class RerankingEngine:
         search_mode: str = SearchMode.HYBRID,
         hop1_reserved_slots: int = 0,
         merged_pool_policy: str = "score",
+        graph_hop_window_cap: int = 0,
         config: "SearchConfig | None" = None,
     ) -> list:
         """
@@ -467,6 +468,14 @@ class RerankingEngine:
                 Only ``MultiHopSearcher``'s Pass-2 call passes a non-default
                 value; the ego-graph/parent-expansion tail call sites stay
                 on ``"score"``.
+            graph_hop_window_cap: Cap how many ``source == "graph_hop"``
+                candidates occupy the ``top_k_candidates`` rerank window —
+                see ``_apply_graph_hop_window_cap`` and
+                ``SearchConfig.reranker.graph_hop_window_cap``. 0 (default)
+                is a no-op. Applied after ``_order_merged_pool`` and before
+                ``hop1_reserved_slots``' eviction. Only ``MultiHopSearcher``'s
+                Pass-2 call passes a non-zero value; the ego-graph/
+                parent-expansion tail call sites stay byte-identical.
             config: Optional pre-fetched SearchConfig snapshot — the effective
                 config for this request (see ADR-0018). Callers that already
                 hold one pass it through so the whole rerank pass reads a
@@ -489,6 +498,11 @@ class RerankingEngine:
 
         sorted_results = self._order_merged_pool(results, merged_pool_policy)
         self.last_candidate_ids = [r.chunk_id for r in sorted_results]
+
+        if graph_hop_window_cap > 0:
+            sorted_results = self._apply_graph_hop_window_cap(
+                sorted_results, config.reranker.top_k_candidates, graph_hop_window_cap
+            )
 
         # Neural reranking (Quality First mode) — always re-check config for
         # runtime changes.

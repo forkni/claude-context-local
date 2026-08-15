@@ -637,6 +637,7 @@ class MultiHopSearcher:
                 search_mode=search_mode,
                 hop1_reserved_slots=config.reranker.hop1_reserved_slots,
                 merged_pool_policy=config.reranker.merged_pool_policy,
+                graph_hop_window_cap=config.reranker.graph_hop_window_cap,
                 config=config,
             )
 
