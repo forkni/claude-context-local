@@ -1,0 +1,185 @@
+{
+  "aggregate": {
+    "micro_recall": 0.5714,
+    "mean_recall": 0.7143,
+    "mean_recall_at_n": 0.3571,
+    "mean_precision": 0.2531,
+    "perfect_recall_count": 5,
+    "total_queries": 7,
+    "total_expected": 7,
+    "total_found": 4,
+    "total_missed": 3,
+    "resolver_sources": {
+      "ast": 23,
+      "lsp": 5,
+      "libcst": 2,
+      "pyan": 2
+    }
+  },
+  "results": [
+    {
+      "id": "OB01",
+      "target": "chunking/relationships/call_edge_resolver.py:method:run_resolvers",
+      "recall": 1.0,
+      "recall_at_n": 0.5,
+      "precision": 0.2,
+      "retrieved_count": 10,
+      "expected_count": 2,
+      "found": [
+        "chunking/relationships/call_edge_resolver.py:function:prepare_scoped_files",
+        "utils/observability.py:function:wrap_in_context"
+      ],
+      "missed": [],
+      "extra": [
+        "chunking/relationships/external_call_graph.py:method:PyanResolver.available",
+        "chunking/relationships/libcst_call_graph.py:method:LibCSTResolver.available",
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver.available",
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.get",
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.get",
+        "mcp_server/tools/job_registry.py:method:JobRegistry.get",
+        "search/metadata.py:method:MetadataStore.get",
+        "search/symbol_cache.py:method:SymbolHashCache.get"
+      ],
+      "resolver_sources": {
+        "ast": 10
+      },
+      "latency_ms": 58700.3
+    },
+    {
+      "id": "OB02",
+      "target": "chunking/relationships/external_call_graph.py:method:PyanResolver.resolve",
+      "recall": 0.0,
+      "recall_at_n": 0.0,
+      "precision": 0.0,
+      "retrieved_count": 0,
+      "expected_count": 1,
+      "found": [],
+      "missed": [
+        "chunking/relationships/call_edge_resolver.py:function:prepare_scoped_files"
+      ],
+      "extra": [],
+      "resolver_sources": {},
+      "latency_ms": 12446.8
+    },
+    {
+      "id": "OB03",
+      "target": "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges",
+      "recall": 0.0,
+      "recall_at_n": 0.0,
+      "precision": 0.0,
+      "retrieved_count": 3,
+      "expected_count": 2,
+      "found": [],
+      "missed": [
+        "chunking/relationships/call_edge_resolver.py:method:run_resolvers",
+        "graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge"
+      ],
+      "extra": [
+        "search/call_edge_injection.py:decorated_definition:InjectionStats",
+        "search/call_edge_injection.py:method:inject_call_edges",
+        "search/config.py:function:get_search_config"
+      ],
+      "resolver_sources": {
+        "lsp": 2,
+        "ast": 1
+      },
+      "latency_ms": 6786.7
+    },
+    {
+      "id": "OB04",
+      "target": "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callees",
+      "recall": 1.0,
+      "recall_at_n": 0.0,
+      "precision": 0.0714,
+      "retrieved_count": 14,
+      "expected_count": 1,
+      "found": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol"
+      ],
+      "missed": [],
+      "extra": [
+        "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.get",
+        "embeddings/query_cache.py:method:QueryEmbeddingCache.get",
+        "graph/graph_queries.py:decorated_definition:RelationshipEntry",
+        "mcp_server/tools/job_registry.py:method:JobRegistry.get",
+        "search/filters.py:function:matches_directory_filter",
+        "search/hybrid_searcher.py:method:HybridSearcher.get_by_chunk_id",
+        "search/metadata.py:method:MetadataStore.get",
+        "search/relationship_analyzer.py:class:RelationshipAnalyzer",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer.__init__",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._result_to_dict",
+        "search/searcher.py:method:IntelligentSearcher.get_by_chunk_id",
+        "search/symbol_cache.py:method:SymbolHashCache.get",
+        "search/symbol_cache.py:method:SymbolHashCache.get_by_chunk_id"
+      ],
+      "resolver_sources": {
+        "lsp": 2,
+        "libcst": 1,
+        "pyan": 2,
+        "ast": 9
+      },
+      "latency_ms": 24563.3
+    },
+    {
+      "id": "OB05",
+      "target": "chunking/relationships/call_edge_resolver.py:function:gather_py_files",
+      "recall": 1.0,
+      "recall_at_n": 1.0,
+      "precision": 1.0,
+      "retrieved_count": 0,
+      "expected_count": 0,
+      "found": [],
+      "missed": [],
+      "extra": [],
+      "resolver_sources": {},
+      "latency_ms": 13796.2
+    },
+    {
+      "id": "OB06",
+      "target": "chunking/relationships/call_edge_resolver.py:function:scope_to_indexed_files",
+      "recall": 1.0,
+      "recall_at_n": 1.0,
+      "precision": 0.0,
+      "retrieved_count": 3,
+      "expected_count": 0,
+      "found": [],
+      "missed": [],
+      "extra": [
+        "chunking/relationships/external_call_graph.py:method:PyanResolver.resolve",
+        "chunking/relationships/libcst_call_graph.py:method:LibCSTResolver.resolve",
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver.resolve"
+      ],
+      "resolver_sources": {
+        "ast": 3
+      },
+      "latency_ms": 10095.7
+    },
+    {
+      "id": "OB07",
+      "target": "graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge",
+      "recall": 1.0,
+      "recall_at_n": 0.0,
+      "precision": 0.5,
+      "retrieved_count": 2,
+      "expected_count": 1,
+      "found": [
+        "utils/path_utils.py:function:normalize_path"
+      ],
+      "missed": [],
+      "extra": [
+        "graph/graph_storage.py:method:CodeGraphStorage._bump_version"
+      ],
+      "resolver_sources": {
+        "lsp": 1,
+        "libcst": 1
+      },
+      "latency_ms": 9817.8
+    }
+  ],
+  "meta": {
+    "project_path": "F:/RD_PROJECTS/COMPONENTS/claude-context-local",
+    "golden_path": "F:\\RD_PROJECTS\\COMPONENTS\\claude-context-local\\evaluation\\callee_golden.json",
+    "direction": "callees",
+    "k": 50
+  }
+}

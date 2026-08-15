@@ -1,0 +1,218 @@
+{
+  "aggregate": {
+    "micro_recall": 0.9231,
+    "mean_recall": 0.8571,
+    "mean_recall_at_n": 0.5595,
+    "mean_precision": 0.3439,
+    "perfect_recall_count": 6,
+    "total_queries": 7,
+    "total_expected": 13,
+    "total_found": 12,
+    "total_missed": 1,
+    "resolver_sources": {
+      "lsp": 6,
+      "libcst": 23,
+      "ast": 25,
+      "pyan": 2
+    }
+  },
+  "results": [
+    {
+      "id": "C001",
+      "target": "evaluation/metrics.py:function:normalize_chunk_id",
+      "recall": 1.0,
+      "recall_at_n": 0.6667,
+      "precision": 0.0857,
+      "retrieved_count": 35,
+      "expected_count": 3,
+      "found": [
+        "evaluation/metrics.py:function:build_chunk_line_lookup",
+        "evaluation/metrics.py:function:normalize_chunk_ids",
+        "evaluation/metrics.py:function:resolve_chunk_ids_to_ranges"
+      ],
+      "missed": [],
+      "extra": [
+        "evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
+        "evaluation/metrics.py:function:expand_retrieved_with_community_credit",
+        "evaluation/metrics.py:function:expand_retrieved_with_containment",
+        "mcp_server/tools/search_handlers.py:method:handle_find_path",
+        "scripts/benchmark/audit_golden_dataset.py:function:audit_dataset",
+        "scripts/benchmark/audit_golden_dataset.py:function:main",
+        "scripts/benchmark/audit_golden_dataset.py:function:suggest_candidates",
+        "scripts/benchmark/bm25_path_token_ab.py:function:_gold_ranks",
+        "scripts/benchmark/build_caller_oracle.py:function:build_oracle_for_target",
+        "scripts/benchmark/build_caller_oracle.py:method:main",
+        "scripts/benchmark/grade_candidate_queries.py:method:main",
+        "scripts/benchmark/mine_commit_queries.py:function:_by_name_for_file",
+        "scripts/benchmark/probe_final_pool_reserve.py:function:instrument_rerank",
+        "scripts/benchmark/probe_final_pool_reserve.py:method:probe_query",
+        "scripts/benchmark/probe_leg_depth_fusion.py:function:fuse_at_depth",
+        "scripts/benchmark/probe_leg_depth_fusion.py:function:probe_query",
+        "scripts/benchmark/probe_rerank_window.py:method:Instrumentation.install",
+        "scripts/benchmark/probe_rerank_window.py:method:main",
+        "scripts/benchmark/probe_reserve_depth.py:function:capture_fused_head",
+        "scripts/benchmark/probe_reserve_depth.py:function:main",
+        "scripts/benchmark/probe_reserve_depth.py:function:raw_bm25_order",
+        "scripts/benchmark/probe_similar_diversity.py:function:build_anchor_lookup",
+        "scripts/benchmark/probe_similar_diversity.py:function:resolve_anchor",
+        "scripts/benchmark/probe_similar_diversity.py:method:main",
+        "scripts/benchmark/probe_stable_misses.py:method:probe_query",
+        "scripts/benchmark/probe_tm2c2_fusion.py:function:probe_query",
+        "scripts/benchmark/run_caller_recall.py:function:_get_direct_edges",
+        "scripts/benchmark/run_caller_recall.py:function:_run_single",
+        "scripts/benchmark/run_sscg_benchmark.py:function:_build_anchor_lookup",
+        "scripts/benchmark/run_sscg_benchmark.py:function:_resolve_anchor",
+        "search/indexer.py:method:CodeIndexManager.get_similar_chunks_batched",
+        "tools/analyze_batch_results.py:function:check_match"
+      ],
+      "resolver_sources": {
+        "lsp": 5,
+        "libcst": 19,
+        "ast": 11
+      },
+      "latency_ms": 2621.4
+    },
+    {
+      "id": "C002",
+      "target": "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callers",
+      "recall": 1.0,
+      "recall_at_n": 0.0,
+      "precision": 0.5,
+      "retrieved_count": 2,
+      "expected_count": 1,
+      "found": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer.analyze_impact"
+      ],
+      "missed": [],
+      "extra": [
+        "search/relationship_analyzer.py:class:RelationshipAnalyzer"
+      ],
+      "resolver_sources": {
+        "pyan": 1,
+        "ast": 1
+      },
+      "latency_ms": 26382.6
+    },
+    {
+      "id": "C003",
+      "target": "evaluation/metrics.py:function:calculate_recall_at_k",
+      "recall": 1.0,
+      "recall_at_n": 1.0,
+      "precision": 0.3333,
+      "retrieved_count": 3,
+      "expected_count": 1,
+      "found": [
+        "evaluation/metrics.py:function:calculate_metrics_from_results"
+      ],
+      "missed": [],
+      "extra": [
+        "scripts/benchmark/run_caller_recall.py:function:_run_single",
+        "scripts/benchmark/run_sscg_benchmark.py:method:run_benchmark"
+      ],
+      "resolver_sources": {
+        "lsp": 1,
+        "libcst": 1,
+        "ast": 1
+      },
+      "latency_ms": 3036.9
+    },
+    {
+      "id": "C004",
+      "target": "graph/graph_storage.py:method:CodeGraphStorage.add_call_edge",
+      "recall": 1.0,
+      "recall_at_n": 0.5,
+      "precision": 0.6667,
+      "retrieved_count": 3,
+      "expected_count": 2,
+      "found": [
+        "search/graph_integration.py:method:GraphIntegration._two_pass_build",
+        "search/graph_integration.py:method:GraphIntegration.add_chunk"
+      ],
+      "missed": [],
+      "extra": [
+        "search/call_edge_injection.py:method:inject_call_edges"
+      ],
+      "resolver_sources": {
+        "ast": 3
+      },
+      "latency_ms": 9530.2
+    },
+    {
+      "id": "C005",
+      "target": "search/hybrid_searcher.py:method:HybridSearcher.get_by_chunk_id",
+      "recall": 1.0,
+      "recall_at_n": 0.75,
+      "precision": 0.5714,
+      "retrieved_count": 7,
+      "expected_count": 4,
+      "found": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callers",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_forward",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_reverse",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_target"
+      ],
+      "missed": [],
+      "extra": [
+        "search/metadata.py:method:MetadataStore.get",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callees",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol"
+      ],
+      "resolver_sources": {
+        "ast": 7
+      },
+      "latency_ms": 11528.2
+    },
+    {
+      "id": "C006",
+      "target": "evaluation/chunk_mapping.py:function:find_enclosing_chunk",
+      "recall": 1.0,
+      "recall_at_n": 1.0,
+      "precision": 0.25,
+      "retrieved_count": 4,
+      "expected_count": 1,
+      "found": [
+        "chunking/relationships/external_call_graph.py:function:_node_to_raw_chunk_id"
+      ],
+      "missed": [],
+      "extra": [
+        "chunking/relationships/lsp_call_graph.py:class:LSPResolver",
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver._session",
+        "scripts/benchmark/build_caller_oracle.py:function:_find_enclosing_chunk"
+      ],
+      "resolver_sources": {
+        "libcst": 2,
+        "pyan": 1,
+        "ast": 1
+      },
+      "latency_ms": 761.1
+    },
+    {
+      "id": "C007",
+      "target": "evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
+      "recall": 0.0,
+      "recall_at_n": 0.0,
+      "precision": 0.0,
+      "retrieved_count": 2,
+      "expected_count": 1,
+      "found": [],
+      "missed": [
+        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges"
+      ],
+      "extra": [
+        "scripts/benchmark/build_caller_oracle.py:function:_build_line_to_chunk_map",
+        "search/call_edge_injection.py:method:inject_call_edges"
+      ],
+      "resolver_sources": {
+        "libcst": 1,
+        "ast": 1
+      },
+      "latency_ms": 13882.3
+    }
+  ],
+  "meta": {
+    "project_path": "F:/RD_PROJECTS/COMPONENTS/claude-context-local",
+    "golden_path": "F:\\RD_PROJECTS\\COMPONENTS\\claude-context-local\\evaluation\\caller_golden.json",
+    "direction": "callers",
+    "k": 50
+  }
+}
