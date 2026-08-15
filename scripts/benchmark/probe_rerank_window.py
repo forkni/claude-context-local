@@ -60,9 +60,14 @@ Usage:
     .venv/Scripts/python.exe scripts/benchmark/probe_rerank_window.py \
         --all --set reranker.merged_pool_policy=channel_priority
 
+    .venv/Scripts/python.exe scripts/benchmark/probe_rerank_window.py \
+        --replay evaluation/probe_rerank_window_20260815.json --caps 2,3
+
 Exit codes: 0 (GREEN) no window-cuts and self-validity holds everywhere; 1 (RED) at least
 one grade-3 gold is window-cut; 2 on setup errors; 3 (HALT) self-validity diverged on at
-least one query — treat P1-P6/A1-A3 as untrustworthy until investigated.
+least one query — treat P1-P6/A1-A3 as untrustworthy until investigated. ``--replay`` mode
+uses its own G1/G2/G3 exit codes 0/1/3 (see ``run_replay()``); 2 still applies to setup
+errors (bad ``--caps``, unreadable JSON) via the ordinary Python traceback.
 """
 
 from __future__ import annotations
@@ -95,6 +100,13 @@ SIMULATED_POLICIES = (
     "score_reserve_fix",
     "channel_priority",
 )
+
+# Cap values simulate_cap_windows() replays for the graph_hop_window_cap probe
+# (docs/plans/humming-wondering-phoenix.md follow-on, --replay mode). cap=0 is
+# the no-op baseline -- byte-identical to SIMULATED_POLICIES's "score" entry --
+# and is always included as the comparison point for gold rescue/eviction
+# deltas (see _cap_gold_net).
+SIMULATED_CAPS = (0, 2, 3, 4, 5)
 
 
 def load_queries(dataset_path: Path, query_ids: list[str] | None) -> list[dict]:
@@ -172,6 +184,45 @@ def simulate_windows(
             ordered, top_k_candidates, reserve_slots, evict_policy=evict_policy
         )
         windows[policy] = [r.chunk_id for r in final[:top_k_candidates]]
+    return windows
+
+
+def simulate_cap_windows(
+    pass2_call: dict, top_k_candidates: int, hop1_reserved_slots: int
+) -> dict[int, list[str]]:
+    """Offline counterfactual analogous to ``simulate_windows()``, but for the
+    ``graph_hop_window_cap`` probe (``--replay`` mode) instead of
+    ``merged_pool_policy``: replay the Pass-2 pool through the ACTUAL
+    production ``RerankingEngine._order_merged_pool("score")`` ->
+    ``._apply_graph_hop_window_cap(cap)`` -> ``._apply_hop1_reserve("tail")``
+    chain for every cap in ``SIMULATED_CAPS``, returning the resulting
+    rerank-window ``chunk_id`` sequence keyed by cap.
+
+    ``cap=0`` is a no-op by construction (``_apply_graph_hop_window_cap``
+    returns its input unchanged when ``cap <= 0``), so ``windows[0]`` is
+    byte-identical to ``simulate_windows(...)["score"]`` and to the observed
+    production window whenever the deployed policy is ``"score"`` — the same
+    self-validity guarantee ``simulate_windows`` relies on: a divergence can
+    only mean the captured pool snapshot is stale, never that this function's
+    logic drifted from ``reranking_engine.py``.
+    """
+    from search.reranking_engine import RerankingEngine
+
+    pool_objects = [
+        _SimResult(p["chunk_id"], p["score"], p["source"], p["hop1_rank"])
+        for p in pass2_call["pool"]
+    ]
+    ordered = RerankingEngine._order_merged_pool(pool_objects, "score")
+
+    windows: dict[int, list[str]] = {}
+    for cap in SIMULATED_CAPS:
+        capped = RerankingEngine._apply_graph_hop_window_cap(
+            ordered, top_k_candidates, cap
+        )
+        final = RerankingEngine._apply_hop1_reserve(
+            capped, top_k_candidates, hop1_reserved_slots, evict_policy="tail"
+        )
+        windows[cap] = [r.chunk_id for r in final[:top_k_candidates]]
     return windows
 
 
@@ -696,6 +747,201 @@ def print_predictions_report(predictions: dict, gate: dict) -> None:
     )
 
 
+def _cap_gold_net(records: list[dict], cap: int) -> tuple[int, int, int]:
+    """Grade-3 gold rescues/evictions moving from each record's ``cap=0``
+    simulated window (byte-identical to the deployed ``"score"`` policy) to
+    its ``cap`` simulated window, summed over every record with a usable cap
+    simulation (``record["cap_simulated"]`` populated by ``run_replay``).
+    Positive net = ``cap`` nets more gold window-memberships than it costs —
+    feeds gate criterion G1. Mirrors ``_policy_gold_net``'s shape for the
+    ``merged_pool_policy`` probe."""
+    rescues = 0
+    evictions = 0
+    for r in records:
+        sim = r.get("cap_simulated")
+        if sim is None:
+            continue
+        base = set(sim[0])
+        variant = set(sim[cap])
+        golds = {row["gold"] for row in r["rows"]}
+        rescues += len((variant - base) & golds)
+        evictions += len((base - variant) & golds)
+    return rescues, evictions, rescues - evictions
+
+
+def evaluate_cap_gate(records: list[dict], chosen_caps: tuple[int, ...]) -> dict:
+    """G1/G2/G3 abort-criteria verdicts for the ``graph_hop_window_cap``
+    probe (``docs/plans/humming-wondering-phoenix.md`` follow-on Phase 1).
+    Structure mirrors ``evaluate_gate()``'s A1/A2/A3 for the original
+    ``merged_pool_policy`` probe.
+
+    - G1 (headroom veto): net gold window-membership change > 0 at a cap.
+    - G2 (retention): no gold in-window at cap=0 may leave the window at
+      that cap -- literally ``evictions == 0`` from ``_cap_gold_net``.
+    - G3 (self-validity): each record's ``cap=0`` replay window must equal
+      the observed production ``pass2_window.window_ids`` exactly (set on
+      ``record["g3_self_validity"]`` by ``run_replay``).
+    """
+    cap_stats = {}
+    for cap in SIMULATED_CAPS:
+        if cap == 0:
+            continue
+        rescues, evictions, net = _cap_gold_net(records, cap)
+        cap_stats[cap] = {"rescues": rescues, "evictions": evictions, "net": net}
+
+    g1_by_cap = {cap: v["net"] > 0 for cap, v in cap_stats.items()}
+    g2_by_cap = {cap: v["evictions"] == 0 for cap, v in cap_stats.items()}
+
+    validity_checked = [r for r in records if r.get("g3_self_validity") is not None]
+    g3_valid = all(r["g3_self_validity"] for r in validity_checked)
+
+    chosen_pass = {
+        cap: (g1_by_cap.get(cap, False) and g2_by_cap.get(cap, False))
+        for cap in chosen_caps
+    }
+
+    return {
+        "cap_stats": cap_stats,
+        "G1_by_cap": g1_by_cap,
+        "G2_by_cap": g2_by_cap,
+        "G3_self_validity_ok": g3_valid,
+        "G3_checked_n": len(validity_checked),
+        "chosen_caps": list(chosen_caps),
+        "chosen_pass": chosen_pass,
+        "abort": (not g3_valid) or not any(chosen_pass.values()),
+    }
+
+
+def print_cap_report(
+    records: list[dict], gate: dict, n_usable: int, n_total: int
+) -> None:
+    print("\n" + "=" * 72)
+    print(f"GRAPH_HOP WINDOW CAP REPLAY (n_usable={n_usable}/{n_total})")
+    print("=" * 72)
+    for cap in SIMULATED_CAPS:
+        if cap == 0:
+            continue
+        changed = 0
+        graph_delta = 0
+        for r in records:
+            sim = r.get("cap_simulated")
+            if sim is None:
+                continue
+            base_ids = set(sim[0])
+            var_ids = set(sim[cap])
+            if base_ids != var_ids:
+                changed += 1
+            pool_source = {p["chunk_id"]: p["source"] for p in r["pass2_call"]["pool"]}
+            graph_delta += sum(
+                1 for c in var_ids if pool_source.get(c) == "graph_hop"
+            ) - sum(1 for c in base_ids if pool_source.get(c) == "graph_hop")
+        stats = gate["cap_stats"][cap]
+        g1 = "PASS" if gate["G1_by_cap"][cap] else "FAIL"
+        g2 = "PASS" if gate["G2_by_cap"][cap] else "FAIL"
+        print(
+            f"  cap={cap}: membership_changed={changed} "
+            f"graph_in_window_delta={graph_delta} "
+            f"gold_rescues={stats['rescues']} gold_evictions={stats['evictions']} "
+            f"net={stats['net']}  G1={g1} G2={g2}"
+        )
+
+    print(
+        f"\nG3 self-validity ({gate['G3_checked_n']} queries checked): "
+        f"{'PASS' if gate['G3_self_validity_ok'] else 'FAIL -> HALT'}"
+    )
+
+    print("\nNamed-gold survival (Q12 / H034 / H066):")
+    for qid in ("Q12", "H034", "H066"):
+        rec = next((r for r in records if r["query_id"] == qid), None)
+        if rec is None or rec.get("cap_simulated") is None:
+            print(f"  {qid}: not found / not usable")
+            continue
+        golds = {row["gold"] for row in rec["rows"]}
+        for cap in SIMULATED_CAPS:
+            in_window = sorted(golds & set(rec["cap_simulated"][cap]))
+            print(f"  {qid} cap={cap}: golds-in-window={in_window or 'none'}")
+
+    print(
+        f"\nChosen caps {gate['chosen_caps']}: "
+        + ", ".join(
+            f"cap={c} {'PASS' if p else 'FAIL'}" for c, p in gate["chosen_pass"].items()
+        )
+    )
+    overall_abort = gate["abort"] or not gate["G3_self_validity_ok"]
+    print(
+        f"\nOVERALL: "
+        f"{'ABORT/HALT' if overall_abort else 'GATE PASSES -- proceed to Phase 2b'}"
+    )
+
+
+def run_replay(
+    json_path: Path, chosen_caps: tuple[int, ...], json_out: Path | None
+) -> int:
+    """``--replay`` mode: read a previously-captured probe JSON
+    (``--json-out`` from a live ``--all`` run) and evaluate the
+    ``graph_hop_window_cap`` gate offline -- no GPU, no live search. Reuses
+    each record's captured Pass-2 pool snapshot (``pass2_call.pool``) and
+    replays it through ``simulate_cap_windows`` (the ACTUAL production
+    statics), so a G3 mismatch can only mean the captured snapshot is stale,
+    never that this function's logic diverged from ``reranking_engine.py``.
+
+    Exit codes: 0 (gate passes on >=1 chosen cap), 1 (no chosen cap clears
+    G1+G2), 3 (G3 self-validity mismatch -- HALT, do not trust G1/G2).
+    """
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    records = payload["records"]
+
+    usable = 0
+    for r in records:
+        pc = r.get("pass2_call")
+        pw = r.get("pass2_window")
+        if pc is None or pw is None:
+            r["cap_simulated"] = None
+            r["g3_self_validity"] = None
+            continue
+        usable += 1
+        sim = simulate_cap_windows(
+            pc, pw["top_k_candidates"], pc["hop1_reserved_slots"]
+        )
+        r["cap_simulated"] = sim
+        r["g3_self_validity"] = sim[0] == pw["window_ids"]
+
+    gate = evaluate_cap_gate(records, chosen_caps)
+    print_cap_report(records, gate, usable, len(records))
+
+    if json_out is not None:
+        out_payload = {
+            "source": str(json_path),
+            "n_usable": usable,
+            "n_total": len(records),
+            "simulated_caps": list(SIMULATED_CAPS),
+            "chosen_caps": list(chosen_caps),
+            "gate": gate,
+            "per_query": [
+                {
+                    "query_id": r["query_id"],
+                    "cap_simulated": r["cap_simulated"],
+                    "g3_self_validity": r["g3_self_validity"],
+                }
+                for r in records
+            ],
+        }
+        json_out.write_text(json.dumps(out_payload, indent=2), encoding="utf-8")
+        print(f"\n[JSON] wrote {json_out}")
+
+    if not gate["G3_self_validity_ok"]:
+        print(
+            "\nHALT: self-validity mismatch on cap replay -- G1/G2 cannot be "
+            "trusted until this is fixed."
+        )
+        return 3
+    if gate["abort"]:
+        print("\nVERDICT: ABORT -- no chosen cap clears G1+G2.")
+        return 1
+    print("\nVERDICT: GATE PASSES")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -734,10 +980,42 @@ def main() -> int:
         metavar="PATH",
         help=(
             "Write the full per-query + aggregate predictions/gate payload as JSON "
-            "to PATH (relative paths resolve against the repo root)."
+            "to PATH (relative paths resolve against the repo root). In --replay "
+            "mode, writes the cap-gate payload instead."
+        ),
+    )
+    parser.add_argument(
+        "--replay",
+        default=None,
+        metavar="JSON",
+        help=(
+            "Offline mode: replay a previously-captured --json-out payload "
+            "through the graph_hop_window_cap gate (no GPU, no live search, "
+            "seconds). Ignores --query-id/--all/--dataset/--project-path/"
+            "--set/--hop1-reserved-slots. See run_replay()."
+        ),
+    )
+    parser.add_argument(
+        "--caps",
+        default="2,3",
+        help=(
+            "Comma-separated chosen caps to gate in --replay mode "
+            "(default: 2,3 -- the pre-registered primary/secondary)."
         ),
     )
     args = parser.parse_args()
+
+    if args.replay:
+        replay_path = Path(args.replay)
+        if not replay_path.is_absolute():
+            replay_path = REPO_ROOT / replay_path
+        chosen_caps = tuple(int(c.strip()) for c in args.caps.split(",") if c.strip())
+        replay_json_out = None
+        if args.json_out:
+            replay_json_out = Path(args.json_out)
+            if not replay_json_out.is_absolute():
+                replay_json_out = REPO_ROOT / replay_json_out
+        return run_replay(replay_path, chosen_caps, replay_json_out)
 
     dataset_path = Path(args.dataset)
     if not dataset_path.is_absolute():

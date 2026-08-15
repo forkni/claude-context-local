@@ -294,6 +294,56 @@ class RerankingEngine:
         raise ValueError(f"Unknown merged_pool_policy: {policy!r}")
 
     @staticmethod
+    def _apply_graph_hop_window_cap(
+        sorted_results: list, top_k_candidates: int, cap: int
+    ) -> list:
+        """Cap how many ``source == "graph_hop"`` candidates occupy the
+        ``top_k_candidates`` rerank window, without comparing scores across
+        channels.
+
+        Runs after ``_order_merged_pool`` (still under the deployed
+        ``"score"`` policy) and before ``_apply_hop1_reserve``. Every
+        ``graph_hop`` candidate carries the literal score ``0.0``
+        (``MultiHopSearcher``'s graph-expansion branch), so under a stable
+        score sort the first ``cap`` graph entries encountered are exactly
+        the first ``cap`` in the pool's original graph-expansion order —
+        "first admitted" never depends on a cross-scale score comparison.
+
+        Single stable pass over ``sorted_results``: non-graph candidates are
+        admitted to the window freely; ``graph_hop`` candidates are admitted
+        only while fewer than ``cap`` have been admitted already, after
+        which excess graph candidates are deferred to just below the window
+        (their relative order preserved) so non-graph candidates further
+        back in the pool backfill the freed slots. The unscanned tail is
+        untouched. Output is always a permutation of the input — deferred
+        entries are reinserted immediately after the window, ahead of
+        whatever wasn't scanned.
+
+        No-op (returns ``sorted_results`` unchanged, same object) when
+        ``cap <= 0`` or the pool doesn't exceed ``top_k_candidates`` — the
+        deployed default ``cap=0`` is byte-identical to before this existed.
+        """
+        if cap <= 0 or len(sorted_results) <= top_k_candidates:
+            return sorted_results
+
+        window: list = []
+        deferred: list = []
+        graph_admitted = 0
+        stopped_at = len(sorted_results)
+        for _idx, r in enumerate(sorted_results):
+            if len(window) == top_k_candidates:
+                stopped_at = _idx
+                break
+            if r.source == "graph_hop" and graph_admitted >= cap:
+                deferred.append(r)
+            else:
+                if r.source == "graph_hop":
+                    graph_admitted += 1
+                window.append(r)
+
+        return window + deferred + sorted_results[stopped_at:]
+
+    @staticmethod
     def _apply_hop1_reserve(
         sorted_results: list,
         top_k_candidates: int,
