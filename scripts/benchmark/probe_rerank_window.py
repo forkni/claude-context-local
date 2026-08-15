@@ -63,11 +63,24 @@ Usage:
     .venv/Scripts/python.exe scripts/benchmark/probe_rerank_window.py \
         --replay evaluation/probe_rerank_window_20260815.json --caps 2,3
 
+    # Evidence-ordered graph band probe (docs/plans "Evidence-ordered graph band"):
+    # capture 1 (default) + capture 2 (evidence side-channel), then gate offline.
+    .venv/Scripts/python.exe scripts/benchmark/probe_rerank_window.py \
+        --all --json-out evaluation/probe_graph_band_default_<date>.json
+    .venv/Scripts/python.exe scripts/benchmark/probe_rerank_window.py \
+        --all --set graph_enhanced.graph_hop_call_evidence_enabled=true \
+        --force-graph-hop-unscored \
+        --json-out evaluation/probe_graph_band_evidence_<date>.json
+    .venv/Scripts/python.exe scripts/benchmark/probe_rerank_window.py \
+        --band-order-replay evaluation/probe_graph_band_default_<date>.json \
+        evaluation/probe_graph_band_evidence_<date>.json
+
 Exit codes: 0 (GREEN) no window-cuts and self-validity holds everywhere; 1 (RED) at least
 one grade-3 gold is window-cut; 2 on setup errors; 3 (HALT) self-validity diverged on at
 least one query — treat P1-P6/A1-A3 as untrustworthy until investigated. ``--replay`` mode
-uses its own G1/G2/G3 exit codes 0/1/3 (see ``run_replay()``); 2 still applies to setup
-errors (bad ``--caps``, unreadable JSON) via the ordinary Python traceback.
+uses its own G1/G2/G3 exit codes 0/1/3 (see ``run_replay()``); ``--band-order-replay`` mode
+uses its own G1/G2/G3 exit codes 0/1/3 (see ``run_band_order_replay()``); 2 still applies to
+setup errors (bad ``--caps``, unreadable JSON) via the ordinary Python traceback.
 """
 
 from __future__ import annotations
@@ -273,7 +286,7 @@ def score_ranges(pass2_call: dict) -> dict[str, dict[str, float]]:
 class Instrumentation:
     """Installs/removes monkeypatches on MultiHopSearcher and RerankingEngine classes."""
 
-    def __init__(self, searcher) -> None:
+    def __init__(self, searcher, force_graph_hop_unscored: bool = False) -> None:
         self._multi_hop_searcher = searcher.multi_hop_searcher
         self._engine_cls = type(searcher.reranking_engine)
         # _single_hop_search is a per-instance bound-callback attribute set in
@@ -282,6 +295,20 @@ class Instrumentation:
         self._orig_single_hop = self._multi_hop_searcher._single_hop_search
         self._orig_rerank_by_query = self._engine_cls.rerank_by_query
         self._orig_run_rerank = self._engine_cls._run_rerank
+        # Evidence-ordered graph band probe side-channel (docs/plans
+        # "Evidence-ordered graph band" Phase 1): when True, every captured
+        # rerank_by_query call has graph_hop_unscored forced to True before
+        # dispatch, regardless of what the caller passed. Under default
+        # config (graph_hop_unscored already True) this is a no-op. Under
+        # graph_enhanced.graph_hop_call_evidence_enabled=true (which would
+        # otherwise dispatch graph_hop_unscored=False, i.e. plain score
+        # sort - multi_hop_searcher.py:643-645), this keeps the ADR-0039
+        # banding path live in production while _graph_expand still writes
+        # the real A1 call-evidence score onto every graph_hop candidate's
+        # .score - so the pool snapshot captures real scores, but the
+        # observed production window stays byte-identical to a default run
+        # (verified offline as G3b in run_band_order_replay()).
+        self._force_graph_hop_unscored = force_graph_hop_unscored
         self.reset()
 
     def reset(self) -> None:
@@ -340,6 +367,8 @@ class Instrumentation:
                 }
             )
             instrumentation._active_ordinal = ordinal
+            if instrumentation._force_graph_hop_unscored:
+                kwargs["graph_hop_unscored"] = True
             try:
                 output = orig_rerank_by_query(
                     self_engine, query, results, k, *args, **kwargs
@@ -951,6 +980,281 @@ def run_replay(
     return 0
 
 
+def simulate_evidence_band_order(
+    default_pool: dict,
+    evidence_scores: dict[str, float],
+    top_k_candidates: int,
+    hop1_reserved_slots: int,
+) -> tuple[list[str], list[str]]:
+    """Offline counterfactual for reopening direction (a) (docs/plans
+    "Evidence-ordered graph band"): order the ``graph_hop`` band internally
+    by the A1 call-evidence score instead of anchor/BFS insertion order,
+    holding the band boundaries fixed. Returns
+    ``(anchor_window_ids, evidence_window_ids)``.
+
+    The banding split and hop1-reserve promotion still run through the
+    ACTUAL production statics (``RerankingEngine._order_merged_pool`` /
+    ``._apply_hop1_reserve``) - only the graph-band splice itself is a
+    probe-only reimplementation, since ``graph_band_order="evidence"``
+    does not exist in production yet (that is this campaign's Phase 2, only
+    built if this probe's gate passes). If/when it is built,
+    ``_order_merged_pool``'s own "evidence" branch must reproduce this
+    splice exactly - mirror this function's logic there, don't just match
+    its output on this one capture.
+
+    Graph-hop entries are guaranteed contiguous in ``_order_merged_pool``'s
+    banded output (``positive + graph + nonpositive`` concatenation), so a
+    single contiguous-slice search for ``source == "graph_hop"`` is exact,
+    not a heuristic.
+    """
+    from search.reranking_engine import RerankingEngine
+
+    pool_objects = [
+        _SimResult(p["chunk_id"], p["score"], p["source"], p["hop1_rank"])
+        for p in default_pool["pool"]
+    ]
+    ordered = RerankingEngine._order_merged_pool(
+        pool_objects, "score", graph_hop_unscored=True
+    )
+    anchor_final = RerankingEngine._apply_hop1_reserve(
+        ordered, top_k_candidates, hop1_reserved_slots, evict_policy="tail"
+    )
+    anchor_window = [r.chunk_id for r in anchor_final[:top_k_candidates]]
+
+    band_start = next(
+        (i for i, r in enumerate(ordered) if r.source == "graph_hop"), None
+    )
+    if band_start is None:
+        # No graph_hop candidates in this pool at all - evidence ordering
+        # is vacuously identical to anchor ordering.
+        return anchor_window, anchor_window
+
+    band_end = band_start
+    while band_end < len(ordered) and ordered[band_end].source == "graph_hop":
+        band_end += 1
+    band = ordered[band_start:band_end]
+    reordered_band = [
+        r
+        for _, r in sorted(
+            enumerate(band),
+            key=lambda item: (-evidence_scores.get(item[1].chunk_id, 0.0), item[0]),
+        )
+    ]
+    evidence_ordered = ordered[:band_start] + reordered_band + ordered[band_end:]
+    evidence_final = RerankingEngine._apply_hop1_reserve(
+        evidence_ordered, top_k_candidates, hop1_reserved_slots, evict_policy="tail"
+    )
+    evidence_window = [r.chunk_id for r in evidence_final[:top_k_candidates]]
+    return anchor_window, evidence_window
+
+
+def _band_order_gold_net(records: list[dict]) -> tuple[int, int, int]:
+    """Grade-3 gold rescues/evictions moving from each record's anchor
+    (graph band in original insertion order) simulated window to its
+    evidence (graph band ordered by A1 call-evidence score) simulated
+    window, summed over every record with a usable simulation
+    (``record["band_order_simulated"]`` populated by
+    ``run_band_order_replay``). Positive net = evidence ordering nets more
+    gold window-memberships than it costs - feeds gate criterion G1.
+    Mirrors ``_cap_gold_net``'s shape for the ``graph_hop_window_cap``
+    probe."""
+    rescues = 0
+    evictions = 0
+    for r in records:
+        sim = r.get("band_order_simulated")
+        if sim is None:
+            continue
+        base = set(sim["anchor"])
+        variant = set(sim["evidence"])
+        golds = {row["gold"] for row in r["rows"]}
+        rescues += len((variant - base) & golds)
+        evictions += len((base - variant) & golds)
+    return rescues, evictions, rescues - evictions
+
+
+def evaluate_band_order_gate(records: list[dict]) -> dict:
+    """G1/G2/G3 abort-criteria verdicts for the evidence-ordered graph band
+    probe (docs/plans "Evidence-ordered graph band", Phase 1 Gate P1).
+    Structure mirrors ``evaluate_cap_gate()``'s G1/G2/G3 for the
+    ``graph_hop_window_cap`` probe.
+
+    - G1 (headroom): net gold window-membership delta >= 2. Raised from the
+      naive ``> 0`` bar used by earlier probes on this seam: the
+      ``graph_hop_window_cap`` probe's replay gate passed at exactly net +1
+      and its Phase-3 A/B was then rejected - net +1 is a known false
+      positive here.
+    - G2 (retention): no gold in-window under anchor order may leave the
+      window under evidence order - literally ``evictions == 0`` from
+      ``_band_order_gold_net``.
+    - G3 (self-validity): two independent checks, both must hold on every
+      queryable record -
+        (a) anchor-simulated window == the observed production window on
+            the DEFAULT capture (band-replay byte-identity, ADR-0039 -
+            same guarantee ``simulate_cap_windows``'s cap=0 relies on).
+        (b) the observed production window on the DEFAULT capture ==
+            the observed production window on the EVIDENCE capture (the
+            side-channel is inert on live production ordering - confirms
+            ``--force-graph-hop-unscored`` neutralized the real evidence
+            scores' effect on the actually-dispatched search).
+    """
+    rescues, evictions, net = _band_order_gold_net(records)
+    g1_ok = net >= 2
+    g2_ok = evictions == 0
+
+    checked_a = [r for r in records if r.get("self_validity_anchor") is not None]
+    checked_b = [r for r in records if r.get("self_validity_pairing") is not None]
+    g3_a_ok = all(r["self_validity_anchor"] for r in checked_a)
+    g3_b_ok = all(r["self_validity_pairing"] for r in checked_b)
+    g3_ok = g3_a_ok and g3_b_ok
+
+    return {
+        "rescues": rescues,
+        "evictions": evictions,
+        "net": net,
+        "G1_headroom_ok": g1_ok,
+        "G2_retention_ok": g2_ok,
+        "G3_self_validity_anchor_ok": g3_a_ok,
+        "G3_self_validity_anchor_checked_n": len(checked_a),
+        "G3_self_validity_pairing_ok": g3_b_ok,
+        "G3_self_validity_pairing_checked_n": len(checked_b),
+        "G3_self_validity_ok": g3_ok,
+        "abort": (not g3_ok) or (not g1_ok) or (not g2_ok),
+    }
+
+
+def print_band_order_report(
+    records: list[dict], gate: dict, n_usable: int, n_total: int
+) -> None:
+    print("\n" + "=" * 72)
+    print(f"EVIDENCE-ORDERED GRAPH BAND REPLAY (n_usable={n_usable}/{n_total})")
+    print("=" * 72)
+    print(
+        f"  gold_rescues={gate['rescues']} gold_evictions={gate['evictions']} "
+        f"net={gate['net']}  "
+        f"G1(net>=2)={'PASS' if gate['G1_headroom_ok'] else 'FAIL'}  "
+        f"G2(evictions==0)={'PASS' if gate['G2_retention_ok'] else 'FAIL'}"
+    )
+    print(
+        f"\n  G3a self-validity (anchor sim == observed default window, "
+        f"{gate['G3_self_validity_anchor_checked_n']} checked): "
+        f"{'PASS' if gate['G3_self_validity_anchor_ok'] else 'FAIL -> HALT'}"
+    )
+    print(
+        f"  G3b self-validity (default observed == evidence observed "
+        f"window, {gate['G3_self_validity_pairing_checked_n']} checked): "
+        f"{'PASS' if gate['G3_self_validity_pairing_ok'] else 'FAIL -> HALT'}"
+    )
+
+    print("\nNamed-gold rescue detail (Q12 / Q56 / Q72 / Q102 / Q112):")
+    for qid in ("Q12", "Q56", "Q72", "Q102", "Q112"):
+        rec = next((r for r in records if r["query_id"] == qid), None)
+        if rec is None or rec.get("band_order_simulated") is None:
+            print(f"  {qid}: not found / not usable")
+            continue
+        golds = {row["gold"] for row in rec["rows"]}
+        anchor_hit = sorted(golds & set(rec["band_order_simulated"]["anchor"]))
+        evidence_hit = sorted(golds & set(rec["band_order_simulated"]["evidence"]))
+        print(
+            f"  {qid}: anchor golds-in-window={anchor_hit or 'none'}  "
+            f"evidence golds-in-window={evidence_hit or 'none'}"
+        )
+
+    overall_abort = gate["abort"]
+    print(
+        f"\nOVERALL: "
+        f"{'ABORT/HALT' if overall_abort else 'GATE PASSES -- proceed to Phase 2 build'}"
+    )
+
+
+def run_band_order_replay(
+    default_path: Path, evidence_path: Path, json_out: Path | None
+) -> int:
+    """``--band-order-replay DEFAULT_JSON EVIDENCE_JSON`` mode: pair two
+    previously-captured probe JSONs - a default-config run and a run with
+    ``--set graph_enhanced.graph_hop_call_evidence_enabled=true
+    --force-graph-hop-unscored`` - and evaluate the evidence-ordered
+    graph-band gate offline: no GPU, no live search.
+
+    For each query, pulls the real A1 call-evidence scores off the
+    EVIDENCE capture's ``graph_hop`` pool entries, and replays the DEFAULT
+    capture's pool through ``simulate_evidence_band_order`` to compute the
+    anchor and evidence simulated windows via the ACTUAL production
+    ``_order_merged_pool``/``_apply_hop1_reserve`` statics (only the
+    graph-band splice itself is probe-only - see
+    ``simulate_evidence_band_order``'s docstring).
+
+    Exit codes: 0 (G1+G2+G3 all pass), 1 (G1 or G2 fails), 3 (G3
+    self-validity mismatch - HALT, do not trust G1/G2).
+    """
+    default_payload = json.loads(default_path.read_text(encoding="utf-8"))
+    evidence_payload = json.loads(evidence_path.read_text(encoding="utf-8"))
+    default_records = default_payload["records"]
+    evidence_by_id = {r["query_id"]: r for r in evidence_payload["records"]}
+
+    usable = 0
+    for r in default_records:
+        pc = r.get("pass2_call")
+        pw = r.get("pass2_window")
+        ev_r = evidence_by_id.get(r["query_id"])
+        ev_pc = ev_r.get("pass2_call") if ev_r else None
+        ev_pw = ev_r.get("pass2_window") if ev_r else None
+        if pc is None or pw is None or ev_pc is None or ev_pw is None:
+            r["band_order_simulated"] = None
+            r["self_validity_anchor"] = None
+            r["self_validity_pairing"] = None
+            continue
+        usable += 1
+        evidence_scores = {
+            p["chunk_id"]: p["score"]
+            for p in ev_pc["pool"]
+            if p["source"] == "graph_hop"
+        }
+        anchor_window, evidence_window = simulate_evidence_band_order(
+            pc, evidence_scores, pw["top_k_candidates"], pc["hop1_reserved_slots"]
+        )
+        r["band_order_simulated"] = {
+            "anchor": anchor_window,
+            "evidence": evidence_window,
+        }
+        r["self_validity_anchor"] = anchor_window == pw["window_ids"]
+        r["self_validity_pairing"] = pw["window_ids"] == ev_pw["window_ids"]
+
+    gate = evaluate_band_order_gate(default_records)
+    print_band_order_report(default_records, gate, usable, len(default_records))
+
+    if json_out is not None:
+        out_payload = {
+            "default_source": str(default_path),
+            "evidence_source": str(evidence_path),
+            "n_usable": usable,
+            "n_total": len(default_records),
+            "gate": gate,
+            "per_query": [
+                {
+                    "query_id": r["query_id"],
+                    "band_order_simulated": r["band_order_simulated"],
+                    "self_validity_anchor": r["self_validity_anchor"],
+                    "self_validity_pairing": r["self_validity_pairing"],
+                }
+                for r in default_records
+            ],
+        }
+        json_out.write_text(json.dumps(out_payload, indent=2), encoding="utf-8")
+        print(f"\n[JSON] wrote {json_out}")
+
+    if not gate["G3_self_validity_ok"]:
+        print(
+            "\nHALT: self-validity mismatch on band-order replay -- G1/G2 "
+            "cannot be trusted until this is fixed."
+        )
+        return 3
+    if gate["abort"]:
+        print("\nVERDICT: ABORT -- G1 or G2 failed.")
+        return 1
+    print("\nVERDICT: GATE PASSES")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -1012,7 +1316,50 @@ def main() -> int:
             "(default: 2,3 -- the pre-registered primary/secondary)."
         ),
     )
+    parser.add_argument(
+        "--band-order-replay",
+        nargs=2,
+        default=None,
+        metavar=("DEFAULT_JSON", "EVIDENCE_JSON"),
+        help=(
+            "Offline mode: pair a default-config --json-out capture with a "
+            "--set graph_enhanced.graph_hop_call_evidence_enabled=true "
+            "--force-graph-hop-unscored capture and gate the "
+            "evidence-ordered graph-band lever (no GPU, seconds). Ignores "
+            "--query-id/--all/--dataset/--project-path/--set/"
+            "--hop1-reserved-slots/--replay/--caps. See "
+            "run_band_order_replay()."
+        ),
+    )
+    parser.add_argument(
+        "--force-graph-hop-unscored",
+        action="store_true",
+        help=(
+            "Force graph_hop_unscored=True on every captured "
+            "rerank_by_query call, regardless of what the caller passed. "
+            "No effect under default config (already True). Under "
+            "--set graph_enhanced.graph_hop_call_evidence_enabled=true, "
+            "neutralizes the real evidence scores' effect on live "
+            "production ordering (keeps the ADR-0039 banding path) while "
+            "still capturing the real per-candidate scores in the pool "
+            "snapshot -- the evidence side-channel capture for "
+            "--band-order-replay."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.band_order_replay:
+        default_path, evidence_path = (Path(p) for p in args.band_order_replay)
+        if not default_path.is_absolute():
+            default_path = REPO_ROOT / default_path
+        if not evidence_path.is_absolute():
+            evidence_path = REPO_ROOT / evidence_path
+        band_json_out = None
+        if args.json_out:
+            band_json_out = Path(args.json_out)
+            if not band_json_out.is_absolute():
+                band_json_out = REPO_ROOT / band_json_out
+        return run_band_order_replay(default_path, evidence_path, band_json_out)
 
     if args.replay:
         replay_path = Path(args.replay)
@@ -1074,7 +1421,9 @@ def main() -> int:
 
     searcher = get_searcher(project_path=args.project_path)
 
-    instr = Instrumentation(searcher)
+    instr = Instrumentation(
+        searcher, force_graph_hop_unscored=args.force_graph_hop_unscored
+    )
     instr.install()
 
     window_cut_count = 0
