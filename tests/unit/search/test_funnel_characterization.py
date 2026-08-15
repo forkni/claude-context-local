@@ -100,6 +100,8 @@ def _cfg(
     cfg.reranker.single_pass = single_pass
     cfg.reranker.hop1_reserved_slots = hop1_reserved_slots
     cfg.search_mode.bm25_reserved_slots = bm25_reserved_slots
+    cfg.search_mode.leg_search_multiplier = 5
+    cfg.search_mode.fusion_function = "rrf"
     cfg.query_expansion.enabled = False  # Mock attrs are truthy by default
     return cfg
 

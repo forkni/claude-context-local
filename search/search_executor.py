@@ -127,7 +127,9 @@ class SearchExecutor:
             # (reranker.top_k_candidates, deployed 30) instead of starving it at
             # k*2. Exact FlatIP dense search makes the wider sweep ~free.
             reranker_budget = config.reranker.top_k_candidates
-            search_k = max(reranker_budget, k * 5)
+            search_k = max(
+                reranker_budget, k * config.search_mode.leg_search_multiplier
+            )
 
             if use_parallel and not self._is_shutdown:
                 # Parallel execution
@@ -195,6 +197,14 @@ class SearchExecutor:
                     max_results=fusion_k,
                     reserved_slots=config.search_mode.bm25_reserved_slots,
                     reserve_list_idx=0,
+                )
+            elif config.search_mode.fusion_function == "tm2c2":
+                final_results = self.reranker.rerank_tm2c2(
+                    bm25_results=bm25_results,
+                    dense_results=dense_results,
+                    max_results=fusion_k,
+                    alpha=config.search_mode.tm2c2_alpha,
+                    reserved_slots=config.search_mode.bm25_reserved_slots,
                 )
             else:
                 final_results = self.reranker.rerank_simple(

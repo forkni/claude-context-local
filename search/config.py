@@ -347,6 +347,52 @@ class SearchModeConfig:
         default=0.1,
         metadata=spec(flat_alias="min_bm25_score", reader="search/search_executor.py"),
     )
+    # Leg-search depth multiplier: search_k = max(reranker_budget, k * this).
+    # Widening legs does NOT widen the fused pool (fusion_k stays at
+    # reranker_budget) — it only changes which candidates compete for the
+    # existing cut. 5 = today's hardcoded behavior, byte-identical default.
+    # Screening probe (evaluation/LEG_DEPTH_FUSION_PROBE_20260814.md): depth
+    # 200 (multiplier 10 at hop-1's k=20) nets +3 gold-membership rescues on
+    # both golden sets under RRF — a passed gate, not a predicted end-metric
+    # win; membership gains have historically not always converted (see
+    # bm25_reserved_slots above). Live, not construction-baked.
+    leg_search_multiplier: int = field(
+        default=5,
+        metadata=spec(
+            range=(1, 40),
+            flat_alias="leg_search_multiplier",
+            reader="search/search_executor.py",
+        ),
+    )
+    # Fusion function for combining BM25 + dense legs. "rrf" = today's
+    # weighted reciprocal-rank fusion (byte-identical default). "tm2c2" =
+    # theoretical-min/max-normalized convex combination (Bruch, Gai & Ingber,
+    # ACM TOIS 2023, arXiv 2210.11934) — only reopened as viable at leg depth
+    # >= 100 (evaluation/LEG_DEPTH_FUSION_PROBE_20260814.md Gate B; at the
+    # depth-50 leg the golds it fuses were never retrieved at all, see the
+    # closed evaluation/TM2C2_FUSION_PROBE_20260814.md). Variant legs
+    # (query_expansion) always fall back to RRF regardless of this setting.
+    fusion_function: str = field(
+        default="rrf",
+        metadata=spec(
+            choices=("rrf", "tm2c2"),
+            flat_alias="fusion_function",
+            reader="search/search_executor.py",
+        ),
+    )
+    # TM2C2 convex-combination weight on the normalized dense leg (1 - alpha
+    # on BM25). Only read when fusion_function="tm2c2". Pre-registered
+    # alpha=0.8 passed Gate B (net +3 gold rescues, 133q, depth 100);
+    # alpha=0.65 failed badly (net -4 to -12 across both datasets/depths) and
+    # stays rejected — do not sweep other values without a new probe.
+    tm2c2_alpha: float = field(
+        default=0.8,
+        metadata=spec(
+            range=(0.0, 1.0),
+            flat_alias="tm2c2_alpha",
+            reader="search/search_executor.py",
+        ),
+    )
 
     # Reranking Configuration
     rrf_k_parameter: int = field(
