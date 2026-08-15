@@ -23,6 +23,7 @@ if TYPE_CHECKING:  # pragma: no mutate
         JinaRerankerV3,
         NeuralReranker,
     )
+    from .reranker import SearchResult
 
 try:
     import torch
@@ -279,7 +280,7 @@ class RerankingEngine:
             return sorted(results, key=lambda r: r.score, reverse=True)
         if policy == "channel_priority":
 
-            def _sort_key(item: tuple[int, object]) -> tuple[int, float, int]:
+            def _sort_key(item: "tuple[int, SearchResult]") -> tuple[int, float, int]:
                 index, r = item
                 hop1_rank = r.metadata.get("hop1_rank")
                 if hop1_rank is not None:

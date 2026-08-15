@@ -486,7 +486,7 @@ def print_query_report(record: dict) -> None:
         )
 
 
-def _median_or_none(xs: list[float]) -> float | None:
+def _median_or_none(xs: list[float] | list[int]) -> float | None:
     return statistics.median(xs) if xs else None
 
 
