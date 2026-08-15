@@ -68,8 +68,8 @@ GLSL_EXTENSIONS = frozenset(
 # centrality_alpha 0.0 replicated; single_pass kills recall; hop1_reserved_slots
 # ADR-0013; bm25_reserved_slots rejected; query_expansion ADR-0012 closed FAIL;
 # bm25_tokenizer is INDEX_VERSION 4; multi_hop tuned; doc_representation_mode
-# rejected 2026-08-14; merged_pool_policy rejected 2026-08-15. See
-# BENCHMARK_LOCK_CITATIONS
+# rejected 2026-08-14; merged_pool_policy rejected 2026-08-15;
+# graph_hop_window_cap rejected 2026-08-15. See BENCHMARK_LOCK_CITATIONS
 # below for the per-key citation (ADR-0022) shown in start_mcp_server.cmd's
 # ":tuned_parameters" menu.
 FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
@@ -87,6 +87,7 @@ FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
         "reranker.hop1_reserved_slots",
         "reranker.doc_representation_mode",
         "reranker.merged_pool_policy",
+        "reranker.graph_hop_window_cap",
         "query_expansion.enabled",
         "multi_hop.expansion",
         "multi_hop.multi_hop_mode",
@@ -123,6 +124,11 @@ BENCHMARK_LOCK_CITATIONS: dict[str, str] = {
     "reranker.merged_pool_policy": (
         "POOL_ORDER_AB_20260815: channel_priority breaches 63q MRR/recall@5 "
         "guard-rail; score_reserve_fix never clears the recall CI upside bar"
+    ),
+    "reranker.graph_hop_window_cap": (
+        "POOL_ORDER_CAP_AB_20260815: neither cap=2 nor cap=3 clears the "
+        "133q recall@10/recall@20 upside CI (both include zero, both point "
+        "estimates negative)"
     ),
 }
 
