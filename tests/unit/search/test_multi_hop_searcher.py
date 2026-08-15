@@ -465,6 +465,77 @@ class TestMultiHopSearcher:
         call_kwargs = self.mock_reranking_engine.rerank_by_query.call_args.kwargs
         assert call_kwargs["graph_hop_window_cap"] == 3
 
+    def test_search_multi_hop_threads_graph_hop_unscored_true_when_a1_off(self):
+        """search() declares graph_hop_unscored=True to rerank_by_query when
+        the A1 call-evidence scorer is off — the same gate _graph_expand
+        itself reads (ADR-0039) — since every graph_hop candidate in this
+        pool then carries the fabricated 0.0 placeholder, not a real
+        score."""
+        config = MagicMock()
+        config.multi_hop.initial_k_multiplier = 2.0
+        config.reranker.single_pass = False
+        config.graph_enhanced.graph_hop_call_evidence_enabled = False
+
+        query_emb = np.array([1.0, 0.0, 0.0])
+        self.mock_embedder.embed_query.return_value = query_emb
+
+        initial_results = [
+            SearchResult(chunk_id="chunk1", score=0.9, metadata={}),
+            SearchResult(chunk_id="chunk2", score=0.8, metadata={}),
+        ]
+        self.mock_single_hop_callback.return_value = initial_results
+
+        batched_results = {
+            "chunk1": [("chunk3", 0.7, {"file": "test.py"})],
+            "chunk2": [("chunk4", 0.6, {"file": "test.py"})],
+        }
+        self.mock_dense_index.get_similar_chunks_batched.return_value = batched_results
+        self.mock_reranking_engine.rerank_by_query.return_value = initial_results
+
+        self.searcher.search(
+            _request(query="test query", k=2, search_mode="hybrid", config=config),
+            hops=2,
+            expansion_factor=0.3,
+        )
+
+        call_kwargs = self.mock_reranking_engine.rerank_by_query.call_args.kwargs
+        assert call_kwargs["graph_hop_unscored"] is True
+
+    def test_search_multi_hop_threads_graph_hop_unscored_false_when_a1_on(self):
+        """search() declares graph_hop_unscored=False when the A1
+        call-evidence scorer is on — those graph_hop candidates carry real
+        anchor-conditioned scores, so the plain score sort (this arm's
+        already-measured behaviour, unchanged by ADR-0039) still applies."""
+        config = MagicMock()
+        config.multi_hop.initial_k_multiplier = 2.0
+        config.reranker.single_pass = False
+        config.graph_enhanced.graph_hop_call_evidence_enabled = True
+
+        query_emb = np.array([1.0, 0.0, 0.0])
+        self.mock_embedder.embed_query.return_value = query_emb
+
+        initial_results = [
+            SearchResult(chunk_id="chunk1", score=0.9, metadata={}),
+            SearchResult(chunk_id="chunk2", score=0.8, metadata={}),
+        ]
+        self.mock_single_hop_callback.return_value = initial_results
+
+        batched_results = {
+            "chunk1": [("chunk3", 0.7, {"file": "test.py"})],
+            "chunk2": [("chunk4", 0.6, {"file": "test.py"})],
+        }
+        self.mock_dense_index.get_similar_chunks_batched.return_value = batched_results
+        self.mock_reranking_engine.rerank_by_query.return_value = initial_results
+
+        self.searcher.search(
+            _request(query="test query", k=2, search_mode="hybrid", config=config),
+            hops=2,
+            expansion_factor=0.3,
+        )
+
+        call_kwargs = self.mock_reranking_engine.rerank_by_query.call_args.kwargs
+        assert call_kwargs["graph_hop_unscored"] is False
+
     def test_search_multi_hop_single_pass_skips_rerank(self):
         """Q3 single_pass: merge keeps fusion/expansion score order and
         truncates to k without calling the neural reranker."""

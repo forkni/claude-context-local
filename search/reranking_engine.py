@@ -260,7 +260,9 @@ class RerankingEngine:
             return candidates
 
     @staticmethod
-    def _order_merged_pool(results: list, policy: str) -> list:
+    def _order_merged_pool(
+        results: list, policy: str, graph_hop_unscored: bool = False
+    ) -> list:
         """Order the merged multi-hop pool before the ``top_k_candidates`` cut.
 
         ``"score"`` (default) is the literal pre-existing behaviour — sort by
@@ -275,9 +277,44 @@ class RerankingEngine:
         that rank ascending; tier 1 = ``source == "multi_hop"`` ordered by
         score descending; tier 2 = ``source == "graph_hop"`` in stable
         insertion order; tier 3 = anything else, stable insertion order.
+
+        ``graph_hop_unscored`` (default ``False``, only meaningful for
+        ``"score"``/``"score_reserve_fix"``): the caller's declaration that
+        every ``source == "graph_hop"`` candidate in ``results`` carries
+        ``MultiHopSearcher``'s fabricated placeholder score (literal ``0.0``,
+        never a real relevance signal — see ADR-0039). When ``True``, the
+        sort is replaced by an explicit three-band ordering — signal-positive
+        candidates (score > 0) descending, then every ``graph_hop`` candidate
+        in its original insertion order, then signal-nonpositive candidates
+        (score <= 0) descending — instead of relying on ``0.0``'s incidental
+        position under a plain numeric sort. Measured behaviour-preserving:
+        the two orderings diverge only when a non-graph candidate scores
+        exactly ``0.0`` (0 of 4,129 non-graph pool entries in the
+        `evaluation/probe_rerank_window_20260815.json` capture); the pinned
+        tie rule places such a candidate in the nonpositive band, i.e. after
+        graph. Callers set this from the same config gate that decides
+        whether ``graph_hop`` scores are placeholders
+        (``graph_enhanced.graph_hop_call_evidence_enabled``) — see
+        ``MultiHopSearcher.search``.
         """
         if policy in ("score", "score_reserve_fix"):
-            return sorted(results, key=lambda r: r.score, reverse=True)
+            if not graph_hop_unscored:
+                return sorted(results, key=lambda r: r.score, reverse=True)
+            # Provenance bands: graph_hop carries no real score at all (the
+            # caller has declared its 0.0 is a placeholder), so it is never
+            # compared against a real score — it is ordered by insertion
+            # order between the signal-positive and signal-nonpositive bands.
+            positive, graph, nonpositive = [], [], []
+            for r in results:
+                if r.source == "graph_hop":
+                    graph.append(r)
+                elif r.score > 0:
+                    positive.append(r)
+                else:
+                    nonpositive.append(r)
+            positive.sort(key=lambda r: r.score, reverse=True)
+            nonpositive.sort(key=lambda r: r.score, reverse=True)
+            return positive + graph + nonpositive
         if policy == "channel_priority":
 
             def _sort_key(item: "tuple[int, SearchResult]") -> tuple[int, float, int]:
@@ -304,10 +341,14 @@ class RerankingEngine:
         Runs after ``_order_merged_pool`` (still under the deployed
         ``"score"`` policy) and before ``_apply_hop1_reserve``. Every
         ``graph_hop`` candidate carries the literal score ``0.0``
-        (``MultiHopSearcher``'s graph-expansion branch), so under a stable
-        score sort the first ``cap`` graph entries encountered are exactly
-        the first ``cap`` in the pool's original graph-expansion order —
-        "first admitted" never depends on a cross-scale score comparison.
+        (``MultiHopSearcher``'s graph-expansion branch), and
+        ``_order_merged_pool`` always keeps ``graph_hop`` entries contiguous
+        in their original graph-expansion order — incidentally, via stable
+        sort tie-breaking, when ``graph_hop_unscored=False``; structurally,
+        by explicit banding, when ``True`` (ADR-0039) — so either way the
+        first ``cap`` graph entries encountered here are exactly the first
+        ``cap`` in that order: "first admitted" never depends on a
+        cross-scale score comparison.
 
         Single stable pass over ``sorted_results``: non-graph candidates are
         admitted to the window freely; ``graph_hop`` candidates are admitted
@@ -438,6 +479,7 @@ class RerankingEngine:
         hop1_reserved_slots: int = 0,
         merged_pool_policy: str = "score",
         graph_hop_window_cap: int = 0,
+        graph_hop_unscored: bool = False,
         config: "SearchConfig | None" = None,
     ) -> list:
         """
@@ -476,6 +518,16 @@ class RerankingEngine:
                 ``hop1_reserved_slots``' eviction. Only ``MultiHopSearcher``'s
                 Pass-2 call passes a non-zero value; the ego-graph/
                 parent-expansion tail call sites stay byte-identical.
+            graph_hop_unscored: The caller's declaration that every
+                ``source == "graph_hop"`` candidate in ``results`` carries a
+                fabricated placeholder score rather than a real one — see
+                ``_order_merged_pool`` and ADR-0039. ``False`` (default) is
+                byte-identical to the pre-existing plain sort. Only
+                ``MultiHopSearcher``'s Pass-2 call passes ``True`` (and only
+                when its own graph-scoring gate is off); the ego-graph/
+                parent-expansion tail call sites stay byte-identical because
+                Pass-2 survivors reaching them under ``source="graph_hop"``
+                carry real, already-reranked scores, not placeholders.
             config: Optional pre-fetched SearchConfig snapshot — the effective
                 config for this request (see ADR-0018). Callers that already
                 hold one pass it through so the whole rerank pass reads a
@@ -496,7 +548,9 @@ class RerankingEngine:
         if config is None:
             config = get_search_config()
 
-        sorted_results = self._order_merged_pool(results, merged_pool_policy)
+        sorted_results = self._order_merged_pool(
+            results, merged_pool_policy, graph_hop_unscored
+        )
         self.last_candidate_ids = [r.chunk_id for r in sorted_results]
 
         if graph_hop_window_cap > 0:

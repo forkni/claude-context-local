@@ -738,6 +738,154 @@ def test_order_merged_pool_unknown_policy_raises():
         RerankingEngine._order_merged_pool([], "bogus")
 
 
+# ---------------------------------------------------------------------------
+# graph_hop_unscored: explicit provenance-banded ordering (ADR-0039). A
+# caller-declared, default-off refinement of the "score"/"score_reserve_fix"
+# branch above — replaces the incidental placement of graph_hop's literal
+# 0.0 placeholder (tied with real 0.0 scores under a plain sort) with an
+# explicit band, without comparing it against a real score. See
+# evaluation/probe_rerank_window_20260815.json (0 of 4,129 non-graph pool
+# entries score exactly 0.0 — the only case where the two orderings diverge).
+# ---------------------------------------------------------------------------
+
+
+def test_order_merged_pool_graph_hop_unscored_bands_by_provenance():
+    """graph_hop_unscored=True: positive-scored descending, then every
+    graph_hop entry in insertion order, then nonpositive-scored descending —
+    and, absent a non-graph exact-0.0 tie, this is byte-identical to the
+    plain score sort."""
+    candidates = [
+        SearchResult(chunk_id="pos_hi", score=0.9, metadata={}, source="multi_hop"),
+        SearchResult(chunk_id="pos_lo", score=0.2, metadata={}, source="hybrid"),
+        SearchResult(chunk_id="g0", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="g1", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="neg_hi", score=-0.1, metadata={}, source="multi_hop"),
+        SearchResult(chunk_id="neg_lo", score=-0.5, metadata={}, source="multi_hop"),
+    ]
+
+    banded = RerankingEngine._order_merged_pool(
+        candidates, "score", graph_hop_unscored=True
+    )
+    plain = RerankingEngine._order_merged_pool(candidates, "score")
+
+    expected = ["pos_hi", "pos_lo", "g0", "g1", "neg_hi", "neg_lo"]
+    assert [r.chunk_id for r in banded] == expected
+    assert [r.chunk_id for r in plain] == expected
+
+
+def test_order_merged_pool_graph_hop_unscored_divergence_pin():
+    """The one case where banded and plain sort diverge: a non-graph
+    candidate scoring exactly 0.0. Pinned direction — it lands in the
+    nonpositive band, i.e. after every graph_hop entry — even though it
+    appears BEFORE the graph entries in insertion order, which is where a
+    plain stable sort's tie-breaking would keep it."""
+    candidates = [
+        SearchResult(chunk_id="pos", score=0.5, metadata={}, source="multi_hop"),
+        SearchResult(
+            chunk_id="zero_nongraph", score=0.0, metadata={}, source="unknown"
+        ),
+        SearchResult(chunk_id="g0", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="g1", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="neg", score=-0.3, metadata={}, source="multi_hop"),
+    ]
+
+    plain = RerankingEngine._order_merged_pool(candidates, "score")
+    banded = RerankingEngine._order_merged_pool(
+        candidates, "score", graph_hop_unscored=True
+    )
+
+    # Plain: stable-sort tie at 0.0 keeps zero_nongraph's original position
+    # ahead of g0/g1.
+    assert [r.chunk_id for r in plain] == [
+        "pos",
+        "zero_nongraph",
+        "g0",
+        "g1",
+        "neg",
+    ]
+    # Banded: zero_nongraph is not source=="graph_hop", so it is never
+    # placed in the graph band regardless of insertion order.
+    assert [r.chunk_id for r in banded] == [
+        "pos",
+        "g0",
+        "g1",
+        "zero_nongraph",
+        "neg",
+    ]
+
+
+def test_order_merged_pool_graph_hop_unscored_permutation_invariant():
+    """Banding never drops or duplicates entries, and the graph band
+    preserves the original relative order of graph_hop candidates even when
+    interleaved with other sources."""
+    from collections import Counter
+
+    candidates = [
+        SearchResult(chunk_id="s0", score=0.7, metadata={}, source="multi_hop"),
+        SearchResult(chunk_id="g0", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="s1", score=-0.2, metadata={}, source="multi_hop"),
+        SearchResult(chunk_id="g1", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="g2", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="s2", score=0.3, metadata={}, source="hybrid"),
+    ]
+
+    out = RerankingEngine._order_merged_pool(
+        candidates, "score", graph_hop_unscored=True
+    )
+
+    assert Counter(r.chunk_id for r in out) == Counter(r.chunk_id for r in candidates)
+    graph_ids = [r.chunk_id for r in out if r.source == "graph_hop"]
+    assert graph_ids == ["g0", "g1", "g2"]
+
+
+def test_order_merged_pool_channel_priority_ignores_graph_hop_unscored():
+    """graph_hop_unscored only affects the "score"/"score_reserve_fix"
+    branch -- channel_priority's output is identical regardless of it."""
+    candidates = [
+        SearchResult(chunk_id="graph_a", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="semantic_a", score=0.6, metadata={}, source="multi_hop"),
+        SearchResult(
+            chunk_id="hop1_a", score=-0.4, metadata={"hop1_rank": 1}, source="unknown"
+        ),
+    ]
+
+    default = RerankingEngine._order_merged_pool(candidates, "channel_priority")
+    with_flag = RerankingEngine._order_merged_pool(
+        candidates, "channel_priority", graph_hop_unscored=True
+    )
+
+    assert [r.chunk_id for r in default] == [r.chunk_id for r in with_flag]
+
+
+def test_graph_hop_unscored_ego_tail_call_site_unaffected():
+    """rerank_by_query's graph_hop_unscored defaults to False -- calls that
+    don't pass it explicitly (the ego-graph/parent-expansion tail in
+    HybridSearcher) stay on the plain score sort even on a pool that WOULD
+    band differently, because Pass-2 survivors reaching that tail under
+    source=="graph_hop" carry real, already-reranked scores, not
+    placeholders."""
+    engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
+    engine._ensure_reranker = Mock(return_value=False)
+    cfg = _cfg(top_k_candidates=10)
+    candidates = [
+        SearchResult(chunk_id="pos", score=0.5, metadata={}, source="multi_hop"),
+        SearchResult(
+            chunk_id="zero_nongraph", score=0.0, metadata={}, source="unknown"
+        ),
+        SearchResult(chunk_id="g0", score=0.0, metadata={}, source="graph_hop"),
+        SearchResult(chunk_id="neg", score=-0.3, metadata={}, source="multi_hop"),
+    ]
+
+    with patch("search.reranking_engine.get_search_config", return_value=cfg):
+        out = engine.rerank_by_query(
+            "q", candidates, k=4
+        )  # no graph_hop_unscored kwarg
+
+    # Plain sort: zero_nongraph keeps its stable-sort tie position ahead of
+    # g0, the opposite of what banding would do.
+    assert [r.chunk_id for r in out] == ["pos", "zero_nongraph", "g0", "neg"]
+
+
 def test_apply_hop1_reserve_unknown_evict_policy_raises():
     """Guards against a typo'd evict_policy value silently no-op'ing."""
     candidates = [

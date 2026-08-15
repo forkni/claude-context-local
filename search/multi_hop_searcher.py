@@ -17,6 +17,7 @@ from search.graph_integration import is_chunk_id
 from utils.timing import timed
 
 from .reranker import SearchResult as RerankerSearchResult
+from .reranking_engine import RerankingEngine
 from .types import RetrievalRequest
 
 
@@ -265,7 +266,12 @@ class MultiHopSearcher:
                 )
                 scores = [0.0] * len(pending)
         else:
-            scores = [0.0] * len(pending)  # Legacy: reranker assigns final score
+            # Legacy: no real score assigned here — 0.0 is a placeholder, not
+            # a relevance signal. RerankingEngine._order_merged_pool treats
+            # every source=="graph_hop" candidate in this pool as carrying
+            # this placeholder (graph_hop_unscored=True, ADR-0039) rather
+            # than comparing it against real scores from other channels.
+            scores = [0.0] * len(pending)
 
         for (neighbor_id, metadata, _anchor), score in zip(
             pending, scores, strict=True
@@ -623,11 +629,23 @@ class MultiHopSearcher:
 
         rerank_start = time.time()
         merged_results = list(all_results.values())
+
+        # This pool's graph_hop candidates carry MultiHopSearcher's own
+        # fabricated placeholder score (see _graph_expand) unless the A1
+        # call-evidence scorer is on and produced real anchor-conditioned
+        # scores — same gate _graph_expand itself reads (ADR-0039).
+        ge_cfg = getattr(config, "graph_enhanced", None)
+        graph_hop_unscored = not (
+            ge_cfg is not None and ge_cfg.graph_hop_call_evidence_enabled
+        )
+
         if config.reranker.single_pass:
             # Q3 single-pass: defer neural reranking to the one listwise pass
             # at the tail of HybridSearcher.search(); keep fusion/expansion
             # score order so ego expansion still seeds from this top-k.
-            merged_results.sort(key=lambda r: r.score, reverse=True)
+            merged_results = RerankingEngine._order_merged_pool(
+                merged_results, "score", graph_hop_unscored
+            )
             final_results = merged_results[:k]
         else:
             final_results = self.reranking_engine.rerank_by_query(
@@ -638,6 +656,7 @@ class MultiHopSearcher:
                 hop1_reserved_slots=config.reranker.hop1_reserved_slots,
                 merged_pool_policy=config.reranker.merged_pool_policy,
                 graph_hop_window_cap=config.reranker.graph_hop_window_cap,
+                graph_hop_unscored=graph_hop_unscored,
                 config=config,
             )
 

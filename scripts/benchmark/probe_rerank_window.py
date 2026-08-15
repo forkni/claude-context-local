@@ -205,6 +205,13 @@ def simulate_cap_windows(
     self-validity guarantee ``simulate_windows`` relies on: a divergence can
     only mean the captured pool snapshot is stale, never that this function's
     logic drifted from ``reranking_engine.py``.
+
+    ``graph_hop_unscored=True`` here (ADR-0039): this is what makes
+    ``--replay``'s G3 self-validity check (``windows[0] == observed
+    window_ids``) the empirical byte-identity gate for the provenance-band
+    reformulation — a real production pool, ordered by the new banded code
+    path, must still reproduce the exact window a *pre-reformulation* capture
+    observed. A mismatch means the reformulation is not behaviour-preserving.
     """
     from search.reranking_engine import RerankingEngine
 
@@ -212,7 +219,9 @@ def simulate_cap_windows(
         _SimResult(p["chunk_id"], p["score"], p["source"], p["hop1_rank"])
         for p in pass2_call["pool"]
     ]
-    ordered = RerankingEngine._order_merged_pool(pool_objects, "score")
+    ordered = RerankingEngine._order_merged_pool(
+        pool_objects, "score", graph_hop_unscored=True
+    )
 
     windows: dict[int, list[str]] = {}
     for cap in SIMULATED_CAPS:

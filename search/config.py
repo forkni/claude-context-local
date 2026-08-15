@@ -865,12 +865,20 @@ class RerankerConfig:
         # (default, byte-identical) sorts by raw .score across three
         # incommensurable scales -- hop-1 survivors carry an overwritten jina
         # relevance score (~-0.12..+0.22), semantic-expansion candidates carry
-        # raw FAISS cosine (~0.5-0.9), graph-expansion candidates carry
-        # literal 0.0 -- so every expansion candidate structurally outranks
-        # every hop-1 winner regardless of actual relevance (see
-        # docs/adr/0013-hop1-reserve-at-final-pool.md and
-        # evaluation/POOL_ORDER_AB_20260815.md). "score_reserve_fix" keeps the
-        # score sort but changes hop1_reserved_slots' eviction target from the
+        # raw FAISS cosine (~0.5-0.9), graph-expansion candidates carry a
+        # fabricated literal 0.0 (never a real relevance signal). Measured
+        # over the 124-query capture (evaluation/probe_rerank_window_20260815
+        # .json): every graph-expansion candidate's score is exactly 0.0 and
+        # no non-graph candidate's is, so the stable sort places all graph
+        # candidates in a single contiguous band between the signal-positive
+        # and signal-negative candidates -- it does not, contrary to an
+        # earlier version of this comment, make graph candidates structurally
+        # outrank every hop-1 winner (see docs/adr/0013-hop1-reserve-at-final
+        # -pool.md, evaluation/POOL_ORDER_AB_20260815.md, and
+        # docs/adr/0039-merged-pool-provenance-bands.md, which replaces the
+        # incidental band with an explicit one under a caller-declared flag).
+        # "score_reserve_fix" keeps the score sort but changes
+        # hop1_reserved_slots' eviction target from the
         # window's blind score-sorted tail to the lowest-scored non-hop1
         # entries, so promoting a hop-1 candidate can no longer evict a
         # better-ranked one. "channel_priority" replaces the sort entirely
