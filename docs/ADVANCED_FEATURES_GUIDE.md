@@ -422,7 +422,7 @@ set CLAUDE_EMBEDDING_MODEL=google/embeddinggemma-300m
 **Interactive Selection**:
 
 ```bash
-start_mcp_server.bat → 3 (Search Config) → 4 (Select Model)
+start_mcp_server.cmd → 3 (Search Config) → 4 (Select Model)
 ```
 
 **Python Command**:
