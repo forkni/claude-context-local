@@ -369,7 +369,10 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
     max_depth = arguments.get("max_depth", 3)
     exclude_dirs = arguments.get("exclude_dirs")
     relationship_types = arguments.get("relationship_types")
-    hide_ambiguous = arguments.get("hide_ambiguous", False)
+    hide_ambiguous = arguments.get(
+        "hide_ambiguous",
+        get_search_config().graph_enhanced.hide_ambiguous_edges_default,
+    )
 
     # Validate inputs
     if not chunk_id and not symbol_name:

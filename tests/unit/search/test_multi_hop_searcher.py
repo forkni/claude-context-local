@@ -653,7 +653,7 @@ class TestMultiHopSearcher:
         all_results = {"src/a.py:1-10:function:foo": initial_results[0]}
 
         # Mock graph neighbors (returns set[str])
-        self.mock_graph_storage.get_neighbors.return_value = {
+        self.mock_graph_storage.get_neighbors_ranked.return_value = {
             "src/b.py:20-30:function:bar",
             "Exception",  # symbol_name node, should be filtered
         }
@@ -706,7 +706,7 @@ class TestMultiHopSearcher:
         all_chunk_ids = {"src/a.py:1-10:function:foo"}
         all_results = {"src/a.py:1-10:function:foo": initial_results[0]}
 
-        self.mock_graph_storage.get_neighbors.return_value = {
+        self.mock_graph_storage.get_neighbors_ranked.return_value = {
             "BaseClass",  # 0 colons - symbol
             "os.path",  # 0 colons - symbol
             "module:func",  # 1 colon  - not a chunk
@@ -731,7 +731,7 @@ class TestMultiHopSearcher:
         all_results = {"src/a.py:1-10:function:foo": initial_results[0]}
 
         # Neighbor exists in graph
-        self.mock_graph_storage.get_neighbors.return_value = {
+        self.mock_graph_storage.get_neighbors_ranked.return_value = {
             "src/orphan.py:1-10:function:bar",
         }
 
@@ -749,6 +749,82 @@ class TestMultiHopSearcher:
         assert len(all_results) == 1  # Neighbor was skipped
         assert "src/orphan.py:1-10:function:bar" not in all_chunk_ids
 
+    def test_graph_expand_truncates_by_ranked_order(self):
+        """expansion_k truncation follows get_neighbors_ranked's list order,
+        not an arbitrary subset. Regression case for fix #3: before the
+        get_neighbors -> get_neighbors_ranked switch, `added_for_source >=
+        expansion_k` truncated by Python's set-iteration order instead of
+        this priority/discovery order."""
+        initial_results = [
+            SearchResult(chunk_id="src/a.py:1-10:function:foo", score=0.9, metadata={}),
+        ]
+        all_chunk_ids = {"src/a.py:1-10:function:foo"}
+        all_results = {"src/a.py:1-10:function:foo": initial_results[0]}
+
+        ranked_neighbors = [
+            "src/b.py:1-10:function:first",
+            "src/c.py:1-10:function:second",
+            "src/d.py:1-10:function:third",
+            "src/e.py:1-10:function:fourth",
+        ]
+        self.mock_graph_storage.get_neighbors_ranked.return_value = ranked_neighbors
+        self.mock_dense_index.get_chunk_by_id.return_value = {"file": "src/x.py"}
+
+        self.searcher._graph_expand(
+            initial_results=initial_results,
+            all_chunk_ids=all_chunk_ids,
+            all_results=all_results,
+            expansion_k=2,
+            k=5,
+        )
+
+        # Only the first two neighbors in ranked order survive truncation.
+        assert "src/b.py:1-10:function:first" in all_chunk_ids
+        assert "src/c.py:1-10:function:second" in all_chunk_ids
+        assert "src/d.py:1-10:function:third" not in all_chunk_ids
+        assert "src/e.py:1-10:function:fourth" not in all_chunk_ids
+
+    def test_graph_expand_truncation_deterministic_across_repeated_calls(self):
+        """Two independent expansions over the identical ranked-neighbor list
+        truncate to the identical subset -- the property that regressed
+        under set-iteration truncation across process restarts."""
+        ranked_neighbors = [
+            "src/b.py:1-10:function:first",
+            "src/c.py:1-10:function:second",
+            "src/d.py:1-10:function:third",
+        ]
+        self.mock_graph_storage.get_neighbors_ranked.return_value = ranked_neighbors
+        self.mock_dense_index.get_chunk_by_id.return_value = {"file": "src/x.py"}
+
+        def _run():
+            initial_results = [
+                SearchResult(
+                    chunk_id="src/a.py:1-10:function:foo", score=0.9, metadata={}
+                ),
+            ]
+            all_chunk_ids = {"src/a.py:1-10:function:foo"}
+            all_results = {"src/a.py:1-10:function:foo": initial_results[0]}
+            self.searcher._graph_expand(
+                initial_results=initial_results,
+                all_chunk_ids=all_chunk_ids,
+                all_results=all_results,
+                expansion_k=2,
+                k=5,
+            )
+            return set(all_results.keys())
+
+        first = _run()
+        second = _run()
+        assert (
+            first
+            == second
+            == {
+                "src/a.py:1-10:function:foo",
+                "src/b.py:1-10:function:first",
+                "src/c.py:1-10:function:second",
+            }
+        )
+
     def test_hybrid_expand_runs_both(self):
         """Test hybrid expansion runs graph first, then semantic."""
         initial_results = [
@@ -758,7 +834,7 @@ class TestMultiHopSearcher:
         all_results = {"src/a.py:1-10:function:foo": initial_results[0]}
 
         # Graph returns one neighbor
-        self.mock_graph_storage.get_neighbors.return_value = {
+        self.mock_graph_storage.get_neighbors_ranked.return_value = {
             "src/b.py:20-30:function:bar",
         }
         self.mock_dense_index.metadata_store.get.return_value = {
@@ -807,7 +883,7 @@ class TestMultiHopSearcher:
         ]
 
         # Graph returns neighbor
-        self.mock_graph_storage.get_neighbors.return_value = {
+        self.mock_graph_storage.get_neighbors_ranked.return_value = {
             "src/b.py:20-30:function:bar",
         }
         self.mock_dense_index.metadata_store.get.return_value = {
@@ -822,8 +898,8 @@ class TestMultiHopSearcher:
 
         self.searcher.search(_request(query="test", k=5, config=config), hops=2)
 
-        # Verify graph_storage.get_neighbors was called (graph mode)
-        self.mock_graph_storage.get_neighbors.assert_called()
+        # Verify graph_storage.get_neighbors_ranked was called (graph mode)
+        self.mock_graph_storage.get_neighbors_ranked.assert_called()
         # Verify batched search was NOT called (not semantic mode)
         self.mock_dense_index.get_similar_chunks_batched.assert_not_called()
 
@@ -848,12 +924,12 @@ class TestIntentAdaptiveWeights:
         )
 
     def test_graph_expand_uses_custom_weights(self):
-        """_graph_expand() should pass custom edge_weights to get_neighbors()."""
+        """_graph_expand() should pass custom edge_weights to get_neighbors_ranked()."""
 
         custom_weights = {"calls": 0.5, "imports": 1.0}
 
-        # Setup: get_neighbors returns empty set
-        self.mock_graph_storage.get_neighbors.return_value = set()
+        # Setup: get_neighbors_ranked returns empty set
+        self.mock_graph_storage.get_neighbors_ranked.return_value = set()
 
         # Create mock result
         mock_result = MagicMock()
@@ -868,16 +944,16 @@ class TestIntentAdaptiveWeights:
             edge_weights=custom_weights,
         )
 
-        # Verify get_neighbors was called with custom weights
-        call_args = self.mock_graph_storage.get_neighbors.call_args
+        # Verify get_neighbors_ranked was called with custom weights
+        call_args = self.mock_graph_storage.get_neighbors_ranked.call_args
         assert call_args.kwargs["edge_weights"] == custom_weights
 
     def test_graph_expand_default_weights_when_none(self):
         """_graph_expand() should use DEFAULT_EDGE_WEIGHTS when edge_weights=None."""
         from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
 
-        # Setup: get_neighbors returns empty set
-        self.mock_graph_storage.get_neighbors.return_value = set()
+        # Setup: get_neighbors_ranked returns empty set
+        self.mock_graph_storage.get_neighbors_ranked.return_value = set()
 
         # Create mock result
         mock_result = MagicMock()
@@ -892,8 +968,8 @@ class TestIntentAdaptiveWeights:
             edge_weights=None,
         )
 
-        # Verify get_neighbors was called with DEFAULT_EDGE_WEIGHTS
-        call_args = self.mock_graph_storage.get_neighbors.call_args
+        # Verify get_neighbors_ranked was called with DEFAULT_EDGE_WEIGHTS
+        call_args = self.mock_graph_storage.get_neighbors_ranked.call_args
         assert call_args.kwargs["edge_weights"] == DEFAULT_EDGE_WEIGHTS
 
     def test_search_threads_edge_weights(self):
@@ -915,8 +991,8 @@ class TestIntentAdaptiveWeights:
             kwargs["results"]
         )
 
-        # Mock graph_storage.get_neighbors to return empty set
-        self.mock_graph_storage.get_neighbors.return_value = set()
+        # Mock graph_storage.get_neighbors_ranked to return empty set
+        self.mock_graph_storage.get_neighbors_ranked.return_value = set()
 
         # Patch _graph_expand to verify it receives edge_weights
         with patch.object(self.searcher, "_graph_expand") as mock_expand:
@@ -973,7 +1049,7 @@ class TestCallEvidenceScoring:
         all_chunk_ids = {self.ANCHOR}
         all_results = {self.ANCHOR: initial_results[0]}
 
-        self.mock_graph_storage.get_neighbors.return_value = {self.NEIGHBOR}
+        self.mock_graph_storage.get_neighbors_ranked.return_value = {self.NEIGHBOR}
         self.mock_dense_index.get_chunk_by_id.return_value = {"file": "src/b.py"}
 
         self.searcher._graph_expand(
@@ -1090,28 +1166,28 @@ class TestCallEvidenceScoring:
 
     def test_traversal_confidence_defaults_are_noop(self):
         """A2 byte-identity: a default config threads floor 0.0 and weighting
-        False into get_neighbors."""
+        False into get_neighbors_ranked."""
         self._expand(config=SearchConfig())
-        kwargs = self.mock_graph_storage.get_neighbors.call_args.kwargs
+        kwargs = self.mock_graph_storage.get_neighbors_ranked.call_args.kwargs
         assert kwargs["min_confidence"] == 0.0
         assert kwargs["confidence_weighting"] is False
 
     def test_no_config_traversal_defaults(self):
         """Legacy callers threading no config get the same no-op traversal."""
         self._expand(config=None)
-        kwargs = self.mock_graph_storage.get_neighbors.call_args.kwargs
+        kwargs = self.mock_graph_storage.get_neighbors_ranked.call_args.kwargs
         assert kwargs["min_confidence"] == 0.0
         assert kwargs["confidence_weighting"] is False
 
     def test_traversal_confidence_threaded_from_config(self):
-        """A2: config values reach get_neighbors on every anchor expansion."""
+        """A2: config values reach get_neighbors_ranked on every anchor expansion."""
         config = SearchConfig()
         config.graph_enhanced.min_traversal_confidence = 0.7
         config.graph_enhanced.traversal_confidence_weighting_enabled = True
 
         self._expand(config=config)
 
-        kwargs = self.mock_graph_storage.get_neighbors.call_args.kwargs
+        kwargs = self.mock_graph_storage.get_neighbors_ranked.call_args.kwargs
         assert kwargs["min_confidence"] == 0.7
         assert kwargs["confidence_weighting"] is True
 
@@ -1128,7 +1204,7 @@ class TestCallEvidenceScoring:
         self.mock_reranking_engine.rerank_by_query.side_effect = lambda **kwargs: (
             kwargs["results"]
         )
-        self.mock_graph_storage.get_neighbors.return_value = set()
+        self.mock_graph_storage.get_neighbors_ranked.return_value = set()
 
         with patch.object(self.searcher, "_graph_expand") as mock_expand:
             mock_expand.return_value = {}

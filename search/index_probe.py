@@ -91,6 +91,7 @@ FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
         "query_expansion.enabled",
         "multi_hop.expansion",
         "multi_hop.multi_hop_mode",
+        "ego_graph.drop_nonpositive_output",
         "embedding.model_name",  # routes to a different per-model index dir
     }
 )
@@ -129,6 +130,11 @@ BENCHMARK_LOCK_CITATIONS: dict[str, str] = {
         "POOL_ORDER_CAP_AB_20260815: neither cap=2 nor cap=3 clears the "
         "133q recall@10/recall@20 upside CI (both include zero, both point "
         "estimates negative)"
+    ),
+    "ego_graph.drop_nonpositive_output": (
+        "CONFIDENCE_EGO_AB_20260816: recall@20 CI excludes zero on the loss "
+        "side on both 63q and 133q; recall@10 upside CI includes zero both "
+        "sets — fails the Phase 5 gate, stays default-off"
     ),
 }
 

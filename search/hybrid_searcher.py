@@ -52,6 +52,28 @@ from .tokenization import augment_bm25_document
 from .types import RetrievalRequest
 
 
+def drop_nonpositive_ego_results(results: list[SearchResult]) -> list[SearchResult]:
+    """Fix #4: bound ego-graph output to the cross-encoder's own judgment.
+
+    Drops only ``source == "ego_graph"`` results with ``reranker_score <= 0``
+    (metadata key) -- never anchors, never ``multi_hop``/``graph_hop``
+    results. Reads ``reranker_score``, not ``blended_score``:
+    ``CentralityRanker._apply_bm25_boost`` is additive and can flip a
+    negative ``reranker_score`` positive, so ``blended_score`` would let
+    through results the cross-encoder actually rejected. ``<= 0``, not
+    ``< 0``: a result can land at exactly 0.0. Results with no
+    ``reranker_score`` yet (rerank never ran) are left alone -- this is a
+    cut on the cross-encoder's own judgment, not a guess.
+    """
+    return [
+        r
+        for r in results
+        if r.source != "ego_graph"
+        or (r.metadata or {}).get("reranker_score") is None
+        or r.metadata["reranker_score"] > 0
+    ]
+
+
 class HybridSearcher(BaseSearcher):
     """Orchestrates BM25 + dense search with GPU awareness and parallel execution."""
 
@@ -729,8 +751,14 @@ class HybridSearcher(BaseSearcher):
                 # decorator changes the chunk kind to decorated_definition,
                 # breaking golden-dataset chunk IDs that reference this method
                 with timer("ego_expansion"):
+                    ge_cfg = effective_config.graph_enhanced
                     results = self._apply_ego_graph_expansion(
-                        results, effective_config.ego_graph, k, query
+                        results,
+                        effective_config.ego_graph,
+                        k,
+                        query,
+                        min_confidence=ge_cfg.min_traversal_confidence,
+                        confidence_weighting=ge_cfg.traversal_confidence_weighting_enabled,
                     )
 
             # Apply parent expansion if enabled (limit to primary k results to prevent bloat)
@@ -773,6 +801,11 @@ class HybridSearcher(BaseSearcher):
                     config=effective_config,
                 )
 
+            # Fix #4: bound ego-graph output (see drop_nonpositive_ego_results
+            # docstring for why reranker_score, not blended_score, and <= not <)
+            if effective_config.ego_graph.drop_nonpositive_output and results:
+                results = drop_nonpositive_ego_results(results)
+
             # Safety-net dedup for paths that bypass rerank_by_query (e.g.
             # single-hop with no ego growth): split_block fragments of one
             # function must not occupy multiple final slots. Idempotent when
@@ -810,6 +843,8 @@ class HybridSearcher(BaseSearcher):
         ego_config: "EgoGraphConfig",
         original_k: int,
         query: str,
+        min_confidence: float = 0.0,
+        confidence_weighting: bool = False,
     ) -> list[SearchResult]:
         """Apply ego-graph expansion to search results.
 
@@ -821,6 +856,12 @@ class HybridSearcher(BaseSearcher):
             ego_config: EgoGraphConfig instance
             original_k: Original k parameter for search
             query: Original search query (for similarity scoring of neighbors)
+            min_confidence: Forwarded to
+                ``EgoGraphRetriever.expand_search_results`` (graph_enhanced's
+                ``min_traversal_confidence``). Default 0.0 = no-op.
+            confidence_weighting: Forwarded likewise
+                (``traversal_confidence_weighting_enabled``). Default
+                False = no-op.
 
         Returns:
             Expanded search results (anchors + neighbors)
@@ -838,7 +879,10 @@ class HybridSearcher(BaseSearcher):
             expanded_chunk_ids, ego_graphs = (
                 # pyrefly: ignore [missing-attribute]
                 self.ego_graph_retriever.expand_search_results(
-                    search_results_dict, ego_config
+                    search_results_dict,
+                    ego_config,
+                    min_confidence,
+                    confidence_weighting,
                 )
             )
 

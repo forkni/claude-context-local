@@ -96,6 +96,7 @@ class TestGuardrails:
             "query_expansion.enabled",
             "multi_hop.expansion",
             "multi_hop.multi_hop_mode",
+            "ego_graph.drop_nonpositive_output",
             "embedding.model_name",
         } == FORBIDDEN_AUTO_TUNE_KEYS
 

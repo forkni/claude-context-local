@@ -217,17 +217,26 @@ def _enrich_results_with_top_callers(
 ) -> list[dict]:
     """Attach a ``top_callers`` hint (up to ``max_callers``) to each result.
 
-    Per result, scans raw incoming ``calls``-type edges on the MultiDiGraph.
+    Per result, scans raw incoming ``calls``-type edges on the chunk_id node.
     Unresolved AST call edges target the bare symbol-name node rather than the
     chunk_id node (see ``graph_storage.add_call_edge``) — the common case when
-    the ``[callgraph]`` extras are absent — so both nodes are scanned, mirroring
-    ``_get_graph_data_for_chunk``'s two-lookup pattern, with callers deduped
-    across the two scans before the cut.
+    the ``[callgraph]`` extras are absent — so the bare-symbol node is
+    consulted as a *fallback*, mirroring ``_get_graph_data_for_chunk``'s
+    two-lookup pattern, and only when the chunk node alone yields fewer than
+    ``max_callers`` candidates.
 
-    Ranking is ``resolver_confidence`` descending where the float exists,
-    insertion order otherwise (most in-file AST edges lack the float — this is
-    a hint, not a confidence-ranked guarantee). Skips silently when the graph
-    or node is absent.
+    The symbol-node fallback is unreliable in a way the chunk-node lookup is
+    not: an edge into a bare symbol name like ``get`` or ``add`` conflates
+    every definition of that name across the whole project (100% of these
+    edges carry no confidence tag at all — see the Fix #2 census), so a
+    common method name produces false hints while a unique name produces true
+    ones. There is no per-edge signal to distinguish the two cases, so this
+    function treats the *lookup tier* itself as the confidence signal:
+    chunk-node candidates always sort before symbol-node candidates,
+    regardless of any ``resolver_confidence`` float either carries. Within
+    each tier, ranking is ``resolver_confidence`` descending where the float
+    exists, insertion order otherwise. Skips silently when the graph or node
+    is absent.
 
     Args:
         results: List of formatted result dicts
@@ -242,6 +251,20 @@ def _enrich_results_with_top_callers(
 
     graph = index_manager.graph_storage.graph
 
+    def _collect(node: str, seen: set[str], normalized: str) -> list[tuple[str, dict]]:
+        """In-edge ``calls`` candidates at ``node``, deduped against ``seen``."""
+        found: list[tuple[str, dict]] = []
+        if node not in graph:
+            return found
+        for source, _, edge_data in graph.in_edges(node, data=True):
+            if edge_data.get("type", "calls") != "calls":
+                continue
+            if source in seen or source == normalized:
+                continue
+            seen.add(source)
+            found.append((source, edge_data))
+        return found
+
     for item in results:
         chunk_id = item.get("chunk_id")
         if not chunk_id:
@@ -250,32 +273,32 @@ def _enrich_results_with_top_callers(
             normalized = normalize_path(chunk_id)
             symbol_name = normalized.rsplit(":", 1)[-1] if ":" in normalized else None
 
-            lookup_nodes = [normalized]
-            if symbol_name and symbol_name != normalized:
-                lookup_nodes.append(symbol_name)
-
-            candidates: list[tuple[str, dict]] = []
             seen: set[str] = set()
-            for node in lookup_nodes:
-                if node not in graph:
-                    continue
-                for source, _, edge_data in graph.in_edges(node, data=True):
-                    if edge_data.get("type", "calls") != "calls":
-                        continue
-                    if source in seen or source == normalized:
-                        continue
-                    seen.add(source)
-                    candidates.append((source, edge_data))
+            chunk_candidates = _collect(normalized, seen, normalized)
 
-            if not candidates:
+            symbol_candidates: list[tuple[str, dict]] = []
+            if (
+                len(chunk_candidates) < max_callers
+                and symbol_name
+                and symbol_name != normalized
+            ):
+                symbol_candidates = _collect(symbol_name, seen, normalized)
+
+            if not chunk_candidates and not symbol_candidates:
                 continue
 
-            # Stable sort: float-confident edges first (desc), the rest keep
+            # Chunk-node tier always sorts before symbol-node tier; within a
+            # tier, float-confident edges first (desc), the rest keep
             # discovery order via missing-confidence -> 0.0.
-            candidates.sort(key=lambda c: -(c[1].get("resolver_confidence") or 0.0))
+            tiered = [(c, False) for c in chunk_candidates] + [
+                (c, True) for c in symbol_candidates
+            ]
+            tiered.sort(
+                key=lambda t: (t[1], -(t[0][1].get("resolver_confidence") or 0.0))
+            )
 
             top_callers = []
-            for source, _ in candidates[:max_callers]:
+            for (source, _), _is_symbol_tier in tiered[:max_callers]:
                 node_name = graph.nodes[source].get("name") if source in graph else None
                 top_callers.append(
                     {

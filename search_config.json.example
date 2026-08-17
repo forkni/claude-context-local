@@ -143,7 +143,8 @@
     },
     "expansion_mode": "bfs",
     "ppr_alpha": 0.85,
-    "min_similarity_threshold": 0.15
+    "min_similarity_threshold": 0.15,
+    "drop_nonpositive_output": false
   },
   "parent_retrieval": {
     "enabled": false,
@@ -165,7 +166,8 @@
     "graph_hop_call_evidence_enabled": false,
     "graph_hop_call_evidence_lambda": 0.05,
     "min_traversal_confidence": 0.0,
-    "traversal_confidence_weighting_enabled": false
+    "traversal_confidence_weighting_enabled": false,
+    "hide_ambiguous_edges_default": true
   },
   "observability": {
     "enabled": false,

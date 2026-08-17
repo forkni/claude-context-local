@@ -808,8 +808,11 @@ def _patch_find_connections_deps():
 
 
 @pytest.mark.asyncio
-async def test_handle_find_connections_default_keeps_ambiguous():
-    """Omitted hide_ambiguous defaults to False — byte-identical response."""
+async def test_handle_find_connections_default_hides_ambiguous():
+    """Omitted hide_ambiguous now defaults to True (promoted 2026-08-16,
+    GraphEnhancedConfig.hide_ambiguous_edges_default) — the real (unmocked)
+    SearchConfig default drops ambiguous callers while caller_confidence
+    stays a pre-filter total."""
     p_searcher, p_state, p_dec_state, p_analyzer = _patch_find_connections_deps()
     with (
         p_searcher,
@@ -832,7 +835,6 @@ async def test_handle_find_connections_default_keeps_ambiguous():
 
         assert [e["chunk_id"] for e in result["direct_callers"]] == [
             "a.py:1-2:function:a",
-            "b.py:1-2:function:b",
         ]
         assert result["caller_confidence"]["ambiguous"] == 1
 
@@ -867,6 +869,85 @@ async def test_handle_find_connections_hide_ambiguous_filters_edges():
         # Pre-filter totals remain the "N were hidden" signal
         assert result["caller_confidence"]["ambiguous"] == 1
         assert result["total_impacted"] == 2
+
+
+@pytest.mark.asyncio
+async def test_handle_find_connections_omitted_falls_back_to_config_default():
+    """Omitted hide_ambiguous picks up
+    GraphEnhancedConfig.hide_ambiguous_edges_default when the config sets it
+    True — Phase 6 promotion path (default flip) must actually take effect
+    without every caller having to pass the arg explicitly."""
+    from search.config import SearchConfig
+
+    p_searcher, p_state, p_dec_state, p_analyzer = _patch_find_connections_deps()
+    with (
+        p_searcher,
+        p_state as mock_get_state,
+        p_dec_state as mock_dec_state,
+        p_analyzer as mock_analyzer_cls,
+        patch(
+            "mcp_server.tools.search_handlers.get_search_config"
+        ) as mock_search_config,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
+
+        config = SearchConfig()
+        config.graph_enhanced.hide_ambiguous_edges_default = True
+        mock_search_config.return_value = config
+
+        mock_analyzer = Mock()
+        mock_analyzer.analyze_impact.return_value = _make_impact_report_with_ambiguous()
+        mock_analyzer_cls.from_searcher.return_value = mock_analyzer
+
+        result = await tool_handlers.handle_find_connections(
+            {"chunk_id": "src/t.py:function:target"}
+        )
+
+        assert [e["chunk_id"] for e in result["direct_callers"]] == [
+            "a.py:1-2:function:a"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_handle_find_connections_explicit_false_overrides_config_default():
+    """An explicit hide_ambiguous=False always wins over the config default,
+    even when the config default is True."""
+    from search.config import SearchConfig
+
+    p_searcher, p_state, p_dec_state, p_analyzer = _patch_find_connections_deps()
+    with (
+        p_searcher,
+        p_state as mock_get_state,
+        p_dec_state as mock_dec_state,
+        p_analyzer as mock_analyzer_cls,
+        patch(
+            "mcp_server.tools.search_handlers.get_search_config"
+        ) as mock_search_config,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
+
+        config = SearchConfig()
+        config.graph_enhanced.hide_ambiguous_edges_default = True
+        mock_search_config.return_value = config
+
+        mock_analyzer = Mock()
+        mock_analyzer.analyze_impact.return_value = _make_impact_report_with_ambiguous()
+        mock_analyzer_cls.from_searcher.return_value = mock_analyzer
+
+        result = await tool_handlers.handle_find_connections(
+            {"chunk_id": "src/t.py:function:target", "hide_ambiguous": False}
+        )
+
+        assert [e["chunk_id"] for e in result["direct_callers"]] == [
+            "a.py:1-2:function:a",
+            "b.py:1-2:function:b",
+        ]
 
 
 # ============================================================================

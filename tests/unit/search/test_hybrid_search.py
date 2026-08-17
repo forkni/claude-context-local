@@ -1333,6 +1333,115 @@ class TestSinglePassTailRerank:
         ]
 
 
+class TestEgoOutputBounding:
+    """Fix #4: drop_nonpositive_output bounds ego-graph output to the
+    cross-encoder's own non-negative judgments (search.hybrid_searcher's
+    wiring; see test_ego_output_bounding.py for the pure-function cases)."""
+
+    def _make_searcher_and_config(self, mock_bm25, mock_dense, drop: bool):
+        from search.config import MultiHopConfig, SearchConfig
+
+        mock_dense.return_value.index = None
+        searcher = HybridSearcher(tempfile.mkdtemp())
+
+        mock_bm25.return_value.is_empty = False
+        dense_index = Mock()
+        dense_index.ntotal = 100
+        mock_dense.return_value.index = dense_index
+
+        # Single-hop only: results are injected directly via
+        # _single_hop_search with source/reranker_score pre-set, so no real
+        # ego expansion or rerank pass needs to run for the filter itself
+        # to be exercised.
+        config = SearchConfig(multi_hop=MultiHopConfig(enabled=False))
+        config.ego_graph.enabled = False
+        config.ego_graph.drop_nonpositive_output = drop
+        config.parent_retrieval.enabled = False
+        return searcher, config
+
+    def _mixed_results(self):
+        from search.reranker import SearchResult
+
+        return [
+            SearchResult(
+                chunk_id="src/a.py:1-10:function:alpha",
+                score=0.9,
+                metadata={"reranker_score": 0.4},
+                source="hybrid",
+            ),
+            SearchResult(
+                chunk_id="src/b.py:1-10:function:beta",
+                score=0.5,
+                metadata={"reranker_score": -0.12},
+                source="ego_graph",
+            ),
+            SearchResult(
+                chunk_id="src/c.py:1-10:function:gamma",
+                score=0.4,
+                metadata={"reranker_score": 0.0},
+                source="ego_graph",
+            ),
+            SearchResult(
+                chunk_id="src/d.py:1-10:function:delta",
+                score=0.3,
+                metadata={"reranker_score": 0.02},
+                source="ego_graph",
+            ),
+            SearchResult(
+                chunk_id="src/e.py:1-10:function:epsilon",
+                score=0.2,
+                metadata={},  # no reranker_score yet -- left alone
+                source="ego_graph",
+            ),
+            SearchResult(
+                chunk_id="src/f.py:1-10:function:phi",
+                score=-0.9,
+                metadata={"reranker_score": -0.9},
+                source="multi_hop",
+            ),
+        ]
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_disabled_is_byte_identical(self, mock_bm25, mock_dense):
+        """drop_nonpositive_output=False preserves pre-fix behaviour."""
+        searcher, config = self._make_searcher_and_config(
+            mock_bm25, mock_dense, drop=False
+        )
+        mixed = self._mixed_results()
+        with (
+            patch("search.hybrid_searcher.get_search_config", return_value=config),
+            patch.object(searcher, "_single_hop_search", return_value=mixed),
+        ):
+            results = searcher.search("query", k=10)
+
+        assert [r.chunk_id for r in results] == [r.chunk_id for r in mixed]
+
+    @patch("search.hybrid_searcher.CodeIndexManager")
+    @patch("search.hybrid_searcher.BM25Index")
+    def test_enabled_drops_only_nonpositive_ego_results(self, mock_bm25, mock_dense):
+        """Drops ego_graph with reranker_score <= 0 (including exact 0.0);
+        keeps positive-scored ego_graph, unset-score ego_graph, and every
+        non-ego_graph result (including a negatively-scored multi_hop one)."""
+        searcher, config = self._make_searcher_and_config(
+            mock_bm25, mock_dense, drop=True
+        )
+        with (
+            patch("search.hybrid_searcher.get_search_config", return_value=config),
+            patch.object(
+                searcher, "_single_hop_search", return_value=self._mixed_results()
+            ),
+        ):
+            results = searcher.search("query", k=10)
+
+        assert [r.chunk_id for r in results] == [
+            "src/a.py:1-10:function:alpha",
+            "src/d.py:1-10:function:delta",
+            "src/e.py:1-10:function:epsilon",
+            "src/f.py:1-10:function:phi",
+        ]
+
+
 class TestConfigThreadedToReranker:
     """C2 (docs/adr/0018): the config a caller passes to search() must be
     what RerankingEngine actually acts on, not silently replaced by the

@@ -20,7 +20,7 @@ set. This keeps the advertised tool count small without removing the capability.
 | Tool | Priority | Purpose | Parameters |
 | ------ | ---------- | --------- | ------------ |
 | **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=4 (schema default; `search_config.json.example` sets the effective default to 7), search_mode="hybrid", file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0, include_top_callers=False |
-| **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types, hide_ambiguous=False |
+| **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types, hide_ambiguous=True |
 | **find_path** | 🟡 **IMPACT** | Trace shortest path between code entities in relationship graph | source OR source_chunk_id, target OR target_chunk_id, edge_types, max_hops=10 |
 | **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), project_name, incremental=True, wait=True, include_dirs, exclude_dirs |
 | **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=4, exclude_same_file=False (set true for cross-file analogues — sibling implementations in other files; leave false for neighbors within the reference chunk's own file, e.g. other methods of the same class) |
@@ -333,13 +333,13 @@ search_code("rerank candidates", include_top_callers=True)
 
 ---
 
-## Ambiguous-Edge Filtering for find_connections (opt-in, 2026-08-14)
+## Ambiguous-Edge Filtering for find_connections (default-on since 2026-08-16)
 
-**Feature**: `hide_ambiguous=True` on `find_connections` drops call-edge entries whose confidence tag is `"ambiguous"`.
+**Feature**: `hide_ambiguous` on `find_connections` drops call-edge entries whose confidence tag is `"ambiguous"`. Default `true` (promoted 2026-08-16 — `run_caller_recall` gate: recall byte-identical, precision up both directions, see `evaluation/CONFIDENCE_EGO_AB_20260816.md`). Pass `hide_ambiguous=False` explicitly to see the raw, unfiltered edge list.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `hide_ambiguous` | boolean | false | Hide `"ambiguous"`-tagged entries from `direct_callers`, `direct_callees`, and `indirect_callers` |
+| `hide_ambiguous` | boolean | true | Hide `"ambiguous"`-tagged entries from `direct_callers`, `direct_callees`, and `indirect_callers` |
 
 ### Behavior
 

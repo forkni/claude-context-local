@@ -1112,6 +1112,18 @@ class EgoGraphConfig:
         default=0.15,  # Neighbors below this are filtered out
         metadata=spec(reader="search/ego_graph_retriever.py"),
     )
+    # Fix #4: bound ego-graph output by dropping the cross-encoder's own
+    # negative judgments instead of a relative-ratio floor (which inverts
+    # when best_score <= 0 and needs a per-query-unstable magic constant).
+    # Only source == "ego_graph" results with reranker_score <= 0 are
+    # dropped; anchors and multi_hop/graph_hop results are never filtered.
+    drop_nonpositive_output: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="drop_nonpositive_output",
+            reader="search/hybrid_searcher.py",
+        ),
+    )
 
 
 @dataclass
@@ -1238,9 +1250,12 @@ class GraphEnhancedConfig:
         ),
     )
     # DyCoder-style confidence-weighted traversal (A2): drop graph edges whose
-    # resolver_confidence falls below this floor during _graph_expand's
-    # get_neighbors BFS. Edges without the float attribute count as 1.0 and
-    # always survive. Ships as 0.0 = byte-identical no-op pending A/B.
+    # resolved confidence (graph.graph_storage.edge_confidence) falls below
+    # this floor during _graph_expand's get_neighbors BFS. Resolver-verified
+    # edges use their float resolver_confidence; legacy-tagged and untagged
+    # `calls` edges resolve to 0.5-0.7; only a non-call edge with neither a
+    # float nor a tag counts as 1.0 and always survives. Ships as 0.0 =
+    # byte-identical no-op pending A/B.
     min_traversal_confidence: float = field(
         default=0.0,
         metadata=spec(
@@ -1248,14 +1263,32 @@ class GraphEnhancedConfig:
             reader="search/multi_hop_searcher.py",
         ),
     )
-    # Weighted BFS only: multiply each edge's type-weight by its
-    # resolver_confidence so ambiguous-AST edges (0.5) stop competing equally
-    # with resolver-validated edges (0.98) for expansion priority.
+    # Weighted BFS only: multiply each edge's type-weight by its resolved
+    # confidence so ambiguous-AST edges (0.5) stop competing equally with
+    # resolver-validated edges (0.98) for expansion priority.
     traversal_confidence_weighting_enabled: bool = field(
         default=False,
         metadata=spec(
             flat_alias="traversal_confidence_weighting_enabled",
             reader="search/multi_hop_searcher.py",
+        ),
+    )
+    # Fix #2 (partial mitigation): default for find_connections' `hide_ambiguous`
+    # arg when the caller omits it. When true, callees/callers tagged
+    # confidence == "ambiguous" are dropped from the returned list (but not
+    # from the pre-filter callee_confidence/caller_confidence counts).
+    # `recovered`-tagged symbol-retry edges are NOT covered by this filter and
+    # can still be false — see docs/adr (Fix #2 partial-mitigation note).
+    # Promoted True 2026-08-16 (evaluation/CONFIDENCE_EGO_AB_20260816.md):
+    # run_caller_recall gate passed both directions — recall byte-identical
+    # (callers 11/13, callees 5/7 edges found in both arms), precision up
+    # (callers 0.4051->0.4082, callees 0.2648->0.4014). Explicit `hide_ambiguous:
+    # false` in a call still overrides this default.
+    hide_ambiguous_edges_default: bool = field(
+        default=True,
+        metadata=spec(
+            flat_alias="hide_ambiguous_edges_default",
+            reader="mcp_server/tools/search_handlers.py",
         ),
     )
 

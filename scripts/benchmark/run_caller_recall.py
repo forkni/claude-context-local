@@ -78,6 +78,7 @@ def _get_direct_edges(
     target_chunk_id: str,
     direction: str,
     max_depth: int = 1,
+    hide_ambiguous: bool = False,
 ) -> tuple[list[str], dict[str, int]]:
     """Call analyze_impact and return normalized chunk IDs plus resolver provenance.
 
@@ -86,6 +87,12 @@ def _get_direct_edges(
         target_chunk_id: Chunk to look up.
         direction: "callers" or "callees".
         max_depth: Impact analysis depth (1 = direct only).
+        hide_ambiguous: Drop entries with ``confidence == "ambiguous"``, matching
+            ``filter_ambiguous_edges()`` / the MCP ``hide_ambiguous`` option
+            (``mcp_server/tools/search_handlers.py``). Same predicate, applied
+            directly to the raw edge dicts rather than via a report-dict round
+            trip -- ``analyze_impact`` here bypasses the MCP layer entirely, so
+            this is the only way to exercise the knob through this harness.
 
     Returns:
         Tuple of (normalized_chunk_ids, resolver_source_counts).
@@ -104,6 +111,9 @@ def _get_direct_edges(
     except Exception as e:
         print(f"    [ERROR] analyze_impact failed: {e}", file=sys.stderr)
         raw_entries = []
+
+    if hide_ambiguous:
+        raw_entries = [e for e in raw_entries if e.get("confidence") != "ambiguous"]
 
     # Normalize + deduplicate, collect resolver provenance
     seen: set[str] = set()
@@ -136,6 +146,7 @@ def _run_single(
     direction: str,
     k: int,
     verbose: bool = True,
+    hide_ambiguous: bool = False,
 ) -> dict[str, Any]:
     """Evaluate one query and return a result dict."""
     qid = query["id"]
@@ -147,7 +158,9 @@ def _run_single(
         print(f"  [{qid}] {target}", flush=True)
 
     t0 = time.perf_counter()
-    retrieved, resolver_sources = _get_direct_edges(analyzer, target, direction)
+    retrieved, resolver_sources = _get_direct_edges(
+        analyzer, target, direction, hide_ambiguous=hide_ambiguous
+    )
     latency_ms = (time.perf_counter() - t0) * 1000.0
 
     # Trim to k for metric computation
@@ -309,6 +322,15 @@ def main() -> None:
         help=f"Max edges to retrieve per target (default: {DEFAULT_K})",
     )
     run_p.add_argument("--quiet", action="store_true", help="Suppress per-query output")
+    run_p.add_argument(
+        "--hide-ambiguous",
+        action="store_true",
+        help=(
+            "Drop confidence=='ambiguous' entries before scoring, matching "
+            "find_connections' hide_ambiguous option / "
+            "GraphEnhancedConfig.hide_ambiguous_edges_default"
+        ),
+    )
 
     # Compare mode
     cmp_p = subparsers.add_parser("compare", help="Compare two saved result JSONs")
@@ -383,7 +405,14 @@ def main() -> None:
     )
     results: list[dict[str, Any]] = []
     for q in queries:
-        row = _run_single(q, analyzer, direction, k=args.k, verbose=not args.quiet)
+        row = _run_single(
+            q,
+            analyzer,
+            direction,
+            k=args.k,
+            verbose=not args.quiet,
+            hide_ambiguous=args.hide_ambiguous,
+        )
         results.append(row)
 
     # Aggregate
@@ -442,6 +471,7 @@ def main() -> None:
             "golden_path": str(golden_path),
             "direction": direction,
             "k": args.k,
+            "hide_ambiguous": args.hide_ambiguous,
         },
     }
 

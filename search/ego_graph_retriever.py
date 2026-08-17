@@ -65,12 +65,19 @@ class EgoGraphRetriever:
         self,
         anchor_chunk_ids: list[str],
         config: EgoGraphConfig,
+        min_confidence: float = 0.0,
+        confidence_weighting: bool = False,
     ) -> dict[str, list[str]]:
         """Retrieve k-hop ego-graph for each anchor.
 
         Args:
             anchor_chunk_ids: Starting nodes (from initial search results)
             config: Ego-graph configuration
+            min_confidence: Forwarded to
+                :meth:`graph.graph_storage.CodeGraphStorage.get_neighbors_ranked`
+                — drop edges below this confidence floor. Default 0.0 = no-op.
+            confidence_weighting: Forwarded likewise — scale weighted-BFS
+                priority by edge confidence. Default False = no-op.
 
         Returns:
             Dict mapping anchor_id -> list of neighbor chunk_ids
@@ -80,7 +87,9 @@ class EgoGraphRetriever:
 
         # QW3: route to PPR expansion when requested
         if config.expansion_mode == "ppr":
-            return self._expand_via_ppr(anchor_chunk_ids, config)
+            return self._expand_via_ppr(
+                anchor_chunk_ids, config, min_confidence, confidence_weighting
+            )
 
         results = {}
         for anchor in anchor_chunk_ids:
@@ -92,8 +101,11 @@ class EgoGraphRetriever:
                 if config.exclude_third_party_imports:
                     exclude_categories.append("third_party")
 
-                # Get neighbors using existing graph traversal
-                neighbors = self.graph.get_neighbors(
+                # Get neighbors using existing graph traversal. Ranked (not
+                # set) so the max_total truncation below survives in
+                # priority order instead of Python's set-iteration order
+                # whenever self._centrality_scores is empty.
+                neighbors = self.graph.get_neighbors_ranked(
                     anchor,
                     relation_types=config.relation_types,
                     max_depth=config.k_hops,
@@ -101,6 +113,8 @@ class EgoGraphRetriever:
                         exclude_categories if exclude_categories else None
                     ),
                     edge_weights=config.edge_weights,
+                    min_confidence=min_confidence,
+                    confidence_weighting=confidence_weighting,
                 )
 
                 # Filter to keep only valid chunk_ids (format: "file:lines:type:name")
@@ -156,6 +170,8 @@ class EgoGraphRetriever:
         self,
         anchor_chunk_ids: list[str],
         config: EgoGraphConfig,
+        min_confidence: float = 0.0,
+        confidence_weighting: bool = False,
     ) -> dict[str, list[str]]:
         """Expand anchors using Personalized PageRank instead of k-hop BFS.
 
@@ -193,7 +209,9 @@ class EgoGraphRetriever:
             logger.warning(
                 "[PPR] Power iteration failed to converge — falling back to BFS"
             )
-            return self.retrieve_ego_graph(anchor_chunk_ids, config)
+            return self.retrieve_ego_graph(
+                anchor_chunk_ids, config, min_confidence, confidence_weighting
+            )
 
         max_total = config.max_neighbors_per_hop * config.k_hops
         anchor_set = set(valid_anchors)
@@ -272,6 +290,8 @@ class EgoGraphRetriever:
         self,
         search_results: list[dict],
         config: EgoGraphConfig,
+        min_confidence: float = 0.0,
+        confidence_weighting: bool = False,
     ) -> tuple[list[str], dict[str, list[str]]]:
         """Expand search results using ego-graph retrieval.
 
@@ -281,6 +301,10 @@ class EgoGraphRetriever:
         Args:
             search_results: List of search result dicts with 'chunk_id' field
             config: Ego-graph configuration
+            min_confidence: Forwarded to :meth:`retrieve_ego_graph`. Default
+                0.0 = no-op.
+            confidence_weighting: Forwarded to :meth:`retrieve_ego_graph`.
+                Default False = no-op.
 
         Returns:
             Tuple of:
@@ -295,7 +319,9 @@ class EgoGraphRetriever:
         anchor_chunk_ids = [r["chunk_id"] for r in search_results]
 
         # Retrieve ego-graphs for each anchor
-        ego_graphs = self.retrieve_ego_graph(anchor_chunk_ids, config)
+        ego_graphs = self.retrieve_ego_graph(
+            anchor_chunk_ids, config, min_confidence, confidence_weighting
+        )
 
         # Flatten to unique chunk list
         expanded_chunk_ids = self.flatten_for_context(ego_graphs, config)

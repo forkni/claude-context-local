@@ -366,3 +366,89 @@ def test_top_callers_no_index_manager_no_op():
     manager.graph_storage = None
     results = _enrich_results_with_top_callers([_result()], manager)
     assert "top_callers" not in results[0]
+
+
+def test_top_callers_chunk_tier_fills_quota_skips_symbol_fallback(
+    multidigraph_index_manager,
+):
+    """Fix #2 regression guard: when the chunk-id node alone already yields
+    max_callers real edges, the bare symbol-name node (which conflates every
+    definition of that name project-wide, per the Fix #2 census) is never
+    even consulted -- a bogus symbol-node hint cannot leak in just because it
+    happens to sort first by insertion order. Mirrors the live
+    ``CleanupQueue._save`` case: two real callers, both correct."""
+    g = multidigraph_index_manager.graph_storage.graph
+    g.add_edge(
+        "api.py:10-30:function:handle_request",
+        "auth.py:10-50:function:login",
+        key="calls",
+        type="calls",
+    )
+    g.add_edge(
+        "cli.py:5-15:function:main",
+        "auth.py:10-50:function:login",
+        key="calls",
+        type="calls",
+    )
+    # A false hit via the bare symbol node -- would be picked up if the
+    # fallback ran, since it would otherwise fill the remaining slot.
+    g.add_edge("jobs.py:1-9:function:cron_login", "login", key="calls", type="calls")
+    results = _enrich_results_with_top_callers(
+        [_result()], multidigraph_index_manager, max_callers=2
+    )
+    assert [c["name"] for c in results[0]["top_callers"]] == [
+        "handle_request",
+        "main",
+    ]
+
+
+def test_top_callers_chunk_tier_ranks_above_symbol_tier(multidigraph_index_manager):
+    """Fix #2: a chunk-node caller always outranks a symbol-node caller, even
+    when the symbol-node edge carries a higher resolver_confidence float --
+    the lookup tier is the confidence signal, not the raw float, because
+    every symbol-node edge is untagged and can be a false hit."""
+    g = multidigraph_index_manager.graph_storage.graph
+    # Chunk-node hit: no float at all.
+    g.add_edge(
+        "api.py:10-30:function:handle_request",
+        "auth.py:10-50:function:login",
+        key="calls",
+        type="calls",
+    )
+    # Symbol-node hit: a (hypothetically) high float -- still must sort last.
+    g.add_edge(
+        "cli.py:5-15:function:main",
+        "login",
+        key="calls",
+        type="calls",
+        resolver_confidence=0.98,
+    )
+    results = _enrich_results_with_top_callers(
+        [_result()], multidigraph_index_manager, max_callers=2
+    )
+    assert [c["name"] for c in results[0]["top_callers"]] == [
+        "handle_request",
+        "main",
+    ]
+
+
+def test_top_callers_symbol_fallback_fills_remaining_slots_only(
+    multidigraph_index_manager,
+):
+    """When the chunk-id node yields fewer than max_callers, the symbol-node
+    fallback fills the rest, sorted after every chunk-tier candidate."""
+    g = multidigraph_index_manager.graph_storage.graph
+    g.add_edge(
+        "api.py:10-30:function:handle_request",
+        "auth.py:10-50:function:login",
+        key="calls",
+        type="calls",
+    )
+    g.add_edge("cli.py:5-15:function:main", "login", key="calls", type="calls")
+    g.add_edge("jobs.py:1-9:function:cron_login", "login", key="calls", type="calls")
+    results = _enrich_results_with_top_callers(
+        [_result()], multidigraph_index_manager, max_callers=2
+    )
+    names = [c["name"] for c in results[0]["top_callers"]]
+    assert names[0] == "handle_request"  # chunk tier always first
+    assert len(names) == 2

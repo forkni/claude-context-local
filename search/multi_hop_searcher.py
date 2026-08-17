@@ -220,8 +220,12 @@ class MultiHopSearcher:
             confidence_weighting = ge_cfg.traversal_confidence_weighting_enabled
 
         for result in source_results:
-            # Weighted BFS -- prioritizes calls (1.0) over imports (0.3)
-            neighbors: set[str] = self.graph_storage.get_neighbors(
+            # Weighted BFS -- prioritizes calls (1.0) over imports (0.3).
+            # get_neighbors_ranked (not get_neighbors) so the `break` below
+            # truncates by priority order, not Python's set-iteration order —
+            # the latter made `added_for_source >= expansion_k` pick a
+            # different neighbor subset across process restarts.
+            neighbors: list[str] = self.graph_storage.get_neighbors_ranked(
                 chunk_id=result.chunk_id,
                 max_depth=1,
                 edge_weights=edge_weights or DEFAULT_EDGE_WEIGHTS,
