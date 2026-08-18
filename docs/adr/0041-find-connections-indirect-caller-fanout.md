@@ -37,7 +37,7 @@ different defect in the same code:
 
    ```python
    direct_callers = self._dedup_and_sort_edges(enriched_direct)
-   indirect_callers = enriched_indirect          # <-- the one list that skipped it
+   indirect_callers = enriched_indirect  # <-- the one list that skipped it
    ```
 
    `_dedup_and_sort_edges` exists because `_enrich_callers` can emit the same `chunk_id` more than
