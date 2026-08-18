@@ -148,11 +148,14 @@ string but gate different things.
 | `k` (`search_code`) | `4` | `SearchModeConfig.default_k` = `7` (`search/config.py:408-409`), via `search_orchestrator.py:129` | **Lie — fixed** (`find_similar_code`'s `k`, `tool_registry.py:291-293`, already carried the honest form — this brings its sibling into line) |
 | `max_context_tokens` | `0` | `default_max_context_tokens` = `0` | **Agrees — confirmed non-issue, left alone** |
 
-`ego_graph_enabled` is a related but distinct defect, not a config-fallback mismatch: its
-`default: False` is correct *for the parameter* — it's a one-way force-ON switch, never a gate
-(confirmed via `search_orchestrator.py:133` + the bare `if` at `effective_config.py:57` above), so
-only its schema *description* was corrected to say so. The code stays untouched here; an actual
-`else`-branch behavior fix, if ever built, belongs to the deferred L2b recall A/B, not this lever.
+`ego_graph_enabled` is a related but distinct defect, not a config-fallback mismatch: at the time
+this section was written its `default: False` was correct *for the parameter* — it was a one-way
+force-ON switch, never a gate (confirmed via `search_orchestrator.py:133` + the bare `if` at
+`effective_config.py:57` above), so only its schema *description* was corrected to say so. The code
+stayed untouched here; an actual `else`-branch behavior fix was deferred to L2b below. **Correction
+(2026-08-18, see L2b below and ADR-0041):** that else-branch fix has since shipped — the field is
+now a real `bool | None` two-way gate, not force-ON-only. The schema description was corrected a
+second time to match.
 
 **Gate:** advertised defaults match live defaults; documentation/schema correction only, no
 behaviour change, zero retrieval risk.
@@ -180,23 +183,50 @@ datasets); this is display-only, orthogonal to ranking. **Gate:** `gold_sufficie
 ceiling, **and** ranking is proved byte-identical across the change — the field must be purely
 additive, never touching which results are chosen or their order.
 
-### L4 — `find_connections` fan-out cap *(unchanged rank, evidence now measured)*
+**Cost banked, not acted on** (from `scripts/benchmark/probe_context_cost.py`'s
+`signature_view_tokens` field, computed per-query from `bm25_text` and non-null on all 133/133
+queries): mean **318.8** tok/query (median 296, min 128, max 805). Two corrections to how that
+compares against the live baseline: first, `evaluation/CONTEXT_COST_PROBE_20260818.json`'s
+`tokens_returned` mean of **3,125** tiktoken tokens is measured on the **verbose** wire format, but
+`ultra` is the live default — the ultra-equivalent baseline is ≈**1,270** tok/query (verbose→ultra
+payload-byte ratio ≈0.406 applied to the 3,125 verbose figure), so **L3's real cost ratio against
+what callers actually receive today is ~+25%, not the ~+10% an unqualified verbose comparison would
+suggest**. Second, this remains cheaper than the **6,086** tok/query mean of the targeted-span reads
+(`signature_view_delta.targeted_span_tokens`) it would let an agent skip — L3 is a net win against
+the read pattern it displaces even at the corrected ratio. Implementation note for whoever builds
+this: `search/neural_reranker.py:139` already reads `bm25_text` straight off `candidate.metadata` at
+query time, so `result_view._format_search_results` (`:96`) likely needs no `metadata_store` round
+trip to add a signature field — the probe's own store lookup was a measurement convenience, not a
+requirement. Mirror `_enrich_results_with_top_callers` (`result_view.py:213`) as the in-repo
+opt-in-display-enrichment precedent for how to wire it in without touching ranking.
 
-Output is unbounded today at every layer — no `limit`/`max_results` parameter exists in
-`search/relationship_analyzer.py:177-195`, `graph/graph_queries.py:585-613`, or the handler
-(`mcp_server/tools/search_handlers.py:365-420`; its only post-processing is `filter_ambiguous_edges`,
-a confidence filter, not a count cap). Note `find_similar_code`'s `similar_code` path *is* already
-capped (`relationship_analyzer.py:816-818`, `k=10`) — "unbounded" applies specifically to the
-call-edge lists. **Measured worst case on the live self-index** (5,850 nodes / 25,547 edges):
-**317 direct callers on `MetadataStore.get`** → 846 nodes at `max_depth=3` (14.5% of the whole
-graph) → an estimated ~260 KB ≈ 72,000 tokens from a single call. Two qualifiers before sizing a
-cap off that number: the tail is driven by bare-symbol conflation — `_node_variants`
-(`graph_queries.py:627-643`) merges a dotted call target with its bare symbol, so
-`MetadataStore.get` absorbs every unrelated `.get()` call in the project; and the real distribution
-is far tamer — median 1 caller, p95 33, p99 42. A cap sized off 317 would be sized off a known
-defect, not real fan-in; size it off the de-conflated distribution instead. **Gate:**
-`scripts/benchmark/run_caller_recall.py` (the only harness that scores `find_connections` output,
-per `evaluation/CONFIDENCE_EGO_AB_20260816.md`) shows no recall drop at the proposed cap.
+### L4 — `find_connections` fan-out cap — CLOSED, see [ADR-0041](../adr/0041-find-connections-indirect-caller-fanout.md) *(premise corrected; hygiene fix shipped, cap declined)*
+
+**Both the original framing and its gate were wrong**, corrected during the L2b/guidance.py
+follow-up work. Output is indeed unbounded today (no `limit`/`max_results` parameter exists in
+`search/relationship_analyzer.py`, `graph/graph_queries.py:585-613`, or the handler), but the
+framing pointed at the wrong list, and the proposed gate could not have measured it. Corrected
+premise, per `evaluation/CONTEXT_COST_PROBE_20260818.json`'s `connections_fanout` data (28
+non-error anchors): `direct_callers` maxes at **56** (median 2.5) and `direct_callees` at **21**
+(median 3.0) — both small in practice. The entire cost lives in `indirect_callers`: median **17**
+(primary anchors) / **18.5** (secondary), max **480** on `C005` / **636** on `Q66`, at a stable
+marginal **~97–99 tokens per impacted entry**, concentrated (top 2 primary anchors = 61.7% of
+primary fan-out tokens; top 4 secondary anchors = 77.9% of secondary). A cap sized off
+`direct_callers`/`direct_callees` — the original framing — would have moved essentially nothing.
+The proposed gate, `scripts/benchmark/run_caller_recall.py`, reads only `direct_callees`/
+`direct_callers` against 7 golds each and cannot observe `indirect_callers` at all — it would have
+passed by construction for a cap on the one list that matters, because no indirect-caller golden
+set exists in this repo.
+
+**What actually shipped**: the real defect in `indirect_callers` was hygiene, not size — it was the
+one of the three call-edge lists that skipped `_dedup_and_sort_edges`, so `find_connections`
+returned it in a non-deterministic order (and possibly with duplicates) on every call. That is now
+fixed (`search/relationship_analyzer.py:126`). Measured live on the two heaviest anchors: dedup
+collapsed 0/566 duplicates on `C005` and 5/706 on `Q66` — a small effect, smaller than the "the tail
+collapses" hypothesis this document originally floated — but determinism across repeated calls is
+now confirmed (`order1 == order2` on both anchors, two back-to-back `analyze_impact` calls). See
+ADR-0041 for full detail, including the reopening condition for the still-declined cap (build an
+indirect-caller golden set first).
 
 ### L1 — Tool-schema diet *(demoted from 1st — hoisting alone moves nothing)*
 
@@ -219,20 +249,40 @@ fixed call. Note: no module-level string-constant pattern exists yet in `tool_re
 a hoist on (only `ADVANCED_TOOLS`, `TOOL_REGISTRY`), though a shared-*value* precedent does —
 `SearchMode` enum values consumed at `:98-99`, `:538-539`.
 
-### L2b — Truncation half of the `ego_graph_enabled` contract — DEFERRED to a recall A/B *(new)*
+### L2b — Truncation half of the `ego_graph_enabled` contract — the *automatic-truncation* question stays DEFERRED to a recall A/B; the *per-call reachability* question is now CLOSED *(corrected)*
 
 The original L2 gate asked whether excess ego-graph results are appended after the top-k (safe
 truncation) or interleaved into it (a recall change). **Answer: INTERLEAVED, definitively.**
 `search/hybrid_searcher.py:914-916` does append at merge time, but a listwise re-rank
 (`:789-802`, live path since `reranker.single_pass=False`) then re-sorts the **whole** merged pool
 at `k=len(results)`, so ego rows can and do outrank hybrid rows (empirically: `ego_graph` at rank 3
-outranking `hybrid` at rank 4 in a live call). Bounding `len(results) ≤ k` under this path would
-therefore discard reranker-preferred results — **a recall change requiring a full A/B, not a
-contract fix**. The real governor today is `hybrid_searcher.py:904-906`:
-`max_ego = min(max_neighbors_per_hop * k_hops, original_k * 3)`, which fully explains every
-observed count as `k + min(20, 3k)` — k=3→12 (11 after `dedupe_split_blocks`), k=5→20, k=6→24. The
-only caller-facing bound that actually works today is `max_context_tokens`, and it defaults to `0`
-(unbounded). Deferred pending a dedicated recall A/B; not gated in this document.
+outranking `hybrid` at rank 4 in a live call). Bounding `len(results) ≤ k` **by default, for every
+caller** under this path would therefore risk discarding reranker-preferred results — that specific
+question (should the system *automatically* truncate?) is still a recall change requiring a full
+A/B, and remains deferred; not gated in this document. The real governor today is
+`hybrid_searcher.py:904-906`: `max_ego = min(max_neighbors_per_hop * k_hops, original_k * 3)`, which
+fully explains every observed count as `k + min(20, 3k)` — k=3→12 (11 after `dedupe_split_blocks`),
+k=5→20, k=6→24. The only caller-facing bound that actually works today is `max_context_tokens`, and
+it defaults to `0` (unbounded).
+
+**Correction (2026-08-18):** L2a's closing note (above) had bundled a second, separable question
+into this deferral — whether an explicit per-call `ego_graph_enabled=False` could ever be made to
+actually disable expansion — on the reasoning that building the missing `else` branch "would
+disable ego-graph expansion on every call that omits the flag." **That blocker was a fixable
+representation bug, not evidence of an inherent recall trade-off**:
+`SearchPlan.ego_graph_enabled` was a plain `bool`, and `search_orchestrator.py:133` coerced the
+omitted case to the same `False` value as an explicit `False`, so the only possible `else`-branch
+implementation *would* have flipped the default for every caller who never touched the flag.
+Widening the field to `bool | None` (tri-state: omitted → `None` → defers to config, explicit
+`True`/`False` → real per-call override) lets an explicit `False` disable expansion while the
+omitted path returns the exact same config object, by identity — zero behavior change for any
+caller not opting in. **This half is now closed** — see ADR-0041's sibling fix and
+`tests/unit/search/test_effective_config.py::test_ego_graph_explicit_false_disables_on_a_copy`. The
+probe's `ego_off_within_k_rate = 1.0` / `ego_actually_disabled_rate = 1.0` figures (measured by
+directly mutating `config.ego_graph.enabled`, not the previously-inert flag) predict exactly this:
+an explicit `ego_graph_enabled=False` call now returns `len(results) ≤ k` deterministically, without
+requiring the system to guess at automatic truncation for callers who never asked for it. The
+*automatic*-truncation question above is unaffected by this fix and remains open.
 
 ### L6 — Aider-style repo map — SPEC ONLY, do not build
 
