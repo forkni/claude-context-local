@@ -16,7 +16,6 @@ _WITH_GRAPH_MSG = (
     "Results include call graph data. Use get_callers/get_callees for detailed "
     "relationship analysis."
 )
-_NO_SIMILAR_MSG = "No similar code found. This chunk may be unique in the codebase."
 _NO_IMPACT_MSG = "No connections found. This appears to be unused or entry-point code."
 _INDEX_ERROR_MSG = "Indexing failed. Check directory path and file permissions."
 
@@ -103,21 +102,6 @@ def generate_impact_message(total_impacted: int, file_count: int | None = None) 
         )
 
 
-def generate_similar_code_message(
-    results: list[dict[str, Any]], query_chunk_id: str
-) -> str:
-    """Generate system message for find_similar_code results."""
-    count = len(results)
-
-    if count == 0:
-        return _NO_SIMILAR_MSG
-
-    return (
-        f"Found {count} similar chunks. These share semantic/structural patterns "
-        f"with '{query_chunk_id}'. Use chunk_id for direct access."
-    )
-
-
 def add_system_message(
     response: dict[str, Any], tool_name: str, **kwargs
 ) -> dict[str, Any]:
@@ -142,11 +126,6 @@ def add_system_message(
 
     elif tool_name == "index_directory":
         system_message = generate_index_message(response)
-
-    elif tool_name == "find_similar_code":
-        results = response.get("results", [])
-        chunk_id = kwargs.get("chunk_id", "")
-        system_message = generate_similar_code_message(results, chunk_id)
 
     elif tool_name == "find_connections":
         total = response.get("total_impacted", 0)
