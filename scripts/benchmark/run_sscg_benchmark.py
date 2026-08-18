@@ -37,8 +37,6 @@ import argparse
 import asyncio
 import json
 import logging
-import os
-import subprocess
 import sys
 import time
 from collections import Counter
@@ -47,30 +45,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean, stdev
 from typing import Any
-
-
-def _ensure_pinned_hash_seed() -> None:
-    """Re-exec with PYTHONHASHSEED=0 when unset (script execution only).
-
-    Reproducibility: chunk-ID set iteration order feeds candidate-pool
-    composition, so unpinned hash randomization flips ~25/131 queries between
-    otherwise-identical rounds (evaluation/GPU_DETERMINISM_AB_20260802.md).
-    Any explicit PYTHONHASHSEED, including "random", is respected. Must only
-    run under __main__ — at import time (tests import this module) sys.argv
-    belongs to the importer and re-exec'ing it is wrong.
-    """
-    if os.environ.get("PYTHONHASHSEED") is None:
-        print(
-            "[HASHSEED] PYTHONHASHSEED unset - re-exec with PYTHONHASHSEED=0 "
-            "for reproducible rounds",
-            file=sys.stderr,
-        )
-        raise SystemExit(
-            subprocess.call(
-                [sys.executable, *sys.argv],
-                env={**os.environ, "PYTHONHASHSEED": "0"},
-            )
-        )
 
 
 # Add project root to sys.path so imports resolve from any working directory
@@ -106,6 +80,7 @@ from evaluation.metrics import (  # noqa: E402
     resolve_chunk_ids_to_ranges,
     to_file_entries,
 )
+from evaluation.probe_harness import ensure_pinned_hash_seed  # noqa: E402
 from search.config import SearchConfig  # noqa: E402
 
 
@@ -2372,5 +2347,5 @@ async def main_async(args: argparse.Namespace) -> None:
 
 
 if __name__ == "__main__":
-    _ensure_pinned_hash_seed()
+    ensure_pinned_hash_seed()
     main()
