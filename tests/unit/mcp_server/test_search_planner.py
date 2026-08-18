@@ -160,6 +160,16 @@ class TestSearchPlannerFieldExtraction:
             plan = SearchPlanner().plan({"query": "test", "include_top_callers": True})
         assert plan.include_top_callers is True
 
+    def test_include_signatures_defaults_false(self):
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test"})
+        assert plan.include_signatures is False
+
+    def test_include_signatures_passthrough(self):
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test", "include_signatures": True})
+        assert plan.include_signatures is True
+
     def test_ego_graph_omitted_is_none(self):
         """Omitting ego_graph_enabled must produce None, not False -- collapsing the
         two loses the two-way gate build_effective_config depends on this field for.

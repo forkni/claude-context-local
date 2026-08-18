@@ -450,11 +450,20 @@ async def probe_query(
     project_root: Path,
     metadata_store: Any,
     format_response: Any,
+    include_signatures: bool = False,
 ) -> dict[str, Any]:
     """One query's full context-cost measurement: baseline payload economics
     (tokens/bytes/result_count per output_format), the L2 ego-graph-disable
-    counterfactual, gold_sufficiency (located vs content-present), and the
-    L3 signature-view counterfactual against downstream_read_cost.
+    counterfactual, gold_sufficiency (located vs content-present vs
+    signature-present), and the L3 signature-view counterfactual against
+    downstream_read_cost.
+
+    ``include_signatures`` wires the shipped ``search_code`` display flag
+    into the request itself (production path), while ``signature_present``
+    below and ``_signature_view_tokens`` above independently recompute the
+    same extractor over ``metadata_store``'s ``bm25_text`` -- keeping both
+    lets ``signature_present_rate`` observe the real wire field rather than
+    only the offline estimate.
 
     ``search_mode`` is deliberately omitted (real default-agent routing) --
     see module docstring for why this diverges from
@@ -465,6 +474,7 @@ async def probe_query(
         "k": k,
         "include_context": True,
         "max_context_tokens": 0,
+        "include_signatures": include_signatures,
     }
     response = await orchestrator.run(dict(arguments))
 
@@ -575,6 +585,18 @@ async def probe_query(
         if gold_ids
         else None
     )
+    # ---- signature_present: L3's opt-in `signature` field, kept separate
+    # from CONTENT_FIELD_CANDIDATES/content_present -- a signature is not
+    # body content, and content_present's structural 0.0 must stay intact
+    # as a baseline finding regardless of include_signatures. ----
+    signature_present = (
+        any(
+            normalize_chunk_id(r.get("chunk_id", "")) in gold_ids and r.get("signature")
+            for r in top_k
+        )
+        if gold_ids
+        else None
+    )
 
     downstream = _downstream_read_cost(top_k, project_root)
     signature_tokens = _signature_view_tokens(top_k, metadata_store)
@@ -599,6 +621,7 @@ async def probe_query(
             "has_gold": bool(gold_ids),
             "located": located,
             "content_present": content_present,
+            "signature_present": signature_present,
         },
         "downstream_read_cost": downstream,
         "signature_view_tokens": signature_tokens,
@@ -754,6 +777,9 @@ def summarize(
     content_present_rate = _mean(
         [1.0 if g["content_present"] else 0.0 for g in gold_rows]
     )
+    signature_present_rate = _mean(
+        [1.0 if g["signature_present"] else 0.0 for g in gold_rows]
+    )
 
     ego_off_within_k_rate = _mean(
         [1.0 if r["ego_contract"]["ego_off_within_k"] else 0.0 for r in reports]
@@ -826,6 +852,7 @@ def summarize(
             "n_with_gold": len(gold_rows),
             "located_rate": located_rate,
             "content_present_rate": content_present_rate,
+            "signature_present_rate": signature_present_rate,
         },
         "ego_contract": {
             "ego_off_within_k_rate": ego_off_within_k_rate,
@@ -882,7 +909,8 @@ def print_summary(summary: dict[str, Any]) -> None:
     print(
         f"n_with_gold={gs['n_with_gold']} located_rate={gs['located_rate']} "
         f"content_present_rate={gs['content_present_rate']} "
-        "(expected structural 0.0 -- search_code returns coordinates only)"
+        "(expected structural 0.0 -- search_code returns coordinates only) "
+        f"signature_present_rate={gs['signature_present_rate']}"
     )
 
     ec = summary["ego_contract"]
@@ -952,6 +980,7 @@ async def _async_main(args: argparse.Namespace) -> dict[str, Any]:
                     project_root,
                     metadata_store,
                     format_response,
+                    include_signatures=args.include_signatures,
                 )
             )
 
@@ -977,6 +1006,7 @@ async def _async_main(args: argparse.Namespace) -> dict[str, Any]:
                 "project_path": str(project_root),
                 "k": args.k,
                 "connections_max_depth": args.connections_max_depth,
+                "include_signatures": args.include_signatures,
                 "pythonhashseed": os.environ.get("PYTHONHASHSEED"),
                 "tiktoken_available": _ENCODING is not None,
             },
@@ -996,6 +1026,13 @@ def main() -> int:
     )
     parser.add_argument(
         "--connections-max-depth", type=int, default=DEFAULT_CONNECTIONS_MAX_DEPTH
+    )
+    parser.add_argument(
+        "--include-signatures",
+        action="store_true",
+        help="Pass include_signatures=True on every search_code call (L3's "
+        "opt-in display flag), so gold_sufficiency.signature_present_rate "
+        "measures the real wire field instead of only the offline estimate.",
     )
     args = parser.parse_args()
 

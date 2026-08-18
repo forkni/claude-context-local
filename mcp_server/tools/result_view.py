@@ -210,6 +210,106 @@ def _reorder_by_source_position(results: list[dict]) -> list[dict]:
     return reordered
 
 
+def _extract_signature_estimate(
+    text: str, max_lines: int = 15, no_anchor_lines: int = 3
+) -> str:
+    """Extract a signature-only prefix from raw chunk source text.
+
+    Line-scans for a ``def ``/``async def ``/``class `` anchor and stops at the
+    first line ending in ``:`` seen at or after the anchor, capped at
+    ``max_lines``. Ported from
+    ``scripts/benchmark/probe_context_cost.py:_extract_signature_estimate``
+    (the banked source of the 318.8-token estimate), with one addition: when
+    no anchor is seen within ``max_lines`` — non-Python chunks, whose grammars
+    don't share Python's ``def``/``class`` keywords, and ``module_preamble``/
+    ``module`` chunks with no anchor at all — only the first
+    ``no_anchor_lines`` lines are returned instead of the full 15-line body.
+    Without this, an un-anchored chunk would silently degenerate from a
+    signature into an arbitrary body excerpt.
+
+    Args:
+        text: Raw chunk source (``bm25_text`` from the metadata store).
+        max_lines: Cap on the anchored scan (default: 15).
+        no_anchor_lines: Cap when no anchor is found (default: 3).
+
+    Returns:
+        The extracted signature text (may be shorter than either cap).
+    """
+    lines = text.split("\n")
+    sig_lines: list[str] = []
+    seen_start = False
+    for line in lines[:max_lines]:
+        sig_lines.append(line)
+        stripped = line.strip()
+        if stripped.startswith(("def ", "async def ", "class ")):
+            seen_start = True
+        if seen_start and stripped.endswith(":"):
+            break
+    if not seen_start:
+        sig_lines = lines[:no_anchor_lines]
+    return "\n".join(sig_lines)
+
+
+def _enrich_results_with_signatures(
+    results: list[dict],
+    index_manager: CodeIndexManager | None,
+) -> list[dict]:
+    """Attach a ``signature`` field (signature-only view) to each result.
+
+    ``search_code`` returns coordinates only (file/lines/kind/score) — no
+    chunk content. A context agent that finds the right chunk still needs a
+    follow-up ``Read`` to judge it (measured: 0% of results carry any content
+    field, `evaluation/CONTEXT_COST_PROBE_20260818.md`). This attaches a
+    cheap, opt-in counterfactual: the first def/class line(s) of the chunk,
+    extracted from ``bm25_text`` via ``_extract_signature_estimate``.
+
+    ``bm25_text`` — the raw chunk source persisted by the indexer
+    (``hybrid_searcher.py``) — is read via ``index_manager.metadata_store``
+    rather than any field on the formatted result dict: results reach this
+    function post-``_format_search_results``, which carries no ``.metadata``.
+    The metadata store is the same path the context-cost probe itself reads,
+    so the shipped view matches the banked 318.8-token estimate exactly on
+    Python chunks, and is a bound (not an underestimate) elsewhere — see
+    ``_extract_signature_estimate``'s ``no_anchor_lines`` cap.
+
+    §V-B note: this is unsanitized resource content (paper term) — raw source
+    text from the indexed repo, truncated but not filtered. Accepted residual
+    risk: exposure is metadata-only (never a full code body — capped at 15
+    lines — never executed/eval'd) and the source is the user's own indexed
+    codebase, not an untrusted external fetch. A repo containing a hostile
+    docstring or comment could still relay prompt-injection-like text to the
+    calling LLM as part of a search result; no content filtering is applied
+    here today. Same exposure class already accepted for the ``summary``
+    field above.
+
+    Args:
+        results: List of formatted result dicts
+        index_manager: Index manager with metadata storage
+
+    Returns:
+        Results with ``signature`` added where ``bm25_text`` is available
+    """
+    if not index_manager or index_manager.metadata_store is None:
+        return results
+
+    for item in results:
+        chunk_id = item.get("chunk_id")
+        if not chunk_id:
+            continue
+        try:
+            entry = index_manager.metadata_store.get(chunk_id)
+            if not entry:
+                continue
+            bm25_text = entry.get("metadata", {}).get("bm25_text")
+            if not bm25_text:
+                continue
+            item["signature"] = _extract_signature_estimate(bm25_text)
+        except Exception as e:  # noqa: BLE001 - resilience: optional signature enrichment, degrade to no signature
+            logger.debug(f"Failed to get signature for {chunk_id}: {e}")
+
+    return results
+
+
 def _enrich_results_with_top_callers(
     results: list[dict],
     index_manager: CodeIndexManager | None,

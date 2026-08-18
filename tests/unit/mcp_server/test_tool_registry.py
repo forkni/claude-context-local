@@ -118,6 +118,24 @@ class TestEgoGraphEnabledSchema:
         assert "default" not in self._schema()
 
 
+class TestIncludeSignaturesSchema:
+    """include_signatures must default off and document its non-Python bound
+    (degrades to a raw-line excerpt, not a per-language signature guarantee).
+    """
+
+    def _schema(self):
+        return TOOL_REGISTRY["search_code"]["input_schema"]["properties"][
+            "include_signatures"
+        ]
+
+    def test_default_false(self):
+        assert self._schema()["default"] is False
+
+    def test_description_documents_non_python_bound(self):
+        description = self._schema()["description"].lower()
+        assert "non-python" in description
+
+
 def _field_metadata(section_cls, field_name):
     for f in dataclasses.fields(section_cls):
         if f.name == field_name:

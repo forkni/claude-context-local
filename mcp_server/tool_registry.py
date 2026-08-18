@@ -181,6 +181,11 @@ RETURNS:
                     "default": False,
                     "description": "Attach up to 2 top callers per result as top_callers: [{name, file}] (default: False). Callers come from the code graph's incoming call edges — context agents cannot derive from the result text alone. Ordering prefers resolver-confident edges when available; otherwise discovery order (hint, not a guarantee).",
                 },
+                "include_signatures": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Attach a signature-only view per result as signature: str (default: False). search_code returns coordinates only (file/lines/kind/score) — no chunk content; this is a display-only counterfactual to a follow-up Read, not chunk content itself. Measured ~319 tokens/result average on Python chunks (~25% over ultra-format baseline) — a hint, not a guarantee: on non-Python chunks (no def/class anchor recognized) it degrades to the first 3 raw lines rather than a full signature. Never touches scoring, ordering, or the reranker.",
+                },
                 "max_context_tokens": {
                     "type": "integer",
                     "default": 0,

@@ -40,6 +40,7 @@ def _make_plan(
     max_age_minutes=5.0,
     max_context_tokens=0,
     include_top_callers=False,
+    include_signatures=False,
 ):
     from mcp_server.tools.search_orchestrator import SearchPlan
 
@@ -61,6 +62,7 @@ def _make_plan(
         max_age_minutes=max_age_minutes,
         max_context_tokens=max_context_tokens,
         include_top_callers=include_top_callers,
+        include_signatures=include_signatures,
     )
 
 
@@ -626,6 +628,38 @@ class TestAssembleTopCallersGate:
         mock_enrich.assert_called_once()
 
 
+class TestAssembleSignaturesGate:
+    """_assemble (Block E): signature enrichment runs iff plan opts in."""
+
+    def _run_assemble(self, plan):
+        orch = SearchOrchestrator()
+        orch._graph_scoring_stage = Mock()
+        orch._graph_scoring_stage.run.return_value = ([], None)
+        outcome = _make_outcome()
+        with (
+            patch(
+                "mcp_server.guidance.add_system_message",
+                side_effect=lambda r, **kw: r,
+            ),
+            patch(
+                "mcp_server.tools.result_view._enrich_results_with_signatures",
+                side_effect=lambda results, *a, **kw: results,
+            ) as mock_enrich,
+        ):
+            orch._assemble(plan, outcome)
+        return mock_enrich
+
+    def test_default_off_skips_enrichment(self):
+        """include_signatures=False (default): enrichment is never called —
+        the default path stays byte-identical."""
+        mock_enrich = self._run_assemble(_make_plan())
+        mock_enrich.assert_not_called()
+
+    def test_opt_in_calls_enrichment(self):
+        mock_enrich = self._run_assemble(_make_plan(include_signatures=True))
+        mock_enrich.assert_called_once()
+
+
 class TestApplySourceOrderAndBudget:
     """_apply_source_order_and_budget (Block H)."""
 
@@ -733,6 +767,37 @@ class TestApplySourceOrderAndBudget:
             plan, outcome, list(results)
         )
         assert len(out) == 10
+
+    def test_signature_bytes_counted_by_budget(self):
+        """L3's signature field is added at Block E, which runs before Block
+        H's max_context_tokens truncation (_assemble's Block ordering) — the
+        budget estimate (json.dumps(r) // 4) must therefore include it rather
+        than silently exceeding the caller's budget. Same tight-budget shape
+        as test_context_budget_truncates, but comparing a bare result set
+        against an otherwise-identical set carrying a signature field: more
+        bare results must survive the same budget.
+        """
+        sc = SearchConfig()
+        sc.output.source_order_output = False
+        outcome = _make_outcome(effective_config=sc)
+        plan = _make_plan(max_context_tokens=50)  # tight budget, as in truncates test
+        bare_results = [
+            {"chunk_id": f"f.py:{i}-{i + 10}:function:f{i}"} for i in range(5)
+        ]
+        signed_results = [
+            {
+                "chunk_id": f"f.py:{i}-{i + 10}:function:f{i}",
+                "signature": "x" * 150,
+            }
+            for i in range(5)
+        ]
+        bare_out = SearchOrchestrator._apply_source_order_and_budget(
+            plan, outcome, list(bare_results)
+        )
+        signed_out = SearchOrchestrator._apply_source_order_and_budget(
+            plan, outcome, list(signed_results)
+        )
+        assert len(signed_out) < len(bare_out)
 
 
 # ---------------------------------------------------------------------------
