@@ -680,6 +680,84 @@ def test_analyze_impact_filters_similar_code_by_exclude_dirs(
 
 
 # ============================================================================
+# INDIRECT_CALLERS DEDUP/SORT TESTS
+# ============================================================================
+
+
+def test_analyze_impact_dedups_and_sorts_indirect_callers(
+    impact_analyzer, mock_searcher, mock_graph_engine
+):
+    """indirect_callers must be routed through _dedup_and_sort_edges just like
+    direct_callers/direct_callees. Two depth>1 inbound edges resolving to the
+    same chunk_id (e.g. via different graph-node variants of one symbol) must
+    collapse to a single entry, keeping the higher-resolver_confidence
+    provenance -- previously this list shipped raw, so both entries and their
+    non-deterministic relative order would have survived into the report.
+    """
+    target_id = "src/main.py:10-20:function:process"
+
+    mock_target = Mock()
+    mock_target.metadata = {
+        "file": "src/main.py",
+        "start_line": 10,
+        "end_line": 20,
+        "chunk_type": "function",
+    }
+
+    dup_chunk_id = "src/callers.py:1-5:function:dup_caller"
+    mock_dup_caller = Mock()
+    mock_dup_caller.metadata = {
+        "file": "src/callers.py",
+        "start_line": 1,
+        "end_line": 5,
+        "chunk_type": "function",
+    }
+    mock_dup_caller.score = 1.0
+
+    def _get_by_chunk_id(cid):
+        return {target_id: mock_target, dup_chunk_id: mock_dup_caller}.get(cid)
+
+    mock_searcher.get_by_chunk_id.side_effect = _get_by_chunk_id
+    mock_searcher.find_similar_to_chunk.return_value = []
+
+    # Same chunk_id reached at two different depths/provenances -- exactly the
+    # _enrich_callers collision _dedup_and_sort_edges exists to resolve.
+    indirect_entries = [
+        RelationshipEntry(
+            chunk_id=dup_chunk_id,
+            relationship_type="calls",
+            direction="inbound",
+            depth=2,
+            edge_data={"resolver_source": "ast", "resolver_confidence": 0.5},
+        ),
+        RelationshipEntry(
+            chunk_id=dup_chunk_id,
+            relationship_type="calls",
+            direction="inbound",
+            depth=3,
+            edge_data={"resolver_source": "lsp", "resolver_confidence": 0.98},
+        ),
+    ]
+
+    def _get_relationships(chunk_id, direction, max_depth=1):
+        return indirect_entries if direction == "inbound" else []
+
+    mock_graph_engine.get_relationships.side_effect = _get_relationships
+
+    report = impact_analyzer.analyze_impact(chunk_id=target_id)
+
+    assert len(report.indirect_callers) == 1
+    entry = report.indirect_callers[0]
+    assert entry["chunk_id"] == dup_chunk_id
+    assert entry["resolver_confidence"] == 0.98  # best-provenance kept
+    assert entry["resolver_source"] == "lsp"
+    # total_impacted must reflect the deduped length, not the raw pre-dedup count.
+    assert report.total_impacted == len(report.direct_callers) + 1 + len(
+        report.similar_code
+    )
+
+
+# ============================================================================
 # _resolve_target TESTS
 # ============================================================================
 

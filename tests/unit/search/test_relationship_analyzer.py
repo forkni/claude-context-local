@@ -578,6 +578,71 @@ _RELATIONSHIP_FIELDS_TODAY = [
 ]
 
 
+class TestDedupAndSortEdges(TestCase):
+    """RelationshipAnalyzer._dedup_and_sort_edges — used identically by
+    direct_callers, direct_callees, and (since this defect fix) indirect_callers.
+    """
+
+    def test_dedups_by_chunk_id_keeping_highest_resolver_confidence(self):
+        from search.relationship_analyzer import RelationshipAnalyzer
+
+        entries = [
+            {"chunk_id": "a.py:1:function:a", "resolver_confidence": 0.5},
+            {"chunk_id": "a.py:1:function:a", "resolver_confidence": 0.98},
+            {"chunk_id": "a.py:1:function:a", "resolver_confidence": 0.7},
+        ]
+        result = RelationshipAnalyzer._dedup_and_sort_edges(entries)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["resolver_confidence"], 0.98)
+
+    def test_sorts_by_confidence_desc_then_chunk_id_asc(self):
+        from search.relationship_analyzer import RelationshipAnalyzer
+
+        entries = [
+            {"chunk_id": "z.py:1:function:z", "resolver_confidence": 0.9},
+            {"chunk_id": "b.py:1:function:b", "resolver_confidence": 0.9},
+            {"chunk_id": "a.py:1:function:a", "resolver_confidence": 0.5},
+        ]
+        result = RelationshipAnalyzer._dedup_and_sort_edges(entries)
+        self.assertEqual(
+            [e["chunk_id"] for e in result],
+            ["b.py:1:function:b", "z.py:1:function:z", "a.py:1:function:a"],
+        )
+
+    def test_deterministic_across_repeated_calls_regardless_of_input_order(self):
+        """Same entries, different input order -> identical output order --
+        this is the property that was missing from indirect_callers before it
+        was routed through this helper."""
+        from search.relationship_analyzer import RelationshipAnalyzer
+
+        entries = [
+            {"chunk_id": "c.py:1:function:c", "resolver_confidence": 0.6},
+            {"chunk_id": "a.py:1:function:a", "resolver_confidence": 0.6},
+            {"chunk_id": "b.py:1:function:b", "resolver_confidence": 0.9},
+        ]
+        reversed_entries = list(reversed(entries))
+
+        result_a = RelationshipAnalyzer._dedup_and_sort_edges(entries)
+        result_b = RelationshipAnalyzer._dedup_and_sort_edges(reversed_entries)
+
+        self.assertEqual(result_a, result_b)
+
+    def test_missing_resolver_confidence_uses_half_default_for_comparison(self):
+        """0.5 is only a comparison/sort default -- an entry missing the key
+        outright is neither mutated nor dropped."""
+        from search.relationship_analyzer import RelationshipAnalyzer
+
+        entries = [{"chunk_id": "a.py:1:function:a"}]
+        result = RelationshipAnalyzer._dedup_and_sort_edges(entries)
+        self.assertEqual(len(result), 1)
+        self.assertNotIn("resolver_confidence", result[0])
+
+    def test_empty_list_returns_empty_list(self):
+        from search.relationship_analyzer import RelationshipAnalyzer
+
+        self.assertEqual(RelationshipAnalyzer._dedup_and_sort_edges([]), [])
+
+
 class TestImpactReportToDictKeyOrder(TestCase):
     """Characterization test for ImpactReport.to_dict()'s wire shape.
 
@@ -663,8 +728,10 @@ class TestFilterAmbiguousEdges(TestCase):
 
     def test_drops_ambiguous_from_all_three_call_lists(self):
         """Ambiguous entries removed from direct_callers, direct_callees, AND
-        indirect_callers (the last is never routed through
-        _dedup_and_sort_edges, so the filter must cover it independently)."""
+        indirect_callers. All three are routed through _dedup_and_sort_edges
+        upstream in analyze_impact, but this filter must still cover all three
+        independently since it also runs standalone on hand-built dicts like
+        this one that never went through that dedup/sort step."""
         from search.relationship_analyzer import filter_ambiguous_edges
 
         d = self._make_report_dict(

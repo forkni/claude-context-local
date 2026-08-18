@@ -123,7 +123,7 @@ class RelationshipAnalyzer:
                 indirect_raw, exclude_dirs
             )
             direct_callers = self._dedup_and_sort_edges(enriched_direct)
-            indirect_callers = enriched_indirect
+            indirect_callers = self._dedup_and_sort_edges(enriched_indirect)
             stale_count = stale_d + stale_i
         else:
             inbound = []
