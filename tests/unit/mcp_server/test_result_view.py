@@ -68,6 +68,30 @@ class TestExtractSignatureEstimate:
         result = _extract_signature_estimate(text, no_anchor_lines=2)
         assert result == "line1\nline2"
 
+    def test_minified_single_line_chunk_is_truncated_by_max_chars(self):
+        """A minified-JS-shaped chunk (one giant unanchored 'line') must be
+        bounded by max_chars, not just the line caps -- the line caps bound
+        line *count*, not line *length*."""
+        text = "x" * 5000
+        result = _extract_signature_estimate(text)
+        assert len(result) == 600
+
+    def test_signature_exactly_at_max_chars_is_untouched(self):
+        text = "x" * 600
+        result = _extract_signature_estimate(text)
+        assert result == text
+        assert len(result) == 600
+
+    def test_normal_multi_line_python_signature_unaffected_by_max_chars(self):
+        text = "def foo(\n    a,\n    b,\n):\n    pass\n"
+        result = _extract_signature_estimate(text)
+        assert result == "def foo(\n    a,\n    b,\n):"
+
+    def test_custom_max_chars_cap(self):
+        text = "def foo(a, b):\n    return a + b\n"
+        result = _extract_signature_estimate(text, max_chars=5)
+        assert result == "def f"
+
 
 class TestEnrichResultsWithSignatures:
     """Attaches ``signature`` from metadata_store's bm25_text; degrades
@@ -161,3 +185,61 @@ class TestEnrichResultsWithSignatures:
         out = _enrich_results_with_signatures(results, manager)
         assert out[0]["signature"] == "def foo():"
         assert "signature" not in out[1]
+
+    def test_module_kind_is_skipped_entirely(self):
+        """module/module_preamble chunks carry no def/class anchor -- their
+        'signature' would be filler (a docstring line, an import, a
+        comment), not a callable contract. Gated on the result dict's
+        existing `kind` field, so this must not even hit metadata_store."""
+        chunk_id = "a.py:0-0:module:a"
+        manager = self._index_manager({chunk_id: '"""Module docstring."""\n'})
+        results = [{"chunk_id": chunk_id, "kind": "module"}]
+        out = _enrich_results_with_signatures(results, manager)
+        assert "signature" not in out[0]
+        manager.metadata_store.get.assert_not_called()
+
+    def test_module_preamble_kind_is_skipped_entirely(self):
+        chunk_id = "a.py:1-10:module_preamble"
+        manager = self._index_manager({chunk_id: "import os\nimport sys\n"})
+        results = [{"chunk_id": chunk_id, "kind": "module_preamble"}]
+        out = _enrich_results_with_signatures(results, manager)
+        assert "signature" not in out[0]
+        manager.metadata_store.get.assert_not_called()
+
+    def test_function_kind_is_still_enriched_alongside_gated_kinds(self):
+        """Guards against an over-broad gate: a real definition kind in the
+        same result set as a gated kind must still get its signature."""
+        manager = self._index_manager(
+            {
+                "a.py:1-2:function:foo": "def foo():\n    pass\n",
+                "a.py:0-0:module:a": '"""Docstring."""\n',
+            }
+        )
+        results = [
+            {"chunk_id": "a.py:1-2:function:foo", "kind": "function"},
+            {"chunk_id": "a.py:0-0:module:a", "kind": "module"},
+        ]
+        out = _enrich_results_with_signatures(results, manager)
+        assert out[0]["signature"] == "def foo():"
+        assert "signature" not in out[1]
+
+    def test_go_shaped_function_kind_still_enriched(self):
+        """Non-Python definition kinds (Go/Rust/C++/...) are un-anchored but
+        must NOT be caught by the kind-gate -- only module/module_preamble
+        are. Their 3-line excerpt is the only signature they have."""
+        chunk_id = "a.go:1-5:function:Foo"
+        text = "func Foo(a int) int {\n\treturn a\n}\n"
+        manager = self._index_manager({chunk_id: text})
+        results = [{"chunk_id": chunk_id, "kind": "function"}]
+        out = _enrich_results_with_signatures(results, manager)
+        assert out[0]["signature"] == "func Foo(a int) int {\n\treturn a\n}"
+
+    def test_missing_kind_field_is_not_gated(self):
+        """A result dict without a `kind` key at all (defensive -- kind is
+        always set by _format_search_results in production) must not be
+        mistaken for a gated kind; falls through to normal enrichment."""
+        chunk_id = "a.py:1-2:function:foo"
+        manager = self._index_manager({chunk_id: "def foo():\n    pass\n"})
+        results = [{"chunk_id": chunk_id}]
+        out = _enrich_results_with_signatures(results, manager)
+        assert out[0]["signature"] == "def foo():"

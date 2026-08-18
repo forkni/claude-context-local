@@ -22,16 +22,19 @@ probe was written -- see
   No ``content``/``bm25_text``/etc field is ever emitted. The caller must
   ``Read`` whole files to act on a hit -- ``downstream_read_cost`` below
   measures exactly that externalized cost.
-- ``ego_graph_enabled=False`` in the ``run()`` arguments dict does **not**
-  disable ego-graph expansion. That per-request ``SearchPlan`` flag only
-  ever flips ``True`` (intent-suggestion) and defaults ``False`` already, so
-  a caller-supplied ``False`` is a no-op either way. The actual gate is the
-  **config-level** ``EgoGraphConfig.enabled`` field
-  (``config.ego_graph.enabled``, default ``True``) -- confusingly sharing
-  the identical ``flat_alias="ego_graph_enabled"`` string with the inert
-  per-request flag. This probe's ``ego_contract`` metric mutates the config
-  field directly (snapshot/False/restore per query, cheap -- not among
+- ``ego_graph_enabled`` in the ``run()`` arguments dict is now a genuine
+  two-way gate (fixed by commit ``bd21c85``, after this probe was first
+  written): the per-request ``SearchPlan`` field is ``bool | None``
+  (``mcp_server/tools/search_orchestrator.py:54``), tri-state-parsed from the
+  raw argument (``:139-141``) so an *omitted* argument (``None``) defers to
+  the config default while an *explicit* ``False`` forces expansion off for
+  that call -- omission and explicit-False are no longer collapsed together.
+  This probe's ``ego_contract`` metric instead mutates the **config-level**
+  ``EgoGraphConfig.enabled`` field directly (``config.ego_graph.enabled``,
+  default ``True``, snapshot/False/restore per query, cheap -- not among
   ``SearchConfig._CONSTRUCTION_BAKED_FIELDS``, no searcher rebuild needed).
+  That remains correct and is why the metric still works: it bypasses the
+  per-request flag entirely rather than relying on it.
 
 Payload field-set is NOT stable across queries -- a reranked hybrid query
 carries ``reranker_score``, an auto-routed BM25 query does not, only
@@ -126,6 +129,10 @@ from typing import Any
 
 from evaluation import probe_harness
 from evaluation.metrics import normalize_chunk_id
+from mcp_server.tools.result_view import (
+    _NON_SIGNATURE_CHUNK_TYPES,
+    _extract_signature_estimate,
+)
 
 
 try:
@@ -284,28 +291,6 @@ def _parse_lines(lines_str: str) -> tuple[int, int]:
         return 0, 0
 
 
-def _extract_signature_estimate(text: str, max_lines: int = 15) -> str:
-    """Reimplementation of ``chunking/languages/python.py``'s
-    ``_extract_signature`` line-scan against a plain ``bm25_text`` string --
-    the original takes a tree-sitter node + source bytes, not a string, so it
-    cannot be imported directly. Extends it with ``"class "`` recognition
-    (search_code returns non-function chunk kinds too) and a ``max_lines``
-    safety cap for pathological one-arg-per-line signatures. Measurement-only
-    for the L3 counterfactual; no production refactor is implied.
-    """
-    lines = text.split("\n")
-    sig_lines: list[str] = []
-    seen_start = False
-    for line in lines[:max_lines]:
-        sig_lines.append(line)
-        stripped = line.strip()
-        if stripped.startswith(("def ", "async def ", "class ")):
-            seen_start = True
-        if seen_start and stripped.endswith(":"):
-            break
-    return "\n".join(sig_lines)
-
-
 _DOTTED_SYMBOL_RE = re.compile(
     r"\b[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+\b"
 )
@@ -424,6 +409,11 @@ def _signature_view_tokens(
     read from ``metadata_store``'s persisted ``bm25_text`` -- the L3
     counterfactual. Returns None (not 0) when no metadata_store is available,
     so callers can distinguish "measured zero" from "couldn't measure".
+
+    Applies the same ``_NON_SIGNATURE_CHUNK_TYPES`` kind-gate as production's
+    ``_enrich_results_with_signatures`` (ADR-0040 -- both now import the same
+    ``_extract_signature_estimate`` from ``mcp_server.tools.result_view``, so
+    this offline estimate and the wire field agree by construction).
     """
     if metadata_store is None:
         return None
@@ -431,6 +421,8 @@ def _signature_view_tokens(
     for r in results:
         chunk_id = r.get("chunk_id")
         if not chunk_id:
+            continue
+        if r.get("kind") in _NON_SIGNATURE_CHUNK_TYPES:
             continue
         entry = metadata_store.get(chunk_id)
         text = (entry or {}).get("metadata", {}).get("bm25_text") if entry else None

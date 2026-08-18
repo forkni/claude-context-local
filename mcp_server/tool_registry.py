@@ -184,7 +184,7 @@ RETURNS:
                 "include_signatures": {
                     "type": "boolean",
                     "default": False,
-                    "description": "Attach a signature-only view per result as signature: str (default: False). search_code returns coordinates only (file/lines/kind/score) — no chunk content; this is a display-only counterfactual to a follow-up Read, not chunk content itself. Measured ~319 tokens/result average on Python chunks (~25% over ultra-format baseline) — a hint, not a guarantee: on non-Python chunks (no def/class anchor recognized) it degrades to the first 3 raw lines rather than a full signature. Never touches scoring, ordering, or the reranker.",
+                    "description": "Attach a signature-only view per result as signature: str (default: False). search_code returns coordinates only (file/lines/kind/score) — no chunk content; this is a display-only counterfactual to a follow-up Read, not chunk content itself. Measured ~687 tokens/query overhead (~36% over the default compact format's payload size) — a hint, not a guarantee: module/module_preamble chunks are skipped (no callable contract to summarize); on non-Python chunks (no def/class anchor recognized) it degrades to the first 3 raw lines, capped at 600 characters. Never touches scoring, ordering, or the reranker.",
                 },
                 "max_context_tokens": {
                     "type": "integer",

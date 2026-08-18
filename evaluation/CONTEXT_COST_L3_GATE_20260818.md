@@ -60,12 +60,29 @@ exactly as designed:
 1. **Precedent check.** `include_top_callers` — the exact template L3 mirrors — has the identical
    unscoped full-`formatted_results` enrichment shape and shipped with **no token-cost gate at
    all** (`evaluation/REMAINING_LEVERS_AB_20260814.md`: byte-identity + unit tests only).
-2. **Consistency check.** Measured relative overhead is `750.91 / 2,952.466 = +25.4%`. This closely
-   matches the independently-banked `318.8 / 1,268.7 = +25.1%` figure from the ultra-format
-   verification in Step 0/1 — despite the two figures being computed over different row counts and
-   different format axes (verbose tiktoken vs. ultra production-heuristic). The feature's
-   *proportional* cost is stable and exactly as advertised; only the absolute 3,500 ceiling, which
-   silently assumed top-k-scoped enrichment, was arithmetically wrong.
+2. **~~Consistency check~~ — retracted, was a scope coincidence, not corroboration.** The original
+   note claimed `750.91 / 2,952.466 = +25.4%` "closely matches" the independently-banked
+   `318.8 / 1,268.7 = +25.1%` ultra-format figure. That agreement was arithmetic coincidence: the
+   two numerators are a **per-query tiktoken delta over the full k-drifted result set** (2.6× more
+   rows than top-k) and a **per-query production-heuristic delta over `top_k[:10]` on the ultra
+   format** — different row counts and different format axes landing within 0.3 points of each
+   other by chance. Neither figure was ever "~319 tokens/**result**" as the shipped schema
+   description (`mcp_server/tool_registry.py`) claimed — both are per-**query** sums. The schema
+   text carried this error since `21cd9bb` and is corrected in this changeset (A1); `21cd9bb`'s
+   commit message is not rewritten and still carries the superseded figure. The actual per-format
+   overhead, measured directly from the banked `L3_off`/`L3_on` payload_bytes, is:
+
+   | format | overhead (shipped) |
+   |---|---|
+   | verbose | +27.2% |
+   | **compact** (the actual schema default) | **+40.0%** |
+   | ultra | +57.0% |
+
+   Signature bytes are ~constant per result, so relative cost rises as the format compacts —
+   quoting the ultra figure as "the" overhead (as the original schema text did) overstates it
+   against the format callers actually get by default. The correct governing check going forward
+   is this per-format table (re-measured in Part B below), not a single ceiling or a
+   cross-scope "consistency" argument.
 
 ## Ranking-identity smoke test — methodology correction
 
@@ -93,13 +110,54 @@ are not a valid `chunk_id`-sequence-identity check on their own — issue a same
 call to confirm the baseline draw is stable before attributing any divergence to the parameter
 under test, or use the deterministic probe harness (seed-pinned) instead of ambient live calls.
 
+## Part B — what changed (2026-08-18)
+
+`_enrich_results_with_signatures` and `_extract_signature_estimate`
+were changed after all: module/module_preamble chunks are skipped entirely (no callable contract to
+summarize — 20-22% of signature tokens on two independent corpora were this kind of filler), and the
+extractor is now bounded to `max_chars=600` (a minified/single-line chunk could previously produce a
+multi-thousand-token "signature", 5× the entire per-query overhead). The duplicate extractor in
+`scripts/benchmark/probe_context_cost.py` was retired in favor of importing the production one
+(ADR-0040), so the two no longer drift. Full plan and rationale:
+`docs/plans` session notes (this changeset); see also `mcp_server/tools/result_view.py`'s
+`_NON_SIGNATURE_CHUNK_TYPES` docstring.
+
+## Part B results — re-measured post-change
+
+Full 133-query probe, same dataset/k/project-path as the original banked run
+(`evaluation/CONTEXT_COST_PROBE_20260818_L3_on_postB.json` vs. the original
+`evaluation/CONTEXT_COST_PROBE_20260818_L3_{off,on}.json`):
+
+| Metric | Control (off) | Shipped (pre-B) | Post-B | Gate | Verdict |
+|---|---|---|---|---|---|
+| `signature_present_rate` | 0.0 | 0.857 | 0.850 | ≥0.85 | **PASS** |
+| `content_present_rate` | 0.0 | 0.0 | 0.0 | stays 0.0 | **PASS** |
+| `tiktoken_mean` | 2,952.466 | 3,703.376 | **3,639.85** | falls | **PASS** (−63.5 tok) |
+| per-query overhead (tiktoken) | — | 750.9 | **687.4** | — | −8.5% |
+| `payload_bytes.verbose` overhead | — | +27.2% | **+24.6%** | — | |
+| `payload_bytes.compact` overhead | — | +40.0% | **+35.9%** | falls | **PASS** |
+| `payload_bytes.ultra` overhead | — | +57.0% | **+50.8%** | — | |
+| max `signature_view_tokens`/query | — | 749 | **528** | bounded | tail cut confirmed |
+
+Three per-query `gold.located` values flipped between the banked and post-B runs (`Q133`
+false→true, `H012`/`H066` true→false — net −1 raw `signature_present` count, matching the
+0.857→0.850 rate move). All three are pure **located** flips (gold not found in the result set at
+all), not a located-definition-chunk losing its `signature` field — confirming the kind-gate does
+not touch definition-kind golds. `Q133`/`H066` are both already-documented ambient bf16-reranker
+flapper queries from prior benchmark sessions, not a regression introduced here.
+
+The tail bound is enforced unconditionally in code (`_extract_signature_estimate`'s
+`text[:max_chars]`), not just observed empirically — covered by
+`test_minified_single_line_chunk_is_truncated_by_max_chars` and
+`test_signature_exactly_at_max_chars_is_untouched` in
+`tests/unit/mcp_server/test_result_view.py`.
+
 ## Disposition
 
-**Ship as-is.** No change to `_enrich_results_with_signatures` or its call site. The gate record is
-corrected here: the governing check for future re-verification is the **relative overhead**
-(~+25%, consistent across two independent measurement methods), not a fixed absolute
-`tiktoken_mean` ceiling — the absolute number is a function of corpus k-drift row count, which this
-feature does not control and does not perturb.
+**Ship as-is, cheaper.** The governing check for future re-verification is the **per-format
+overhead table above**, not a fixed absolute `tiktoken_mean` ceiling or a cross-scope "consistency"
+argument — the absolute number is a function of corpus k-drift row count, which this feature does
+not control and does not perturb.
 
 All other pre-registered gates passed as specified. Canons are unaffected (L3 is display-only, never
 reaches scoring — not re-run here since no scoring-path code changed).

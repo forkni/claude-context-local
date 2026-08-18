@@ -211,26 +211,43 @@ def _reorder_by_source_position(results: list[dict]) -> list[dict]:
 
 
 def _extract_signature_estimate(
-    text: str, max_lines: int = 15, no_anchor_lines: int = 3
+    text: str,
+    max_lines: int = 15,
+    no_anchor_lines: int = 3,
+    max_chars: int = 600,
 ) -> str:
     """Extract a signature-only prefix from raw chunk source text.
 
     Line-scans for a ``def ``/``async def ``/``class `` anchor and stops at the
     first line ending in ``:`` seen at or after the anchor, capped at
-    ``max_lines``. Ported from
-    ``scripts/benchmark/probe_context_cost.py:_extract_signature_estimate``
-    (the banked source of the 318.8-token estimate), with one addition: when
-    no anchor is seen within ``max_lines`` — non-Python chunks, whose grammars
-    don't share Python's ``def``/``class`` keywords, and ``module_preamble``/
-    ``module`` chunks with no anchor at all — only the first
-    ``no_anchor_lines`` lines are returned instead of the full 15-line body.
-    Without this, an un-anchored chunk would silently degenerate from a
-    signature into an arbitrary body excerpt.
+    ``max_lines``. Originally ported from a probe-only reimplementation in
+    ``scripts/benchmark/probe_context_cost.py``; that copy has since been
+    retired (ADR-0040) in favor of importing this function directly, so this
+    is now the single implementation both the wire field and the offline
+    ``_signature_view_tokens`` estimate use. Two additions beyond the
+    original line-scan:
+
+    1. When no anchor is seen within ``max_lines`` — non-Python chunks, whose
+       grammars don't share Python's ``def``/``class`` keywords, and
+       ``module_preamble``/``module`` chunks with no anchor at all — only the
+       first ``no_anchor_lines`` lines are returned instead of the full
+       15-line body. Without this, an un-anchored chunk would silently
+       degenerate from a signature into an arbitrary body excerpt.
+    2. The result is truncated to ``max_chars``. The line caps bound *line
+       count*, not line *length*: a minified/single-line chunk (e.g. bundled
+       JS) can pack thousands of characters into one "line" and blow past any
+       reasonable token budget despite passing both line caps untouched.
+       Measured on a 9,610-chunk corpus: 0.9% of chunks carry 7.5% of all
+       signature tokens, with one minified-JS chunk alone producing a
+       3,877-token "signature". ``max_chars=600`` sits between the p99 (420)
+       and p99.9 (672) character length of legitimate anchored signatures, so
+       it clips well under 1% of real signatures while bounding the tail.
 
     Args:
         text: Raw chunk source (``bm25_text`` from the metadata store).
         max_lines: Cap on the anchored scan (default: 15).
         no_anchor_lines: Cap when no anchor is found (default: 3).
+        max_chars: Cap on the final extracted text length (default: 600).
 
     Returns:
         The extracted signature text (may be shorter than either cap).
@@ -247,7 +264,20 @@ def _extract_signature_estimate(
             break
     if not seen_start:
         sig_lines = lines[:no_anchor_lines]
-    return "\n".join(sig_lines)
+    return "\n".join(sig_lines)[:max_chars]
+
+
+_NON_SIGNATURE_CHUNK_TYPES = frozenset({"module_preamble", "module"})
+"""Chunk kinds with no callable contract to summarize.
+
+Measured over 2,534 corpus chunks (reproduced on a second, 9,610-chunk
+corpus): every ``method``/``function``/``split_block``/``decorated_definition``/
+``class`` chunk is 100% anchored by ``_extract_signature_estimate``, while
+``module_preamble``/``module`` chunks are 0% anchored — their "signature" is
+whatever the first ``no_anchor_lines`` lines happen to be (a docstring line,
+an import, a comment). Skipping these two kinds removes ~20-22% of signature
+tokens and 0% of callable contracts; see ``_enrich_results_with_signatures``.
+"""
 
 
 def _enrich_results_with_signatures(
@@ -263,24 +293,27 @@ def _enrich_results_with_signatures(
     cheap, opt-in counterfactual: the first def/class line(s) of the chunk,
     extracted from ``bm25_text`` via ``_extract_signature_estimate``.
 
+    Results whose ``kind`` is in ``_NON_SIGNATURE_CHUNK_TYPES`` are skipped
+    entirely (no ``signature`` field attached, matching the existing
+    skip-on-falsy behavior below) — these kinds carry no def/class anchor, so
+    their "signature" would be filler rather than a callable contract.
+
     ``bm25_text`` — the raw chunk source persisted by the indexer
     (``hybrid_searcher.py``) — is read via ``index_manager.metadata_store``
     rather than any field on the formatted result dict: results reach this
     function post-``_format_search_results``, which carries no ``.metadata``.
-    The metadata store is the same path the context-cost probe itself reads,
-    so the shipped view matches the banked 318.8-token estimate exactly on
-    Python chunks, and is a bound (not an underestimate) elsewhere — see
-    ``_extract_signature_estimate``'s ``no_anchor_lines`` cap.
+    The same metadata entry already carries ``chunk_type``, so the kind-gate
+    above costs no extra lookup.
 
     §V-B note: this is unsanitized resource content (paper term) — raw source
     text from the indexed repo, truncated but not filtered. Accepted residual
     risk: exposure is metadata-only (never a full code body — capped at 15
-    lines — never executed/eval'd) and the source is the user's own indexed
-    codebase, not an untrusted external fetch. A repo containing a hostile
-    docstring or comment could still relay prompt-injection-like text to the
-    calling LLM as part of a search result; no content filtering is applied
-    here today. Same exposure class already accepted for the ``summary``
-    field above.
+    lines and 600 chars — never executed/eval'd) and the source is the user's
+    own indexed codebase, not an untrusted external fetch. A repo containing a
+    hostile docstring or comment could still relay prompt-injection-like text
+    to the calling LLM as part of a search result; no content filtering is
+    applied here today. Same exposure class already accepted for the
+    ``summary`` field above.
 
     Args:
         results: List of formatted result dicts
@@ -295,6 +328,8 @@ def _enrich_results_with_signatures(
     for item in results:
         chunk_id = item.get("chunk_id")
         if not chunk_id:
+            continue
+        if item.get("kind") in _NON_SIGNATURE_CHUNK_TYPES:
             continue
         try:
             entry = index_manager.metadata_store.get(chunk_id)
