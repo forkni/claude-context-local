@@ -10,13 +10,12 @@ fused cut because reciprocal rank saturates fast (Q121 exemplar: dense rank
 84 / BM25 rank 80 / RRF fused rank 41, all beyond a 30-slot cut).
 
 This probe replays, for every golden query, the exact deployed leg-search
-depth (``search_k = max(reranker.top_k_candidates, k*5)``, from
-``SearchExecutor.execute_single_hop`` / ``search_executor.py:130``) and the
-exact deployed fused-pool cut (``fusion_k = max(k, reranker.top_k_candidates)``,
-``search_executor.py:177``), then compares RRF's cut membership
-(``RRFReranker.rerank_simple``, unmodified) against a **local** TM2C2
-implementation at two pre-registered alpha values. No production code is
-touched; ``_theoretical_min_max_normalize``/``fuse_tm2c2`` here are the
+depth and fused-pool cut (``ProbeSession.replay_legs`` -- itself
+``search_executor.leg_search_depth``/``fused_pool_cut``, never a re-derived
+literal; see ``evaluation/probe_harness.py``), then compares RRF's cut
+membership (``RRFReranker.rerank_simple``, unmodified) against a **local**
+TM2C2 implementation at two pre-registered alpha values. No production code
+is touched; ``_theoretical_min_max_normalize``/``fuse_tm2c2`` here are the
 reference implementation later lifted verbatim into ``search/reranker.py``
 if the gate passes (probe/production drift would invalidate the gate).
 
@@ -48,15 +47,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 from typing import Any
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from evaluation.metrics import normalize_chunk_id  # noqa: E402
+from evaluation import probe_harness
+from evaluation.metrics import normalize_chunk_id
 
 
 # Pre-registered alpha values (dense-side weight) -- no sweep.
@@ -68,23 +62,6 @@ DENSE_THEORETICAL_MIN = -1.0
 
 # Q121 -- the named exemplar of the RRF-exclusion class this probe targets.
 WATCHLIST = ("Q121",)
-
-
-def load_queries(dataset_path: Path, query_ids: list[str] | None) -> list[dict]:
-    """Golden entries with grades; category D excluded (matches the benchmark)."""
-    data = json.loads(dataset_path.read_text(encoding="utf-8"))
-    queries = [
-        q
-        for q in data["queries"]
-        if q.get("category") != "D" and q.get("relevance_grades")
-    ]
-    if query_ids:
-        by_id = {q["id"]: q for q in queries}
-        missing = [qid for qid in query_ids if qid not in by_id]
-        if missing:
-            raise KeyError(f"{missing} not found (or category-D) in {dataset_path}")
-        return [by_id[qid] for qid in query_ids]
-    return queries
 
 
 def rank_of(gold: str, ids: list[str]) -> int | None:
@@ -139,56 +116,37 @@ def fuse_tm2c2(
     return sorted(fused.items(), key=lambda kv: kv[1], reverse=True)
 
 
-def probe_query(searcher, item: dict, k: int) -> dict[str, Any]:
+def probe_query(
+    session: probe_harness.ProbeSession, item: probe_harness.GoldenQuery, k: int
+) -> dict[str, Any]:
     """Capture leg orders + RRF/TM2C2 cut membership for one query."""
-    from search.config import get_search_config
+    query = item.query
+    grades = item.grades
 
-    config = get_search_config()
-    query = item["query"]
-    grades = {
-        normalize_chunk_id(gid): grade
-        for gid, grade in item["relevance_grades"].items()
-    }
+    capture = session.replay_legs(query, k=k)
+    search_k = capture.search_k
+    cut = capture.cut
 
-    executor = searcher.search_executor
-    reranker_budget = config.reranker.top_k_candidates
-    search_k = max(reranker_budget, k * 5)  # search_executor.py:130, exact
-    cut = max(k, reranker_budget)  # search_executor.py:177 fusion_k, exact
-    min_score = config.search_mode.min_bm25_score
-
-    bm25 = executor.search_bm25(query, search_k, min_score, None)
-    dense = executor.search_dense(query, search_k, None, None)
-    bm25_ids = [normalize_chunk_id(c) for c, _, _ in bm25]
-    dense_ids = [normalize_chunk_id(c) for c, _, _ in dense]
-
-    rrf_fused = executor.reranker.rerank_simple(
-        bm25_results=bm25,
-        dense_results=dense,
-        max_results=cut,
-        bm25_weight=config.search_mode.bm25_weight,
-        dense_weight=config.search_mode.dense_weight,
-        reserved_slots=config.search_mode.bm25_reserved_slots,
-    )
-    rrf_ids = [normalize_chunk_id(r.chunk_id) for r in rrf_fused]
+    rrf_ids = capture.fused
     rrf_set = set(rrf_ids)
 
     variants: dict[str, Any] = {}
     for alpha in ALPHAS:
-        tm2c2_full = fuse_tm2c2(bm25, dense, alpha)
+        tm2c2_full = fuse_tm2c2(capture.raw_bm25, capture.raw_dense, alpha)
         tm2c2_ids = [normalize_chunk_id(cid) for cid, _ in tm2c2_full][:cut]
         tm2c2_set = set(tm2c2_ids)
 
         rescued = []
         evicted = []
         for gold, grade in sorted(grades.items(), key=lambda kv: -kv[1]):
-            dense_rank = rank_of(gold, dense_ids)
-            bm25_rank = rank_of(gold, bm25_ids)
+            dense_rank = capture.rank_of(gold, "dense")
+            bm25_rank = capture.rank_of(gold, "bm25")
             row = {
                 "gold": gold,
                 "grade": grade,
                 "dense_rank": dense_rank,
                 "bm25_rank": bm25_rank,
-                "rrf_rank": rank_of(gold, rrf_ids),
+                "rrf_rank": capture.rank_of(gold, "fused"),
                 "tm2c2_rank": rank_of(gold, tm2c2_ids),
                 # Q121-class: ranks beyond the cut on BOTH raw legs individually
                 # (so RRF's reciprocal-rank arithmetic can't favor it) yet
@@ -209,8 +167,8 @@ def probe_query(searcher, item: dict, k: int) -> dict[str, Any]:
         variants[str(alpha)] = {"rescued_golds": rescued, "evicted_golds": evicted}
 
     return {
-        "id": item["id"],
-        "category": item.get("category", "?"),
+        "id": item.id,
+        "category": item.category,
         "query": query,
         "cut": cut,
         "search_k": search_k,
@@ -299,39 +257,31 @@ def print_summary(reports: list[dict[str, Any]], summary: dict[str, Any]) -> Non
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--dataset", default="evaluation/golden_dataset_expanded.json")
-    parser.add_argument("--project-path", default=".")
-    parser.add_argument("--k", type=int, default=10)
-    parser.add_argument("--query-ids", nargs="*", default=None)
-    parser.add_argument("--json", dest="json_out", default=None)
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        parents=[probe_harness.probe_parser(__doc__.splitlines()[0])],
+    )
     args = parser.parse_args()
 
-    dataset_path = Path(args.dataset)
-    if not dataset_path.is_absolute():
-        dataset_path = REPO_ROOT / dataset_path
+    dataset_path = probe_harness.resolve_dataset_path(args.dataset)
     try:
-        items = load_queries(dataset_path, args.query_ids)
+        items = probe_harness.load_golden_queries(dataset_path, args.query_ids)
     except (OSError, KeyError, json.JSONDecodeError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
 
-    from mcp_server.search_factory import get_searcher
+    with probe_harness.open_probe(args) as session:
+        reports = []
+        for i, item in enumerate(items, 1):
+            print(f"[{i:3d}/{len(items)}] {item.id}", flush=True)
+            reports.append(probe_query(session, item, k=args.k))
 
-    searcher = get_searcher(project_path=args.project_path)
+        summary = summarize(reports)
+        print_summary(reports, summary)
 
-    reports = []
-    for i, item in enumerate(items, 1):
-        print(f"[{i:3d}/{len(items)}] {item['id']}", flush=True)
-        reports.append(probe_query(searcher, item, k=args.k))
-
-    summary = summarize(reports)
-    print_summary(reports, summary)
-
-    if args.json_out:
-        payload = {"summary": summary, "reports": reports}
-        Path(args.json_out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        print(f"\nJSON written to {args.json_out}")
+        if args.json_out:
+            payload = {"summary": summary, "reports": reports}
+            probe_harness.write_probe_json(args.json_out, payload)
     return 0
 
 
