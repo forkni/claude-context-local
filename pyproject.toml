@@ -140,7 +140,15 @@ Issues = "https://github.com/forkni/claude-context-local/issues"
 Changelog = "https://github.com/forkni/claude-context-local/blob/main/docs/VERSION_HISTORY.md"
 
 [tool.setuptools.packages.find]
-include = ["chunking*", "embeddings*", "graph*", "mcp_server*", "merkle*", "search*", "utils*"]
+include = ["chunking*", "embeddings*", "evaluation*", "graph*", "mcp_server*", "merkle*", "search*", "utils*"]
+
+# evaluation/ mixes 4 importable modules (__init__, arm_overrides, chunk_mapping, metrics
+# -- 3 of which are imported at module scope by production call-graph resolvers, see
+# search/call_edge_injection.py, chunking/relationships/{external_call_graph,libcst_call_graph,
+# lsp_call_graph}.py) with ~33 MB of benchmark JSON/markdown records that are not code and
+# must never ship in a built wheel/sdist.
+[tool.setuptools.exclude-package-data]
+evaluation = ["*.json", "*.md"]
 
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
