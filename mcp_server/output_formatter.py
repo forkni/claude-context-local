@@ -14,6 +14,18 @@ Key principle: NO data is filtered or limited, only formatting is optimized.
 from typing import Any
 
 
+# Keys whose EMPTY value is itself meaningful negative evidence ("found nothing" must stay
+# machine-readable) rather than ordinary absence-of-data. The three drop sites below skip empty
+# fields to save tokens, but must never drop these — an omitted "results" key is indistinguishable
+# from a key that was never populated, forcing callers to treat a real "no results" answer the
+# same as a missing field.
+#
+# NOTE: this assumes each of these keys, when present, holds a list. The branch logic in
+# _to_compact_format/_to_toon_format below falls through to a plain assignment for empty lists;
+# an allowlisted key that held an empty *dict* would need the dict branches extended too.
+NEVER_DROP_EMPTY_KEYS = frozenset({"results", "direct_callers", "direct_callees"})
+
+
 def format_response(
     data: dict[str, Any], output_format: str = "compact"
 ) -> dict[str, Any]:
@@ -50,8 +62,9 @@ def _to_compact_format(data: dict[str, Any]) -> dict[str, Any]:
     """
     result = {}
     for key, value in data.items():
-        # Skip empty lists/dicts/None/empty strings
-        if value in ([], {}, None, ""):
+        # Skip empty lists/dicts/None/empty strings, except contract-carrying keys whose empty
+        # value is itself the answer (see NEVER_DROP_EMPTY_KEYS).
+        if key not in NEVER_DROP_EMPTY_KEYS and value in ([], {}, None, ""):
             continue
 
         # Recursively compact nested structures
@@ -99,8 +112,8 @@ def _compact_dict(d: dict[str, Any]) -> dict[str, Any]:
         if key in ("file", "lines") and chunk_id:
             continue
 
-        # Skip empty values
-        if value in ([], {}, None, ""):
+        # Skip empty values, except contract-carrying keys (see NEVER_DROP_EMPTY_KEYS).
+        if key not in NEVER_DROP_EMPTY_KEYS and value in ([], {}, None, ""):
             continue
 
         # Keep original key names (no abbreviation for agent understanding)
@@ -133,8 +146,8 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
     sparse_threshold = 0.25  # If <25% of rows have values, move to sparse
 
     for key, value in data.items():
-        # Skip empty values
-        if value in ([], {}, None, ""):
+        # Skip empty values, except contract-carrying keys (see NEVER_DROP_EMPTY_KEYS).
+        if key not in NEVER_DROP_EMPTY_KEYS and value in ([], {}, None, ""):
             continue
 
         if isinstance(value, list) and value and isinstance(value[0], dict):

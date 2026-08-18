@@ -135,12 +135,27 @@ guard with **no `else` branch** — `False` can only ever fail to enter the bloc
 flag is structurally incapable of disabling anything. The schema advertises `default: False`
 (`mcp_server/tool_registry.py:157-161`) against `EgoGraphConfig.enabled=True`
 (`search/config.py:1046-1051`) — the two share the identical `flat_alias="ego_graph_enabled"`
-string but gate different things. A **parallel lie** exists in the same file: the schema advertises
-`output_format` `default: "compact"` in all 18 tool blocks, while `search_config.json` and
-`OutputConfig.format` (`search/config.py:928-931`) both say `"ultra"`, and
-`mcp_server/server.py:408-415` proves the config wins whenever a caller omits the argument — the
-schema default is dead code on that path. **Gate:** advertised defaults match live defaults;
-documentation/schema correction only, no behaviour change, zero retrieval risk.
+string but gate different things.
+
+**Update (MCP-verified, 2026-08-18):** sweeping the underlying pattern
+(`arguments.get/pop(<name>, <config>.…)`) across `mcp_server/` widened this from a single
+**parallel lie** to a **four-field inventory**, all sharing the same defect shape:
+
+| Parameter | Schema said | Config actually supplies | Verdict |
+|---|---|---|---|
+| `output_format` (×18 blocks) | `"compact"` | `OutputConfig.format` = `"ultra"` (`search/config.py:928-931`), via `mcp_server/server.py:408-415` | **Lie — fixed** |
+| `hide_ambiguous` (`find_connections`) | `false` | `GraphEnhancedConfig.hide_ambiguous_edges_default` = `True` (`search/config.py:1287-1293`), via `mcp_server/tools/search_handlers.py:372-375` | **Lie — fixed, highest impact (silently removes call edges from responses, not just cosmetic)** |
+| `k` (`search_code`) | `4` | `SearchModeConfig.default_k` = `7` (`search/config.py:408-409`), via `search_orchestrator.py:129` | **Lie — fixed** (`find_similar_code`'s `k`, `tool_registry.py:291-293`, already carried the honest form — this brings its sibling into line) |
+| `max_context_tokens` | `0` | `default_max_context_tokens` = `0` | **Agrees — confirmed non-issue, left alone** |
+
+`ego_graph_enabled` is a related but distinct defect, not a config-fallback mismatch: its
+`default: False` is correct *for the parameter* — it's a one-way force-ON switch, never a gate
+(confirmed via `search_orchestrator.py:133` + the bare `if` at `effective_config.py:57` above), so
+only its schema *description* was corrected to say so. The code stays untouched here; an actual
+`else`-branch behavior fix, if ever built, belongs to the deferred L2b recall A/B, not this lever.
+
+**Gate:** advertised defaults match live defaults; documentation/schema correction only, no
+behaviour change, zero retrieval risk.
 
 ### L3 — `include_signatures` on `search_code`, default off *(upgraded — cheaper than first assumed)*
 

@@ -378,6 +378,9 @@ async def handle_get_search_config_status(arguments: dict[str, Any]) -> dict:
         "reranker_top_k_candidates": config.reranker.top_k_candidates,
         "default_k": config.search_mode.default_k,
         "max_k": config.search_mode.max_k,
+        "output_format": config.output.format,
+        "ego_graph_enabled": config.ego_graph.enabled,
+        "hide_ambiguous_edges_default": config.graph_enhanced.hide_ambiguous_edges_default,
     }
 
 
