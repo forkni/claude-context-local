@@ -44,6 +44,8 @@ for avoiding re-litigating settled questions.
 | [0036](0036-include-dirs-additive-for-dependency-trees.md) | Make `include_dirs` additive for dependency trees, narrowing for source | accepted | 2026-08-07 |
 | [0037](0037-decline-index-version-bump-for-cpp-parity.md) | Decline an `INDEX_VERSION` bump for C++ chunking parity | accepted | 2026-08-12 |
 | [0038](0038-cpp-only-container-traversal-seam.md) | Fix the container-traversal seam for C++ only; defer the Rust/C# analogues | accepted | 2026-08-12 |
+| [0039](0039-merged-pool-provenance-bands.md) | Replace the merged-pool score sort's incidental graph band with an explicit one | accepted | 2026-08-15 |
+| [0040](0040-probe-harness-seam.md) | Shared interface for offline retrieval probes: `evaluation/probe_harness.py` | accepted | 2026-08-17 |
 
 ## Adding a new ADR
 
