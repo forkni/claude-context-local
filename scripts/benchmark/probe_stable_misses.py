@@ -41,13 +41,16 @@ arithmetic drift is what invalidates a diagnosis):
   identical judgment call.
 
   This migration surfaced exactly the drift ``probe_harness``'s own module
-  docstring warns about: this project's live ``search_overrides.json`` pins
+  docstring warns about: at migration time (2026-08-17) this project's live
+  *base* ``search_config.json`` (not the ADR-0014 ``search_overrides.json``
+  layer, which carries no ``search_mode`` key) pinned
   ``leg_search_multiplier=1`` (not the dataclass default 5), so the
   pre-migration hardcoded ``* 5`` reported ``search_k=100`` for a k=10 query
-  while the actual deployed funnel runs ``search_k=30`` — a real, silent
+  while the actual deployed funnel ran ``search_k=30`` — a real, silent
   numeric bug in the retired hand-copied formula, not a migration
   regression. Confirmed via before/after capture against Q119/Q121/H063: only
   ``search_k`` (and classes gated on it) changed; every other field matched.
+  The pin was restored to the adopted default 5 on 2026-08-18 (see ADR-0040).
 
 This probe fetches raw legs at ``probe_depth`` once and re-cuts them at
 multiple depths (``search_k``, ``probe_depth``) via its own ``fuse()``

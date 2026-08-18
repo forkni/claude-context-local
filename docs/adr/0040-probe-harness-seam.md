@@ -27,10 +27,12 @@ The load-bearing failure mode, not just duplication: **two live copies of the ho
 arithmetic** (`search_k = max(reranker_budget, k * 5)`) had already drifted from
 `search/search_executor.py`'s actual production formula, which reads
 `config.search_mode.leg_search_multiplier` rather than a hardcoded `5`. A probe re-deriving that
-arithmetic locally silently reports the wrong `search_k` for any project whose
-`search_overrides.json` (ADR-0014) pins a non-default multiplier — exactly what this project's own
-live config does (see Verification below). A probe that measures the wrong funnel width invalidates
-whatever gate it was built to support.
+arithmetic locally silently reports the wrong `search_k` for any project whose base
+`search_config.json` (first hit in `search/config_paths.py`'s `CONFIG_PATH_CANDIDATES`, gitignored
+per-machine) or ADR-0014 `search_overrides.json` layer pins a non-default multiplier — exactly what
+this project's own live `search_config.json` did at the time this module was written (see "A
+concrete drift bug" below). A probe that measures the wrong funnel width invalidates whatever gate
+it was built to support.
 
 ## Decision
 
@@ -92,17 +94,33 @@ time, gated by the same ratchet.
 ## A concrete drift bug the migration surfaced, not introduced
 
 Migrating `probe_stable_misses.py` replaced its hand-copied
-`search_k = max(reranker_budget, hop1_k * 5)` with `leg_search_depth(config, hop1_k)`. This project's
-live `search_overrides.json` (the ADR-0014 per-project override layer) pins
-`search_mode.leg_search_multiplier = 1`, not the `search/config.py` dataclass default of `5`. The
-retired formula therefore reported `search_k=100` for a `k=10` query while the actual deployed funnel
-runs `search_k=30` — a real, silent numeric bug in the hand-copied arithmetic, not a migration
+`search_k = max(reranker_budget, hop1_k * 5)` with `leg_search_depth(config, hop1_k)`. That retired
+formula was *latent*, not wrong in general — numerically correct only while
+`leg_search_multiplier == 5`.
+
+At migration time (2026-08-17) this machine's live **base config**,
+`<repo-root>/search_config.json` (gitignored, `search/config_paths.py`'s first
+`CONFIG_PATH_CANDIDATES` entry, resolved independently of process cwd), pinned
+`search_mode.leg_search_multiplier = 1` — left over from that day's cross-system Arm-B
+duplicate-crowding benchmark runs (`SESSION_LOG.md`'s 2026-08-17 session entry;
+`evaluation/CROSS_SYSTEM_RESULTS_OURS_ARM_B_R1_20260817.md`), not from the ADR-0014
+`search_overrides.json` per-project layer, which carries no `search_mode` key at all and so did
+nothing to restore the default on merge. The retired formula therefore reported `search_k=100` for a
+`k=10` query (`hop1_k = k * multi_hop.initial_k_multiplier = 20`) while the actual deployed funnel
+ran `search_k=30` — a real, silent 3.3x over-report in the hand-copied arithmetic, not a migration
 regression. Verified via a structured before/after JSON diff against Q119/Q121/H063
-(`PYTHONHASHSEED=0`, identical `--query-ids`/flags on the pre- and post-migration script): every
-`dense`/`bm25`/`fused_deep` rank (derived at the depth-independent `probe_depth=200`) was
-byte-identical; only `search_k` and the miss-classes gated on it changed, fully explained by this one
-formula fix. This is exactly the failure mode the module docstring's "load-bearing failure" line
-names — now with a live reproduction instead of a hypothetical.
+(`PYTHONHASHSEED=0`, identical `--query-ids`/flags on the pre- and post-migration script, no `--set`
+needed since the pin lived in the base config both times): every `dense`/`bm25`/`fused_deep` rank
+(derived at the depth-independent `probe_depth=200`) was byte-identical; only `search_k` and the
+miss-classes gated on it changed, fully explained by this one formula fix. This is exactly the
+failure mode the module docstring's "load-bearing failure" line names — now with a live reproduction
+instead of a hypothetical.
+
+The pin was restored to the adopted default `5` on 2026-08-18 once this section's evidence was
+captured (`evaluation/LEG_DEPTH_FUSION_AB_20260815.md`'s verdict keeps it there) — a reader checking
+`search_config.json` today will find `5`, not `1`. The bug was real and reproducible at the time;
+its trigger has since been cleared, and the harness now derives `search_k` from whatever value is
+live instead of drifting from it.
 
 ## A packaging gotcha the migration surfaced
 
