@@ -6,7 +6,8 @@ funnel and assigns one of five miss classes:
 
 - ``vocab-gap``            — neither leg retrieves it within the probe depth
 - ``depth-truncation``     — a leg sees it, but beyond the production
-                             ``search_k`` (= max(top_k_candidates, k*5))
+                             ``search_k`` (``leg_search_depth`` — live
+                             ``leg_search_multiplier``, not a fixed ``k*5``)
 - ``rrf-arithmetic``       — both legs within production depth, but the fused
                              RRF rank falls outside the hop-1 pool cut
 - ``hop1-rerank-demotion`` — inside the hop-1 fused pool, but the hop-1
@@ -24,6 +25,36 @@ Methodology follows evaluation/POOL_MISS_DIAGNOSIS.md; pool/window capture uses
 the same ``RerankingEngine.last_candidate_ids`` / ``last_window_ids``
 observability attributes the SSCG benchmark reads for ``pool_hit``.
 
+Reused, not re-implemented, from the shared probe harness (probe/production
+arithmetic drift is what invalidates a diagnosis):
+
+- ``evaluation/probe_harness.py``: searcher/config lifecycle (``open_probe``),
+  golden-query loading (``load_golden_queries``, no category exclusion and
+  ungraded entries allowed per its own docstring — this probe diagnoses named
+  queries regardless of grading status).
+- ``search.search_executor.leg_search_depth`` / ``fused_pool_cut`` for
+  ``search_k``/``hop1_cut`` at the hop-1-widened ``hop1_k`` — never a
+  re-derived ``max(reranker_budget, hop1_k * 5)`` literal. The
+  ``hop1_k = k * multi_hop.initial_k_multiplier`` widening itself has no
+  harness equivalent (``ProbeSession.replay_legs`` takes whatever ``k`` it is
+  given verbatim) and stays local, matching ``probe_leg_depth_fusion.py``'s
+  identical judgment call.
+
+  This migration surfaced exactly the drift ``probe_harness``'s own module
+  docstring warns about: this project's live ``search_overrides.json`` pins
+  ``leg_search_multiplier=1`` (not the dataclass default 5), so the
+  pre-migration hardcoded ``* 5`` reported ``search_k=100`` for a k=10 query
+  while the actual deployed funnel runs ``search_k=30`` — a real, silent
+  numeric bug in the retired hand-copied formula, not a migration
+  regression. Confirmed via before/after capture against Q119/Q121/H063: only
+  ``search_k`` (and classes gated on it) changed; every other field matched.
+
+This probe fetches raw legs at ``probe_depth`` once and re-cuts them at
+multiple depths (``search_k``, ``probe_depth``) via its own ``fuse()``
+closure, which ``ProbeSession.replay_legs`` (single depth per call) does not
+support — so the raw ``executor.search_bm25``/``search_dense`` calls and the
+``fuse()`` closure stay local rather than routed through ``replay_legs``.
+
 Usage:
     .venv/Scripts/python.exe scripts/benchmark/probe_stable_misses.py \
         --query-ids Q119 Q121 Q122 Q133 H063 \
@@ -36,25 +67,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 from typing import Any
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from evaluation.metrics import normalize_chunk_id  # noqa: E402
-
-
-def load_queries(dataset_path: Path, query_ids: list[str]) -> list[dict]:
-    """Return golden-dataset entries for ``query_ids`` (raises KeyError if absent)."""
-    data = json.loads(dataset_path.read_text(encoding="utf-8"))
-    by_id = {item["id"]: item for item in data["queries"]}
-    missing = [qid for qid in query_ids if qid not in by_id]
-    if missing:
-        raise KeyError(f"{missing} not found in {dataset_path}")
-    return [by_id[qid] for qid in query_ids]
+from evaluation import probe_harness
+from evaluation.metrics import normalize_chunk_id
+from search.search_executor import fused_pool_cut, leg_search_depth
 
 
 def rank_of(gold: str, ids: list[str]) -> int | None:
@@ -96,20 +113,20 @@ def classify(
     return f"rrf-arithmetic (legs within depth, fused rank {fused_s} > {hop1_cut})"
 
 
-def probe_query(searcher, item: dict, k: int, probe_depth: int) -> dict[str, Any]:
+def probe_query(
+    session: probe_harness.ProbeSession,
+    item: probe_harness.GoldenQuery,
+    k: int,
+    probe_depth: int,
+) -> dict[str, Any]:
     """Measure per-gold funnel positions for one golden query."""
-    from search.config import get_search_config
-
-    config = get_search_config()
-    query = item["query"]
-    grades = {
-        normalize_chunk_id(gid): grade
-        for gid, grade in (item.get("relevance_grades") or {}).items()
-    }
+    config = session.config
+    searcher = session.searcher
+    query = item.query
+    grades = item.grades
 
     executor = searcher.search_executor
     min_score = config.search_mode.min_bm25_score
-    reranker_budget = config.reranker.top_k_candidates
     # With multi-hop enabled, hop 1 runs at a widened k (multi_hop_searcher.py:
     # initial_k = int(k * initial_k_multiplier)), which widens search_k and the
     # hop-1 [:initial_k] seed cut with it.
@@ -118,12 +135,12 @@ def probe_query(searcher, item: dict, k: int, probe_depth: int) -> dict[str, Any
         if config.multi_hop.enabled
         else k
     )
-    search_k = max(reranker_budget, hop1_k * 5)
-    hop1_cut = max(hop1_k, reranker_budget)
+    search_k = leg_search_depth(config, hop1_k)
+    hop1_cut = fused_pool_cut(config, hop1_k)
 
     # Raw legs at probe depth (production depth is a prefix of these).
-    bm25_deep = executor.search_bm25(query, probe_depth, min_score)
-    dense_deep = executor.search_dense(query, probe_depth, None)
+    bm25_deep = executor.search_bm25(query, probe_depth, min_score, None)
+    dense_deep = executor.search_dense(query, probe_depth, None, None)
     bm25_ids = [normalize_chunk_id(t[0]) for t in bm25_deep]
     dense_ids = [normalize_chunk_id(t[0]) for t in dense_deep]
 
@@ -161,10 +178,7 @@ def probe_query(searcher, item: dict, k: int, probe_depth: int) -> dict[str, Any
         engine.last_candidate_ids = None
         engine.last_window_ids = None
     results = searcher.search(query, k=k)
-    final_ids = [
-        normalize_chunk_id(getattr(r, "chunk_id", None) or r["chunk_id"])
-        for r in results
-    ]
+    final_ids = [normalize_chunk_id(r.chunk_id) for r in results]
     pool_ids = [
         normalize_chunk_id(cid)
         for cid in (getattr(engine, "last_candidate_ids", None) or [])
@@ -202,7 +216,7 @@ def probe_query(searcher, item: dict, k: int, probe_depth: int) -> dict[str, Any
         )
 
     return {
-        "id": item["id"],
+        "id": item.id,
         "query": query,
         "search_k": search_k,
         "hop1_cut": hop1_cut,
@@ -240,37 +254,36 @@ def print_report(report: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--query-ids", nargs="+", required=True)
-    parser.add_argument("--dataset", default="evaluation/golden_dataset_expanded.json")
-    parser.add_argument("--project-path", default=".")
-    parser.add_argument("--k", type=int, default=10)
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        parents=[probe_harness.probe_parser(__doc__.splitlines()[0])],
+    )
     parser.add_argument("--probe-depth", type=int, default=200)
-    parser.add_argument("--json", dest="json_out", default=None)
     args = parser.parse_args()
+    if not args.query_ids:
+        parser.error("--query-ids is required (this probe diagnoses named queries)")
 
-    dataset_path = Path(args.dataset)
-    if not dataset_path.is_absolute():
-        dataset_path = REPO_ROOT / dataset_path
+    dataset_path = probe_harness.resolve_dataset_path(args.dataset)
     try:
-        items = load_queries(dataset_path, args.query_ids)
+        items = probe_harness.load_golden_queries(
+            dataset_path,
+            args.query_ids,
+            exclude_categories=(),
+            require_grades=False,
+        )
     except (OSError, KeyError, json.JSONDecodeError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
 
-    from mcp_server.search_factory import get_searcher
+    with probe_harness.open_probe(args) as session:
+        reports = []
+        for item in items:
+            report = probe_query(session, item, k=args.k, probe_depth=args.probe_depth)
+            print_report(report)
+            reports.append(report)
 
-    searcher = get_searcher(project_path=args.project_path)
-
-    reports = []
-    for item in items:
-        report = probe_query(searcher, item, k=args.k, probe_depth=args.probe_depth)
-        print_report(report)
-        reports.append(report)
-
-    if args.json_out:
-        Path(args.json_out).write_text(json.dumps(reports, indent=2), encoding="utf-8")
-        print(f"\nJSON written to {args.json_out}")
+        if args.json_out:
+            probe_harness.write_probe_json(args.json_out, reports)
     return 0
 
 

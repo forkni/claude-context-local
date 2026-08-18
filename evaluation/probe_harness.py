@@ -219,7 +219,7 @@ def resolve_dataset_path(raw: str | Path) -> Path:
     return path if path.is_absolute() else REPO_ROOT / path
 
 
-def write_probe_json(path: str | Path, payload: dict[str, Any]) -> None:
+def write_probe_json(path: str | Path, payload: dict[str, Any] | list[Any]) -> None:
     """Write *payload* as indented JSON and announce the path.
 
     Replaces the 6x-repeated ``Path(args.json_out).write_text(json.dumps(...),

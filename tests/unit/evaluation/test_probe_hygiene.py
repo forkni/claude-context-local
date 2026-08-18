@@ -40,8 +40,8 @@ BENCHMARK_DIR = REPO_ROOT / "scripts" / "benchmark"
 SYS_PATH_INSERT_RE = re.compile(r"^\s*sys\.path\.insert\(", re.MULTILINE)
 LOAD_QUERIES_DEF_RE = re.compile(r"^def load_(queries|golden_queries)\(", re.MULTILINE)
 
-BASELINE_SYS_PATH_BOOTSTRAP_COUNT = 20
-BASELINE_LOCAL_LOAD_QUERIES_COUNT = 2
+BASELINE_SYS_PATH_BOOTSTRAP_COUNT = 19
+BASELINE_LOCAL_LOAD_QUERIES_COUNT = 1
 
 # Populated one filename at a time as Step 5 lands each migration.
 # probe_duplicate_crowding.py and probe_rerank_window.py never join this set
@@ -51,6 +51,7 @@ MIGRATED_PROBES: frozenset[str] = frozenset(
         "probe_tm2c2_fusion.py",
         "probe_final_pool_reserve.py",
         "probe_leg_depth_fusion.py",
+        "probe_stable_misses.py",
     }
 )
 
