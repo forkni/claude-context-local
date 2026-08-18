@@ -18,12 +18,18 @@ from typing import Any
 # machine-readable) rather than ordinary absence-of-data. The three drop sites below skip empty
 # fields to save tokens, but must never drop these — an omitted "results" key is indistinguishable
 # from a key that was never populated, forcing callers to treat a real "no results" answer the
-# same as a missing field.
+# same as a missing field. "similar_chunks" (find_similar_code's own results, both direct and via
+# search_code's similarity-intent redirect — search_orchestrator.py's "find_similar" PlanRedirect
+# returns handle_find_similar_code's payload unmodified) is the same contract under a different
+# key name; a corpus probe (evaluation/CONTEXT_COST_PROBE_20260818.md) caught it missing from this
+# set after the initial results/direct_callers/direct_callees fix, live on the wire.
 #
 # NOTE: this assumes each of these keys, when present, holds a list. The branch logic in
 # _to_compact_format/_to_toon_format below falls through to a plain assignment for empty lists;
 # an allowlisted key that held an empty *dict* would need the dict branches extended too.
-NEVER_DROP_EMPTY_KEYS = frozenset({"results", "direct_callers", "direct_callees"})
+NEVER_DROP_EMPTY_KEYS = frozenset(
+    {"results", "direct_callers", "direct_callees", "similar_chunks"}
+)
 
 
 def format_response(

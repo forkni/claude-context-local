@@ -832,16 +832,19 @@ class TestSubgraphFormatting:
 class TestZeroResultContract:
     """Tests for the explicit zero-result contract (L5).
 
-    Empty "results"/"direct_callers"/"direct_callees" must survive formatting so a caller can
-    tell "search/traversal found nothing" apart from "field omitted" — the generic empty-value
-    guard (skip [], {}, None, "") would otherwise drop them, and under ultra (the live default)
-    there is no separate count field to fall back on.
+    Empty "results"/"direct_callers"/"direct_callees"/"similar_chunks" must survive formatting
+    so a caller can tell "search/traversal found nothing" apart from "field omitted" — the
+    generic empty-value guard (skip [], {}, None, "") would otherwise drop them, and under
+    ultra (the live default) there is no separate count field to fall back on. "similar_chunks"
+    (find_similar_code's payload key, including via search_code's "find_similar" intent
+    redirect) was added after a corpus probe caught it missing from the original three-key
+    allowlist live on the wire — same defect, different key name.
     """
 
     def test_never_drop_empty_keys_are_the_expected_set(self):
         """The allowlist should name exactly the negative-evidence carriers."""
         assert (
-            frozenset({"results", "direct_callers", "direct_callees"})
+            frozenset({"results", "direct_callers", "direct_callees", "similar_chunks"})
             == NEVER_DROP_EMPTY_KEYS
         )
 
@@ -866,6 +869,15 @@ class TestZeroResultContract:
             result = format_response(data, fmt)
             assert result["direct_callers"] == []
             assert result["direct_callees"] == []
+
+    def test_empty_similar_chunks_survives_all_formats(self):
+        """find_similar_code's empty similar_chunks list must survive formatting too."""
+        data = {"reference_chunk": "a.py:1:func:f", "similar_chunks": []}
+
+        for fmt in ("verbose", "compact", "ultra"):
+            result = format_response(data, fmt)
+            assert "similar_chunks" in result
+            assert result["similar_chunks"] == []
 
     def test_non_allowlisted_empty_keys_still_dropped(self):
         """Keys outside NEVER_DROP_EMPTY_KEYS keep the original drop-when-empty behavior."""

@@ -218,34 +218,58 @@ def count_tokens_prod_heuristic(results: list[dict[str, Any]]) -> int:
 # ---------------------------------------------------------------------------
 
 
-def _result_count(formatted: dict[str, Any]) -> int:
-    """Number of results in a formatted payload, across all three
-    ``output_format`` shapes. ``ultra`` renames "results" to a dynamic
-    ``results[N]{...}`` header key; an empty results list vanishes entirely
-    under compact/ultra (``_to_compact_format``/``_to_toon_format`` both skip
-    ``value in ([], {}, None, "")``) -- see ``_results_key_present`` for
-    detecting that specific case (P11's negative-evidence defect).
+def _negative_evidence_key(redirect_kind: str | None) -> str:
+    """Name of the key that carries this response's results list, given its
+    redirect (see module docstring's "A redirect ... is therefore an
+    expected outcome"). ``find_similar`` redirects (``handle_find_similar_code``,
+    returned unmodified by ``search_orchestrator.py``'s ``PlanRedirect``
+    path) use ``similar_chunks``, never ``results`` -- checking only
+    "results" for these would misreport every one of them as P11 regardless
+    of whether the formatter is actually dropping anything. No corpus
+    ``find_path`` redirects exist in the current golden dataset (verified:
+    zero ``redirect_kind == "find_path"`` entries), so that case is left
+    unhandled rather than guessed at.
     """
-    if "results" in formatted:
-        value = formatted["results"]
+    return "similar_chunks" if redirect_kind == "find_similar" else "results"
+
+
+def _result_count(formatted: dict[str, Any], redirect_kind: str | None = None) -> int:
+    """Number of results in a formatted payload, across all three
+    ``output_format`` shapes. ``ultra`` renames the carrier key (see
+    ``_negative_evidence_key``) to a dynamic ``<key>[N]{...}`` header key; an
+    empty results list vanishes entirely under compact/ultra
+    (``_to_compact_format``/``_to_toon_format`` both skip
+    ``value in ([], {}, None, "")`` unless the key is in
+    ``output_formatter.NEVER_DROP_EMPTY_KEYS``) -- see
+    ``_results_key_present`` for detecting that specific case (P11's
+    negative-evidence defect).
+    """
+    key = _negative_evidence_key(redirect_kind)
+    if key in formatted:
+        value = formatted[key]
         return len(value) if isinstance(value, list) else 0
-    for key in formatted:
-        match = _TOON_HEADER_RE.match(key)
-        if match and match.group(1) == "results":
+    for k in formatted:
+        match = _TOON_HEADER_RE.match(k)
+        if match and match.group(1) == key:
             return int(match.group(2))
     return 0
 
 
-def _results_key_present(formatted: dict[str, Any]) -> bool:
-    """Whether a "results" key (in any of the three formats' encodings) is
-    present at all -- False on an empty results list under compact/ultra
+def _results_key_present(
+    formatted: dict[str, Any], redirect_kind: str | None = None
+) -> bool:
+    """Whether this response's negative-evidence carrier key (``results``,
+    or ``similar_chunks`` under a ``find_similar`` redirect -- see
+    ``_negative_evidence_key``) is present at all, in any of the three
+    formats' encodings -- False on an empty list under compact/ultra
     demonstrates P11 (negative evidence silently dropped) directly.
     """
-    if "results" in formatted:
+    key = _negative_evidence_key(redirect_kind)
+    if key in formatted:
         return True
     return any(
-        _TOON_HEADER_RE.match(key) and _TOON_HEADER_RE.match(key).group(1) == "results"
-        for key in formatted
+        _TOON_HEADER_RE.match(k) and _TOON_HEADER_RE.match(k).group(1) == key
+        for k in formatted
     )
 
 
@@ -491,8 +515,8 @@ async def probe_query(
             blob = json.dumps(formatted, separators=(",", ":"), default=str)
         format_stats[fmt] = {
             "payload_bytes": len(blob.encode("utf-8")),
-            "result_count": _result_count(formatted),
-            "results_key_present": _results_key_present(formatted),
+            "result_count": _result_count(formatted, redirect_kind),
+            "results_key_present": _results_key_present(formatted, redirect_kind),
         }
     verbose_bytes = format_stats["verbose"]["payload_bytes"] or 1
     format_savings = {
