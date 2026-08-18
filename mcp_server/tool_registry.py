@@ -155,8 +155,7 @@ RETURNS:
                 },
                 "ego_graph_enabled": {
                     "type": "boolean",
-                    "default": False,
-                    "description": "Force-enable RepoGraph-style k-hop ego-graph expansion for this call (default: False). This flag is a one-way switch, not a gate: leaving it at False does NOT guarantee expansion is off — the running server may already have ego-graph expansion on by default (check get_search_config_status.ego_graph_enabled), in which case results are already expanded and this flag has no further effect. When enabled here, expands search results by retrieving graph neighbors (callers, callees, related code) for richer context. Based on ICLR 2025 RepoGraph paper showing 32.8% improvement.",
+                    "description": "Per-call override for RepoGraph-style k-hop ego-graph expansion. This is a real two-way gate: pass True to force expansion on for this call, or False to force it off, regardless of the server's configured default. Omit the argument entirely to defer to the running server's default instead (check get_search_config_status.ego_graph_enabled) — that is the only way to get the server default; an explicit False here always disables expansion for this call. When enabled, expands search results by retrieving graph neighbors (callers, callees, related code) for richer context. Based on ICLR 2025 RepoGraph paper showing 32.8% improvement.",
                 },
                 "ego_graph_k_hops": {
                     "type": "integer",

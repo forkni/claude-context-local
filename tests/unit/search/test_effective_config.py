@@ -12,7 +12,7 @@ from search.effective_config import build_effective_config
 from tests.fixtures.mcp_mocks import make_intent_decision_mock
 
 
-def _make_plan(*, intent_decision, ego_graph_enabled=False, include_parent=False):
+def _make_plan(*, intent_decision, ego_graph_enabled=None, include_parent=False):
     from mcp_server.tools.search_orchestrator import SearchPlan
 
     return SearchPlan(
@@ -42,6 +42,11 @@ def test_intent_only_plan_returns_singleton_by_identity():
     value is a key of the now-deleted INTENT_EDGE_WEIGHT_PROFILES), forcing a
     deepcopy on every intent-on request. Post-deletion, nothing in the
     is_hybrid region applies, so base_config must come back unchanged.
+
+    ego_graph_enabled is None here (omitted), which is the tri-state gate's
+    no-op case -- this is also the load-bearing regression test for that gate:
+    if omitted ever regressed to coercing into False, this would start
+    triggering a copy instead of returning base_config by identity.
     """
     base_config = SearchConfig()
     plan = _make_plan(intent_decision=make_intent_decision_mock("local"))
@@ -72,3 +77,26 @@ def test_ego_graph_enabled_still_triggers_copy():
 
     assert result is not base_config
     assert result.ego_graph.enabled is True
+
+
+def test_ego_graph_explicit_false_disables_on_a_copy():
+    """The two-way gate: an explicit False must override an on-by-default base
+    config, on a copy, without touching k_hops/max_neighbors_per_hop.
+    """
+    base_config = SearchConfig()
+    base_config.ego_graph.enabled = True
+    plan = _make_plan(
+        intent_decision=make_intent_decision_mock("local"),
+        ego_graph_enabled=False,
+    )
+
+    result = build_effective_config(plan, base_config, is_hybrid=True)
+
+    assert result is not base_config
+    assert result.ego_graph.enabled is False
+    assert base_config.ego_graph.enabled is True  # singleton untouched
+    assert result.ego_graph.k_hops == base_config.ego_graph.k_hops
+    assert (
+        result.ego_graph.max_neighbors_per_hop
+        == base_config.ego_graph.max_neighbors_per_hop
+    )

@@ -90,6 +90,34 @@ class TestBuildToolList:
             assert tool.input_schema == TOOL_REGISTRY[tool.name]["input_schema"]
 
 
+class TestEgoGraphEnabledSchema:
+    """ego_graph_enabled must describe a genuine two-way gate: the stale text
+    ("one-way switch, not a gate") predates build_effective_config's tri-state
+    fix and would actively mislead a caller if it survived the fix.
+    """
+
+    def _schema(self):
+        return TOOL_REGISTRY["search_code"]["input_schema"]["properties"][
+            "ego_graph_enabled"
+        ]
+
+    def test_description_no_longer_claims_one_way_switch(self):
+        description = self._schema()["description"]
+        assert "one-way switch" not in description
+        assert "not a gate" not in description
+
+    def test_description_documents_omission_as_the_defer_to_server_default_path(self):
+        description = self._schema()["description"]
+        assert "omit" in description.lower()
+        assert "get_search_config_status" in description
+
+    def test_no_forced_schema_default(self):
+        """A JSON-schema 'default' here would misrepresent the field as binary;
+        omission must be distinguishable from an explicit False.
+        """
+        assert "default" not in self._schema()
+
+
 def _field_metadata(section_cls, field_name):
     for f in dataclasses.fields(section_cls):
         if f.name == field_name:

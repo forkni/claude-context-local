@@ -160,12 +160,25 @@ class TestSearchPlannerFieldExtraction:
             plan = SearchPlanner().plan({"query": "test", "include_top_callers": True})
         assert plan.include_top_callers is True
 
-    def test_ego_graph_defaults_false(self):
+    def test_ego_graph_omitted_is_none(self):
+        """Omitting ego_graph_enabled must produce None, not False -- collapsing the
+        two loses the two-way gate build_effective_config depends on this field for.
+        """
         with _patch_planner_deps():
             plan = SearchPlanner().plan({"query": "test"})
-        assert plan.ego_graph_enabled is False
+        assert plan.ego_graph_enabled is None
         assert plan.ego_graph_k_hops == 2
         assert plan.ego_graph_max_neighbors == 10
+
+    def test_ego_graph_explicit_false_stays_false(self):
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test", "ego_graph_enabled": False})
+        assert plan.ego_graph_enabled is False
+
+    def test_ego_graph_explicit_true_stays_true(self):
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test", "ego_graph_enabled": True})
+        assert plan.ego_graph_enabled is True
 
 
 # ---------------------------------------------------------------------------

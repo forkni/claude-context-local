@@ -51,7 +51,7 @@ class SearchPlan:
     k: int
     intent_decision: IntentDecision | None
     search_mode: str
-    ego_graph_enabled: bool
+    ego_graph_enabled: bool | None
     ego_graph_k_hops: int
     ego_graph_max_neighbors: int
     include_parent: bool
@@ -129,8 +129,16 @@ class SearchPlanner:
         k = int(arguments.get("k", search_config.search_mode.default_k))
         k = min(k, search_config.search_mode.max_k)
 
-        # Ego-graph defaults (may be overridden by CONTEXTUAL intent below)
-        ego_graph_enabled = bool(arguments.get("ego_graph_enabled", False))
+        # Ego-graph defaults (may be overridden by CONTEXTUAL intent below).
+        # Tri-state: None means "omitted" and defers to config default; True/False are
+        # explicit per-request overrides. Do not collapse omitted into False here — that
+        # would make an explicit ego_graph_enabled=False indistinguishable from the
+        # default, which is exactly the bug build_effective_config's gate depends on
+        # this field to avoid.
+        _ego_graph_enabled_arg = arguments.get("ego_graph_enabled")
+        ego_graph_enabled = (
+            None if _ego_graph_enabled_arg is None else bool(_ego_graph_enabled_arg)
+        )
         ego_graph_k_hops = int(arguments.get("ego_graph_k_hops", 2))
         ego_graph_max_neighbors = int(
             arguments.get("ego_graph_max_neighbors_per_hop", 10)

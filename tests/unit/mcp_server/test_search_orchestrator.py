@@ -27,7 +27,7 @@ def _make_plan(
     k=4,
     intent_decision=None,
     search_mode="hybrid",
-    ego_graph_enabled=False,
+    ego_graph_enabled=None,
     ego_graph_k_hops=2,
     ego_graph_max_neighbors=10,
     include_parent=False,
