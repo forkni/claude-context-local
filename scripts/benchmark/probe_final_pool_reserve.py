@@ -41,6 +41,12 @@ the ceiling, not the win: the listwise model re-scores the whole window, so
 only an A/B measures conversion (the mhexp-0.25 lesson — pool_hit gains that
 never converted).
 
+This probe deliberately sweeps a fixed ``--probe-depth`` (default 200) rather
+than replaying the production hop-1 funnel width, so it does not go through
+``ProbeSession.replay_legs`` (see ``evaluation/probe_harness.py``) — only the
+searcher/config lifecycle and ``ProbeSession.instrument`` (this file's own
+``instrument_rerank`` before the harness generalized it) are shared.
+
 Usage:
     .venv/Scripts/python.exe scripts/benchmark/probe_final_pool_reserve.py \
         [--dataset evaluation/golden_dataset_expanded.json] \
@@ -53,15 +59,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 from typing import Any
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from evaluation.metrics import normalize_chunk_id  # noqa: E402
+from evaluation import probe_harness
+from evaluation.metrics import normalize_chunk_id
 
 
 # Stable misses + boundary flappers from evaluation/STABLE_MISS_DIAGNOSIS_20260802.md.
@@ -76,85 +77,12 @@ VARIANT_SOURCES = (
 )
 
 
-def load_queries(dataset_path: Path, query_ids: list[str] | None) -> list[dict]:
-    """Golden entries with grades; category D excluded (matches the benchmark)."""
-    data = json.loads(dataset_path.read_text(encoding="utf-8"))
-    queries = [
-        q
-        for q in data["queries"]
-        if q.get("category") != "D" and q.get("relevance_grades")
-    ]
-    if query_ids:
-        by_id = {q["id"]: q for q in queries}
-        missing = [qid for qid in query_ids if qid not in by_id]
-        if missing:
-            raise KeyError(f"{missing} not found (or category-D) in {dataset_path}")
-        return [by_id[qid] for qid in query_ids]
-    return queries
-
-
 def rank_of(gold: str, ids: list[str]) -> int | None:
     """1-based rank of ``gold`` in ``ids``, or None when absent."""
     try:
         return ids.index(gold) + 1
     except ValueError:
         return None
-
-
-def instrument_rerank(engine) -> list[dict[str, Any]]:
-    """Record every ``_run_rerank`` pass: pool, window, reranked output order.
-
-    ``rerank_by_query`` truncates its return to ``[:k]``, hiding the reranked
-    window order this probe needs (merged ranks 11+). Wrapping ``_run_rerank``
-    exposes the full reordered window; a paired ``rerank_by_query`` wrapper
-    tags each pass with its ``hop1_reserved_slots`` so the multi-hop merged
-    call (slots > 0) is distinguishable from the final post-ego call (0) and
-    from hop-1 ``apply_neural_reranking`` passes (tag None).
-    """
-    calls: list[dict[str, Any]] = []
-    state: dict[str, int | None] = {"hop1_slots": None}
-    orig_rbq = engine.rerank_by_query
-    orig_run = engine._run_rerank
-
-    def rbq_wrap(*args: Any, **kwargs: Any) -> Any:
-        state["hop1_slots"] = kwargs.get("hop1_reserved_slots", 0)
-        try:
-            return orig_rbq(*args, **kwargs)
-        finally:
-            state["hop1_slots"] = None
-
-    def run_wrap(
-        query_or_content: str,
-        candidates: list,
-        k: int,
-        log_prefix: str,
-        config: Any = None,
-    ) -> list:
-        out = orig_run(query_or_content, candidates, k, log_prefix, config=config)
-        calls.append(
-            {
-                "hop1_slots": state["hop1_slots"],
-                "k": k,
-                "pool_ids": [normalize_chunk_id(r.chunk_id) for r in candidates],
-                # Provenance-preserving view of the pool: graph-hop expansion
-                # candidates carry source == "graph_hop" (tested contract, see
-                # test_multi_hop_searcher.py) and survive un-fused into the
-                # merged pool — the v4 variant selects on this.
-                "pool_sources": [
-                    (normalize_chunk_id(r.chunk_id), getattr(r, "source", None))
-                    for r in candidates
-                ],
-                "window_ids": [
-                    normalize_chunk_id(cid) for cid in (engine.last_window_ids or [])
-                ],
-                "output_ids": [normalize_chunk_id(r.chunk_id) for r in out],
-            }
-        )
-        return out
-
-    engine.rerank_by_query = rbq_wrap
-    engine._run_rerank = run_wrap
-    return calls
 
 
 def simulate_reserve(
@@ -173,19 +101,20 @@ def simulate_reserve(
     return list(kept) + injected, injected, evicted
 
 
-def probe_query(searcher, item: dict, k: int, probe_depth: int) -> dict[str, Any]:
+def probe_query(
+    session: probe_harness.ProbeSession,
+    item: probe_harness.GoldenQuery,
+    k: int,
+    probe_depth: int,
+    calls: list[dict[str, Any]],
+) -> dict[str, Any]:
     """Capture funnel positions + run reserve simulations for one query."""
-    from search.config import get_search_config
-
-    config = get_search_config()
-    query = item["query"]
-    grades = {
-        normalize_chunk_id(gid): grade
-        for gid, grade in item["relevance_grades"].items()
-    }
+    config = session.config
+    query = item.query
+    grades = item.grades
     cap = config.reranker.top_k_candidates
 
-    executor = searcher.search_executor
+    executor = session.searcher.search_executor
     min_score = config.search_mode.min_bm25_score
     bm25_deep = executor.search_bm25(query, probe_depth, min_score)
     dense_deep = executor.search_dense(query, probe_depth, None)
@@ -201,14 +130,8 @@ def probe_query(searcher, item: dict, k: int, probe_depth: int) -> dict[str, Any
     )
     fused_ids = [normalize_chunk_id(r.chunk_id) for r in fused_deep]
 
-    engine = searcher.reranking_engine
-    calls = getattr(engine, "_probe_rerank_calls", None)
-    if calls is None:
-        calls = instrument_rerank(engine)
-        engine._probe_rerank_calls = calls
     calls.clear()
-
-    results = searcher.search(query, k=k)
+    results = session.searcher.search(query, k=k)
     final_ids = [
         normalize_chunk_id(getattr(r, "chunk_id", None) or r["chunk_id"])
         for r in results
@@ -222,8 +145,8 @@ def probe_query(searcher, item: dict, k: int, probe_depth: int) -> dict[str, Any
     if final is None:
         # Degenerate path (no rerank_by_query fired) — nothing to simulate.
         return {
-            "id": item["id"],
-            "category": item.get("category", "?"),
+            "id": item.id,
+            "category": item.category,
             "query": query,
             "degenerate": True,
             "golds": [
@@ -300,8 +223,8 @@ def probe_query(searcher, item: dict, k: int, probe_depth: int) -> dict[str, Any
         }
 
     return {
-        "id": item["id"],
-        "category": item.get("category", "?"),
+        "id": item.id,
+        "category": item.category,
         "query": query,
         "currently_hit": currently_hit,
         "best_final_rank": best_final,
@@ -406,42 +329,36 @@ def print_summary(reports: list[dict[str, Any]], summary: dict[str, Any]) -> Non
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--dataset", default="evaluation/golden_dataset_expanded.json")
-    parser.add_argument("--project-path", default=".")
-    parser.add_argument("--k", type=int, default=10)
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        parents=[probe_harness.probe_parser(__doc__.splitlines()[0])],
+    )
     parser.add_argument("--probe-depth", type=int, default=200)
-    parser.add_argument("--query-ids", nargs="*", default=None)
-    parser.add_argument("--json", dest="json_out", default=None)
     args = parser.parse_args()
 
-    dataset_path = Path(args.dataset)
-    if not dataset_path.is_absolute():
-        dataset_path = REPO_ROOT / dataset_path
+    dataset_path = probe_harness.resolve_dataset_path(args.dataset)
     try:
-        items = load_queries(dataset_path, args.query_ids)
+        items = probe_harness.load_golden_queries(dataset_path, args.query_ids)
     except (OSError, KeyError, json.JSONDecodeError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2
 
-    from mcp_server.search_factory import get_searcher
+    with probe_harness.open_probe(args) as session, session.instrument() as calls:
+        reports = []
+        for i, item in enumerate(items, 1):
+            print(f"[{i:3d}/{len(items)}] {item.id}", flush=True)
+            reports.append(
+                probe_query(
+                    session, item, k=args.k, probe_depth=args.probe_depth, calls=calls
+                )
+            )
 
-    searcher = get_searcher(project_path=args.project_path)
+        summary = summarize(reports)
+        print_summary(reports, summary)
 
-    reports = []
-    for i, item in enumerate(items, 1):
-        print(f"[{i:3d}/{len(items)}] {item['id']}", flush=True)
-        reports.append(
-            probe_query(searcher, item, k=args.k, probe_depth=args.probe_depth)
-        )
-
-    summary = summarize(reports)
-    print_summary(reports, summary)
-
-    if args.json_out:
-        payload = {"summary": summary, "reports": reports}
-        Path(args.json_out).write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        print(f"\nJSON written to {args.json_out}")
+        if args.json_out:
+            payload = {"summary": summary, "reports": reports}
+            probe_harness.write_probe_json(args.json_out, payload)
     return 0
 
 
