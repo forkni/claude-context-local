@@ -21,8 +21,9 @@ from typing import Any
 # same as a missing field. "similar_chunks" (find_similar_code's own results, both direct and via
 # search_code's similarity-intent redirect — search_orchestrator.py's "find_similar" PlanRedirect
 # returns handle_find_similar_code's payload unmodified) is the same contract under a different
-# key name; a corpus probe (evaluation/CONTEXT_COST_PROBE_20260818.md) caught it missing from this
-# set after the initial results/direct_callers/direct_callees fix, live on the wire.
+# key name, and is reachable-empty in production (search_handlers.py's handle_find_similar_code
+# returns "similar_chunks" unconditionally) — it was added to this set alongside
+# results/direct_callers/direct_callees for that reason.
 #
 # NOTE: this assumes each of these keys, when present, holds a list. The branch logic in
 # _to_compact_format/_to_toon_format below falls through to a plain assignment for empty lists;

@@ -47,6 +47,8 @@ for avoiding re-litigating settled questions.
 | [0039](0039-merged-pool-provenance-bands.md) | Replace the merged-pool score sort's incidental graph band with an explicit one | accepted | 2026-08-15 |
 | [0040](0040-probe-harness-seam.md) | Shared interface for offline retrieval probes: `evaluation/probe_harness.py` | accepted | 2026-08-17 |
 | [0041](0041-find-connections-indirect-caller-fanout.md) | Dedup/sort `find_connections`' `indirect_callers`; decline the fan-out cap | accepted | 2026-08-18 |
+| [0042](0042-publish-invariants-not-values.md) | Derive the MCP tool schema's bounds/enums from `spec()`; never derive `default` | accepted | 2026-08-19 |
+| [0043](0043-point-stale-prose-counts-at-derived-source.md) | Point stale ADR/README prose counts at their derived source, not a re-pinned number | accepted | 2026-08-19 |
 
 ## Adding a new ADR
 

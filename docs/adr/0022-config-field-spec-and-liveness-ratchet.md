@@ -171,7 +171,9 @@ forbidden set, meaning a future probe rule touching them would sail past the gua
 silently.
 
 Both gaps are closed the same way: `bm25_k1`, `bm25_b`, and `bm25_use_stopwords` were added
-to `FORBIDDEN_AUTO_TUNE_KEYS` (now 15 keys), and a new `BENCHMARK_LOCK_CITATIONS: dict[str,
+to `FORBIDDEN_AUTO_TUNE_KEYS` (15 keys as of this round; 19 keys live as of ADR-0042's audit —
+treat `search/index_probe.py`'s `FORBIDDEN_AUTO_TUNE_KEYS` frozenset, not this number, as the
+current source), and a new `BENCHMARK_LOCK_CITATIONS: dict[str,
 str]` in `index_probe.py`, keyed identically to the frozenset minus `embedding.model_name`
 (which is locked for index-routing safety, not a benchmark result, and stays displayed
 separately under the menu's "Observation only" section), replaces the eight hand-typed
