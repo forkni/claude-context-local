@@ -1,6 +1,6 @@
 """Unit tests for low-level MCP tool handlers.
 
-Tests all 14 tool handlers with mocked dependencies.
+Tests all 18 tool handlers with mocked dependencies.
 """
 
 import json

@@ -14,6 +14,12 @@ MCP_EXPOSE_ADVANCED_TOOLS=1 to list all 18. This only affects what list_tools
 advertises to the LLM — TOOL_DISPATCH in tool_handlers.py still dispatches every
 tool by name regardless of this flag, so advanced tools remain callable by any
 client that already knows their name/schema (tests, scripts, power users).
+
+Config-backed properties (bounds/enum sourced from search/config.py's spec()
+metadata) spread their fragment from mcp_server.config_schema.CONFIG_BACKED;
+see that module's docstring for why a field's default is never published here.
+Properties with no config field backing them (see config_schema.HAND_TYPED for
+the rationale) stay hand-typed in place.
 """
 
 import os
@@ -21,6 +27,11 @@ from typing import Any
 
 from mcp.types import Tool
 
+from mcp_server.config_schema import (
+    CONFIG_BACKED,
+    OUTPUT_FORMAT_PROPERTY,
+    SEARCH_MODE_ENUM,
+)
 from search.config import SearchMode
 
 
@@ -87,14 +98,12 @@ RETURNS:
                     "description": 'Direct lookup by chunk_id (from previous search results). Format: "file.py:10-20:function:name". Use this for unambiguous follow-up queries. Provide either query OR chunk_id, not both.',
                 },
                 "k": {
-                    "type": "integer",
+                    **CONFIG_BACKED["search_code.k"],
                     "description": "Number of results to return (default: the configured search_mode.default_k, max recommended: 20)",
-                    "minimum": 1,
-                    "maximum": 100,
                 },
                 "search_mode": {
                     "type": "string",
-                    "enum": [m.value for m in SearchMode],
+                    "enum": list(SEARCH_MODE_ENUM),
                     "default": SearchMode.AUTO.value,
                     "description": "Search mode selection",
                 },
@@ -136,35 +145,24 @@ RETURNS:
                     "description": "Include similar chunks and relationships (default: True, recommended)",
                 },
                 "auto_reindex": {
-                    "type": "boolean",
-                    "default": True,
-                    "description": "Automatically reindex if index is stale (schema default: True; "
-                    "the running server may be configured with a different effective default — "
-                    "check get_search_config_status.auto_reindex_enabled)",
+                    **CONFIG_BACKED["search_code.auto_reindex"],
+                    "description": "Automatically reindex if index is stale. Omit to use the server's configured value (get_search_config_status.auto_reindex_enabled).",
                 },
                 "max_age_minutes": {
-                    "type": "number",
+                    **CONFIG_BACKED["search_code.max_age_minutes"],
                     "description": "Maximum age of index in minutes before auto-reindex triggers. Omit to use the server's configured value (get_search_config_status.max_index_age_minutes).",
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
                 "ego_graph_enabled": {
                     "type": "boolean",
                     "description": "Per-call override for RepoGraph-style k-hop ego-graph expansion. This is a real two-way gate: pass True to force expansion on for this call, or False to force it off, regardless of the server's configured default. Omit the argument entirely to defer to the running server's default instead (check get_search_config_status.ego_graph_enabled) — that is the only way to get the server default; an explicit False here always disables expansion for this call. When enabled, expands search results by retrieving graph neighbors (callers, callees, related code) for richer context. Based on ICLR 2025 RepoGraph paper showing 32.8% improvement.",
                 },
                 "ego_graph_k_hops": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 3,
+                    **CONFIG_BACKED["search_code.ego_graph_k_hops"],
                     "description": "Depth of ego-graph traversal. Controls how many relationship hops to follow. Higher values provide more context but may include less relevant code. Omit to use the server's configured value (get_search_config_status.ego_graph_k_hops).",
                 },
                 "ego_graph_max_neighbors_per_hop": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 50,
+                    **CONFIG_BACKED["search_code.ego_graph_max_neighbors_per_hop"],
                     "description": "Maximum neighbors to retrieve per hop. Limits expansion to prevent context explosion while maintaining relevance. Omit to use the server's configured value (get_search_config_status.ego_graph_max_neighbors_per_hop).",
                 },
                 "include_parent": {
@@ -183,9 +181,7 @@ RETURNS:
                     "description": "Attach a signature-only view per result as signature: str (default: False). search_code returns coordinates only (file/lines/kind/score) — no chunk content; this is a display-only counterfactual to a follow-up Read, not chunk content itself. Measured ~687 tokens/query overhead (~36% over the default compact format's payload size) — a hint, not a guarantee: module/module_preamble chunks are skipped (no callable contract to summarize); on non-Python chunks (no def/class anchor recognized) it degrades to the first 3 raw lines, capped at 600 characters. Never touches scoring, ordering, or the reranker.",
                 },
                 "max_context_tokens": {
-                    "type": "integer",
-                    "default": 0,
-                    "minimum": 0,
+                    **CONFIG_BACKED["search_code.max_context_tokens"],
                     "description": "Maximum total tokens in results (0 = unlimited). Prevents LLM context overflow by truncating results when budget exceeded.",
                 },
             },
@@ -252,11 +248,7 @@ RETURNS:
                     "default": False,
                     "description": 'Escape hatch back to whitelist-only include_dirs. By default, an include_dirs pattern that reaches into a dependency tree (venv, site-packages, node_modules, ...) is ADDITIVE — it re-admits that path on top of the normal root-down scope, so your own source is still indexed. Any other include_dirs pattern (e.g. "src/core") is NARROWING — it restricts indexing to just the paths named, same as before. Set include_exclusive=true to force EVERY include_dirs pattern to be narrowing, i.e. index ONLY the named paths and nothing else — use this when you deliberately want a dependency-only index. Omit to reuse the stored value from project creation. Changing this on an existing project forces a full (non-incremental) reindex.',
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": ["directory_path"],
         },
@@ -295,11 +287,7 @@ RETURNS:
                     "default": False,
                     "description": "Set true when you want cross-file analogues (sibling implementations in other files) — the reference chunk's own-file neighbors often dominate the top ranks. Leave false when you want neighbors within the reference chunk's own file (e.g. other methods of the same class).",
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": ["chunk_id"],
         },
@@ -326,11 +314,7 @@ RETURNS:
                     "type": "string",
                     "description": "Optional job_id returned by index_directory(wait=false). When set, returns that background job's status instead of the regular index snapshot.",
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
@@ -350,11 +334,7 @@ RETURNS:
         "input_schema": {
             "type": "object",
             "properties": {
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
@@ -380,11 +360,7 @@ RETURNS:
                     "type": "string",
                     "description": "Path to the project directory",
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": ["project_path"],
         },
@@ -409,11 +385,7 @@ RETURNS:
         "input_schema": {
             "type": "object",
             "properties": {
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
@@ -450,11 +422,7 @@ RETURNS:
                     "default": False,
                     "description": "Force delete even if this is the current project (default: False)",
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": ["project_path"],
         },
@@ -473,11 +441,7 @@ RETURNS:
         "input_schema": {
             "type": "object",
             "properties": {
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
@@ -492,11 +456,7 @@ RETURNS:
         "input_schema": {
             "type": "object",
             "properties": {
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
@@ -525,34 +485,23 @@ RETURNS:
             "properties": {
                 "search_mode": {
                     "type": "string",
-                    "enum": [m.value for m in SearchMode],
+                    "enum": list(SEARCH_MODE_ENUM),
                     "default": SearchMode.HYBRID.value,
                     "description": 'Default search mode - "hybrid", "semantic", "bm25", or "auto"',
                 },
                 "bm25_weight": {
-                    "type": "number",
-                    "default": 0.35,
-                    "minimum": 0.0,
-                    "maximum": 1.0,
+                    **CONFIG_BACKED["configure_search_mode.bm25_weight"],
                     "description": "Weight for BM25 sparse search (0.0 to 1.0)",
                 },
                 "dense_weight": {
-                    "type": "number",
-                    "default": 0.65,
-                    "minimum": 0.0,
-                    "maximum": 1.0,
+                    **CONFIG_BACKED["configure_search_mode.dense_weight"],
                     "description": "Weight for dense vector search (0.0 to 1.0)",
                 },
                 "enable_parallel": {
-                    "type": "boolean",
-                    "default": True,
+                    **CONFIG_BACKED["configure_search_mode.enable_parallel"],
                     "description": "Enable parallel BM25 + Dense search execution",
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
@@ -575,11 +524,7 @@ RETURNS:
         "input_schema": {
             "type": "object",
             "properties": {
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
@@ -598,11 +543,7 @@ RETURNS:
         "input_schema": {
             "type": "object",
             "properties": {
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
@@ -626,11 +567,7 @@ RETURNS:
                     "type": "string",
                     "description": 'Model identifier from MODEL_REGISTRY (e.g., "BAAI/bge-m3")',
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": ["model_name"],
         },
@@ -701,14 +638,10 @@ resolution no-ops unless the `[lsp]` extra is installed.""",
                     "description": 'Filter to only include specific relationship types (e.g., ["inherits", "imports", "decorates"]). If not provided, all relationship types are included. Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager. Note: uses_global and asserts_type require entity tracking (enable_entity_tracking, default True) and a reindex to populate on an existing index.',
                 },
                 "hide_ambiguous": {
-                    "type": "boolean",
+                    **CONFIG_BACKED["find_connections.hide_ambiguous"],
                     "description": 'Hide call edges tagged confidence="ambiguous" from direct_callers, direct_callees, and indirect_callers. Omit to use the server\'s configured value (get_search_config_status.hide_ambiguous_edges_default). Display-layer filter only: total_impacted, affected_files, and the caller_confidence/callee_confidence breakdowns remain pre-filter totals, so the ambiguous count stays visible even when the edges are hidden.',
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
@@ -759,11 +692,7 @@ RETURNS:
                     "items": {"type": "string"},
                     "description": 'Filter path to only use specific relationship types (e.g., ["calls", "inherits"]). Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, assigns_to, reads_from. If not provided, all relationship types are considered.',
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
@@ -789,11 +718,11 @@ RETURNS:
             "type": "object",
             "properties": {
                 "enabled": {
-                    "type": "boolean",
+                    **CONFIG_BACKED["configure_reranking.enabled"],
                     "description": "Enable/disable neural reranking",
                 },
                 "model_name": {
-                    "type": "string",
+                    **CONFIG_BACKED["configure_reranking.model_name"],
                     "description": (
                         "Reranker model name, e.g. "
                         "Alibaba-NLP/gte-reranker-modernbert-base, "
@@ -802,16 +731,10 @@ RETURNS:
                     ),
                 },
                 "top_k_candidates": {
-                    "type": "integer",
+                    **CONFIG_BACKED["configure_reranking.top_k_candidates"],
                     "description": "Number of candidates to rerank",
-                    "minimum": 5,
-                    "maximum": 100,
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
@@ -838,62 +761,46 @@ RETURNS:
             "type": "object",
             "properties": {
                 "enable_large_node_splitting": {
-                    "type": "boolean",
+                    **CONFIG_BACKED["configure_chunking.enable_large_node_splitting"],
                     "description": "Enable/disable AST block splitting for large functions",
                 },
                 "max_chunk_lines": {
-                    "type": "integer",
+                    **CONFIG_BACKED["configure_chunking.max_chunk_lines"],
                     "description": "Maximum lines per chunk before splitting at AST boundaries",
-                    "minimum": 10,
-                    "maximum": 1000,
                 },
                 "split_size_method": {
-                    "type": "string",
-                    "enum": ["lines", "characters"],
+                    **CONFIG_BACKED["configure_chunking.split_size_method"],
                     "description": "Size method for splitting - 'lines' or 'characters'",
                 },
                 "max_split_chars": {
-                    "type": "integer",
+                    **CONFIG_BACKED["configure_chunking.max_split_chars"],
                     "description": "Maximum characters per split chunk",
-                    "minimum": 1000,
-                    "maximum": 10000,
                 },
                 "enable_file_summaries": {
-                    "type": "boolean",
+                    **CONFIG_BACKED["configure_chunking.enable_file_summaries"],
                     "description": "Enable/disable file-level module summary chunks (A2 feature)",
                 },
                 "sizing_mode": {
-                    "type": "string",
-                    "enum": ["fixed", "adaptive"],
+                    **CONFIG_BACKED["configure_chunking.sizing_mode"],
                     "description": "Chunk sizing algorithm: 'fixed' uses static thresholds, 'adaptive' profiles the repo (P75 baseline) and modulates per-function complexity",
                 },
                 "adaptive_multiplier_max": {
-                    "type": "number",
+                    **CONFIG_BACKED["configure_chunking.adaptive_multiplier_max"],
                     "description": "T_max multiplier: P75_baseline × this gives the chunk size for low-complexity functions",
-                    "minimum": 1.0,
-                    "maximum": 2.0,
                 },
                 "adaptive_multiplier_min": {
-                    "type": "number",
+                    **CONFIG_BACKED["configure_chunking.adaptive_multiplier_min"],
                     "description": "T_min multiplier: P75_baseline × this gives the chunk size for high-complexity functions",
-                    "minimum": 0.1,
-                    "maximum": 1.0,
                 },
                 "max_complexity_cap": {
-                    "type": "integer",
+                    **CONFIG_BACKED["configure_chunking.max_complexity_cap"],
                     "description": "Cyclomatic complexity ceiling for Cv normalization — functions above this are treated as maximally complex",
-                    "minimum": 5,
-                    "maximum": 100,
                 },
                 "glsl_filter_td_prefix": {
-                    "type": "boolean",
+                    **CONFIG_BACKED["configure_chunking.glsl_filter_td_prefix"],
                     "description": "Filter TouchDesigner's TD-prefixed shader-include builtins (TDPanelSize, TDOutputSwizzle, ...) out of GLSL call-graph metadata. Disable for non-TouchDesigner GLSL projects where a real user-defined symbol might start with 'TD'.",
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details. Omit to use the server's configured value (get_search_config_status.output_format).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },

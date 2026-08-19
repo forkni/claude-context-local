@@ -46,53 +46,28 @@ from mcp_server.tools.status_handlers import (
 # Explicit name→handler dispatch table — mirrors TOOL_REGISTRY keys exactly.
 # server.py uses this instead of getattr(tool_handlers, f"handle_{name}").
 TOOL_DISPATCH: dict[str, Callable[[dict], Awaitable[dict | list]]] = {
-    # Status (6)
+    # Status
     "get_index_status": handle_get_index_status,
     "list_projects": handle_list_projects,
     "get_memory_status": handle_get_memory_status,
     "cleanup_resources": handle_cleanup_resources,
     "get_search_config_status": handle_get_search_config_status,
     "list_embedding_models": handle_list_embedding_models,
-    # Config (5)
+    # Config
     "switch_project": handle_switch_project,
     "configure_reranking": handle_configure_reranking,
     "configure_search_mode": handle_configure_search_mode,
     "configure_chunking": handle_configure_chunking,
     "switch_embedding_model": handle_switch_embedding_model,
-    # Search (4)
+    # Search
     "search_code": handle_search_code,
     "find_similar_code": handle_find_similar_code,
     "find_connections": handle_find_connections,
     "find_path": handle_find_path,
-    # Index (3)
+    # Index
     "index_directory": handle_index_directory,
     "clear_index": handle_clear_index,
     "delete_project": handle_delete_project,
 }
 
-__all__ = [
-    # Dispatch table
-    "TOOL_DISPATCH",
-    # Status handlers (6)
-    "handle_get_index_status",
-    "handle_list_projects",
-    "handle_get_memory_status",
-    "handle_cleanup_resources",
-    "handle_get_search_config_status",
-    "handle_list_embedding_models",
-    # Config handlers (5)
-    "handle_switch_project",
-    "handle_configure_reranking",
-    "handle_configure_search_mode",
-    "handle_configure_chunking",
-    "handle_switch_embedding_model",
-    # Search handlers (4)
-    "handle_search_code",
-    "handle_find_similar_code",
-    "handle_find_connections",
-    "handle_find_path",
-    # Index handlers (3)
-    "handle_index_directory",
-    "handle_clear_index",
-    "handle_delete_project",
-]
+__all__ = ["TOOL_DISPATCH", *(handler.__name__ for handler in TOOL_DISPATCH.values())]

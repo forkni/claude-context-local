@@ -4,6 +4,7 @@ import dataclasses
 
 import pytest
 
+from mcp_server.config_schema import CONFIG_BACKED, HAND_TYPED, OUTPUT_FORMAT_PROPERTY
 from mcp_server.tool_registry import (
     ADVANCED_TOOLS,
     TOOL_REGISTRY,
@@ -148,6 +149,15 @@ class TestConfigToolSchemaMatchesFieldSpec:
     independent representation of the same bound already declared on the
     field's ``spec(range=...)``/``spec(choices=...)`` metadata (ADR-0022).
     Nothing enforced agreement between the two until this test.
+
+    Widened (C4) from a 4-tool parity check into a whole-registry hygiene
+    ratchet: every property across all 18 tools that carries minimum/maximum/
+    enum/default must be accounted for in mcp_server/config_schema.py, either
+    as CONFIG_BACKED (derived from spec(), never carries a default) or
+    HAND_TYPED (documented rationale for why no config field backs it). The
+    original 4-tool parametrized check stays alongside it — it verifies a
+    different seam (config_handlers.py's apply-path field maps agree with the
+    schema), which the registry-wide ratchet does not cover.
     """
 
     @pytest.mark.parametrize(
@@ -180,3 +190,69 @@ class TestConfigToolSchemaMatchesFieldSpec:
                 f"{tool_name}.{arg_key} schema enum {schema_enum} diverges from "
                 f"{section_cls.__name__}.{attr}'s spec(choices={metadata.get('choices')})"
             )
+
+    @staticmethod
+    def _iter_registry_properties():
+        for tool_name, meta in TOOL_REGISTRY.items():
+            for arg_key, prop in meta["input_schema"]["properties"].items():
+                yield tool_name, arg_key, prop
+
+    @staticmethod
+    def _classification_key(tool_name, arg_key):
+        """The CONFIG_BACKED/HAND_TYPED key that classifies this property, or
+        None if neither a direct "<tool>.<arg>" nor a "*.<arg>" wildcard entry
+        exists.
+        """
+        direct = f"{tool_name}.{arg_key}"
+        if direct in CONFIG_BACKED or direct in HAND_TYPED:
+            return direct
+        wildcard = f"*.{arg_key}"
+        if wildcard in CONFIG_BACKED:
+            return wildcard
+        return None
+
+    def test_every_bound_carrying_property_is_classified(self):
+        bound_keys = ("minimum", "maximum", "enum", "default")
+        unclassified = [
+            f"{tool_name}.{arg_key}"
+            for tool_name, arg_key, prop in self._iter_registry_properties()
+            if any(k in prop for k in bound_keys)
+            and self._classification_key(tool_name, arg_key) is None
+        ]
+        assert not unclassified, (
+            "Propert(y/ies) carrying minimum/maximum/enum/default but missing "
+            "from both CONFIG_BACKED and HAND_TYPED in "
+            "mcp_server/config_schema.py:\n  " + "\n  ".join(unclassified)
+        )
+
+    def test_config_backed_properties_spread_the_derived_fragment(self):
+        """A property classified CONFIG_BACKED must actually spread that
+        fragment (type/minimum/maximum/enum) rather than hand-retyping the
+        same values — otherwise a future spec() change silently stops
+        reaching the schema. Equality also proves no stray 'default' leaked
+        in, since CONFIG_BACKED itself never carries one.
+        """
+        mismatches = []
+        for tool_name, arg_key, prop in self._iter_registry_properties():
+            key = self._classification_key(tool_name, arg_key)
+            if key is None or key not in CONFIG_BACKED:
+                continue
+            actual = {k: v for k, v in prop.items() if k != "description"}
+            if actual != CONFIG_BACKED[key]:
+                mismatches.append(
+                    f"{tool_name}.{arg_key}: schema has {actual}, "
+                    f"CONFIG_BACKED[{key!r}] is {CONFIG_BACKED[key]}"
+                )
+        assert not mismatches, "\n  ".join(mismatches)
+
+    def test_output_format_properties_match_shared_definition(self):
+        mismatches = [
+            tool_name
+            for tool_name, meta in TOOL_REGISTRY.items()
+            if meta["input_schema"]["properties"].get("output_format")
+            != OUTPUT_FORMAT_PROPERTY
+        ]
+        assert not mismatches, (
+            "Tool(s) whose output_format property diverges from "
+            "OUTPUT_FORMAT_PROPERTY: " + ", ".join(mismatches)
+        )
