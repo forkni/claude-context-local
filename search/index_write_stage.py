@@ -106,23 +106,12 @@ class IndexWriteStage:
         if all_chunks:
             try:
                 logger.info(f"Starting embedding for {len(all_chunks)} chunks")
-                all_embedding_results = self._embedder.embed_chunks(
-                    all_chunks, cache=self._resolve_chunk_cache()
+                all_embedding_results = self.embed_and_attach_metadata(
+                    all_chunks, project_name
                 )
                 logger.info(
                     f"Successfully embedded {len(all_embedding_results)} chunks"
                 )
-                # strict=True: embed_chunks guarantees a 1:1, order-preserved
-                # result per input chunk (see embedder.py's un-permute step). A
-                # length mismatch here would otherwise silently attach the wrong
-                # chunk's source text to a vector's metadata on the full-index
-                # path — better to fail loudly (caught by the except below)
-                # than corrupt metadata across an entire reindex.
-                for chunk, embedding_result in zip(
-                    all_chunks, all_embedding_results, strict=True
-                ):
-                    embedding_result.metadata["project_name"] = project_name
-                    embedding_result.metadata["content"] = chunk.content
             except Exception as e:  # noqa: BLE001 - api-boundary: embedding failure converted to structured error result
                 logger.error(f"Embedding failed: {e}")
                 logger.error(traceback.format_exc())
@@ -158,44 +147,122 @@ class IndexWriteStage:
         if project_path:
             injection_stats = self._inject_call_edges(project_path)
 
-        # Save snapshot
-        metadata = self._build_metadata(
+        return self.finalize(
+            dag=dag,
             project_name=project_name,
             all_files=all_files,
             supported_files=supported_files,
             total_chunks=chunks_added,
             is_full=True,
             repo_profile=repo_profile,
-        )
-        self._snapshot_manager.save_snapshot(dag, metadata)
-
-        logger.info("[FULL_INDEX] Saving index...")
-        self._indexer.save_indices()
-        logger.info("[FULL_INDEX] Index saved")
-
-        bm25_resynced, bm25_resync_count = self._indexer.resync_if_desynced(
-            "FULL_INDEX"
-        )
-
-        self._clear_gpu("FULL_INDEX")
-
-        return IncrementalIndexResult(
+            start_time=start_time,
+            log_prefix="FULL_INDEX",
             files_added=len(supported_files),
             files_removed=0,
             files_modified=0,
             chunks_added=chunks_added,
             chunks_removed=0,
+            call_edges_injected=injection_stats.injected,
+            call_edge_resolvers=injection_stats.resolvers_run,
+        )
+
+    def finalize(
+        self,
+        *,
+        dag: MerkleDAG,
+        project_name: str,
+        all_files: list[Any],
+        supported_files: list[Any],
+        total_chunks: int,
+        is_full: bool,
+        repo_profile: RepoProfile | None,
+        start_time: float,
+        log_prefix: str,
+        files_added: int,
+        files_removed: int,
+        files_modified: int,
+        chunks_added: int,
+        chunks_removed: int,
+        call_edges_injected: int = 0,
+        call_edge_resolvers: tuple[str, ...] = (),
+        metadata_changes: dict[str, int] | None = None,
+    ) -> IncrementalIndexResult:
+        """Save snapshot + index, resync BM25, clear GPU, and build the result.
+
+        Shared tail of the full-index path (:meth:`run`) and the incremental
+        path (``IncrementalIndexer.incremental_index``) — the part of an
+        index pass that always runs once chunks are already embedded/added
+        (or removed) and just needs to be persisted. ``call_edges_injected``/
+        ``call_edge_resolvers`` default to 0/() since only :meth:`run`
+        performs injection today.
+        """
+        metadata = self._build_metadata(
+            project_name=project_name,
+            all_files=all_files,
+            supported_files=supported_files,
+            total_chunks=total_chunks,
+            is_full=is_full,
+            repo_profile=repo_profile,
+            **(metadata_changes or {}),
+        )
+        self._snapshot_manager.save_snapshot(dag, metadata)
+
+        logger.info(f"[{log_prefix}] Saving index...")
+        self._indexer.save_indices()
+        logger.info(f"[{log_prefix}] Index saved")
+
+        bm25_resynced, bm25_resync_count = self._indexer.resync_if_desynced(log_prefix)
+
+        self._clear_gpu(log_prefix)
+
+        return IncrementalIndexResult(
+            files_added=files_added,
+            files_removed=files_removed,
+            files_modified=files_modified,
+            chunks_added=chunks_added,
+            chunks_removed=chunks_removed,
             time_taken=time.time() - start_time,
             success=True,
             bm25_resynced=bm25_resynced,
             bm25_resync_count=bm25_resync_count,
-            call_edges_injected=injection_stats.injected,
-            call_edge_resolvers=injection_stats.resolvers_run,
+            call_edges_injected=call_edges_injected,
+            call_edge_resolvers=call_edge_resolvers,
         )
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def embed_and_attach_metadata(
+        self,
+        chunks: list[CodeChunk],
+        project_name: str,
+        *,
+        cache_full_pass: bool = True,
+    ) -> list[Any]:
+        """Batch-embed chunks and attach project_name/content to each result's metadata.
+
+        Shared by the full-index path (via :meth:`run`) and the incremental
+        path (``IncrementalIndexer._add_new_chunks``). Raises on embedding
+        failure rather than catching it — :meth:`run` wraps this call in its
+        own try/except to produce a structured failure result; the
+        incremental path deliberately lets the exception propagate so its
+        caller's except routes to ``_attempt_recovery`` instead.
+        """
+        embedding_results = self._embedder.embed_chunks(
+            chunks,
+            cache=self._resolve_chunk_cache(),
+            cache_full_pass=cache_full_pass,
+        )
+        # strict=True: embed_chunks guarantees a 1:1, order-preserved result
+        # per input chunk (see embedder.py's un-permute step). A length
+        # mismatch here would otherwise silently attach the wrong chunk's
+        # source text to a vector's metadata — better to fail loudly than
+        # corrupt metadata across an entire index pass.
+        for chunk, embedding_result in zip(chunks, embedding_results, strict=True):
+            embedding_result.metadata["project_name"] = project_name
+            embedding_result.metadata["content"] = chunk.content
+        return embedding_results
 
     def _resolve_chunk_cache(self) -> ChunkEmbeddingCache | None:
         """Resolve this run's persistent chunk-embedding cache, if enabled.

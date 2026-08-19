@@ -340,6 +340,10 @@ class TestIncrementalIndexer:
         time. cache_full_pass=False matters because a full-pass eviction cap
         here would wrongly collapse a cache built by prior full indexes down
         to this run's handful of live keys — see ChunkEmbeddingCache._evict.
+
+        The embed call now runs through IndexWriteStage.embed_and_attach_metadata
+        (shared with the full-index path), so resolve_chunk_cache is patched at
+        its call site in search.index_write_stage, not search.incremental_indexer.
         """
         self.mock_indexer.storage_dir = "/fake/storage_dir"
         indexer = IncrementalIndexer(
@@ -381,7 +385,7 @@ class TestIncrementalIndexer:
 
         sentinel_cache = Mock()
         with patch(
-            "search.incremental_indexer.resolve_chunk_cache",
+            "search.index_write_stage.resolve_chunk_cache",
             return_value=sentinel_cache,
         ) as mock_resolve:
             result = indexer.incremental_index(str(self.project_path), "test_project")

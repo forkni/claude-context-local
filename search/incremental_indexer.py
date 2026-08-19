@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from chunking.python_ast_chunker import CodeChunk
-from embeddings.chunk_cache import resolve_chunk_cache
 from embeddings.embedder import CodeEmbedder
 from merkle.change_detector import ChangeDetector, FileChanges
 from merkle.merkle_dag import MerkleDAG
@@ -323,47 +322,32 @@ class IncrementalIndexer:
                         start_time,
                     )
 
-            # Update snapshot
-            # After processing changes, calculate cumulative stats
+            # Update snapshot, index, BM25 sync, and GPU cache; build the result.
+            # After processing changes, calculate cumulative stats.
             all_files = list(current_dag.get_all_files())
             supported_files = self._get_supported_files(project_path, all_files)
             total_chunks = self._get_total_chunks()
 
-            metadata = self._build_snapshot_metadata(
+            return self._index_write_stage.finalize(
+                dag=current_dag,
                 project_name=project_name,
                 all_files=all_files,
                 supported_files=supported_files,
                 total_chunks=total_chunks,
                 is_full=False,
-                files_added=len(changes.added),
-                files_removed=len(changes.removed),
-                files_modified=len(changes.modified),
-            )
-            self.snapshot_manager.save_snapshot(current_dag, metadata)
-
-            # Update index
-            logger.info("[INCREMENTAL] Saving index...")
-            self.indexer.save_indices()
-            logger.info("[INCREMENTAL] Index saved")
-
-            # Auto-sync BM25 if significant desync detected (>10% difference)
-            bm25_resynced, bm25_resync_count = self.indexer.resync_if_desynced(
-                "INCREMENTAL"
-            )
-
-            # Clear GPU cache to free intermediate tensors from embedding batches
-            self._clear_gpu_cache("INCREMENTAL")
-
-            return IncrementalIndexResult(
+                repo_profile=None,
+                start_time=start_time,
+                log_prefix="INCREMENTAL",
                 files_added=len(changes.added),
                 files_removed=len(changes.removed),
                 files_modified=len(changes.modified),
                 chunks_added=chunks_added,
                 chunks_removed=chunks_removed,
-                time_taken=time.time() - start_time,
-                success=True,
-                bm25_resynced=bm25_resynced,
-                bm25_resync_count=bm25_resync_count,
+                metadata_changes={
+                    "files_added": len(changes.added),
+                    "files_removed": len(changes.removed),
+                    "files_modified": len(changes.modified),
+                },
             )
 
         except Exception as e:  # noqa: BLE001 - api-boundary: top-level indexing op converts failure to structured result
@@ -1093,23 +1077,18 @@ class IncrementalIndexer:
         )
         chunks_to_embed = self._chunk_files_parallel(project_path, supported_files)
 
-        # ========== File-Level Module Summaries (A2) ==========
+        # File-level module summaries — shared with the full-index path via
+        # SummaryStage (see _full_index).
         config = get_search_config()
         if config.chunking.enable_file_summaries and chunks_to_embed:
-            try:
-                from chunking.file_summarizer import generate_file_summaries
-
-                file_summaries = generate_file_summaries(chunks_to_embed)
-                if file_summaries:
-                    chunks_to_embed.extend(file_summaries)
-                    logger.info(
-                        f"[INCREMENTAL] Generated {len(file_summaries)} module summary chunks"
-                    )
-            except Exception as e:  # noqa: BLE001 - resilience: optional module summary generation, indexing continues
-                logger.warning(
-                    f"[INCREMENTAL] File summary generation failed: {e}", exc_info=True
+            module_summaries = self._summary_stage.generate_module_summaries(
+                chunks_to_embed
+            )
+            if module_summaries:
+                chunks_to_embed.extend(module_summaries)
+                logger.info(
+                    f"[INCREMENTAL] Appended {len(module_summaries)} module summary chunks"
                 )
-        # ========== END File-Level Module Summaries ==========
 
         all_embedding_results = []
         if chunks_to_embed:
@@ -1120,17 +1099,9 @@ class IncrementalIndexer:
             # handful of chunks that changed, never the whole project — see
             # ChunkEmbeddingCache._evict for why a full-pass cap here would
             # wrongly collapse a cache built by prior full indexes.
-            all_embedding_results = self.embedder.embed_chunks(
-                chunks_to_embed,
-                cache=resolve_chunk_cache(self.indexer.storage_dir, self.embedder),
-                cache_full_pass=False,
+            all_embedding_results = self._index_write_stage.embed_and_attach_metadata(
+                chunks_to_embed, project_name, cache_full_pass=False
             )
-            # Update metadata
-            for chunk, embedding_result in zip(
-                chunks_to_embed, all_embedding_results, strict=True
-            ):
-                embedding_result.metadata["project_name"] = project_name
-                embedding_result.metadata["content"] = chunk.content
 
         # Add all embeddings to index at once
         if all_embedding_results:
