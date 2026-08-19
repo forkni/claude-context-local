@@ -25,7 +25,7 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 |-----------|---------|-------------|
 | `query` | — | Natural language description. Optional if `chunk_id` given. |
 | `chunk_id` | — | Direct chunk ID for O(1) lookup. Format: `"file:lines:type:name"` |
-| `k` | schema **4**, effective **7** | Schema default is `4` (`mcp_server/tool_registry.py`); `search_orchestrator.py` falls back to `search_config.search_mode.default_k` when omitted, and both the shipped `search_config.json.example` and this machine's local config set `default_k: 7`. **Recommended: pass `k=7` explicitly** — targets may rank 6–7 on complex queries (SSCG benchmark: Hit@5=100% at k=7). Use `k=10` for architectural queries. |
+| `k` | schema publishes **no default** (bounds only: min 1, max 100 — the invariant ceiling of `SearchModeConfig.max_k`, not `max_k`'s own value); effective **7** | `mcp_server/tool_registry.py`'s `k` property has no `default` key, only `minimum`/`maximum`; `search_orchestrator.py` falls back to `search_config.search_mode.default_k` when omitted, and both the shipped `search_config.json.example` and this machine's local config set `default_k: 7`. **Recommended: pass `k=7` explicitly** — targets may rank 6–7 on complex queries (SSCG benchmark: Hit@5=100% at k=7). Use `k=10` for architectural queries. |
 | `search_mode` | "auto" | "hybrid", "semantic", "bm25", "auto" |
 | `file_pattern` | — | Filter by filename/path substring (e.g., "auth", "models") |
 | `include_dirs` | — | Whitelist directories, e.g. `["src/"]` — a pure path-prefix narrowing filter over the already-built index. Distinct from `index_directory`'s `include_dirs` (see [tool-index.md](tool-index.md), replace-wholesale + ADR-0036 additive dependency-tree semantics); this one has no additive case. |
@@ -33,12 +33,13 @@ Covers `code-search:search_code`, `code-search:find_connections`, and `code-sear
 | `chunk_type` | — | Filter by structure type (see below) |
 | `include_context` | true | Include similar chunks and relationships |
 | `auto_reindex` | schema **true**, effective **true** | If omitted, `search_orchestrator.py` falls back to `config.performance.enable_auto_reindex` — dataclass default is also `True`, so schema and effective values agree today. Documented for the same reason as the two rows below: if a project's `search_config.json` ever overrides this, the schema-shown default becomes stale, not the behavior. |
-| `max_age_minutes` | schema **5**, effective **30** | If omitted, the server falls back to `config.performance.max_index_age_minutes` (`SearchPlanner.plan` in `mcp_server/tools/search_orchestrator.py`), not the schema's 5 — dataclass factory default is 5.0, and both the shipped `search_config.json.example` and this machine's local config set 30.0. Pass the value explicitly if you need a specific staleness window. |
-| `ego_graph_enabled` | false | **Does not gate ego-graph expansion — it always runs.** Only widens `ego_graph_k_hops`/`ego_graph_max_neighbors_per_hop` when `true`; see `SKILL.md` Gotchas and [advanced-features.md](advanced-features.md). |
-| `ego_graph_k_hops` | 2 | Graph traversal depth (range 1-5) |
+| `max_age_minutes` | schema publishes **no default** (config-backed, description-only fallback hint); effective **30** | If omitted, the server falls back to `config.performance.max_index_age_minutes` (`SearchPlanner.plan` in `mcp_server/tools/search_orchestrator.py`) — dataclass default is **30.0** (`PerformanceConfig.max_index_age_minutes` in `search/config.py`), which is also what this machine's local config and the shipped `search_config.json.example` set, so schema-omitted and effective values agree today. Pass the value explicitly if you need a specific staleness window. |
+| `ego_graph_enabled` | schema publishes **no default**; server default **on** (`EgoGraphConfig.enabled=True`) | **Real tri-state gate, not widen-only.** Omit to defer to the server's configured default (on by default); pass `true` to force expansion on *and* apply the `ego_graph_k_hops`/`ego_graph_max_neighbors_per_hop` overrides; pass `false` to force it off for that call (`search/effective_config.py`'s `build_effective_config()` sets `EgoGraphConfig.enabled=False` when the arg is explicitly `false`). See `SKILL.md` Gotchas and [advanced-features.md](advanced-features.md). |
+| `ego_graph_k_hops` | 2 | Graph traversal depth (range 1-3 — `EgoGraphConfig.k_hops` `spec(range=(1,3))` in `search/config.py`) |
 | `ego_graph_max_neighbors_per_hop` | 10 | Max neighbors per hop (range 1-50) |
 | `include_parent` | false | Also retrieve enclosing class when matching methods |
-| `output_format` | schema `"compact"`, effective `"ultra"` | If omitted, `handle_call_tool` (`mcp_server/server.py`) falls back to `config.output.format`, which ships as **`"ultra"`** (`OutputConfig.format` in `search/config.py`, for 45-55% token reduction). Pass `output_format="compact"` or `"verbose"` explicitly to override. |
+| `include_signatures` | false | Attach a signature-only view per result as `signature: str` — a display-only counterfactual to a follow-up `Read`, not chunk content itself. Measured ~687 tokens/query overhead (~36% over the default compact format's payload size); module/module_preamble chunks are skipped, non-Python chunks degrade to the first 3 raw lines (capped at 600 chars). Never affects scoring, ordering, or the reranker. |
+| `output_format` | schema publishes **no default**; effective **`"ultra"`** | If omitted, `handle_call_tool` (`mcp_server/server.py`) falls back to `config.output.format`, which ships as **`"ultra"`** (`OutputConfig.format` in `search/config.py`, for 45-55% token reduction). Pass `output_format="compact"` or `"verbose"` explicitly to override. |
 | `max_context_tokens` | schema **0**, effective **0** | If omitted, falls back to `config.search_mode.default_max_context_tokens` — dataclass default is also `0` (no cap), so schema and effective values agree today. Same drift risk as `auto_reindex` above if a project overrides the config value. |
 | `include_top_callers` | false | (2026-08-14) Attach `top_callers` — up to 2 `{name, file}` caller hints per result from raw call-graph in-edges. Ranked by resolver confidence when present, insertion order otherwise (most in-file AST edges carry no confidence float — treat ordering as a hint). Silently absent when the graph or incoming call edges are missing. |
 
@@ -57,8 +58,9 @@ schema-guaranteed field, so check for its presence rather than assuming it), `to
 `{name, file}` caller hints).
 
 **Source values:** `"search"` (direct lexical/dense match), `"multi_hop"` (always-on semantic expansion of initial hits), `"graph_hop"` (always-on
-call/import graph expansion of initial hits), `"ego_graph"` (always-on k-hop neighbors — `ego_graph_enabled=true` widens the neighborhood, it doesn't
-switch this on). A direct `chunk_id` lookup instead returns `"direct_lookup"` plus a `graph` summary object. See
+call/import graph expansion of initial hits), `"ego_graph"` (k-hop neighbors — on by server default; `ego_graph_enabled=true` widens the
+neighborhood and `ego_graph_enabled=false` suppresses these rows for that call). A direct `chunk_id` lookup instead returns `"direct_lookup"` plus a
+`graph` summary object. See
 [advanced-features.md](advanced-features.md) for the full disambiguation.
 
 **Examples:**
@@ -98,7 +100,7 @@ code-search:search_code("how does the indexing pipeline work", k=10)
 | `max_depth` | 3 | Max depth for dependency traversal (range 1-5) |
 | `exclude_dirs` | — | Directories to exclude, e.g. `["tests/"]` |
 | `relationship_types` | — | Filter to specific types (see list below) |
-| `hide_ambiguous` | false | (2026-08-14) Drop `"ambiguous"`-tagged entries from `direct_callers`/`direct_callees`/`indirect_callers` only. `caller_confidence`/`callee_confidence` breakdowns and `total_impacted` intentionally stay **pre-filter totals** (e.g. `ambiguous: 5` alongside a shorter list means 5 were hidden); `dependency_graph` is not filtered and can still show hidden entries. |
+| `hide_ambiguous` | schema publishes **no default**; server default **`true`** (`GraphEnhancedConfig.hide_ambiguous_edges_default`, promoted from `false` on 2026-08-16 after its A/B gate passed) | (2026-08-14, default flipped 2026-08-16) Drop `"ambiguous"`-tagged entries from `direct_callers`/`direct_callees`/`indirect_callers` only. `caller_confidence`/`callee_confidence` breakdowns and `total_impacted` intentionally stay **pre-filter totals** (e.g. `ambiguous: 5` alongside a shorter list means 5 were hidden); `dependency_graph` is not filtered and can still show hidden entries. Pass `hide_ambiguous=false` explicitly to see unfiltered edges. |
 | `output_format` | "compact" | "compact" / "verbose" / "ultra" |
 
 **Valid relationship_types (21 enum members; only 19 actually route to a response field):**

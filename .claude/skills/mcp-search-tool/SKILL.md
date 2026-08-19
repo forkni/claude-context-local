@@ -60,18 +60,20 @@ instrumentation makes the scan-all-k rule concrete: on the canonical set essenti
 (pool_hit_rate ≈ 0.90–1.0 depending on the run), so most benchmark misses are *ordering* misses — the right answer can legitimately sit at rank 5–7
 of an otherwise-correct result set, not just missing outright.
 
-**Baseline rule:** **pass `k=7` explicitly when correctness matters.** The `search_code` tool schema declares `k`'s default as `4`
-(`mcp_server/tool_registry.py`), but the handler falls back to `search_config.search_mode.default_k` whenever `k` is omitted — both the shipped
-`search_config.json.example` and this deployment's config set that to **7**, which is what makes `k=7` the effective default in practice, not the
-schema value. Pass it explicitly regardless: an MCP client isn't guaranteed to omit the field the same way in every context, and targets may still
-rank 6–7 on complex or multi-target queries. Use `k=10` for architectural / global queries.
+**Baseline rule:** **pass `k=7` explicitly when correctness matters.** The `search_code` tool schema publishes no `default` for `k` at all
+(`mcp_server/tool_registry.py`) — only `minimum: 1`/`maximum: 100` (the invariant ceiling of `SearchModeConfig.max_k`, itself a separate per-install
+value, not the bound's own number). The handler falls back to `search_config.search_mode.default_k` whenever `k` is omitted — both the shipped
+`search_config.json.example` and this deployment's config set that to **7**, which is what makes `k=7` the effective default in practice. Pass it
+explicitly regardless: an MCP client isn't guaranteed to omit the field the same way in every context, and targets may still rank 6–7 on complex or
+multi-target queries. Use `k=10` for architectural / global queries.
 
 **Result Interpretation Workflow:**
 
-1. Call `code-search:search_code(query="<your query>", k=7)`. Multi-hop, graph-hop, **and ego-graph** expansion of the initial hits all run
-   **always-on**; `ego_graph_enabled` (schema default `false`) does not gate ego-graph expansion, it only *widens* `ego_graph_k_hops`/
-   `ego_graph_max_neighbors_per_hop` when `true` (see Gotchas) — expect `source: "ego_graph"` rows in every result set regardless. `include_context`
-   has **no effect on the default `HybridSearcher` search path**
+1. Call `code-search:search_code(query="<your query>", k=7)`. Multi-hop and graph-hop expansion of the initial hits run **always-on and unconditionally**.
+   Ego-graph expansion runs **by default** (`EgoGraphConfig.enabled=True`) but is a genuine tri-state gate via `ego_graph_enabled`: omit it to defer to
+   the server's configured default (on, in this deployment), pass `true` to force it on and apply the `ego_graph_k_hops`/
+   `ego_graph_max_neighbors_per_hop` overrides, or pass `false` to force it off for that call (see Gotchas) — so expect `source: "ego_graph"` rows in
+   every result set unless you explicitly disable it. `include_context` has **no effect on the default `HybridSearcher` search path**
    (`SearchOrchestrator._search` in `mcp_server/tools/search_orchestrator.py` only threads it through for a non-default searcher) — don't rely on it.
    Use `k=10` for architectural / global queries.
 2. **Scan ALL k results** — results are pre-sorted in relevance order (centrality-reranked blended_score descending) under the server default;
@@ -213,7 +215,7 @@ These are non-obvious traps from real session experience — not things the docs
 |---|---|
 | Results are pre-sorted by `blended_score` descending under the server default (`source_order_output=false`, v0.18.0+); module summaries are demoted to the tail for non-GLOBAL queries | Array position 0 is already the best default-order match. For strict cross-encoder order instead, re-sort by `reranker_score` then `blended_score`: `sorted(results, key=lambda r: (r.get("reranker_score", 0), r.get("blended_score", 0)), reverse=True)`. **Caveat:** this re-promotes demoted summary chunks (e.g. a `module:hybrid_searcher` summary with `reranker_score=0.94` moves from position 28 to position 0) — apply it only when you specifically want pure cross-encoder ranking |
 | `search_code` returns metadata only — `file`, `lines`, `kind`, `score`, `chunk_id`, usually `name` — never a code body (full field list: [references/parameters.md](references/parameters.md)) | Don't spend extra calls "confirming" a candidate's body; names, kinds, and scores are sufficient to judge relevance |
-| **Ego-graph expansion is always-on and cannot be disabled from the MCP boundary.** `EgoGraphConfig.enabled` defaults to `True` in the dataclass (`search/config.py`), and `search/effective_config.py`'s `build_effective_config()` only ever *turns it on* (there is no branch that sets `enabled=False`). The `ego_graph_enabled` tool argument (schema default `false`) does not gate the feature — it only raises `ego_graph_k_hops`/`ego_graph_max_neighbors_per_hop` when `true` | Expect `source="ego_graph"` rows interleaved into every result set, carrying their own `blended_score` — count them toward your top-k window, don't filter them out. `ego_graph_enabled=true` is for *widening* the neighborhood, not switching it on |
+| **Ego-graph expansion is on by default, but `ego_graph_enabled` is a real tri-state gate, not a widen-only knob.** `EgoGraphConfig.enabled` defaults to `True` in the dataclass (`search/config.py`). `search/effective_config.py`'s `build_effective_config()` reads the tool argument as tri-state: omitted (`None`) defers to that server default; explicit `true` forces expansion on *and* applies the `ego_graph_k_hops`/`ego_graph_max_neighbors_per_hop` overrides; explicit `false` sets `EgoGraphConfig.enabled=False` for that call (logs `"[EGO_GRAPH] Explicitly disabled"`) and leaves the hop-count args untouched. The schema itself publishes no `default` for this argument (only the description tells you to omit it to get the server's configured value) | Expect `source="ego_graph"` rows interleaved into every result set unless you pass `ego_graph_enabled=false` to suppress them for that call. When they're present, count them toward your top-k window, don't filter them out |
 | `k` is not the result count — multi-hop/graph-hop/ego-graph expansion adds rows *after* `k` is applied to the initial retrieval. Measured on the live index, same query: `k=1` → 4 results, `k=5` → 20, `k` omitted (effective 7) → 26 | Don't size a context budget off `k` directly — expect roughly 3–5× more rows back than `k`. Total rows are capped at `k × graph_enhanced.max_results_multiplier` (default 8) |
 | `find_connections`'s `relationship_types` filter only scopes *some* response sections — `direct_callers`, `indirect_callers`, `direct_callees`, and `similar_code` come back unfiltered no matter what you pass; only sections like `uses_types`/`exceptions_caught`/`instantiates` are actually narrowed by it | Don't rely on `relationship_types` to prune caller/callee lists — filter those client-side by their own `resolver_source`/edge-type fields instead |
 | `split_block` pieces of one long function (e.g. `file.py:10-40:split_block:fn` + `file.py:41-80:split_block:fn`) are one logical hit | Normalize/dedupe by stripping the line range (`file.py:10-40:type:name` → `file.py:type:name`) before counting unique chunks in Recall/Hit metrics. Since v0.12.1 they also carry full `uses_type`/`imports` edges, so `find_connections` returns these too |

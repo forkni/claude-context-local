@@ -27,14 +27,15 @@ Tiers" for the full decision procedure.
 
 Find code with natural language query or direct chunk lookup. Use for all initial code searches.
 
-**Key options:** `query`, `chunk_id` (direct O(1) lookup), `k` (schema default 4, effective default **7** via `search_mode.default_k`), `search_mode`
-("hybrid"/"semantic"/"bm25"/"auto"), `file_pattern`, `include_dirs`, `exclude_dirs`, `chunk_type` (see below), `include_context` (default true),
-`auto_reindex` (default true), `max_age_minutes` (schema default 5, effective default **30** via `performance.max_index_age_minutes`),
-`ego_graph_enabled` (schema default false — **does not gate ego-graph expansion, which always runs**; only widens hop depth/neighbor cap when
-`true`), `ego_graph_k_hops` (default 2, range 1-5), `ego_graph_max_neighbors_per_hop` (default 10, range 1-50), `include_parent` (default false),
-`output_format` (schema default "compact", effective default **"ultra"** via `config.output.format`), `max_context_tokens` (token-budget cap, default
-0/no cap), `include_top_callers` (default false — attach up to 2 `{name, file}` caller hints per result, 2026-08-14). Full parameter reference (with
-the schema-vs-effective fallback chains) in [parameters.md](parameters.md).
+**Key options:** `query`, `chunk_id` (direct O(1) lookup), `k` (schema publishes no default, only bounds min 1/max 100; effective default **7** via
+`search_mode.default_k`), `search_mode` ("hybrid"/"semantic"/"bm25"/"auto"), `file_pattern`, `include_dirs`, `exclude_dirs`, `chunk_type` (see below),
+`include_context` (default true), `auto_reindex` (default true), `max_age_minutes` (schema publishes no default; effective default **30** via
+`performance.max_index_age_minutes`), `ego_graph_enabled` (schema publishes no default, server default **on** — **real tri-state gate**: omit to
+defer to the server default, `true` forces it on and applies the hop overrides, `false` forces it off for that call), `ego_graph_k_hops` (default 2,
+range 1-3), `ego_graph_max_neighbors_per_hop` (default 10, range 1-50), `include_parent` (default false), `include_signatures` (default false —
+attach a signature-only view per result), `output_format` (schema publishes no default, effective default **"ultra"** via `config.output.format`),
+`max_context_tokens` (token-budget cap, default 0/no cap), `include_top_callers` (default false — attach up to 2 `{name, file}` caller hints per
+result, 2026-08-14). Full parameter reference (with the schema-vs-effective fallback chains) in [parameters.md](parameters.md).
 
 **chunk_type values (12):** see [parameters.md](parameters.md) (omit the field to match any chunk type)
 
@@ -52,8 +53,8 @@ Find all callers, callees, dependencies, and relationships for a given symbol. R
 per-entry provenance (`resolver_source`, `resolver_confidence`). Preferred over Grep for caller/dependency discovery.
 
 **Key options:** `chunk_id` (preferred), `symbol_name` (fallback — may be ambiguous), `max_depth` (default 3, range 1-5), `exclude_dirs`,
-`relationship_types`, `hide_ambiguous` (default false — hide `"ambiguous"`-tagged call edges; confidence counters stay pre-filter totals, 2026-08-14),
-`output_format`
+`relationship_types`, `hide_ambiguous` (schema publishes no default, server default **true** since 2026-08-16 — hide `"ambiguous"`-tagged call edges;
+confidence counters stay pre-filter totals; pass `false` to see unfiltered edges), `output_format`
 
 **Valid relationship types (21 enum members, only 19 route to a response field — `assigns_to`/`reads_from` don't):** see
 [parameters.md](parameters.md)

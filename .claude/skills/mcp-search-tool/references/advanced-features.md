@@ -13,7 +13,7 @@ The project has **three distinct graph-aware subsystems** that are often confuse
 
 - Retrieval Funnel & Reranker Budget (v0.21.0 — per-leg pool sizing, graph cap)
 - Multi-Hop Search (always-on — semantic + graph expansion, tags `multi_hop`/`graph_hop`)
-- Ego-Graph Expansion (**always-on** — `ego_graph_enabled` only widens it, never gates it)
+- Ego-Graph Expansion (**on by server default** — `ego_graph_enabled` is a real tri-state gate: omit/`true`/`false`)
 - Centrality Reranking (always-on when graph data exists)
 - BM25 Snowball Stemming (inactive under the default `bm25_tokenizer="whole"`)
 - Intent Classification: Effects That Still Exist (on by default — ADR-0029)
@@ -69,7 +69,7 @@ lexical/dense retrieval.
 | `search` | Direct lexical / dense match to the query |
 | `multi_hop` | Reached by semantic expansion of an initial hit |
 | `graph_hop` | Reached by call / import graph traversal from an initial hit |
-| `ego_graph` | Reached by the always-on ego-graph k-hop retriever (see below — the tool argument only widens it, it doesn't gate it) |
+| `ego_graph` | Reached by the ego-graph k-hop retriever, on by server default (see below — the tool argument is a real tri-state gate: omit for the server default, `true` widens it, `false` suppresses it for that call) |
 
 You cannot disable multi-hop via tool parameters. For debugging, edit `search_config.json` and restart.
 
@@ -78,36 +78,46 @@ You cannot disable multi-hop via tool parameters. For debugging, edit `search_co
 
 ---
 
-## Ego-Graph Expansion (always-on; the tool argument only widens it)
+## Ego-Graph Expansion (on by server default; the tool argument is a real tri-state gate)
 
-**Status:** **Always-on, and cannot be disabled from the MCP boundary.** `EgoGraphConfig.enabled` defaults to `True` in the dataclass
-(`search/config.py`), and `search/effective_config.py`'s `build_effective_config()` only ever *turns ego-graph on*
-(`if plan.ego_graph_enabled: replace(..., enabled=True)`) — there is no branch that sets `enabled=False`. The `ego_graph_enabled` tool argument
-(schema default `false`) does not gate the feature; it only raises `ego_graph_k_hops`/`ego_graph_max_neighbors_per_hop` when `true`. Confirmed
-empirically: a plain `search_code` call with `ego_graph_enabled` omitted still returns rows carrying `"source": "ego_graph"`. Separate subsystem from
-multi-hop above — the two are not the same thing, but neither one is actually optional today.
+**Status:** **On by server default, and can be disabled per-call from the MCP boundary.** `EgoGraphConfig.enabled` defaults to `True` in the
+dataclass (`search/config.py`). `search/effective_config.py`'s `build_effective_config()` reads `ego_graph_enabled` as tri-state: omitted (`None`)
+leaves the base config's `enabled` value untouched (on, by default); explicit `true` mutates a copy to `enabled=True` and applies the
+`ego_graph_k_hops`/`ego_graph_max_neighbors_per_hop` overrides (logs `"[EGO_GRAPH] Enabled with k_hops=..."`); explicit `false` mutates a copy to
+`enabled=False` and leaves the hop-count args untouched (logs `"[EGO_GRAPH] Explicitly disabled"`). The schema itself publishes no `default` for this
+argument — only a description telling you to omit it to get the server's configured value. A plain `search_code` call with `ego_graph_enabled`
+omitted returns rows carrying `"source": "ego_graph"` because the server default is on, not because the argument is inert. Separate subsystem from
+multi-hop above — the two are not the same thing.
 
 **Purpose:** Fetch k-hop neighbors of the top result(s) via weighted BFS, with configurable hop depth and neighbor caps. Useful when you know you
-want a local neighborhood of related code rather than the engine's default expansion.
+want a local neighborhood of related code rather than the engine's default expansion — or when you want to suppress it entirely for a call where
+graph-neighbor rows would just add noise.
 
 **Observable behavior:**
 
 1. Run normal search (which already includes always-on multi-hop above).
-2. Ego-graph BFS always runs, taking top result(s) out to `ego_graph_k_hops` (default `2`) with edge weights `calls=1.0`, `imports=0.3`, others
-   intermediate. Passing `ego_graph_enabled=true` raises this to a wider neighborhood — it does not switch on something that wasn't already running.
+2. Ego-graph BFS runs whenever `EgoGraphConfig.enabled` resolves to `True` for the call (server default, or an explicit `ego_graph_enabled=true`),
+   taking top result(s) out to `ego_graph_k_hops` (default `2`) with edge weights `calls=1.0`, `imports=0.3`, others intermediate. Passing
+   `ego_graph_enabled=true` also raises this to the hop/neighbor values you pass; passing `ego_graph_enabled=false` skips this step entirely for that
+   call.
 3. Cap neighbors per hop via `ego_graph_max_neighbors_per_hop` (default `10`).
 4. An **additional** post-expansion neural rerank (to unify scoring across the original results + the ego-graph-added results on a single
-   cross-encoder scale) runs whenever ego-graph neighbors are present — which, per the above, is effectively always. The standard neural reranker used
-   by hybrid search is independent of this and continues to run as configured via `code-search:configure_reranking`.
+   cross-encoder scale) runs whenever ego-graph neighbors are present. The standard neural reranker used by hybrid search is independent of this and
+   continues to run as configured via `code-search:configure_reranking`.
 
-> **Implementation notes (may drift — 2026-08-06):** dataclass default in `search/config.py` (`EgoGraphConfig.enabled`); the ON-only merge logic is
-> `search/effective_config.py`'s `build_effective_config()`; core BFS logic in `search/ego_graph_retriever.py`; consumed inside
-> `HybridSearcher.search()` in `search/hybrid_searcher.py` via `effective_config.ego_graph.enabled`.
+> **Implementation notes (may drift — 2026-08-18):** dataclass default in `search/config.py` (`EgoGraphConfig.enabled`); the tri-state merge logic is
+> `search/effective_config.py`'s `build_effective_config()`; the arg-to-tri-state parsing (`None` if omitted, else `bool(...)`) is
+> `mcp_server/tools/search_orchestrator.py`; core BFS logic in `search/ego_graph_retriever.py`; consumed inside `HybridSearcher.search()` in
+> `search/hybrid_searcher.py` via `effective_config.ego_graph.enabled`.
 
-**To widen it:** `code-search:search_code(..., ego_graph_enabled=true, ego_graph_k_hops=2)` — there is no argument that narrows or disables it.
+**To widen it:** `code-search:search_code(..., ego_graph_enabled=true, ego_graph_k_hops=2)`.
 
-**When to use the wider setting:** contextual / local-neighborhood queries ("show me everything that touches this class"). The narrower always-on
-default already adds neighbor rows to every result set; `ego_graph_enabled=true` is for when that isn't enough context.
+**To disable it for one call:** `code-search:search_code(..., ego_graph_enabled=false)` — turns off ego-graph BFS for that call only; the server's
+configured default is unaffected for subsequent calls.
+
+**When to use the wider setting:** contextual / local-neighborhood queries ("show me everything that touches this class"). The server default
+already adds neighbor rows to every result set; `ego_graph_enabled=true` is for when that isn't enough context, `ego_graph_enabled=false` is for when
+you specifically don't want graph-neighbor rows mixed into that result set.
 
 ### `relation_types` in `ego_graph` config
 
@@ -180,8 +190,11 @@ evidence.**
    search path (`fallback_on_error=True` — a redirect failure falls back to normal search rather than erroring out). **The only effect with positive
    measured evidence:** the repaired extractor's redirect beats the normal ranked path on MRR for the 9 similarity queries in the golden set, on both
    the 63q and 133q datasets (ADR-0029).
-2. **`CONTEXTUAL` intent → forces `ego_graph_enabled=True`** for that search. **Present in code but proven inert** — ego-graph expansion is already
-   always-on regardless of this flag (see above), so this effect currently changes nothing observable.
+2. **`CONTEXTUAL` intent → forces `ego_graph_enabled=True`** for that search (`mcp_server/tools/search_orchestrator.py`, unconditionally overwriting
+   whatever the raw argument resolved to, including an explicit `false`). **Measured as inert under the previous always-on ego-graph
+   implementation** — that measurement predates the 2026-08-18 tri-state-gate fix (see "Ego-Graph Expansion" above) and has not been re-verified
+   since; the one case where this override could now matter is a `CONTEXTUAL`-classified query that also explicitly passed
+   `ego_graph_enabled=false`, which this code path would silently flip back to `true`.
 3. **`GLOBAL` intent → suggests `k=10`**, applied only when greater than the caller's `k` (plus suggests `search_mode=HYBRID`).
 4. **Any intent whose `suggested_params` includes `search_mode="auto"` → applies that suggested `search_mode`** to the actual search call.
 5. **`NAVIGATIONAL` intent writes `symbol_name`/`relationship_types` into `suggested_params` that nothing consumes.** `PlanRedirect` only ever
