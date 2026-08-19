@@ -39,6 +39,14 @@ harness. Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
   across the campaign's implementation commits; no default behavior changed). See
   `docs/BENCHMARKS.md`.
 
+### Fixed
+
+- **`ego_graph_k_hops`/`ego_graph_max_neighbors_per_hop` omission fallback** — `search_code`
+  hardcoded literals `2`/`10` as the value used when these args were omitted, shadowing
+  `EgoGraphConfig.k_hops`/`.max_neighbors_per_hop`. On the explicit-enable path
+  (`ego_graph_enabled=True`), a configured non-default value was silently ignored. Byte-identical
+  on an unconfigured install (2 == 2, 10 == 10).
+
 ## [0.25.0] - 2026-08-13
 
 Closes out PR #57 review findings before merge: two real chunking bugs fixed (nested same-named

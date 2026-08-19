@@ -140,9 +140,14 @@ class SearchPlanner:
         ego_graph_enabled = (
             None if _ego_graph_enabled_arg is None else bool(_ego_graph_enabled_arg)
         )
-        ego_graph_k_hops = int(arguments.get("ego_graph_k_hops", 2))
+        ego_graph_k_hops = int(
+            arguments.get("ego_graph_k_hops", search_config.ego_graph.k_hops)
+        )
         ego_graph_max_neighbors = int(
-            arguments.get("ego_graph_max_neighbors_per_hop", 10)
+            arguments.get(
+                "ego_graph_max_neighbors_per_hop",
+                search_config.ego_graph.max_neighbors_per_hop,
+            )
         )
 
         # Intent classification

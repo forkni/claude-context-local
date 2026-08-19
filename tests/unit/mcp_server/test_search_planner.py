@@ -25,10 +25,12 @@ def _make_app_config(intent_enabled=True, semantic_enabled=False):
     return cfg
 
 
-def _make_search_config(default_k=4, max_k=20):
+def _make_search_config(default_k=4, max_k=20, ego_k_hops=2, ego_max_neighbors=10):
     sc = MagicMock()
     sc.search_mode.default_k = default_k
     sc.search_mode.max_k = max_k
+    sc.ego_graph.k_hops = ego_k_hops
+    sc.ego_graph.max_neighbors_per_hop = ego_max_neighbors
     return sc
 
 
@@ -189,6 +191,18 @@ class TestSearchPlannerFieldExtraction:
         with _patch_planner_deps():
             plan = SearchPlanner().plan({"query": "test", "ego_graph_enabled": True})
         assert plan.ego_graph_enabled is True
+
+    def test_ego_graph_hops_and_neighbors_default_to_config_not_literals(self):
+        """Regression guard: the omission fallback for ego_graph_k_hops /
+        ego_graph_max_neighbors_per_hop must read search_config.ego_graph, not
+        hardcoded literals -- previously a configured EgoGraphConfig.k_hops=3
+        was silently shadowed by a literal 2 whenever the caller omitted the arg.
+        """
+        sc = _make_search_config(ego_k_hops=3, ego_max_neighbors=7)
+        with _patch_planner_deps(sc=sc):
+            plan = SearchPlanner().plan({"query": "test"})
+        assert plan.ego_graph_k_hops == 3
+        assert plan.ego_graph_max_neighbors == 7
 
 
 # ---------------------------------------------------------------------------
