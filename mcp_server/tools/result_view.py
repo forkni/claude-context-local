@@ -9,7 +9,8 @@ the *output* side (``SearchResult`` -> MCP JSON dicts).
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from graph.schema import get_reverse_relation
@@ -537,3 +538,48 @@ def _enrich_results_with_graph_data(
         skip_kinds=frozenset(),
         annotate=_annotate,
     )
+
+
+@dataclass(frozen=True)
+class ResultEnricher:
+    """One registry row: a gate key, the field it writes, and its apply function."""
+
+    key: str
+    field: str
+    apply: Callable[[list[dict], CodeIndexManager | None], list[dict]]
+
+
+RESULT_ENRICHERS: tuple[ResultEnricher, ...] = (
+    ResultEnricher("graph", "graph", _enrich_results_with_graph_data),
+    ResultEnricher("top_callers", "top_callers", _enrich_results_with_top_callers),
+    ResultEnricher("signatures", "signature", _enrich_results_with_signatures),
+)
+"""Every result enricher, in application order (today's ``_assemble`` order).
+
+Adding a fourth enricher is a new row here plus a gate entry in
+``SearchOrchestrator._enrichment_gates`` — nothing else in this module or
+the caller needs to change.
+"""
+
+
+def enrich_results(
+    results: list[dict],
+    index_manager: CodeIndexManager | None,
+    gates: Mapping[str, bool],
+) -> list[dict]:
+    """Apply every gated enricher in ``RESULT_ENRICHERS`` order.
+
+    Args:
+        results: List of formatted result dicts.
+        index_manager: Index manager passed through to each enricher.
+        gates: Per-enricher on/off decision, keyed by ``ResultEnricher.key``.
+            A missing key is treated as off, not an error.
+
+    Returns:
+        The same ``results`` list, mutated in place by whichever enrichers
+        were gated on.
+    """
+    for enricher in RESULT_ENRICHERS:
+        if gates.get(enricher.key):
+            results = enricher.apply(results, index_manager)
+    return results

@@ -21,6 +21,7 @@ from mcp_server.services import get_config, get_state
 from mcp_server.tools import responses, result_view
 from mcp_server.tools.searcher_view import SearcherView
 from search.config import (
+    OutputConfig,
     SearchConfig,
     SearchMode,
     get_config_manager,
@@ -542,6 +543,27 @@ class SearchOrchestrator:
 
         return response
 
+    @staticmethod
+    def _enrichment_gates(
+        plan: SearchPlan, output_cfg: OutputConfig
+    ) -> dict[str, bool]:
+        """Resolve each registered enricher's gate from its own scope.
+
+        ``graph``'s gate is config-scoped (``OutputConfig.include_result_graph``);
+        ``top_callers``/``signatures`` are request-scoped (``SearchPlan`` fields
+        set per call from the ``search_code`` arguments). Keeping the literal
+        ``include_result_graph`` name in this file (rather than passed through
+        or read from a shared helper) matters: ADR-0022's field-liveness
+        ratchet asserts that name appears in the declared reader file
+        (``search/config.py``'s ``spec(reader=...)`` for that field), which is
+        this module.
+        """
+        return {
+            "graph": output_cfg.include_result_graph,
+            "top_callers": plan.include_top_callers,
+            "signatures": plan.include_signatures,
+        }
+
     def _assemble(self, plan: SearchPlan, outcome: ExecutionOutcome) -> dict:
         """Blocks E–I: format, enrich, centrality, subgraph, reorder, build response."""
         index_manager = SearcherView(outcome.searcher).index_manager
@@ -549,18 +571,11 @@ class SearchOrchestrator:
 
         # Block E: format + enrich (per-result graph gated by include_result_graph)
         formatted_results = result_view._format_search_results(outcome.results)
-        if output_cfg.include_result_graph:
-            formatted_results = result_view._enrich_results_with_graph_data(
-                formatted_results, index_manager
-            )
-        if plan.include_top_callers:
-            formatted_results = result_view._enrich_results_with_top_callers(
-                formatted_results, index_manager
-            )
-        if plan.include_signatures:
-            formatted_results = result_view._enrich_results_with_signatures(
-                formatted_results, index_manager
-            )
+        formatted_results = result_view.enrich_results(
+            formatted_results,
+            index_manager,
+            self._enrichment_gates(plan, output_cfg),
+        )
 
         # Blocks F–G: centrality scoring, cap, SSCG subgraph extraction
         # Block G (subgraph extraction) is itself skipped when include_subgraph
