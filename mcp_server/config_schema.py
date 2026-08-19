@@ -12,8 +12,6 @@ similarly-named config field exists. See each HAND_TYPED entry's rationale strin
 for the handler line that was read to make that call.
 """
 
-from __future__ import annotations
-
 import dataclasses
 from typing import Any
 
@@ -62,9 +60,9 @@ def _field(section_cls: type, field_name: str) -> dataclasses.Field:
 def _build(mapping: dict[str, tuple[type, str]]) -> dict[str, dict[str, Any]]:
     """Derive a schema-property fragment for each ``key: (section_cls, field_name)``.
 
-    Emits ``type`` (from the field's real type object — this module has no
-    ``from __future__ import annotations``, so ``f.type`` is a real type, not a
-    string), ``minimum``/``maximum`` (from ``metadata["range"]``), and ``enum``
+    Emits ``type`` (from the field's real type object — ``search/config.py`` has
+    no ``from __future__ import annotations``, so ``f.type`` is a real type, not
+    a string), ``minimum``/``maximum`` (from ``metadata["range"]``), and ``enum``
     (from ``metadata["choices"]``). Never emits ``default``.
 
     Raises ``ValueError`` rather than guessing when a field is in
@@ -80,6 +78,7 @@ def _build(mapping: dict[str, tuple[type, str]]) -> dict[str, dict[str, Any]]:
                 "stay in HAND_TYPED"
             )
         f = _field(section_cls, field_name)
+        # pyrefly: ignore [bad-argument-type]
         json_type = _TYPE_MAP.get(f.type)
         if json_type is None:
             raise ValueError(
