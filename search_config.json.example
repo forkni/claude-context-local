@@ -191,6 +191,7 @@
     "pyan_seconds_per_file": 2.5,
     "pyan_total_timeout_cap_seconds": 3600.0,
     "use_pyproject_toml": false,
-    "min_confidence": 0.65
+    "min_confidence": 0.65,
+    "inject_on_incremental": false
   }
 }

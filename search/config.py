@@ -1413,7 +1413,7 @@ class QueryExpansionConfig:
 
 @dataclass
 class CallGraphConfig:
-    """Call-graph resolver pipeline settings (11 fields).
+    """Call-graph resolver pipeline settings (12 fields).
 
     Controls which static-analysis backends run at full-index time to inject
     cross-module ``calls`` edges into the code graph.
@@ -1590,6 +1590,27 @@ class CallGraphConfig:
 
     Example: set ``0.75`` to drop wildcard-fan-out pyan edges; set ``0.90``
     to keep only LibCST and LSP edges.
+    """
+
+    inject_on_incremental: bool = field(
+        default=False,
+        metadata=spec(reader="search/incremental_indexer.py"),
+    )
+    """Run the resolver-pipeline call-edge injection on incremental passes too.
+
+    Default ``False``: today, only a full-index pass calls
+    ``inject_call_edges`` (via ``IndexWriteStage.run``). Incremental passes
+    prune graph nodes for changed/removed files (``remove_file_nodes``) and
+    re-add them via ``add_embeddings``, which restores only the always-on
+    AST-level edges — resolver-injected pyan/LibCST/LSP edges are lost for
+    any file touched by an incremental pass and never regenerated short of a
+    full reindex. Setting this to ``True`` closes that gap by re-running
+    injection at the end of every incremental pass (scoped to the full
+    indexed set, not just the changed files — see
+    ``chunking/relationships/call_edge_resolver.py``'s ``prepare_scoped_files``).
+
+    Stays ``False`` until incremental-pass latency, edges recovered, and the
+    RW-lock hold time (ADR-0008) are measured and judged acceptable.
     """
 
     def __post_init__(self) -> None:

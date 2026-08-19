@@ -28,6 +28,7 @@ from utils.otel_attributes import (
 )
 from utils.timing import timed
 
+from .call_edge_injection import InjectionStats
 from .config import get_active_project_storage_dir, get_search_config
 from .index_write_stage import IncrementalIndexResult, IndexWriteStage
 from .indexer import CodeIndexManager as Indexer
@@ -322,6 +323,18 @@ class IncrementalIndexer:
                         start_time,
                     )
 
+            # Re-inject resolver call edges (pyan/LibCST/LSP), opt-in only:
+            # _remove_old_chunks above destroyed them for every changed/
+            # removed file via remove_file_nodes, and _add_new_chunks's
+            # add_embeddings restores only the always-on AST-level edges.
+            # Off by default until incremental-pass cost is measured — see
+            # CallGraphConfig.inject_on_incremental.
+            injection_stats = InjectionStats()
+            if get_search_config().call_graph.inject_on_incremental:
+                injection_stats = self._index_write_stage._inject_call_edges(
+                    project_path
+                )
+
             # Update snapshot, index, BM25 sync, and GPU cache; build the result.
             # After processing changes, calculate cumulative stats.
             all_files = list(current_dag.get_all_files())
@@ -343,6 +356,8 @@ class IncrementalIndexer:
                 files_modified=len(changes.modified),
                 chunks_added=chunks_added,
                 chunks_removed=chunks_removed,
+                call_edges_injected=injection_stats.injected,
+                call_edge_resolvers=injection_stats.resolvers_run,
                 metadata_changes={
                     "files_added": len(changes.added),
                     "files_removed": len(changes.removed),

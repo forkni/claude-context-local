@@ -253,9 +253,13 @@ These are advanced tuning options. For most projects, defaults are correct.
 
 ## Layered Call-Graph Resolver Pipeline (v0.14.0)
 
-**Status:** Runs at full-index time via `search/call_edge_injection.py`'s `inject_call_edges()`. Core (AST) is always-on; pyan3/LibCST require
-`pip install -e ".[callgraph]"` **and** their names present in `call_graph.resolvers`; LSP requires `pip install -e ".[lsp]"` and is gated by the
-separate `lsp_enabled` flag, which now **defaults to `true`** — not by `call_graph.resolvers` (see the trap below).
+**Status:** Runs at full-index time via `search/call_edge_injection.py`'s `inject_call_edges()`. Also runs on incremental passes when
+`call_graph.inject_on_incremental=true` (default `false` — measured-and-rejected as an always-on default, see ADR-0044; opt in via
+`search_overrides.json` if you need fresher call-graph data on every pass and can accept the added latency). Without the opt-in, an incremental
+pass's changed/removed files lose their resolver-attributed edges permanently until the next full reindex — only always-on AST-level edges survive.
+Core (AST) is always-on; pyan3/LibCST require `pip install -e ".[callgraph]"` **and** their names present in `call_graph.resolvers`; LSP requires
+`pip install -e ".[lsp]"` and is gated by the separate `lsp_enabled` flag, which now **defaults to `true`** — not by `call_graph.resolvers` (see the
+trap below).
 
 **Purpose:** Improve `find_connections` cross-module caller/callee recall. Each resolver adds edges with a confidence score; a higher-confidence
 resolver can upgrade an edge already contributed by a lower one.
@@ -295,9 +299,10 @@ gated solely by the separate `lsp_enabled` boolean, independent of what `resolve
 
 **How it works:**
 
-1. At full-index time, `search/call_edge_injection.py`'s `inject_call_edges()` reads `CallGraphConfig` and instantiates the enabled + available
-   resolvers (subject to the `resolvers`-vs-`lsp_enabled` trap above). `search/index_write_stage.py`'s `_inject_call_edges` now only handles
-   collaborator resolution before delegating to `inject_call_edges()` — it is not where resolver instantiation happens anymore.
+1. At full-index time (always) or incremental-pass time (only if `inject_on_incremental=true`), `search/call_edge_injection.py`'s
+   `inject_call_edges()` reads `CallGraphConfig` and instantiates the enabled + available resolvers (subject to the `resolvers`-vs-`lsp_enabled`
+   trap above). `search/index_write_stage.py`'s `_inject_call_edges` now only handles collaborator resolution before delegating to
+   `inject_call_edges()` — it is not where resolver instantiation happens anymore.
 2. `run_resolvers()` (`chunking/relationships/call_edge_resolver.py`) runs all resolvers in ascending confidence order; the merged result keeps the
    highest-confidence edge per `(caller_id, callee_id)` pair.
 3. Edges carry provenance: `resolver_source` (`"ast"|"pyan"|"libcst"|"lsp"`) and `resolver_confidence` (float).

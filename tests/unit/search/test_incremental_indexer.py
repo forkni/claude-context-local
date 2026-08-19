@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from search.call_edge_injection import InjectionStats
 from search.filters import PathFilter
 from search.incremental_indexer import IncrementalIndexer, IncrementalIndexResult
 
@@ -2189,3 +2190,113 @@ class TestModuleSummaryInjection:
 
         assert result.success is True
         mock_generate.assert_not_called()
+
+
+class TestIncrementalCallEdgeInjection:
+    """`inject_on_incremental` (CallGraphConfig) gates whether the incremental
+    path re-runs resolver call-edge injection to counteract the decay
+    `_remove_old_chunks`/`_add_new_chunks` otherwise causes. See
+    `search/call_edge_injection.py` and `IndexWriteStage._inject_call_edges`.
+    """
+
+    def setup_method(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.project_path = Path(self.temp_dir) / "test_project"
+        self.project_path.mkdir(parents=True, exist_ok=True)
+
+        self.mock_indexer = Mock()
+        self.mock_indexer.resync_if_desynced.return_value = (False, 0)
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
+        self.mock_embedder = Mock()
+        self.mock_chunker = Mock()
+        self.mock_snapshot_manager = Mock()
+
+    def _make_indexer(self) -> IncrementalIndexer:
+        return IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+    def _run_incremental_with_changes(
+        self, indexer: IncrementalIndexer, inject_on_incremental: bool
+    ) -> IncrementalIndexResult:
+        self.mock_snapshot_manager.has_snapshot.return_value = True
+
+        mock_changes = Mock()
+        mock_changes.has_changes.return_value = True
+        mock_changes.added = ["new_file.py"]
+        mock_changes.removed = ["old_file.py"]
+        mock_changes.modified = ["changed_file.py"]
+        mock_dag = Mock()
+        mock_dag.get_all_files.return_value = [
+            "new_file.py",
+            "old_file.py",
+            "changed_file.py",
+        ]
+        mock_dag.path_filter = PathFilter(None, None, self.project_path)
+
+        indexer.change_detector.detect_changes_from_snapshot = Mock(
+            return_value=(mock_changes, mock_dag)
+        )
+        indexer.change_detector.get_files_to_remove = Mock(
+            return_value=["old_file.py", "changed_file.py"]
+        )
+        indexer.change_detector.get_files_to_reindex = Mock(
+            return_value=["new_file.py", "changed_file.py"]
+        )
+
+        self.mock_indexer.remove_files = Mock(return_value=10)
+
+        mock_chunk = Mock()
+        mock_chunk.content = "test content"
+        self.mock_chunker.is_supported.return_value = True
+        self.mock_chunker.chunk_file.return_value = [mock_chunk]
+
+        mock_embedding_result = Mock()
+        mock_embedding_result.metadata = {}
+        self.mock_embedder.embed_chunks.return_value = [
+            mock_embedding_result,
+            mock_embedding_result,
+        ]
+
+        mock_config = Mock()
+        mock_config.call_graph.inject_on_incremental = inject_on_incremental
+
+        with patch(
+            "search.incremental_indexer.get_search_config",
+            return_value=mock_config,
+        ):
+            return indexer.incremental_index(str(self.project_path), "test_project")
+
+    def test_enabled_injects_and_forwards_stats(self):
+        indexer = self._make_indexer()
+        sentinel_stats = InjectionStats(injected=7, resolvers_run=("pyan", "libcst"))
+        with patch.object(
+            indexer._index_write_stage,
+            "_inject_call_edges",
+            return_value=sentinel_stats,
+        ) as mock_inject:
+            result = self._run_incremental_with_changes(
+                indexer, inject_on_incremental=True
+            )
+
+        assert result.success is True
+        mock_inject.assert_called_once_with(str(self.project_path))
+        assert result.call_edges_injected == 7
+        assert result.call_edge_resolvers == ("pyan", "libcst")
+
+    def test_disabled_by_default_skips_injection(self):
+        indexer = self._make_indexer()
+        with patch.object(
+            indexer._index_write_stage, "_inject_call_edges"
+        ) as mock_inject:
+            result = self._run_incremental_with_changes(
+                indexer, inject_on_incremental=False
+            )
+
+        assert result.success is True
+        mock_inject.assert_not_called()
+        assert result.call_edges_injected == 0
+        assert result.call_edge_resolvers == ()
