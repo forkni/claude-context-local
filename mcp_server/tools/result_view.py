@@ -9,6 +9,7 @@ the *output* side (``SearchResult`` -> MCP JSON dicts).
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from graph.schema import get_reverse_relation
@@ -286,6 +287,58 @@ tokens and 0% of callable contracts; see ``_enrich_results_with_signatures``.
 """
 
 
+def _annotate_each(
+    results: list[dict],
+    index_manager: CodeIndexManager | None,
+    *,
+    storage_attr: str,
+    skip_ego: bool,
+    skip_kinds: frozenset[str],
+    annotate: Callable[[dict, str], None],
+) -> list[dict]:
+    """Run *annotate* over each enrichable item, owning guard/skip/resilience.
+
+    Shared scaffolding hand-copied by all three result enrichers before this
+    extraction: the index-manager/storage guard, the per-item falsy-``chunk_id``
+    skip, the optional ego-graph skip, the optional kind skip, and a per-item
+    ``try/except Exception`` -> ``logger.debug`` so one bad chunk cannot abort
+    enrichment for the rest of the batch. ``annotate`` receives the
+    already-guarded ``(item, chunk_id)`` pair and mutates ``item`` in place;
+    its return value is ignored.
+
+    Args:
+        results: List of formatted result dicts.
+        index_manager: Index manager providing the storage named by
+            ``storage_attr``; enrichment is skipped entirely when this is
+            ``None`` or that storage attribute is ``None``.
+        storage_attr: Attribute name on ``index_manager`` whose presence
+            gates enrichment (``"graph_storage"`` or ``"metadata_store"``).
+        skip_ego: Skip results whose ``source`` is ``"ego_graph"``.
+        skip_kinds: Skip results whose ``kind`` is in this set.
+        annotate: Per-item callable ``(item, chunk_id) -> None``.
+
+    Returns:
+        The same ``results`` list, mutated in place.
+    """
+    if not index_manager or getattr(index_manager, storage_attr) is None:
+        return results
+
+    for item in results:
+        chunk_id = item.get("chunk_id")
+        if not chunk_id:
+            continue
+        if skip_ego and item.get("source") == "ego_graph":
+            continue
+        if item.get("kind") in skip_kinds:
+            continue
+        try:
+            annotate(item, chunk_id)
+        except Exception as e:  # noqa: BLE001 - resilience: optional result enrichment, degrade to no field
+            logger.debug(f"Failed to enrich result for {chunk_id}: {e}")
+
+    return results
+
+
 def _enrich_results_with_signatures(
     results: list[dict],
     index_manager: CodeIndexManager | None,
@@ -328,27 +381,24 @@ def _enrich_results_with_signatures(
     Returns:
         Results with ``signature`` added where ``bm25_text`` is available
     """
-    if not index_manager or index_manager.metadata_store is None:
-        return results
 
-    for item in results:
-        chunk_id = item.get("chunk_id")
-        if not chunk_id:
-            continue
-        if item.get("kind") in _NON_SIGNATURE_CHUNK_TYPES:
-            continue
-        try:
-            entry = index_manager.metadata_store.get(chunk_id)
-            if not entry:
-                continue
-            bm25_text = entry.get("metadata", {}).get("bm25_text")
-            if not bm25_text:
-                continue
-            item["signature"] = _extract_signature_estimate(bm25_text)
-        except Exception as e:  # noqa: BLE001 - resilience: optional signature enrichment, degrade to no signature
-            logger.debug(f"Failed to get signature for {chunk_id}: {e}")
+    def _annotate(item: dict, chunk_id: str) -> None:
+        entry = index_manager.metadata_store.get(chunk_id)
+        if not entry:
+            return
+        bm25_text = entry.get("metadata", {}).get("bm25_text")
+        if not bm25_text:
+            return
+        item["signature"] = _extract_signature_estimate(bm25_text)
 
-    return results
+    return _annotate_each(
+        results,
+        index_manager,
+        storage_attr="metadata_store",
+        skip_ego=False,
+        skip_kinds=_NON_SIGNATURE_CHUNK_TYPES,
+        annotate=_annotate,
+    )
 
 
 def _enrich_results_with_top_callers(
@@ -406,53 +456,52 @@ def _enrich_results_with_top_callers(
             found.append((source, edge_data))
         return found
 
-    for item in results:
-        chunk_id = item.get("chunk_id")
-        if not chunk_id:
-            continue
-        try:
-            normalized = normalize_path(chunk_id)
-            symbol_name = normalized.rsplit(":", 1)[-1] if ":" in normalized else None
+    def _annotate(item: dict, chunk_id: str) -> None:
+        normalized = normalize_path(chunk_id)
+        symbol_name = normalized.rsplit(":", 1)[-1] if ":" in normalized else None
 
-            seen: set[str] = set()
-            chunk_candidates = _collect(normalized, seen, normalized)
+        seen: set[str] = set()
+        chunk_candidates = _collect(normalized, seen, normalized)
 
-            symbol_candidates: list[tuple[str, dict]] = []
-            if (
-                len(chunk_candidates) < max_callers
-                and symbol_name
-                and symbol_name != normalized
-            ):
-                symbol_candidates = _collect(symbol_name, seen, normalized)
+        symbol_candidates: list[tuple[str, dict]] = []
+        if (
+            len(chunk_candidates) < max_callers
+            and symbol_name
+            and symbol_name != normalized
+        ):
+            symbol_candidates = _collect(symbol_name, seen, normalized)
 
-            if not chunk_candidates and not symbol_candidates:
-                continue
+        if not chunk_candidates and not symbol_candidates:
+            return
 
-            # Chunk-node tier always sorts before symbol-node tier; within a
-            # tier, float-confident edges first (desc), the rest keep
-            # discovery order via missing-confidence -> 0.0.
-            tiered = [(c, False) for c in chunk_candidates] + [
-                (c, True) for c in symbol_candidates
-            ]
-            tiered.sort(
-                key=lambda t: (t[1], -(t[0][1].get("resolver_confidence") or 0.0))
+        # Chunk-node tier always sorts before symbol-node tier; within a
+        # tier, float-confident edges first (desc), the rest keep
+        # discovery order via missing-confidence -> 0.0.
+        tiered = [(c, False) for c in chunk_candidates] + [
+            (c, True) for c in symbol_candidates
+        ]
+        tiered.sort(key=lambda t: (t[1], -(t[0][1].get("resolver_confidence") or 0.0)))
+
+        top_callers = []
+        for (source, _), _is_symbol_tier in tiered[:max_callers]:
+            node_name = graph.nodes[source].get("name") if source in graph else None
+            top_callers.append(
+                {
+                    "name": node_name
+                    or (source.rsplit(":", 1)[-1] if ":" in source else source),
+                    "file": source.split(":")[0] if ":" in source else "",
+                }
             )
+        item["top_callers"] = top_callers
 
-            top_callers = []
-            for (source, _), _is_symbol_tier in tiered[:max_callers]:
-                node_name = graph.nodes[source].get("name") if source in graph else None
-                top_callers.append(
-                    {
-                        "name": node_name
-                        or (source.rsplit(":", 1)[-1] if ":" in source else source),
-                        "file": source.split(":")[0] if ":" in source else "",
-                    }
-                )
-            item["top_callers"] = top_callers
-        except Exception as e:  # noqa: BLE001 - resilience: optional hint enrichment, degrade to no top_callers
-            logger.debug(f"Failed to get top callers for {chunk_id}: {e}")
-
-    return results
+    return _annotate_each(
+        results,
+        index_manager,
+        storage_attr="graph_storage",
+        skip_ego=False,
+        skip_kinds=frozenset(),
+        annotate=_annotate,
+    )
 
 
 def _enrich_results_with_graph_data(
@@ -467,16 +516,24 @@ def _enrich_results_with_graph_data(
     Returns:
         Results with graph data added where available
     """
-    if not index_manager or index_manager.graph_storage is None:
-        return results
 
-    for item in results:
-        chunk_id = item.get("chunk_id")
-        # Skip per-result graph data for ego-graph neighbors (captured in subgraph_edges instead)
-        # Saves ~400 chars per ego neighbor, ~8K chars total for 20 neighbors
-        if chunk_id and item.get("source") != "ego_graph":
-            graph_data = _get_graph_data_for_chunk(index_manager, chunk_id)
-            if graph_data:
-                item["graph"] = graph_data
+    def _annotate(item: dict, chunk_id: str) -> None:
+        graph_data = _get_graph_data_for_chunk(index_manager, chunk_id)
+        if graph_data:
+            item["graph"] = graph_data
 
-    return results
+    # Skip per-result graph data for ego-graph neighbors (captured in
+    # subgraph_edges instead) — saves ~400 chars per ego neighbor, ~8K chars
+    # total for 20 neighbors. Unlike the other two enrichers, this one had no
+    # per-item try/except of its own: routing it through the shared one in
+    # _annotate_each is a narrowing of failure surface, not a widening —
+    # _get_graph_data_for_chunk already swallows its own exceptions and
+    # returns None.
+    return _annotate_each(
+        results,
+        index_manager,
+        storage_attr="graph_storage",
+        skip_ego=True,
+        skip_kinds=frozenset(),
+        annotate=_annotate,
+    )
