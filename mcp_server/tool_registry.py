@@ -269,8 +269,9 @@ WORKFLOW:
 
 RETURNS:
 - reference_chunk: the input chunk_id (normalized)
-- similar_chunks: ranked list, each with chunk_id, file, lines, kind, score,
-  and name when available""",
+- similar_chunks: ranked list of chunks, each with chunk_id, file, lines, kind
+  (function/class/method/module/...), score, and — when available — name,
+  complexity_score, summary (module docstring preview), source ("similarity")""",
         "input_schema": {
             "type": "object",
             "properties": {
