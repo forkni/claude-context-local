@@ -1,0 +1,601 @@
+{
+  "summary": {
+    "v1_bm25_top3": {
+      "queries_with_rescued_gold": [
+        "H063"
+      ],
+      "currently_miss_rescued": [
+        "H063"
+      ],
+      "currently_miss_rescued_no_final_pass": [],
+      "watchlist_rescued": [
+        "H063"
+      ],
+      "collateral_hit_queries": []
+    },
+    "v2_dense_top3": {
+      "queries_with_rescued_gold": [],
+      "currently_miss_rescued": [],
+      "currently_miss_rescued_no_final_pass": [],
+      "watchlist_rescued": [],
+      "collateral_hit_queries": []
+    },
+    "v3_merged_11_15": {
+      "queries_with_rescued_gold": [],
+      "currently_miss_rescued": [],
+      "currently_miss_rescued_no_final_pass": [],
+      "watchlist_rescued": [],
+      "collateral_hit_queries": []
+    },
+    "v1_plus_v3": {
+      "queries_with_rescued_gold": [
+        "H063"
+      ],
+      "currently_miss_rescued": [
+        "H063"
+      ],
+      "currently_miss_rescued_no_final_pass": [],
+      "watchlist_rescued": [
+        "H063"
+      ],
+      "collateral_hit_queries": []
+    },
+    "v4_graph_hop": {
+      "queries_with_rescued_gold": [
+        "Q121"
+      ],
+      "currently_miss_rescued": [
+        "Q121"
+      ],
+      "currently_miss_rescued_no_final_pass": [],
+      "watchlist_rescued": [
+        "Q121"
+      ],
+      "collateral_hit_queries": []
+    }
+  },
+  "reports": [
+    {
+      "id": "Q119",
+      "category": "A",
+      "query": "keep the project's stored identity stable when the repository moves to a different location",
+      "currently_hit": true,
+      "best_final_rank": 1,
+      "window_size": 30,
+      "merged_pool_size": 57,
+      "final_pool_size": 30,
+      "had_final_pass": true,
+      "golds": [
+        {
+          "gold": "search/filters.py:function:compute_drive_agnostic_hash",
+          "grade": 3,
+          "dense_rank": 183,
+          "bm25_rank": null,
+          "fused_rank": null,
+          "merged_pool_rank": 20,
+          "merged_out_rank": 18,
+          "final_pool_rank": 20,
+          "in_final_window": true,
+          "final_rank": 13
+        },
+        {
+          "gold": "search/filters.py:function:find_project_at_different_drive",
+          "grade": 2,
+          "dense_rank": 40,
+          "bm25_rank": 2,
+          "fused_rank": 10,
+          "merged_pool_rank": 26,
+          "merged_out_rank": 2,
+          "final_pool_rank": 2,
+          "in_final_window": true,
+          "final_rank": 2
+        },
+        {
+          "gold": "mcp_server/storage_manager.py:function:_update_stored_path_if_changed",
+          "grade": 2,
+          "dense_rank": 1,
+          "bm25_rank": 8,
+          "fused_rank": 1,
+          "merged_pool_rank": 25,
+          "merged_out_rank": 1,
+          "final_pool_rank": 1,
+          "in_final_window": true,
+          "final_rank": 1
+        },
+        {
+          "gold": "search/filters.py:function:compute_legacy_hash",
+          "grade": 1,
+          "dense_rank": null,
+          "bm25_rank": null,
+          "fused_rank": null,
+          "merged_pool_rank": null,
+          "merged_out_rank": null,
+          "final_pool_rank": null,
+          "in_final_window": false,
+          "final_rank": null
+        },
+        {
+          "gold": "merkle/snapshot_manager.py:method:SnapshotManager.get_project_id",
+          "grade": 1,
+          "dense_rank": 4,
+          "bm25_rank": null,
+          "fused_rank": 27,
+          "merged_pool_rank": 53,
+          "merged_out_rank": null,
+          "final_pool_rank": null,
+          "in_final_window": false,
+          "final_rank": null
+        }
+      ],
+      "variants": {
+        "v1_bm25_top3": {
+          "injected": [
+            "search/hybrid_searcher.py:method:HybridSearcher.clear_index"
+          ],
+          "evicted_count": 1,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v2_dense_top3": {
+          "injected": [
+            "mcp_server/state.py:function:set_current_project_compat"
+          ],
+          "evicted_count": 1,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v3_merged_11_15": {
+          "injected": [
+            "mcp_server/project_persistence.py:module:project_persistence",
+            "mcp_server/project_persistence.py:function:get_selection_file_path",
+            "search/config.py:function:get_active_project_storage_dir",
+            "scripts/list_projects_parseable.py:function:get_storage_dir"
+          ],
+          "evicted_count": 4,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v1_plus_v3": {
+          "injected": [
+            "search/hybrid_searcher.py:method:HybridSearcher.clear_index",
+            "mcp_server/project_persistence.py:module:project_persistence",
+            "mcp_server/project_persistence.py:function:get_selection_file_path",
+            "search/config.py:function:get_active_project_storage_dir",
+            "scripts/list_projects_parseable.py:function:get_storage_dir"
+          ],
+          "evicted_count": 5,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v4_graph_hop": {
+          "injected": [
+            "search/metadata.py:method:MetadataStore.exists",
+            "search/filters.py:function:extract_drive_agnostic_path"
+          ],
+          "evicted_count": 2,
+          "rescued_golds": [],
+          "evicted_golds": []
+        }
+      }
+    },
+    {
+      "id": "Q121",
+      "category": "C",
+      "query": "the component responsible for the whole lifecycle of the similarity index, from creation to device placement",
+      "currently_hit": false,
+      "best_final_rank": null,
+      "window_size": 30,
+      "merged_pool_size": 82,
+      "final_pool_size": 30,
+      "had_final_pass": true,
+      "golds": [
+        {
+          "gold": "search/faiss_index.py:class:FaissVectorIndex",
+          "grade": 3,
+          "dense_rank": 80,
+          "bm25_rank": 79,
+          "fused_rank": 36,
+          "merged_pool_rank": 34,
+          "merged_out_rank": null,
+          "final_pool_rank": null,
+          "in_final_window": false,
+          "final_rank": null
+        },
+        {
+          "gold": "search/indexer.py:class:CodeIndexManager",
+          "grade": 2,
+          "dense_rank": 47,
+          "bm25_rank": 103,
+          "fused_rank": 17,
+          "merged_pool_rank": 43,
+          "merged_out_rank": null,
+          "final_pool_rank": null,
+          "in_final_window": false,
+          "final_rank": null
+        },
+        {
+          "gold": "search/faiss_index.py:method:FaissVectorIndex.create",
+          "grade": 1,
+          "dense_rank": 58,
+          "bm25_rank": 31,
+          "fused_rank": 8,
+          "merged_pool_rank": 70,
+          "merged_out_rank": null,
+          "final_pool_rank": null,
+          "in_final_window": false,
+          "final_rank": null
+        }
+      ],
+      "variants": {
+        "v1_bm25_top3": {
+          "injected": [
+            "search/ranking_policy.py:function:lifecycle_demotion",
+            "search/reranking_engine.py:decorated_definition:RerankingEngine.apply_neural_reranking"
+          ],
+          "evicted_count": 2,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v2_dense_top3": {
+          "injected": [
+            "search/indexer.py:decorated_definition:CodeIndexManager.index",
+            "search/indexer.py:module:indexer",
+            "search/index_sync.py:method:IndexSynchronizer.__init__"
+          ],
+          "evicted_count": 3,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v3_merged_11_15": {
+          "injected": [
+            "search/bm25_index.py:module_preamble",
+            "mcp_server/tools/searcher_view.py:module_preamble",
+            "search/indexer.py:method:CodeIndexManager._matches_filters",
+            "mcp_server/tools/search_handlers.py:module_preamble",
+            "search/indexer.py:method:CodeIndexManager.__enter__"
+          ],
+          "evicted_count": 5,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v1_plus_v3": {
+          "injected": [
+            "search/ranking_policy.py:function:lifecycle_demotion",
+            "search/reranking_engine.py:decorated_definition:RerankingEngine.apply_neural_reranking",
+            "search/bm25_index.py:module_preamble",
+            "mcp_server/tools/searcher_view.py:module_preamble",
+            "search/indexer.py:method:CodeIndexManager._matches_filters",
+            "mcp_server/tools/search_handlers.py:module_preamble",
+            "search/indexer.py:method:CodeIndexManager.__enter__"
+          ],
+          "evicted_count": 7,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v4_graph_hop": {
+          "injected": [
+            "search/metadata.py:class:MetadataStore",
+            "search/faiss_index.py:class:FaissVectorIndex"
+          ],
+          "evicted_count": 2,
+          "rescued_golds": [
+            {
+              "gold": "search/faiss_index.py:class:FaissVectorIndex",
+              "grade": 3
+            }
+          ],
+          "evicted_golds": []
+        }
+      }
+    },
+    {
+      "id": "Q122",
+      "category": "C",
+      "query": "hold several loaded encoders at once and drop the least valuable when memory gets tight",
+      "currently_hit": true,
+      "best_final_rank": 1,
+      "window_size": 30,
+      "merged_pool_size": 70,
+      "final_pool_size": 30,
+      "had_final_pass": true,
+      "golds": [
+        {
+          "gold": "mcp_server/model_pool_manager.py:class:ModelPoolManager",
+          "grade": 3,
+          "dense_rank": 12,
+          "bm25_rank": null,
+          "fused_rank": 34,
+          "merged_pool_rank": 60,
+          "merged_out_rank": null,
+          "final_pool_rank": null,
+          "in_final_window": false,
+          "final_rank": null
+        },
+        {
+          "gold": "mcp_server/model_pool_manager.py:method:ModelPoolManager.get_embedder",
+          "grade": 2,
+          "dense_rank": 7,
+          "bm25_rank": null,
+          "fused_rank": 26,
+          "merged_pool_rank": 57,
+          "merged_out_rank": null,
+          "final_pool_rank": null,
+          "in_final_window": false,
+          "final_rank": null
+        },
+        {
+          "gold": "embeddings/chunk_cache.py:method:ChunkEmbeddingCache._evict",
+          "grade": 1,
+          "dense_rank": 9,
+          "bm25_rank": 4,
+          "fused_rank": 1,
+          "merged_pool_rank": 27,
+          "merged_out_rank": 1,
+          "final_pool_rank": 1,
+          "in_final_window": true,
+          "final_rank": 1
+        }
+      ],
+      "variants": {
+        "v1_bm25_top3": {
+          "injected": [
+            "search/storage_layout.py:function:project_id_from_index_dir",
+            "search/faiss_index.py:method:FaissVectorIndex.check_memory_requirements"
+          ],
+          "evicted_count": 2,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v2_dense_top3": {
+          "injected": [
+            "embeddings/embedder.py:method:CodeEmbedder.__del__",
+            "embeddings/embedder.py:method:CodeEmbedder.__exit__",
+            "embeddings/embedder.py:method:CodeEmbedder.cleanup"
+          ],
+          "evicted_count": 3,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v3_merged_11_15": {
+          "injected": [
+            "search/neural_reranker.py:module_preamble",
+            "embeddings/embedder.py:method:CodeEmbedder._log_gpu_memory",
+            "search/neural_reranker.py:method:GenerativeReranker._ensure_loaded",
+            "search/index_probe.py:function:_embedding_batch_size"
+          ],
+          "evicted_count": 4,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v1_plus_v3": {
+          "injected": [
+            "search/storage_layout.py:function:project_id_from_index_dir",
+            "search/faiss_index.py:method:FaissVectorIndex.check_memory_requirements",
+            "search/neural_reranker.py:module_preamble",
+            "embeddings/embedder.py:method:CodeEmbedder._log_gpu_memory",
+            "search/neural_reranker.py:method:GenerativeReranker._ensure_loaded",
+            "search/index_probe.py:function:_embedding_batch_size"
+          ],
+          "evicted_count": 6,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v4_graph_hop": {
+          "injected": [
+            "search/metadata.py:method:MetadataStore.keys"
+          ],
+          "evicted_count": 1,
+          "rescued_golds": [],
+          "evicted_golds": []
+        }
+      }
+    },
+    {
+      "id": "Q133",
+      "category": "A",
+      "query": "match each JSON-RPC response to its pending request by id",
+      "currently_hit": true,
+      "best_final_rank": 1,
+      "window_size": 30,
+      "merged_pool_size": 64,
+      "final_pool_size": 30,
+      "had_final_pass": true,
+      "golds": [
+        {
+          "gold": "chunking/relationships/lsp_call_graph.py:method:_LspClient._dispatch",
+          "grade": 3,
+          "dense_rank": 8,
+          "bm25_rank": 6,
+          "fused_rank": 3,
+          "merged_pool_rank": 25,
+          "merged_out_rank": 2,
+          "final_pool_rank": 2,
+          "in_final_window": true,
+          "final_rank": 2
+        },
+        {
+          "gold": "chunking/relationships/lsp_call_graph.py:method:_LspClient.request",
+          "grade": 2,
+          "dense_rank": 2,
+          "bm25_rank": 1,
+          "fused_rank": 1,
+          "merged_pool_rank": 27,
+          "merged_out_rank": 3,
+          "final_pool_rank": 3,
+          "in_final_window": true,
+          "final_rank": 3
+        },
+        {
+          "gold": "chunking/relationships/lsp_call_graph.py:method:_LspClient._reader_loop",
+          "grade": 2,
+          "dense_rank": 15,
+          "bm25_rank": null,
+          "fused_rank": 34,
+          "merged_pool_rank": 51,
+          "merged_out_rank": null,
+          "final_pool_rank": 5,
+          "in_final_window": true,
+          "final_rank": 7
+        },
+        {
+          "gold": "chunking/relationships/lsp_call_graph.py:class:_LspClient",
+          "grade": 2,
+          "dense_rank": 28,
+          "bm25_rank": 2,
+          "fused_rank": 12,
+          "merged_pool_rank": 26,
+          "merged_out_rank": 1,
+          "final_pool_rank": 1,
+          "in_final_window": true,
+          "final_rank": 1
+        }
+      ],
+      "variants": {
+        "v1_bm25_top3": {
+          "injected": [],
+          "evicted_count": 0,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v2_dense_top3": {
+          "injected": [
+            "chunking/relationships/lsp_call_graph.py:function:_read_response",
+            "chunking/relationships/lsp_call_graph.py:function:_read_frame"
+          ],
+          "evicted_count": 2,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v3_merged_11_15": {
+          "injected": [
+            "mcp_server/tools/responses.py:function:no_indexed_project",
+            "mcp_server/cleanup_queue.py:module:cleanup_queue",
+            "mcp_server/tools/job_registry.py:module_preamble",
+            "mcp_server/cleanup_queue.py:method:CleanupQueue.process"
+          ],
+          "evicted_count": 4,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v1_plus_v3": {
+          "injected": [
+            "mcp_server/tools/responses.py:function:no_indexed_project",
+            "mcp_server/cleanup_queue.py:module:cleanup_queue",
+            "mcp_server/tools/job_registry.py:module_preamble",
+            "mcp_server/cleanup_queue.py:method:CleanupQueue.process"
+          ],
+          "evicted_count": 4,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v4_graph_hop": {
+          "injected": [
+            "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.get",
+            "embeddings/query_cache.py:method:QueryEmbeddingCache.get"
+          ],
+          "evicted_count": 2,
+          "rescued_golds": [],
+          "evicted_golds": []
+        }
+      }
+    },
+    {
+      "id": "H063",
+      "category": "H",
+      "query": "update call sites in the connection-analysis and similar-code handlers after metadata storage was pulled out into its own class",
+      "currently_hit": false,
+      "best_final_rank": null,
+      "window_size": 30,
+      "merged_pool_size": 77,
+      "final_pool_size": 30,
+      "had_final_pass": true,
+      "golds": [
+        {
+          "gold": "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections",
+          "grade": 3,
+          "dense_rank": 39,
+          "bm25_rank": 69,
+          "fused_rank": 27,
+          "merged_pool_rank": 76,
+          "merged_out_rank": null,
+          "final_pool_rank": null,
+          "in_final_window": false,
+          "final_rank": null
+        },
+        {
+          "gold": "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code",
+          "grade": 3,
+          "dense_rank": null,
+          "bm25_rank": 3,
+          "fused_rank": 120,
+          "merged_pool_rank": null,
+          "merged_out_rank": null,
+          "final_pool_rank": null,
+          "in_final_window": false,
+          "final_rank": null
+        }
+      ],
+      "variants": {
+        "v1_bm25_top3": {
+          "injected": [
+            "mcp_server/tools/search_handlers.py:module_preamble",
+            "graph/__init__.py:module_preamble",
+            "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code"
+          ],
+          "evicted_count": 3,
+          "rescued_golds": [
+            {
+              "gold": "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code",
+              "grade": 3
+            }
+          ],
+          "evicted_golds": []
+        },
+        "v2_dense_top3": {
+          "injected": [
+            "chunking/languages/glsl.py:method:GLSLChunker._extract_call_metadata"
+          ],
+          "evicted_count": 1,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v3_merged_11_15": {
+          "injected": [
+            "search/metadata.py:method:MetadataStore.commit",
+            "chunking/languages/glsl.py:method:GLSLChunker.extract_metadata",
+            "search/metadata.py:method:MetadataStore.__enter__"
+          ],
+          "evicted_count": 3,
+          "rescued_golds": [],
+          "evicted_golds": []
+        },
+        "v1_plus_v3": {
+          "injected": [
+            "mcp_server/tools/search_handlers.py:module_preamble",
+            "graph/__init__.py:module_preamble",
+            "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code",
+            "search/metadata.py:method:MetadataStore.commit",
+            "chunking/languages/glsl.py:method:GLSLChunker.extract_metadata",
+            "search/metadata.py:method:MetadataStore.__enter__"
+          ],
+          "evicted_count": 6,
+          "rescued_golds": [
+            {
+              "gold": "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code",
+              "grade": 3
+            }
+          ],
+          "evicted_golds": []
+        },
+        "v4_graph_hop": {
+          "injected": [
+            "scripts/benchmark/audit_golden_dataset.py:function:main"
+          ],
+          "evicted_count": 1,
+          "rescued_golds": [],
+          "evicted_golds": []
+        }
+      }
+    }
+  ]
+}
