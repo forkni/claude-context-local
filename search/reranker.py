@@ -5,6 +5,8 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+from search.types import UNSCORED_SOURCES
+
 
 # TM2C2 (Bruch, Gai & Ingber, ACM TOIS 2023, arXiv 2210.11934) theoretical
 # per-leg score bounds used by RRFReranker.fuse_tm2c2's normalization.
@@ -21,6 +23,16 @@ class SearchResult:
     metadata: dict[str, Any]
     source: str = "unknown"  # "bm25", "dense", "hybrid"
     rank: int = 0  # Original rank in source list
+
+    @property
+    def is_unscored(self) -> bool:
+        """Whether ``score`` is a fabricated placeholder (D9), not a rank signal.
+
+        See ``search.types.UNSCORED_SOURCES`` for which sources qualify and why
+        ``graph_hop`` -- despite also stamping 0.0 in some configurations -- is
+        deliberately not a static member of that set.
+        """
+        return self.source in UNSCORED_SOURCES
 
 
 class RRFReranker:

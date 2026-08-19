@@ -79,6 +79,39 @@ def test_ego_graph_enabled_still_triggers_copy():
     assert result.ego_graph.enabled is True
 
 
+def test_include_parent_true_enables_parent_retrieval_on_a_copy():
+    """SearchPlan.include_parent=True (D9) must reach the ParentRetrievalConfig
+    HybridSearcher.search actually reads (hybrid_searcher.py:765's
+    `effective_config.parent_retrieval.enabled` gate) -- on a copy, not the
+    process-wide singleton, matching the ego-graph override block's contract."""
+    base_config = SearchConfig()
+    plan = _make_plan(
+        intent_decision=make_intent_decision_mock("local"),
+        include_parent=True,
+    )
+
+    result = build_effective_config(plan, base_config, is_hybrid=True)
+
+    assert result is not base_config
+    assert result.parent_retrieval.enabled is True
+    assert base_config.parent_retrieval.enabled is False  # singleton untouched
+
+
+def test_include_parent_false_returns_singleton_by_identity():
+    """The mirror of the intent-only case: include_parent's block is an
+    `if plan.include_parent:` guard, not a tri-state gate like ego-graph's --
+    False never triggers a copy."""
+    base_config = SearchConfig()
+    plan = _make_plan(
+        intent_decision=make_intent_decision_mock("local"),
+        include_parent=False,
+    )
+
+    result = build_effective_config(plan, base_config, is_hybrid=True)
+
+    assert result is base_config
+
+
 def test_ego_graph_explicit_false_disables_on_a_copy():
     """The two-way gate: an explicit False must override an on-by-default base
     config, on a copy, without touching k_hops/max_neighbors_per_hop.

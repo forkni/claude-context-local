@@ -68,6 +68,25 @@ BUILTIN_TYPES: frozenset[str] = frozenset(
 )
 
 
+# Source tags whose SearchResult.score is a fabricated placeholder, not a
+# ranking signal -- SearchResult.is_unscored (search/reranker.py) reads this
+# set directly. Only sources whose 0.0 is *unconditional* belong here.
+#
+# parent_expansion is unconditional: HybridSearcher._apply_parent_expansion
+# always calls ResultFactory.from_expansion(parent_id, 0.0, ...) (D9) -- there
+# is no config path that ever gives a parent chunk a real score.
+#
+# graph_hop is deliberately excluded even though it also stamps 0.0 on some
+# candidates (MultiHopSearcher._score_graph_hop_candidates): whether a given
+# graph_hop result is scored is conditional per query on
+# SearchConfig.graph_enhanced.graph_hop_call_evidence_enabled (ADR-0039), not
+# a static property of the source tag. That per-call distinction is carried
+# by RerankWindowPolicy.graph_hop_unscored, a caller-declared flag -- adding
+# "graph_hop" here unconditionally would mislabel every scored graph_hop
+# result as unscored whenever call-evidence scoring is on.
+UNSCORED_SOURCES: frozenset[str] = frozenset({"parent_expansion"})
+
+
 @dataclass(frozen=True, slots=True)
 class RetrievalRequest:
     """Everything one retrieval executes against.

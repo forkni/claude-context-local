@@ -224,6 +224,35 @@ class TestResultFactory:
 
         assert results[0].source == "multi_hop"
 
+    def test_from_expansion_ego_graph_score_and_source(self):
+        """Ego-graph hits carry a real anchor x similarity score."""
+        result = ResultFactory.from_expansion(
+            "chunk1", 0.7, {"file": "test.py"}, "ego_graph"
+        )
+        assert result.score == 0.7
+        assert result.source == "ego_graph"
+        assert result.rank == 0
+
+    def test_from_expansion_parent_expansion_is_unscored(self):
+        """Parent-expansion hits always carry the fixed 0.0 placeholder (D9) --
+        SearchResult.is_unscored must read that as unranked context, not a
+        real (if low) score."""
+        result = ResultFactory.from_expansion(
+            "parent1", 0.0, {"file": "test.py"}, "parent_expansion"
+        )
+        assert result.score == 0.0
+        assert result.source == "parent_expansion"
+        assert result.is_unscored is True
+
+    def test_from_expansion_ego_graph_is_not_unscored(self):
+        """A real score under a different source tag must not be flagged --
+        ego_graph is not in UNSCORED_SOURCES even when its score happens to
+        be 0.0 (e.g. a zero-similarity neighbor)."""
+        result = ResultFactory.from_expansion(
+            "chunk1", 0.0, {"file": "test.py"}, "ego_graph"
+        )
+        assert result.is_unscored is False
+
     def test_from_similarity_results_preserves_metadata(self):
         """Test that similarity conversion preserves all metadata fields."""
         similar_chunks = [

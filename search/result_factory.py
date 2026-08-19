@@ -137,7 +137,12 @@ class ResultFactory:
 
         Args:
             chunk_id: Chunk identifier
-            score: Expansion score (anchor × similarity, or 0.0 for parents)
+            score: Expansion score (anchor × similarity for ego-graph hits), or
+                0.0 for parent-expansion hits -- that 0.0 is not a score at all,
+                it is a fixed placeholder HybridSearcher._apply_parent_expansion
+                always passes (D9): a parent chunk is unranked context, never
+                itself a ranked hit. See SearchResult.is_unscored, which reads
+                ``source`` to tell the two apart.
             metadata: Chunk metadata dictionary
             source: Source tag ("ego_graph", "parent_expansion", ...)
 

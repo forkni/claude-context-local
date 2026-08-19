@@ -1219,6 +1219,67 @@ def test_include_parent_content_true_keeps_content_in_parent_metadata():
     assert parent_result.metadata["content"] == "full parent source"
 
 
+def test_parent_expansion_stamps_zero_score_and_unscored_source():
+    """Parent chunks always get score=0.0 and source='parent_expansion' (:982-983),
+    and SearchResult.is_unscored reads that source as fabricated, not ranked (D9)."""
+    searcher = _bare_hybrid_searcher()
+    searcher.dense_index.get_chunk_by_id.return_value = {"file_path": "foo.py"}
+    results = [
+        SearchResult(chunk_id="r0", score=0.83, metadata={"parent_chunk_id": "parent0"})
+    ]
+    config = ParentRetrievalConfig(enabled=True)
+
+    combined = searcher._apply_parent_expansion(
+        results, config, max_results_to_expand=4
+    )
+
+    parent_result = next(r for r in combined if r.chunk_id == "parent0")
+    assert parent_result.score == 0.0
+    assert parent_result.source == "parent_expansion"
+    assert parent_result.is_unscored is True
+    # The original, real-scored result must not be flagged.
+    original = next(r for r in combined if r.chunk_id == "r0")
+    assert original.is_unscored is False
+
+
+def test_parent_expansion_appends_parents_after_all_originals():
+    """combined_results = results + parent_results (:993) -- parents always
+    sort last, after every original result, regardless of relative score."""
+    searcher = _bare_hybrid_searcher()
+    searcher.dense_index.get_chunk_by_id.return_value = {"file_path": "foo.py"}
+    results = [
+        SearchResult(chunk_id="r0", score=0.1, metadata={"parent_chunk_id": "parent0"}),
+        SearchResult(chunk_id="r1", score=0.9, metadata={}),
+    ]
+    config = ParentRetrievalConfig(enabled=True)
+
+    combined = searcher._apply_parent_expansion(
+        results, config, max_results_to_expand=4
+    )
+
+    # Both originals (in original order) precede the appended parent, even
+    # though r0's real score (0.1) is far below r1's (0.9).
+    assert [r.chunk_id for r in combined] == ["r0", "r1", "parent0"]
+
+
+def test_parent_expansion_skipped_when_config_disabled():
+    """Sanity complement to the enabled-path tests above: config.enabled=False
+    is a no-op, matching hybrid_searcher.py:765's gate (`not config.enabled`
+    short-circuits before dense_index.get_chunk_by_id is ever called)."""
+    searcher = _bare_hybrid_searcher()
+    results = [
+        SearchResult(chunk_id="r0", score=1.0, metadata={"parent_chunk_id": "parent0"})
+    ]
+    config = ParentRetrievalConfig(enabled=False)
+
+    combined = searcher._apply_parent_expansion(
+        results, config, max_results_to_expand=4
+    )
+
+    assert combined == results
+    searcher.dense_index.get_chunk_by_id.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # GraphScoringStage: output cap (:245, arithmetic at :261; config.py:1231-1236)
 # ---------------------------------------------------------------------------

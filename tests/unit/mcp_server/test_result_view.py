@@ -13,7 +13,9 @@ from unittest.mock import MagicMock
 from mcp_server.tools.result_view import (
     _enrich_results_with_signatures,
     _extract_signature_estimate,
+    _format_search_results,
 )
+from search.reranker import SearchResult
 
 
 class TestExtractSignatureEstimate:
@@ -91,6 +93,51 @@ class TestExtractSignatureEstimate:
         text = "def foo(a, b):\n    return a + b\n"
         result = _extract_signature_estimate(text, max_chars=5)
         assert result == "def f"
+
+
+class TestFormatSearchResults:
+    """_format_search_results: SearchResult -> MCP JSON dict. Covers the
+    ``is_unscored`` flag (D9) added for parent-expansion's fabricated 0.0."""
+
+    def _result(self, **overrides):
+        defaults = {
+            "chunk_id": "a.py:1-2:function:foo",
+            "score": 0.5,
+            "metadata": {"relative_path": "a.py", "start_line": 1, "end_line": 2},
+            "source": "bm25",
+        }
+        defaults.update(overrides)
+        return SearchResult(**defaults)
+
+    def test_ranked_result_has_no_is_unscored_key(self):
+        """A normal, real-scored result must not carry the flag at all --
+        matches the file's only-add-when-relevant convention."""
+        out = _format_search_results([self._result(source="bm25", score=0.85)])
+        assert "is_unscored" not in out[0]
+
+    def test_parent_expansion_result_is_flagged_unscored(self):
+        out = _format_search_results(
+            [self._result(source="parent_expansion", score=0.0)]
+        )
+        assert out[0]["is_unscored"] is True
+        assert out[0]["score"] == 0.0
+
+    def test_graph_hop_zero_score_is_not_flagged_unscored(self):
+        """graph_hop is deliberately excluded from UNSCORED_SOURCES (its
+        unscored-ness is per-call, not a static property of the source tag,
+        ADR-0039) -- a graph_hop result with score 0.0 must format the same
+        as any other ranked result."""
+        out = _format_search_results([self._result(source="graph_hop", score=0.0)])
+        assert "is_unscored" not in out[0]
+
+    def test_mixed_results_only_parent_expansion_flagged(self):
+        results = [
+            self._result(chunk_id="r0", source="bm25", score=0.9),
+            self._result(chunk_id="p0", source="parent_expansion", score=0.0),
+        ]
+        out = _format_search_results(results)
+        assert "is_unscored" not in out[0]
+        assert out[1]["is_unscored"] is True
 
 
 class TestEnrichResultsWithSignatures:

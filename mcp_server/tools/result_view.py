@@ -138,6 +138,12 @@ def _format_search_results(results: list) -> list[dict]:
         # Propagate source field for ego-graph neighbor identification
         if hasattr(result, "source") and result.source:
             item["source"] = result.source
+        # Flag fabricated-score results (D9) so a caller can tell unranked
+        # context (e.g. parent-expansion's fixed 0.0) from an actual ranked
+        # hit. Only added when true -- matches this function's existing
+        # only-add-when-relevant convention for source/reranker_score/etc.
+        if getattr(result, "is_unscored", False):
+            item["is_unscored"] = True
         formatted_results.append(item)
     return formatted_results
 
