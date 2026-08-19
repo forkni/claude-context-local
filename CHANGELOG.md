@@ -38,6 +38,20 @@ harness. Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
   bit-identical), 133q MRR **0.6843** — supersede `canon_l1`'s 0.8603/0.6789 (substrate drift
   across the campaign's implementation commits; no default behavior changed). See
   `docs/BENCHMARKS.md`.
+- **`mcp_server/tool_registry.py`'s config-backed bounds/enums now derive from `search/config.py`'s
+  `spec()` metadata** (new `mcp_server/config_schema.py`, pure refactor — every property is
+  byte-identical to the post-fix schema above except the deletions "publish invariants, never
+  values" mandates; see `docs/adr/0042-publish-invariants-not-values.md`). The 18 verbatim
+  `output_format` blocks collapse to one shared `OUTPUT_FORMAT_PROPERTY` definition, and
+  `search_mode`'s enum derives once via `SEARCH_MODE_ENUM` instead of two hand-listed copies. The
+  parity test (`tests/unit/mcp_server/test_tool_registry.py`) widens from a 4-tool parametrized
+  check to a whole-registry ratchet asserting every `minimum`/`maximum`/`enum`-carrying property is
+  classified as either config-backed or explicitly hand-typed with a documented rationale — a
+  hand-typed bound can no longer be added without either classification catching it or the ratchet
+  going red. One field, `search_code.max_context_tokens`, lost its unbacked `minimum`/`maximum`
+  entirely: no `search/config.py` field ever governed it, so under the same rule nothing was
+  derived to replace it. `mcp_server/tool_handlers.py`'s `__all__` now derives from
+  `TOOL_DISPATCH.values()` instead of hand-restating all 18 handler names a third time.
 
 ### Fixed
 

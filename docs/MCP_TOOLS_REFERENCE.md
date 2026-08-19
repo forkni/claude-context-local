@@ -552,9 +552,9 @@ Notice:
 
 **Recommendation**:
 
-- Use **compact** as default (good balance of readability and efficiency)
-- Use **toon** for large result sets (k > 10) or bandwidth-constrained environments
-- Use **json** only for debugging or when you need maximum readability
+- The server defaults to **ultra** (the "TOON" row above; `OutputConfig.format`) — best token efficiency for large result sets (k > 10) or bandwidth-constrained environments; omit `output_format` to use it
+- Use **compact** for a middle ground when tabular ultra output is harder to read than plain JSON
+- Use **verbose** (the "JSON" row above) only for debugging or when you need maximum readability
 
 ---
 

@@ -685,7 +685,7 @@ class IntentConfig:
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (14 fields)."""
+    """Neural reranker settings (15 fields)."""
 
     enabled: bool = field(
         default=True,  # Enabled by default (Quality First)
