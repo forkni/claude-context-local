@@ -67,8 +67,8 @@ async def test_handle_search_code_does_not_mutate_config_singleton():
         # _assemble helpers (prevent format/subgraph code from blowing up on mock data)
         patch("mcp_server.tools.result_view._format_search_results", return_value=[]),
         patch(
-            "mcp_server.tools.result_view._enrich_results_with_graph_data",
-            side_effect=lambda r, _: r,
+            "mcp_server.tools.result_view.enrich_results",
+            side_effect=lambda r, _im, _gates: r,
         ),
     ):
         mock_orch_state.return_value.current_project = "/test"

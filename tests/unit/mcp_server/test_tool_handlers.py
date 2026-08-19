@@ -1243,8 +1243,8 @@ async def test_handle_search_code_hybrid_searcher_ready():
             ],
         ),
         patch(
-            "mcp_server.tools.result_view._enrich_results_with_graph_data",
-            side_effect=lambda r, _im: r,
+            "mcp_server.tools.result_view.enrich_results",
+            side_effect=lambda r, _im, _gates: r,
         ),
     ):
         mock_state = Mock()

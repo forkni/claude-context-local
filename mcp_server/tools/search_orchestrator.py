@@ -569,7 +569,8 @@ class SearchOrchestrator:
         index_manager = SearcherView(outcome.searcher).index_manager
         output_cfg = outcome.effective_config.output
 
-        # Block E: format + enrich (per-result graph gated by include_result_graph)
+        # Block E: format + enrich (gate map resolved by _enrichment_gates,
+        # one row per RESULT_ENRICHERS entry — see result_view.enrich_results)
         formatted_results = result_view._format_search_results(outcome.results)
         formatted_results = result_view.enrich_results(
             formatted_results,
