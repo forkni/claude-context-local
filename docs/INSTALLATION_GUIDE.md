@@ -569,7 +569,7 @@ verify-installation.cmd
 .venv\Scripts\python.exe -c "import torch; print('CUDA available:', torch.cuda.is_available())"
 
 # Start MCP server (interactive menu with 8 functional options)
-start_mcp_server.bat
+start_mcp_server.cmd
 
 # Alternative launcher options
 scripts\batch\start_mcp_debug.bat    # Debug mode with enhanced logging
@@ -682,11 +682,11 @@ tests/README.md                            # Comprehensive test guide (285 lines
 
 The system provides multiple launcher options for different use cases:
 
-#### Main Launcher (start_mcp_server.bat)
+#### Main Launcher (start_mcp_server.cmd)
 
 ```powershell
 # Interactive menu with 8 functional options
-start_mcp_server.bat
+start_mcp_server.cmd
 ```
 
 **Features:**
@@ -802,7 +802,7 @@ If incremental indexing fails to detect changes:
 
 ```powershell
 # Option 1: Via interactive menu
-start_mcp_server.bat
+start_mcp_server.cmd
 # Select: Option 2 - Force Reindex Project
 
 # Option 2: Via command line
@@ -906,7 +906,7 @@ uv sync  # This will install correct transformers version
 
 ```powershell
 # Option 1: Via interactive menu
-start_mcp_server.bat
+start_mcp_server.cmd
 # Select: 1 - Quick Start Server (launches HTTP directly)
 
 # Option 2: Direct launcher
@@ -1292,7 +1292,7 @@ For issues not covered in this guide:
 python test_cuda_indexing.py
 
 # Start MCP server
-start_mcp_server.bat
+start_mcp_server.cmd
 
 # Index a project
 python -m mcp_server.tools index_directory "path/to/project"

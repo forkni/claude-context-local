@@ -171,7 +171,7 @@ pytest tests/ -k "hybrid"
 
 ```bash
 # Start interactive menu
-start_mcp_server.bat
+start_mcp_server.cmd
 
 # Navigate to: Advanced Options (6)
 # - Option 1: Start Server in Debug Mode

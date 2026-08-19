@@ -7,7 +7,7 @@ Built directly on the official MCP SDK's low-level `Server` (not FastMCP) for:
 
 Handlers are registered via SDK v2's constructor-kwarg pattern
 (`Server(..., on_call_tool=handle_call_tool, ...)`) rather than v1's
-`@server.call_tool()` decorators — see ADR-0017.
+`@server.call_tool()` decorators - see ADR-0017.
 """
 
 import argparse
@@ -67,7 +67,7 @@ from mcp_server.output_formatter import format_response  # noqa: E402
 from mcp_server.tools import responses  # noqa: E402
 
 
-# Configure logging — dual-handler: console (colored) + rotating file (plain)
+# Configure logging - dual-handler: console (colored) + rotating file (plain)
 debug_mode = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes")
 log_level = logging.DEBUG if debug_mode else logging.INFO
 console_format = (
@@ -87,10 +87,11 @@ _ANSI_YELLOW = "\033[93m"
 _ANSI_BLUE = "\033[94m"
 _ANSI_RESET = "\033[0m"
 
-# Stage-completion keywords → blue in console output
+# Stage-completion keywords -> blue in console output
 _STAGE_KEYWORDS: frozenset[str] = frozenset(
     [
-        "✓",
+        "\u2713",  # checkmark (escaped to keep this file ASCII-only; still
+        # matches the literal glyph some log messages emit, e.g. embeddings/model_loader.py)
         "ready",
         "complete",
         "loaded",
@@ -134,7 +135,7 @@ def _enable_windows_ansi() -> None:
 
 
 class _ColorFormatter(logging.Formatter):
-    """Console formatter: ERROR/CRITICAL→red, WARNING→yellow, stage INFO→blue."""
+    """Console formatter: ERROR/CRITICAL->red, WARNING->yellow, stage INFO->blue."""
 
     def format(self, record: logging.LogRecord) -> str:
         text = super().format(record)
@@ -156,7 +157,7 @@ class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
     gracefully rather than spamming stderr with logging-error tracebacks.
 
     Backup files are named ``mcp_server_<mmddyyhhmmss>.log`` where the timestamp
-    is fixed at session start — unique per server run, no numeric suffix needed.
+    is fixed at session start - unique per server run, no numeric suffix needed.
     """
 
     def rotate(self, source: str, dest: str) -> None:
@@ -222,7 +223,7 @@ else:
 _BENIGN_UVICORN_ERROR_SUBSTRINGS = (
     "Unexpected ASGI message",  # secondary error after a client BrokenResourceError
     "ASGI callable returned without completing response",  # standalone SSE stream
-    # cancelled mid-flight when uvicorn shuts down (Ctrl+C) — cosmetic, not a bug.
+    # cancelled mid-flight when uvicorn shuts down (Ctrl+C) - cosmetic, not a bug.
 )
 
 
@@ -354,9 +355,9 @@ from mcp_server.tool_registry import build_tool_list  # noqa: E402
 #
 # SDK v2 handlers take a uniform (ctx, params) signature and are wired into
 # the server via constructor kwargs below (v1 used @server.*() decorators).
-# `ctx: ServerRequestContext` is unused by every handler here — none of them
+# `ctx: ServerRequestContext` is unused by every handler here - none of them
 # need session/lifespan state beyond the module-level globals already
-# managed by resource_manager.py / search_factory.py — but the SDK dispatches
+# managed by resource_manager.py / search_factory.py - but the SDK dispatches
 # positionally, so it must still be accepted.
 
 
@@ -373,7 +374,7 @@ def _hash_arguments(arguments: dict[str, Any] | None) -> str:
     """Stable one-way digest of a tool call's arguments, for log correlation.
 
     Hashes key+value pairs (not just keys) so repeated/identical calls can be
-    matched across log lines — but the digest is one-way, so raw argument
+    matched across log lines - but the digest is one-way, so raw argument
     values are never written to logs or error responses (see the keys-only
     echo in the `except Exception` branch of handle_call_tool, #62).
     """
@@ -473,8 +474,8 @@ async def handle_call_tool(
                 else str(formatted_result)
             )
 
-        # Per-call observability (§VII-D): one structured line per dispatch with
-        # name, input hash, latency, and output size — independent of whether
+        # Per-call observability (Section VII-D): one structured line per dispatch with
+        # name, input hash, latency, and output size - independent of whether
         # OTel tracing (utils/observability.py) is enabled.
         _elapsed_ms = round((time.monotonic() - _start) * 1000, 1)
         _out_bytes = len(result_text.encode("utf-8"))
@@ -510,7 +511,7 @@ async def handle_call_tool(
         _elapsed_ms = round((time.monotonic() - _start) * 1000, 1)
         logger.error(f"[TOOL_ERROR] {name}: {e}", exc_info=True)
         # Echo only argument keys (not values) to keep error payloads compact and avoid
-        # doubling log noise — exc_info=True above already captures full context (#62).
+        # doubling log noise - exc_info=True above already captures full context (#62).
         error_response = responses.error(
             str(e),
             tool=name,
@@ -649,7 +650,7 @@ For more information, see the project documentation.
 # CREATE SERVER INSTANCE
 # ============================================================================
 # SDK v2 wires handlers in via constructor kwargs (v1 used @server.*()
-# decorators after the fact) — must come after every handle_* def above.
+# decorators after the fact) - must come after every handle_* def above.
 
 server = Server(
     "Code Search",
@@ -765,7 +766,7 @@ if __name__ == "__main__":
                 stateless=True,
             )
 
-            # ASGI adapter — session_manager.handle_request requires run() task group
+            # ASGI adapter - session_manager.handle_request requires run() task group
             async def handle_mcp(scope: Any, receive: Any, send: Any) -> None:
                 await session_manager.handle_request(scope, receive, send)
 
@@ -780,7 +781,7 @@ if __name__ == "__main__":
                     logger.info(
                         "[HTTP CLEANUP] Resource cleanup requested via /cleanup endpoint"
                     )
-                    # _cleanup_previous_resources() blocks (gc, CUDA ops, sleep) —
+                    # _cleanup_previous_resources() blocks (gc, CUDA ops, sleep) -
                     # offload so the uvicorn event loop stays responsive.
                     await asyncio.to_thread(_cleanup_previous_resources)
                     logger.info("[HTTP CLEANUP] Resources cleaned up successfully")
@@ -907,7 +908,7 @@ if __name__ == "__main__":
                     # succeeded.
 
                     # Suppress noisy-but-benign uvicorn.error messages (disconnected
-                    # clients, SSE streams cancelled at shutdown) — see
+                    # clients, SSE streams cancelled at shutdown) - see
                     # _drop_benign_uvicorn_errors for the full rationale.
                     logging.getLogger("uvicorn.error").addFilter(
                         _drop_benign_uvicorn_errors

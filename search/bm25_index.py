@@ -766,7 +766,7 @@ class BM25Index:
                         f"⚠️  BM25 index configuration mismatch detected!\n"
                         f"   Index built with stemming={saved_stemming}, current config={self.use_stemming}\n"
                         f"   Search quality may be degraded. Recommendation: Re-index project for optimal results.\n"
-                        f"   Run: 'Re-index Existing Project (Incremental)' from start_mcp_server.bat"
+                        f"   Run: 'Re-index Existing Project (Incremental)' from start_mcp_server.cmd"
                     )
 
                 if saved_stopwords != self.use_stopwords:

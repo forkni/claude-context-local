@@ -13,7 +13,7 @@ pushd "%PROJECT_DIR%" || (
 
 REM Check prerequisites first
 if not exist ".venv" (
-    echo [ERROR] Virtual environment not found. Run install-windows.bat first.
+    echo [ERROR] Virtual environment not found. Run install-windows.cmd first.
     echo [DEBUG] Current directory: %CD%
     echo [DEBUG] Looking for: %CD%\.venv
     echo.
@@ -282,7 +282,7 @@ goto menu_restart
 echo.
 echo === Installation ^& Setup ===
 echo.
-echo   1. Run Full Installation ^(install-windows.bat^)
+echo   1. Run Full Installation ^(install-windows.cmd^)
 echo   2. Verify Installation Status
 echo   3. Configure Claude Code Integration
 echo   4. Check CUDA/CPU Mode
@@ -1553,7 +1553,7 @@ REM Installation & Setup Functions
 :run_installer
 echo.
 echo [INFO] Running Windows Installer...
-call install-windows.bat
+call install-windows.cmd
 pause
 goto menu_restart
 
@@ -1561,7 +1561,7 @@ goto menu_restart
 echo.
 echo [INFO] Running installation verification...
 set "VERIFY_PERSISTENT_MODE=1"
-call verify-installation.bat
+call verify-installation.cmd
 set "VERIFY_PERSISTENT_MODE="
 goto menu_restart
 
@@ -2984,10 +2984,10 @@ if exist ".venv\Scripts\python.exe" (
     ".\.venv\Scripts\python.exe" -c "import torch; print(f'  PyTorch: {torch.__version__}'); print(f'  CUDA Available: {torch.cuda.is_available()}')" 2>nul
     ".\.venv\Scripts\python.exe" -c "import torch; [print(f'  GPU Count: {torch.cuda.device_count()}') or [print(f'    GPU {i}: {torch.cuda.get_device_name(i)}') for i in range(torch.cuda.device_count())] if torch.cuda.is_available() else print('  Note: Running in CPU-only mode')]" 2>nul
     ".\.venv\Scripts\python.exe" -c "import psutil; print(f'  System RAM: {psutil.virtual_memory().total // (1024**3)} GB'); print(f'  Available RAM: {psutil.virtual_memory().available // (1024**3)} GB')" 2>nul
-    ".\.venv\Scripts\python.exe" -c "try: import rank_bm25, nltk; print('  Hybrid Search: BM25 + Semantic ✓'); except ImportError: print('  Hybrid Search: Not available ✗')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "import importlib.util; print('  Hybrid Search: BM25 + Semantic [OK]' if all(importlib.util.find_spec(m) for m in ('rank_bm25','nltk')) else '  Hybrid Search: Not available [X]')" 2>nul
 ) else (
     echo   Python: Not installed
-    echo   Status: Run install-windows.bat first
+    echo   Status: Run install-windows.cmd first
 )
 goto :eof
 

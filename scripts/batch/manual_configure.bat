@@ -24,7 +24,7 @@ echo.
 REM Check if Python exists
 if not exist "%PYTHON_EXE%" (
     echo [ERROR] Python executable not found: %PYTHON_EXE%
-    echo [INFO] Please run install-windows.bat first to set up the virtual environment
+    echo [INFO] Please run install-windows.cmd first to set up the virtual environment
     echo.
     pause
     exit /b 1

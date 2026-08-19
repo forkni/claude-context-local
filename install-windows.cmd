@@ -519,7 +519,7 @@ echo   2. Configure Claude Code integration:
 echo      scripts\batch\manual_configure.bat
 echo.
 echo   3. Start the MCP server:
-echo      start_mcp_server.bat
+echo      start_mcp_server.cmd
 echo.
 echo   4. In Claude Code, index your project:
 echo      /index_directory "C:\path\to\your\project"

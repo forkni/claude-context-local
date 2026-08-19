@@ -965,7 +965,7 @@ $env:CLAUDE_BM25_WEIGHT="0.35"
 $env:CLAUDE_DENSE_WEIGHT="0.65"
 
 # Start server with configuration
-start_mcp_server.bat
+start_mcp_server.cmd
 ```
 
 ## Best Practices

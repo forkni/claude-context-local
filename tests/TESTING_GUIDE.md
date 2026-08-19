@@ -522,7 +522,7 @@ pytest tests/slow_integration/test_full_flow.py
 
 ```bash
 # Launch interactive menu
-start_mcp_server.bat
+start_mcp_server.cmd
 
 # Navigate: Advanced Options (6) → Testing Options
 # - Option 1: Start Server in Debug Mode

@@ -105,7 +105,11 @@ def _test_file_encoding_detailed(file_path: Path) -> dict:
 
 def _all_files_check():
     """Test all relevant files for encoding issues."""
-    project_root = Path(__file__).parent.parent
+    # tests/fast_integration/test_encoding_validation.py -> repo root needs
+    # 3 parents, not 2 (a prior 2-parent version silently resolved to tests/,
+    # making every path below "File not found" and this test vacuously pass
+    # regardless of content).
+    project_root = Path(__file__).parent.parent.parent
 
     # Files to test
     test_files = [
@@ -113,14 +117,16 @@ def _all_files_check():
         "tools/batch_index.py",
         "tools/notify_server.py",
         "mcp_server/server.py",
-        "tests/integration/test_complete_workflow.py",
-        "tests/integration/test_system.py",
         # PowerShell files - NOTE: configure_claude_code.ps1 and verify_claude_config.ps1 moved to _archive
-        # "scripts/powershell/install-windows.ps1",  # Removed - functionality in install-windows.bat
+        # "scripts/powershell/install-windows.ps1",  # Removed - functionality in install-windows.cmd
         # "scripts/powershell/configure_claude_code.ps1",  # Moved to _archive/powershell_scripts/
         "scripts/powershell/hf_auth.ps1",  # Still in use
-        # Batch files
-        "start_mcp_server.bat",
+        # Windows launchers (repo root)
+        "start_mcp_server.cmd",
+        "install-windows.cmd",
+        "verify-installation.cmd",
+        "verify-hf-auth.cmd",
+        "clean_pycache.cmd",
         "scripts/batch/manual_configure.bat",  # New: Python-based configuration wrapper
         # "td_tools.bat", # Removed - functionality integrated into main launcher
     ]
