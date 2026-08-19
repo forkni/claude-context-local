@@ -19,6 +19,7 @@ from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_project_storage_dir
 from mcp_server.tools import responses
 from mcp_server.tools.decorators import error_handler, require_indexed_project
+from mcp_server.tools.result_view import _format_search_results
 from mcp_server.tools.search_orchestrator import SearchOrchestrator
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import get_search_config
@@ -335,18 +336,7 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
 
     results = await asyncio.to_thread(_run_find_similar)
 
-    formatted_results = []
-    for result in results:
-        item = {
-            "chunk_id": result.chunk_id,
-            "file": result.metadata.get("relative_path", ""),
-            "lines": f"{result.metadata.get('start_line', 0)}-{result.metadata.get('end_line', 0)}",
-            "kind": result.metadata.get("chunk_type", "unknown"),
-            "score": round(result.score, 2),
-        }
-        if result.metadata.get("name"):
-            item["name"] = result.metadata["name"]
-        formatted_results.append(item)
+    formatted_results = _format_search_results(results)
 
     return {
         "reference_chunk": chunk_id,
