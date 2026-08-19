@@ -486,6 +486,7 @@ class Instrumentation:
                 {
                     "ordinal": ordinal,
                     "hop1_reserved_slots": window.hop1_reserved_slots,
+                    "is_merged_pass": "window" in kwargs,
                 }
             )
             instrumentation._active_ordinal = ordinal
@@ -568,9 +569,14 @@ class Instrumentation:
         prefix + nested-call ordinal (see module docstring)."""
         pass2_ordinal = None
         for call in self.rerank_by_query_calls:
-            if call["hop1_reserved_slots"] > 0:
+            # Classify by pass identity (did the call pass window= at all),
+            # not by hop1_reserved_slots' value -- ==0 is a legitimate
+            # Pass-2 call when reranker.hop1_reserved_slots is configured
+            # to 0, and sniffing the value silently misclassifies it as
+            # Pass-3.
+            if call["is_merged_pass"]:
                 pass2_ordinal = call["ordinal"]
-                break  # only MultiHopSearcher's Pass-2 call ever passes >0
+                break  # only MultiHopSearcher's Pass-2 call ever passes window=
 
         pass1, pass2, pass3 = [], [], []
         for rc in self.run_rerank_calls:

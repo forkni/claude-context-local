@@ -6,33 +6,40 @@ the B0 step of the "characterize, own, observe" architecture-deepening pass
 next benchmark sweep that silently moves a width (as `search_k`'s floor did,
 `50 -> 30`, in `f936d0b`) fail loudly instead of shipping unnoticed.
 
-All values below assume the outer query enters with ``k=4`` and multi-hop
-enabled. Multi-hop's hop-1 call widens that to ``initial_k = int(4 * 2.0)
-= 8`` (``multi_hop_searcher.py:400``) *before* it reaches
-``SearchExecutor.execute_single_hop`` — so the ``SearchExecutor``-level
-tests below use ``k=8``/``k=40`` directly (the hop-level input), not the
-outer ``k=4``, to reproduce the table in the plan's B0 step verbatim:
+All values below assume the outer query enters with ``k=7`` — the production
+default (``SearchMode.default_k``, ``config.py:408-417``) — and multi-hop
+enabled. Multi-hop's hop-1 call widens that to ``initial_k = int(7 * 2.0)
+= 14`` (``multi_hop_searcher.py:557``) *before* it reaches
+``SearchExecutor.execute_single_hop``. The widen/cut formulas are not
+re-derived inline here or below — they live once, canonically, as
+``leg_search_depth`` and ``fused_pool_cut`` (``search_executor.py:29-57``,
+called at ``:161``/``:204``); most individual tests below instead use
+explicit, self-contained k values (``k=4``, ``k=8``, ``k=40``, etc.) to pin
+those formulas in isolation, independent of whatever the outer default
+happens to be. The table traces what the formulas produce when actually fed
+the production default, end to end:
 
-    outer k=4
-      -> multi-hop widen:      int(4 * 2.0)                = 8
-      -> hybrid widen:         max(reranker_budget=30, 8*5) = 40
-      -> BM25 re-widen (dir):  40 * 5                       = 200
-      -> BM25 re-widen (other):40 * 3                       = 120
-      -> dense:                dense_index.search(emb, 40)  = 40
-      -> fusion:                max(k=8, reranker_budget=30) = 30
-      -> rerank slice:         min(top_k_candidates=30, len) = 30
-      -> ego cap (outer k=4):  min(5*1, 4*3)                = 5
-      -> parent cap (outer k=4): results[:4]                = 4
-      -> output cap (outer k=4): 4 * 8                      = 32
+    outer k=7
+      -> multi-hop widen:      int(7 * 2.0)                 = 14
+      -> hybrid widen:         max(reranker_budget=30, 14*5) = 70
+      -> BM25 re-widen (dir):  70 * 5                        = 350
+      -> BM25 re-widen (other):70 * 3                        = 210
+      -> dense:                dense_index.search(emb, 70)   = 70
+      -> FAISS widen (indexer.py:288-290): min(70*3, ntotal)  = 210
+      -> fusion:                max(k=14, reranker_budget=30) = 30
+      -> rerank slice:         min(top_k_candidates=30, len)  = 30
+      -> ego cap (outer k=7):  min(10*2, 7*3)                = 20
+      -> parent cap (outer k=7): results[:7]                 = 7
+      -> output cap (outer k=7): 7 * 8                       = 56
 
 Assertions inspect ``call_args`` on the mocked ``bm25_index``/``dense_index``
-directly — nothing else in the suite does this (``test_hybrid_search.py:216``
+directly — nothing else in the suite does this (``test_hybrid_search.py:312``
 inspects ``dense_mock.search.call_args`` but only ever asserts ``filters``,
 never the width).
 
 The hop-1-skip-under-single_pass pin already exists at
 ``test_search_executor.py::test_hybrid_single_pass_skips_hop1_neural_rerank``
-and is not duplicated here.
+(``:119``) and is not duplicated here.
 """
 
 import logging
@@ -60,7 +67,8 @@ from search.types import RetrievalRequest
 
 
 # ---------------------------------------------------------------------------
-# SearchExecutor: hybrid widen + fusion (search_executor.py:138-139, :165)
+# SearchExecutor: hybrid widen + fusion via leg_search_depth/fused_pool_cut
+# (search_executor.py:29-57, called at :161/:204)
 # ---------------------------------------------------------------------------
 
 
@@ -155,7 +163,7 @@ def test_hybrid_widen_uses_k5_when_larger_than_budget(executor):
 
 
 def test_fusion_k_uses_reranker_budget_floor(executor):
-    """fusion_k = max(k, reranker_budget) (search_executor.py:165)."""
+    """fusion_k = max(k, reranker_budget) (fused_pool_cut, search_executor.py:204)."""
     executor.reranker.rerank_simple.return_value = [
         SearchResult(chunk_id="x", score=1.0, metadata={})
     ]
@@ -167,7 +175,7 @@ def test_fusion_k_uses_reranker_budget_floor(executor):
 def test_parallel_search_forwards_k_unmodified(executor):
     """Pins _parallel_search's k-forwarding contract explicitly by keyword.
 
-    test_search_executor.py:112 exercises this same call site positionally
+    test_search_executor.py:164 exercises this same call site positionally
     (``_parallel_search("query", 5, 0.0, None, None)``) and would silently
     absorb a signature reorder; this pin names the argument.
     """
@@ -180,33 +188,33 @@ def test_parallel_search_forwards_k_unmodified(executor):
 
 
 # ---------------------------------------------------------------------------
-# SearchExecutor.search_bm25: re-widen + filter cutoff (:257-285)
+# SearchExecutor.search_bm25: re-widen + filter cutoff (:375-428)
 # ---------------------------------------------------------------------------
 
 
 def test_bm25_widens_5x_for_directory_filters(executor):
-    """search_k = k*5 when filters carry include_dirs/exclude_dirs (:257-258)."""
+    """search_k = k*5 when filters carry include_dirs/exclude_dirs (:383-384)."""
     executor.search_bm25("q", k=40, min_score=0.0, filters={"include_dirs": ["src"]})
 
     assert executor.bm25_index.search.call_args[0][1] == 200
 
 
 def test_bm25_widens_3x_for_other_filters(executor):
-    """search_k = k*3 for any other (non-directory) filter (:259-260)."""
+    """search_k = k*3 for any other (non-directory) filter (:385-386)."""
     executor.search_bm25("q", k=40, min_score=0.0, filters={"chunk_type": "function"})
 
     assert executor.bm25_index.search.call_args[0][1] == 120
 
 
 def test_bm25_no_filters_uses_k_unwidened(executor):
-    """search_k = k when no filters are given (:261-262)."""
+    """search_k = k when no filters are given (:387-388)."""
     executor.search_bm25("q", k=4, min_score=0.0, filters=None)
 
     assert executor.bm25_index.search.call_args[0][1] == 4
 
 
 def test_bm25_filter_cutoff_stops_at_k(executor):
-    """Filtering stops accumulating once len(filtered) >= k (:281), not search_k."""
+    """Filtering stops accumulating once len(filtered) >= k (:407), not search_k."""
     executor.bm25_index.search.return_value = [
         (f"id{i}", 1.0, {"chunk_type": "function", "relative_path": f"f{i}.py"})
         for i in range(10)
@@ -221,7 +229,7 @@ def test_bm25_filter_cutoff_stops_at_k(executor):
 
 
 # ---------------------------------------------------------------------------
-# CodeIndexManager.search: FAISS widen (search/indexer.py:247-249)
+# CodeIndexManager.search: FAISS widen (search/indexer.py:288-290)
 # ---------------------------------------------------------------------------
 
 
@@ -238,7 +246,7 @@ def _bare_index_manager(ntotal: int):
 
 
 def test_faiss_search_widens_3x_capped_by_ntotal():
-    """search_k = min(k*3, ntotal); k*3 wins when ntotal is large (:247-249)."""
+    """search_k = min(k*3, ntotal); k*3 wins when ntotal is large (:288-290)."""
     manager = _bare_index_manager(ntotal=1000)
 
     manager.search(np.zeros(4), k=40)
@@ -256,7 +264,7 @@ def test_faiss_search_capped_by_ntotal_when_smaller():
 
 
 # ---------------------------------------------------------------------------
-# MultiHopSearcher: hop-1 widen + single_pass tail (:400, :479-491)
+# MultiHopSearcher: hop-1 widen + single_pass tail (:557, :652-659)
 # ---------------------------------------------------------------------------
 
 
@@ -280,7 +288,7 @@ def _mh_request(query="q", k=4, config=None, filters=None):
 
 
 def test_multihop_widens_initial_k_by_multiplier():
-    """initial_k = int(k * initial_k_multiplier) (multi_hop_searcher.py:400)."""
+    """initial_k = int(k * initial_k_multiplier) (multi_hop_searcher.py:557)."""
     cfg = Mock()
     cfg.multi_hop.initial_k_multiplier = 2.0
     callback = Mock(return_value=[])  # empty -> early return, still records the call
@@ -300,7 +308,7 @@ def test_multihop_widens_initial_k_by_multiplier():
 
 def test_multihop_single_pass_tail_sorts_and_slices_without_reranker():
     """single_pass=True skips reranking_engine.rerank_by_query at the tail and
-    instead sorts by score + slices to k directly (:479-484)."""
+    instead sorts by score + slices to k directly (:652-659)."""
     cfg = Mock()
     cfg.multi_hop.initial_k_multiplier = 1.0
     cfg.multi_hop.multi_hop_mode = "semantic"
@@ -332,12 +340,12 @@ def test_multihop_single_pass_tail_sorts_and_slices_without_reranker():
 
 
 # ---------------------------------------------------------------------------
-# RerankingEngine: rerank slice + dedupe-before-truncate (:209, :278-281)
+# RerankingEngine: rerank slice + dedupe-before-truncate (:236, :548-551)
 # ---------------------------------------------------------------------------
 
 
 def test_rerank_slice_caps_at_top_k_candidates():
-    """rerank_count = min(top_k_candidates, len(candidates)) (reranking_engine.py:209)."""
+    """rerank_count = min(top_k_candidates, len(candidates)) (reranking_engine.py:236)."""
     engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
     engine.neural_reranker = Mock()
     engine.neural_reranker.rerank.return_value = []
@@ -455,7 +463,7 @@ def test_hop1_reserve_ego_tail_call_site_unaffected():
 
 def test_dedupe_split_blocks_can_return_fewer_than_k():
     """dedupe_split_blocks=True collapses split_block siblings *before* the
-    [:k] truncation (:278-281), so the funnel can legitimately return fewer
+    [:k] truncation (:548-551), so the funnel can legitimately return fewer
     than k rows even though k results were requested."""
     engine = RerankingEngine(embedder=Mock(), metadata_store=Mock())
     engine._ensure_reranker = Mock(return_value=False)  # skip neural rerank branch
@@ -476,7 +484,7 @@ def test_dedupe_split_blocks_can_return_fewer_than_k():
 
 
 # ---------------------------------------------------------------------------
-# merged_pool_policy: ordering + eviction fix (reranking_engine.py:294-380)
+# merged_pool_policy: ordering + eviction fix (reranking_engine.py:267-336)
 #
 # Repairs finding (E) — the merged multi-hop pool's raw-.score sort mixes
 # three incomparable scales (hop-1 jina relevance, semantic-expansion raw
@@ -931,7 +939,7 @@ def test_apply_hop1_reserve_unknown_evict_policy_raises():
 
 # ---------------------------------------------------------------------------
 # graph_hop_window_cap: caps zero-signal graph_hop occupancy in the rerank
-# window (reranking_engine.py:296-344). Reopening direction (b) from
+# window (reranking_engine.py:338-390). Reopening direction (b) from
 # evaluation/POOL_ORDER_AB_20260815.md, gated by
 # evaluation/POOL_ORDER_CAP_PROBE_20260815.md — a standalone knob, not a
 # fourth merged_pool_policy choice, since that key is verdict-locked.
@@ -1113,7 +1121,7 @@ def test_graph_hop_window_cap_applied_before_hop1_reserve():
 
 
 # ---------------------------------------------------------------------------
-# HybridSearcher: ego cap + parent cap (:887-889, :942-946)
+# HybridSearcher: ego cap + parent cap (:902-904, :957-961)
 # ---------------------------------------------------------------------------
 
 
@@ -1127,7 +1135,7 @@ def _bare_hybrid_searcher():
 
 
 def test_ego_cap_uses_min_of_max_neighbors_and_3k():
-    """max_ego = min(max_neighbors_per_hop * k_hops, original_k * 3) (:887-889)."""
+    """max_ego = min(max_neighbors_per_hop * k_hops, original_k * 3) (:902-904)."""
     searcher = _bare_hybrid_searcher()
     anchor = SearchResult(chunk_id="anchor", score=1.0, metadata={})
     neighbor_results = [
@@ -1152,7 +1160,7 @@ def test_ego_cap_uses_min_of_max_neighbors_and_3k():
 
 def test_parent_cap_only_expands_first_max_results_to_expand():
     """results[:max_results_to_expand] bounds which primaries get parent-expanded
-    (:942-946); results past that slice never reach dense_index.get_chunk_by_id."""
+    (:957-961); results past that slice never reach dense_index.get_chunk_by_id."""
     searcher = _bare_hybrid_searcher()
     searcher.dense_index.get_chunk_by_id.return_value = {"content": "x"}
     results = [
@@ -1212,12 +1220,12 @@ def test_include_parent_content_true_keeps_content_in_parent_metadata():
 
 
 # ---------------------------------------------------------------------------
-# GraphScoringStage: output cap (:245-249; config.py:451)
+# GraphScoringStage: output cap (:245, arithmetic at :261; config.py:1231-1236)
 # ---------------------------------------------------------------------------
 
 
 def test_output_cap_is_k_times_max_results_multiplier():
-    """max_total = k * max_results_multiplier, default multiplier 8 (config.py:451)."""
+    """max_total = k * max_results_multiplier, default multiplier 8 (config.py:1231-1236)."""
     stage = GraphScoringStage()
     results = [{"chunk_id": f"c{i}"} for i in range(40)]
 
@@ -1232,18 +1240,22 @@ def test_output_cap_is_k_times_max_results_multiplier():
 
 
 def test_real_output_ceiling_has_slack_vs_advertised_cap():
-    """The real worst-case output size is 5k (k multi-hop + 3k ego + k parent),
-    not the k*8 the config advertises via max_results_multiplier. Assert the
-    derived ceiling explicitly so a future width change that closes this gap
-    (or blows past it) is machine-checked rather than discovered in production.
+    """The real worst-case output size is k multi-hop + ego + k parent, not
+    the naive 5k (k + 3k + k) this test used to assert -- the ego term is
+    itself a min() (:902-904) that saturates once max_neighbors_per_hop*k_hops
+    is smaller than k*3, which it is at the production default k=7. Assert
+    the derived ceiling explicitly so a future width change that closes this
+    gap (or blows past it) is machine-checked rather than discovered in
+    production.
     """
-    k = 4
+    k = 7
     multi_hop_ceiling = k
-    ego_ceiling = k * 3  # min(max_neighbors_per_hop * k_hops, k*3), worst case k*3
+    ego_config = EgoGraphConfig()
+    ego_ceiling = min(ego_config.max_neighbors_per_hop * ego_config.k_hops, k * 3)
     parent_ceiling = k  # one parent per primary result, worst case
     derived_ceiling = multi_hop_ceiling + ego_ceiling + parent_ceiling
 
     advertised_cap = k * GraphEnhancedConfig().max_results_multiplier
 
-    assert derived_ceiling == 5 * k == 20
-    assert derived_ceiling < advertised_cap  # 20 < 32 today — cap has slack
+    assert derived_ceiling == 34  # 7 + min(10*2, 21)=20 + 7, not the naive 5*k=35
+    assert derived_ceiling < advertised_cap  # 34 < 56 today — cap has slack

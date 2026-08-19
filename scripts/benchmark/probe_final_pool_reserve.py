@@ -137,9 +137,13 @@ def probe_query(
         for r in results
     ]
 
-    rbq_calls = [c for c in calls if c["hop1_slots"] is not None]
-    merged_calls = [c for c in rbq_calls if c["hop1_slots"] > 0]
-    final_calls = [c for c in rbq_calls if c["hop1_slots"] == 0]
+    # Classify by pass identity (whether the call passed window=), not by
+    # hop1_slots' value — hop1_slots==0 is a legitimate merged call when
+    # reranker.hop1_reserved_slots is configured to 0, and sniffing the
+    # value instead of the kwarg's presence silently misclassifies it.
+    rbq_calls = [c for c in calls if c["is_merged_pass"] is not None]
+    merged_calls = [c for c in rbq_calls if c["is_merged_pass"]]
+    final_calls = [c for c in rbq_calls if not c["is_merged_pass"]]
     merged = merged_calls[-1] if merged_calls else None
     final = final_calls[-1] if final_calls else merged
     if final is None:

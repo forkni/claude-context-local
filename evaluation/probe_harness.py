@@ -374,11 +374,20 @@ class ProbeSession:
         ``instrument_rerank`` and ``probe_duplicate_crowding.py``'s
         ``Instrumentation`` class.
 
-        Each record: ``hop1_slots`` (the ``rerank_by_query`` call's
-        ``window.hop1_reserved_slots``, tagging which pass this is -- >0 is
-        the multi-hop merged call, 0 is the final post-ego call, ``None`` is
-        a hop-1 ``apply_neural_reranking`` pass that never went through
-        ``rerank_by_query``), ``k``, ``pool_ids`` (normalized),
+        Each record: ``is_merged_pass`` (the pass-identity discriminator --
+        ``True`` iff the ``rerank_by_query`` call passed a ``window=``
+        kwarg at all, which only the multi-hop Pass-2 merged call does;
+        ``False`` for an ego/parent tail call, which relies on
+        ``RerankWindowPolicy``'s default and never passes ``window=``;
+        ``None`` for a hop-1 ``apply_neural_reranking`` pass that never
+        went through ``rerank_by_query``. Use this, not ``hop1_slots``, to
+        classify which pass produced a record -- ``hop1_slots`` reflects
+        whatever value the caller's policy carries and is ``0`` on a
+        legitimate merged call when ``reranker.hop1_reserved_slots`` is
+        configured to 0, which looks identical to a non-merged call if you
+        sniff the value instead of the kwarg's presence), ``hop1_slots``
+        (the ``rerank_by_query`` call's ``window.hop1_reserved_slots``,
+        kept as data -- not a pass tag), ``k``, ``pool_ids`` (normalized),
         ``pool_sources`` (``(chunk_id, source)`` pairs -- ``source ==
         "graph_hop"`` identifies graph-hop-expansion candidates),
         ``window_ids`` (via ``engine.last_window_ids``), ``output_ids``
@@ -388,17 +397,22 @@ class ProbeSession:
 
         engine = self.searcher.reranking_engine
         calls: list[dict[str, Any]] = []
-        state: dict[str, int | None] = {"hop1_slots": None}
+        state: dict[str, int | bool | None] = {
+            "hop1_slots": None,
+            "is_merged_pass": None,
+        }
         orig_rbq = engine.rerank_by_query
         orig_run = engine._run_rerank
 
         def rbq_wrap(*call_args: Any, **call_kwargs: Any) -> Any:
             window = call_kwargs.get("window", RerankWindowPolicy.tail())
             state["hop1_slots"] = window.hop1_reserved_slots
+            state["is_merged_pass"] = "window" in call_kwargs
             try:
                 return orig_rbq(*call_args, **call_kwargs)
             finally:
                 state["hop1_slots"] = None
+                state["is_merged_pass"] = None
 
         def run_wrap(
             query_or_content: str,
@@ -411,6 +425,7 @@ class ProbeSession:
             calls.append(
                 {
                     "hop1_slots": state["hop1_slots"],
+                    "is_merged_pass": state["is_merged_pass"],
                     "k": k,
                     "pool_ids": [normalize_chunk_id(r.chunk_id) for r in candidates],
                     "pool_sources": [

@@ -29,8 +29,9 @@ gated behind ``search/config.py``'s ``RerankerConfig.merged_pool_policy`` field
 - ``Instrumentation.pass2_call()``/``.pass2_window()``/``.pass3_calls()`` disambiguate the
   multi-hop merge-pool rerank (Pass 2) from the ego-graph/parent-expansion tail rerank
   (Pass 3) by ``rerank_by_query`` call **ordinal**, cross-checked against
-  ``hop1_reserved_slots > 0`` (only Pass 2's dispatch ever passes a non-zero value) — *not*
-  by list position or log prefix alone, since both passes share the
+  ``is_merged_pass`` (``"window" in kwargs`` — only Pass 2's dispatch ever passes that
+  kwarg at all, an exact discriminator unlike sniffing ``hop1_reserved_slots``' value) —
+  *not* by list position or log prefix alone, since both passes share the
   ``"[NEURAL_RERANK]"`` prefix (``reranking_engine.py:458``); only Pass 1
   (``SearchExecutor.apply_neural_reranking``) uses the distinct ``"[NEURAL_RERANK-SEARCH]"``.
 - ``simulate_windows()`` replays each query's captured Pass-2 pool (order/score/source/
@@ -343,6 +344,7 @@ class Instrumentation:
             ordinal = len(instrumentation.rerank_by_query_calls)
             window = kwargs.get("window", RerankWindowPolicy.tail())
             hop1_reserved_slots = window.hop1_reserved_slots
+            is_merged_pass = "window" in kwargs
             merged_pool_policy = window.merged_pool_policy
             pool = [
                 {
@@ -363,6 +365,7 @@ class Instrumentation:
                     "sources": {p["chunk_id"]: p["source"] for p in pool},
                     "hop1_ranks": {p["chunk_id"]: p["hop1_rank"] for p in pool},
                     "hop1_reserved_slots": hop1_reserved_slots,
+                    "is_merged_pass": is_merged_pass,
                     "merged_pool_policy": merged_pool_policy,
                     "output_ids": None,  # filled in below once orig returns
                 }
@@ -422,28 +425,28 @@ class Instrumentation:
         Attribution is primarily by call **ordinal**: Pass 2 (MultiHopSearcher) always
         dispatches before Pass 3 (the ego-graph/parent-expansion tail,
         ``hybrid_searcher.py``'s two call sites) when both run in the same query, so
-        ordinal 0 is Pass 2. Cross-checked against ``hop1_reserved_slots > 0`` — only
-        Pass 2's dispatch ever passes a non-zero value — but the cross-check only *fires*
-        (raises) on an actual contradiction (a positive-hop1_reserved_slots call NOT at
-        ordinal 0, or more than one such call); it does not require ordinal 0 to itself
-        have ``hop1_reserved_slots > 0``, since running this probe with
-        ``--hop1-reserved-slots 0`` legitimately makes Pass 2 pass 0 too.
+        ordinal 0 is Pass 2. Cross-checked against ``is_merged_pass`` (``"window" in
+        kwargs`` — only Pass 2's dispatch ever passes that kwarg at all) — the
+        cross-check only *fires* (raises) on an actual contradiction (a merged-pass call
+        NOT at ordinal 0, or more than one such call). This is an exact discriminator,
+        unlike sniffing ``hop1_reserved_slots > 0`` (the previous approach): that value
+        is legitimately 0 on a real Pass-2 call whenever
+        ``reranker.hop1_reserved_slots`` is configured to 0, which made the old
+        cross-check silently inert (never raising, never confirming) at that setting.
         """
         if not self.rerank_by_query_calls:
             return None
-        positive_hop1 = [
-            c for c in self.rerank_by_query_calls if c["hop1_reserved_slots"] > 0
-        ]
-        if len(positive_hop1) > 1:
+        merged_calls = [c for c in self.rerank_by_query_calls if c["is_merged_pass"]]
+        if len(merged_calls) > 1:
             raise RuntimeError(
-                f"{len(positive_hop1)} rerank_by_query calls with hop1_reserved_slots>0 "
+                f"{len(merged_calls)} rerank_by_query calls passed window= "
                 "in one query (expected at most 1 Pass-2 call)"
             )
-        if positive_hop1 and positive_hop1[0]["ordinal"] != 0:
+        if merged_calls and merged_calls[0]["ordinal"] != 0:
             raise RuntimeError(
                 "Pass-2/Pass-3 disambiguation cross-check failed: a "
-                f"hop1_reserved_slots>0 call was observed at ordinal "
-                f"{positive_hop1[0]['ordinal']}, expected 0 (Pass 2 always runs first)"
+                f"merged-pass call was observed at ordinal "
+                f"{merged_calls[0]['ordinal']}, expected 0 (Pass 2 always runs first)"
             )
         return self.rerank_by_query_calls[0]
 
