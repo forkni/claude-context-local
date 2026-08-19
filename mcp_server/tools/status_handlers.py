@@ -380,6 +380,8 @@ async def handle_get_search_config_status(arguments: dict[str, Any]) -> dict:
         "max_k": config.search_mode.max_k,
         "output_format": config.output.format,
         "ego_graph_enabled": config.ego_graph.enabled,
+        "ego_graph_k_hops": config.ego_graph.k_hops,
+        "ego_graph_max_neighbors_per_hop": config.ego_graph.max_neighbors_per_hop,
         "hide_ambiguous_edges_default": config.graph_enhanced.hide_ambiguous_edges_default,
     }
 

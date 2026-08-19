@@ -46,6 +46,21 @@ harness. Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
   `EgoGraphConfig.k_hops`/`.max_neighbors_per_hop`. On the explicit-enable path
   (`ego_graph_enabled=True`), a configured non-default value was silently ignored. Byte-identical
   on an unconfigured install (2 == 2, 10 == 10).
+- **`mcp_server/tool_registry.py` schema/config divergences** (documentation only — `input_schema`
+  is never validated at runtime) — six confirmed defects corrected: `output_format`
+  (×18) hand-typed `default: "compact"` while `OutputConfig.format = "ultra"` and carried no
+  `spec(choices=)` until now; `search_code.k`'s `maximum: 100` had no backing invariant until
+  `SearchModeConfig.max_k` gained `spec(range=(1, 100))`; `ego_graph_k_hops`'s `maximum: 5`
+  disagreed with the real `spec(range=(1, 3))` (now `3`); `ego_graph_max_neighbors_per_hop` had no
+  `spec(range=)` until `EgoGraphConfig.max_neighbors_per_hop` gained `range=(1, 50)`;
+  `max_age_minutes`'s `default: 5` disagreed with `max_index_age_minutes = 30.0`;
+  `find_connections.hide_ambiguous`'s `default: False` disagreed with
+  `hide_ambiguous_edges_default = True`. Per "publish invariants, never values", every stale
+  `default` was deleted rather than corrected — descriptions now end in "Omit to use the server's
+  configured value (`get_search_config_status.<field>`)." `find_path`'s short-form
+  `output_format` description was also reconciled to the long-form text used by the other 17.
+  `get_search_config_status` gained two previously-missing keys, `ego_graph_k_hops` /
+  `ego_graph_max_neighbors_per_hop`, so that pointer is truthful.
 
 ## [0.25.0] - 2026-08-13
 

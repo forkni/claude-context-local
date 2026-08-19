@@ -418,11 +418,13 @@ class SearchModeConfig:
     max_k: int = field(
         default=50,
         metadata=spec(
+            range=(1, 100),
             flat_alias="max_k",
             env="CLAUDE_MAX_K",
             reader="mcp_server/tools/search_orchestrator.py",
         ),
-    )
+    )  # range is the invariant ceiling the search_code.k schema publishes; max_k's
+    # own *value* (a per-install setting) is a separate, unpublished runtime clamp
 
     # Context budget (0 = unlimited)
     default_max_context_tokens: int = field(
@@ -856,7 +858,7 @@ class RerankerConfig:
         metadata=spec(
             flat_alias="reranker_hop1_reserved_slots",
             env="CLAUDE_RERANKER_HOP1_RESERVED_SLOTS",
-            reader="search/multi_hop_searcher.py",
+            reader="search/rerank_window_policy.py",
         ),
     )
     merged_pool_policy: str = field(
@@ -894,7 +896,7 @@ class RerankerConfig:
         metadata=spec(
             choices=("score", "score_reserve_fix", "channel_priority"),
             flat_alias="reranker_merged_pool_policy",
-            reader="search/multi_hop_searcher.py",
+            reader="search/rerank_window_policy.py",
         ),
     )
     graph_hop_window_cap: int = field(
@@ -916,7 +918,7 @@ class RerankerConfig:
             range=(0, 30),
             flat_alias="reranker_graph_hop_window_cap",
             env="CLAUDE_RERANKER_GRAPH_HOP_WINDOW_CAP",
-            reader="search/multi_hop_searcher.py",
+            reader="search/rerank_window_policy.py",
         ),
     )
 
@@ -927,7 +929,11 @@ class OutputConfig:
 
     format: str = field(
         default="ultra",  # verbose, compact, ultra (default: ultra for 45-55% token reduction)
-        metadata=spec(flat_alias="output_format", reader="mcp_server/server.py"),
+        metadata=spec(
+            choices=("verbose", "compact", "ultra"),
+            flat_alias="output_format",
+            reader="mcp_server/server.py",
+        ),
     )
     source_order_output: bool = field(
         default=False,  # Emit results in relevance order (blended_score desc); set True to restore DOS-RAG file/line ordering
@@ -1060,6 +1066,7 @@ class EgoGraphConfig:
     max_neighbors_per_hop: int = field(
         default=10,  # Max neighbors per hop
         metadata=spec(
+            range=(1, 50),
             flat_alias="ego_graph_max_neighbors_per_hop",
             reader="search/ego_graph_retriever.py",
         ),
