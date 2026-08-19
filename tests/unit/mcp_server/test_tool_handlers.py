@@ -38,6 +38,129 @@ def test_tool_dispatch_registry_parity():
 
 
 # ============================================================================
+# MUTATION LOCK COVERAGE: TOOL_DISPATCH-wide invariant (D4)
+# ============================================================================
+
+
+MUTATION_LOCKED_TOOLS = {
+    "switch_project",
+    "configure_search_mode",
+    "switch_embedding_model",
+    "configure_reranking",
+    "configure_chunking",
+    "clear_index",
+    "delete_project",
+}
+
+# Documents the complete mutator/non-mutator split of TOOL_DISPATCH, consumed
+# by test_mutation_lock_coverage_is_exhaustive_over_tool_dispatch below so a
+# newly added tool can't silently skip this invariant. If that test fails:
+# add the new tool to MUTATION_LOCKED_TOOLS (after confirming it acquires the
+# lock) or to NOT_MUTATION_LOCKED_TOOLS here with a one-line justification.
+NOT_MUTATION_LOCKED_TOOLS = {
+    "get_index_status",
+    "list_projects",
+    "get_memory_status",
+    "cleanup_resources",
+    "get_search_config_status",
+    "list_embedding_models",
+    "search_code",
+    "find_similar_code",
+    "find_connections",
+    "find_path",
+    "index_directory",  # self-locks internally -- see test above
+}
+
+
+def _decorator_chain(fn):
+    """Yield fn and every function reachable via functools.wraps' __wrapped__
+    chain, so a decorator stack (e.g. @error_handler wrapping
+    @with_mutation_lock wrapping the handler body) can be inspected layer by
+    layer.
+    """
+    seen = set()
+    current = fn
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = getattr(current, "__wrapped__", None)
+
+
+def _acquires_mutation_lock(fn) -> bool:
+    """True if any layer of fn's decorator chain calls get_mutation_lock().
+
+    Both @error_handler and @with_mutation_lock use functools.wraps, which
+    copies __name__/__qualname__ from the wrapped function onto the
+    wrapper — so the layers are not distinguishable by name alone. Instead,
+    check each layer's own code object: with_mutation_lock's wrapper body
+    reads ``get_state().get_mutation_lock()``, and attribute names (method
+    lookups) land in co_names alongside globals, so this is a direct,
+    reflection-based check rather than a source-text grep.
+    """
+    return any(
+        "get_mutation_lock" in layer.__code__.co_names
+        for layer in _decorator_chain(fn)
+        if hasattr(layer, "__code__")
+    )
+
+
+@pytest.mark.parametrize("tool_name", sorted(MUTATION_LOCKED_TOOLS))
+def test_state_mutating_tool_acquires_mutation_lock(tool_name):
+    """Every tool that mutates shared ApplicationState must serialize via
+    @with_mutation_lock (decorators.py) -- otherwise two concurrent MCP
+    clients on the stateless HTTP transport can interleave mutations and
+    corrupt state (see with_mutation_lock's docstring, section IV-C).
+
+    Regression guard for D4-shaped defects: this walks the *actual* handler
+    reachable through TOOL_DISPATCH, so it fails if a handler is
+    un-decorated, or if a future refactor swaps @with_mutation_lock for
+    something that doesn't call get_mutation_lock().
+    """
+    handler = TOOL_DISPATCH[tool_name]
+    assert _acquires_mutation_lock(handler), (
+        f"TOOL_DISPATCH['{tool_name}'] never calls get_mutation_lock() "
+        f"anywhere in its decorator chain. State-mutating MCP tools must be "
+        f"decorated with @with_mutation_lock (see decorators.py)."
+    )
+
+
+def test_index_directory_acquires_mutation_lock_internally():
+    """index_directory is the one mutator that cannot be decorated directly:
+    under wait=False, handle_index_directory hands the real work to
+    asyncio.create_task and returns immediately, so a decorator on the
+    handler would only cover the fast job-creation call, not the actual
+    indexing. Instead, _run_index_directory takes get_mutation_lock()
+    explicitly around its state-mutating prologue (project_info.json
+    read/write, set_current_project, bind_active_project_overrides) and
+    releases it before the reindex rwlock body runs -- mutation lock
+    (outermost) -> reindex rwlock, never the reverse (decorators.py's
+    documented lock order).
+    """
+    from mcp_server.tools import index_handlers
+
+    assert not _acquires_mutation_lock(TOOL_DISPATCH["index_directory"]), (
+        "handle_index_directory itself must stay undecorated by "
+        "@with_mutation_lock -- decorating it would only guard job creation "
+        "under wait=False, not the actual indexing work run on create_task."
+    )
+    assert (
+        "get_mutation_lock" in index_handlers._run_index_directory.__code__.co_names
+    ), (
+        "_run_index_directory's prologue must acquire "
+        "get_state().get_mutation_lock() explicitly, since the handler "
+        "itself cannot be decorated (see docstring)."
+    )
+
+
+def test_mutation_lock_coverage_is_exhaustive_over_tool_dispatch():
+    """See NOT_MUTATION_LOCKED_TOOLS above for what to do if this fails."""
+    assert set(TOOL_DISPATCH) == MUTATION_LOCKED_TOOLS | NOT_MUTATION_LOCKED_TOOLS, (
+        "TOOL_DISPATCH gained or lost a tool that isn't accounted for by "
+        "either MUTATION_LOCKED_TOOLS or NOT_MUTATION_LOCKED_TOOLS above."
+    )
+
+
+# ============================================================================
 # FIXTURES - Mock CodeGraphStorage to prevent production pollution
 # ============================================================================
 
@@ -948,6 +1071,67 @@ async def test_handle_find_connections_explicit_false_overrides_config_default()
             "a.py:1-2:function:a",
             "b.py:1-2:function:b",
         ]
+
+
+def _make_impact_report_no_callers():
+    """A leaf symbol: no callers, no callees. Exercises the D13 zero-caller
+    path -- ImpactReport.to_dict() must still emit direct_callers/
+    direct_callees as [] rather than omitting the keys."""
+    from search.types import ImpactReport
+
+    return ImpactReport(
+        symbol={"name": "leaf"},
+        chunk_id="src/t.py:function:leaf",
+        direct_callers=[],
+        indirect_callers=[],
+        similar_code=[],
+        total_impacted=0,
+        unique_files=set(),
+        dependency_graph={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_find_connections_zero_callers_survives_formatting():
+    """D13 regression guard: a leaf symbol's empty direct_callers/
+    direct_callees must reach format_response as *present* keys (not
+    omitted), in all three output formats -- exercising the real
+    handle_find_connections -> format_response chain rather than a
+    hand-authored dict, which is exactly the isolation gap that let D13 hide
+    behind an otherwise-green TestZeroResultContract suite (both keys were
+    already covered there, but only at the formatter layer)."""
+    from mcp_server.output_formatter import format_response
+
+    p_searcher, p_state, p_dec_state, p_analyzer = _patch_find_connections_deps()
+    with (
+        p_searcher,
+        p_state as mock_get_state,
+        p_dec_state as mock_dec_state,
+        p_analyzer as mock_analyzer_cls,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
+
+        mock_analyzer = Mock()
+        mock_analyzer.analyze_impact.return_value = _make_impact_report_no_callers()
+        mock_analyzer_cls.from_searcher.return_value = mock_analyzer
+
+        result = await tool_handlers.handle_find_connections(
+            {"chunk_id": "src/t.py:function:leaf"}
+        )
+
+        # The handler's raw dict must already carry both keys (D13) -- this
+        # is what a conditional to_dict() emission would fail before any
+        # formatter runs.
+        assert result["direct_callers"] == []
+        assert result["direct_callees"] == []
+
+        for fmt in ("verbose", "compact", "ultra"):
+            formatted = format_response(result, fmt)
+            assert formatted["direct_callers"] == [], fmt
+            assert formatted["direct_callees"] == [], fmt
 
 
 # ============================================================================

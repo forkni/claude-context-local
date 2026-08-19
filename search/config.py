@@ -1882,6 +1882,33 @@ class SearchConfig:
         _derive_construction_baked_fields(_SUBCONFIG_TYPES)
     )
 
+    @staticmethod
+    def requires_rebuild(flat: dict[str, Any]) -> bool:
+        """True if any dotted-key override in *flat* touches a
+        ``spec(construction_baked=True)`` field.
+
+        *flat* keys are ``"section.field"`` dotted paths (e.g.
+        ``"reranker.top_k_candidates"``), matching
+        ``evaluation/arm_overrides.py``'s ``normalize_overrides`` shape. This
+        is the public predicate that module's own ``requires_rebuild``
+        delegates to (D7) instead of reading ``_CONSTRUCTION_BAKED_FIELDS``
+        directly across the layer; ``mcp_server/tools/config_handlers.py``'s
+        config handlers use it the same way to skip an unnecessary
+        ``reset_searcher()`` when nothing touched actually requires one.
+
+        Malformed keys (no ``"."``, or an unrecognized section) simply never
+        match anything in ``_CONSTRUCTION_BAKED_FIELDS`` and are treated as
+        not baked — this function does not validate; callers that need a
+        hard failure on a bad key (e.g. ``arm_overrides.validate_overrides``)
+        do that separately, before calling this.
+        """
+        touched = {
+            cast(tuple[str, str], tuple(key.split(".", 1)))
+            for key in flat
+            if "." in key
+        }
+        return bool(touched & SearchConfig._CONSTRUCTION_BAKED_FIELDS)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to nested dictionary for JSON serialization.
 

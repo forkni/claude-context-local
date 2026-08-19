@@ -177,16 +177,27 @@ def test_construction_baked_fields_declare_a_reader():
 
 def test_no_mcp_settable_field_is_construction_baked():
     """Ratchet: spec(mcp=...) and spec(construction_baked=True) must never be
-    set together for a *settable* mcp tag (see ADR-0027/mcp-field-derivation).
+    set together for a *settable* mcp tag whose section has no
+    requires_rebuild gate (see ADR-0027/mcp-field-derivation).
 
     A field tagged mcp="<section>" is patched live onto the cached SearchConfig
     by an MCP handler (see apply_config_patch); a field tagged
     construction_baked=True is read once into a collaborator (cached
     HybridSearcher/reranker) at construction, so mutating it on the config
     singleton is a no-op until that collaborator is rebuilt. A field carrying
-    both tags would silently accept an MCP-set value that never takes effect -
-    the handler must call state.reset_searcher() (dropping construction_baked),
-    or the field must not be MCP-settable (dropping mcp=).
+    both tags would silently accept an MCP-set value that never takes effect.
+
+    D7: handle_configure_search_mode and handle_configure_reranking now gate
+    state.reset_searcher() behind SearchConfig.requires_rebuild() (config.py),
+    so a newly-baked field in RerankerConfig/SearchModeConfig/PerformanceConfig
+    is handled automatically as long as it stays in one of _RERANKER_FIELDS/
+    _SEARCH_MODE_FIELDS/_PERFORMANCE_SEARCH_FIELDS (config_handlers.py) - this
+    ratchet does not need to fire for those. It still guards every other
+    settable section (e.g. chunking, whose handler intentionally has no
+    searcher-reset path at all - changes there need a re-index, not a rebuilt
+    collaborator): a settable+baked field there would still silently no-op,
+    and needs a handler-side requires_rebuild gate of its own or must drop the
+    mcp= tag.
 
     mcp="<section>_echo" is a different tag: it marks a field that is
     read-only-echoed back after a patch (see config_handlers.py's
@@ -203,6 +214,9 @@ def test_no_mcp_settable_field_is_construction_baked():
         and f.metadata.get("construction_baked")
     ]
     assert not exposed, (
-        "MCP-settable field(s) baked at construction - the handler must call "
-        "state.reset_searcher(), or drop the mcp= tag:\n  " + "\n  ".join(exposed)
+        "MCP-settable field(s) baked at construction - add a "
+        "SearchConfig.requires_rebuild()-gated state.reset_searcher() call to "
+        "that field's handler (see handle_configure_reranking/"
+        "handle_configure_search_mode in config_handlers.py for the pattern), "
+        "or drop the mcp= tag:\n  " + "\n  ".join(exposed)
     )

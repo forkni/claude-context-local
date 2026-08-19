@@ -254,10 +254,16 @@ class TestImpactReportCalleeFields:
         assert report.direct_callees_recovered == 0
         assert report.direct_callees_ambiguous == 0
 
-    def test_to_dict_omits_empty_callees(self) -> None:
+    def test_to_dict_empty_callees_present_as_empty_list(self) -> None:
+        # direct_callees is one of output_formatter.NEVER_DROP_EMPTY_KEYS'
+        # four allowlisted keys (D13) -- to_dict() must emit it unconditionally
+        # so the formatter's post-pass has a key to preserve. callee_confidence
+        # is an ordinary derived summary, not allowlisted, and still omits
+        # when every counter is zero.
         report = self._make_report()
         d = report.to_dict()
-        assert "direct_callees" not in d
+        assert "direct_callees" in d
+        assert d["direct_callees"] == []
         assert "callee_confidence" not in d
 
     def test_to_dict_includes_callees_when_set(self) -> None:

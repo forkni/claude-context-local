@@ -1032,3 +1032,50 @@ def test_example_config_covers_full_dataclass_surface():
         "default (see ADR-0022 / Phase 2 default alignment):\n"
         + "\n".join(value_mismatches)
     )
+
+
+# ---------------------------------------------------------------------------
+# SearchConfig.requires_rebuild (D7)
+# ---------------------------------------------------------------------------
+
+# tests/unit/evaluation/test_arm_overrides.py already exercises this predicate
+# thoroughly (all 13 construction-baked keys, live-field negatives, mixed
+# touched sets) via evaluation.arm_overrides.requires_rebuild, which is now a
+# thin delegator to this staticmethod. These tests pin the predicate directly
+# at its own layer -- SearchConfig -- so a future decoupling of that delegator
+# (e.g. arm_overrides growing its own logic again) can't silently leave
+# SearchConfig.requires_rebuild itself uncovered.
+
+
+def test_requires_rebuild_true_for_construction_baked_key():
+    assert SearchConfig.requires_rebuild({"reranker.doc_max_chars": 4000}) is True
+
+
+def test_requires_rebuild_false_for_live_key():
+    assert SearchConfig.requires_rebuild({"reranker.top_k_candidates": 50}) is False
+
+
+def test_requires_rebuild_empty_is_false():
+    assert SearchConfig.requires_rebuild({}) is False
+
+
+def test_requires_rebuild_true_if_any_touched_key_is_baked():
+    """A mix of live and baked keys must still trigger -- the caller (an MCP
+    config handler) needs a rebuild if *any* touched field demands one, not
+    only when every touched field does."""
+    assert (
+        SearchConfig.requires_rebuild(
+            {"reranker.top_k_candidates": 50, "reranker.doc_max_chars": 4000}
+        )
+        is True
+    )
+
+
+def test_requires_rebuild_ignores_malformed_keys():
+    """A key with no '.' (or an unrecognized section) never matches
+    _CONSTRUCTION_BAKED_FIELDS -- requires_rebuild does not validate, per its
+    own docstring; callers needing a hard failure on a bad key (e.g.
+    arm_overrides.validate_overrides) do that separately, before calling
+    this."""
+    assert SearchConfig.requires_rebuild({"not_dotted": 1}) is False
+    assert SearchConfig.requires_rebuild({"nonexistent_section.field": 1}) is False

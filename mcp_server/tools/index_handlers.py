@@ -778,127 +778,134 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
         bind_active_project_overrides,
     )
 
-    await asyncio.to_thread(_cleanup_previous_resources)
+    async with get_state().get_mutation_lock():
+        await asyncio.to_thread(_cleanup_previous_resources)
 
-    directory_path = Path(directory_path).resolve()
-    if not directory_path.exists():
-        return responses.error(f"Directory does not exist: {directory_path}")
+        directory_path = Path(directory_path).resolve()
+        if not directory_path.exists():
+            return responses.error(f"Directory does not exist: {directory_path}")
 
-    # Step 2: Optional pre-index accessibility check (sample files for locks).
-    # Walks the directory tree and opens files — offload off the event loop.
-    await asyncio.to_thread(_run_accessibility_precheck, directory_path)
+        # Step 2: Optional pre-index accessibility check (sample files for locks).
+        # Walks the directory tree and opens files — offload off the event loop.
+        await asyncio.to_thread(_run_accessibility_precheck, directory_path)
 
-    # Check if project already exists and handle filter immutability.
-    # Use get_canonical_project_info() so filter reads work regardless of which
-    # model the current config default points to (prevents H1: null-overwrite when
-    # the config model's dir has no project_info.json but another model's dir does).
-    project_info_file = get_canonical_project_info(str(directory_path)) or (
-        get_project_storage_dir(str(directory_path)) / "project_info.json"
-    )
-
-    # Load stored filters if project exists — file read blocks, offload.
-    stored_include = None
-    stored_exclude = None
-    stored_include_exclusive = False
-    stored_filter_semantics_version = None
-    if project_info_file.exists():
-
-        def _read_project_info() -> dict[str, Any]:
-            with open(project_info_file) as f:
-                return json.load(f)
-
-        project_info = await asyncio.to_thread(_read_project_info)
-        stored_include = project_info.get("user_included_dirs")
-        stored_exclude = project_info.get("user_excluded_dirs")
-        stored_include_exclusive = bool(project_info.get("include_exclusive", False))
-        stored_filter_semantics_version = project_info.get("filter_semantics_version")
-        check_filter_semantics_migration(project_info)
-
-    # Determine effective filters
-    # If user didn't provide filters, use stored filters (auto-reindex case)
-    effective_include = include_dirs if include_dirs is not None else stored_include
-    effective_exclude = exclude_dirs if exclude_dirs is not None else stored_exclude
-    effective_include_exclusive = (
-        include_exclusive if include_exclusive is not None else stored_include_exclusive
-    )
-
-    # FILTER_SEMANTICS_VERSION 3 made dependency-tree include patterns
-    # additive instead of narrowing. A stored index built under an older
-    # version, with such patterns and not opted into include_exclusive, was
-    # indexed under the old (narrowing) semantics — force one full reindex
-    # so it picks up the newly re-admitted source tree, rather than silently
-    # staying stale until some unrelated filter edit triggers it. Scoped to
-    # only the affected group (see _includes_touch_dependency_tree) so every
-    # other stored project — the overwhelming majority — isn't forced
-    # through a needless full reindex just for a version bump that changes
-    # nothing for them.
-    semantics_stale = (
-        stored_filter_semantics_version is not None
-        and stored_filter_semantics_version < FILTER_SEMANTICS_VERSION
-        and not effective_include_exclusive
-        and _includes_touch_dependency_tree(effective_include, directory_path)
-    )
-
-    # Check for filter change
-    filters_changed = project_info_file.exists() and (
-        effective_include != stored_include
-        or effective_exclude != stored_exclude
-        or effective_include_exclusive != stored_include_exclusive
-        or semantics_stale
-    )
-
-    # Force full reindex if filters changed during incremental
-    if filters_changed and incremental:
-        reason = (
-            "filter_semantics_version stale (dependency-tree include patterns "
-            "now additive)"
-            if semantics_stale
-            and effective_include == stored_include
-            and effective_exclude == stored_exclude
-            and effective_include_exclusive == stored_include_exclusive
-            else "filters changed"
-        )
-        logger.warning(
-            f"[FILTER_CHANGE] {reason}, forcing full reindex\n"
-            f"  Old: include={stored_include}, exclude={stored_exclude}, "
-            f"include_exclusive={stored_include_exclusive}\n"
-            f"  New: include={effective_include}, exclude={effective_exclude}, "
-            f"include_exclusive={effective_include_exclusive}"
-        )
-        incremental = False  # Force full reindex
-
-    # Use effective filters for indexing
-    include_dirs = effective_include
-    exclude_dirs = effective_exclude
-    include_exclusive = effective_include_exclusive
-
-    # Save/update filters in project_info.json
-    if not project_info_file.exists() or filters_changed:
-        # First time or filters changed - create/update project storage with new filters
-        project_dir = get_project_storage_dir(
-            str(directory_path),
-            include_dirs=include_dirs,
-            exclude_dirs=exclude_dirs,
-            include_exclusive=include_exclusive,
+        # Check if project already exists and handle filter immutability.
+        # Use get_canonical_project_info() so filter reads work regardless of which
+        # model the current config default points to (prevents H1: null-overwrite when
+        # the config model's dir has no project_info.json but another model's dir does).
+        project_info_file = get_canonical_project_info(str(directory_path)) or (
+            get_project_storage_dir(str(directory_path)) / "project_info.json"
         )
 
-        update_project_filters(
-            str(directory_path),
-            include_dirs,
-            exclude_dirs,
-            include_exclusive=include_exclusive,
+        # Load stored filters if project exists — file read blocks, offload.
+        stored_include = None
+        stored_exclude = None
+        stored_include_exclusive = False
+        stored_filter_semantics_version = None
+        if project_info_file.exists():
+
+            def _read_project_info() -> dict[str, Any]:
+                with open(project_info_file) as f:
+                    return json.load(f)
+
+            project_info = await asyncio.to_thread(_read_project_info)
+            stored_include = project_info.get("user_included_dirs")
+            stored_exclude = project_info.get("user_excluded_dirs")
+            stored_include_exclusive = bool(
+                project_info.get("include_exclusive", False)
+            )
+            stored_filter_semantics_version = project_info.get(
+                "filter_semantics_version"
+            )
+            check_filter_semantics_migration(project_info)
+
+        # Determine effective filters
+        # If user didn't provide filters, use stored filters (auto-reindex case)
+        effective_include = include_dirs if include_dirs is not None else stored_include
+        effective_exclude = exclude_dirs if exclude_dirs is not None else stored_exclude
+        effective_include_exclusive = (
+            include_exclusive
+            if include_exclusive is not None
+            else stored_include_exclusive
         )
 
-    # Set as current project (using setter for proper cross-module sync)
-    set_current_project(str(directory_path))
+        # FILTER_SEMANTICS_VERSION 3 made dependency-tree include patterns
+        # additive instead of narrowing. A stored index built under an older
+        # version, with such patterns and not opted into include_exclusive, was
+        # indexed under the old (narrowing) semantics — force one full reindex
+        # so it picks up the newly re-admitted source tree, rather than silently
+        # staying stale until some unrelated filter edit triggers it. Scoped to
+        # only the affected group (see _includes_touch_dependency_tree) so every
+        # other stored project — the overwhelming majority — isn't forced
+        # through a needless full reindex just for a version bump that changes
+        # nothing for them.
+        semantics_stale = (
+            stored_filter_semantics_version is not None
+            and stored_filter_semantics_version < FILTER_SEMANTICS_VERSION
+            and not effective_include_exclusive
+            and _includes_touch_dependency_tree(effective_include, directory_path)
+        )
 
-    # Point the config layer at this project's storage dir so its
-    # search_overrides.json (ADR-0014) applies to this run — index_directory
-    # without a prior switch_project must still pick up the right file — then
-    # drop config-derived caches built against the previous project's overrides.
-    # Non-swallowing: a bind failure here must surface via @error_handler
-    # rather than indexing proceeding against the previous project's overrides.
-    bind_active_project_overrides(str(directory_path))
+        # Check for filter change
+        filters_changed = project_info_file.exists() and (
+            effective_include != stored_include
+            or effective_exclude != stored_exclude
+            or effective_include_exclusive != stored_include_exclusive
+            or semantics_stale
+        )
+
+        # Force full reindex if filters changed during incremental
+        if filters_changed and incremental:
+            reason = (
+                "filter_semantics_version stale (dependency-tree include patterns "
+                "now additive)"
+                if semantics_stale
+                and effective_include == stored_include
+                and effective_exclude == stored_exclude
+                and effective_include_exclusive == stored_include_exclusive
+                else "filters changed"
+            )
+            logger.warning(
+                f"[FILTER_CHANGE] {reason}, forcing full reindex\n"
+                f"  Old: include={stored_include}, exclude={stored_exclude}, "
+                f"include_exclusive={stored_include_exclusive}\n"
+                f"  New: include={effective_include}, exclude={effective_exclude}, "
+                f"include_exclusive={effective_include_exclusive}"
+            )
+            incremental = False  # Force full reindex
+
+        # Use effective filters for indexing
+        include_dirs = effective_include
+        exclude_dirs = effective_exclude
+        include_exclusive = effective_include_exclusive
+
+        # Save/update filters in project_info.json
+        if not project_info_file.exists() or filters_changed:
+            # First time or filters changed - create/update project storage with new filters
+            project_dir = get_project_storage_dir(
+                str(directory_path),
+                include_dirs=include_dirs,
+                exclude_dirs=exclude_dirs,
+                include_exclusive=include_exclusive,
+            )
+
+            update_project_filters(
+                str(directory_path),
+                include_dirs,
+                exclude_dirs,
+                include_exclusive=include_exclusive,
+            )
+
+        # Set as current project (using setter for proper cross-module sync)
+        set_current_project(str(directory_path))
+
+        # Point the config layer at this project's storage dir so its
+        # search_overrides.json (ADR-0014) applies to this run — index_directory
+        # without a prior switch_project must still pick up the right file — then
+        # drop config-derived caches built against the previous project's overrides.
+        # Non-swallowing: a bind failure here must surface via @error_handler
+        # rather than indexing proceeding against the previous project's overrides.
+        bind_active_project_overrides(str(directory_path))
 
     # Temporarily disable allow_ram_fallback during indexing for performance
     with temporary_ram_fallback_off() as original_value:

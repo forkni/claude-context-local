@@ -671,8 +671,12 @@ class TestImpactReportToDictKeyOrder(TestCase):
 
     def test_all_relationship_fields_populated_key_order(self):
         """Every relationship bucket non-empty -> to_dict() emits them in
-        this exact order, after the fixed symbol/chunk_id/total_impacted/
-        file_count prefix.
+        this exact order, after the fixed symbol/chunk_id prefix and around
+        the total_impacted/file_count block. direct_callers/direct_callees
+        bracket the rest of the payload (right after chunk_id and last,
+        respectively) because to_dict() emits them unconditionally (D13,
+        NEVER_DROP_EMPTY_KEYS) -- unlike every other key here, they appear
+        even though this report has no actual callers/callees.
         """
         relationships = {
             name: [{"chunk_id": "x"}] for name in _RELATIONSHIP_FIELDS_TODAY
@@ -683,19 +687,26 @@ class TestImpactReportToDictKeyOrder(TestCase):
         expected_order = [
             "symbol",
             "chunk_id",
+            "direct_callers",
             "total_impacted",
             "file_count",
             *_RELATIONSHIP_FIELDS_TODAY,
+            "direct_callees",
         ]
         self.assertEqual(list(d.keys()), expected_order)
 
     def test_empty_relationship_fields_omitted(self):
         """omit-empty: none of the 23 relationship keys appear when none of
-        the buckets have data.
+        the buckets have data. direct_callers/direct_callees are NOT part of
+        this set -- they emit unconditionally (D13) and are asserted present
+        (as []) by TestZeroResultContract / test_direct_callers_and_callees_*
+        elsewhere, not by this omit-empty test.
         """
         report = self._make_report()
         d = report.to_dict()
         self.assertFalse(set(_RELATIONSHIP_FIELDS_TODAY) & d.keys())
+        self.assertEqual(d["direct_callers"], [])
+        self.assertEqual(d["direct_callees"], [])
 
 
 # ---------------------------------------------------------------------------
@@ -756,16 +767,45 @@ class TestFilterAmbiguousEdges(TestCase):
             [e["chunk_id"] for e in out["direct_callees"]], ["e.py:1-2:function:e"]
         )
 
-    def test_emptied_list_key_is_removed(self):
-        """A list that becomes empty is dropped entirely, matching
-        to_dict()'s omit-empty contract."""
+    def test_indirect_callers_emptied_list_key_is_removed(self):
+        """indirect_callers is NOT a NEVER_DROP_EMPTY_KEYS key -- to_dict()
+        still omits it when empty (ordinary absence-of-data), so a list that
+        becomes empty here is dropped entirely too, matching that contract.
+        """
+        from search.relationship_analyzer import filter_ambiguous_edges
+
+        d = self._make_report_dict(
+            indirect_callers=[_edge("f.py:1-2:function:f", "ambiguous")],
+        )
+        out = filter_ambiguous_edges(d)
+        self.assertNotIn("indirect_callers", out)
+
+    def test_direct_callees_emptied_list_key_stays_present_as_empty(self):
+        """direct_callers/direct_callees are NEVER_DROP_EMPTY_KEYS keys --
+        to_dict() emits them unconditionally (D13). Filtering every entry
+        down to nothing must leave the key present as [], not delete it;
+        deleting it would silently reopen the exact hole D13 closed, one
+        layer downstream of the producer.
+        """
         from search.relationship_analyzer import filter_ambiguous_edges
 
         d = self._make_report_dict(
             direct_callees=[_edge("f.py:1-2:function:f", "ambiguous")],
         )
         out = filter_ambiguous_edges(d)
-        self.assertNotIn("direct_callees", out)
+        self.assertIn("direct_callees", out)
+        self.assertEqual(out["direct_callees"], [])
+
+    def test_direct_callers_emptied_list_key_stays_present_as_empty(self):
+        """Same guarantee as direct_callees, for direct_callers."""
+        from search.relationship_analyzer import filter_ambiguous_edges
+
+        d = self._make_report_dict(
+            direct_callers=[_edge("g.py:1-2:function:g", "ambiguous")],
+        )
+        out = filter_ambiguous_edges(d)
+        self.assertIn("direct_callers", out)
+        self.assertEqual(out["direct_callers"], [])
 
     def test_totals_and_confidence_counters_untouched(self):
         """total_impacted / file_count / caller+callee confidence breakdowns

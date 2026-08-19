@@ -202,8 +202,13 @@ class ImpactReport:
             "chunk_id": self.chunk_id,
         }
 
-        if self.direct_callers:
-            result["direct_callers"] = self.direct_callers
+        # Unconditional (D13): unlike the other relationship buckets below, which
+        # are ordinary absence-of-data, direct_callers/direct_callees are two of
+        # NEVER_DROP_EMPTY_KEYS' four allowlisted keys (output_formatter.py) --
+        # the formatter's post-pass can only re-add a key that was present here
+        # to begin with, so gating this emission on truthiness silently defeated
+        # the allowlist for every symbol with no callers.
+        result["direct_callers"] = self.direct_callers
         if self.indirect_callers:
             result["indirect_callers"] = self.indirect_callers
         if self.similar_code:
@@ -237,9 +242,9 @@ class ImpactReport:
                 "ambiguous": self.direct_callers_ambiguous,
             }
 
-        # Outbound callees (bidirectional)
-        if self.direct_callees:
-            result["direct_callees"] = self.direct_callees
+        # Outbound callees (bidirectional). Unconditional for the same reason as
+        # direct_callers above (D13).
+        result["direct_callees"] = self.direct_callees
         if (
             self.direct_callees_exact
             or self.direct_callees_recovered

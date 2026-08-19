@@ -986,6 +986,14 @@ class RelationshipAnalyzer:
 
 _AMBIGUOUS_FILTERED_KEYS = ("direct_callers", "direct_callees", "indirect_callers")
 
+# The two of the three filtered keys that ImpactReport.to_dict() now emits
+# unconditionally (D13, matching output_formatter.NEVER_DROP_EMPTY_KEYS) --
+# filtering ALL of a symbol's callers/callees down to nothing must leave the
+# key present as [], not delete it, or this filter would silently re-open the
+# hole D13 closed. indirect_callers stays conditional (to_dict() still omits
+# it when empty; ordinary absence-of-data, not a contract-carrying key).
+_NEVER_DROP_FILTERED_KEYS = frozenset({"direct_callers", "direct_callees"})
+
 
 def filter_ambiguous_edges(report_dict: dict[str, Any]) -> dict[str, Any]:
     """Drop call edges tagged ``confidence == "ambiguous"`` from a report dict.
@@ -1003,7 +1011,11 @@ def filter_ambiguous_edges(report_dict: dict[str, Any]) -> dict[str, Any]:
     existed but were hidden" signal.
 
     A list emptied by the filter is removed entirely, matching ``to_dict()``'s
-    omit-empty contract.
+    omit-empty contract for ``indirect_callers``. ``direct_callers`` and
+    ``direct_callees`` are the opposite: ``to_dict()`` emits them
+    unconditionally (D13), so an all-ambiguous list is kept here too, as
+    ``[]`` — deleting it would reintroduce the exact "key silently absent"
+    defect D13 fixed, one layer downstream of the producer.
     """
     filtered = dict(report_dict)
     for key in _AMBIGUOUS_FILTERED_KEYS:
@@ -1011,7 +1023,7 @@ def filter_ambiguous_edges(report_dict: dict[str, Any]) -> dict[str, Any]:
         if not entries:
             continue
         kept = [e for e in entries if e.get("confidence") != "ambiguous"]
-        if kept:
+        if kept or key in _NEVER_DROP_FILTERED_KEYS:
             filtered[key] = kept
         else:
             del filtered[key]

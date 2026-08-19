@@ -894,3 +894,35 @@ class TestZeroResultContract:
             assert "direct_callers" in result
             assert "other_empty_list" not in result
             assert "other_empty_dict" not in result
+
+    def test_direct_callers_that_compacts_to_nothing_still_present(self):
+        """A NEVER_DROP_EMPTY_KEYS list that is non-empty at the top level
+        but whose only item compacts down to {} (every field empty) must
+        still survive compact formatting as [] (D6). This is a distinct
+        code path from an already-empty top-level value: _to_compact_format's
+        `if compacted_list:` guard drops the key exactly like any other
+        now-empty field unless the post-pass safety net restores it."""
+        data = {
+            "chunk_id": "a.py:1:func:f",
+            "direct_callers": [{"resolver_confidence": None}],
+        }
+
+        result = _to_compact_format(data)
+
+        assert "direct_callers" in result
+        assert result["direct_callers"] == []
+
+    def test_direct_callees_that_tabulates_to_nothing_still_present(self):
+        """Same gap as above, for toon format's tabular path: if every field
+        of every row is empty, `fields` ends up [], so no dense header and no
+        sparse table are ever written for the key -- the post-pass restore
+        must still add it back as []."""
+        data = {
+            "chunk_id": "a.py:1:func:f",
+            "direct_callees": [{"resolver_confidence": None}],
+        }
+
+        result = _to_toon_format(data)
+
+        assert "direct_callees" in result
+        assert result["direct_callees"] == []

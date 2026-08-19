@@ -96,7 +96,29 @@ def _to_compact_format(data: dict[str, Any]) -> dict[str, Any]:
             # For primitives, keep as-is
             result[key] = value
 
+    _restore_never_drop_empty_keys_compact(data, result)
     return result
+
+
+def _restore_never_drop_empty_keys_compact(
+    data: dict[str, Any], result: dict[str, Any]
+) -> None:
+    """Post-pass safety net for NEVER_DROP_EMPTY_KEYS in compact format (D6).
+
+    The branches above only special-case a key's own top-level empty value
+    (an already-empty ``direct_callers: []`` falls through to the plain
+    ``else: result[key] = value`` assignment and survives). But if the key's
+    value is non-empty and *compaction of its contents* empties it out --
+    every item compacts to ``{}`` (the ``if compacted:`` / ``if
+    compacted_list:`` truthiness guards above) -- those "only add if not
+    empty after compacting" checks drop the key entirely, same as any other
+    now-empty field. Re-assert the contract once, here, instead of teaching
+    each of those sites to special-case NEVER_DROP_EMPTY_KEYS individually.
+    Mutates *result* in place.
+    """
+    for key in NEVER_DROP_EMPTY_KEYS:
+        if key in data and key not in result:
+            result[key] = []
 
 
 def _compact_dict(d: dict[str, Any]) -> dict[str, Any]:
@@ -152,6 +174,14 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
     result = {}
     sparse_threshold = 0.25  # If <25% of rows have values, move to sparse
 
+    # NOTE (D6): the three ([], {}, None, "") checks below this point (skipping
+    # an all-empty field across all rows, computing per-field fill_ratio, and
+    # collecting non-empty sparse entries) are deliberately left unguarded by
+    # NEVER_DROP_EMPTY_KEYS. They operate on item-level *fields* inside a
+    # NEVER_DROP_EMPTY_KEYS key's rows, not on the top-level response key
+    # itself -- the key-level contract is enforced once, by the
+    # _restore_never_drop_empty_keys_toon post-pass at the end of this
+    # function, regardless of how the per-field checks below shape the table.
     for key, value in data.items():
         # Skip empty values, except contract-carrying keys (see NEVER_DROP_EMPTY_KEYS).
         if key not in NEVER_DROP_EMPTY_KEYS and value in ([], {}, None, ""):
@@ -234,4 +264,43 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
     # Format is self-explanatory and documented in MCP_TOOLS_REFERENCE.md
     # Removed _format_note to save 15-30 tokens per response
 
+    _restore_never_drop_empty_keys_toon(data, result)
     return result
+
+
+def _toon_key_present(key: str, result: dict[str, Any]) -> bool:
+    """True if *key* survived toon-formatting.
+
+    A NEVER_DROP_EMPTY_KEYS key that tabulated successfully (dense_fields
+    non-empty) never appears under its own bare name in a toon result -- only
+    under the composite ``"{key}[N]{field1,field2,...}"`` header (and,
+    independently, sparse-only fields land under ``"{key}_sparse"`` with no
+    dense header at all). A naive ``key in result`` check would therefore
+    false-positive a restore for every key that tabulated correctly.
+    """
+    if key in result:
+        return True
+    header_prefix = f"{key}["
+    sparse_key = f"{key}_sparse"
+    return any(
+        existing == sparse_key or existing.startswith(header_prefix)
+        for existing in result
+    )
+
+
+def _restore_never_drop_empty_keys_toon(
+    data: dict[str, Any], result: dict[str, Any]
+) -> None:
+    """Post-pass safety net for NEVER_DROP_EMPTY_KEYS in toon format (D6).
+
+    Mirrors _restore_never_drop_empty_keys_compact's rationale: if a key's
+    value is non-empty but every field is empty across all rows, the ``if
+    fields:`` guard above drops the key (no dense header, no sparse table --
+    nothing is ever written to `result` for it) exactly like any other
+    now-empty field. Re-assert the contract once, here, instead of teaching
+    that guard to special-case NEVER_DROP_EMPTY_KEYS. Mutates *result* in
+    place.
+    """
+    for key in NEVER_DROP_EMPTY_KEYS:
+        if key in data and not _toon_key_present(key, result):
+            result[key] = []

@@ -25,7 +25,7 @@ import time
 from collections.abc import AsyncGenerator
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import anyio
 
@@ -384,6 +384,33 @@ def _hash_arguments(arguments: dict[str, Any] | None) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
 
 
+def _is_carved_out_error_shape(result: dict[str, Any]) -> bool:
+    """True if *result* carries a top-level ``"error"`` key that must NOT
+    translate to ``CallToolResult(is_error=True)`` (D5).
+
+    Two carve-outs, both cases where the *tool call itself* succeeded even
+    though its payload happens to include an ``"error"`` key -- discriminated
+    by the sibling ``"status"`` key, which no genuine error envelope sets
+    (``responses.error()`` never adds a ``status=`` context field today):
+
+    - Async-job status polls (``get_index_status(job_id=...)`` ->
+      ``Job.to_status_dict()``, job_registry.py:52-53): when the polled job
+      failed, the status dict carries ``"status": "error"`` alongside
+      ``"error": <message>`` -- but polling succeeded; it's reporting that
+      the *job* failed, not that this call did.
+    - ``responses.client_disconnected()`` (responses.py:67-69), shaped
+      ``{"error": "Client disconnected", "status": "cancelled"}`` -- mirrors
+      the ``asyncio.CancelledError`` branch below, which logs
+      ``status=cancelled`` rather than ``status=error`` and never reaches
+      this function at all (it re-raises). Treating a client-initiated
+      disconnect as a server-side tool failure would misclassify it.
+    """
+    from mcp_server.tools.job_registry import JobStatus
+
+    status = result.get("status")
+    return status is not None and status in (*get_args(JobStatus), "cancelled")
+
+
 async def handle_call_tool(
     ctx: ServerRequestContext, params: CallToolRequestParams
 ) -> CallToolResult:
@@ -416,6 +443,11 @@ async def handle_call_tool(
 
         # Call handler (arguments dict no longer contains output_format)
         result = await handler(arguments)
+        is_error = (
+            isinstance(result, dict)
+            and "error" in result
+            and not _is_carved_out_error_shape(result)
+        )
         formatted_result = (
             format_response(result, output_format)
             if isinstance(result, dict)
@@ -448,7 +480,7 @@ async def handle_call_tool(
         _out_bytes = len(result_text.encode("utf-8"))
         logger.info(
             f"[TOOL_DONE] name={name} input_hash={_input_hash} ms={_elapsed_ms} "
-            f"out_bytes={_out_bytes} status=ok"
+            f"out_bytes={_out_bytes} status={'error' if is_error else 'ok'}"
         )
 
         # Return both content (backward compat) and structured_content (native JSON, no double encoding)
@@ -456,6 +488,7 @@ async def handle_call_tool(
         # pretty-print the dict regardless, making the response appear as full/indented output and
         # defeating the token-reduction goal. For compact/ultra the content text is canonical.
         return CallToolResult(
+            is_error=is_error,
             content=[TextContent(type="text", text=result_text)],
             structured_content=(
                 formatted_result
