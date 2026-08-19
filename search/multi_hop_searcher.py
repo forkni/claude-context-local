@@ -16,6 +16,7 @@ from search.config import SearchMode
 from search.graph_integration import is_chunk_id
 from utils.timing import timed
 
+from .rerank_window_policy import RerankWindowPolicy
 from .reranker import SearchResult as RerankerSearchResult
 from .reranking_engine import RerankingEngine
 from .types import RetrievalRequest
@@ -643,17 +644,17 @@ class MultiHopSearcher:
         # fabricated placeholder score (see _graph_expand) unless the A1
         # call-evidence scorer is on and produced real anchor-conditioned
         # scores — same gate _graph_expand itself reads (ADR-0039).
-        ge_cfg = getattr(config, "graph_enhanced", None)
-        graph_hop_unscored = not (
-            ge_cfg is not None and ge_cfg.graph_hop_call_evidence_enabled
-        )
+        # RerankWindowPolicy.merged_pool() derives this from `config`; both
+        # branches below need the same value, so it's read off the policy
+        # once rather than recomputed.
+        window = RerankWindowPolicy.merged_pool(config)
 
         if config.reranker.single_pass:
             # Q3 single-pass: defer neural reranking to the one listwise pass
             # at the tail of HybridSearcher.search(); keep fusion/expansion
             # score order so ego expansion still seeds from this top-k.
             merged_results = RerankingEngine._order_merged_pool(
-                merged_results, "score", graph_hop_unscored
+                merged_results, "score", window.graph_hop_unscored
             )
             final_results = merged_results[:k]
         else:
@@ -661,12 +662,8 @@ class MultiHopSearcher:
                 query=query,
                 results=merged_results,
                 k=k,
-                search_mode=search_mode,
-                hop1_reserved_slots=config.reranker.hop1_reserved_slots,
-                merged_pool_policy=config.reranker.merged_pool_policy,
-                graph_hop_window_cap=config.reranker.graph_hop_window_cap,
-                graph_hop_unscored=graph_hop_unscored,
                 config=config,
+                window=window,
             )
 
         timings["rerank"] = time.time() - rerank_start

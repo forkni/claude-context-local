@@ -12,7 +12,8 @@ from typing import TYPE_CHECKING
 from utils.timing import timed
 
 from .chunk_id import dedupe_results
-from .config import SearchMode, get_search_config
+from .config import get_search_config
+from .rerank_window_policy import RerankWindowPolicy
 
 
 # TYPE_CHECKING is always False at runtime; AddNot mutation on this guard is equivalent.
@@ -33,6 +34,10 @@ except ImportError:  # pragma: no mutate
 
 from .neural_reranker import create_reranker
 
+
+# RerankWindowPolicy is frozen, so one shared instance is safe as a default —
+# module-level singleton instead of calling .tail() in the signature (B008).
+_TAIL_WINDOW = RerankWindowPolicy.tail()
 
 # merged_pool_policy="channel_priority" tier map for non-hop1 candidates.
 # Tier 0 (hop-1 survivors, metadata["hop1_rank"] is not None) is handled
@@ -475,12 +480,8 @@ class RerankingEngine:
         query: str,
         results: list,
         k: int,
-        search_mode: str = SearchMode.HYBRID,
-        hop1_reserved_slots: int = 0,
-        merged_pool_policy: str = "score",
-        graph_hop_window_cap: int = 0,
-        graph_hop_unscored: bool = False,
-        config: "SearchConfig | None" = None,
+        config: "SearchConfig",
+        window: RerankWindowPolicy = _TAIL_WINDOW,
     ) -> list:
         """
         Re-rank results by sorted score, then apply neural reranking.
@@ -489,50 +490,19 @@ class RerankingEngine:
             query: Original search query
             results: List of SearchResult objects to re-rank
             k: Number of top results to return
-            search_mode: Search mode for re-ranking strategy
-            hop1_reserved_slots: Reserve up to this many hop-1-tagged
-                (``metadata["hop1_rank"]``) candidates into the
-                ``top_k_candidates`` rerank window when the pool exceeds it.
-                0 (default) is a no-op — only ``MultiHopSearcher.search``
-                passes a non-zero value; the ego-graph/parent-expansion tail
-                call sites stay byte-identical.
-            merged_pool_policy: How to order the merged pool before the
-                ``top_k_candidates`` cut — see ``_order_merged_pool`` and
-                ``SearchConfig.reranker.merged_pool_policy``.
-                ``"score"`` (default) is byte-identical to the pre-existing
-                sort. ``"score_reserve_fix"`` keeps that sort but changes
-                ``_apply_hop1_reserve``'s eviction target from the window's
-                blind tail to its lowest-scored non-hop1 entries.
-                ``"channel_priority"`` replaces the sort with a tiered
-                ordering that never compares across incomparable score
-                scales; under it, ``hop1_reserved_slots`` is provably inert
-                (all hop-1 candidates already sit in the window's tier 0).
-                Only ``MultiHopSearcher``'s Pass-2 call passes a non-default
-                value; the ego-graph/parent-expansion tail call sites stay
-                on ``"score"``.
-            graph_hop_window_cap: Cap how many ``source == "graph_hop"``
-                candidates occupy the ``top_k_candidates`` rerank window —
-                see ``_apply_graph_hop_window_cap`` and
-                ``SearchConfig.reranker.graph_hop_window_cap``. 0 (default)
-                is a no-op. Applied after ``_order_merged_pool`` and before
-                ``hop1_reserved_slots``' eviction. Only ``MultiHopSearcher``'s
-                Pass-2 call passes a non-zero value; the ego-graph/
-                parent-expansion tail call sites stay byte-identical.
-            graph_hop_unscored: The caller's declaration that every
-                ``source == "graph_hop"`` candidate in ``results`` carries a
-                fabricated placeholder score rather than a real one — see
-                ``_order_merged_pool`` and ADR-0039. ``False`` (default) is
-                byte-identical to the pre-existing plain sort. Only
-                ``MultiHopSearcher``'s Pass-2 call passes ``True`` (and only
-                when its own graph-scoring gate is off); the ego-graph/
-                parent-expansion tail call sites stay byte-identical because
-                Pass-2 survivors reaching them under ``source="graph_hop"``
-                carry real, already-reranked scores, not placeholders.
-            config: Optional pre-fetched SearchConfig snapshot — the effective
-                config for this request (see ADR-0018). Callers that already
-                hold one pass it through so the whole rerank pass reads a
-                single snapshot instead of re-fetching the process global;
-                fetched here if omitted.
+            config: The effective SearchConfig snapshot for this request (see
+                ADR-0018). Required — callers hold one already, so the whole
+                rerank pass reads a single snapshot instead of each helper
+                independently re-fetching the process global.
+            window: Which rerank pass this is — see CONTEXT.md's "Rerank
+                pass" glossary entry and ``RerankWindowPolicy``.
+                ``RerankWindowPolicy.tail()`` (default) is the post-expansion
+                pass: no hop-1 reserve, plain score order, real scores —
+                byte-identical to the pre-``RerankWindowPolicy`` defaults.
+                ``RerankWindowPolicy.merged_pool(config)`` is
+                ``MultiHopSearcher``'s Pass-2 over the merged pool; the
+                ego-graph/parent-expansion tail call sites always pass
+                ``tail()``.
 
         Returns:
             Top k results sorted by query relevance
@@ -540,36 +510,30 @@ class RerankingEngine:
         if not results:
             return []
 
-        # Fetch once per pass (R1) and thread through every helper below
-        # instead of each independently re-fetching. Hoisted above the sort
-        # (was previously fetched only after) so merged_pool_policy — itself
-        # config-driven when callers pass config.reranker.merged_pool_policy
-        # through — is available before ordering runs.
-        if config is None:
-            config = get_search_config()
-
         sorted_results = self._order_merged_pool(
-            results, merged_pool_policy, graph_hop_unscored
+            results, window.merged_pool_policy, window.graph_hop_unscored
         )
         self.last_candidate_ids = [r.chunk_id for r in sorted_results]
 
-        if graph_hop_window_cap > 0:
+        if window.graph_hop_window_cap > 0:
             sorted_results = self._apply_graph_hop_window_cap(
-                sorted_results, config.reranker.top_k_candidates, graph_hop_window_cap
+                sorted_results,
+                config.reranker.top_k_candidates,
+                window.graph_hop_window_cap,
             )
 
         # Neural reranking (Quality First mode) — always re-check config for
         # runtime changes.
-        if hop1_reserved_slots > 0:
+        if window.hop1_reserved_slots > 0:
             evict_policy = (
                 "lowest_non_hop1"
-                if merged_pool_policy == "score_reserve_fix"
+                if window.merged_pool_policy == "score_reserve_fix"
                 else "tail"
             )
             sorted_results = self._apply_hop1_reserve(
                 sorted_results,
                 config.reranker.top_k_candidates,
-                hop1_reserved_slots,
+                window.hop1_reserved_slots,
                 evict_policy=evict_policy,
             )
         if sorted_results and self._ensure_reranker("[RERANK]", config=config):

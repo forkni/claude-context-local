@@ -783,7 +783,6 @@ class HybridSearcher(BaseSearcher):
                     query=query,
                     results=results,
                     k=k,
-                    search_mode=search_mode,
                     config=effective_config,
                 )
             elif (
@@ -797,7 +796,6 @@ class HybridSearcher(BaseSearcher):
                     query=query,
                     results=results,
                     k=len(results),  # Keep all results, just re-score and re-sort
-                    search_mode=search_mode,
                     config=effective_config,
                 )
 

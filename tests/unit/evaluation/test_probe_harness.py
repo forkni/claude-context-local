@@ -28,6 +28,7 @@ from evaluation.probe_harness import (
     write_probe_json,
 )
 from search.config import SearchConfig
+from search.rerank_window_policy import RerankWindowPolicy
 
 
 # ---------------------------------------------------------------------------
@@ -382,7 +383,7 @@ def _fake_searcher_for_instrument():
     def orig_run(query_or_content, candidates, k, log_prefix, config=None):
         return list(candidates[:k])
 
-    def orig_rbq(*, candidates=(), k=0, hop1_reserved_slots=0, **kwargs):
+    def orig_rbq(*, candidates=(), k=0, window=None, **kwargs):
         # Real RerankingEngine.rerank_by_query delegates to _run_rerank
         # internally -- looked up via `engine.` at call time so instrument()'s
         # _run_rerank patch is visible to it, exactly like the production path.
@@ -422,7 +423,9 @@ def test_instrument_captures_hop1_reserved_slots_via_rerank_by_query():
 
     with session.instrument() as calls:
         searcher.reranking_engine.rerank_by_query(
-            candidates=[candidate], k=1, hop1_reserved_slots=6
+            candidates=[candidate],
+            k=1,
+            window=RerankWindowPolicy(hop1_reserved_slots=6),
         )
 
     assert calls[0]["hop1_slots"] == 6

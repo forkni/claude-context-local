@@ -323,6 +323,10 @@ class Instrumentation:
         self._active_ordinal: int | None = None
 
     def install(self) -> None:
+        import dataclasses
+
+        from search.rerank_window_policy import RerankWindowPolicy
+
         instrumentation = self
         orig_single_hop = self._orig_single_hop
         orig_rerank_by_query = self._orig_rerank_by_query
@@ -337,12 +341,9 @@ class Instrumentation:
 
         def patched_rerank_by_query(self_engine, query, results, k, *args, **kwargs):
             ordinal = len(instrumentation.rerank_by_query_calls)
-            hop1_reserved_slots = kwargs.get(
-                "hop1_reserved_slots", args[1] if len(args) > 1 else 0
-            )
-            merged_pool_policy = kwargs.get(
-                "merged_pool_policy", args[2] if len(args) > 2 else "score"
-            )
+            window = kwargs.get("window", RerankWindowPolicy.tail())
+            hop1_reserved_slots = window.hop1_reserved_slots
+            merged_pool_policy = window.merged_pool_policy
             pool = [
                 {
                     "chunk_id": normalize_chunk_id(r.chunk_id),
@@ -368,7 +369,7 @@ class Instrumentation:
             )
             instrumentation._active_ordinal = ordinal
             if instrumentation._force_graph_hop_unscored:
-                kwargs["graph_hop_unscored"] = True
+                kwargs["window"] = dataclasses.replace(window, graph_hop_unscored=True)
             try:
                 output = orig_rerank_by_query(
                     self_engine, query, results, k, *args, **kwargs

@@ -393,7 +393,7 @@ class TestMultiHopSearcher:
         )
 
         call_kwargs = self.mock_reranking_engine.rerank_by_query.call_args.kwargs
-        assert call_kwargs["hop1_reserved_slots"] == 5
+        assert call_kwargs["window"].hop1_reserved_slots == 5
 
     def test_search_multi_hop_threads_merged_pool_policy(self):
         """The merge-pool rerank call passes config.reranker.merged_pool_policy
@@ -428,7 +428,7 @@ class TestMultiHopSearcher:
         )
 
         call_kwargs = self.mock_reranking_engine.rerank_by_query.call_args.kwargs
-        assert call_kwargs["merged_pool_policy"] == "channel_priority"
+        assert call_kwargs["window"].merged_pool_policy == "channel_priority"
 
     def test_search_multi_hop_threads_graph_hop_window_cap(self):
         """The merge-pool rerank call passes config.reranker.graph_hop_window_cap
@@ -463,7 +463,7 @@ class TestMultiHopSearcher:
         )
 
         call_kwargs = self.mock_reranking_engine.rerank_by_query.call_args.kwargs
-        assert call_kwargs["graph_hop_window_cap"] == 3
+        assert call_kwargs["window"].graph_hop_window_cap == 3
 
     def test_search_multi_hop_threads_graph_hop_unscored_true_when_a1_off(self):
         """search() declares graph_hop_unscored=True to rerank_by_query when
@@ -499,7 +499,7 @@ class TestMultiHopSearcher:
         )
 
         call_kwargs = self.mock_reranking_engine.rerank_by_query.call_args.kwargs
-        assert call_kwargs["graph_hop_unscored"] is True
+        assert call_kwargs["window"].graph_hop_unscored is True
 
     def test_search_multi_hop_threads_graph_hop_unscored_false_when_a1_on(self):
         """search() declares graph_hop_unscored=False when the A1
@@ -534,7 +534,7 @@ class TestMultiHopSearcher:
         )
 
         call_kwargs = self.mock_reranking_engine.rerank_by_query.call_args.kwargs
-        assert call_kwargs["graph_hop_unscored"] is False
+        assert call_kwargs["window"].graph_hop_unscored is False
 
     def test_search_multi_hop_single_pass_skips_rerank(self):
         """Q3 single_pass: merge keeps fusion/expansion score order and

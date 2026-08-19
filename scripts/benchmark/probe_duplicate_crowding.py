@@ -472,6 +472,8 @@ class Instrumentation:
         self._active_ordinal: int | None = None
 
     def install(self) -> None:
+        from search.rerank_window_policy import RerankWindowPolicy
+
         instrumentation = self
         orig_rerank_by_query = self._orig_rerank_by_query
         orig_run_rerank = self._orig_run_rerank
@@ -479,13 +481,11 @@ class Instrumentation:
 
         def patched_rerank_by_query(self_engine, query, results, k, *args, **kwargs):
             ordinal = len(instrumentation.rerank_by_query_calls)
-            hop1_reserved_slots = kwargs.get(
-                "hop1_reserved_slots", args[1] if len(args) > 1 else 0
-            )
+            window = kwargs.get("window", RerankWindowPolicy.tail())
             instrumentation.rerank_by_query_calls.append(
                 {
                     "ordinal": ordinal,
-                    "hop1_reserved_slots": hop1_reserved_slots,
+                    "hop1_reserved_slots": window.hop1_reserved_slots,
                 }
             )
             instrumentation._active_ordinal = ordinal

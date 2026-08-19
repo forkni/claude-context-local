@@ -52,6 +52,7 @@ from search.graph_scoring_stage import GraphScoringStage
 from search.hybrid_searcher import HybridSearcher
 from search.indexer import CodeIndexManager
 from search.multi_hop_searcher import MultiHopSearcher
+from search.rerank_window_policy import RerankWindowPolicy
 from search.reranker import SearchResult
 from search.reranking_engine import RerankingEngine
 from search.search_executor import SearchExecutor
@@ -367,7 +368,7 @@ def test_hop1_reserve_default_zero_is_identical_window():
     candidates[9].metadata["hop1_rank"] = 1  # lowest score, best hop1 rank
 
     with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query("q", candidates, k=5)
+        out = engine.rerank_by_query("q", candidates, k=5, config=cfg)
 
     assert [r.chunk_id for r in out] == ["c0", "c1", "c2", "c3", "c4"]
 
@@ -389,7 +390,13 @@ def test_hop1_reserve_promotes_tagged_candidate_into_window():
     )
 
     with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query("q", candidates, k=5, hop1_reserved_slots=1)
+        out = engine.rerank_by_query(
+            "q",
+            candidates,
+            k=5,
+            config=cfg,
+            window=RerankWindowPolicy(hop1_reserved_slots=1),
+        )
 
     out_ids = {r.chunk_id for r in out}
     assert "c9" in out_ids
@@ -410,7 +417,13 @@ def test_hop1_reserve_noop_when_pool_within_window():
     candidates[9].metadata["hop1_rank"] = 1
 
     with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query("q", candidates, k=5, hop1_reserved_slots=3)
+        out = engine.rerank_by_query(
+            "q",
+            candidates,
+            k=5,
+            config=cfg,
+            window=RerankWindowPolicy(hop1_reserved_slots=3),
+        )
 
     assert [r.chunk_id for r in out] == ["c0", "c1", "c2", "c3", "c4"]
 
@@ -434,8 +447,8 @@ def test_hop1_reserve_ego_tail_call_site_unaffected():
 
     with patch("search.reranking_engine.get_search_config", return_value=cfg):
         out = engine.rerank_by_query(
-            "q", candidates, k=5
-        )  # no hop1_reserved_slots kwarg
+            "q", candidates, k=5, config=cfg
+        )  # no window kwarg -- default policy is tail()
 
     assert [r.chunk_id for r in out] == ["c0", "c1", "c2", "c3", "c4"]
 
@@ -455,7 +468,7 @@ def test_dedupe_split_blocks_can_return_fewer_than_k():
     ]
 
     with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query("q", results, k=3)
+        out = engine.rerank_by_query("q", results, k=3, config=cfg)
 
     assert len(out) == 2 < 3
     # Cross-check against the canonical dedupe helper directly.
@@ -496,7 +509,7 @@ def test_merged_pool_policy_default_is_score():
     ]
 
     with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query("q", candidates, k=6)
+        out = engine.rerank_by_query("q", candidates, k=6, config=cfg)
 
     assert [r.chunk_id for r in out] == [
         "hi",
@@ -529,8 +542,8 @@ def test_merged_pool_policy_ego_tail_call_site_unaffected():
 
     with patch("search.reranking_engine.get_search_config", return_value=cfg):
         out = engine.rerank_by_query(
-            "q", candidates, k=2
-        )  # no merged_pool_policy kwarg
+            "q", candidates, k=2, config=cfg
+        )  # no window kwarg -- default policy is tail()
 
     # Plain score sort — graph_hop's 0.9 beats hop1's -0.5, exactly as
     # today, regardless of the policy live in config.
@@ -570,7 +583,11 @@ def test_channel_priority_orders_hop1_then_semantic_then_graph():
 
     with patch("search.reranking_engine.get_search_config", return_value=cfg):
         out = engine.rerank_by_query(
-            "q", candidates, k=6, merged_pool_policy="channel_priority"
+            "q",
+            candidates,
+            k=6,
+            config=cfg,
+            window=RerankWindowPolicy(merged_pool_policy="channel_priority"),
         )
 
     assert [r.chunk_id for r in out] == [
@@ -615,15 +632,19 @@ def test_channel_priority_makes_hop1_reserve_inert():
             "q",
             candidates,
             k=8,
-            merged_pool_policy="channel_priority",
-            hop1_reserved_slots=0,
+            config=cfg,
+            window=RerankWindowPolicy(
+                merged_pool_policy="channel_priority", hop1_reserved_slots=0
+            ),
         )
         with_reserve = engine.rerank_by_query(
             "q",
             candidates,
             k=8,
-            merged_pool_policy="channel_priority",
-            hop1_reserved_slots=5,
+            config=cfg,
+            window=RerankWindowPolicy(
+                merged_pool_policy="channel_priority", hop1_reserved_slots=5
+            ),
         )
 
     assert [r.chunk_id for r in without_reserve] == [r.chunk_id for r in with_reserve]
@@ -660,7 +681,13 @@ def test_hop1_reserve_tail_eviction_drops_top_hop1_characterization():
     ]
 
     with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query("q", candidates, k=5, hop1_reserved_slots=1)
+        out = engine.rerank_by_query(
+            "q",
+            candidates,
+            k=5,
+            config=cfg,
+            window=RerankWindowPolicy(hop1_reserved_slots=1),
+        )
 
     out_ids = [r.chunk_id for r in out]
     assert "hop1_rank2" in out_ids  # promoted, as intended
@@ -699,8 +726,10 @@ def test_score_reserve_fix_evicts_lowest_non_hop1():
             "q",
             candidates,
             k=5,
-            hop1_reserved_slots=1,
-            merged_pool_policy="score_reserve_fix",
+            config=cfg,
+            window=RerankWindowPolicy(
+                hop1_reserved_slots=1, merged_pool_policy="score_reserve_fix"
+            ),
         )
 
     out_ids = [r.chunk_id for r in out]
@@ -878,8 +907,8 @@ def test_graph_hop_unscored_ego_tail_call_site_unaffected():
 
     with patch("search.reranking_engine.get_search_config", return_value=cfg):
         out = engine.rerank_by_query(
-            "q", candidates, k=4
-        )  # no graph_hop_unscored kwarg
+            "q", candidates, k=4, config=cfg
+        )  # no window kwarg -- default policy is tail()
 
     # Plain sort: zero_nongraph keeps its stable-sort tie position ahead of
     # g0, the opposite of what banding would do.
@@ -1033,7 +1062,9 @@ def test_graph_hop_window_cap_ego_tail_call_site_unaffected():
     ]
 
     with patch("search.reranking_engine.get_search_config", return_value=cfg):
-        out = engine.rerank_by_query("q", candidates, k=4)  # no cap kwarg
+        out = engine.rerank_by_query(
+            "q", candidates, k=4, config=cfg
+        )  # no window kwarg -- default policy is tail()
 
     assert [r.chunk_id for r in out] == ["g0", "g1", "g2", "s0"]
 
@@ -1058,10 +1089,18 @@ def test_graph_hop_window_cap_applied_before_hop1_reserve():
 
     with patch("search.reranking_engine.get_search_config", return_value=cfg):
         without_cap = engine.rerank_by_query(
-            "q", candidates, k=4, hop1_reserved_slots=1
+            "q",
+            candidates,
+            k=4,
+            config=cfg,
+            window=RerankWindowPolicy(hop1_reserved_slots=1),
         )
         with_cap = engine.rerank_by_query(
-            "q", candidates, k=4, hop1_reserved_slots=1, graph_hop_window_cap=1
+            "q",
+            candidates,
+            k=4,
+            config=cfg,
+            window=RerankWindowPolicy(hop1_reserved_slots=1, graph_hop_window_cap=1),
         )
 
     # Without the cap: window = [s0, g0, g1], hop1_a promotes in via the

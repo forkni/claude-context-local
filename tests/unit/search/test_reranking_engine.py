@@ -106,7 +106,9 @@ class TestRerankingEngine:
 
     def test_rerank_by_query_empty_results(self):
         """Test reranking with empty results."""
-        results = self.engine.rerank_by_query("test query", [], k=5)
+        results = self.engine.rerank_by_query(
+            "test query", [], k=5, config=SearchConfig()
+        )
         assert results == []
 
     def test_rerank_by_query_never_touches_metadata_store(self):
@@ -137,7 +139,7 @@ class TestRerankingEngine:
         self.engine._session_oom_detected = True
 
         reranked = self.engine.rerank_by_query(
-            "test query", results, k=3, search_mode="semantic"
+            "test query", results, k=3, config=SearchConfig()
         )
 
         assert self.fake_metadata_store.get_call_count == 0
@@ -156,7 +158,7 @@ class TestRerankingEngine:
         # No embedder → embedding path skipped; neural path bypassed via OOM flag.
         engine._session_oom_detected = True
         reranked = engine.rerank_by_query(
-            "test query", results, k=2, search_mode="bm25"
+            "test query", results, k=2, config=SearchConfig()
         )
 
         # Should keep original ordering (sorted by score)
@@ -213,7 +215,7 @@ class TestRerankingEngine:
         results = [SearchResult(chunk_id="c1", score=0.5, metadata={})]
         self.engine._session_oom_detected = True
 
-        self.engine.rerank_by_query("query", results, k=1, search_mode="bm25")
+        self.engine.rerank_by_query("query", results, k=1, config=SearchConfig())
 
         self.mock_embedder.embed_query.assert_not_called()
 
@@ -272,18 +274,21 @@ class TestRerankingEngine:
             mock_config.return_value = enabled_config
 
             mock_reranker_instance.rerank.return_value = results
-            self.engine.rerank_by_query("test query", results, k=2)
+            self.engine.rerank_by_query(
+                "test query", results, k=2, config=enabled_config
+            )
 
             assert self.engine.neural_reranker is not None
             assert mock_neural_reranker_class.call_count == 1
 
         # Phase 2: Disable neural reranking
+        disabled_config = SearchConfig(reranker=RerankerConfig(enabled=False))
         with patch("search.reranking_engine.get_search_config") as mock_config:
-            mock_config.return_value = SearchConfig(
-                reranker=RerankerConfig(enabled=False)
-            )
+            mock_config.return_value = disabled_config
 
-            self.engine.rerank_by_query("test query", results, k=2)
+            self.engine.rerank_by_query(
+                "test query", results, k=2, config=disabled_config
+            )
 
             mock_reranker_instance.cleanup.assert_called_once()
             assert self.engine.neural_reranker is None
@@ -293,7 +298,9 @@ class TestRerankingEngine:
             mock_config.return_value = enabled_config
 
             mock_reranker_instance.rerank.return_value = results
-            self.engine.rerank_by_query("test query", results, k=2)
+            self.engine.rerank_by_query(
+                "test query", results, k=2, config=enabled_config
+            )
 
             # Reranker must be re-initialised (not remain None)
             assert self.engine.neural_reranker is not None
@@ -342,7 +349,7 @@ class TestRerankingEngine:
         with patch("search.reranking_engine.get_search_config") as mock_config:
             mock_config.return_value = config_a
             model_a_instance.rerank.return_value = results
-            self.engine.rerank_by_query("test query", results, k=1)
+            self.engine.rerank_by_query("test query", results, k=1, config=config_a)
 
             assert self.engine.neural_reranker is model_a_instance
             assert mock_neural_reranker_class.call_count == 1
@@ -360,7 +367,7 @@ class TestRerankingEngine:
         with patch("search.reranking_engine.get_search_config") as mock_config:
             mock_config.return_value = config_b
             model_b_instance.rerank.return_value = results
-            self.engine.rerank_by_query("test query", results, k=1)
+            self.engine.rerank_by_query("test query", results, k=1, config=config_b)
 
             # Old instance must be released before the new one takes over
             model_a_instance.cleanup.assert_called_once()
@@ -400,7 +407,7 @@ class TestRerankingEngine:
             mock_config.return_value = config
             results = [SearchResult(chunk_id="chunk1", score=0.5, metadata={})]
             instance.rerank.return_value = results
-            self.engine.rerank_by_query("test query", results, k=1)
+            self.engine.rerank_by_query("test query", results, k=1, config=config)
 
         assert mock_create_reranker.call_args.kwargs["listwise_dtype"] == "fp32"
 
@@ -437,7 +444,7 @@ class TestRerankingEngine:
             mock_config.return_value = config
             results = [SearchResult(chunk_id="chunk1", score=0.5, metadata={})]
             instance.rerank.return_value = results
-            self.engine.rerank_by_query("test query", results, k=1)
+            self.engine.rerank_by_query("test query", results, k=1, config=config)
 
         assert (
             mock_create_reranker.call_args.kwargs["doc_representation_mode"]
@@ -453,13 +460,15 @@ class TestRerankingEngine:
     def test_rerank_by_query_fetches_config_once_per_call(
         self, mock_neural_reranker_class, mock_torch
     ):
-        """R1: rerank_by_query must fetch config once, not three times.
+        """R1: rerank_by_query must not fetch config internally at all.
 
         Before R1, should_enable_neural_reranking, _ensure_reranker, and
         _run_rerank each independently called get_search_config() — 3
         fetches per rerank_by_query call (9/query across the 3 rerank
-        passes that fire on the default hybrid path). R1 fetches once and
-        threads the same snapshot through all three helpers.
+        passes that fire on the default hybrid path). R1 fetched once and
+        threaded the same snapshot through all three helpers; the later
+        `config`-required change removed that internal fetch entirely —
+        callers must now pass `config` explicitly.
         """
         mock_torch.cuda.is_available.return_value = True
         mock_torch.cuda.mem_get_info.return_value = (
@@ -483,9 +492,9 @@ class TestRerankingEngine:
         )
         with patch("search.reranking_engine.get_search_config") as mock_config:
             mock_config.return_value = config
-            self.engine.rerank_by_query("test query", results, k=1)
+            self.engine.rerank_by_query("test query", results, k=1, config=config)
 
-            assert mock_config.call_count == 1
+            assert mock_config.call_count == 0
 
     @patch("search.reranking_engine.torch")
     @patch("search.neural_reranker.NeuralReranker")
@@ -549,11 +558,10 @@ class TestRerankingEngine:
         ]
         self.engine._session_oom_detected = True  # bypass neural path
 
+        config = SearchConfig(reranker=RerankerConfig(dedupe_split_blocks=True))
         with patch("search.reranking_engine.get_search_config") as mock_config:
-            mock_config.return_value = SearchConfig(
-                reranker=RerankerConfig(dedupe_split_blocks=True)
-            )
-            reranked = self.engine.rerank_by_query("query", results, k=2)
+            mock_config.return_value = config
+            reranked = self.engine.rerank_by_query("query", results, k=2, config=config)
 
         assert [r.chunk_id for r in reranked] == [
             "src/big.py:10-40:split_block:Cls.long_method",
@@ -581,11 +589,10 @@ class TestRerankingEngine:
         ]
         self.engine._session_oom_detected = True
 
+        config = SearchConfig(reranker=RerankerConfig(dedupe_split_blocks=False))
         with patch("search.reranking_engine.get_search_config") as mock_config:
-            mock_config.return_value = SearchConfig(
-                reranker=RerankerConfig(dedupe_split_blocks=False)
-            )
-            reranked = self.engine.rerank_by_query("query", results, k=2)
+            mock_config.return_value = config
+            reranked = self.engine.rerank_by_query("query", results, k=2, config=config)
 
         assert [r.chunk_id for r in reranked] == [
             "src/big.py:10-40:split_block:Cls.long_method",

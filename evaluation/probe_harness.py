@@ -375,7 +375,7 @@ class ProbeSession:
         ``Instrumentation`` class.
 
         Each record: ``hop1_slots`` (the ``rerank_by_query`` call's
-        ``hop1_reserved_slots`` kwarg, tagging which pass this is -- >0 is
+        ``window.hop1_reserved_slots``, tagging which pass this is -- >0 is
         the multi-hop merged call, 0 is the final post-ego call, ``None`` is
         a hop-1 ``apply_neural_reranking`` pass that never went through
         ``rerank_by_query``), ``k``, ``pool_ids`` (normalized),
@@ -384,6 +384,8 @@ class ProbeSession:
         ``window_ids`` (via ``engine.last_window_ids``), ``output_ids``
         (normalized).
         """
+        from search.rerank_window_policy import RerankWindowPolicy
+
         engine = self.searcher.reranking_engine
         calls: list[dict[str, Any]] = []
         state: dict[str, int | None] = {"hop1_slots": None}
@@ -391,7 +393,8 @@ class ProbeSession:
         orig_run = engine._run_rerank
 
         def rbq_wrap(*call_args: Any, **call_kwargs: Any) -> Any:
-            state["hop1_slots"] = call_kwargs.get("hop1_reserved_slots", 0)
+            window = call_kwargs.get("window", RerankWindowPolicy.tail())
+            state["hop1_slots"] = window.hop1_reserved_slots
             try:
                 return orig_rbq(*call_args, **call_kwargs)
             finally:
