@@ -2536,3 +2536,79 @@ already-identified candidate for a future, separately-scoped ratchet step.
 ./scripts/git/commit_enhanced.sh "test: fix repeat-mode isolation bug in TestPurgeIndexDirFailureReporting"
 ./scripts/git/commit_enhanced.sh "docs: record Phase 13 in TESTING_GUIDE (Phase 13.4)"
 ```
+
+### Test-strength remediation (Phase 14.1 — 2026-08-20)
+
+A fresh audit against the `harden-test-suite` checklist found tests that pass on broken
+code — the skill's own named failure mode, and one that had survived inside the very commit
+that earned Phase 13.3's `fail_under` bump. Phase 14.1 fixes the four concrete instances
+found, at zero coverage-number cost: `fail_under` stays at 84 throughout, per the plan's
+explicit "strengthen, hold the number" scoping.
+
+| | Before | After |
+| --- | --- | --- |
+| `TestValidateDimensions` (`test_base_searcher.py`) | 5 of 6 tests relied on a trailing `# must not raise` comment; 2 named a skip behavior (`test_none_index_skips_validation`, `test_none_embedder_skips_validation`) they never checked | all 6 assert an observable outcome; skip tests assert the collaborator was never consulted, via instrumented `_FakeIndex.d`/`_FakeEmbedder.get_model_info()` access-tracking |
+| Fixed sleeps (`test_auto_reindex_fixes.py`) | `time.sleep(6)` + `time.sleep(2)` — 8s of wall-clock in the 20-test integration tier | `os.utime()` mtime backdating on the snapshot file — instant, same assertion coverage |
+| Assert-on-stub tautologies | ~205 `.assert_called*` sites flagged for triage across 5 concentration files | 4 files, 4 sites fixed: each replaced a redundant interaction assertion on a stub with either nothing (outcome assertion already proved the call) or a documenting comment explaining why |
+| Weak call verification (`assert_called_once()` → `assert_called_once_with(...)`) | 146 bare `assert_called_once()` vs 47 `assert_called_once_with()` | 11 genuine upgrades landed across 6 files where arguments carried unverified meaning (paths, project ids, config objects, relationship edges); remainder confirmed either zero-arg lifecycle calls, dispatch/branch-routing proofs, or already covered by adjacent manual `call_args` inspection |
+
+**`TestValidateDimensions` rewrite.** `BaseSearcher._validate_dimensions`
+(`search/base_searcher.py:118-144`) short-circuits on `None` index/embedder before touching
+either collaborator, then swallows `AttributeError`/`KeyError` into a `logger.debug` call.
+None of that was observable from the old test bodies. Fixed by making `_FakeIndex.d` a
+property that records access and `_FakeEmbedder.get_model_info()` record whether it fired,
+plus a `caplog` assertion on the swallowed-exception branch. Verified non-vacuous with a
+manual mutation self-check: temporarily inverting the `if index is not None and embedder is
+not None:` guard in `search/base_searcher.py` now fails exactly the test targeting that
+behavior, confirmed reverted (`git diff --stat` clean).
+
+**Assert-on-stub triage** (`e505936`) — 4 sites across
+`test_code_relationship_analyzer.py`, `test_tool_handlers.py`, `test_incremental_indexer.py`
+(×2), `test_search_executor.py`. Each followed the `TEST-DOUBLES.md` rule: a double that
+only supplies data is a stub, and an interaction assertion on it is redundant once an
+outcome assertion already proves the call fired (e.g. a result's specific line range or
+object identity is reachable *only* through the mocked return value, so checking that
+outcome already proves the call happened — a separate `assert_called_once()` verified
+nothing beyond what the outcome check already required). Each deletion left an inline
+comment naming which outcome assertion carries the proof, so the reasoning survives the
+diff.
+
+**Weak call verification** (`3150e18`) — 11 sites across `test_config_handlers.py` (×3,
+mock-identity assertions on a `load_config()` → mutate → `save_config(config)` round-trip
+through a plain `Mock()`, exploiting `Mock`'s default identity-based `__eq__`),
+`test_tool_handlers.py` (×1, cleanup-queue `add(path, reason)` reconstructed from the
+production error-message format), `test_search_orchestrator.py` (×1, source-position
+reorder call with a zero budget so the input list passes through untouched),
+`test_batch_operations.py` (×2, FAISS `create(dim, index_type)` after a rebuild),
+`test_graph_integration.py` (×1, a full `RelationshipEdge` dataclass equality check),
+`test_incremental_indexer.py` (×4, chunker constructor kwargs, `needs_reindex(path, ttl)`
+×2, `delete_snapshot(path)`, `remove_files(set, project_name)`). Every expected-value
+literal was traced back to its production call site
+(`mcp_server/tools/config_handlers.py`, `mcp_server/cleanup_queue.py`,
+`mcp_server/tools/index_handlers.py`, `mcp_server/tools/result_view.py`,
+`search/incremental_indexer.py`) before being hardcoded into the assertion, per the rule
+that an upgrade must be deterministically computable from data already in the test body —
+not guessed and back-filled from a passing run.
+
+**Left unchanged, and why:** zero-argument lifecycle calls (`clear()`, `save_config`-style
+cleanup, `gc.collect()`, `SnapshotManager()` construction) stay bare — there is no argument
+to verify. Dispatch/branch-routing tests that pair `assert_called_once()` on the executed
+path with `assert_not_called()` on the sibling path stay as-is — the call-count-with-negative-
+proof pattern already answers "which branch ran," which is what those tests are named for.
+Sites immediately followed by manual `call_args`/`call_args.kwargs[...]` inspection stay
+bare, since call-count-exactly-one is already independent information from the manual
+inspection. ~16 further files (`test_embedder.py`, `test_neural_reranker.py`,
+`test_index_handlers.py`, `test_reranking_engine.py`, `test_jina_reranker_v3.py`, and others)
+were reviewed in full against the same criteria and needed no changes.
+
+**Gate:** full suite green throughout (3,995 passed / 2 skipped after the golden-guard
+collapse baseline); `fail_under` held at 84, unchanged from Phase 13.3 — no production code
+was touched, so coverage could not move.
+
+Commits:
+
+```bash
+./scripts/git/commit_enhanced.sh "test: strengthen dimension-validation tests, kill fixed sleeps (Phase 14.1)"
+./scripts/git/commit_enhanced.sh "test: close assert-on-stub triage sweep (Phase 14.1)"
+./scripts/git/commit_enhanced.sh "test: upgrade weak assert_called_once sites (Phase 14.1)"
+```
