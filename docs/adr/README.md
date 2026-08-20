@@ -58,6 +58,7 @@ for avoiding re-litigating settled questions.
 | [0050](0050-per-layer-confidence-unknown-defaults.md) | Decline a shared policy object for the four `resolver_confidence`-unknown defaults | accepted | 2026-08-20 |
 | [0051](0051-delete-graph-scoring-stage-upward-import.md) | Delete `GraphScoringStage`'s upward `mcp_server` import instead of moving the class | accepted | 2026-08-20 |
 | [0052](0052-index-write-stage-owns-add-and-inject-for-incremental-passes.md) | IndexWriteStage owns index-adds and the injection gate for both passes | accepted | 2026-08-20 |
+| [0053](0053-resource-refresher-protocol-seam.md) | Lift the MCP process-resource lifecycle out of `IncrementalIndexer` via a protocol seam | accepted | 2026-08-20 |
 
 ## Adding a new ADR
 
