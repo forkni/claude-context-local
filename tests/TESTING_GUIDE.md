@@ -550,8 +550,10 @@ pytest tests/unit/test_hybrid_search.py tests/integration/test_hybrid_search_int
 # Run with coverage report
 pytest tests/ --cov=. --cov-report=html
 
-# Coverage with specific threshold
-pytest tests/ --cov=. --cov-fail-under=80
+# Coverage, gated by [tool.coverage.report] fail_under in pyproject.toml (single
+# source of truth for the threshold -- CI deliberately omits --cov-fail-under, see
+# "Measuring and gating coverage" below)
+pytest tests/ --cov=. --cov-branch
 
 # Terminal coverage report
 pytest tests/ --cov=. --cov-report=term-missing
@@ -766,15 +768,17 @@ class TestComprehensiveSearch:
 **Fast CI Pipeline** (< 3 minutes):
 
 ```bash
-# Run unit + fast integration only
-pytest tests/unit/ tests/fast_integration/ --cov=. --cov-fail-under=75
+# Run unit + fast integration only. Gated by [tool.coverage.report] fail_under
+# in pyproject.toml, not a --cov-fail-under flag here -- see "Measuring and
+# gating coverage" below.
+pytest tests/unit/ tests/fast_integration/ --cov=. --cov-branch
 ```
 
 **Comprehensive CI Pipeline** (10-15 minutes):
 
 ```bash
 # Run all tests including slow integration
-pytest tests/ --cov=. --cov-fail-under=80
+pytest tests/ --cov=. --cov-branch
 ```
 
 **Development Workflow**:
@@ -1475,8 +1479,9 @@ pytest tests/ --cov=. --cov-report=term-missing
 # XML coverage report (for CI)
 pytest tests/ --cov=. --cov-report=xml
 
-# Fail if coverage below threshold
-pytest tests/ --cov=. --cov-fail-under=80
+# Fail if coverage below threshold -- threshold comes from [tool.coverage.report]
+# fail_under in pyproject.toml, not a CLI flag (see "Measuring and gating coverage")
+pytest tests/ --cov=. --cov-branch
 ```
 
 ### Coverage Analysis
@@ -1503,48 +1508,25 @@ pytest tests/unit/ tests/fast_integration/ -q
 # 2. Run specific feature tests
 pytest tests/unit/test_hybrid_search.py tests/slow_integration/test_hybrid_search_integration.py
 
-# 3. Fast test suite with coverage (skip slow tests)
-pytest tests/ -m "not slow" --cov=. --cov-fail-under=75
+# 3. Fast test suite with coverage (skip slow tests) -- threshold from
+#    [tool.coverage.report] fail_under in pyproject.toml, not a CLI flag
+pytest tests/ -m "not slow" --cov=. --cov-branch
 
 # 4. Full test suite with coverage (includes slow tests, ~15 min)
-pytest tests/ --cov=. --cov-fail-under=75
+pytest tests/ --cov=. --cov-branch
 ```
 
-### Automated Pre-commit Hook Example
+### Pre-commit Hook (Phase 13.2.e correction)
 
-```bash
-#!/bin/bash
-# .git/hooks/pre-commit
-
-echo "Running pre-commit tests..."
-
-# Fast unit tests
-echo "1. Running unit tests..."
-pytest tests/unit/ -q --tb=no
-if [ $? -ne 0 ]; then
-    echo "❌ Unit tests failed!"
-    exit 1
-fi
-
-# Fast integration tests
-echo "2. Running fast integration tests..."
-pytest tests/fast_integration/ -q --tb=no
-if [ $? -ne 0 ]; then
-    echo "❌ Fast integration tests failed!"
-    exit 1
-fi
-
-# Coverage check (excluding slow tests for speed)
-echo "3. Checking coverage..."
-pytest tests/ -m "not slow" --cov=. --cov-fail-under=75 -q --tb=no
-if [ $? -ne 0 ]; then
-    echo "❌ Coverage below threshold!"
-    exit 1
-fi
-
-echo "✅ All pre-commit tests passed (slow tests skipped)!"
-echo "💡 Run 'pytest tests/' for full validation including slow tests"
-```
+This section previously showed a fictional `.git/hooks/pre-commit` that ran pytest + a
+coverage threshold. No hook in `.githooks/` (this project's real, installed hooks — see
+`scripts/git/install_hooks.sh`) runs pytest or checks coverage; that example never matched
+what actually runs locally, and duplicated a gate CI already owns (`branch-protection.yml`
+via `pyproject.toml`'s `fail_under`). The real `.githooks/pre-commit` blocks local-only
+files (`CLAUDE.md`, `MEMORY.md`, etc.) from being committed — a different, narrower job.
+Running the fast tiers before committing is still good practice; do it explicitly via
+`./scripts/test/run_tests.sh tests/unit/ tests/fast_integration/ -q` (project convention:
+never bare `pytest`, see the project `CLAUDE.md`), not via an automated hook.
 
 ## Debugging Failed Tests
 
@@ -1751,11 +1733,12 @@ def test_random_selection():
 ### CI-Friendly Test Commands
 
 ```bash
-# Fast CI pipeline (unit + fast integration, < 3 min)
-pytest tests/unit/ tests/fast_integration/ --cov=. --cov-fail-under=75
+# Fast CI pipeline (unit + fast integration, < 3 min). Threshold from
+# [tool.coverage.report] fail_under in pyproject.toml, not a CLI flag.
+pytest tests/unit/ tests/fast_integration/ --cov=. --cov-branch
 
 # Fast test run (skip slow tests using marker)
-pytest tests/ -m "not slow" --cov=. --cov-fail-under=75
+pytest tests/ -m "not slow" --cov=. --cov-branch
 
 # Full test suite with XML output (includes slow tests, ~15 min)
 pytest tests/ --cov=. --cov-report=xml --junit-xml=test-results.xml

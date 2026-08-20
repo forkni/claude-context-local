@@ -130,6 +130,9 @@ def test_direct_indexing(tmp_path, test_glsl_dir):
 
 
 @pytest.mark.slow
+@pytest.mark.timeout(
+    5400
+)  # ~42min real model download/load work, not a hang (Phase 13.2.a)
 def test_incremental_indexer_class(tmp_path, test_glsl_dir):
     """Test the IncrementalIndexer class directly."""
     print("\n\nTESTING INCREMENTAL INDEXER CLASS")

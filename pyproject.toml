@@ -104,6 +104,7 @@ test = [
     "pytest-randomly>=3.15.0",  # Phase 2: order-randomisation; exposes hidden ordering deps
     "pytest-xdist>=3.6.0",      # Phase 2/CI: parallel test execution (-n auto)
     "syrupy>=4.0.0",             # Phase 4: snapshot/golden-file regression testing
+    "pytest-timeout>=2.3.0",     # Phase 13.2.a: per-test timeout (thread method, Windows-safe)
 ]
 dev = [
     "ruff>=0.16.3",
@@ -599,6 +600,14 @@ addopts = [
     "--import-mode=importlib",  # pytest docs recommendation for new projects; avoids sys.path hacks
 ]
 pythonpath = [".", "tools"]  # project root + tools/ (namespace package, scripts imported bare)
+# Phase 13.2.a: global default sized for the fast tiers (unit/integration/fast_integration), not
+# the slow tier -- a hang anywhere burns at most 5 minutes instead of the runner's own job limit
+# with no indication which test hung. "thread" (not "signal") is required: signal relies on
+# SIGALRM, which does not exist on Windows. The two known-long slow-tier tests
+# (test_incremental_indexer_class ~42min, test_multi_hop_reranking ~61min -- real model
+# download/load work, not hangs) carry their own @pytest.mark.timeout(5400) override.
+timeout = 300
+timeout_method = "thread"
 markers = [
     "unit: Unit tests",
     "integration: Integration tests",
@@ -608,8 +617,6 @@ markers = [
     "chunking: Code chunking tests",
     "search: Search functionality tests",
     "asyncio: Mark test as async (pytest-asyncio)",
-    "gpu: Requires CUDA device (skipped when absent)",
-    "e2e: Full end-to-end workflow",
     "allow_network: Opt out of the tests/conftest.py real-network guard",
 ]
 filterwarnings = [
