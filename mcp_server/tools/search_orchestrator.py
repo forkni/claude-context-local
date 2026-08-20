@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from mcp_server.config_schema import arg
+from mcp_server.enricher_specs import ENRICHER_SPECS
 from mcp_server.search_factory import get_searcher
 from mcp_server.services import get_config, get_state
 from mcp_server.tools import responses, result_view
@@ -65,8 +67,12 @@ class SearchPlan:
     auto_reindex: bool
     max_age_minutes: float
     max_context_tokens: int
-    include_top_callers: bool = False
-    include_signatures: bool = False
+    # One gate per request-scoped enricher, keyed by EnricherSpec.key — the
+    # default factory enumerates every spec row so a bare SearchPlan still
+    # carries a complete gate set (each row's declared default).
+    display_params: Mapping[str, bool] = field(
+        default_factory=lambda: {s.key: bool(s.default) for s in ENRICHER_SPECS}
+    )
     redirect: PlanRedirect | None = None
 
 
@@ -244,8 +250,10 @@ class SearchPlanner:
             ego_graph_k_hops=ego_graph_k_hops,
             ego_graph_max_neighbors=ego_graph_max_neighbors,
             include_parent=bool(arg(arguments, "search_code.include_parent")),
-            include_top_callers=bool(arg(arguments, "search_code.include_top_callers")),
-            include_signatures=bool(arg(arguments, "search_code.include_signatures")),
+            display_params={
+                s.key: bool(arg(arguments, f"search_code.{s.param}"))
+                for s in ENRICHER_SPECS
+            },
             file_pattern=arguments.get("file_pattern"),
             include_dirs=arguments.get("include_dirs"),
             exclude_dirs=arguments.get("exclude_dirs"),
@@ -542,8 +550,9 @@ class SearchOrchestrator:
         """Resolve each registered enricher's gate from its own scope.
 
         ``graph``'s gate is config-scoped (``OutputConfig.include_result_graph``);
-        ``top_callers``/``signatures`` are request-scoped (``SearchPlan`` fields
-        set per call from the ``search_code`` arguments). Keeping the literal
+        the request-scoped gates arrive pre-resolved as
+        ``SearchPlan.display_params`` (one entry per ``EnricherSpec`` row, set
+        per call from the ``search_code`` arguments). Keeping the literal
         ``include_result_graph`` name in this file (rather than passed through
         or read from a shared helper) matters: ADR-0022's field-liveness
         ratchet asserts that name appears in the declared reader file
@@ -552,8 +561,7 @@ class SearchOrchestrator:
         """
         return {
             "graph": output_cfg.include_result_graph,
-            "top_callers": plan.include_top_callers,
-            "signatures": plan.include_signatures,
+            **plan.display_params,
         }
 
     def _assemble(self, plan: SearchPlan, outcome: ExecutionOutcome) -> dict:

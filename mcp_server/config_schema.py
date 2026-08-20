@@ -16,6 +16,7 @@ import dataclasses
 from enum import Enum
 from typing import Any
 
+from mcp_server.enricher_specs import ENRICHER_SPECS
 from search.config import (
     CallGraphConfig,
     ChunkingConfig,
@@ -274,14 +275,13 @@ HAND_TYPED: dict[str, HandTyped] = {
         default=False,
         rationale="literal False fallback (search_orchestrator.py) — no config field",
     ),
-    "search_code.include_top_callers": HandTyped(
-        default=False,
-        rationale="literal False fallback (search_orchestrator.py) — no config field",
-    ),
-    "search_code.include_signatures": HandTyped(
-        default=False,
-        rationale="literal False fallback (search_orchestrator.py) — no config field",
-    ),
+    # Request-scoped enricher opt-ins: one derived entry per EnricherSpec row
+    # (mcp_server/enricher_specs.py) — the row is the single declaration of
+    # the parameter's default, description, and rationale.
+    **{
+        f"search_code.{s.param}": HandTyped(default=s.default, rationale=s.rationale)
+        for s in ENRICHER_SPECS
+    },
     "search_code.include_dirs": HandTyped(
         rationale=(
             "plain arguments.get, no fallback (search_orchestrator.py) — "

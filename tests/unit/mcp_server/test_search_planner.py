@@ -155,22 +155,32 @@ class TestSearchPlannerFieldExtraction:
     def test_include_top_callers_defaults_false(self):
         with _patch_planner_deps():
             plan = SearchPlanner().plan({"query": "test"})
-        assert plan.include_top_callers is False
+        assert plan.display_params["top_callers"] is False
 
     def test_include_top_callers_passthrough(self):
         with _patch_planner_deps():
             plan = SearchPlanner().plan({"query": "test", "include_top_callers": True})
-        assert plan.include_top_callers is True
+        assert plan.display_params["top_callers"] is True
 
     def test_include_signatures_defaults_false(self):
         with _patch_planner_deps():
             plan = SearchPlanner().plan({"query": "test"})
-        assert plan.include_signatures is False
+        assert plan.display_params["signatures"] is False
 
     def test_include_signatures_passthrough(self):
         with _patch_planner_deps():
             plan = SearchPlanner().plan({"query": "test", "include_signatures": True})
-        assert plan.include_signatures is True
+        assert plan.display_params["signatures"] is True
+
+    def test_display_params_cover_every_enricher_spec(self):
+        """The planner must resolve a gate for every EnricherSpec row —
+        catches 'added a spec row, planner loop drifted' (it can't today,
+        the loop enumerates ENRICHER_SPECS, but this pins that property)."""
+        from mcp_server.enricher_specs import ENRICHER_SPECS
+
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test"})
+        assert set(plan.display_params) == {s.key for s in ENRICHER_SPECS}
 
     def test_ego_graph_omitted_is_none(self):
         """Omitting ego_graph_enabled must produce None, not False -- collapsing the

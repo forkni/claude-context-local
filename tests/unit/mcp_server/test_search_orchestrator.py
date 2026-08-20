@@ -46,11 +46,13 @@ def _make_plan(
     auto_reindex=True,
     max_age_minutes=5.0,
     max_context_tokens=0,
-    include_top_callers=False,
-    include_signatures=False,
+    display_params=None,
 ):
     from mcp_server.tools.search_orchestrator import SearchPlan
 
+    # display_params=None omits the field so SearchPlan's default factory
+    # (one all-off gate per EnricherSpec row) applies.
+    extra = {} if display_params is None else {"display_params": display_params}
     return SearchPlan(
         query=query,
         k=k,
@@ -68,8 +70,7 @@ def _make_plan(
         auto_reindex=auto_reindex,
         max_age_minutes=max_age_minutes,
         max_context_tokens=max_context_tokens,
-        include_top_callers=include_top_callers,
-        include_signatures=include_signatures,
+        **extra,
     )
 
 
@@ -642,13 +643,17 @@ class TestAssembleEnrichmentGates:
         assert gates == {"graph": False, "top_callers": False, "signatures": False}
 
     def test_top_callers_opt_in_sets_only_its_gate(self):
-        gates = self._run_assemble(_make_plan(include_top_callers=True))
+        gates = self._run_assemble(
+            _make_plan(display_params={"top_callers": True, "signatures": False})
+        )
         assert gates["top_callers"] is True
         assert gates["signatures"] is False
         assert gates["graph"] is False
 
     def test_signatures_opt_in_sets_only_its_gate(self):
-        gates = self._run_assemble(_make_plan(include_signatures=True))
+        gates = self._run_assemble(
+            _make_plan(display_params={"top_callers": False, "signatures": True})
+        )
         assert gates["signatures"] is True
         assert gates["top_callers"] is False
         assert gates["graph"] is False
@@ -674,6 +679,17 @@ class TestEnrichmentGatesRegistry:
         gates = SearchOrchestrator._enrichment_gates(_make_plan(), OutputConfig())
         assert set(gates) == {e.key for e in RESULT_ENRICHERS}
 
+    def test_enricher_specs_join_result_enrichers_on_key(self):
+        """The wire side (ENRICHER_SPECS) and the application side
+        (RESULT_ENRICHERS) are separate registries joined on key: every spec
+        row must have an apply row, and every apply row except the
+        config-scoped 'graph' must have a spec row."""
+        from mcp_server.enricher_specs import ENRICHER_SPECS
+
+        assert {s.key for s in ENRICHER_SPECS} | {"graph"} == {
+            e.key for e in RESULT_ENRICHERS
+        }
+
     def test_enrichment_gates_reflect_plan_and_config(self):
         """Each gate reads from its own declared scope: graph from
         OutputConfig, top_callers/signatures from SearchPlan. Closes a
@@ -681,7 +697,7 @@ class TestEnrichmentGatesRegistry:
         refactor."""
         output_cfg = OutputConfig()
         output_cfg.include_result_graph = True
-        plan = _make_plan(include_top_callers=True, include_signatures=True)
+        plan = _make_plan(display_params={"top_callers": True, "signatures": True})
         gates = SearchOrchestrator._enrichment_gates(plan, output_cfg)
         assert gates == {"graph": True, "top_callers": True, "signatures": True}
 

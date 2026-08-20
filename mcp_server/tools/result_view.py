@@ -557,9 +557,14 @@ RESULT_ENRICHERS: tuple[ResultEnricher, ...] = (
 )
 """Every result enricher, in application order (today's ``_assemble`` order).
 
-Adding a fourth enricher is a new row here plus a gate entry in
-``SearchOrchestrator._enrichment_gates`` — nothing else in this module or
-the caller needs to change.
+Rows join on ``key`` to the wire-interface specs in
+``mcp_server/enricher_specs.py``: a request-scoped enricher's schema property,
+published default, and plan/gate wiring are all derived from its
+``EnricherSpec`` row, so adding one is a spec row plus an apply function and
+its row here — no schema, defaults-table, plan, or gate edits. ``graph`` is
+the one config-scoped row (no spec; gated by
+``OutputConfig.include_result_graph`` in ``_enrichment_gates``). The join is
+drift-tested in ``tests/unit/mcp_server/test_search_orchestrator.py``.
 """
 
 

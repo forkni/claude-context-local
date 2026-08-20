@@ -33,6 +33,7 @@ from mcp_server.config_schema import (
     OUTPUT_FORMAT_PROPERTY,
     SEARCH_MODE_ENUM,
 )
+from mcp_server.enricher_specs import ENRICHER_SPECS
 
 
 # Tools gated behind MCP_EXPOSE_ADVANCED_TOOLS (default: hidden from list_tools).
@@ -170,15 +171,17 @@ RETURNS:
                     **HAND_TYPED["search_code.include_parent"].schema,
                     "description": "Enable parent chunk retrieval (default: False). When a method is matched, also retrieves its enclosing class for fuller context. Implements 'Match Small, Retrieve Big' pattern for improved comprehension.",
                 },
-                "include_top_callers": {
-                    "type": "boolean",
-                    **HAND_TYPED["search_code.include_top_callers"].schema,
-                    "description": "Attach up to 2 top callers per result as top_callers: [{name, file}] (default: False). Callers come from the code graph's incoming call edges — context agents cannot derive from the result text alone. Ordering prefers resolver-confident edges when available; otherwise discovery order (hint, not a guarantee).",
-                },
-                "include_signatures": {
-                    "type": "boolean",
-                    **HAND_TYPED["search_code.include_signatures"].schema,
-                    "description": "Attach a signature-only view per result as signature: str (default: False). search_code returns coordinates only (file/lines/kind/score) — no chunk content; this is a display-only counterfactual to a follow-up Read, not chunk content itself. Measured ~687 tokens/query overhead (~36% over the default compact format's payload size) — a hint, not a guarantee: module/module_preamble chunks are skipped (no callable contract to summarize); on non-Python chunks (no def/class anchor recognized) it degrades to the first 3 raw lines, capped at 600 characters. Never touches scoring, ordering, or the reranker.",
+                # Request-scoped enricher opt-ins: one derived property per
+                # EnricherSpec row (mcp_server/enricher_specs.py) — default
+                # still routes through HAND_TYPED so the ADR-0046 ratchet
+                # keeps guarding schema/handler agreement.
+                **{
+                    s.param: {
+                        "type": "boolean",
+                        **HAND_TYPED[f"search_code.{s.param}"].schema,
+                        "description": s.description,
+                    }
+                    for s in ENRICHER_SPECS
                 },
                 "max_context_tokens": {
                     **CONFIG_BACKED["search_code.max_context_tokens"],
