@@ -2043,10 +2043,43 @@ produces it, so a gate on it can never actually trip.
 coverage — a small, zero-mock, deterministic class with no prior tests at all) and
 `tests/unit/mcp_server/test_tool_registry.py` (`build_tool_list()` / `_advanced_tools_enabled()` were
 at 35%, exercised only incidentally through integration tests). Both are pure in-memory logic with no
-I/O beyond `monkeypatch.setenv`, so no mocking was needed. Remaining low-coverage modules
+I/O beyond `monkeypatch.setenv`, so no mocking was needed. Remaining low-coverage modules at the time
 (`mcp_server/guidance.py` 34%, `mcp_server/server.py` 62%, `mcp_server/resource_manager.py` 54%,
 `search/searcher.py` 54%, `search/bm25_index.py` 64%) were left untouched — they need async/process-
 boundary mocking to test properly, which is a larger, separate effort than this ratchet pass.
+
+**Phase 13.3 re-triage (2026-08-20):** that blanket "needs async/process-boundary mocking" verdict
+was wrong for one of the five and partially stale for two more — re-checked against fresh
+`--cov-report=term-missing` output plus a direct read of each module's actual missing lines before
+writing anything:
+
+- `mcp_server/guidance.py` — **mis-triaged.** One import (`typing.Any`), four pure functions, zero
+  collaborators, zero async/I-O. `tests/unit/mcp_server/test_guidance.py` now covers it 34% → 100%
+  with plain `@pytest.mark.parametrize` cases, no mocks.
+- `mcp_server/server.py` — verdict **confirmed accurate.** Read the actual missing lines (501-526,
+  556-571, 602-646): these are `async def handle_*` MCP JSON-RPC handlers (`ctx:
+  ServerRequestContext`, cancellation/error-response paths) — genuinely transport-shaped.
+- `mcp_server/resource_manager.py` — verdict **confirmed accurate.** Read `_cleanup_previous_resources`
+  (the source of most of the gap): seven independent `try/except Exception` isolated-teardown blocks
+  wrapping global singleton state (`get_state()`), GPU memory release, and OTel span flushing — by
+  design, each failure must not block its siblings. Legitimately process-boundary code.
+- `search/searcher.py` — **partially stale.** Four thin, low-collaborator methods
+  (`search_by_file_pattern`, `search_by_chunk_type`, `find_similar_to_chunk`,
+  `get_search_suggestions`) were unit-testable with the same `unittest.mock.Mock`-based style
+  `test_searcher.py` already used elsewhere in the file; added, 55% → 82%. The remaining gap
+  (`is_ready`/`graph_storage` one-line properties, `get_by_chunk_id`'s cache-hit/miss path) is a
+  legitimate candidate for a future ratchet step, not mis-triaged, just not reached this pass.
+- `search/bm25_index.py` — **partially stale, not yet acted on.** `validate_consistency()` (~57
+  statements) reads only the instance's own in-memory lists (`self._doc_ids`, `self._documents`,
+  etc.) — testable without filesystem mocking, unlike `save()`/`load()`, which are genuinely
+  I/O-boundary (pickle to disk) and correctly described by the original note. Left for a future
+  ratchet step — Phase 13.3 was scoped to the four targets verified in the plan, not a full sweep
+  of this file.
+
+`search/base_searcher.py` (53% → 95%, `tests/unit/search/test_base_searcher.py`) and
+`utils/deprecation.py` (0% → 100%, `tests/unit/utils/test_deprecation.py`) were not part of this
+mis-triage note (they were correctly identified as unproven-but-testable in the Phase 13 plan) but
+landed in the same pass.
 
 ### Snapshot / golden-file regression testing (Phase 4 — Syrupy)
 

@@ -1,8 +1,9 @@
 """Unit tests for IntelligentSearcher intent detection enhancements."""
 
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
+from search.config import SearchConfig
 from search.searcher import IntelligentSearcher
 
 
@@ -107,3 +108,127 @@ class TestDeferredEnrichment(unittest.TestCase):
         self.searcher._semantic_search("test query", k=3, context_depth=0)
 
         self.mock_index_manager.get_similar_chunks.assert_not_called()
+
+
+class TestFilterWrapperMethods(unittest.TestCase):
+    """search_by_file_pattern / search_by_chunk_type are thin filters-dict
+    wrappers around self.search() (BaseSearcher's public seam) -- previously
+    uncovered (search/searcher.py:202-203, 219-220, Phase 13.3). They go
+    through BaseSearcher.search(), which resolves search.config.get_search_config()
+    when no explicit config is passed -- patched here to a bare SearchConfig()
+    so the test doesn't depend on this process's on-disk/env config state.
+    """
+
+    def setUp(self):
+        self.mock_index_manager = Mock()
+        self.mock_index_manager.index = None
+        self.mock_index_manager.search.return_value = []
+        self.mock_embedder = Mock()
+        self.mock_embedder.model_name = "test-model"
+        self.mock_embedder.embed_query.return_value = [0.1, 0.2, 0.3]
+
+        self.searcher = IntelligentSearcher(
+            index_manager=self.mock_index_manager, embedder=self.mock_embedder
+        )
+
+        patcher = patch("search.config.get_search_config", return_value=SearchConfig())
+        self.addCleanup(patcher.stop)
+        patcher.start()
+
+    def test_search_by_file_pattern_builds_file_pattern_filter(self):
+        self.searcher.search_by_file_pattern("query", ["**/*.py"], k=2)
+
+        passed_filters = self.mock_index_manager.search.call_args[0][2]
+        self.assertEqual(passed_filters, {"file_pattern": ["**/*.py"]})
+
+    def test_search_by_chunk_type_builds_chunk_type_filter(self):
+        self.searcher.search_by_chunk_type("query", "function", k=2)
+
+        passed_filters = self.mock_index_manager.search.call_args[0][2]
+        self.assertEqual(passed_filters, {"chunk_type": "function"})
+
+
+class TestFindSimilarToChunk(unittest.TestCase):
+    """search/searcher.py:233-242, Phase 13.3 -- previously uncovered."""
+
+    def setUp(self):
+        self.mock_index_manager = Mock()
+        self.mock_index_manager.index = None
+        self.mock_embedder = Mock()
+        self.mock_embedder.model_name = "test-model"
+
+        self.searcher = IntelligentSearcher(
+            index_manager=self.mock_index_manager, embedder=self.mock_embedder
+        )
+
+    def test_wraps_each_similar_chunk_as_a_search_result(self):
+        self.mock_index_manager.get_similar_chunks.return_value = [
+            ("a.py:1-5:function:foo", 0.9, {"name": "foo", "chunk_type": "function"}),
+            ("b.py:1-5:function:bar", 0.7, {"name": "bar", "chunk_type": "function"}),
+        ]
+
+        results = self.searcher.find_similar_to_chunk("a.py:1-5:function:foo", k=2)
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0].chunk_id, "a.py:1-5:function:foo")
+        self.assertEqual(results[0].score, 0.9)
+        self.assertEqual(results[1].chunk_id, "b.py:1-5:function:bar")
+        # The first call is the primary similar-chunks lookup; each result is
+        # then enriched (context_depth=1), which calls get_similar_chunks
+        # again per result to build its own "similar_chunks" context.
+        self.assertEqual(
+            self.mock_index_manager.get_similar_chunks.call_args_list[0],
+            unittest.mock.call("a.py:1-5:function:foo", 2),
+        )
+
+    def test_empty_result_when_no_similar_chunks(self):
+        self.mock_index_manager.get_similar_chunks.return_value = []
+
+        results = self.searcher.find_similar_to_chunk("a.py:1-5:function:foo")
+
+        self.assertEqual(results, [])
+
+
+class TestGetSearchSuggestions(unittest.TestCase):
+    """search/searcher.py:309-324, Phase 13.3 -- previously uncovered."""
+
+    def setUp(self):
+        self.mock_index_manager = Mock()
+        self.mock_index_manager.index = None
+        self.mock_embedder = Mock()
+        self.mock_embedder.model_name = "test-model"
+
+        self.searcher = IntelligentSearcher(
+            index_manager=self.mock_index_manager, embedder=self.mock_embedder
+        )
+
+    def test_suggestions_from_matching_tags_and_chunk_types(self):
+        self.mock_index_manager.get_stats.return_value = {
+            "top_tags": {"authentication": 5, "database": 3},
+            "chunk_types": {"function": 10, "class": 4},
+        }
+
+        suggestions = self.searcher.get_search_suggestions("auth")
+
+        self.assertIn("Find authentication related code", suggestions)
+        self.assertNotIn("Find database related code", suggestions)
+
+    def test_no_match_returns_empty_list(self):
+        self.mock_index_manager.get_stats.return_value = {
+            "top_tags": {"database": 3},
+            "chunk_types": {"class": 4},
+        }
+
+        suggestions = self.searcher.get_search_suggestions("zzz_no_match")
+
+        self.assertEqual(suggestions, [])
+
+    def test_suggestions_capped_at_five(self):
+        self.mock_index_manager.get_stats.return_value = {
+            "top_tags": {f"foo_tag_{i}": i for i in range(10)},
+            "chunk_types": {},
+        }
+
+        suggestions = self.searcher.get_search_suggestions("foo")
+
+        self.assertEqual(len(suggestions), 5)
