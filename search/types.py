@@ -171,21 +171,23 @@ class RetrievalRequest:
         search_mode: str | SearchMode,
         bm25_weight: float | None = None,
         dense_weight: float | None = None,
-        min_bm25_score: float = 0.0,
+        min_bm25_score: float | None = None,
         use_parallel: bool = True,
         filters: dict[str, Any] | None = None,
         context_depth: int = 1,
     ) -> RetrievalRequest:
         """Resolve every field from explicit overrides + config, in one place.
 
-        Mirrors HybridSearcher.search's historical inline resolution
-        verbatim (ADR-0048): an unrecognized ``search_mode`` string falls
-        back to hybrid, and ``None`` weights fall back to
-        ``config.search_mode``. ``min_bm25_score``'s own default here stays
-        the historical literal ``0.0`` -- not config's ``0.1`` -- so this
-        method is a pure refactor; BaseSearcher.search always supplies
-        ``search_mode`` (via its subclass's ``_DEFAULT_SEARCH_MODE``), so it
-        has no default of its own.
+        Mirrors HybridSearcher.search's historical inline resolution, except
+        for ``min_bm25_score``: an unrecognized ``search_mode`` string falls
+        back to hybrid, and ``None`` weights -- including ``min_bm25_score``
+        -- fall back to ``config.search_mode`` (ADR-0048). This is the one
+        BM25 floor: callers that previously relied on the undeclared literal
+        ``0.0`` (``RelationshipAnalyzer._resolve_by_symbol`` /
+        ``_resolve_type_chunk``) now see config's ``0.1`` instead.
+        BaseSearcher.search always supplies ``search_mode`` (via its
+        subclass's ``_DEFAULT_SEARCH_MODE``), so it has no default of its
+        own.
 
         ``SearchMode`` is imported locally, not at module scope, so this
         module carries no runtime dependency on ``search/config.py``.
@@ -211,7 +213,11 @@ class RetrievalRequest:
                 if dense_weight is not None
                 else config.search_mode.dense_weight
             ),
-            min_bm25_score=min_bm25_score,
+            min_bm25_score=(
+                min_bm25_score
+                if min_bm25_score is not None
+                else config.search_mode.min_bm25_score
+            ),
             use_parallel=use_parallel,
             filters=filters,
             config=config,
