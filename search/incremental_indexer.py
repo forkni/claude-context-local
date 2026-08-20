@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import logging
 import os
@@ -14,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from chunking.repo_profiler import RepoProfile
+
+    from .resource_refresh import ResourceRefresher
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from chunking.python_ast_chunker import CodeChunk
@@ -38,6 +41,13 @@ from .summary_stage import SummaryStage
 logger = logging.getLogger(__name__)
 
 
+def _default_resource_refresher() -> ResourceRefresher:
+    """Import-on-call factory holding the one surviving upward import."""
+    from mcp_server.resource_manager import McpResourceRefresher
+
+    return McpResourceRefresher()
+
+
 class IncrementalIndexer:
     """Handles incremental indexing of code changes."""
 
@@ -51,6 +61,7 @@ class IncrementalIndexer:
         exclude_dirs: list | None = None,
         *,
         include_exclusive: bool = False,
+        resource_refresher: ResourceRefresher | None = None,
     ):
         """Initialize incremental indexer.
 
@@ -67,8 +78,16 @@ class IncrementalIndexer:
                 escape hatch back to the pre-additive behaviour. Forwarded to
                 the chunker, the change detector, and every MerkleDAG built
                 during a full or incremental pass.
+            resource_refresher: MCP resource-lifecycle collaborator used by a
+                full reindex (see search.resource_refresh.ResourceRefresher).
+                Defaults to the real MCP adapter, matching today's behaviour —
+                pass NullResourceRefresher() for callers that construct this
+                class outside the MCP process and must not touch its state.
         """
         self.include_exclusive = include_exclusive
+        self._resource_refresher: ResourceRefresher = (
+            resource_refresher or _default_resource_refresher()
+        )
         if indexer is None:
             # Create indexer with temporary storage directory for testing
             temp_dir = tempfile.mkdtemp(prefix="incremental_index_")
@@ -541,15 +560,15 @@ class IncrementalIndexer:
     def _release_and_verify_resources(self, project_path: str) -> None:
         """Mandatory resource release and verification before full reindex.
 
-        Delegates to McpResourceRefresher (mcp_server/resource_manager.py) —
+        Delegates to self._resource_refresher (search.resource_refresh) —
         release/verify/reacquire is MCP process-state management, not
-        indexing logic. See that method's docstring for the step-by-step
-        behaviour, preserved byte-identical by the move.
+        indexing logic. See ResourceRefresher.refresh_before_full_index's
+        docstring for the step-by-step behaviour.
         """
-        from mcp_server.resource_manager import McpResourceRefresher
-
-        self.embedder, self.indexer = McpResourceRefresher().refresh_before_full_index(
-            project_path, self.embedder, self.indexer
+        self.embedder, self.indexer = (
+            self._resource_refresher.refresh_before_full_index(
+                project_path, self.embedder, self.indexer
+            )
         )
 
     def _full_index(
@@ -786,16 +805,11 @@ class IncrementalIndexer:
             # _release_and_verify_resources) was built with load_existing=False,
             # so if this failure happened after construction but before
             # clear_hybrid_indices()/rebuild completed, state.searcher is an
-            # empty write-only instance. Null it — same one-line invalidation
-            # search_factory.get_searcher() already does for
-            # DimensionMismatchError — so the next call rebuilds from disk
-            # instead of returning an empty cached searcher.
-            try:
-                from mcp_server.services import get_state
-
-                get_state().searcher = None
-            except Exception:  # noqa: BLE001 - best-effort cache invalidation, never mask the original failure
-                pass
+            # empty write-only instance. Invalidate it — the compensating
+            # inverse of refresh_before_full_index — so the next call rebuilds
+            # from disk instead of returning an empty cached searcher.
+            with contextlib.suppress(Exception):  # noqa: BLE001 - best-effort cache invalidation, never mask the original failure
+                self._resource_refresher.invalidate_searcher_cache()
             return self._zero_result(start_time, success=False, error=str(e))
 
     def _get_total_chunks(self) -> int:

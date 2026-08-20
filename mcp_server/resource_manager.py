@@ -250,6 +250,22 @@ class McpResourceRefresher:
 
         return embedder, indexer
 
+    def invalidate_searcher_cache(self) -> None:
+        """Null out state.searcher — compensating inverse of a failed refresh.
+
+        (#reindex-log-audit-2026-07-30) The searcher acquired by
+        ``refresh_before_full_index`` was built with ``load_existing=False``,
+        so if a full-index failure happened after construction but before
+        ``clear_hybrid_indices()``/rebuild completed, ``state.searcher`` is an
+        empty write-only instance. Null it — same one-line invalidation
+        ``search_factory.get_searcher()`` already does for
+        ``DimensionMismatchError`` — so the next call rebuilds from disk
+        instead of returning an empty cached searcher.
+        """
+        from mcp_server.services import get_state
+
+        get_state().searcher = None
+
 
 def close_project_resources(project_path: str, *, clear_current: bool = True) -> bool:
     """Close all resources associated with a specific project.
