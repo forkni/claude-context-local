@@ -74,6 +74,9 @@ coverage.xml
 .pytest_cache/
 cover/
 
+# CRAP-gate lcov export (Phase 14.2 — coverage.py lcov output consumed by crap4py; regenerate, never commit)
+lcov.info
+
 # Translations
 *.mo
 *.pot

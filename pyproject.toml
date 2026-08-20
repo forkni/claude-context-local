@@ -117,6 +117,8 @@ dev = [
     "cosmic-ray>=8.4",  # Phase 4.2: mutation testing; local cross-platform runner
     "gitpython>=3.1.59",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
     "deptry>=0.25.1",  # /deps-audit Phase 1.7: dependency-usage hygiene check; declared to match what summarize_audit.py installs into this venv
+    "radon>=6.0.1",  # Phase 14.2: cyclomatic complexity / maintainability-index reporting (harden-test-suite skill Phase 3.5)
+    "crap4py>=0.1.1",  # Phase 14.2: coverage x complexity (CRAP) stop-condition metric; consumes coverage.py's lcov output (0.1.1 is the latest PyPI release as of 2026-08-20, not the plan's assumed >=1.0.0)
 ]
 gpu = [
     # nvidia-ml-py (pynvml): NVML bindings for device-level GPU memory reporting.
@@ -490,9 +492,16 @@ select = [
     "BLE", # flake8-blind-except - flags `except Exception`/bare `except:` without justification
 ]
 ignore = [
-    "C901",  # McCabe complexity - skip for faster checks (diffusers pattern)
     "E501",  # line too long (handled by formatter)
 ]
+
+# Phase 14.2: complexity gate (harden-test-suite skill Phase 3.5). Ceiling of 15 was
+# chosen from measured `ruff check --select C901` counts: 92 whole-repo / 65 gated-packages
+# at the ruff default of 10; 31/22 at 15. 15 captures real debt in the 8 coverage-gated
+# packages without the noise of the stricter thresholds. The 22 offenders below are an
+# explicit, countable debt list -- later phases shrink it, not silently exempt more of it.
+[tool.ruff.lint.mccabe]
+max-complexity = 15
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["E402", "F401", "F403", "F811"]
@@ -502,8 +511,38 @@ ignore = [
 # Broad catch-alls are routine in tests/scripts/tools (fixtures, one-off tooling);
 # BLE001 is enforced only on the core library.
 "tests/**" = ["BLE001"]
-"scripts/**" = ["BLE001"]
-"tools/**" = ["BLE001"]
+"scripts/**" = ["BLE001", "C901"]
+"tools/**" = ["BLE001", "C901"]
+# Phase 14.2: C901 wholesale-exempted on scripts/, tools/, tests/fixtures/ -- same
+# treatment as BLE001 above. These aren't shipped package code (scripts/tools) or
+# aren't held to the same bar as production logic (test fixture setup).
+"tests/fixtures/**" = ["C901"]
+
+# Phase 14.2 CRAP-gate debt list: the 22 functions over max-complexity=15 in the 8
+# coverage-gated packages, measured 2026-08-20 via `ruff check --select C901`. Each
+# entry is a ratchet-shrink target, not a permanent exemption -- remove a line only
+# when the named function has actually been refactored under 15.
+"chunking/dedent_utils.py" = ["C901"]                            # smart_dedent (20)
+"chunking/languages/cpp.py" = ["C901"]                            # extract_metadata (21)
+"chunking/languages/glsl.py" = ["C901"]                           # _extract_declaration_metadata (20)
+"chunking/relationships/call_edge_resolver.py" = ["C901"]         # run_resolvers (17)
+"chunking/relationships/call_graph_extractor.py" = ["C901"]       # _get_call_name (17)
+"chunking/relationships/external_call_graph.py" = ["C901"]        # resolve (19)
+"chunking/relationships/lsp_call_graph.py" = ["C901"]             # _session (21)
+"chunking/relationships/resolvers/assignment_tracker.py" = ["C901"]  # extract_local_assignments (18)
+"embeddings/document_composer.py" = ["C901"]                      # compose (20)
+"embeddings/embedder.py" = ["C901"]                               # embed_chunks (30)
+"embeddings/model_cache.py" = ["C901"]                            # check_cache_at_location (22)
+"embeddings/model_loader.py" = ["C901"]                           # load (22)
+"mcp_server/output_formatter.py" = ["C901"]                       # _to_toon_format (19)
+"search/batch_operations.py" = ["C901"]                           # remove_files (18)
+"search/call_edge_injection.py" = ["C901"]                        # inject_call_edges (17)
+"search/ego_graph_retriever.py" = ["C901"]                        # score_neighbors (17)
+"search/graph_integration.py" = ["C901"]  # _extract_split_block_calls (18), _two_pass_build (16)
+"search/incremental_indexer.py" = ["C901"]                        # _full_index (17)
+"search/parallel_chunker.py" = ["C901"]                           # chunk_files (17)
+"search/relationship_analyzer.py" = ["C901"]                      # _build_graph_relationships (18)
+"search/subgraph_extractor.py" = ["C901"]                         # extract_subgraph (20)
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2
