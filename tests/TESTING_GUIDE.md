@@ -8,44 +8,41 @@ organized into clear categories for effective quality assurance.
 
 ### Current Test Status
 
-✅ **Full suite green in one process** (re-measured 2026-08-05, nightly CI fix — see "Fixed
-(Nightly CI, 2026-08-05)" below):
+✅ **Full suite green in one process** (re-measured 2026-08-20, Phase 13 — see "Phase 13"
+below; supersedes the 2026-08-05 numbers this block previously carried):
 
-- **Unit Tests**: **5,800 passed, 1 skipped** (`tests/unit/`), ~97s serial. This is *collected
-  test cases*, not distinct test functions: `tests/unit/evaluation/test_golden_set_guard.py`
-  contributes 2 `def test_*` functions but 2,219 collected cases (`--collect-only -q` on that
-  file alone) — one is a single sanity check (`test_guard_detects_corrupted_id`), the other
-  2,218 are one `@pytest.mark.parametrize`d function (`test_golden_chunk_id_exists_in_live_index`)
-  run once per golden chunk-id across four `evaluation/*golden*.json` files. That single
-  data-driven drift guard is **~39% of the entire `tests/unit/` collected total** (2,218 of
-  5,801). The protection is real and worth keeping (see Phase 10.6 note below for why it's
-  collection-time live-file-reading, not a fixed count) — but "5,800 unit tests" should not be
-  read as 5,800 independent test functions.
+- **Unit Tests**: **3,997 collected** (`tests/unit/`, `--collect-only -q`) — down from the prior
+  5,801 collected almost entirely because of Phase 13.2.b: `test_golden_set_guard.py`'s
+  `@pytest.mark.parametrize`d drift guard collapsed from **2,218 individual per-golden-ID cases
+  to 4 per-file aggregate cases** (identical protection — each case still asserts every ID in its
+  file resolves live against the index, now reported as one failure listing every drifted ID
+  instead of one failure per ID). Phase 13.3 added 49 new test functions on top of that drop
+  (`test_guidance.py` 25, `test_base_searcher.py` 10, `test_deprecation.py` 7, 7 more appended to
+  `test_searcher.py`). "3,997 unit tests" is collected-case count, not a claim that the suite
+  shrank in what it verifies — see Phase 13.2.b below for the restructure.
   - Chunking (incl. relationships): includes `test_call_edge_resolver.py`,
     `test_call_graph_config.py`, `test_libcst_call_graph.py`,
     `test_lsp_call_graph.py` (1 POSIX skip)
-  - Embeddings, Graph, Merkle, Search, MCP Server, Evaluation, Benchmark, Utils, Tools
-- **Fast Integration Tests**: **102 passed** (`tests/fast_integration/`), ~26s
-- **Integration Tests**: **19 passed** (`tests/integration/`) — the 3 failures previously
-  tracked here (`test_full_index_injects_real_call_edges`, `test_index_full_span_via_mcp_handler`,
-  `test_search_span_hierarchy_via_mcp_handlers`) are fixed; see "Fixed (Nightly CI, 2026-08-05)"
-  below
+  - Embeddings, Graph, Merkle, Search, MCP Server, Evaluation, Benchmark, Utils
+- **Fast Integration Tests**: **102 collected** (`tests/fast_integration/`), unchanged.
+- **Integration Tests**: **20 collected** (`tests/integration/`), +1 since 2026-08-05 —
+  unrelated to Phase 13, not investigated further here.
 - **Slow Integration Tests**: **107 passed, 1 skipped** (`tests/slow_integration/`), 2h39m30s
-  wall clock — now runs automatically in a weekly CI job (`.github/workflows/weekly.yml`, Phase
-  11.1; this tier never ran in any automated job before). The one skip is a runtime
-  `pytest.skip()` conditioned on `searcher.embedder is None`, not a decorator-level skip. Two
-  tests dominate the runtime (`test_incremental_indexer_class` ~42min,
-  `test_multi_hop_reranking` ~61min) — confirmed genuine real-model download/load work, not
-  hangs, since `tests/conftest.py`'s session-wide `CODE_SEARCH_STORAGE` redirect forces a fresh,
-  empty model cache for every run of this tier.
-- **Total**: `tests/ --ignore=tests/slow_integration` in one process — **5,797 passed, 1
-  skipped, 0 failed** in 470.16s (2026-08-05). Branch coverage (CI-shaped, same scope) is
-  **76.24%** (re-measured 2026-08-05, up from 75.03% on 2026-08-04 — the C2 fix's new
-  per-resolver `except` branch in `call_edge_resolver.py` is covered by its regression test, and
-  the process-pool resolver path executing for the first time under pytest exercises code that
-  was previously dead in every test run) against `fail_under = 73` — see "Measuring and gating
-  coverage" below for why the 2026-08-04 figure itself dropped from the prior 83.52%/81 baseline
-  (Phase 11.3 honestly added `tools/`'s mostly-untested CLI scripts to the measured source set).
+  wall clock — figures as last measured 2026-08-05 (Phase 13 did not touch this tier); now runs
+  automatically in a weekly CI job (`.github/workflows/weekly.yml`, Phase 11.1; this tier never
+  ran in any automated job before). The one skip is a runtime `pytest.skip()` conditioned on
+  `searcher.embedder is None`, not a decorator-level skip. Two tests dominate the runtime
+  (`test_incremental_indexer_class` ~42min, `test_multi_hop_reranking` ~61min) — confirmed
+  genuine real-model download/load work, not hangs, since `tests/conftest.py`'s session-wide
+  `CODE_SEARCH_STORAGE` redirect forces a fresh, empty model cache for every run of this tier.
+- **Total**: `tests/ --ignore=tests/slow_integration/ -m "not slow"` in one process — **4,114
+  passed, 2 skipped, 5 subtests passed, 0 failed** (2026-08-20, Phase 13.3 — CI-shaped, `-n auto
+  --dist loadfile`). Branch coverage (same scope) is **85.94%** against `fail_under = 84` — see
+  "Measuring and gating coverage" and "Phase 13" below for the two separately-measured effects
+  behind that jump from the 2026-08-05 baseline (76.24%/`fail_under = 73`): a **scope
+  correction** (dropping `tools/` from the coverage denominator, Phase 13.1, +9.39pp with zero
+  new tests) and a **genuine ratchet** (Phase 13.3's new tests, +0.31pp) — conflating the two
+  would misrepresent a denominator change as earned progress.
 - **Resolved (Phase 10.2)**: the intermittent failure previously tracked here in
   `tests/unit/search/test_index_write_stage.py::TestInjectCallEdgesResolverSelection::test_none_resolvers_falls_back_to_default_pair`
   did not reproduce once across 22+ randomized whole-suite runs during the Phase 10 hardening
@@ -2354,3 +2351,188 @@ the attribute/method every holder shares regardless of import style — `patch.o
 itself must be swapped, patch it at every eager-import call site, not just the definition
 module. A fixture docstring claiming to patch "all import locations" is itself worth verifying —
 Phase 10.5 found one that was wrong.
+
+### Coverage re-scope + first ratchet (Phase 13 — 2026-08-20)
+
+The user set a hard coverage-baseline target of 90% (against the then-current `fail_under = 73`)
+and ruled directly on one open scope question: `tools/` is a standalone CLI/batch-script
+directory, not shipped package code, and should not count toward the whole-repo coverage floor —
+`codecov.yml`'s `ignore: ["tools/**"]` already treated it that way; `pyproject.toml`'s
+`[tool.coverage.run] source` (Phase 11.3) did not, so the two gates disagreed. Phase 13 is a
+structural audit (0 xfail, 0 unconditional skips, 1 `assert True`, no `sys.path` hacks, no
+singleton-reset gaps, order-dependence already solved — nothing to fix there) plus a scope
+correction, integrity fixes, and one earned ratchet step. It does **not** claim to reach 90% —
+see the honest-ceiling note below.
+
+| | Before | After |
+| --- | --- | --- |
+| Coverage source packages | 9 (incl. `tools`) | 8 |
+| Statements measured | 19,861 | 17,451 (measured; supersedes the plan's 17,745 estimate) |
+| Coverage — scope change only (Phase 13.1, zero new tests) | 76.24% (2026-08-05, 149 commits stale) | 85.63% |
+| Coverage — after new tests (Phase 13.3) | — | 85.94% |
+| `fail_under` | 73 | 83 (Phase 13.1) → 84 (Phase 13.3) |
+| Per-test timeout | none | 300s, `timeout_method = "thread"` (Windows-safe; slow-tier's two long tests carry `@pytest.mark.timeout(5400)`) |
+| `test_golden_set_guard` collected cases | 2,218 | 4 (one per golden file, aggregate assertion — same protection, see 13.2.b) |
+
+**Phase 13.1 — re-scope and re-measure honestly.** Dropped `tools/` from `[tool.coverage.run]
+source`; the resulting +9.39pp is a **denominator correction, not an earned ratchet** — the same
+code is tested to exactly the same degree before and after, only the statement count in the
+denominator changed. Re-measured CI-shaped (`--ignore=tests/slow_integration/ -m "not slow" -n
+auto --dist loadfile --cov --cov-branch`), clean run (6,279 passed, 1 skipped, 5 subtests passed,
+0 failures): 85.63%. A same-command first attempt showed 76.11% with 1 failure — a worker
+(`gw10`) crashed on a CUDA `mem_get_info` call mid-integration-test under `-n auto`, and
+`pytest-cov` silently discarded that worker's entire loadfile group's coverage data
+("coverage: failed workers"), not just the one test's; a clean re-run reproduced 0 failures at
+85.63%, confirming the crash was a transient parallel-worker resource-contention flake, not a
+logic bug — worth knowing if a future coverage re-measurement shows an inexplicable drop paired
+with a worker crash message. `fail_under` set to 83, a ~2pp margin matching the existing
+75.03%→73 / 83.52%→81 precedents.
+
+**Phase 13.2 — integrity fixes**, each independently committed:
+
+- **13.2.a** — added `pytest-timeout>=2.3.0`; no per-test timeout existed before, and the weekly
+  slow tier runs 2h39m with no indication which test would hang if one did. `thread` method
+  (not `signal`) because `SIGALRM` doesn't exist on Windows.
+- **13.2.b** — collapsed `test_golden_set_guard.py`'s parametrization from one case per golden
+  ID (2,218 cases, ~39% of the entire unit tier, `_all_golden_id_cases()` re-reading 4 JSON files
+  twice at collection time) to one case per golden file (4 cases), asserting the aggregate set of
+  drifted IDs is empty and reporting the full list on failure. Identical protection, identical
+  diagnostics, collection no longer re-reads the golden files twice, and the case count no longer
+  shifts under seed replay whenever a golden file changes (Phase 10.6's root cause).
+- **13.2.c** — `test_bm25_population.py` set `os.environ["MCP_DEBUG"] = "1"` at module import
+  time with no teardown, leaking into every test running afterward in the same process; converted
+  to `monkeypatch.setenv` in a fixture.
+- **13.2.d** — added a guard that fails (not silently skips) when `CI=true` and an optional extra
+  callgraph/lsp dependency is missing, so a broken `--extra` install can't silently vanish 31
+  `pytest.skip()`-gated tests from CI without failing anything.
+- **13.2.e** — documentation truth-up: stale `--cov-fail-under=75`/`=80` examples replaced or
+  removed (CI omits the flag deliberately, `pyproject.toml` is the single source per "Measuring
+  and gating coverage" above); the bare-`pytest` pre-commit-hook example aligned with project
+  convention; dead `gpu`/`e2e` markers (0 uses each) dropped from `[tool.pytest.ini_options]
+  markers`.
+- **13.2.f — explicitly not done**: the 142 redundant `@pytest.mark.asyncio` decorators (no-ops
+  under `asyncio_mode = "auto"`, high merge-conflict cost for zero behavioural change) and the
+  de-mocking backlog (2,117 mock occurrences, 92.7% in `search/`/`mcp_server/`/`embeddings/`) —
+  both noted as known debt, neither is a coverage step, and folding either in here would make the
+  ratchet unmeasurable.
+
+**Phase 13.3 — first ratchet step.** The original target list came from a "no test file imports
+this module directly" scan; verifying it against the MCP semantic index of `tests/` found a
+~52%-by-statement false-positive rate (171 of 327 named statements were already covered
+*behaviourally*, through a facade — `chunking/relationships/resolvers/*`, `mcp_server/tools/
+responses.py`, `utils/path_utils.py`, `chunking/languages/glsl.py`). Final targets were the ones
+that survived both a direct-import scan *and* a `--cov-report=term-missing` check:
+
+- `mcp_server/guidance.py` (34% → 100%, `test_guidance.py`, 25 tests) — the exemplar and a
+  corrected mis-triage: one import, four pure functions, zero collaborators, zero I/O; this
+  file's own module docstring in the repo had lumped it in with modules that "need
+  async/process-boundary mocking to test properly," which was simply wrong for this one. Verified
+  non-vacuous with a break-and-revert check: temporarily changed `generate_search_message`'s
+  `elif count <= 5:` to `elif count <= 4:`, confirmed exactly
+  `test_few_results_no_graph[5]` failed, reverted (`git diff --stat` clean).
+- `search/base_searcher.py` (53% → 95%, `test_base_searcher.py`, 10 tests) — an ABC with 3
+  abstract methods but 4 concrete ones carrying real logic (dimension validation, cache eviction,
+  cache-stat reporting). Tested via a minimal concrete `_FakeSearcher` (a fake, not a mock, per
+  house style) whose `execute()` drives `_validate_dimensions`/`_evict_cache_if_needed` through
+  the public `search()` seam rather than calling the private helpers directly. The 3 remaining
+  uncovered statements are the abstract-method `pass` bodies — unreachable through normal
+  subclass usage.
+- `utils/deprecation.py` (0% → 100%, `test_deprecation.py`, 7 tests) — a single decorator with no
+  caller anywhere in the production tree yet. This project's `filterwarnings = ["error", ...]`
+  means every call into a `@deprecated`-wrapped function had to be wrapped in `pytest.warns`, or
+  the uncaught `DeprecationWarning` would fail the triggering test rather than just document the
+  behavior.
+- `search/searcher.py` (55% → 82%, 7 new tests appended to the existing `test_searcher.py`) — four
+  previously-untested methods (`search_by_file_pattern`, `search_by_chunk_type`,
+  `find_similar_to_chunk`, `get_search_suggestions`), tested with the same `unittest.mock.Mock`
+  house style the rest of that file already uses. The filter-wrapper tests route through
+  `BaseSearcher.search()`, which resolves `search.config.get_search_config()` when no explicit
+  config is passed — patched to a bare `SearchConfig()` so the test doesn't depend on this
+  process's on-disk/env config state. One test bug found and fixed during writing: an
+  `assert_called_once_with` on `get_similar_chunks` failed because `find_similar_to_chunk` calls
+  it once for the primary lookup and then once more per result during enrichment
+  (`context_depth=1`) — corrected to assert only `call_args_list[0]`.
+
+The other four modules the same stale mis-triage note covered (`mcp_server/server.py`,
+`mcp_server/resource_manager.py`, `search/searcher.py`, `search/bm25_index.py`) were re-triaged
+against fresh `term-missing` output and a direct read of each module's actual missing lines — see
+"Measuring and gating coverage" above for the corrected, per-module verdict (one mis-triaged and
+fixed, two confirmed genuinely process-boundary-shaped, one partially stale and left as a future
+candidate).
+
+Re-measured clean, same CI-shaped command (4,114 passed, 2 skipped, 5 subtests passed, 0
+failures — the drop from 6,279 is the Phase 13.2.b golden-guard collapse, not a regression):
+**85.94%**, a real but small +0.31pp gain — the four target modules total only 225 statements
+against a 17,451-statement denominator. `fail_under` set to 84, a ~1.9pp margin — tighter than
+Phase 13.1's because the confirmed transient xdist/CUDA worker-crash flake documented above is
+the risk this margin exists to absorb, and a small measured gain doesn't justify widening it back
+out.
+
+**Honest verdict on 90%.** Not reached, and this phase does not claim it was. The ceiling for a
+single ratchet step built from genuinely pure, zero-mock cores was always going to be small — the
+surviving confirmed targets totaled 225 statements against 17,451. The remaining low-coverage
+modules (`mcp_server/server.py`'s async JSON-RPC transport wiring,
+`mcp_server/resource_manager.py`'s isolated-teardown exception handlers around global GPU/OTel
+state, `search/bm25_index.py`'s I/O-bound `save()`/`load()`) are genuinely
+process-boundary-shaped, where unit tests mostly assert that mocks were called rather than verify
+real behavior — coverage is a floor, not a target, and padding those with low-value tests to hit
+a number would be a regression in the four-pillars sense, not progress. `search/bm25_index.py`'s
+`validate_consistency()` (pure in-memory list-length checks, ~57 statements) is a legitimate,
+already-identified candidate for a future, separately-scoped ratchet step.
+
+**Verification.** All items from the plan's Verification section confirmed:
+
+1. Collection is clean: `tests/unit/` collects 3,997 cases post-13.2.b (down from ~5,801).
+2. Clean CI-shaped run, 0 failures, 85.94% coverage (above).
+3. Gate enforces at the new floor: 85.94% > `fail_under = 84`.
+4. `detect_flaky_tests.sh 5 tests/unit/` (pytest-repeat, 5×) — first run was **not** clean:
+   138 failed / 18,473 passed / 10 skipped. Both failure categories were fully diagnosed, not
+   waved off:
+   - **130 failures — a tooling incompatibility, not a defect.** All 130 were
+     `test_search_results_snapshot.py` (and other syrupy-backed) cases; pytest-repeat's
+     `--count` appends a `[k-N]` suffix to every node ID, and syrupy looks up snapshots keyed
+     by that exact node ID — `[k-N]` never matches the recorded (unsuffixed) snapshot name, so
+     every repeat after the first reports "Snapshot ... does not exist!" regardless of whether
+     the code under test is correct. Verified with a minimal control:
+     `test_search_results_snapshot.py` alone passes 4/4 on a normal run and fails 8/8 under
+     `--count=2` — 100% failure rate independent of any code change confirms this is structural,
+     not a real flake. Snapshot-backed tests are not repeat-mode-compatible; this is a known
+     limitation to route around (exclude snapshot tests from future repeat-mode runs), not
+     something fixable in the snapshot tests themselves.
+   - **8 failures — a real, fixed test-isolation bug**, unrelated to Phase 13.3:
+     `test_index_handlers.py::TestPurgeIndexDirFailureReporting`'s two tests build
+     `index_dir` under `get_storage_dir()` (session-scoped — same path every call) and call
+     `index_dir.mkdir(parents=True)` with no `exist_ok` and no cleanup; a `tmp_path` fixture
+     argument is accepted but was already unused (dead from an earlier refactor, per the
+     test's own comment). Fine on a single run; back-to-back repeats within the same session
+     hit `FileExistsError: [WinError 183]` on the second invocation. Fixed by clearing the
+     directory (`shutil.rmtree(index_dir, ignore_errors=True)`) immediately before `mkdir`, in
+     both tests. Re-verified: `--count=5` on just this class — 10/10 pass (was 8/10 failing);
+     full `test_index_handlers.py` — 26/26 pass unaffected.
+   Re-running the full `detect_flaky_tests.sh 5 tests/unit/` after the fix was judged
+   unnecessary — the 130 syrupy failures are a known, reproduced-independently repeat-mode
+   artifact (not a regression signal to re-check), and the 8 real failures were isolated,
+   reproduced, fixed, and re-verified directly against the exact failing node IDs above.
+5. Timeout wiring deliberately tripped: a temporary `test_timeout_trip_temp.py` with
+   `time.sleep(400)` (no CLI override, using the real configured 300s default) fired exactly at
+   the `time.sleep(400)` call, dumped the thread-method stack trace, and force-exited with code 1
+   after ~300s — confirmed as a Timeout failure, not a hang. File deleted after the check,
+   `git status` clean. (An initial attempt using a `--timeout=2` CLI override to shortcut the
+   wait instead tripped during per-test setup's heavy import chain before the test body ever ran
+   — not a useful signal; discarded in favor of the real 300s default.)
+6. Env-leak fix (13.2.c) holds under both orders: `tests/unit/search/` — 1,698 passed with
+   `-p no:randomly`, 1,698 passed randomized. Both clean.
+7. Every Phase 13.3 target re-verified against both `term-missing` and an MCP `search_code()`
+   query before a test was written for it, per the plan's two-independent-checks rule (a
+   direct-import scan alone had already produced false positives once).
+
+### Phase 13.4 — commits
+
+```bash
+./scripts/git/commit_enhanced.sh "test: re-scope coverage to package, drop tools/ (Phase 13.1)"
+./scripts/git/commit_enhanced.sh "test: add pytest-timeout and fix env leak (Phase 13.2)"
+./scripts/git/commit_enhanced.sh "test: collapse golden-set guard to per-file cases (Phase 13.2b)"
+./scripts/git/commit_enhanced.sh "test: cover pure mcp_server/utils cores, ratchet fail_under (Phase 13.3)"
+./scripts/git/commit_enhanced.sh "test: fix repeat-mode isolation bug in TestPurgeIndexDirFailureReporting"
+./scripts/git/commit_enhanced.sh "docs: record Phase 13 in TESTING_GUIDE (Phase 13.4)"
+```
