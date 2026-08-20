@@ -53,6 +53,7 @@ for avoiding re-litigating settled questions.
 | [0045](0045-extract-embedding-document-composer.md) | Extract the embedding-document composer from `CodeEmbedder` | accepted | 2026-08-19 |
 | [0046](0046-single-source-mcp-parameter-defaults.md) | Single-source hand-typed MCP parameter defaults through `config_schema.py` | accepted | 2026-08-19 |
 | [0047](0047-result-source-strenum.md) | Replace `SearchResult.source`'s bare `str` with a `ResultSource` StrEnum | accepted | 2026-08-19 |
+| [0048](0048-base-searcher-execute-seam.md) | One retrieval seam on `BaseSearcher`: `execute(request)` behind `search(...)` | accepted | 2026-08-19 |
 
 ## Adding a new ADR
 

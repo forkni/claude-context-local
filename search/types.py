@@ -141,8 +141,8 @@ class RetrievalRequest:
 
     NB: shallow freeze — `config` is a mutable SearchConfig reachable through
     this object. Nothing may mutate it mid-request; the orchestrator's only
-    config mutation happens before construction (search_orchestrator.py:498-501,
-    before the search call at :511).
+    config mutation happens before construction (search_orchestrator.py:414-416,
+    before the search call at :424).
     """
 
     query: str
