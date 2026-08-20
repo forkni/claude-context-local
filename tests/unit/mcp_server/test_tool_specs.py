@@ -1,4 +1,4 @@
-"""Unit tests for the low-level MCP tool registry (mcp_server/tool_registry.py)."""
+"""Unit tests for the low-level MCP tool specs (mcp_server/tool_specs.py)."""
 
 import dataclasses
 
@@ -10,9 +10,9 @@ from mcp_server.config_schema import (
     NO_DEFAULT,
     OUTPUT_FORMAT_PROPERTY,
 )
-from mcp_server.tool_registry import (
+from mcp_server.tool_specs import (
     ADVANCED_TOOLS,
-    TOOL_REGISTRY,
+    TOOL_SPECS,
     _advanced_tools_enabled,
     build_tool_list,
 )
@@ -28,6 +28,9 @@ from search.config import (
     RerankerConfig,
     SearchModeConfig,
 )
+
+
+TOOL_SPECS_BY_NAME = {s.name: s for s in TOOL_SPECS}
 
 
 @pytest.fixture(autouse=True)
@@ -59,7 +62,7 @@ class TestBuildToolList:
 
         names = {tool.name for tool in tools}
         assert names.isdisjoint(ADVANCED_TOOLS)
-        assert len(tools) == len(TOOL_REGISTRY) - len(ADVANCED_TOOLS)
+        assert len(tools) == len(TOOL_SPECS) - len(ADVANCED_TOOLS)
 
     def test_env_var_enables_advanced_tools(self, monkeypatch):
         monkeypatch.setenv("MCP_EXPOSE_ADVANCED_TOOLS", "1")
@@ -68,7 +71,7 @@ class TestBuildToolList:
 
         names = {tool.name for tool in tools}
         assert ADVANCED_TOOLS.issubset(names)
-        assert len(tools) == len(TOOL_REGISTRY)
+        assert len(tools) == len(TOOL_SPECS)
 
     def test_explicit_true_overrides_unset_env_var(self, monkeypatch):
         monkeypatch.delenv("MCP_EXPOSE_ADVANCED_TOOLS", raising=False)
@@ -89,11 +92,12 @@ class TestBuildToolList:
     def test_each_tool_has_name_description_and_schema(self):
         tools = build_tool_list(include_advanced=True)
 
-        assert len(tools) == len(TOOL_REGISTRY)
+        assert len(tools) == len(TOOL_SPECS)
         for tool in tools:
-            assert tool.name in TOOL_REGISTRY
-            assert tool.description == TOOL_REGISTRY[tool.name]["description"]
-            assert tool.input_schema == TOOL_REGISTRY[tool.name]["input_schema"]
+            assert tool.name in TOOL_SPECS_BY_NAME
+            spec = TOOL_SPECS_BY_NAME[tool.name]
+            assert tool.description == spec.description
+            assert tool.input_schema == spec.input_schema
 
 
 class TestEgoGraphEnabledSchema:
@@ -103,7 +107,7 @@ class TestEgoGraphEnabledSchema:
     """
 
     def _schema(self):
-        return TOOL_REGISTRY["search_code"]["input_schema"]["properties"][
+        return TOOL_SPECS_BY_NAME["search_code"].input_schema["properties"][
             "ego_graph_enabled"
         ]
 
@@ -137,7 +141,7 @@ class TestIndexDirectoryFilterSchema:
     """
 
     def _properties(self):
-        return TOOL_REGISTRY["index_directory"]["input_schema"]["properties"]
+        return TOOL_SPECS_BY_NAME["index_directory"].input_schema["properties"]
 
     @pytest.mark.parametrize(
         "arg_key", ["include_dirs", "exclude_dirs", "include_exclusive"]
@@ -155,7 +159,7 @@ class TestIncludeSignaturesSchema:
     """
 
     def _schema(self):
-        return TOOL_REGISTRY["search_code"]["input_schema"]["properties"][
+        return TOOL_SPECS_BY_NAME["search_code"].input_schema["properties"][
             "include_signatures"
         ]
 
@@ -200,7 +204,7 @@ class TestConfigToolSchemaMatchesFieldSpec:
         ],
     )
     def test_numeric_and_choice_bounds_match(self, tool_name, section_cls, field_map):
-        properties = TOOL_REGISTRY[tool_name]["input_schema"]["properties"]
+        properties = TOOL_SPECS_BY_NAME[tool_name].input_schema["properties"]
         for arg_key, attr in field_map:
             schema_prop = properties[arg_key]
             metadata = _field_metadata(section_cls, attr)
@@ -222,10 +226,10 @@ class TestConfigToolSchemaMatchesFieldSpec:
             )
 
     @staticmethod
-    def _iter_registry_properties():
-        for tool_name, meta in TOOL_REGISTRY.items():
-            for arg_key, prop in meta["input_schema"]["properties"].items():
-                yield tool_name, arg_key, prop
+    def _iter_spec_properties():
+        for spec in TOOL_SPECS:
+            for arg_key, prop in spec.input_schema["properties"].items():
+                yield spec.name, arg_key, prop
 
     @staticmethod
     def _classification_key(tool_name, arg_key):
@@ -245,7 +249,7 @@ class TestConfigToolSchemaMatchesFieldSpec:
         bound_keys = ("minimum", "maximum", "enum", "default")
         unclassified = [
             f"{tool_name}.{arg_key}"
-            for tool_name, arg_key, prop in self._iter_registry_properties()
+            for tool_name, arg_key, prop in self._iter_spec_properties()
             if any(k in prop for k in bound_keys)
             and self._classification_key(tool_name, arg_key) is None
         ]
@@ -263,7 +267,7 @@ class TestConfigToolSchemaMatchesFieldSpec:
         in, since CONFIG_BACKED itself never carries one.
         """
         mismatches = []
-        for tool_name, arg_key, prop in self._iter_registry_properties():
+        for tool_name, arg_key, prop in self._iter_spec_properties():
             key = self._classification_key(tool_name, arg_key)
             if key is None or key not in CONFIG_BACKED:
                 continue
@@ -277,9 +281,9 @@ class TestConfigToolSchemaMatchesFieldSpec:
 
     def test_output_format_properties_match_shared_definition(self):
         mismatches = [
-            tool_name
-            for tool_name, meta in TOOL_REGISTRY.items()
-            if meta["input_schema"]["properties"].get("output_format")
+            spec.name
+            for spec in TOOL_SPECS
+            if spec.input_schema["properties"].get("output_format")
             != OUTPUT_FORMAT_PROPERTY
         ]
         assert not mismatches, (
@@ -292,21 +296,22 @@ class TestHandTypedSchemaSeam:
     """D2 made HAND_TYPED[key].schema and arg()'s fallback the same read of the
     same object, so a schema default and a handler fallback can no longer
     independently drift — the exact seam include_exclusive fell through, where
-    tool_registry.py's "default": False and index_handlers.py's no-fallback
-    tri-state resolution silently disagreed (docs/adr/0046). These ratchets
-    make that regression structurally impossible, not just caught by review.
+    the old tool_registry.py's "default": False and index_handlers.py's
+    no-fallback tri-state resolution silently disagreed (docs/adr/0046). These
+    ratchets make that regression structurally impossible, not just caught by
+    review.
     """
 
     @staticmethod
     def _governed_properties():
-        """Yield (key, prop) for every TOOL_REGISTRY property whose
-        "<tool>.<arg>" key has a direct HAND_TYPED entry. HAND_TYPED carries no
-        "*.<arg>" wildcard entries, so a direct match is the only membership
-        test needed.
+        """Yield (key, prop) for every ToolSpec property whose "<tool>.<arg>"
+        key has a direct HAND_TYPED entry. HAND_TYPED carries no "*.<arg>"
+        wildcard entries, so a direct match is the only membership test
+        needed.
         """
-        for tool_name, meta in TOOL_REGISTRY.items():
-            for arg_key, prop in meta["input_schema"]["properties"].items():
-                key = f"{tool_name}.{arg_key}"
+        for spec in TOOL_SPECS:
+            for arg_key, prop in spec.input_schema["properties"].items():
+                key = f"{spec.name}.{arg_key}"
                 if key in HAND_TYPED:
                     yield key, prop
 
@@ -339,11 +344,11 @@ class TestHandTypedSchemaSeam:
         to reuse the value stored in project_info.json).
         """
         unbacked = []
-        for tool_name, meta in TOOL_REGISTRY.items():
-            for arg_key, prop in meta["input_schema"]["properties"].items():
+        for spec in TOOL_SPECS:
+            for arg_key, prop in spec.input_schema["properties"].items():
                 if "default" not in prop:
                     continue
-                key = f"{tool_name}.{arg_key}"
+                key = f"{spec.name}.{arg_key}"
                 record = HAND_TYPED.get(key)
                 if record is None or record.default is NO_DEFAULT:
                     rationale = record.rationale if record else "no HAND_TYPED entry"
@@ -368,22 +373,23 @@ class TestHandTypedSchemaSeam:
                 offenders.append(f"{key}: .schema default is {type(value).__name__}")
         assert not offenders, "\n  ".join(offenders)
 
-    def test_no_inline_default_literal_in_tool_registry_source(self):
+    def test_no_inline_default_literal_in_tool_specs_source(self):
         """AST ban, supplementary to the runtime seam above: after D2,
-        mcp_server/tool_registry.py must never contain a literal
-        '"default": ...' dict entry again — every default now reaches the
-        registry exclusively via a HAND_TYPED[key].schema or CONFIG_BACKED[key]
-        spread. Detection-after-the-fact (comparing values at runtime, as the
-        tests above do) is precisely the mechanism that already failed once on
-        include_exclusive; this bans the pattern at the source-code level so a
-        reviewer doesn't have to re-derive that reasoning from scratch.
+        mcp_server/tool_specs.py must never contain a literal '"default": ...'
+        dict entry in a TOOL_SPECS row's input_schema — every default now
+        reaches the schema exclusively via a HAND_TYPED[key].schema or
+        CONFIG_BACKED[key] spread. Detection-after-the-fact (comparing values
+        at runtime, as the tests above do) is precisely the mechanism that
+        already failed once on include_exclusive; this bans the pattern at
+        the source-code level so a reviewer doesn't have to re-derive that
+        reasoning from scratch.
         """
         import ast
         import inspect
 
-        import mcp_server.tool_registry as tool_registry_module
+        import mcp_server.tool_specs as tool_specs_module
 
-        source = inspect.getsource(tool_registry_module)
+        source = inspect.getsource(tool_specs_module)
         tree = ast.parse(source)
 
         offending_lines = [
@@ -396,7 +402,7 @@ class TestHandTypedSchemaSeam:
 
         assert not offending_lines, (
             "Literal '\"default\": ...' dict entries found at line(s) "
-            f"{offending_lines} in tool_registry.py — defaults must be "
+            f"{offending_lines} in tool_specs.py — defaults must be "
             "spread from HAND_TYPED[key].schema / CONFIG_BACKED[key], never "
             "restated inline (docs/adr/0046)"
         )

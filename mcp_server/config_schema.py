@@ -98,7 +98,7 @@ def _build(mapping: dict[str, tuple[type, str]]) -> dict[str, dict[str, Any]]:
     return built
 
 
-# Derived once, generalizing the enum list tool_registry.py already built by hand
+# Derived once, generalizing the enum list tool_specs.py already built by hand
 # at two call sites (search_code.search_mode, configure_search_mode.search_mode).
 SEARCH_MODE_ENUM: tuple[str, ...] = tuple(m.value for m in SearchMode)
 

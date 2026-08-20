@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from mcp_server.state import get_state
-from mcp_server.tool_handlers import (
+from mcp_server.tool_specs import (
     handle_clear_index,
     handle_get_index_status,
     handle_index_directory,

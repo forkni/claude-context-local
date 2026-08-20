@@ -1,6 +1,25 @@
-"""Tool registry for low-level MCP server.
+"""Tool specs for the low-level MCP server.
 
-Contains JSON schemas for all 18 tools following MCP specification.
+One ``ToolSpec`` row is the single declaration of an MCP tool's wire schema,
+handler, and dispatch-time guards. Three things a caller used to have to keep
+in sync by hand now derive from it instead:
+
+- ``TOOL_DISPATCH`` — ``{name: handler}``, used by ``handle_call_tool`` in
+  server.py and the HTTP ``switch_project`` route.
+- ``ADVANCED_TOOLS`` / ``build_tool_list`` — the advanced-tools tier and the
+  published tool list (see tool-count budget below).
+- The mutation-lock / index-guard coverage tests in
+  ``tests/unit/mcp_server/test_tool_specs.py`` — each row's ``mutation_lock``
+  and ``requires_index`` flags are checked against the handler's actual
+  decorator chain, so a spec that drifts from its handler fails a structural
+  test instead of silently going unchecked.
+
+This supersedes the former ``tool_registry.py`` / ``tool_handlers.py`` split,
+which held the same 18-tool knowledge in two hand-synced tables (joined only
+by a parity test) plus a hand-maintained, bytecode-inspecting mutation-lock
+test set. It extends ADR-0049's ``EnricherSpec`` pattern
+(``mcp_server/enricher_specs.py``) from request-scoped display parameters to
+whole tools.
 
 Tool-count budget (§VI-C, "MCP Server Architecture Patterns for LLM-Integrated
 Applications", Rodrigues & Vas, arXiv:2606.30317): LLM tool-selection accuracy
@@ -8,12 +27,12 @@ falls below 90% once a context holds ~10-15 tools (Haiku-class models) / ~20-30
 (Sonnet-class). Listing all 18 tools unconditionally risks that budget once this
 server is loaded alongside other MCP servers in the same client session.
 
-Tools are tagged CORE or ADVANCED (see ADVANCED_TOOLS below). By default
+Tools are tagged CORE or ADVANCED (see ``advanced=`` on each row). By default
 build_tool_list() returns CORE tools only (10). Set the environment variable
 MCP_EXPOSE_ADVANCED_TOOLS=1 to list all 18. This only affects what list_tools
-advertises to the LLM — TOOL_DISPATCH in tool_handlers.py still dispatches every
-tool by name regardless of this flag, so advanced tools remain callable by any
-client that already knows their name/schema (tests, scripts, power users).
+advertises to the LLM — TOOL_DISPATCH still dispatches every tool by name
+regardless of this flag, so advanced tools remain callable by any client that
+already knows their name/schema (tests, scripts, power users).
 
 Config-backed properties (bounds/enum sourced from search/config.py's spec()
 metadata) spread their fragment from mcp_server.config_schema.CONFIG_BACKED;
@@ -23,7 +42,9 @@ the rationale) stay hand-typed in place.
 """
 
 import os
-from typing import Any
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from mcp.types import Tool
 
@@ -34,23 +55,31 @@ from mcp_server.config_schema import (
     SEARCH_MODE_ENUM,
 )
 from mcp_server.enricher_specs import ENRICHER_SPECS
-
-
-# Tools gated behind MCP_EXPOSE_ADVANCED_TOOLS (default: hidden from list_tools).
-# These are runtime-tuning / destructive / rarely-needed-day-to-day operations;
-# hiding them by default keeps the advertised tool count within the accuracy
-# budget above without removing the capability (see module docstring).
-ADVANCED_TOOLS: frozenset[str] = frozenset(
-    {
-        "configure_search_mode",
-        "configure_reranking",
-        "configure_chunking",
-        "switch_embedding_model",
-        "list_embedding_models",
-        "get_search_config_status",
-        "clear_index",
-        "delete_project",
-    }
+from mcp_server.tools.config_handlers import (
+    handle_configure_chunking,
+    handle_configure_reranking,
+    handle_configure_search_mode,
+    handle_switch_embedding_model,
+    handle_switch_project,
+)
+from mcp_server.tools.index_handlers import (
+    handle_clear_index,
+    handle_delete_project,
+    handle_index_directory,
+)
+from mcp_server.tools.search_handlers import (
+    handle_find_connections,
+    handle_find_path,
+    handle_find_similar_code,
+    handle_search_code,
+)
+from mcp_server.tools.status_handlers import (
+    handle_cleanup_resources,
+    handle_get_index_status,
+    handle_get_memory_status,
+    handle_get_search_config_status,
+    handle_list_embedding_models,
+    handle_list_projects,
 )
 
 
@@ -63,10 +92,40 @@ def _advanced_tools_enabled() -> bool:
     return os.getenv("MCP_EXPOSE_ADVANCED_TOOLS", "").lower() in ("1", "true", "yes")
 
 
-# Complete tool registry with JSON schemas
-TOOL_REGISTRY: dict[str, dict[str, Any]] = {
-    "search_code": {
-        "description": """PREFERRED: Use this tool for code analysis and understanding tasks. Provides semantic search with intelligent multi-model routing for optimal results.
+@dataclass(frozen=True)
+class ToolSpec:
+    """The wire interface and dispatch-time guards of one MCP tool.
+
+    name: MCP tool name, as published to clients and used as the
+        TOOL_DISPATCH key.
+    description: published verbatim in list_tools.
+    input_schema: published verbatim in list_tools; built the same way as
+        before (CONFIG_BACKED / HAND_TYPED fragment spreads, ADR-0042/0046).
+    handler: the decorated async handler TOOL_DISPATCH resolves to.
+    mutation_lock: "decorator" if the handler itself is wrapped in
+        @with_mutation_lock, "internal" if it acquires the lock explicitly
+        further down the call stack instead (index_directory — see
+        handle_index_directory's docstring for why it can't be decorated
+        directly), or None if the tool never mutates shared ApplicationState.
+    requires_index: True if the handler is wrapped in
+        @require_indexed_project (the four search_handlers.py tools).
+    advanced: True if this tool sits in the ADVANCED_TOOLS tier (hidden from
+        list_tools unless MCP_EXPOSE_ADVANCED_TOOLS=1 — see module docstring).
+    """
+
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    handler: Callable[[dict], Awaitable[dict | list]]
+    mutation_lock: Literal["decorator", "internal", None]
+    requires_index: bool
+    advanced: bool
+
+
+TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        name="search_code",
+        description="""PREFERRED: Use this tool for code analysis and understanding tasks. Provides semantic search with intelligent multi-model routing for optimal results.
 
 WHEN TO USE:
 - Understanding how specific functionality is implemented
@@ -87,7 +146,7 @@ RETURNS:
   source ("ego_graph" for expanded graph-neighbor results)
 - subgraph_nodes / subgraph_edges: present when a result subgraph is serialized
 - system_message: routing/reindex guidance for the calling model""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "query": {
@@ -190,9 +249,14 @@ RETURNS:
             },
             "required": [],
         },
-    },
-    "index_directory": {
-        "description": """SETUP REQUIRED: Index a codebase for semantic search. Must run this before using search_code on a new project. Supports 9 languages: Python, JavaScript, TypeScript (including TSX), Go, Rust, C, C++, C#, and GLSL.
+        handler=handle_search_code,
+        mutation_lock=None,
+        requires_index=True,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="index_directory",
+        description="""SETUP REQUIRED: Index a codebase for semantic search. Must run this before using search_code on a new project. Supports 9 languages: Python, JavaScript, TypeScript (including TSX), Go, Rust, C, C++, C#, and GLSL.
 
 WHEN TO USE:
 - First time analyzing a new codebase
@@ -215,7 +279,7 @@ RETURNS:
 - wait=false: success, job_id, status="running", project — poll with
   get_index_status(job_id=...) until status is "done" (result holds the
   fields above) or "error" (error holds the failure message)""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "directory_path": {
@@ -250,9 +314,14 @@ RETURNS:
             },
             "required": ["directory_path"],
         },
-    },
-    "find_similar_code": {
-        "description": """SPECIALIZED: Find code chunks functionally similar to a specific reference chunk. Use this when you want to discover code that does similar things to a known piece of code.
+        handler=handle_index_directory,
+        mutation_lock="internal",
+        requires_index=False,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="find_similar_code",
+        description="""SPECIALIZED: Find code chunks functionally similar to a specific reference chunk. Use this when you want to discover code that does similar things to a known piece of code.
 
 WHEN TO USE:
 - Finding alternative implementations of the same functionality
@@ -270,7 +339,7 @@ RETURNS:
 - similar_chunks: ranked list of chunks, each with chunk_id, file, lines, kind
   (function/class/method/module/...), score, and — when available — name,
   complexity_score, summary (module docstring preview), source ("similarity")""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "chunk_id": {
@@ -290,9 +359,14 @@ RETURNS:
             },
             "required": ["chunk_id"],
         },
-    },
-    "get_index_status": {
-        "description": """Check whether the active project's index exists, how large it is, and how stale it is. Also doubles as the poll target for a background index_directory(wait=false) job.
+        handler=handle_find_similar_code,
+        mutation_lock=None,
+        requires_index=True,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="get_index_status",
+        description="""Check whether the active project's index exists, how large it is, and how stale it is. Also doubles as the poll target for a background index_directory(wait=false) job.
 
 WHEN TO USE:
 - Before the first search_code call in a new session, to confirm a project is indexed
@@ -306,7 +380,7 @@ RETURNS:
 - no job_id: index_statistics (total_chunks and, when hybrid search is
   enabled, bm25_documents, dense_vectors, synced), model_information,
   storage_directory, current_project, last_indexed_time""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "job_id": {
@@ -317,9 +391,14 @@ RETURNS:
             },
             "required": [],
         },
-    },
-    "list_projects": {
-        "description": """List every project that has been indexed on this machine, with per-model chunk counts. Use this to find the exact project_path before switch_project.
+        handler=handle_get_index_status,
+        mutation_lock=None,
+        requires_index=False,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="list_projects",
+        description="""List every project that has been indexed on this machine, with per-model chunk counts. Use this to find the exact project_path before switch_project.
 
 WHEN TO USE:
 - Unsure which projects are indexed or what their exact paths are
@@ -330,16 +409,21 @@ RETURNS:
 - projects: list of {project_name, project_path, project_hash, path_exists,
   models_indexed: [{model, dimension, chunks, created_at}]}
 - current_project: the currently active project path""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "switch_project": {
-        "description": """Switch the active project so subsequent search_code / find_connections / find_path calls target a different indexed codebase.
+        handler=handle_list_projects,
+        mutation_lock=None,
+        requires_index=False,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="switch_project",
+        description="""Switch the active project so subsequent search_code / find_connections / find_path calls target a different indexed codebase.
 
 WHEN TO USE:
 - Multiple projects are indexed and the wrong one is currently active
@@ -352,7 +436,7 @@ with get_index_status if in doubt.
 RETURNS:
 - success, project (resolved path), indexed (bool)
 - warning (if not yet indexed) or message confirming the switch""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "project_path": {
@@ -363,9 +447,14 @@ RETURNS:
             },
             "required": ["project_path"],
         },
-    },
-    "clear_index": {
-        "description": """Clear the entire search index and metadata for the current project. Deletes ALL dimension indices (768d, 1024d, etc.) and associated Merkle snapshots.
+        handler=handle_switch_project,
+        mutation_lock="decorator",
+        requires_index=False,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="clear_index",
+        description="""Clear the entire search index and metadata for the current project. Deletes ALL dimension indices (768d, 1024d, etc.) and associated Merkle snapshots.
 
 WHEN TO USE:
 - Forcing a full rebuild from scratch (e.g. after a config change with no incremental path)
@@ -381,16 +470,21 @@ HTTP transport this affects all connected clients working on that project.
 RETURNS:
 - success, cleared_models (list of model-dir names whose indices were deleted)
 - snapshots_cleared (Merkle snapshot count; omitted when zero)""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "delete_project": {
-        "description": """Safely delete an indexed project and all associated data.
+        handler=handle_clear_index,
+        mutation_lock="decorator",
+        requires_index=False,
+        advanced=True,
+    ),
+    ToolSpec(
+        name="delete_project",
+        description="""Safely delete an indexed project and all associated data.
 
 Properly closes database connections before deletion to prevent file lock errors.
 Handles deletion of: vector indices (FAISS), metadata databases (SQLite), BM25 indices,
@@ -409,7 +503,7 @@ RETURNS:
 - deleted_snapshots: number of Merkle snapshots deleted
 - errors: list of any deletion errors (omitted on full success)
 - hint: suggestion text when deletion was blocked (e.g. file locks)""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "project_path": {
@@ -425,9 +519,14 @@ RETURNS:
             },
             "required": ["project_path"],
         },
-    },
-    "get_memory_status": {
-        "description": """Get current memory usage status for the index and system.
+        handler=handle_delete_project,
+        mutation_lock="decorator",
+        requires_index=False,
+        advanced=True,
+    ),
+    ToolSpec(
+        name="get_memory_status",
+        description="""Get current memory usage status for the index and system.
 
 Shows available RAM/VRAM, current index memory usage, and whether GPU acceleration is active. Useful for monitoring memory consumption and optimizing performance.
 
@@ -437,31 +536,41 @@ RETURNS:
   {"status": "No GPU available"}
 - index_memory: {vectors, dimension, estimated_mb}, or {"status": "No index loaded"}
 - per_model_vram_mb: VRAM usage per currently loaded embedding model""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "cleanup_resources": {
-        "description": """Manually cleanup all resources to free memory.
+        handler=handle_get_memory_status,
+        mutation_lock=None,
+        requires_index=False,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="cleanup_resources",
+        description="""Manually cleanup all resources to free memory.
 
 Forces cleanup of indexes, embedding model(s), and GPU memory. Useful when switching between large projects or when memory is running low.
 
 RETURNS:
 - success, message confirming cleanup completed""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "configure_search_mode": {
-        "description": """Configure search mode and hybrid search parameters.
+        handler=handle_cleanup_resources,
+        mutation_lock=None,
+        requires_index=False,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="configure_search_mode",
+        description="""Configure search mode and hybrid search parameters.
 
 WHEN TO USE:
 - Tuning the BM25/dense balance for a codebase where one signal underperforms
@@ -479,7 +588,7 @@ get_search_config_status if in doubt.
 
 RETURNS:
 - success, config: {search_mode, bm25_weight, dense_weight, enable_parallel}""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "search_mode": {
@@ -504,9 +613,14 @@ RETURNS:
             },
             "required": [],
         },
-    },
-    "get_search_config_status": {
-        "description": """Show the search engine's live configuration — current mode, weights, reranker state, multi-hop settings, and k defaults.
+        handler=handle_configure_search_mode,
+        mutation_lock="decorator",
+        requires_index=False,
+        advanced=True,
+    ),
+    ToolSpec(
+        name="get_search_config_status",
+        description="""Show the search engine's live configuration — current mode, weights, reranker state, multi-hop settings, and k defaults.
 
 WHEN TO USE:
 - Verifying a configure_search_mode / configure_reranking / configure_chunking call took effect
@@ -520,16 +634,21 @@ RETURNS:
 - bm25_use_stemming, multi_hop_enabled, multi_hop_count, multi_hop_expansion
 - reranker_enabled, reranker_model, reranker_top_k_candidates
 - default_k, max_k""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "list_embedding_models": {
-        "description": """List every embedding model available for indexing/search, with dimension, VRAM footprint, context length, and whether it's currently loaded.
+        handler=handle_get_search_config_status,
+        mutation_lock=None,
+        requires_index=False,
+        advanced=True,
+    ),
+    ToolSpec(
+        name="list_embedding_models",
+        description="""List every embedding model available for indexing/search, with dimension, VRAM footprint, context length, and whether it's currently loaded.
 
 WHEN TO USE:
 - Choosing a model before the first index_directory on a new project
@@ -539,16 +658,21 @@ RETURNS:
 - models: list of {name, dimension, description, recommended_batch_size,
   vram_gb, max_context, loaded}
 - current_model: the embedding model active for the current project""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "switch_embedding_model": {
-        "description": """Switch to a different embedding model without deleting existing indices.
+        handler=handle_list_embedding_models,
+        mutation_lock=None,
+        requires_index=False,
+        advanced=True,
+    ),
+    ToolSpec(
+        name="switch_embedding_model",
+        description="""Switch to a different embedding model without deleting existing indices.
 
 Per-model indices enable instant switching - if you've already indexed a project with a model, switching back to it requires no re-indexing.
 
@@ -559,7 +683,7 @@ get_search_config_status if in doubt.
 RETURNS:
 - success, old_model, new_model
 - message, note (existing indices for other models are preserved per-model)""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "model_name": {
@@ -570,9 +694,14 @@ RETURNS:
             },
             "required": ["model_name"],
         },
-    },
-    "find_connections": {
-        "description": """Find all code connections to a given symbol.
+        handler=handle_switch_embedding_model,
+        mutation_lock="decorator",
+        requires_index=False,
+        advanced=True,
+    ),
+    ToolSpec(
+        name="find_connections",
+        description="""Find all code connections to a given symbol.
 
 Discovers code connected to the target symbol through multiple relationship types:
 - Direct callers (functions that call this)
@@ -608,7 +737,7 @@ Higher-confidence resolvers upgrade lower-confidence edges for the same pair.
 Install `pip install -e ".[callgraph]"` to enable pyan3 + LibCST resolvers.
 `lsp_enabled` is requested by default in call_graph config; basedpyright LSP
 resolution no-ops unless the `[lsp]` extra is installed.""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "chunk_id": {
@@ -644,9 +773,14 @@ resolution no-ops unless the `[lsp]` extra is installed.""",
             },
             "required": [],
         },
-    },
-    "find_path": {
-        "description": """Find shortest path between two code entities in the relationship graph.
+        handler=handle_find_connections,
+        mutation_lock=None,
+        requires_index=True,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="find_path",
+        description="""Find shortest path between two code entities in the relationship graph.
 
 Traces how two symbols connect through calls, inheritance, imports, or other relationships.
 
@@ -660,7 +794,7 @@ RETURNS:
 - Path as sequence of nodes with metadata
 - Edge types traversed (calls, inherits, imports, etc.)
 - Path length (number of hops)""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "source": {
@@ -695,9 +829,14 @@ RETURNS:
             },
             "required": [],
         },
-    },
-    "configure_reranking": {
-        "description": """Configure neural reranker settings.
+        handler=handle_find_path,
+        mutation_lock=None,
+        requires_index=True,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="configure_reranking",
+        description="""Configure neural reranker settings.
 
 Args:
     enabled: Enable/disable neural reranking (default: True)
@@ -713,7 +852,7 @@ get_search_config_status if in doubt.
 RETURNS:
 - success, config: {enabled, model_name, top_k_candidates, min_vram_gb, batch_size}
 - system_message noting changes take effect on the next search""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "enabled": {
@@ -737,9 +876,14 @@ RETURNS:
             },
             "required": [],
         },
-    },
-    "configure_chunking": {
-        "description": """Configure code chunking and splitting parameters. Changes are persisted to config; re-index the project to apply them to existing chunks.
+        handler=handle_configure_reranking,
+        mutation_lock="decorator",
+        requires_index=False,
+        advanced=True,
+    ),
+    ToolSpec(
+        name="configure_chunking",
+        description="""Configure code chunking and splitting parameters. Changes are persisted to config; re-index the project to apply them to existing chunks.
 
 WHEN TO USE:
 - Tuning chunk granularity (max_chunk_lines, max_split_chars, sizing_mode) for
@@ -756,7 +900,7 @@ HTTP transport this affects all connected clients.
 RETURNS:
 - success, config: echo of the chunking fields after the patch is applied
 - system_message noting that re-indexing is required to apply changes""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "enable_large_node_splitting": {
@@ -803,12 +947,30 @@ RETURNS:
             },
             "required": [],
         },
-    },
+        handler=handle_configure_chunking,
+        mutation_lock="decorator",
+        requires_index=False,
+        advanced=True,
+    ),
+)
+"""All 18 tool specs, in published-schema order (matches the former
+TOOL_REGISTRY key order)."""
+
+
+TOOL_DISPATCH: dict[str, Callable[[dict], Awaitable[dict | list]]] = {
+    s.name: s.handler for s in TOOL_SPECS
 }
+"""name -> handler, derived from TOOL_SPECS. Used by handle_call_tool
+(server.py) and the HTTP switch_project route."""
+
+ADVANCED_TOOLS: frozenset[str] = frozenset(s.name for s in TOOL_SPECS if s.advanced)
+"""Tools gated behind MCP_EXPOSE_ADVANCED_TOOLS (default: hidden from
+list_tools). Derived from each row's advanced= flag — see module docstring
+for the tool-count budget this protects."""
 
 
 def build_tool_list(include_advanced: bool | None = None) -> list[Tool]:
-    """Build MCP Tool list from registry.
+    """Build the MCP Tool list from TOOL_SPECS.
 
     Args:
         include_advanced: Whether to include ADVANCED_TOOLS. Defaults to the
@@ -818,15 +980,18 @@ def build_tool_list(include_advanced: bool | None = None) -> list[Tool]:
     if include_advanced is None:
         include_advanced = _advanced_tools_enabled()
 
-    tools = []
-    for name, meta in TOOL_REGISTRY.items():
-        if not include_advanced and name in ADVANCED_TOOLS:
-            continue
-        tools.append(
-            Tool(
-                name=name,
-                description=meta["description"],
-                input_schema=meta["input_schema"],
-            )
-        )
-    return tools
+    return [
+        Tool(name=s.name, description=s.description, input_schema=s.input_schema)
+        for s in TOOL_SPECS
+        if include_advanced or not s.advanced
+    ]
+
+
+__all__ = [
+    "ToolSpec",
+    "TOOL_SPECS",
+    "TOOL_DISPATCH",
+    "ADVANCED_TOOLS",
+    "build_tool_list",
+    *(s.handler.__name__ for s in TOOL_SPECS),
+]

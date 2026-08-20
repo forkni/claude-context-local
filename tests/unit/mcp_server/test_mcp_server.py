@@ -113,7 +113,7 @@ class TestToolHandlers:
         self, mock_get_search_config
     ):
         """Verify config status returns auto_reindex settings (Issue #3)."""
-        from mcp_server.tool_handlers import handle_get_search_config_status
+        from mcp_server.tool_specs import handle_get_search_config_status
 
         # Mock config with nested structure
         mock_config = MagicMock()
@@ -162,7 +162,7 @@ class TestToolHandlers:
         mock_snapshot_manager_class,
     ):
         """Verify get_index_status returns last_indexed_time from Merkle metadata (Issue #2)."""
-        from mcp_server.tool_handlers import handle_get_index_status
+        from mcp_server.tool_specs import handle_get_index_status
 
         # Mock state
         mock_state = MagicMock()
@@ -214,7 +214,7 @@ class TestToolHandlers:
         self, mock_get_search_config
     ):
         """Verify config status returns multi-hop and stemming settings."""
-        from mcp_server.tool_handlers import handle_get_search_config_status
+        from mcp_server.tool_specs import handle_get_search_config_status
 
         # Mock config with nested structure
         mock_config = MagicMock()
@@ -261,7 +261,7 @@ class TestToolHandlers:
         self, mock_get_search_config, mock_get_config_manager
     ):
         """Config status surfaces per-project overrides provenance (ADR-0014)."""
-        from mcp_server.tool_handlers import handle_get_search_config_status
+        from mcp_server.tool_specs import handle_get_search_config_status
 
         mock_get_search_config.return_value = MagicMock()
 
@@ -300,7 +300,7 @@ class TestToolHandlers:
     @patch("mcp_server.tools.status_handlers.get_state")
     async def test_list_embedding_models_includes_vram(self, mock_get_state):
         """Verify list_embedding_models includes vram_gb field."""
-        from mcp_server.tool_handlers import handle_list_embedding_models
+        from mcp_server.tool_specs import handle_list_embedding_models
 
         # Mock state
         mock_state = MagicMock()
@@ -343,7 +343,7 @@ class TestToolHandlers:
         mock_cuda_available,
     ):
         """Verify memory status returns GPU hardware details."""
-        from mcp_server.tool_handlers import handle_get_memory_status
+        from mcp_server.tool_specs import handle_get_memory_status
 
         # Mock GPU properties
         mock_props = MagicMock()
@@ -516,7 +516,7 @@ class TestHandleCallToolErrorClassification:
 
         with (
             patch.dict(
-                "mcp_server.tool_handlers.TOOL_DISPATCH",
+                "mcp_server.tool_specs.TOOL_DISPATCH",
                 {"fake_tool": fake_handler},
                 clear=True,
             ),
@@ -543,7 +543,7 @@ class TestHandleCallToolErrorClassification:
 
         with (
             patch.dict(
-                "mcp_server.tool_handlers.TOOL_DISPATCH",
+                "mcp_server.tool_specs.TOOL_DISPATCH",
                 {"fake_tool": fake_handler},
                 clear=True,
             ),
@@ -567,7 +567,7 @@ class TestHandleCallToolErrorClassification:
 
         with (
             patch.dict(
-                "mcp_server.tool_handlers.TOOL_DISPATCH",
+                "mcp_server.tool_specs.TOOL_DISPATCH",
                 {"fake_tool": fake_handler},
                 clear=True,
             ),
@@ -589,7 +589,7 @@ class TestHandleCallToolErrorClassification:
 
         with (
             patch.dict(
-                "mcp_server.tool_handlers.TOOL_DISPATCH",
+                "mcp_server.tool_specs.TOOL_DISPATCH",
                 {"fake_tool": fake_handler},
                 clear=True,
             ),

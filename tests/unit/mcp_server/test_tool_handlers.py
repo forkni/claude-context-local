@@ -11,65 +11,23 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 
 # Import handlers
-from mcp_server import tool_handlers
-from mcp_server.tool_handlers import TOOL_DISPATCH
-from mcp_server.tool_registry import TOOL_REGISTRY
+from mcp_server import tool_specs
+from mcp_server.tool_specs import TOOL_DISPATCH, TOOL_SPECS
 from search.config import SearchConfig
 
 
 # ============================================================================
-# PARITY: TOOL_DISPATCH must mirror TOOL_REGISTRY exactly
+# STRUCTURAL GUARD COVERAGE: each ToolSpec's declared mutation_lock /
+# requires_index flags must match its handler's actual decorator chain (D4)
 # ============================================================================
-
-
-def test_tool_dispatch_registry_parity():
-    """TOOL_DISPATCH and TOOL_REGISTRY must have identical key sets.
-
-    Catches the 'added a schema but forgot to wire dispatch' class of bug
-    that the old getattr convention tolerated silently.
-    """
-    dispatch_keys = set(TOOL_DISPATCH)
-    registry_keys = set(TOOL_REGISTRY)
-    assert dispatch_keys == registry_keys, (
-        f"TOOL_DISPATCH and TOOL_REGISTRY are out of sync.\n"
-        f"  In DISPATCH but not REGISTRY: {dispatch_keys - registry_keys}\n"
-        f"  In REGISTRY but not DISPATCH: {registry_keys - dispatch_keys}"
-    )
-
-
-# ============================================================================
-# MUTATION LOCK COVERAGE: TOOL_DISPATCH-wide invariant (D4)
-# ============================================================================
-
-
-MUTATION_LOCKED_TOOLS = {
-    "switch_project",
-    "configure_search_mode",
-    "switch_embedding_model",
-    "configure_reranking",
-    "configure_chunking",
-    "clear_index",
-    "delete_project",
-}
-
-# Documents the complete mutator/non-mutator split of TOOL_DISPATCH, consumed
-# by test_mutation_lock_coverage_is_exhaustive_over_tool_dispatch below so a
-# newly added tool can't silently skip this invariant. If that test fails:
-# add the new tool to MUTATION_LOCKED_TOOLS (after confirming it acquires the
-# lock) or to NOT_MUTATION_LOCKED_TOOLS here with a one-line justification.
-NOT_MUTATION_LOCKED_TOOLS = {
-    "get_index_status",
-    "list_projects",
-    "get_memory_status",
-    "cleanup_resources",
-    "get_search_config_status",
-    "list_embedding_models",
-    "search_code",
-    "find_similar_code",
-    "find_connections",
-    "find_path",
-    "index_directory",  # self-locks internally -- see test above
-}
+#
+# TOOL_SPECS (mcp_server/tool_specs.py) is the single declaration of every
+# tool's dispatch target, mutation_lock, and requires_index flags --
+# TOOL_DISPATCH and ADVANCED_TOOLS both derive from it, so there is no
+# second hand-maintained set to keep in sync with the decorator stacks by
+# hand any more. What remains worth testing is that each row's *declared*
+# flag actually matches the handler's *real* decorator chain -- catching a
+# spec row that claims a guard the handler doesn't have (or vice versa).
 
 
 def _decorator_chain(fn):
@@ -86,41 +44,92 @@ def _decorator_chain(fn):
         current = getattr(current, "__wrapped__", None)
 
 
-def _acquires_mutation_lock(fn) -> bool:
-    """True if any layer of fn's decorator chain calls get_mutation_lock().
+def _decorator_chain_names(fn, name: str) -> bool:
+    """True if any layer of fn's decorator chain references `name`.
 
-    Both @error_handler and @with_mutation_lock use functools.wraps, which
-    copies __name__/__qualname__ from the wrapped function onto the
-    wrapper — so the layers are not distinguishable by name alone. Instead,
-    check each layer's own code object: with_mutation_lock's wrapper body
-    reads ``get_state().get_mutation_lock()``, and attribute names (method
-    lookups) land in co_names alongside globals, so this is a direct,
+    @error_handler, @with_mutation_lock, and @require_indexed_project all
+    use functools.wraps, which copies __name__/__qualname__ from the
+    wrapped function onto the wrapper -- so the layers are not
+    distinguishable by name alone. Instead, check each layer's own code
+    object: attribute/global lookups land in co_names, so this is a direct,
     reflection-based check rather than a source-text grep.
     """
     return any(
-        "get_mutation_lock" in layer.__code__.co_names
+        name in layer.__code__.co_names
         for layer in _decorator_chain(fn)
         if hasattr(layer, "__code__")
     )
 
 
-@pytest.mark.parametrize("tool_name", sorted(MUTATION_LOCKED_TOOLS))
-def test_state_mutating_tool_acquires_mutation_lock(tool_name):
+def _acquires_mutation_lock(fn) -> bool:
+    """True if any layer of fn's decorator chain calls get_mutation_lock().
+
+    with_mutation_lock's wrapper body reads
+    ``get_state().get_mutation_lock()``.
+    """
+    return _decorator_chain_names(fn, "get_mutation_lock")
+
+
+def _guards_on_no_indexed_project(fn) -> bool:
+    """True if any layer of fn's decorator chain short-circuits via
+    require_indexed_project's ``responses.no_indexed_project()`` return.
+    """
+    return _decorator_chain_names(fn, "no_indexed_project")
+
+
+_DECORATOR_SPECS = [s for s in TOOL_SPECS if s.name != "index_directory"]
+
+
+@pytest.mark.parametrize(
+    "spec", _DECORATOR_SPECS, ids=[s.name for s in _DECORATOR_SPECS]
+)
+def test_mutation_lock_matches_declared_spec(spec):
     """Every tool that mutates shared ApplicationState must serialize via
     @with_mutation_lock (decorators.py) -- otherwise two concurrent MCP
     clients on the stateless HTTP transport can interleave mutations and
     corrupt state (see with_mutation_lock's docstring, section IV-C).
 
     Regression guard for D4-shaped defects: this walks the *actual* handler
-    reachable through TOOL_DISPATCH, so it fails if a handler is
-    un-decorated, or if a future refactor swaps @with_mutation_lock for
-    something that doesn't call get_mutation_lock().
+    named on the ToolSpec row and checks it against the row's declared
+    ``mutation_lock``, so it fails if a handler is un-decorated despite
+    claiming the lock, decorated despite claiming it doesn't need it, or if
+    a future refactor swaps @with_mutation_lock for something that doesn't
+    call get_mutation_lock(). ``index_directory`` (mutation_lock="internal")
+    is excluded here -- it's covered by
+    test_index_directory_acquires_mutation_lock_internally below, since it
+    self-locks inside its async job rather than via a handler decorator.
     """
-    handler = TOOL_DISPATCH[tool_name]
-    assert _acquires_mutation_lock(handler), (
-        f"TOOL_DISPATCH['{tool_name}'] never calls get_mutation_lock() "
-        f"anywhere in its decorator chain. State-mutating MCP tools must be "
-        f"decorated with @with_mutation_lock (see decorators.py)."
+    acquires_lock = _acquires_mutation_lock(spec.handler)
+    if spec.mutation_lock == "decorator":
+        assert acquires_lock, (
+            f"ToolSpec('{spec.name}').mutation_lock == 'decorator' but its "
+            f"handler never calls get_mutation_lock() anywhere in its "
+            f"decorator chain. State-mutating MCP tools must be decorated "
+            f"with @with_mutation_lock (see decorators.py)."
+        )
+    else:
+        assert not acquires_lock, (
+            f"ToolSpec('{spec.name}').mutation_lock == {spec.mutation_lock!r} "
+            f"but its handler calls get_mutation_lock() anywhere in its "
+            f"decorator chain -- update the spec row's mutation_lock to "
+            f"'decorator' (see decorators.py)."
+        )
+
+
+@pytest.mark.parametrize("spec", TOOL_SPECS, ids=[s.name for s in TOOL_SPECS])
+def test_requires_index_matches_declared_spec(spec):
+    """Every tool whose handler is wrapped in @require_indexed_project must
+    declare requires_index=True on its ToolSpec row, and vice versa.
+
+    No prior test verified @require_indexed_project membership at all --
+    this closes that gap using the same declare-and-verify pattern as the
+    mutation-lock check above.
+    """
+    guarded = _guards_on_no_indexed_project(spec.handler)
+    assert guarded == spec.requires_index, (
+        f"ToolSpec('{spec.name}').requires_index == {spec.requires_index} "
+        f"but its handler's @require_indexed_project guard presence is "
+        f"{guarded} -- these must match (see decorators.py)."
     )
 
 
@@ -138,6 +147,12 @@ def test_index_directory_acquires_mutation_lock_internally():
     """
     from mcp_server.tools import index_handlers
 
+    spec = next(s for s in TOOL_SPECS if s.name == "index_directory")
+    assert spec.mutation_lock == "internal", (
+        "ToolSpec('index_directory').mutation_lock should be 'internal' -- "
+        "it self-locks inside _run_index_directory rather than via a "
+        "handler decorator (see this test's docstring)."
+    )
     assert not _acquires_mutation_lock(TOOL_DISPATCH["index_directory"]), (
         "handle_index_directory itself must stay undecorated by "
         "@with_mutation_lock -- decorating it would only guard job creation "
@@ -149,14 +164,6 @@ def test_index_directory_acquires_mutation_lock_internally():
         "_run_index_directory's prologue must acquire "
         "get_state().get_mutation_lock() explicitly, since the handler "
         "itself cannot be decorated (see docstring)."
-    )
-
-
-def test_mutation_lock_coverage_is_exhaustive_over_tool_dispatch():
-    """See NOT_MUTATION_LOCKED_TOOLS above for what to do if this fails."""
-    assert set(TOOL_DISPATCH) == MUTATION_LOCKED_TOOLS | NOT_MUTATION_LOCKED_TOOLS, (
-        "TOOL_DISPATCH gained or lost a tool that isn't accounted for by "
-        "either MUTATION_LOCKED_TOOLS or NOT_MUTATION_LOCKED_TOOLS above."
     )
 
 
@@ -179,7 +186,9 @@ def mock_get_project_storage_dir_global(tmp_path):
     """Mock get_project_storage_dir globally to prevent production pollution.
 
     Patches server location and handler modules that use it.
-    Note: tool_handlers.py is now a re-export facade, so we patch the actual modules.
+    Note: tool_specs.py re-exports each handler by name (not a facade around
+    a separate implementation module), so we patch the actual handler
+    modules where get_project_storage_dir is imported, not tool_specs.py.
     Only patch in modules that actually import get_project_storage_dir.
     """
     mock_storage_dir = tmp_path / "mock_project_storage"
@@ -227,7 +236,7 @@ async def test_handle_get_index_status_success():
         with patch("mcp_server.state.get_state") as mock_state:
             state = mock_state.return_value
             state.embedders = {"default": None}
-            result = await tool_handlers.handle_get_index_status({})
+            result = await tool_specs.handle_get_index_status({})
 
             assert "index_statistics" in result
             assert result["index_statistics"]["total_chunks"] == 100
@@ -240,7 +249,7 @@ async def test_handle_get_index_status_error():
     with patch("mcp_server.tools.status_handlers.get_index_manager") as mock_manager:
         mock_manager.side_effect = Exception("Index not found")
 
-        result = await tool_handlers.handle_get_index_status({})
+        result = await tool_specs.handle_get_index_status({})
 
         assert "error" in result
         assert "Index not found" in result["error"]
@@ -291,7 +300,7 @@ async def test_handle_get_index_status_with_hybrid_searcher():
                     state = mock_state.return_value
                     state.embedders = {"default": None}
 
-                    result = await tool_handlers.handle_get_index_status({})
+                    result = await tool_specs.handle_get_index_status({})
 
                     # Verify basic stats
                     assert "index_statistics" in result
@@ -320,7 +329,7 @@ async def test_handle_get_index_status_with_job_id_reports_job_status():
     job = await registry.create(kind="index_directory", target="/proj")
     await registry.mark_done(job.job_id, {"chunks_added": 5})
 
-    result = await tool_handlers.handle_get_index_status({"job_id": job.job_id})
+    result = await tool_specs.handle_get_index_status({"job_id": job.job_id})
 
     assert result["status"] == "done"
     assert result["result"] == {"chunks_added": 5}
@@ -329,7 +338,7 @@ async def test_handle_get_index_status_with_job_id_reports_job_status():
 
 @pytest.mark.asyncio
 async def test_handle_get_index_status_unknown_job_id_returns_error():
-    result = await tool_handlers.handle_get_index_status({"job_id": "does-not-exist"})
+    result = await tool_specs.handle_get_index_status({"job_id": "does-not-exist"})
 
     assert "error" in result
     assert "does-not-exist" in result["error"]
@@ -341,7 +350,7 @@ async def test_handle_list_projects_no_projects():
     with patch("mcp_server.tools.status_handlers.get_storage_dir") as mock_storage:
         mock_storage.return_value = Path("/tmp/nonexistent")
 
-        result = await tool_handlers.handle_list_projects({})
+        result = await tool_specs.handle_list_projects({})
 
         assert len(result["projects"]) == 0
         assert "No projects indexed" in result["message"]
@@ -375,7 +384,7 @@ async def test_handle_list_projects_with_projects(tmp_path):
     with patch("mcp_server.tools.status_handlers.get_storage_dir") as mock_storage:
         mock_storage.return_value = tmp_path
         with patch("mcp_server.state._app_state.current_project", str(tmp_path)):
-            result = await tool_handlers.handle_list_projects({})
+            result = await tool_specs.handle_list_projects({})
 
             assert len(result["projects"]) == 1
             assert result["projects"][0]["project_name"] == "test_project"
@@ -394,7 +403,7 @@ async def test_handle_get_memory_status():
         mock_vmem.return_value = mock_mem
 
         with patch("torch.cuda.is_available", return_value=False):
-            result = await tool_handlers.handle_get_memory_status({})
+            result = await tool_specs.handle_get_memory_status({})
 
             assert "system_memory" in result
             assert result["system_memory"]["total_gb"] == 16.0
@@ -454,7 +463,7 @@ async def test_handle_cleanup_resources():
     with patch(
         "mcp_server.tools.status_handlers._cleanup_previous_resources"
     ) as mock_cleanup:
-        result = await tool_handlers.handle_cleanup_resources({})
+        result = await tool_specs.handle_cleanup_resources({})
 
         assert result["success"] is True
         assert "cleaned up" in result["message"].lower()
@@ -477,7 +486,7 @@ async def test_handle_get_search_config_status():
         mock_config.return_value = mock_cfg
 
         with patch("mcp_server.tools.status_handlers.get_state"):
-            result = await tool_handlers.handle_get_search_config_status({})
+            result = await tool_specs.handle_get_search_config_status({})
 
             assert result["search_mode"] == "hybrid"
             assert result["bm25_weight"] == 0.4
@@ -501,7 +510,7 @@ async def test_handle_list_embedding_models():
         mock_cfg.embedding.model_name = "model1"
         mock_config.return_value = mock_cfg
 
-        result = await tool_handlers.handle_list_embedding_models({})
+        result = await tool_specs.handle_list_embedding_models({})
 
         assert len(result["models"]) == 2
         assert result["current_model"] == "model1"
@@ -533,7 +542,7 @@ async def test_handle_list_embedding_models_loaded_true_when_in_vram():
         mock_cfg.embedding.model_name = "Qwen/Qwen3-Embedding-0.6B"
         mock_config.return_value = mock_cfg
 
-        result = await tool_handlers.handle_list_embedding_models({})
+        result = await tool_specs.handle_list_embedding_models({})
 
     models = {m["name"]: m for m in result["models"]}
     assert models["Qwen/Qwen3-Embedding-0.6B"]["loaded"] is True
@@ -562,7 +571,7 @@ async def test_handle_list_embedding_models_none_slot_is_not_loaded():
         mock_cfg.embedding.model_name = "Qwen/Qwen3-Embedding-0.6B"
         mock_config.return_value = mock_cfg
 
-        result = await tool_handlers.handle_list_embedding_models({})
+        result = await tool_specs.handle_list_embedding_models({})
 
     assert result["models"][0]["loaded"] is False
 
@@ -593,7 +602,7 @@ async def test_handle_switch_project_success(tmp_path):
             patch("mcp_server.tools.config_handlers._cleanup_previous_resources"),
             patch("mcp_server.state._app_state.current_project", None),
         ):
-            result = await tool_handlers.handle_switch_project(
+            result = await tool_specs.handle_switch_project(
                 {"project_path": str(project_path)}
             )
 
@@ -616,7 +625,7 @@ async def test_handle_switch_project_not_indexed(tmp_path):
         mock_storage.return_value = mock_project_dir
 
         with patch("mcp_server.tools.config_handlers._cleanup_previous_resources"):
-            result = await tool_handlers.handle_switch_project(
+            result = await tool_specs.handle_switch_project(
                 {"project_path": str(project_path)}
             )
 
@@ -628,7 +637,7 @@ async def test_handle_switch_project_not_indexed(tmp_path):
 @pytest.mark.asyncio
 async def test_handle_switch_project_not_exist():
     """Test switch_project fails when path doesn't exist."""
-    result = await tool_handlers.handle_switch_project(
+    result = await tool_specs.handle_switch_project(
         {"project_path": "/nonexistent/path"}
     )
 
@@ -683,7 +692,7 @@ async def test_handle_clear_index():
                 "mcp_server.tools.index_handlers.get_storage_dir", return_value=base_dir
             ),
         ):
-            result = await tool_handlers.handle_clear_index({})
+            result = await tool_specs.handle_clear_index({})
 
             assert result["success"] is True
             assert "cleared_models" in result
@@ -716,7 +725,7 @@ async def test_handle_clear_index():
 async def test_handle_clear_index_no_project():
     """Test clear_index fails when no active project."""
     with patch("mcp_server.state._app_state.current_project", None):
-        result = await tool_handlers.handle_clear_index({})
+        result = await tool_specs.handle_clear_index({})
 
         assert "error" in result
         assert "no active project" in result["error"].lower()
@@ -736,7 +745,7 @@ async def test_handle_configure_search_mode():
         mock_manager.return_value.save_config = Mock()
 
         with patch("mcp_server.state._app_state.searcher", Mock()):
-            result = await tool_handlers.handle_configure_search_mode(
+            result = await tool_specs.handle_configure_search_mode(
                 {"search_mode": "hybrid", "bm25_weight": 0.4, "dense_weight": 0.6}
             )
 
@@ -766,7 +775,7 @@ async def test_handle_switch_embedding_model():
             state.index_manager = None
             state.searcher = None
             state.clear_embedders = Mock()
-            result = await tool_handlers.handle_switch_embedding_model(
+            result = await tool_specs.handle_switch_embedding_model(
                 {"model_name": "new_model"}
             )
 
@@ -807,7 +816,7 @@ async def test_handle_find_similar_code():
         mock_searcher_instance.find_similar_to_chunk.return_value = [mock_result]
         mock_searcher.return_value = mock_searcher_instance
 
-        result = await tool_handlers.handle_find_similar_code(
+        result = await tool_specs.handle_find_similar_code(
             {"chunk_id": "ref_chunk_id", "k": 5}
         )
 
@@ -839,7 +848,7 @@ async def test_handle_find_similar_code_exclude_same_file_passthrough():
         mock_searcher_instance.find_similar_to_chunk.return_value = []
         mock_searcher.return_value = mock_searcher_instance
 
-        result = await tool_handlers.handle_find_similar_code(
+        result = await tool_specs.handle_find_similar_code(
             {"chunk_id": "ref_chunk_id", "k": 4, "exclude_same_file": True}
         )
 
@@ -881,7 +890,7 @@ async def test_handle_find_similar_code_default_k_from_config():
         mock_searcher_instance.find_similar_to_chunk.return_value = []
         mock_searcher.return_value = mock_searcher_instance
 
-        await tool_handlers.handle_find_similar_code({"chunk_id": "ref_chunk_id"})
+        await tool_specs.handle_find_similar_code({"chunk_id": "ref_chunk_id"})
 
         mock_searcher_instance.find_similar_to_chunk.assert_called_once_with(
             "ref_chunk_id", k=7, exclude_same_file=False
@@ -954,7 +963,7 @@ async def test_handle_find_connections_default_hides_ambiguous():
         mock_analyzer.analyze_impact.return_value = _make_impact_report_with_ambiguous()
         mock_analyzer_cls.from_searcher.return_value = mock_analyzer
 
-        result = await tool_handlers.handle_find_connections(
+        result = await tool_specs.handle_find_connections(
             {"chunk_id": "src/t.py:function:target"}
         )
 
@@ -984,7 +993,7 @@ async def test_handle_find_connections_hide_ambiguous_filters_edges():
         mock_analyzer.analyze_impact.return_value = _make_impact_report_with_ambiguous()
         mock_analyzer_cls.from_searcher.return_value = mock_analyzer
 
-        result = await tool_handlers.handle_find_connections(
+        result = await tool_specs.handle_find_connections(
             {"chunk_id": "src/t.py:function:target", "hide_ambiguous": True}
         )
 
@@ -1027,7 +1036,7 @@ async def test_handle_find_connections_omitted_falls_back_to_config_default():
         mock_analyzer.analyze_impact.return_value = _make_impact_report_with_ambiguous()
         mock_analyzer_cls.from_searcher.return_value = mock_analyzer
 
-        result = await tool_handlers.handle_find_connections(
+        result = await tool_specs.handle_find_connections(
             {"chunk_id": "src/t.py:function:target"}
         )
 
@@ -1065,7 +1074,7 @@ async def test_handle_find_connections_explicit_false_overrides_config_default()
         mock_analyzer.analyze_impact.return_value = _make_impact_report_with_ambiguous()
         mock_analyzer_cls.from_searcher.return_value = mock_analyzer
 
-        result = await tool_handlers.handle_find_connections(
+        result = await tool_specs.handle_find_connections(
             {"chunk_id": "src/t.py:function:target", "hide_ambiguous": False}
         )
 
@@ -1120,7 +1129,7 @@ async def test_handle_find_connections_zero_callers_survives_formatting():
         mock_analyzer.analyze_impact.return_value = _make_impact_report_no_callers()
         mock_analyzer_cls.from_searcher.return_value = mock_analyzer
 
-        result = await tool_handlers.handle_find_connections(
+        result = await tool_specs.handle_find_connections(
             {"chunk_id": "src/t.py:function:leaf"}
         )
 
@@ -1199,7 +1208,7 @@ async def test_handle_search_code_no_index():
         mock_searcher_obj.index_manager.get_stats.return_value = {"total_chunks": 0}
         mock_searcher.return_value = mock_searcher_obj
 
-        result = await tool_handlers.handle_search_code({"query": "test query", "k": 5})
+        result = await tool_specs.handle_search_code({"query": "test query", "k": 5})
 
         assert "error" in result
         assert "no indexed project" in result["error"].lower()
@@ -1286,7 +1295,7 @@ async def test_handle_search_code_hybrid_searcher_ready():
         mock_get_searcher.return_value = mock_searcher
 
         # Execute search
-        result = await tool_handlers.handle_search_code({"query": "test query", "k": 5})
+        result = await tool_specs.handle_search_code({"query": "test query", "k": 5})
 
         # Should succeed without "No indexed project found" error
         assert "error" not in result
@@ -1344,7 +1353,7 @@ async def test_handle_search_code_hybrid_searcher_not_ready():
         mock_get_searcher.return_value = mock_searcher
 
         # Execute search
-        result = await tool_handlers.handle_search_code({"query": "test query", "k": 5})
+        result = await tool_specs.handle_search_code({"query": "test query", "k": 5})
 
         # Should return error
         assert "error" in result
@@ -1354,7 +1363,7 @@ async def test_handle_search_code_hybrid_searcher_not_ready():
 @pytest.mark.asyncio
 async def test_handle_index_directory_not_exist():
     """Test index_directory fails when directory doesn't exist."""
-    result = await tool_handlers.handle_index_directory(
+    result = await tool_specs.handle_index_directory(
         {"directory_path": "/nonexistent/directory"}
     )
 
@@ -1444,7 +1453,7 @@ async def test_handle_delete_project_success(tmp_path):
     ):
         mock_sm.return_value.delete_all_snapshots.return_value = 2
 
-        result = await tool_handlers.handle_delete_project(
+        result = await tool_specs.handle_delete_project(
             {"project_path": str(project_path)}
         )
 
@@ -1468,7 +1477,7 @@ async def test_handle_delete_project_current_project_without_force(tmp_path):
     mock_state.current_project = project_path_str
 
     with patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state):
-        result = await tool_handlers.handle_delete_project(
+        result = await tool_specs.handle_delete_project(
             {"project_path": str(project_path)}
         )
 
@@ -1508,7 +1517,7 @@ async def test_handle_delete_project_current_project_with_force(tmp_path):
     ):
         mock_sm.return_value.delete_all_snapshots.return_value = 1
 
-        result = await tool_handlers.handle_delete_project(
+        result = await tool_specs.handle_delete_project(
             {"project_path": str(project_path), "force": True}
         )
 
@@ -1520,7 +1529,7 @@ async def test_handle_delete_project_current_project_with_force(tmp_path):
 @pytest.mark.asyncio
 async def test_handle_delete_project_not_exist():
     """Test delete_project fails when project path doesn't exist."""
-    result = await tool_handlers.handle_delete_project(
+    result = await tool_specs.handle_delete_project(
         {"project_path": "/nonexistent/path"}
     )
 
@@ -1531,7 +1540,7 @@ async def test_handle_delete_project_not_exist():
 @pytest.mark.asyncio
 async def test_handle_delete_project_missing_path():
     """Test delete_project fails when project_path not provided."""
-    result = await tool_handlers.handle_delete_project({})
+    result = await tool_specs.handle_delete_project({})
 
     assert "error" in result
     assert "project_path is required" in result["error"]
@@ -1576,7 +1585,7 @@ async def test_handle_delete_project_adds_to_cleanup_queue(tmp_path):
                 mock_queue = Mock()
                 mock_queue_cls.return_value = mock_queue
 
-                result = await tool_handlers.handle_delete_project(
+                result = await tool_specs.handle_delete_project(
                     {"project_path": str(project_path)}
                 )
 
@@ -1630,7 +1639,7 @@ async def test_handle_clear_index_deletes_under_reindex_write_lock(tmp_path):
     ):
         mock_close.side_effect = lambda *a, **kw: events.append("teardown")
 
-        result = await tool_handlers.handle_clear_index({})
+        result = await tool_specs.handle_clear_index({})
 
     assert result["success"] is True
     # Lock keyed by the active project, and teardown happened inside it.
@@ -1679,7 +1688,7 @@ async def test_handle_clear_index_write_lock_drains_inflight_reader(tmp_path):
         reader = asyncio.create_task(inflight_search())
         await reader_holding.wait()
 
-        clear = asyncio.create_task(tool_handlers.handle_clear_index({}))
+        clear = asyncio.create_task(tool_specs.handle_clear_index({}))
         # Real wall-clock (not just loop turns) so the handler could have
         # reached its to_thread teardown if write() failed to block.
         await asyncio.sleep(0.05)
@@ -1728,7 +1737,7 @@ async def test_handle_delete_project_deletes_under_reindex_write_lock(tmp_path):
         mock_close.side_effect = lambda *a, **kw: events.append("teardown")
         mock_sm.return_value.delete_all_snapshots.return_value = 0
 
-        result = await tool_handlers.handle_delete_project(
+        result = await tool_specs.handle_delete_project(
             {"project_path": str(project_path)}
         )
 
@@ -1793,7 +1802,7 @@ async def test_handle_delete_project_write_lock_drains_inflight_reader(tmp_path)
         await reader_holding.wait()
 
         delete = asyncio.create_task(
-            tool_handlers.handle_delete_project({"project_path": str(project_path)})
+            tool_specs.handle_delete_project({"project_path": str(project_path)})
         )
         # Real wall-clock (not just loop turns) so the handler could have
         # reached its to_thread teardown if write() failed to block.

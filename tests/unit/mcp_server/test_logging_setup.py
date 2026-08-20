@@ -95,7 +95,7 @@ class TestConfigureLoggingIdempotent:
 
 class TestIndexHandlersConfiguresLoggingEagerly:
     """Log-hygiene item F: a real force-reindex (tools/batch_index.py ->
-    mcp_server.tool_handlers.handle_index_directory) showed zero INFO-level
+    mcp_server.tool_specs.handle_index_directory) showed zero INFO-level
     "Call graph extraction enabled..." lines from chunking.multi_language_chunker,
     though exactly one is expected per index run (MultiLanguageChunker.__init__
     logs it once, at INFO; worker threads log the same message at DEBUG).
@@ -108,7 +108,7 @@ class TestIndexHandlersConfiguresLoggingEagerly:
     deferred: it only happens later in the same call, inside
     search_factory.get_searcher() (called from _setup_and_run(), after the
     chunker already exists). batch_index.py's own import graph
-    (mcp_server.tool_handlers -> mcp_server.tools.index_handlers) never
+    (mcp_server.tool_specs -> mcp_server.tools.index_handlers) never
     imports mcp_server.server directly, so in a fresh process the chunker's
     one INFO record is emitted while root.level is still WARNING --
     logger.isEnabledFor(INFO) is False at the source, so the record never

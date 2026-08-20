@@ -6,8 +6,8 @@ own copy:
 
 - ``mcp_server/config_schema.py`` — the ``HAND_TYPED`` default entry
   (``arg()``'s fallback and the published schema ``default``, ADR-0046).
-- ``mcp_server/tool_registry.py`` — the published boolean schema property,
-  including its description.
+- ``mcp_server/tool_specs.py`` — the published boolean schema property,
+  including its description, on the ``search_code`` row's ``input_schema``.
 - ``mcp_server/tools/search_orchestrator.py`` — the ``SearchPlan.display_params``
   read in ``SearchPlanner.plan()`` and the enrichment gate row.
 

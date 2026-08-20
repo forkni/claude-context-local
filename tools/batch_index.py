@@ -15,7 +15,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from mcp_server.tool_handlers import handle_index_directory
+from mcp_server.tool_specs import handle_index_directory
 
 
 def _dry_run(

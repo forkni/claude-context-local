@@ -345,8 +345,8 @@ def _get_server_version() -> str:
         return "0.25.0"
 
 
-# Import tool registry
-from mcp_server.tool_registry import build_tool_list  # noqa: E402
+# Import tool specs
+from mcp_server.tool_specs import build_tool_list  # noqa: E402
 
 
 # ============================================================================
@@ -423,7 +423,7 @@ async def handle_call_tool(
     _input_hash = _hash_arguments(arguments)
 
     try:
-        from mcp_server.tool_handlers import TOOL_DISPATCH
+        from mcp_server.tool_specs import TOOL_DISPATCH
 
         handler = TOOL_DISPATCH.get(name)
         if handler is None:
@@ -854,9 +854,11 @@ if __name__ == "__main__":
                         f"[HTTP SWITCH] Project switch requested: {project_path}"
                     )
 
-                    from mcp_server.tools.config_handlers import handle_switch_project
+                    from mcp_server.tool_specs import TOOL_DISPATCH
 
-                    result = await handle_switch_project({"project_path": project_path})
+                    result = await TOOL_DISPATCH["switch_project"](
+                        {"project_path": project_path}
+                    )
 
                     logger.info(
                         f"[HTTP SWITCH] Switch complete: {result.get('project')}"

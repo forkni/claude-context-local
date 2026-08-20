@@ -17,7 +17,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from mcp_server import tool_handlers
+from mcp_server import tool_specs
 
 
 # REMOVED (2025-11-13): test_lifespan_hook_initializes_project
@@ -63,9 +63,9 @@ async def test_parallel_tool_calls_dont_cause_race_condition():
 
             # Call multiple tools in parallel
             results = await asyncio.gather(
-                tool_handlers.handle_get_search_config_status({}),
-                tool_handlers.handle_list_projects({}),
-                tool_handlers.handle_list_embedding_models({}),
+                tool_specs.handle_get_search_config_status({}),
+                tool_specs.handle_list_projects({}),
+                tool_specs.handle_list_embedding_models({}),
                 return_exceptions=True,
             )
 

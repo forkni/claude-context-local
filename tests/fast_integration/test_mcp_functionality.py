@@ -14,12 +14,12 @@ def _mcp_imports_check():
     print("Testing MCP server imports...")
 
     try:
-        from mcp_server.tool_handlers import handle_find_similar_code  # noqa: F401
-        from mcp_server.tool_handlers import handle_get_index_status  # noqa: F401
-        from mcp_server.tool_handlers import handle_index_directory  # noqa: F401
-        from mcp_server.tool_handlers import handle_list_projects  # noqa: F401
-        from mcp_server.tool_handlers import handle_search_code  # noqa: F401
-        from mcp_server.tool_handlers import handle_switch_project  # noqa: F401
+        from mcp_server.tool_specs import handle_find_similar_code  # noqa: F401
+        from mcp_server.tool_specs import handle_get_index_status  # noqa: F401
+        from mcp_server.tool_specs import handle_index_directory  # noqa: F401
+        from mcp_server.tool_specs import handle_list_projects  # noqa: F401
+        from mcp_server.tool_specs import handle_search_code  # noqa: F401
+        from mcp_server.tool_specs import handle_switch_project  # noqa: F401
 
         print("[OK] MCP server functions imported successfully")
         return True
@@ -41,7 +41,7 @@ def _index_status_check():
     print("\nTesting index status...")
 
     try:
-        from mcp_server.tool_handlers import handle_get_index_status
+        from mcp_server.tool_specs import handle_get_index_status
 
         result = asyncio.run(handle_get_index_status({}))
 
