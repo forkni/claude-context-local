@@ -2612,3 +2612,86 @@ Commits:
 ./scripts/git/commit_enhanced.sh "test: close assert-on-stub triage sweep (Phase 14.1)"
 ./scripts/git/commit_enhanced.sh "test: upgrade weak assert_called_once sites (Phase 14.1)"
 ```
+
+### Complexity + CRAP gate (Phase 14.2 — 2026-08-20)
+
+The one `harden-test-suite` instrument the campaign had never run (skill Phase 3.5):
+`C901` sat in ruff's global `ignore` list with no `[tool.ruff.lint.mccabe]` section, and
+neither `radon` nor `crap4py` was installed — so the suite had no stop condition telling it
+when chasing coverage stops paying.
+
+| | Before | After |
+| --- | --- | --- |
+| `C901` in `[tool.ruff.lint].ignore` | present ("skip for faster checks") | removed |
+| `[tool.ruff.lint.mccabe]` | absent | `max-complexity = 15` |
+| C901 violations, whole repo (threshold 10 / 15) | 92 / 30 | unchanged (measurement, not a fix target) |
+| C901 violations, 8 gated packages only (threshold 15) | 22 (uncounted — no gate existed) | 22, gated via `per-file-ignores` debt list |
+| `ruff check --select C901 .` | N/A (rule disabled) | clean (all 22 offenders explicitly exempted) |
+| `radon` / `crap4py` in `[project.optional-dependencies].dev` | absent | `radon>=6.0.1`, `crap4py>=0.1.1` |
+| Functions with CRAP score > 30 (whole repo, `crap4py --max-crap 30`) | never measured | 39, all inside the 8 gated packages (none in `scripts/`/`tools/`/`tests/`, which crap4py sorts last as uncovered/`N/A`) |
+
+**Ruff gate.** Removed `"C901"` from `[tool.ruff.lint].ignore` and added
+`[tool.ruff.lint.mccabe] max-complexity = 15`. Measured (not assumed) violation counts via
+`ruff check --select C901`, confirming the plan's own pre-registered numbers: 92 whole-repo /
+30 at threshold 10/15 respectively (whole-repo 15-threshold count is 30, one below the plan's
+pre-measurement estimate of 31 — attributable to unrelated in-flight `tools/` edits present
+in the working tree at measurement time, outside `tools/`'s wholesale C901 exemption so it
+doesn't affect the gate). The 8-gated-package count at threshold 15 is **22**, matching the
+plan's pre-registered number exactly. `15` is the adoption ceiling — real debt in gated
+packages without threshold-10's noise (65 there). The 22 offenders are listed individually in
+`[tool.ruff.lint.per-file-ignores]` as a named, shrinkable debt list (one file,
+`search/graph_integration.py`, carries 2 of the 22 — `_extract_split_block_calls` and
+`_two_pass_build`); `scripts/**`, `tools/**`, and `tests/fixtures/**` are exempted wholesale,
+matching the existing `BLE001` treatment on the same three trees rather than itemizing
+every script/tool offender. **Do not substitute the MCP `search_code` tool's
+`complexity_score` field for this metric** — it's chunker-computed and disagrees with McCabe
+(verified per the plan: `RerankingEngine._ensure_reranker` scores 12 there but doesn't appear
+in ruff's list at threshold 10 at all). The gate and the tracked count are both ruff-sourced,
+full stop.
+
+**Dependencies.** Added `radon>=6.0.1` and `crap4py>=0.1.1` to
+`[project.optional-dependencies].dev`. One correction to the plan during install: PyPI's
+latest published `crap4py` is `0.1.1`, not the plan's assumed `>=1.0.0` — pinned to the real
+latest instead. `radon` briefly failed to install silently: a single combined `pip install
+"radon>=6.0.1" "crap4py>=1.0.0"` call let pip's resolver fail the whole batch on the bad
+`crap4py` pin, installing neither package with no clear "radon didn't install" signal beyond
+the resolver error naming only `crap4py` — worth knowing if a future combined install of
+multiple new packages appears to partially succeed.
+
+**CRAP baseline.** Ran `run_tests.sh tests/unit/ tests/fast_integration/ --cov --cov-branch`
+(4,097 passed, 2 skipped, 85.36% — measured against a working tree that also carried an
+unrelated, uncommitted, in-progress refactor elsewhere in the repo; not a clean Phase-14-only
+measurement, and the statement count will shift again once that lands or is reverted),
+`coverage lcov -o lcov.info`, then `crap4py . --lcov lcov.info --max-crap 30`. Windows-specific
+trap: `crap4py`'s default file reader has no explicit encoding, so it opens source under the
+system codepage (`cp1252`) instead of UTF-8 — one file with non-cp1252 bytes crashed the run
+with `UnicodeDecodeError`. Fixed by setting `PYTHONUTF8=1` in the environment for the
+`crap4py` invocation, which forces Python's UTF-8 mode so text I/O without an explicit
+encoding argument defaults to UTF-8; this is an invocation-time workaround, not a config
+file change, since `crap4py` is a third-party tool. Result: **39 functions score CRAP > 30**,
+every one of them inside the 8 gated packages (`search/indexer.py`
+`get_similar_chunks_batched` worst at 380.0, `search/bm25_index.py` `remove_files` next at
+240.0) — `scripts/`, `tools/`, and `tests/` carry zero, since they're outside
+`[tool.coverage.run] source` and crap4py reports them `N/A`/uncovered rather than
+high-CRAP. One entry, `McpResourceRefresher.refresh_before_full_index`
+(`mcp_server/resource_manager.py`, CRAP 107.0), belongs to the unrelated in-flight refactor
+noted above, not to any code this campaign touched — re-baseline after that work lands, this
+number will move independent of anything Phase 14 does. Not gated on: per the plan, this is a
+recorded stop-condition baseline, not yet a CI check — it tells later phases (14.3 in
+particular) where mutation testing pays off most (complex *and* already covered, e.g.
+`embeddings/embedder.py` `embed_chunks` at CRAP 106.7 with 76.9% coverage), and it identifies
+where coverage work stops paying (0%-covered high-complexity functions like
+`get_similar_chunks_batched` need a real test, not a coverage-padding one).
+
+**`lcov.info`** added to `.gitignore` (regenerated by the pipeline above, never committed).
+
+**Gate:** `ruff check` clean (confirmed above); the `per-file-ignores` offender list matches
+the measured count exactly (22 entries covering 22 functions, one file holding 2).
+`fail_under` unchanged at 84 — this phase is instrumentation, not a coverage-affecting
+change.
+
+Commits:
+
+```bash
+./scripts/git/commit_enhanced.sh "chore: add complexity+CRAP gate, radon/crap4py deps (Phase 14.2)"
+```
