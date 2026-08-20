@@ -741,7 +741,6 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
     duplicating logic.
     """
     directory_path = arguments["directory_path"]
-    arguments.get("project_name")
     incremental = arguments.get("incremental", True)
     include_dirs = arguments.get("include_dirs")
     exclude_dirs = arguments.get("exclude_dirs")

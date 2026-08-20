@@ -525,6 +525,139 @@ class TestHandlerChunkerOwnership:
         mock_chunker_cls.assert_not_called()
 
 
+class TestIncludeExclusiveOmissionIsTriState:
+    """include_exclusive must stay tri-state end to end: omitting it defers to
+    the stored project value, while an explicit value can override a stored
+    one and trip the filter-change path.
+
+    Before tool_registry.py stopped publishing "default": False for this
+    parameter, a conformant MCP client materializing schema defaults would
+    send an explicit False on every call — indistinguishable here from a
+    deliberate override, forcing a full reindex on every dependency-only
+    index. This characterizes the handler-side resolution the schema fix
+    depends on: update_project_filters must NOT fire when include_exclusive
+    is omitted and the stored value is unchanged, and MUST fire when an
+    explicit value disagrees with the stored one.
+    """
+
+    def _write_stored_project_info(self, tmp_path: Path) -> Path:
+        import json
+
+        from mcp_server.storage_manager import FILTER_SEMANTICS_VERSION
+
+        info_file = tmp_path / "project_info.json"
+        info_file.write_text(
+            json.dumps(
+                {
+                    "user_included_dirs": None,
+                    "user_excluded_dirs": None,
+                    "include_exclusive": True,
+                    "filter_semantics_version": FILTER_SEMANTICS_VERSION,
+                }
+            )
+        )
+        return info_file
+
+    def _run(self, tmp_path: Path, arguments: dict) -> tuple[MagicMock, dict]:
+        """Run handle_index_directory against a stored include_exclusive=True
+        project and return (update_project_filters mock, result dict).
+        """
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        project_dir = tmp_path / "myproject"
+        project_dir.mkdir()
+        info_file = self._write_stored_project_info(tmp_path)
+
+        proj_dir = tmp_path / "storage" / "proj"
+        (proj_dir / "index").mkdir(parents=True)
+
+        async def fake_to_thread(func, *a, **kw):
+            # _setup_and_run is the real indexing work (embeds/writes the
+            # index) — short-circuit only that one. Everything else
+            # (_cleanup_previous_resources, _run_accessibility_precheck,
+            # the local _read_project_info closure) runs for real so the
+            # stored include_exclusive value actually flows through.
+            if getattr(func, "__name__", "") == "_setup_and_run":
+                return {
+                    "files_added": 0,
+                    "files_modified": 0,
+                    "files_removed": 0,
+                    "chunks_added": 0,
+                    "time_taken": 0.0,
+                }
+            return func(*a, **kw)
+
+        with (
+            patch(
+                "mcp_server.tools.index_handlers.MultiLanguageChunker"
+            ) as mock_chunker_cls,
+            patch("mcp_server.resource_manager._cleanup_previous_resources"),
+            patch("mcp_server.tools.index_handlers.get_state") as mock_state,
+            patch("mcp_server.tools.index_handlers.get_config") as mock_cfg,
+            patch(
+                "mcp_server.tools.index_handlers.get_canonical_project_info",
+                return_value=info_file,
+            ),
+            patch(
+                "mcp_server.tools.index_handlers.get_project_storage_dir"
+            ) as mock_psd,
+            patch("mcp_server.tools.index_handlers.set_current_project"),
+            patch("mcp_server.tools.index_handlers.temporary_ram_fallback_off"),
+            patch(
+                "mcp_server.tools.index_handlers._build_index_response", return_value={}
+            ),
+            patch(
+                "mcp_server.tools.index_handlers.update_project_filters"
+            ) as mock_update_filters,
+            patch("asyncio.to_thread", AsyncMock(side_effect=fake_to_thread)),
+            patch(
+                "chunking.tree_sitter.TreeSitterChunker.get_supported_extensions",
+                return_value=[],
+            ),
+        ):
+            mock_cfg.return_value.performance.enable_entity_tracking = False
+            mock_cfg.return_value.search_mode.enable_hybrid = False
+            lock_mock = AsyncMock()
+            lock_mock.__aenter__ = AsyncMock(return_value=None)
+            lock_mock.__aexit__ = AsyncMock(return_value=None)
+            mock_state.return_value.get_reindex_rwlock.return_value.write.return_value = lock_mock
+            mock_psd.return_value = proj_dir
+            mock_chunker_cls.for_project.return_value = MagicMock()
+
+            from mcp_server.tools.index_handlers import handle_index_directory
+
+            result = asyncio.run(handle_index_directory(arguments))
+
+        return mock_update_filters, result
+
+    def test_omitting_include_exclusive_leaves_stored_value_untouched(
+        self, tmp_path: Path
+    ) -> None:
+        mock_update_filters, result = self._run(
+            tmp_path, {"directory_path": str(tmp_path / "myproject")}
+        )
+
+        assert "error" not in result
+        mock_update_filters.assert_not_called()
+
+    def test_explicit_false_overrides_stored_true_and_updates_filters(
+        self, tmp_path: Path
+    ) -> None:
+        mock_update_filters, result = self._run(
+            tmp_path,
+            {
+                "directory_path": str(tmp_path / "myproject"),
+                "include_exclusive": False,
+            },
+        )
+
+        assert "error" not in result
+        mock_update_filters.assert_called_once()
+        _, kwargs = mock_update_filters.call_args
+        assert kwargs["include_exclusive"] is False
+
+
 class TestIndexDirectoryAsyncJob:
     """P2-A: index_directory(wait=False) launches a background job and returns
     a job_id immediately instead of blocking for the full indexing run.

@@ -119,6 +119,31 @@ class TestEgoGraphEnabledSchema:
         assert "default" not in self._schema()
 
 
+class TestIndexDirectoryFilterSchema:
+    """include_dirs, exclude_dirs, and include_exclusive all share the same
+    "omit to reuse the stored project value" semantics (index_handlers.py's
+    tri-state resolution against project_info.json) — none of the three may
+    publish a JSON-schema "default", or a conformant client materializing
+    schema defaults would send an explicit value on every call, indistinguishable
+    from the omitted case and forcing a filters-changed full reindex. This is
+    the regression guard for include_exclusive's former "default": False.
+
+    project_name is dead (no handler ever reads it) and must not be advertised.
+    """
+
+    def _properties(self):
+        return TOOL_REGISTRY["index_directory"]["input_schema"]["properties"]
+
+    @pytest.mark.parametrize(
+        "arg_key", ["include_dirs", "exclude_dirs", "include_exclusive"]
+    )
+    def test_no_forced_schema_default(self, arg_key):
+        assert "default" not in self._properties()[arg_key]
+
+    def test_project_name_not_advertised(self):
+        assert "project_name" not in self._properties()
+
+
 class TestIncludeSignaturesSchema:
     """include_signatures must default off and document its non-Python bound
     (degrades to a raw-line excerpt, not a per-language signature guarantee).

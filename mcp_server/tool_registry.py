@@ -219,10 +219,6 @@ RETURNS:
                     "type": "string",
                     "description": "Absolute path to project root",
                 },
-                "project_name": {
-                    "type": "string",
-                    "description": "Optional name for organization (defaults to directory name)",
-                },
                 "incremental": {
                     "type": "boolean",
                     "default": True,
@@ -245,7 +241,6 @@ RETURNS:
                 },
                 "include_exclusive": {
                     "type": "boolean",
-                    "default": False,
                     "description": 'Escape hatch back to whitelist-only include_dirs. By default, an include_dirs pattern that reaches into a dependency tree (venv, site-packages, node_modules, ...) is ADDITIVE — it re-admits that path on top of the normal root-down scope, so your own source is still indexed. Any other include_dirs pattern (e.g. "src/core") is NARROWING — it restricts indexing to just the paths named, same as before. Set include_exclusive=true to force EVERY include_dirs pattern to be narrowing, i.e. index ONLY the named paths and nothing else — use this when you deliberately want a dependency-only index. Omit to reuse the stored value from project creation. Changing this on an existing project forces a full (non-incremental) reindex.',
                 },
                 "output_format": {**OUTPUT_FORMAT_PROPERTY},
