@@ -1009,7 +1009,7 @@ class ChunkingConfig:
     # File-level module summaries (A2: improve GLOBAL query recall)
     enable_file_summaries: bool = field(
         default=True,  # Generate module-summary chunks per file
-        metadata=spec(mcp="chunking", reader="search/incremental_indexer.py"),
+        metadata=spec(mcp="chunking", reader="search/summary_stage.py"),
     )
 
     # Adaptive chunk sizing (research: P75 baseline + complexity modulation)

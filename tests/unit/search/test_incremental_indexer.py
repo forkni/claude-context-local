@@ -2138,6 +2138,11 @@ class TestModuleSummaryInjection:
                 "search.incremental_indexer.get_search_config",
                 return_value=mock_config,
             ),
+            # The enable_file_summaries gate is read inside SummaryStage.
+            patch(
+                "search.summary_stage.get_search_config",
+                return_value=mock_config,
+            ),
         ):
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py", "utils.py"]

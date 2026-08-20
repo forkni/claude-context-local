@@ -873,17 +873,12 @@ class IncrementalIndexer:
             # ParallelChunker._log_chunking_summary.
             logger.info(f"Total chunks collected: {len(all_chunks)}")
 
-            # Stage 1: file-level module summaries
-            config = get_search_config()
-            if config.chunking.enable_file_summaries and all_chunks:
-                module_summaries = self._summary_stage.generate_module_summaries(
-                    all_chunks
-                )
-                if module_summaries:
-                    all_chunks.extend(module_summaries)
-                    logger.info(
-                        f"[FILE_SUMMARIES] Appended {len(module_summaries)} module summaries"
-                    )
+            # Stage 1: file-level module summaries (config-gated inside the stage)
+            self._summary_stage.generate_and_extend(
+                all_chunks,
+                log_prefix="[FILE_SUMMARIES]",
+                appended_noun="module summaries",
+            )
 
             # Stage 2: embed, index, call-edge injection, snapshot, BM25, GPU
             result = self._index_write_stage.run(
@@ -1093,17 +1088,12 @@ class IncrementalIndexer:
         chunks_to_embed = self._chunk_files_parallel(project_path, supported_files)
 
         # File-level module summaries — shared with the full-index path via
-        # SummaryStage (see _full_index).
-        config = get_search_config()
-        if config.chunking.enable_file_summaries and chunks_to_embed:
-            module_summaries = self._summary_stage.generate_module_summaries(
-                chunks_to_embed
-            )
-            if module_summaries:
-                chunks_to_embed.extend(module_summaries)
-                logger.info(
-                    f"[INCREMENTAL] Appended {len(module_summaries)} module summary chunks"
-                )
+        # SummaryStage.generate_and_extend (config-gated inside the stage).
+        self._summary_stage.generate_and_extend(
+            chunks_to_embed,
+            log_prefix="[INCREMENTAL]",
+            appended_noun="module summary chunks",
+        )
 
         all_embedding_results = []
         if chunks_to_embed:
