@@ -49,6 +49,8 @@ for avoiding re-litigating settled questions.
 | [0041](0041-find-connections-indirect-caller-fanout.md) | Dedup/sort `find_connections`' `indirect_callers`; decline the fan-out cap | accepted | 2026-08-18 |
 | [0042](0042-publish-invariants-not-values.md) | Derive the MCP tool schema's bounds/enums from `spec()`; never derive `default` | accepted | 2026-08-19 |
 | [0043](0043-point-stale-prose-counts-at-derived-source.md) | Point stale ADR/README prose counts at their derived source, not a re-pinned number | accepted | 2026-08-19 |
+| [0044](0044-incremental-call-edge-injection-opt-in-only.md) | Incremental-pass call-edge re-injection: opt-in only, default stays off | accepted | 2026-08-19 |
+| [0045](0045-extract-embedding-document-composer.md) | Extract the embedding-document composer from `CodeEmbedder` | accepted | 2026-08-19 |
 
 ## Adding a new ADR
 

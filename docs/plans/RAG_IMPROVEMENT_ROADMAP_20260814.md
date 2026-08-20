@@ -142,9 +142,11 @@ flappers/secondary golds — low-cost, small-upside.
 
 ### A4. Body-free auxiliary embedding view — DEFERRED
 
-`create_embedding_content` (`embeddings/embedder.py:914-1048`) already prepends the
-structural header, imports, parent-class signature, and docstring; the function
-signature is the first line of `chunk.content` and survives truncation. A second
+`create_embedding_content` (`embeddings/embedder.py`, delegating to
+`embeddings/document_composer.py`'s `EmbeddingDocumentComposer.compose` since the
+architecture-review composer extraction) already prepends the structural header,
+imports, parent-class signature, and docstring; the function signature is the first
+line of `chunk.content` and survives truncation. A second
 signature-only leg duplicates most of that signal at 2× embedding compute/storage plus
 an INDEX_VERSION bump, with no cheap fusion path. **Reopening path**: a reranker-only
 pilot — feed the reranker a signature+docstring+path document representation derived

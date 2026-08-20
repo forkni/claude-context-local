@@ -2,11 +2,12 @@
 
 Force reindex spends the majority of its wall-clock re-embedding chunks whose
 *assembled* embedding content — the structural header, import context, class
-signature, and chunk body that :meth:`CodeEmbedder.create_embedding_content`
-composes — is byte-identical to the last indexed run. This cache stores
-``{content_hash: vector}`` pairs on disk, keyed by that assembled string, so a
-100% cache hit can skip the GPU embedding pass (and, in :meth:`CodeEmbedder.
-embed_chunks`, the model load itself) entirely.
+signature, and chunk body that :meth:`embeddings.document_composer.
+EmbeddingDocumentComposer.compose` assembles (invoked via :meth:`CodeEmbedder.
+create_embedding_content`) — is byte-identical to the last indexed run. This
+cache stores ``{content_hash: vector}`` pairs on disk, keyed by that assembled
+string, so a 100% cache hit can skip the GPU embedding pass (and, in
+:meth:`CodeEmbedder.embed_chunks`, the model load itself) entirely.
 
 The cache file lives inside the project's own storage directory, which is
 already namespaced by model name and dimension
@@ -30,10 +31,10 @@ Deliberately NOT built on top of two existing near-miss candidates:
 
 Correctness note: the cache key MUST be derived from the final string handed
 to ``model.encode()`` (``passage_prefix + create_embedding_content(chunk)``),
-never from raw ``chunk.content``. ``create_embedding_content`` folds in the
-file's import block and the parent class signature, so a chunk's correct
-embedding changes when a *neighbouring* part of its file changes — hashing
-raw chunk content would serve stale vectors for such chunks.
+never from raw ``chunk.content``. The composer folds in the file's import
+block and the parent class signature, so a chunk's correct embedding changes
+when a *neighbouring* part of its file changes — hashing raw chunk content
+would serve stale vectors for such chunks.
 """
 
 from __future__ import annotations
