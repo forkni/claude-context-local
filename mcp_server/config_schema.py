@@ -13,6 +13,7 @@ for the handler line that was read to make that call.
 """
 
 import dataclasses
+from enum import Enum
 from typing import Any
 
 from search.config import (
@@ -187,60 +188,175 @@ OUTPUT_FORMAT_PROPERTY: dict[str, Any] = {
 }
 
 
-# arg key -> why no config field backs it (the handler's actual arguments.get
-# fallback is a literal, not a search/config.py read).
-HAND_TYPED: dict[str, str] = {
-    "search_code.search_mode": (
-        "search_orchestrator.py's SearchPlanner.plan() falls back to the "
-        "AUTO literal (route-by-intent), not to config.search_mode.default_mode "
-        "— enum stays derived from SearchMode via SEARCH_MODE_ENUM"
+class _NoDefault:
+    """Sentinel distinguishing "no default published" from a legitimate ``None``
+    default. A bare ``None`` is itself a valid HandTyped.default value.
+    """
+
+    def __repr__(self) -> str:
+        return "NO_DEFAULT"
+
+
+NO_DEFAULT = _NoDefault()
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class HandTyped:
+    """The one source of truth for a hand-typed (non-CONFIG_BACKED) MCP
+    parameter's fallback: ``arg()`` returns ``default`` to the handler, and
+    ``.schema`` spreads the same value into the published tool schema — so the
+    two can no longer independently drift, which is exactly the seam
+    ``include_exclusive`` fell through (docs/adr/0046).
+
+    ``default=NO_DEFAULT`` marks a deliberately tri-state parameter (e.g. one
+    that defers to stored project state, or has no meaningful default at all):
+    no schema default may be published for it, and ``arg()`` refuses to be
+    called for it — its fallback must be resolved by the caller instead.
+    """
+
+    default: Any = NO_DEFAULT
+    rationale: str
+
+    @property
+    def schema(self) -> dict[str, Any]:
+        """The schema fragment for this default. Enum members publish their
+        ``.value`` (a plain str) — the handler-facing ``default`` stays the
+        enum member itself, so ``arg()``'s return type is unaffected.
+        """
+        if self.default is NO_DEFAULT:
+            return {}
+        value = self.default
+        return {"default": value.value if isinstance(value, Enum) else value}
+
+
+def arg(arguments: dict[str, Any], key: str) -> Any:
+    """Read a HAND_TYPED parameter's wire value, falling back to its one
+    declared default.
+
+    ``key`` is ``"<tool>.<param>"`` (e.g. ``"search_code.include_parent"``),
+    matching a HAND_TYPED entry; the tool prefix is stripped before reading
+    ``arguments``. Raises ``ValueError`` for a ``NO_DEFAULT`` key — those are
+    tri-state by design and must resolve their own fallback, not through
+    this accessor.
+    """
+    record = HAND_TYPED[key]
+    if record.default is NO_DEFAULT:
+        raise ValueError(
+            f"{key} has no default (NO_DEFAULT) — it is tri-state by design; "
+            "its fallback must be resolved by the caller, not via arg()"
+        )
+    _, param = key.split(".", 1)
+    return arguments.get(param, record.default)
+
+
+# arg key -> the one declared default (spread into the schema, returned to the
+# handler) plus why no config field backs it (the handler's actual
+# arguments.get fallback is a literal, not a search/config.py read).
+HAND_TYPED: dict[str, HandTyped] = {
+    "search_code.search_mode": HandTyped(
+        default=SearchMode.AUTO,
+        rationale=(
+            "search_orchestrator.py's SearchPlanner.plan() falls back to the "
+            "AUTO literal (route-by-intent), not to config.search_mode.default_mode "
+            "— enum stays derived from SearchMode via SEARCH_MODE_ENUM"
+        ),
     ),
-    "search_code.chunk_type": (
-        "chunk-kind vocabulary comes from tree-sitter/AST node kinds, not search config"
+    "search_code.chunk_type": HandTyped(
+        rationale=(
+            "chunk-kind vocabulary comes from tree-sitter/AST node kinds, not search config"
+        ),
     ),
-    "search_code.include_context": (
-        "literal True fallback (search_orchestrator.py) — no config field"
+    "search_code.include_context": HandTyped(
+        default=True,
+        rationale="literal True fallback (search_orchestrator.py) — no config field",
     ),
-    "search_code.include_parent": (
-        "literal False fallback (search_orchestrator.py) — no config field"
+    "search_code.include_parent": HandTyped(
+        default=False,
+        rationale="literal False fallback (search_orchestrator.py) — no config field",
     ),
-    "search_code.include_top_callers": (
-        "literal False fallback (search_orchestrator.py) — no config field"
+    "search_code.include_top_callers": HandTyped(
+        default=False,
+        rationale="literal False fallback (search_orchestrator.py) — no config field",
     ),
-    "search_code.include_signatures": (
-        "literal False fallback (search_orchestrator.py) — no config field"
+    "search_code.include_signatures": HandTyped(
+        default=False,
+        rationale="literal False fallback (search_orchestrator.py) — no config field",
     ),
-    "index_directory.incremental": (
-        "literal True fallback (index_handlers.py) — no config field"
+    "search_code.include_dirs": HandTyped(
+        rationale=(
+            "plain arguments.get, no fallback (search_orchestrator.py) — "
+            "per-call scope narrowing has no default value to publish, "
+            "config or otherwise"
+        ),
     ),
-    "index_directory.wait": (
-        "literal True fallback (index_handlers.py) — selects sync vs. "
-        "background dispatch, not a config value"
+    "search_code.exclude_dirs": HandTyped(
+        rationale=(
+            "plain arguments.get, no fallback (search_orchestrator.py) — "
+            "per-call scope narrowing has no default value to publish, "
+            "config or otherwise"
+        ),
     ),
-    "index_directory.include_exclusive": (
-        "falls back to the project's stored project_info.json filter, not a "
-        "search config field"
+    "search_code.ego_graph_enabled": HandTyped(
+        rationale=(
+            "tri-state: omitted (None) defers to config's ego_graph.enabled, "
+            "explicit True/False overrides it for this call — collapsing "
+            "omission into a published False would make it indistinguishable "
+            "from an explicit override (search_orchestrator.py's "
+            "SearchPlanner.plan(), see its own comment at the call site)"
+        ),
     ),
-    "find_similar_code.exclude_same_file": (
-        "literal False fallback (search_handlers.py) — per-call caller "
-        "intent, not a config field"
+    "index_directory.incremental": HandTyped(
+        default=True,
+        rationale="literal True fallback (index_handlers.py) — no config field",
     ),
-    "delete_project.force": (
-        "literal False fallback (index_handlers.py) — per-call safety "
-        "confirmation, not a config field"
+    "index_directory.wait": HandTyped(
+        default=True,
+        rationale=(
+            "literal True fallback (index_handlers.py) — selects sync vs. "
+            "background dispatch, not a config value"
+        ),
     ),
-    "find_connections.max_depth": (
-        "literal 3 fallback (search_handlers.py) — traversal depth is a "
-        "per-call concern; no config field"
+    "index_directory.include_exclusive": HandTyped(
+        rationale=(
+            "falls back to the project's stored project_info.json filter, not a "
+            "search config field"
+        ),
     ),
-    "find_path.max_hops": (
-        "literal 10 fallback, clamped to 20 (search_handlers.py) — no config field"
+    "find_similar_code.exclude_same_file": HandTyped(
+        default=False,
+        rationale=(
+            "literal False fallback (search_handlers.py) — per-call caller "
+            "intent, not a config field"
+        ),
     ),
-    "configure_search_mode.search_mode": (
-        "config_handlers.py sets this unconditionally from a literal "
-        "SearchMode.HYBRID fallback, never deferred to the persisted "
-        "default_mode value — default_mode is deliberately excluded from "
-        "_SEARCH_MODE_FIELDS' skip-if-absent patch (see that file's own "
-        "comment); enum stays derived from SearchMode via SEARCH_MODE_ENUM"
+    "delete_project.force": HandTyped(
+        default=False,
+        rationale=(
+            "literal False fallback (index_handlers.py) — per-call safety "
+            "confirmation, not a config field"
+        ),
+    ),
+    "find_connections.max_depth": HandTyped(
+        default=3,
+        rationale=(
+            "literal 3 fallback (search_handlers.py) — traversal depth is a "
+            "per-call concern; no config field"
+        ),
+    ),
+    "find_path.max_hops": HandTyped(
+        default=10,
+        rationale=(
+            "literal 10 fallback, clamped to 20 (search_handlers.py) — no config field"
+        ),
+    ),
+    "configure_search_mode.search_mode": HandTyped(
+        default=SearchMode.HYBRID,
+        rationale=(
+            "config_handlers.py sets this unconditionally from a literal "
+            "SearchMode.HYBRID fallback, never deferred to the persisted "
+            "default_mode value — default_mode is deliberately excluded from "
+            "_SEARCH_MODE_FIELDS' skip-if-absent patch (see that file's own "
+            "comment); enum stays derived from SearchMode via SEARCH_MODE_ENUM"
+        ),
     ),
 }

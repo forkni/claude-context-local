@@ -16,6 +16,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from mcp_server.config_schema import arg
 from mcp_server.search_factory import get_searcher
 from mcp_server.services import get_config, get_state
 from mcp_server.tools import responses, result_view
@@ -214,7 +215,7 @@ class SearchPlanner:
                     k = int(suggested_k)
 
         # Search mode: apply intent suggestion when user left 'auto'
-        search_mode = str(arguments.get("search_mode", SearchMode.AUTO))
+        search_mode = str(arg(arguments, "search_code.search_mode"))
         if intent_decision and search_mode == SearchMode.AUTO:
             suggested_mode = intent_decision.suggested_params.get("search_mode")
             if suggested_mode:
@@ -242,14 +243,14 @@ class SearchPlanner:
             ego_graph_enabled=ego_graph_enabled,
             ego_graph_k_hops=ego_graph_k_hops,
             ego_graph_max_neighbors=ego_graph_max_neighbors,
-            include_parent=bool(arguments.get("include_parent", False)),
-            include_top_callers=bool(arguments.get("include_top_callers", False)),
-            include_signatures=bool(arguments.get("include_signatures", False)),
+            include_parent=bool(arg(arguments, "search_code.include_parent")),
+            include_top_callers=bool(arg(arguments, "search_code.include_top_callers")),
+            include_signatures=bool(arg(arguments, "search_code.include_signatures")),
             file_pattern=arguments.get("file_pattern"),
             include_dirs=arguments.get("include_dirs"),
             exclude_dirs=arguments.get("exclude_dirs"),
             chunk_type=arguments.get("chunk_type"),
-            include_context=bool(arguments.get("include_context", True)),
+            include_context=bool(arg(arguments, "search_code.include_context")),
             auto_reindex=bool(
                 arguments.get("auto_reindex", config.performance.enable_auto_reindex)
             ),

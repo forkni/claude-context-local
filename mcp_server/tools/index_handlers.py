@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from chunking.multi_language_chunker import MultiLanguageChunker
+from mcp_server.config_schema import arg
 from mcp_server.model_pool_manager import get_embedder
 from mcp_server.search_factory import (
     get_index_manager,
@@ -529,7 +530,7 @@ async def handle_delete_project(arguments: dict[str, Any]) -> dict:
 
     # Extract arguments
     project_path = arguments.get("project_path")
-    force = arguments.get("force", False)
+    force = arg(arguments, "delete_project.force")
 
     if not project_path:
         return responses.error("project_path is required")
@@ -662,7 +663,7 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
     full duration of a long-running operation) — poll progress with
     ``get_index_status(job_id=...)``.
     """
-    wait = arguments.get("wait", True)
+    wait = arg(arguments, "index_directory.wait")
     if wait:
         return await _run_index_directory(arguments)
     return await _start_index_directory_job(arguments)
@@ -741,7 +742,7 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
     duplicating logic.
     """
     directory_path = arguments["directory_path"]
-    incremental = arguments.get("incremental", True)
+    incremental = arg(arguments, "index_directory.incremental")
     include_dirs = arguments.get("include_dirs")
     exclude_dirs = arguments.get("exclude_dirs")
     include_exclusive = arguments.get("include_exclusive")

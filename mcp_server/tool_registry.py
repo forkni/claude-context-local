@@ -29,10 +29,10 @@ from mcp.types import Tool
 
 from mcp_server.config_schema import (
     CONFIG_BACKED,
+    HAND_TYPED,
     OUTPUT_FORMAT_PROPERTY,
     SEARCH_MODE_ENUM,
 )
-from search.config import SearchMode
 
 
 # Tools gated behind MCP_EXPOSE_ADVANCED_TOOLS (default: hidden from list_tools).
@@ -104,7 +104,7 @@ RETURNS:
                 "search_mode": {
                     "type": "string",
                     "enum": list(SEARCH_MODE_ENUM),
-                    "default": SearchMode.AUTO.value,
+                    **HAND_TYPED["search_code.search_mode"].schema,
                     "description": "Search mode selection",
                 },
                 "file_pattern": {
@@ -141,7 +141,7 @@ RETURNS:
                 },
                 "include_context": {
                     "type": "boolean",
-                    "default": True,
+                    **HAND_TYPED["search_code.include_context"].schema,
                     "description": "Include similar chunks and relationships (default: True, recommended)",
                 },
                 "auto_reindex": {
@@ -167,17 +167,17 @@ RETURNS:
                 },
                 "include_parent": {
                     "type": "boolean",
-                    "default": False,
+                    **HAND_TYPED["search_code.include_parent"].schema,
                     "description": "Enable parent chunk retrieval (default: False). When a method is matched, also retrieves its enclosing class for fuller context. Implements 'Match Small, Retrieve Big' pattern for improved comprehension.",
                 },
                 "include_top_callers": {
                     "type": "boolean",
-                    "default": False,
+                    **HAND_TYPED["search_code.include_top_callers"].schema,
                     "description": "Attach up to 2 top callers per result as top_callers: [{name, file}] (default: False). Callers come from the code graph's incoming call edges — context agents cannot derive from the result text alone. Ordering prefers resolver-confident edges when available; otherwise discovery order (hint, not a guarantee).",
                 },
                 "include_signatures": {
                     "type": "boolean",
-                    "default": False,
+                    **HAND_TYPED["search_code.include_signatures"].schema,
                     "description": "Attach a signature-only view per result as signature: str (default: False). search_code returns coordinates only (file/lines/kind/score) — no chunk content; this is a display-only counterfactual to a follow-up Read, not chunk content itself. Measured ~687 tokens/query overhead (~36% over the default compact format's payload size) — a hint, not a guarantee: module/module_preamble chunks are skipped (no callable contract to summarize); on non-Python chunks (no def/class anchor recognized) it degrades to the first 3 raw lines, capped at 600 characters. Never touches scoring, ordering, or the reranker.",
                 },
                 "max_context_tokens": {
@@ -221,12 +221,12 @@ RETURNS:
                 },
                 "incremental": {
                     "type": "boolean",
-                    "default": True,
+                    **HAND_TYPED["index_directory.incremental"].schema,
                     "description": "Use incremental indexing if snapshot exists (default: True)",
                 },
                 "wait": {
                     "type": "boolean",
-                    "default": True,
+                    **HAND_TYPED["index_directory.wait"].schema,
                     "description": "If true (default), block until indexing finishes and return the full result inline. If false, return immediately with a job_id and index in the background — poll get_index_status(job_id=...) for progress. Use false for large repos or first-time full indexes that may take minutes.",
                 },
                 "include_dirs": {
@@ -280,7 +280,7 @@ RETURNS:
                 },
                 "exclude_same_file": {
                     "type": "boolean",
-                    "default": False,
+                    **HAND_TYPED["find_similar_code.exclude_same_file"].schema,
                     "description": "Set true when you want cross-file analogues (sibling implementations in other files) — the reference chunk's own-file neighbors often dominate the top ranks. Leave false when you want neighbors within the reference chunk's own file (e.g. other methods of the same class).",
                 },
                 "output_format": {**OUTPUT_FORMAT_PROPERTY},
@@ -415,7 +415,7 @@ RETURNS:
                 },
                 "force": {
                     "type": "boolean",
-                    "default": False,
+                    **HAND_TYPED["delete_project.force"].schema,
                     "description": "Force delete even if this is the current project (default: False)",
                 },
                 "output_format": {**OUTPUT_FORMAT_PROPERTY},
@@ -482,7 +482,7 @@ RETURNS:
                 "search_mode": {
                     "type": "string",
                     "enum": list(SEARCH_MODE_ENUM),
-                    "default": SearchMode.HYBRID.value,
+                    **HAND_TYPED["configure_search_mode.search_mode"].schema,
                     "description": 'Default search mode - "hybrid", "semantic", "bm25", or "auto"',
                 },
                 "bm25_weight": {
@@ -618,7 +618,7 @@ resolution no-ops unless the `[lsp]` extra is installed.""",
                 },
                 "max_depth": {
                     "type": "integer",
-                    "default": 3,
+                    **HAND_TYPED["find_connections.max_depth"].schema,
                     "minimum": 1,
                     "maximum": 5,
                     "description": "Maximum depth for dependency traversal (default: 3, affects indirect callers)",
@@ -678,7 +678,7 @@ RETURNS:
                 },
                 "max_hops": {
                     "type": "integer",
-                    "default": 10,
+                    **HAND_TYPED["find_path.max_hops"].schema,
                     "minimum": 1,
                     "maximum": 20,
                     "description": "Maximum path length in edges (default: 10)",

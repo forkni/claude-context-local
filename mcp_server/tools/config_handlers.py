@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from mcp_server.config_schema import arg
 from mcp_server.project_persistence import save_project_selection
 from mcp_server.resource_manager import (
     _cleanup_previous_resources,
@@ -190,7 +191,7 @@ async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
     this call; the rest are patched via apply_config_patch, matching
     handle_configure_reranking/handle_configure_chunking's skip-if-absent pattern.
     """
-    search_mode = arguments.get("search_mode", SearchMode.HYBRID)
+    search_mode = arg(arguments, "configure_search_mode.search_mode")
 
     err = validate_field_value(SearchModeConfig, "default_mode", search_mode)
     if err:

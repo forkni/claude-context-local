@@ -8,6 +8,7 @@ import logging
 from typing import Any
 
 from chunking.multi_language_chunker import MultiLanguageChunker
+from mcp_server.config_schema import arg
 from mcp_server.guidance import add_system_message
 from mcp_server.model_pool_manager import get_embedder
 from mcp_server.search_factory import (
@@ -320,7 +321,7 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     # handler's old hardcoded fallback (4) silently never picked it up.
     # Explicit per-request k is passed through untouched.
     k = arguments.get("k", get_search_config().search_mode.default_k)
-    exclude_same_file = arguments.get("exclude_same_file", False)
+    exclude_same_file = arg(arguments, "find_similar_code.exclude_same_file")
 
     # Normalize chunk_id path separators
     # Use CodeIndexManager's normalize_chunk_id for proper cross-platform handling
@@ -356,7 +357,7 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
     """Find all code connections to a given symbol."""
     chunk_id = arguments.get("chunk_id")
     symbol_name = arguments.get("symbol_name")
-    max_depth = arguments.get("max_depth", 3)
+    max_depth = arg(arguments, "find_connections.max_depth")
     exclude_dirs = arguments.get("exclude_dirs")
     relationship_types = arguments.get("relationship_types")
     hide_ambiguous = arguments.get(
@@ -425,7 +426,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
     target = arguments.get("target")
     source_chunk_id = arguments.get("source_chunk_id")
     target_chunk_id = arguments.get("target_chunk_id")
-    max_hops = min(arguments.get("max_hops", 10), 20)
+    max_hops = min(arg(arguments, "find_path.max_hops"), 20)
     edge_types = arguments.get("edge_types")
 
     # Validate: need at least one source and one target identifier
