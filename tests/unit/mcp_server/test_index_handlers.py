@@ -1,5 +1,6 @@
 """Unit tests for index_handlers — file accessibility + pre-clear path guard."""
 
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -327,8 +328,14 @@ class TestPurgeIndexDirFailureReporting:
         # _purge_index_dir now asserts index_dir is under the storage root
         # (a guard migrated in from the dead _clear_index_files_before_create),
         # so build under the session-redirected storage dir rather than a raw
-        # tmp_path sibling of it.
+        # tmp_path sibling of it. That dir is session-scoped (get_storage_dir()
+        # returns the same path every call), so re-running this exact test
+        # in the same session -- e.g. under pytest-repeat's --count, which
+        # found this -- must not assume a pristine directory: clear any
+        # leftovers before mkdir instead of letting a bare mkdir(parents=True)
+        # raise FileExistsError on the second invocation.
         index_dir = get_storage_dir() / "projects" / "proj_test" / "index"
+        shutil.rmtree(index_dir, ignore_errors=True)
         index_dir.mkdir(parents=True)
         (index_dir / "code.index").write_text("data")
         (index_dir / "chunk_ids.pkl").write_text("data")
@@ -352,6 +359,7 @@ class TestPurgeIndexDirFailureReporting:
         from mcp_server.tools.index_handlers import _purge_index_dir
 
         index_dir = get_storage_dir() / "projects" / "proj_test2" / "index"
+        shutil.rmtree(index_dir, ignore_errors=True)
         index_dir.mkdir(parents=True)
         (index_dir / "code.index").write_text("data")
 
