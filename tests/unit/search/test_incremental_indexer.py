@@ -9,6 +9,22 @@ from unittest.mock import ANY, Mock, patch
 from search.call_edge_injection import InjectionStats
 from search.filters import PathFilter
 from search.incremental_indexer import IncrementalIndexer, IncrementalIndexResult
+from search.resource_refresh import NullResourceRefresher
+
+
+class _SwappingRefresher:
+    """Test double: returns a pre-built fresh (embedder, indexer) pair,
+    simulating a real refresh swapping stale test doubles for fresh ones."""
+
+    def __init__(self, embedder, indexer):
+        self._embedder = embedder
+        self._indexer = indexer
+
+    def refresh_before_full_index(self, project_path, embedder, indexer):
+        return self._embedder, self._indexer
+
+    def invalidate_searcher_cache(self) -> None:
+        return None
 
 
 class TestIncrementalIndexResult:
@@ -193,14 +209,14 @@ class TestIncrementalIndexer:
             str(self.project_path)
         )
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_full_index_no_snapshot(self, mock_release):
+    def test_full_index_no_snapshot(self):
         """Test full indexing when no snapshot exists."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Mock no snapshot exists
@@ -403,14 +419,14 @@ class TestIncrementalIndexer:
         assert call_kwargs["cache"] is sentinel_cache
         assert call_kwargs["cache_full_pass"] is False
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_error_handling_full_index(self, mock_release):
+    def test_error_handling_full_index(self):
         """Test error handling during full index."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Mock no snapshot exists
@@ -599,14 +615,14 @@ class TestIncrementalIndexer:
         assert result.chunks_added == 0
         indexer.needs_reindex.assert_called_once_with(str(self.project_path), 5)
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_force_full_reindex(self, mock_release):
+    def test_force_full_reindex(self):
         """Test force full reindex functionality."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Mock components for full index
@@ -632,14 +648,14 @@ class TestIncrementalIndexer:
             assert result.success is True
             self.mock_indexer.clear_index.assert_called_once()
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_chunking_error_handling(self, mock_release):
+    def test_chunking_error_handling(self):
         """Test handling of chunking errors."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Mock no snapshot exists (triggers full index)
@@ -673,14 +689,14 @@ class TestIncrementalIndexer:
             assert result.success is True
             assert result.chunks_added == 1  # Only one file succeeded
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_embedding_error_handling(self, mock_release):
+    def test_embedding_error_handling(self):
         """Test handling of embedding errors."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Mock no snapshot exists
@@ -753,14 +769,14 @@ class TestIncrementalIndexer:
         # Verify validation was called
         self.mock_indexer.validate_index_consistency.assert_called_once()
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_batch_removal_validation_failure_triggers_full_reindex(self, mock_release):
+    def test_batch_removal_validation_failure_triggers_full_reindex(self):
         """Test that validation failure triggers full re-index recovery."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Mock snapshot exists
@@ -826,14 +842,14 @@ class TestIncrementalIndexer:
             # more by _full_index's own tail check once recovery completes.
             assert self.mock_indexer.validate_index_consistency.call_count == 2
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_error_recovery_via_full_reindex(self, mock_release):
+    def test_error_recovery_via_full_reindex(self):
         """Test that errors during incremental indexing trigger full re-index recovery."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Mock snapshot exists
@@ -1043,8 +1059,7 @@ class TestIncrementalIndexer:
         assert result.bm25_resync_count == 0
         self.mock_indexer.resync_if_desynced.assert_not_called()
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_filter_persistence_in_full_index(self, mock_release):
+    def test_filter_persistence_in_full_index(self):
         """Test that filters are preserved when _full_index is triggered."""
         # Create indexer WITH filters
         include_dirs = ["src/", "lib/"]
@@ -1056,6 +1071,7 @@ class TestIncrementalIndexer:
             snapshot_manager=self.mock_snapshot_manager,
             include_dirs=include_dirs,
             exclude_dirs=exclude_dirs,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Real files under the include targets. MerkleDAG is NOT mocked in
@@ -1106,8 +1122,7 @@ class TestIncrementalIndexer:
         assert saved_dag.directory_filter.include_dirs == include_dirs
         assert saved_dag.directory_filter.exclude_dirs == exclude_dirs
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_filter_recovery_from_snapshot_in_full_index(self, mock_release):
+    def test_filter_recovery_from_snapshot_in_full_index(self):
         """Test that filters are recovered from snapshot if not passed to indexer."""
         from search.filters import DirectoryFilter
 
@@ -1119,6 +1134,7 @@ class TestIncrementalIndexer:
             snapshot_manager=self.mock_snapshot_manager,
             include_dirs=None,  # No filters passed!
             exclude_dirs=None,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Create a mock snapshot WITH filters
@@ -1200,8 +1216,7 @@ class TestIncrementalIndexer:
         )
         return mock_path_filter
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_full_index_aborts_when_only_dependency_paths_matched(self, mock_release):
+    def test_full_index_aborts_when_only_dependency_paths_matched(self):
         """Backstop guard: a narrowing include list (or include_exclusive)
         that resolves entirely inside a dependency tree must hard-abort
         _full_index BEFORE delete_snapshot/clear_index run -- this is the
@@ -1214,6 +1229,7 @@ class TestIncrementalIndexer:
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
             include_dirs=["site-packages/torch"],
+            resource_refresher=NullResourceRefresher(),
         )
         self.mock_snapshot_manager.has_snapshot.return_value = False
 
@@ -1237,8 +1253,7 @@ class TestIncrementalIndexer:
         self.mock_snapshot_manager.delete_snapshot.assert_not_called()
         self.mock_indexer.clear_index.assert_not_called()
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_full_index_all_includes_unmatched_takes_precedence(self, mock_release):
+    def test_full_index_all_includes_unmatched_takes_precedence(self):
         """all_includes_unmatched (a typo'd/absent pattern) is checked first
         and gives a more specific error than the dependency-only guard --
         the guard must not even be consulted once that abort has already
@@ -1249,6 +1264,7 @@ class TestIncrementalIndexer:
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
             include_dirs=["nonexistent_dir"],
+            resource_refresher=NullResourceRefresher(),
         )
         self.mock_snapshot_manager.has_snapshot.return_value = False
 
@@ -1271,10 +1287,7 @@ class TestIncrementalIndexer:
         self.mock_snapshot_manager.delete_snapshot.assert_not_called()
         self.mock_indexer.clear_index.assert_not_called()
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_full_index_include_exclusive_downgrades_guard_to_warning(
-        self, mock_release
-    ):
+    def test_full_index_include_exclusive_downgrades_guard_to_warning(self):
         """include_exclusive=True is the deliberate override: the guard must
         still fire (log a warning) but let indexing proceed rather than
         aborting."""
@@ -1285,6 +1298,7 @@ class TestIncrementalIndexer:
             snapshot_manager=self.mock_snapshot_manager,
             include_dirs=["site-packages/torch"],
             include_exclusive=True,
+            resource_refresher=NullResourceRefresher(),
         )
         self.mock_snapshot_manager.has_snapshot.return_value = False
 
@@ -1363,18 +1377,9 @@ class TestIncrementalIndexer:
         assert result.success is True
         mock_dag.path_filter.only_dependency_paths_matched.assert_not_called()
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_write_pipeline_rebound_after_resource_refresh(self, mock_release):
+    def test_write_pipeline_rebound_after_resource_refresh(self):
         """IndexWriteStage must use the freshly acquired embedder/indexer after
-        _release_and_verify_resources() swaps them in — not the original stale ones."""
-        indexer = IncrementalIndexer(
-            indexer=self.mock_indexer,
-            embedder=self.mock_embedder,
-            chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager,
-        )
-
-        # Simulate _release_and_verify_resources replacing embedder/indexer
+        the resource refresher swaps them in — not the original stale ones."""
         fresh_embedder = Mock()
         fresh_embedding_result = Mock()
         fresh_embedding_result.metadata = {}
@@ -1385,11 +1390,13 @@ class TestIncrementalIndexer:
         # _consistency_target() -- give it the same clean default as self.mock_indexer.
         fresh_indexer.validate_index_consistency = Mock(return_value=(True, []))
 
-        def swap_resources(project_path):
-            indexer.embedder = fresh_embedder
-            indexer.indexer = fresh_indexer
-
-        mock_release.side_effect = swap_resources
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=_SwappingRefresher(fresh_embedder, fresh_indexer),
+        )
 
         self.mock_snapshot_manager.has_snapshot.return_value = False
 
@@ -1496,8 +1503,7 @@ class TestConsistencyTarget:
 
         assert target is self.mock_indexer
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_full_index_validation_failure_marks_result_failed(self, mock_release):
+    def test_full_index_validation_failure_marks_result_failed(self):
         """Fix 2: _full_index's tail now actually re-validates. Before this fix
         the check was dead code (hasattr false on the real HybridSearcher shape)
         so a corrupted index would still come back success=True."""
@@ -1506,6 +1512,7 @@ class TestConsistencyTarget:
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         self.mock_snapshot_manager.has_snapshot.return_value = False
@@ -1992,16 +1999,14 @@ class TestProbeWiring:
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
     def _run_full_index(self, indexer: IncrementalIndexer) -> IncrementalIndexResult:
         """Drive a full index with the same mock scaffolding as
         test_full_index_no_snapshot."""
         self.mock_snapshot_manager.has_snapshot.return_value = False
-        with (
-            patch.object(IncrementalIndexer, "_release_and_verify_resources"),
-            patch("search.incremental_indexer.MerkleDAG") as mock_dag_class,
-        ):
+        with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py", "utils.py"]
             mock_dag.path_filter = PathFilter(None, None, self.project_path)
@@ -2125,6 +2130,7 @@ class TestModuleSummaryInjection:
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
     def _run_full_index(
@@ -2140,7 +2146,6 @@ class TestModuleSummaryInjection:
         mock_config.chunking.enable_file_summaries = enable_file_summaries
 
         with (
-            patch.object(IncrementalIndexer, "_release_and_verify_resources"),
             patch("search.incremental_indexer.MerkleDAG") as mock_dag_class,
             patch(
                 "search.incremental_indexer.get_active_project_storage_dir",

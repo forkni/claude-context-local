@@ -18,6 +18,7 @@ from huggingface_hub import get_token
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
+from mcp_server.resource_manager import McpResourceRefresher
 from search.config import SearchConfigManager
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
@@ -87,6 +88,7 @@ class TestHybridSearchIntegration:
                 indexer=hybrid_searcher,
                 embedder=embedder,
                 chunker=chunker,
+                resource_refresher=McpResourceRefresher(),
             )
 
             # NOTE: Do NOT index here - let each test handle its own indexing
@@ -248,6 +250,7 @@ class DatabaseConnection:
                 indexer=hybrid_searcher,
                 embedder=embedder,
                 chunker=chunker,
+                resource_refresher=McpResourceRefresher(),
             )
 
             return {

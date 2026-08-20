@@ -22,6 +22,7 @@ import pytest
 from chunking.multi_language_chunker import MultiLanguageChunker
 from chunking.relationships.external_call_graph import pyan_available
 from embeddings.embedder import CodeEmbedder
+from mcp_server.resource_manager import McpResourceRefresher
 from merkle import SnapshotManager
 from search.config import get_search_config
 from search.hybrid_searcher import HybridSearcher
@@ -109,6 +110,7 @@ def test_full_index_injects_real_call_edges(mini_repo_project, tmp_path):
         embedder=embedder,
         chunker=chunker,
         snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots"),
+        resource_refresher=McpResourceRefresher(),
     )
 
     result = incremental_indexer.incremental_index(
@@ -153,6 +155,7 @@ def test_incremental_index_recovers_edges_when_enabled(mini_repo_project, tmp_pa
         embedder=embedder,
         chunker=chunker,
         snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots"),
+        resource_refresher=McpResourceRefresher(),
     )
 
     full_result = incremental_indexer.incremental_index(

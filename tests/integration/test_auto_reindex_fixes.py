@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from mcp_server.resource_manager import McpResourceRefresher
 from mcp_server.services import get_state
 from merkle import SnapshotManager
 from search.config import get_search_config
@@ -128,7 +129,8 @@ class TestMaxAgeMinutesConfigRespect:
 
         # Create indexer with isolated storage so no writes reach ~/.claude_code_search
         indexer = IncrementalIndexer(
-            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots")
+            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots"),
+            resource_refresher=McpResourceRefresher(),
         )
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success
@@ -156,7 +158,8 @@ class TestMaxAgeMinutesConfigRespect:
         """Verify explicit max_age_minutes parameter overrides config."""
         # Create indexer with isolated storage so no writes reach ~/.claude_code_search
         indexer = IncrementalIndexer(
-            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots")
+            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots"),
+            resource_refresher=McpResourceRefresher(),
         )
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success
@@ -194,7 +197,8 @@ class TestReindexReusesLiveEmbedder:
     ):
         """auto_reindex_if_needed must not call get_state() / reset_pool_manager()."""
         indexer = IncrementalIndexer(
-            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots")
+            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots"),
+            resource_refresher=McpResourceRefresher(),
         )
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success
@@ -218,7 +222,8 @@ class TestReindexReusesLiveEmbedder:
     ):
         """The live embedder's cleanup() must not run mid-reindex."""
         indexer = IncrementalIndexer(
-            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots")
+            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots"),
+            resource_refresher=McpResourceRefresher(),
         )
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success

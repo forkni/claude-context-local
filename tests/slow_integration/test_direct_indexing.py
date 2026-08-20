@@ -138,6 +138,7 @@ def test_incremental_indexer_class(tmp_path, test_glsl_dir):
     print("\n\nTESTING INCREMENTAL INDEXER CLASS")
     print("=" * 60)
 
+    from mcp_server.resource_manager import McpResourceRefresher
     from merkle.snapshot_manager import SnapshotManager
     from search.incremental_indexer import IncrementalIndexer
 
@@ -145,7 +146,10 @@ def test_incremental_indexer_class(tmp_path, test_glsl_dir):
     snapshot_manager = SnapshotManager(storage_dir=str(tmp_path / "merkle"))
 
     # Create with explicit snapshot_manager to avoid dependency issues
-    indexer = IncrementalIndexer(snapshot_manager=snapshot_manager)
+    indexer = IncrementalIndexer(
+        snapshot_manager=snapshot_manager,
+        resource_refresher=McpResourceRefresher(),
+    )
 
     project_path = str(test_glsl_dir)
 

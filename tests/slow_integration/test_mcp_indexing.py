@@ -12,6 +12,7 @@ from huggingface_hub import get_token
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
+from mcp_server.resource_manager import McpResourceRefresher
 from merkle.snapshot_manager import SnapshotManager
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
@@ -95,6 +96,7 @@ class TestMCPIndexing:
             # snapshot dir (~/.claude_code_search/merkle) — see
             # merkle/snapshot_manager.py.
             snapshot_manager=SnapshotManager(tmp_path / "snapshots"),
+            resource_refresher=McpResourceRefresher(),
         )
 
         # Perform indexing - this is the exact call from the MCP tool
@@ -168,6 +170,7 @@ class TestMCPIndexing:
                 embedder=embedder,
                 chunker=chunker,
                 snapshot_manager=snapshot_manager,
+                resource_refresher=McpResourceRefresher(),
             )
 
             # Initial full index
@@ -197,6 +200,7 @@ class TestMCPIndexing:
                 embedder=embedder,
                 chunker=chunker2,
                 snapshot_manager=snapshot_manager,
+                resource_refresher=McpResourceRefresher(),
             )
 
             result2 = incremental_indexer2.incremental_index(
@@ -249,6 +253,7 @@ class TestMCPIndexing:
             embedder=embedder,
             chunker=chunker,
             snapshot_manager=SnapshotManager(tmp_path / "snapshots"),
+            resource_refresher=McpResourceRefresher(),
         )
 
         # This should work with the fix, would fail with the bug
