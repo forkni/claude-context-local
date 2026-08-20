@@ -91,3 +91,112 @@ class TestBM25SyncOwnership:
             f"Stray DESYNC_THRESHOLD definitions: {stray}. "
             "Canonical location: search/index_sync.py."
         )
+
+
+def _iter_production_trees():
+    """Yield (path, parsed AST) for every parseable non-test, non-venv .py file."""
+    for fpath in glob.glob("**/*.py", recursive=True):
+        norm = fpath.replace("\\", "/")
+        if norm.startswith((".", "tests/", "_archive/")):
+            continue
+        try:
+            tree = ast.parse(Path(fpath).read_text(encoding="utf-8"))
+        except (SyntaxError, OSError):
+            continue
+        yield norm, tree
+
+
+class TestIndexWriteSeamOwnership:
+    """Ownership gate for the full/incremental index-write seam (ADR-0052).
+
+    IndexWriteStage is the single owner of adding embeddings to the index
+    (``add_to_index``) and of the incremental injection gate
+    (``inject_call_edges_if_enabled``). If one of these fails you have
+    re-introduced a residue that commit 17c000c's extraction left behind and
+    ADR-0052 finished removing.
+    """
+
+    def test_add_embeddings_called_only_from_write_stage(self):
+        """`.add_embeddings(...)` call sites live only in IndexWriteStage.
+
+        The one sanctioned exception is HybridSearcher's internal delegation
+        to its own sub-index (receiver ``self.dense_index`` — the wrapper and
+        ``index_documents``); everything else must route through
+        IndexWriteStage.add_to_index.
+        """
+
+        def is_self_dense_index(receiver: ast.expr) -> bool:
+            return (
+                isinstance(receiver, ast.Attribute)
+                and receiver.attr == "dense_index"
+                and isinstance(receiver.value, ast.Name)
+                and receiver.value.id == "self"
+            )
+
+        stray: list[str] = []
+        for norm, tree in _iter_production_trees():
+            if norm == "search/index_write_stage.py":
+                continue
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "add_embeddings"
+                    and not (
+                        norm == "search/hybrid_searcher.py"
+                        and is_self_dense_index(node.func.value)
+                    )
+                ):
+                    stray.append(f"{norm}:{node.lineno}")
+
+        assert not stray, (
+            f"Stray .add_embeddings() call sites: {stray}. "
+            "Route index writes through IndexWriteStage.add_to_index "
+            "(see ADR-0052)."
+        )
+
+    def test_inject_on_incremental_read_only_by_write_stage(self):
+        """The ADR-0044 gate is read only inside IndexWriteStage.
+
+        search/config.py declares the field (an AnnAssign, not an attribute
+        read, so it never trips this walk); the only attribute *read* allowed
+        is IndexWriteStage.inject_call_edges_if_enabled's.
+        """
+        stray: list[str] = []
+        for norm, tree in _iter_production_trees():
+            if norm == "search/index_write_stage.py":
+                continue
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Attribute)
+                    and node.attr == "inject_on_incremental"
+                ):
+                    stray.append(f"{norm}:{node.lineno}")
+
+        assert not stray, (
+            f"Stray inject_on_incremental reads: {stray}. "
+            "The gate belongs to IndexWriteStage.inject_call_edges_if_enabled "
+            "(see ADR-0052 / ADR-0044)."
+        )
+
+    def test_private_inject_name_gone_from_production_code(self):
+        """The pre-rename `_inject_call_edges` symbol must not reappear."""
+        stray: list[str] = []
+        for norm, tree in _iter_production_trees():
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and node.name == "_inject_call_edges"
+                ) or (
+                    isinstance(node, (ast.Attribute, ast.Name))
+                    and getattr(node, "attr", getattr(node, "id", None))
+                    == "_inject_call_edges"
+                ):
+                    stray.append(f"{norm}:{node.lineno}")
+
+        assert not stray, (
+            f"Stray _inject_call_edges references: {stray}. "
+            "The method is public now — IndexWriteStage.inject_call_edges "
+            "(unconditional, full path) or inject_call_edges_if_enabled "
+            "(gated, incremental path)."
+        )

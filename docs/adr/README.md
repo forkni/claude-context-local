@@ -57,6 +57,7 @@ for avoiding re-litigating settled questions.
 | [0049](0049-enricher-spec-rows.md) | One spec row per request-scoped result enricher; derive schema, default, plan, and gate | accepted | 2026-08-20 |
 | [0050](0050-per-layer-confidence-unknown-defaults.md) | Decline a shared policy object for the four `resolver_confidence`-unknown defaults | accepted | 2026-08-20 |
 | [0051](0051-delete-graph-scoring-stage-upward-import.md) | Delete `GraphScoringStage`'s upward `mcp_server` import instead of moving the class | accepted | 2026-08-20 |
+| [0052](0052-index-write-stage-owns-add-and-inject-for-incremental-passes.md) | IndexWriteStage owns index-adds and the injection gate for both passes | accepted | 2026-08-20 |
 
 ## Adding a new ADR
 
