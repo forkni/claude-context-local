@@ -76,12 +76,21 @@ that any script claimed as migrated has no bootstrap, no local loader, and does 
 
 `scripts/benchmark/run_sscg_benchmark.py`'s own local `_ensure_pinned_hash_seed` copy — the original
 this function was moved from — was retired in favor of importing `probe_harness.ensure_pinned_hash_seed`
-(`c145d79`), removing the last independent copy of the determinism guard.
+(`c145d79`). This was not yet the last independent copy: `probe_duplicate_crowding.py` carried its
+own byte-identical-body copy, added after this ADR's beachhead round and missed by it because that
+script was excluded from migration entirely (see below). It was retired onto the same import in a
+later round (2026-08-20), which is what actually removed the last independent copy of the
+determinism guard.
 
 **Two scripts are permanently excluded, not just not-yet-migrated:**
 
-- `probe_duplicate_crowding.py` — untracked, actively-changing WIP ("two hats": don't refactor code
-  someone is mid-edit on). `test_never_migrate_probes_are_not_claimed_as_migrated` /
+- `probe_duplicate_crowding.py` — a second, out-of-scope instrumentation adapter: its own
+  `Instrumentation` class (see the module docstring's tally above) predates `ProbeSession.instrument()`
+  and has no equivalent there, the same gap that excludes `probe_rerank_window.py` below. (At the time
+  this ADR was first written the script was also untracked, actively-changing WIP, and that was the
+  stated reason for excluding it; the file was tracked at `bda3b70` (2026-08-18), so that premise no
+  longer holds — the `Instrumentation` gap is the reason that survives.)
+  `test_never_migrate_probes_are_not_claimed_as_migrated` /
   `test_never_migrate_probes_still_exist` guard this exclusion so it can't silently lapse.
 - `probe_rerank_window.py` — a third, out-of-scope instrumentation adapter.
   `probe_leg_depth_fusion.py`'s `fidelity_check` depends on its own, richer `Instrumentation` API that

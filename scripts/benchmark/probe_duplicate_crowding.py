@@ -44,37 +44,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
-import subprocess
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 from statistics import median
 from typing import Any
-
-
-def _ensure_pinned_hash_seed() -> None:
-    """Re-exec with PYTHONHASHSEED=0 when unset (script execution only).
-
-    Reproducibility: chunk-ID set iteration order feeds candidate-pool
-    composition, so unpinned hash randomization flips query results between
-    otherwise-identical rounds (ADR-0021). Any explicit PYTHONHASHSEED,
-    including "random", is respected. Must only run under __main__ — at
-    import time (tests import this module) sys.argv belongs to the importer
-    and re-exec'ing it is wrong.
-    """
-    if os.environ.get("PYTHONHASHSEED") is None:
-        print(
-            "[HASHSEED] PYTHONHASHSEED unset - re-exec with PYTHONHASHSEED=0 "
-            "for reproducible rounds",
-            file=sys.stderr,
-        )
-        raise SystemExit(
-            subprocess.call(
-                [sys.executable, *sys.argv],
-                env={**os.environ, "PYTHONHASHSEED": "0"},
-            )
-        )
 
 
 # Add project root to sys.path so imports resolve from any working directory
@@ -1216,5 +1190,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    _ensure_pinned_hash_seed()
+    from evaluation.probe_harness import ensure_pinned_hash_seed
+
+    ensure_pinned_hash_seed()
     sys.exit(main())

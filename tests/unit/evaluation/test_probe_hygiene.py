@@ -52,6 +52,7 @@ MIGRATED_PROBES: frozenset[str] = frozenset(
         "probe_final_pool_reserve.py",
         "probe_leg_depth_fusion.py",
         "probe_stable_misses.py",
+        "probe_context_cost.py",
     }
 )
 
