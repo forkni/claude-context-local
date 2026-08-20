@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from chunking.python_ast_chunker import CodeChunk
+from search.config import EmbeddingConfig
 
 
 if TYPE_CHECKING:  # pragma: no mutate
@@ -40,16 +41,18 @@ class EmbeddingDocumentPolicy:
 
     Field names are byte-identical to ``search.config.EmbeddingConfig``'s so
     ``from_config`` is a plain attribute copy, not a translation.
+
+    Defaults are read off ``EmbeddingConfig`` itself (a plain ``@dataclass``
+    with no ``__post_init__``, so its class attributes already are the
+    defaulted ints/bools) rather than duplicated as literals here — the two
+    can drift no further apart than a single source of truth allows.
     """
 
-    enable_import_context: bool = True
-    enable_class_context: bool = True
-    # Verbatim today's degraded-path fallback literals — real EmbeddingConfig
-    # defaults are 25 / 20 (config.py:171,175). Reconciled in the next commit;
-    # kept as-is here so this move stays byte-identical output (two hats).
-    max_import_lines: int = 10
-    max_class_signature_lines: int = 5
-    enable_structural_header: bool = True
+    enable_import_context: bool = EmbeddingConfig.enable_import_context
+    enable_class_context: bool = EmbeddingConfig.enable_class_context
+    max_import_lines: int = EmbeddingConfig.max_import_lines
+    max_class_signature_lines: int = EmbeddingConfig.max_class_signature_lines
+    enable_structural_header: bool = EmbeddingConfig.enable_structural_header
 
     @classmethod
     def from_config(cls, config: SearchConfig) -> EmbeddingDocumentPolicy:

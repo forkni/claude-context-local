@@ -15,6 +15,7 @@ from embeddings.document_composer import (
     EmbeddingDocumentComposer,
     EmbeddingDocumentPolicy,
 )
+from search.config import SearchConfig
 
 
 class TestContextExtraction:
@@ -523,3 +524,20 @@ class TestComposeBranches:
         result = composer._get_class_signature(chunk)
 
         assert result == ""
+
+
+class TestPolicyDefaultsMatchConfig:
+    """Ratchet: EmbeddingDocumentPolicy's dataclass defaults must equal
+    EmbeddingConfig.from_config's output on a stock SearchConfig().
+
+    This would have failed on the pre-C2 code (max_import_lines=10 vs the
+    real config default 25, max_class_signature_lines=5 vs 20) and fails
+    again the day anyone edits EmbeddingConfig's defaults without updating
+    this file, since EmbeddingDocumentPolicy's fields are literal
+    ``EmbeddingConfig.<field>`` class-attribute reads, not copied numbers.
+    """
+
+    def test_default_policy_equals_policy_from_default_config(self):
+        assert EmbeddingDocumentPolicy() == EmbeddingDocumentPolicy.from_config(
+            SearchConfig()
+        )

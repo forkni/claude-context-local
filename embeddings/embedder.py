@@ -748,12 +748,13 @@ class CodeEmbedder:
         Supports context enhancement features (v0.8.0+):
         - Import context: Include import statements from file header
         - Class context: Include parent class signature for methods
+        - Structural header: Prepend file path + qualified name
 
-        Configuration is controlled via search/config.py EmbeddingConfig:
-        - enable_import_context (bool, default: True)
-        - enable_class_context (bool, default: True)
-        - max_import_lines (int, default: 10)
-        - max_class_signature_lines (int, default: 5)
+        Governed by ``search.config.EmbeddingConfig``'s
+        ``enable_import_context``, ``enable_class_context``,
+        ``max_import_lines``, ``max_class_signature_lines``, and
+        ``enable_structural_header`` fields -- see that class for current
+        defaults rather than a value restated here that can drift from it.
 
         Fetches the live config and builds an ``EmbeddingDocumentPolicy``;
         the actual composition (structural header, import/class context,
