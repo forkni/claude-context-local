@@ -4,7 +4,12 @@ import dataclasses
 
 import pytest
 
-from mcp_server.config_schema import CONFIG_BACKED, HAND_TYPED, OUTPUT_FORMAT_PROPERTY
+from mcp_server.config_schema import (
+    CONFIG_BACKED,
+    HAND_TYPED,
+    NO_DEFAULT,
+    OUTPUT_FORMAT_PROPERTY,
+)
 from mcp_server.tool_registry import (
     ADVANCED_TOOLS,
     TOOL_REGISTRY,
@@ -280,4 +285,118 @@ class TestConfigToolSchemaMatchesFieldSpec:
         assert not mismatches, (
             "Tool(s) whose output_format property diverges from "
             "OUTPUT_FORMAT_PROPERTY: " + ", ".join(mismatches)
+        )
+
+
+class TestHandTypedSchemaSeam:
+    """D2 made HAND_TYPED[key].schema and arg()'s fallback the same read of the
+    same object, so a schema default and a handler fallback can no longer
+    independently drift — the exact seam include_exclusive fell through, where
+    tool_registry.py's "default": False and index_handlers.py's no-fallback
+    tri-state resolution silently disagreed (docs/adr/0046). These ratchets
+    make that regression structurally impossible, not just caught by review.
+    """
+
+    @staticmethod
+    def _governed_properties():
+        """Yield (key, prop) for every TOOL_REGISTRY property whose
+        "<tool>.<arg>" key has a direct HAND_TYPED entry. HAND_TYPED carries no
+        "*.<arg>" wildcard entries, so a direct match is the only membership
+        test needed.
+        """
+        for tool_name, meta in TOOL_REGISTRY.items():
+            for arg_key, prop in meta["input_schema"]["properties"].items():
+                key = f"{tool_name}.{arg_key}"
+                if key in HAND_TYPED:
+                    yield key, prop
+
+    def test_schema_default_matches_the_seam(self):
+        """A published 'default' must be the exact same value AND type as
+        HAND_TYPED[key].schema's — plain != would let 0 pass for False, or
+        "auto" pass for a hypothetical non-enum 0/"" mismatch.
+        """
+        mismatches = []
+        for key, prop in self._governed_properties():
+            record = HAND_TYPED[key]
+            if record.default is NO_DEFAULT:
+                continue
+            expected = record.schema.get("default")
+            actual = prop.get("default")
+            if (actual, type(actual)) != (expected, type(expected)):
+                mismatches.append(
+                    f"{key}: schema has {actual!r} ({type(actual).__name__}), "
+                    f"HAND_TYPED[{key!r}].schema has {expected!r} "
+                    f"({type(expected).__name__})"
+                )
+        assert not mismatches, "\n  ".join(mismatches)
+
+    def test_every_published_default_comes_from_hand_typed(self):
+        """No '"default"' may appear on a property whose classification key is
+        either missing from HAND_TYPED entirely, or maps to a
+        HAND_TYPED(default=NO_DEFAULT) entry — that combination is exactly the
+        include_exclusive regression: a schema default published for a
+        parameter whose own rationale says it must stay tri-state (e.g. omit
+        to reuse the value stored in project_info.json).
+        """
+        unbacked = []
+        for tool_name, meta in TOOL_REGISTRY.items():
+            for arg_key, prop in meta["input_schema"]["properties"].items():
+                if "default" not in prop:
+                    continue
+                key = f"{tool_name}.{arg_key}"
+                record = HAND_TYPED.get(key)
+                if record is None or record.default is NO_DEFAULT:
+                    rationale = record.rationale if record else "no HAND_TYPED entry"
+                    unbacked.append(f"{key} ({rationale})")
+        assert not unbacked, (
+            "Propert(y/ies) publishing a schema default with no backing "
+            "HAND_TYPED default:\n  " + "\n  ".join(unbacked)
+        )
+
+    def test_hand_typed_defaults_are_json_scalars(self):
+        """.schema's emitted 'default' value — not .default itself, which may
+        legitimately hold an Enum member (see SearchMode) — must be a plain
+        JSON scalar so it is safe to spread straight into a wire schema.
+        """
+        json_scalars = (str, int, float, bool, type(None))
+        offenders = []
+        for key, record in HAND_TYPED.items():
+            if record.default is NO_DEFAULT:
+                continue
+            value = record.schema.get("default")
+            if not isinstance(value, json_scalars):
+                offenders.append(f"{key}: .schema default is {type(value).__name__}")
+        assert not offenders, "\n  ".join(offenders)
+
+    def test_no_inline_default_literal_in_tool_registry_source(self):
+        """AST ban, supplementary to the runtime seam above: after D2,
+        mcp_server/tool_registry.py must never contain a literal
+        '"default": ...' dict entry again — every default now reaches the
+        registry exclusively via a HAND_TYPED[key].schema or CONFIG_BACKED[key]
+        spread. Detection-after-the-fact (comparing values at runtime, as the
+        tests above do) is precisely the mechanism that already failed once on
+        include_exclusive; this bans the pattern at the source-code level so a
+        reviewer doesn't have to re-derive that reasoning from scratch.
+        """
+        import ast
+        import inspect
+
+        import mcp_server.tool_registry as tool_registry_module
+
+        source = inspect.getsource(tool_registry_module)
+        tree = ast.parse(source)
+
+        offending_lines = [
+            key.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Dict)
+            for key in node.keys
+            if isinstance(key, ast.Constant) and key.value == "default"
+        ]
+
+        assert not offending_lines, (
+            "Literal '\"default\": ...' dict entries found at line(s) "
+            f"{offending_lines} in tool_registry.py — defaults must be "
+            "spread from HAND_TYPED[key].schema / CONFIG_BACKED[key], never "
+            "restated inline (docs/adr/0046)"
         )
