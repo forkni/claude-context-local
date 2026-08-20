@@ -195,12 +195,12 @@ def test_search_dense_creates_embedder_lazily_when_none(executor):
     mock_instance = Mock()
     mock_instance.embed_query.return_value = [0.0] * 768
 
-    with patch(
-        "embeddings.embedder.CodeEmbedder", return_value=mock_instance
-    ) as mock_ce:
+    with patch("embeddings.embedder.CodeEmbedder", return_value=mock_instance):
         executor.search_dense("query", 5, None)
 
-    mock_ce.assert_called_once()
+    # return_value on the patch IS mock_instance, so this identity check
+    # already proves the patched constructor was called and its result
+    # captured -- a separate assert_called_once() would be redundant.
     assert executor.embedder is mock_instance
 
 

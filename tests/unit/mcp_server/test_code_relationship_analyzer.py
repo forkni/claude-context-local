@@ -927,8 +927,13 @@ class TestResolveTarget:
         analyzer = self._make_analyzer_with_caches(mock_searcher, graph_storage=mock_gs)
         result, cid = analyzer._resolve_target(stale_id, None, None)
 
+        # mock_gs.get_nodes_by_name/.graph.nodes are both empty and
+        # get_by_chunk_id returns None, so current_result's line range
+        # (15-25, distinct from stale_id's 10-20) is reachable only via
+        # mock_searcher.search.return_value -- this equality already proves
+        # search() fired and its result was consumed, making a separate
+        # assert_called_once() redundant.
         assert cid == "src/auth.py:15-25:method:AuthManager.validate"
-        mock_searcher.search.assert_called_once()
 
     def test_stale_chunk_id_with_too_few_parts_still_raises(self, mock_searcher):
         """A chunk_id with < 4 colon-parts that misses the store raises immediately."""

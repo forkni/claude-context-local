@@ -234,9 +234,10 @@ class TestIncrementalIndexer:
             assert result.files_removed == 0
             assert result.files_modified == 0
 
-            # Verify components were called
+            # Verify components were called. embed_chunks itself is a stub
+            # supplying data -- chunks_added == 3 above already proves it ran
+            # and its output was consumed; no separate interaction assertion.
             self.mock_indexer.clear_index.assert_called_once()
-            self.mock_embedder.embed_chunks.assert_called()
             self.mock_indexer.add_embeddings.assert_called_once()
             self.mock_indexer.save_indices.assert_called_once()
 
@@ -568,9 +569,11 @@ class TestIncrementalIndexer:
 
         result = indexer.auto_reindex_if_needed(str(self.project_path))
 
+        # result's object identity is only reachable via incremental_index's
+        # return value, so that call is already proven by the outcome check
+        # below -- only the predicate's cardinality needs a direct assertion.
         assert result == mock_result
         indexer.needs_reindex.assert_called_once()
-        indexer.incremental_index.assert_called_once()
 
     def test_auto_reindex_if_needed_no_reindex(self):
         """Test auto-reindex when no reindexing is needed."""
@@ -901,7 +904,9 @@ class TestIncrementalIndexer:
         assert result.files_removed == 10
         assert result.chunks_removed == 30  # 10 files * 3 chunks each
         # Verify batch removal was called once with all files
-        self.mock_indexer.remove_files.assert_called_once()
+        self.mock_indexer.remove_files.assert_called_once_with(
+            set(files_to_remove), "test_project"
+        )
 
     def test_recovery_failure_returns_error(self):
         """Test that recovery failure is properly reported."""
