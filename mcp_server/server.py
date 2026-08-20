@@ -859,6 +859,9 @@ if __name__ == "__main__":
                     result = await TOOL_DISPATCH["switch_project"](
                         {"project_path": project_path}
                     )
+                    assert isinstance(result, dict), (
+                        "handle_switch_project always returns dict"
+                    )
 
                     logger.info(
                         f"[HTTP SWITCH] Switch complete: {result.get('project')}"
