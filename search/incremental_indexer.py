@@ -35,17 +35,11 @@ from .config import get_active_project_storage_dir, get_search_config
 from .index_write_stage import IncrementalIndexResult, IndexWriteStage
 from .indexer import CodeIndexManager as Indexer
 from .parallel_chunker import ParallelChunker
+from .resource_refresh import NullResourceRefresher
 from .summary_stage import SummaryStage
 
 
 logger = logging.getLogger(__name__)
-
-
-def _default_resource_refresher() -> ResourceRefresher:
-    """Import-on-call factory holding the one surviving upward import."""
-    from mcp_server.resource_manager import McpResourceRefresher
-
-    return McpResourceRefresher()
 
 
 class IncrementalIndexer:
@@ -80,13 +74,13 @@ class IncrementalIndexer:
                 during a full or incremental pass.
             resource_refresher: MCP resource-lifecycle collaborator used by a
                 full reindex (see search.resource_refresh.ResourceRefresher).
-                Defaults to the real MCP adapter, matching today's behaviour —
-                pass NullResourceRefresher() for callers that construct this
-                class outside the MCP process and must not touch its state.
+                Defaults to NullResourceRefresher() — callers inside the MCP
+                process must pass McpResourceRefresher() explicitly to get
+                the real release/verify/reacquire behaviour.
         """
         self.include_exclusive = include_exclusive
         self._resource_refresher: ResourceRefresher = (
-            resource_refresher or _default_resource_refresher()
+            resource_refresher or NullResourceRefresher()
         )
         if indexer is None:
             # Create indexer with temporary storage directory for testing

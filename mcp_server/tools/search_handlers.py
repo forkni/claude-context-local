@@ -11,6 +11,7 @@ from chunking.multi_language_chunker import MultiLanguageChunker
 from mcp_server.config_schema import arg
 from mcp_server.guidance import add_system_message
 from mcp_server.model_pool_manager import get_embedder
+from mcp_server.resource_manager import McpResourceRefresher
 from mcp_server.search_factory import (
     build_hybrid_searcher,
     get_index_manager,
@@ -198,6 +199,7 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
         include_dirs=include_dirs,
         exclude_dirs=exclude_dirs,
         include_exclusive=include_exclusive,
+        resource_refresher=McpResourceRefresher(),
     )
 
     # Temporarily disable allow_ram_fallback during auto-reindex for performance

@@ -13,6 +13,7 @@ from typing import Any
 from chunking.multi_language_chunker import MultiLanguageChunker
 from mcp_server.config_schema import arg
 from mcp_server.model_pool_manager import get_embedder
+from mcp_server.resource_manager import McpResourceRefresher
 from mcp_server.search_factory import (
     get_index_manager,
     get_searcher,
@@ -154,6 +155,7 @@ def _run_indexing(
         include_dirs=include_dirs,
         exclude_dirs=exclude_dirs,
         include_exclusive=include_exclusive,
+        resource_refresher=McpResourceRefresher(),
     )
 
     start_time = datetime.now()
