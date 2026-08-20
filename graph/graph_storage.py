@@ -64,13 +64,15 @@ def edge_confidence(edge_data: dict, edge_type: "str | None" = None) -> "float |
     :meth:`CodeGraphStorage.get_neighbors` (traversal), which maps ``None`` to
     ``1.0`` (permissive — never silently prune). Two other layers apply this
     same "unknown" policy but do not call this function directly, because
-    they read from already-decayed display dicts rather than raw
-    ``edge_data``, and doing so would additionally pull in the string-tag
-    mapping below and change their existing ordering (out of scope for a
-    no-op fix — see ``search/relationship_analyzer.py:220,226,483,574``,
-    which defaults bare ``resolver_confidence`` to ``0.5`` and intentionally
-    ignores the ``confidence`` string tag for sort/dedup purposes, and
-    ``mcp_server/tools/result_view.py:275``, which defaults to ``0.0`` so
+    doing so would pull in the string-tag mapping below and change their
+    existing ordering (out of scope for a no-op fix — see
+    ``search/relationship_analyzer.py:220,226,483,574``, which defaults bare
+    ``resolver_confidence`` to ``0.5`` and intentionally ignores the
+    ``confidence`` string tag for sort/dedup purposes — it is read
+    separately and surfaced as ``d["confidence"]``, so folding it into the
+    float here would double-count it and shift every ``exact``-tagged edge
+    from ``0.5`` to ``0.7`` — and ``mcp_server/tools/result_view.py``'s
+    ``_enrich_results_with_top_callers``, which defaults to ``0.0`` so
     unranked callers always sort last). Returning ``None`` for "unknown"
     here — rather than baking in one of those three defaults — is what lets
     each layer keep its own documented policy instead of silently agreeing on

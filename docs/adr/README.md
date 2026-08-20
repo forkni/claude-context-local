@@ -55,6 +55,7 @@ for avoiding re-litigating settled questions.
 | [0047](0047-result-source-strenum.md) | Replace `SearchResult.source`'s bare `str` with a `ResultSource` StrEnum | accepted | 2026-08-19 |
 | [0048](0048-base-searcher-execute-seam.md) | One retrieval seam on `BaseSearcher`: `execute(request)` behind `search(...)` | accepted | 2026-08-19 |
 | [0049](0049-enricher-spec-rows.md) | One spec row per request-scoped result enricher; derive schema, default, plan, and gate | accepted | 2026-08-20 |
+| [0050](0050-per-layer-confidence-unknown-defaults.md) | Decline a shared policy object for the four `resolver_confidence`-unknown defaults | accepted | 2026-08-20 |
 
 ## Adding a new ADR
 
