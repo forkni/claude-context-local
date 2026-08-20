@@ -652,25 +652,34 @@ source = [
     "mcp_server",
     "merkle",
     "search",
-    "tools",
     "utils",
     "evaluation",
 ]
 # core = "sysmon"  # Uncomment for ~3x faster coverage on Python 3.12+
+# "tools" removed from source= (Phase 13.1, 2026-08-20): tools/ is standalone CLI/batch
+# scripts, not shipped library code -- codecov.yml already excludes tools/** from its patch
+# gate (ignore: ["tools/**"]), and this whole-repo floor now agrees with that scope instead of
+# contradicting it. Reverts the Phase 11.3 scope decision. See the fail_under comment below for
+# the honest re-baseline this produced.
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 73  # Re-baselined 2026-08-04: 75.03% measured at 5762 passed, 1 skipped, 3
-# pre-existing failures (unrelated to coverage scope, see tests/TESTING_GUIDE.md), CI-shaped
-# suite (tests/ --ignore=tests/slow_integration, --extra test --extra callgraph --extra otel
-# --extra gpu, branch coverage). Dropped from the prior 83.52%/fail_under=81 baseline because
-# that measurement predates "tools" being added to source= above (Phase 11.3): 7 of the 9
-# tools/ files are untested CLI/batch scripts at 0% coverage (~4.5k lines), honestly dragging
-# the aggregate down now that they are actually counted instead of silently excluded. This is
-# a coarse soft-floor tripwire; the real per-PR gate is Codecov's `patch` target in
-# codecov.yml (blocking on changed-line coverage, not this whole-repo number) — codecov.yml
-# also excludes tools/** from that gate, so this whole-repo floor is the only place tools/'s
-# coverage is tracked at all.
+fail_under = 83  # Re-scoped 2026-08-20 (Phase 13.1): "tools" dropped from [tool.coverage.run]
+# source= above (see that comment). This is a pure denominator correction, not an earned ratchet
+# -- the same code is tested to exactly the same degree before and after; only the statement
+# count in the denominator changed (19,861 -> 17,451 measured). The prior fail_under=73 was set
+# against a run that included tools/ (76.24% measured 2026-08-05, now 149 commits stale).
+# Re-measured fresh, CI-shaped (--ignore=tests/slow_integration/ -m "not slow" -n auto
+# --dist loadfile --cov --cov-branch), clean run (6279 passed, 1 skipped, 5 subtests passed, 0
+# failures): 85.63%. A same-command first attempt showed 76.11% with 1 failure -- a worker
+# ('gw10') crashed on a CUDA mem_get_info call mid-integration-test under -n auto and its entire
+# loadfile group's coverage data was silently discarded ("coverage: failed workers"), not just
+# the one test; a clean re-run reproduced 0 failures at 85.63%, confirming the crash was a
+# transient parallel-worker resource-contention flake, not a logic bug. fail_under=83 keeps the
+# same ~2pp safety margin below the measured number as the existing 75.03%->73 / 83.52%->81
+# precedents (see tests/TESTING_GUIDE.md "Measuring and gating coverage").
+# This is a coarse soft-floor tripwire; the real per-PR gate is Codecov's `patch` target in
+# codecov.yml (blocking on changed-line coverage, not this whole-repo number).
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",
