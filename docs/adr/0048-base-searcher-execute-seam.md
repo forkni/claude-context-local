@@ -36,8 +36,11 @@ Split the seam from the convenience. `BaseSearcher` gains an abstract `execute`:
 @abstractmethod
 def execute(self, request: RetrievalRequest) -> list[SearchResult]: ...
 
+
 def search(self, query, k=..., *, config=None, **overrides) -> list[SearchResult]:
-    return self.execute(RetrievalRequest.build(query, k, config or get_search_config(), **overrides))
+    return self.execute(
+        RetrievalRequest.build(query, k, config or get_search_config(), **overrides)
+    )
 ```
 
 - `execute` is the seam: one signature, two real adapters (`HybridSearcher`, `IntelligentSearcher`),
