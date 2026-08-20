@@ -131,14 +131,7 @@ class IndexWriteStage:
             )
 
         # Add all embeddings to index at once
-        if all_embedding_results:
-            logger.info(f"Adding {len(all_embedding_results)} embeddings to index")
-            self._indexer.add_embeddings(all_embedding_results)
-            logger.info("Successfully added embeddings to index")
-        else:
-            logger.warning("No embedding results to add to index")
-
-        chunks_added = len(all_embedding_results)
+        chunks_added = self.add_to_index(all_embedding_results)
 
         # Inject cross-module call edges from the resolver pipeline.
         # Must run after add_embeddings (graph populated) and before
@@ -165,6 +158,35 @@ class IndexWriteStage:
             call_edges_injected=injection_stats.injected,
             call_edge_resolvers=injection_stats.resolvers_run,
         )
+
+    def add_to_index(
+        self,
+        embedding_results: list[Any],
+        *,
+        log_prefix: str = "",
+    ) -> int:
+        """Add embedding results to the index; return the count added.
+
+        Owns the single ``add_embeddings`` write for both index passes: the
+        full path (:meth:`run`) and the incremental path
+        (``IncrementalIndexer._add_new_chunks``). The empty-input warning is
+        full-path semantics — an incremental pass with nothing new to add
+        guards at the call site instead of calling this with an empty list.
+
+        Args:
+            embedding_results: Batched embedding results to add.
+            log_prefix: Log-line prefix (e.g. ``"[INCREMENTAL] "``); empty
+                for the full-index pass.
+        """
+        if embedding_results:
+            logger.info(
+                f"{log_prefix}Adding {len(embedding_results)} embeddings to index"
+            )
+            self._indexer.add_embeddings(embedding_results)
+            logger.info(f"{log_prefix}Successfully added embeddings to index")
+        else:
+            logger.warning(f"{log_prefix}No embedding results to add to index")
+        return len(embedding_results)
 
     def finalize(
         self,

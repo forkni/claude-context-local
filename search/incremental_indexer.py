@@ -1118,17 +1118,15 @@ class IncrementalIndexer:
                 chunks_to_embed, project_name, cache_full_pass=False
             )
 
-        # Add all embeddings to index at once
+        # Add all embeddings to index at once, through the shared write seam.
+        # Guarded here rather than inside add_to_index: an incremental pass
+        # with only removals legitimately adds nothing, so the empty-input
+        # warning would be noise on this path.
         if all_embedding_results:
-            logger.info(
-                f"[INCREMENTAL] Adding {len(all_embedding_results)} embeddings to index"
-            )
             logger.info(f"[INCREMENTAL] Indexer type: {type(self.indexer).__name__}")
-
-            # Add embeddings
-            self.indexer.add_embeddings(all_embedding_results)
-
-            logger.info("[INCREMENTAL] Successfully added embeddings")
+            self._index_write_stage.add_to_index(
+                all_embedding_results, log_prefix="[INCREMENTAL] "
+            )
 
         return len(all_embedding_results)
 
