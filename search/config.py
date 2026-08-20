@@ -158,29 +158,35 @@ class EmbeddingConfig:
     enable_import_context: bool = field(
         default=True,  # Include import statements in embeddings
         metadata=spec(
-            flat_alias="enable_import_context", reader="embeddings/embedder.py"
+            flat_alias="enable_import_context",
+            reader="embeddings/document_composer.py",
         ),
     )
     enable_class_context: bool = field(
         default=True,  # Include parent class signature for methods
         metadata=spec(
-            flat_alias="enable_class_context", reader="embeddings/embedder.py"
+            flat_alias="enable_class_context",
+            reader="embeddings/document_composer.py",
         ),
     )
     max_import_lines: int = field(
         default=25,  # Maximum import lines to extract
-        metadata=spec(flat_alias="max_import_lines", reader="embeddings/embedder.py"),
+        metadata=spec(
+            flat_alias="max_import_lines", reader="embeddings/document_composer.py"
+        ),
     )
     max_class_signature_lines: int = field(
         default=20,  # Maximum lines for class signature
         metadata=spec(
-            flat_alias="max_class_signature_lines", reader="embeddings/embedder.py"
+            flat_alias="max_class_signature_lines",
+            reader="embeddings/document_composer.py",
         ),
     )
     enable_structural_header: bool = field(
         default=True,  # Prepend file path + chunk type + qualified name
         metadata=spec(
-            flat_alias="enable_structural_header", reader="embeddings/embedder.py"
+            flat_alias="enable_structural_header",
+            reader="embeddings/document_composer.py",
         ),
     )
 

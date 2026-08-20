@@ -28,6 +28,10 @@ from rich.progress import (
 from chunking.python_ast_chunker import CodeChunk
 from embeddings.chunk_cache import ChunkEmbeddingCache
 from embeddings.chunk_metadata import ChunkMetadata
+from embeddings.document_composer import (
+    EmbeddingDocumentComposer,
+    EmbeddingDocumentPolicy,
+)
 from embeddings.model_cache import ModelCacheManager
 from embeddings.model_loader import ModelLoader
 from embeddings.query_cache import QueryEmbeddingCache
@@ -495,18 +499,21 @@ class CodeEmbedder:
     """
 
     def __new__(cls, *args, **kwargs) -> "CodeEmbedder":
-        """Pre-create the lifecycle lock before __init__ runs.
+        """Pre-create the lifecycle lock and document composer before __init__ runs.
 
         This is a lock-init hook, NOT a singleton pattern — every call
         returns a fresh instance. It exists so __new__-only construction
         paths (test mocks, unpickling) that skip __init__ still end up with
-        a functional ``_lifecycle_lock``, since the many
-        ``with self._lifecycle_lock:`` sites throughout this class assume
-        it is always present.
+        a functional ``_lifecycle_lock`` and a working ``_document_composer``,
+        since the many ``with self._lifecycle_lock:`` sites throughout this
+        class — and ``create_embedding_content`` — assume both are always
+        present.
         """
         instance = super().__new__(cls)
         # pyrefly: ignore [missing-attribute]
         instance._lifecycle_lock = threading.RLock()
+        # pyrefly: ignore [missing-attribute]
+        instance._document_composer = EmbeddingDocumentComposer()
         return instance
 
     def __init__(
@@ -561,19 +568,9 @@ class CodeEmbedder:
         # Track per-model VRAM usage
         self._model_vram_usage: dict[str, float] = {}  # model_name -> VRAM MB
 
-        # File-content cache for _get_class_signature (#50).
-        # Avoids O(chunks × filesize) repeated re-reads when many methods share a file.
-        # Maps file_path → (mtime, full_file_content); invalidated on mtime change.
-        self._class_file_cache: dict[str, tuple[float, str]] = {}
-        # Derived-result caches for _extract_import_context (I2) and
-        # _get_class_signature (I2b): the splitlines()/regex work over
-        # _class_file_cache's cached content is itself identical per file
-        # (import context) or per (file, parent class) (class signature) across
-        # every chunk that shares it — memoizing collapses O(chunks) redundant
-        # CPU to O(files) / O(classes). Invalidated on mtime change, same as
-        # _class_file_cache.
-        self._import_ctx_cache: dict[str, tuple[float | None, int, str]] = {}
-        self._class_sig_cache: dict[tuple[str, str], tuple[float | None, int, str]] = {}
+        # Document-composition caches (file content, import context, class
+        # signature) live on self._document_composer (embeddings/document_composer.py),
+        # constructed in __new__ so __new__-only test paths get one too.
         # Removed: logging.basicConfig(level=INFO) — library code must not
         # mutate the root logger; it fights the MCP server's dual-handler
         # setup and overrides any earlier basicConfig call (#37).
@@ -745,172 +742,6 @@ class CodeEmbedder:
         # Sync VRAM usage tracking from ModelLoader
         self._model_vram_usage.update(self._model_loader.model_vram_usage)
 
-    def _read_source_cached(self, file_path: str) -> tuple[str, float | None]:
-        """Read a source file's full content, cached by mtime (#50 / I1).
-
-        Shared by `_extract_import_context` and `_get_class_signature` so a
-        file with N chunks is opened once per index run instead of N times —
-        each used to open the same file separately (O(chunks x filesize)).
-        Cache key is file_path; invalidated when mtime changes.
-
-        Returns ``(content, mtime)``. Callers that memoize their own derived
-        result per file (I2 / I2b) validate against this same mtime, so no
-        second ``stat()`` call is needed.
-
-        Raises whatever `open()`/`.read()` raise (OSError, UnicodeDecodeError);
-        callers handle those themselves so each keeps its own log message.
-        """
-        # getattr: tests that use __new__ (no __init__) won't have _class_file_cache.
-        _file_cache: dict[str, tuple[float, str]] | None = getattr(
-            self, "_class_file_cache", None
-        )
-        cached_mtime, content = (
-            _file_cache.get(file_path, (None, None))
-            if _file_cache is not None
-            else (None, None)
-        )
-        try:
-            current_mtime = Path(file_path).stat().st_mtime
-        except OSError:
-            current_mtime = None
-
-        if content is None or cached_mtime != current_mtime:
-            with open(file_path, encoding="utf-8") as f:
-                content = f.read()
-            if _file_cache is not None and current_mtime is not None:
-                _file_cache[file_path] = (current_mtime, content)
-
-        return content, current_mtime
-
-    def _extract_import_context(self, file_path: str, max_imports: int = 10) -> str:
-        """Extract first N import statements from file header.
-
-        Args:
-            file_path: Absolute path to the source file
-            max_imports: Maximum number of import lines to extract
-
-        Returns:
-            String containing import statements, or empty string if none found
-        """
-        try:
-            content, mtime = self._read_source_cached(file_path)
-        except (OSError, UnicodeDecodeError) as e:
-            self._logger.debug(
-                f"Failed to extract import context from {file_path}: {e}"
-            )
-            return ""
-
-        # I2: the scan below is identical for every chunk in the same file at
-        # the same max_imports setting — memoize it so a file with N chunks
-        # scans once instead of N times (getattr guards __new__ test instances,
-        # mirroring _read_source_cached's own guard).
-        _ctx_cache: dict[str, tuple[float | None, int, str]] | None = getattr(
-            self, "_import_ctx_cache", None
-        )
-        if _ctx_cache is not None:
-            cached = _ctx_cache.get(file_path)
-            if cached is not None and cached[0] == mtime and cached[1] == max_imports:
-                return cached[2]
-
-        lines = []
-        for line in content.splitlines():
-            stripped = line.strip()
-            # Collect import statements
-            if stripped.startswith(("import ", "from ")):
-                lines.append(line.rstrip())
-                if len(lines) >= max_imports:
-                    break
-            # Stop at first non-import, non-comment, non-blank line
-            elif (
-                stripped
-                and not stripped.startswith("#")
-                and not stripped.startswith('"""')
-                and not stripped.startswith("'''")
-            ):
-                # Check if we've already collected imports
-                if lines:
-                    break
-                # Otherwise keep scanning (might have docstring before imports)
-        result = "\n".join(lines)
-        if _ctx_cache is not None:
-            _ctx_cache[file_path] = (mtime, max_imports, result)
-        return result
-
-    def _get_class_signature(self, chunk: CodeChunk, max_lines: int = 5) -> str:
-        """Extract parent class signature (header + docstring) for method chunks.
-
-        Args:
-            chunk: CodeChunk with chunk_type='method' and parent_name set
-            max_lines: Maximum number of lines to extract from class definition
-
-        Returns:
-            String containing class signature, or empty string if not a method
-        """
-        # Only applicable to methods
-        if chunk.chunk_type != "method" or not chunk.parent_name:
-            return ""
-
-        try:
-            import re
-
-            # Shared with _extract_import_context (#50 / I1): avoids re-reading
-            # the same file for every method chunk in it (O(chunks × filesize) → O(files)).
-            content, mtime = self._read_source_cached(chunk.file_path)
-
-            # I2b: the regex search + signature extraction below is identical
-            # for every sibling method of the same parent class — memoize per
-            # (file, parent_name) so N methods do it once instead of N times.
-            _sig_cache: dict[tuple[str, str], tuple[float | None, int, str]] | None = (
-                getattr(self, "_class_sig_cache", None)
-            )
-            cache_key = (chunk.file_path, chunk.parent_name)
-            if _sig_cache is not None:
-                cached = _sig_cache.get(cache_key)
-                if cached is not None and cached[0] == mtime and cached[1] == max_lines:
-                    return cached[2]
-
-            # Find class definition containing this method
-            # Pattern: "class ClassName" or "class ClassName(BaseClass)"
-            class_pattern = rf"^class\s+{re.escape(chunk.parent_name)}\s*[\(:]"
-
-            match = re.search(class_pattern, content, re.MULTILINE)
-            if not match:
-                if _sig_cache is not None:
-                    _sig_cache[cache_key] = (mtime, max_lines, "")
-                return ""
-
-            # Extract class header + first few lines (likely docstring)
-            start = match.start()
-            lines = content[start:].split("\n")[:max_lines]
-            signature = "\n".join(lines).strip()
-
-            # Clean up: if docstring is incomplete, truncate at opening quote
-            if '"""' in signature or "'''" in signature:
-                # Find first opening quote
-                first_quote_idx = min(
-                    signature.find('"""') if '"""' in signature else len(signature),
-                    signature.find("'''") if "'''" in signature else len(signature),
-                )
-                # Find matching closing quote
-                if '"""' in signature[first_quote_idx:]:
-                    close_idx = signature.find('"""', first_quote_idx + 3)
-                    if close_idx != -1:
-                        signature = signature[: close_idx + 3]
-                elif "'''" in signature[first_quote_idx:]:
-                    close_idx = signature.find("'''", first_quote_idx + 3)
-                    if close_idx != -1:
-                        signature = signature[: close_idx + 3]
-
-            if _sig_cache is not None:
-                _sig_cache[cache_key] = (mtime, max_lines, signature)
-            return signature
-
-        except (OSError, UnicodeDecodeError) as e:
-            self._logger.debug(
-                f"Failed to extract class signature for {chunk.parent_name}: {e}"
-            )
-            return ""
-
     def create_embedding_content(self, chunk: CodeChunk, max_chars: int = 6000) -> str:
         """Create clean content for embedding generation with size limits.
 
@@ -923,129 +754,19 @@ class CodeEmbedder:
         - enable_class_context (bool, default: True)
         - max_import_lines (int, default: 10)
         - max_class_signature_lines (int, default: 5)
-        """
-        # Prepare clean content without fabricated headers
-        content_parts = []
 
+        Fetches the live config and builds an ``EmbeddingDocumentPolicy``;
+        the actual composition (structural header, import/class context,
+        docstring, budget/truncation) is model-free and lives in
+        ``embeddings.document_composer.EmbeddingDocumentComposer.compose``.
+        """
         try:
-            config = get_search_config()
-            enable_import_ctx = config.embedding.enable_import_context
-            enable_class_ctx = config.embedding.enable_class_context
-            max_import_lines = config.embedding.max_import_lines
-            max_class_sig_lines = config.embedding.max_class_signature_lines
-            enable_structural_header = config.embedding.enable_structural_header
+            policy = EmbeddingDocumentPolicy.from_config(get_search_config())
         except Exception as e:  # noqa: BLE001 - parse-recovery: context config unavailable, use defaults
             self._logger.debug(f"Failed to load context config, using defaults: {e}")
-            # Fallback to defaults
-            enable_import_ctx = True
-            enable_class_ctx = True
-            max_import_lines = 10
-            max_class_sig_lines = 5
-            enable_structural_header = True
-
-        # NEW (v0.9.0): Structural header for module/name/type disambiguation
-        if enable_structural_header:
-            header_parts = []
-            # Add file path for module context
-            if hasattr(chunk, "relative_path") and chunk.relative_path:
-                header_parts.append(chunk.relative_path)
-
-            # Add chunk type + qualified name (ClassName.method_name or function_name)
-            type_name = ""
-            if chunk.chunk_type:
-                type_name = chunk.chunk_type
-            if chunk.parent_name and chunk.name:
-                type_name += f" {chunk.parent_name}.{chunk.name}"
-            elif chunk.name:
-                type_name += f" {chunk.name}"
-
-            if type_name:
-                header_parts.append(type_name.strip())
-
-            # Prepend structural header line if any parts exist
-            if header_parts:
-                content_parts.append(f"# {' | '.join(header_parts)}")
-
-        # NEW: Add import context from file header (if enabled and available)
-        if enable_import_ctx:
-            import_context = self._extract_import_context(
-                chunk.file_path, max_imports=max_import_lines
-            )
-            if import_context:
-                content_parts.append(f"# Imports:\n{import_context}\n")
-
-        # NEW: Add class context for methods (skeleton approach, if enabled)
-        if enable_class_ctx:
-            class_context = self._get_class_signature(
-                chunk, max_lines=max_class_sig_lines
-            )
-            if class_context:
-                content_parts.append(f"# Parent class:\n{class_context}\n")
-
-        # Add docstring if available (important context for code understanding)
-        docstring_budget = 300
-        if chunk.docstring:
-            # Keep docstring but limit length to stay within token budget
-            docstring = (
-                chunk.docstring[:docstring_budget] + "..."
-                if len(chunk.docstring) > docstring_budget
-                else chunk.docstring
-            )
-            content_parts.append(f'"""{docstring}"""')
-
-        # Calculate remaining budget for code content
-        # Account for import context, class context, and docstring
-        context_len = sum(len(part) for part in content_parts)
-        remaining_budget = max_chars - context_len - 10  # small buffer
-
-        # Add the actual code content, truncating if necessary
-        if len(chunk.content) <= remaining_budget:
-            content_parts.append(chunk.content)
-        else:
-            # Smart truncation: try to keep function signature and important parts
-            lines = chunk.content.split("\n")
-            if len(lines) > 3:
-                # Keep first few lines (signature) and last few lines (return/conclusion)
-                head_lines = []
-                tail_lines = []
-                current_length = context_len
-
-                # Add head lines (function signature, early logic)
-                for _i, line in enumerate(lines[: min(len(lines) // 2, 20)]):
-                    if current_length + len(line) + 1 > remaining_budget * 0.7:
-                        break
-                    head_lines.append(line)
-                    current_length += len(line) + 1
-
-                # Add tail lines (return statements, conclusions) if space remains
-                remaining_space = (
-                    remaining_budget - current_length - 20
-                )  # buffer for "..."
-                for line in reversed(lines[-min(len(lines) // 3, 10) :]):
-                    if len("\n".join(tail_lines)) + len(line) + 1 > remaining_space:
-                        break
-                    tail_lines.insert(0, line)
-
-                if tail_lines:
-                    truncated_content = (
-                        "\n".join(head_lines)
-                        + "\n    # ... (truncated) ...\n"
-                        + "\n".join(tail_lines)
-                    )
-                else:
-                    truncated_content = (
-                        "\n".join(head_lines) + "\n    # ... (truncated) ..."
-                    )
-                content_parts.append(truncated_content)
-            else:
-                # For short chunks, just truncate at character limit
-                content_parts.append(
-                    chunk.content[:remaining_budget] + "..."
-                    if len(chunk.content) > remaining_budget
-                    else chunk.content
-                )
-
-        return "\n".join(content_parts)
+            policy = EmbeddingDocumentPolicy()
+        # pyrefly: ignore [missing-attribute]
+        return self._document_composer.compose(chunk, policy, max_chars=max_chars)
 
     @staticmethod
     def _build_chunk_id(chunk: CodeChunk) -> str:
