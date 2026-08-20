@@ -416,30 +416,21 @@ class SearchOrchestrator:
         )
 
         # ===== Block D: Search execution =====
-        # Genuine polymorphic dispatch (HybridSearcher.search vs
-        # IntelligentSearcher.search take different kwargs) — not folded into
-        # the is_hybrid block above; see Phase 2 scope note.
-        if _view.is_hybrid:
-            results = await asyncio.to_thread(
-                searcher.search,
-                query=plan.query,
-                k=plan.k,
-                search_mode=actual_search_mode,
-                min_bm25_score=effective_config.search_mode.min_bm25_score,
-                use_parallel=get_config().performance.use_parallel_search,
-                filters=filters if filters else None,
-                config=effective_config,
-            )
-        else:
-            context_depth = 1 if plan.include_context else 0
-            results = await asyncio.to_thread(
-                searcher.search,
-                query=plan.query,
-                k=plan.k,
-                search_mode=actual_search_mode,
-                context_depth=context_depth,
-                filters=filters if filters else None,
-            )
+        # HybridSearcher.execute ignores context_depth; IntelligentSearcher.execute
+        # ignores min_bm25_score/use_parallel/config (see ADR-0048) — one call
+        # site works for both adapters via BaseSearcher.search -> execute.
+        context_depth = 1 if plan.include_context else 0
+        results = await asyncio.to_thread(
+            searcher.search,
+            query=plan.query,
+            k=plan.k,
+            search_mode=actual_search_mode,
+            min_bm25_score=effective_config.search_mode.min_bm25_score,
+            use_parallel=get_config().performance.use_parallel_search,
+            filters=filters if filters else None,
+            config=effective_config,
+            context_depth=context_depth,
+        )
 
         index_manager = SearcherView(searcher).index_manager
         return ExecutionOutcome(

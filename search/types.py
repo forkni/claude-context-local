@@ -155,6 +155,69 @@ class RetrievalRequest:
     filters: dict[str, Any] | None
     config: SearchConfig
 
+    # Context-chunk expansion depth. Only IntelligentSearcher.execute reads
+    # this today (HybridSearcher.execute ignores it, same as it always has)
+    # — see ADR-0048. Defaulted so every existing keyword-only constructor
+    # call site needs no edit.
+    context_depth: int = 1
+
+    @classmethod
+    def build(
+        cls,
+        query: str,
+        k: int,
+        config: SearchConfig,
+        *,
+        search_mode: str | SearchMode,
+        bm25_weight: float | None = None,
+        dense_weight: float | None = None,
+        min_bm25_score: float = 0.0,
+        use_parallel: bool = True,
+        filters: dict[str, Any] | None = None,
+        context_depth: int = 1,
+    ) -> RetrievalRequest:
+        """Resolve every field from explicit overrides + config, in one place.
+
+        Mirrors HybridSearcher.search's historical inline resolution
+        verbatim (ADR-0048): an unrecognized ``search_mode`` string falls
+        back to hybrid, and ``None`` weights fall back to
+        ``config.search_mode``. ``min_bm25_score``'s own default here stays
+        the historical literal ``0.0`` -- not config's ``0.1`` -- so this
+        method is a pure refactor; BaseSearcher.search always supplies
+        ``search_mode`` (via its subclass's ``_DEFAULT_SEARCH_MODE``), so it
+        has no default of its own.
+
+        ``SearchMode`` is imported locally, not at module scope, so this
+        module carries no runtime dependency on ``search/config.py``.
+        """
+        from search.config import SearchMode as _SearchMode
+
+        try:
+            normalized_mode = _SearchMode(search_mode)
+        except ValueError:
+            normalized_mode = _SearchMode.HYBRID
+
+        return cls(
+            query=query,
+            k=k,
+            search_mode=normalized_mode,
+            bm25_weight=(
+                bm25_weight
+                if bm25_weight is not None
+                else config.search_mode.bm25_weight
+            ),
+            dense_weight=(
+                dense_weight
+                if dense_weight is not None
+                else config.search_mode.dense_weight
+            ),
+            min_bm25_score=min_bm25_score,
+            use_parallel=use_parallel,
+            filters=filters,
+            config=config,
+            context_depth=context_depth,
+        )
+
 
 # The 23 relationship buckets ImpactReport.to_dict() has always emitted, in
 # their original order. Kept fixed (not derived) so any consumer relying on

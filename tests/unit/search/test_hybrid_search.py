@@ -187,7 +187,7 @@ class TestHybridSearcher:
 
         with (
             patch(
-                "search.hybrid_searcher.get_search_config",
+                "search.config.get_search_config",
                 return_value=live_config,
             ),
             patch.object(searcher, "_single_hop_search", side_effect=fake_single_hop),
@@ -1196,7 +1196,7 @@ class TestSearchTailDedup:
         )
         with (
             patch(
-                "search.hybrid_searcher.get_search_config",
+                "search.config.get_search_config",
                 return_value=config,
             ),
             patch.object(
@@ -1219,7 +1219,7 @@ class TestSearchTailDedup:
         )
         with (
             patch(
-                "search.hybrid_searcher.get_search_config",
+                "search.config.get_search_config",
                 return_value=config,
             ),
             patch.object(
@@ -1292,7 +1292,7 @@ class TestSinglePassTailRerank:
         searcher.reranking_engine = engine
         with (
             patch(
-                "search.hybrid_searcher.get_search_config",
+                "search.config.get_search_config",
                 return_value=config,
             ),
             patch.object(searcher, "_single_hop_search", return_value=self._results()),
@@ -1318,7 +1318,7 @@ class TestSinglePassTailRerank:
         searcher.reranking_engine = engine
         with (
             patch(
-                "search.hybrid_searcher.get_search_config",
+                "search.config.get_search_config",
                 return_value=config,
             ),
             patch.object(searcher, "_single_hop_search", return_value=self._results()),
@@ -1410,7 +1410,7 @@ class TestEgoOutputBounding:
         )
         mixed = self._mixed_results()
         with (
-            patch("search.hybrid_searcher.get_search_config", return_value=config),
+            patch("search.config.get_search_config", return_value=config),
             patch.object(searcher, "_single_hop_search", return_value=mixed),
         ):
             results = searcher.search("query", k=10)
@@ -1427,7 +1427,7 @@ class TestEgoOutputBounding:
             mock_bm25, mock_dense, drop=True
         )
         with (
-            patch("search.hybrid_searcher.get_search_config", return_value=config),
+            patch("search.config.get_search_config", return_value=config),
             patch.object(
                 searcher, "_single_hop_search", return_value=self._mixed_results()
             ),
@@ -1555,7 +1555,7 @@ class TestCaptureQueryText:
 
         with (
             patch(
-                "search.hybrid_searcher.get_search_config",
+                "search.config.get_search_config",
                 return_value=config,
             ),
             patch.object(searcher, "_single_hop_search", return_value=[]),
