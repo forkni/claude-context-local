@@ -37,19 +37,19 @@ dependencies = [
     "mcp>=2,<3",  # v2: migrated to the SDK v2 API (decorator->constructor-kwarg handlers, see ADR-0017). Security: carries forward 1.28.1's CVE-2026-52869/52870 (session-routing auth bypass), CVE-2026-59950 (WebSocket Host/Origin validation) fixes
     "msgpack>=1.2.1",  # Security: GHSA-6v7p-g79w-8964 (SEGV on repeated unpack after error)
     "networkx>=3.0",  # Required for graph storage and community detection
-    "nltk>=3.10.2",  # Security: Fixes CVE-2025-14009 (path traversal in downloader), CVE-2026-54293 (URL-encoded path traversal in nltk.data.load()), and takes 3.9.4 out of CVE-2026-12243's affected range
+    "nltk>=3.10.3",  # Security: Fixes CVE-2025-14009 (path traversal in downloader), CVE-2026-54293 (URL-encoded path traversal in nltk.data.load()), and takes 3.9.4 out of CVE-2026-12243's affected range
     "psutil>=7.2.1",
     "pydantic-settings>=2.14.2",  # Security: GHSA-4xgf-cpjx-pc3j (symlink follow in secrets_dir)
     "pygments>=2.20.0",  # Security: CVE-2026-4539 (ReDoS in AdlLexer)
     "pyjwt>=2.13.0",  # Security: 9 CVEs incl CVE-2026-32597 crit-header, CVE-2026-48522..48526
-    "python-dotenv>=1.2.2",  # Security: Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)
+    "python-dotenv>=1.2.3",  # Security: Fixes CVE-2026-28684 (symlink follow in set_key/unset_key)
     "python-multipart>=0.0.32",  # Security: CVE-2026-40347/42561/53538/53539/53540 (multipart DoS)
     "rank-bm25>=0.2.2",
     "requests>=2.34.2",  # Security: CVE-2026-25645 (predictable temp filename in extract_zipped_paths)
     "rich>=14.3.3",
     "sentence-transformers>=5.7.0",
     "sqlitedict>=2.1.0",
-    "starlette>=1.4.1",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
+    "starlette>=1.6.0",  # Security: Fixes PYSEC-2026-161 (1.0.1), CVE-2026-48817/48818 (1.1.0), CVE-2026-54282 (1.3.0), CVE-2026-54283 (1.3.1)
     "tiktoken>=0.12.0",
     "torch>=2.11.0,<2.12.0",  # Security: 2.11.0 closes 7 of 8 tracked CVEs incl. CVE-2025-3001/CVE-2026-24747 weights_only unpickler bypasses and CVE-2026-4538 (pt2 loader deserialization, PYSEC-2026-139, last_affected=2.10.0 per OSV) (2026-08-06). Old <2.9.0 ceiling's "ModernBERT torch.compile" rationale lapsed: the GTE-ModernBERT embedder it protected was deleted in 24f6b8c, and transformers>=5.3.0 removed ModernBERT's reference_compile path entirely.
     "transformers>=5.14.1,<6",  # Security: >=5.3.0 fixes CVE-2026-4372 (config.json RCE) & CVE-2026-1839 (Trainer RCE); <6 pre-major.
@@ -106,15 +106,15 @@ test = [
     "syrupy>=4.0.0",             # Phase 4: snapshot/golden-file regression testing
 ]
 dev = [
-    "ruff>=0.15.20",
+    "ruff>=0.16.3",
     "pip-audit>=2.10.1",
     "pip-licenses>=5.5.5",
     "pipdeptree>=4.2.0",  # 4.0.0 replaced the Python engine with a Rust extension (nab-python); --json/-o json output verified schema-identical, safe to float
-    "pre-commit>=4.6.0",
+    "pre-commit>=4.6.2",
     "pyrefly>=1.2.0",
     "mutmut>=3.7.0",  # Phase 4.2: mutation testing; run periodically, not per-commit (Linux CI only)
     "cosmic-ray>=8.4",  # Phase 4.2: mutation testing; local cross-platform runner
-    "gitpython>=3.1.58",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
+    "gitpython>=3.1.59",  # Security: transitive via cosmic-ray. Fixes 8 argument-injection CVEs (GHSA-2f96/v396/956x @3.1.51, 3rp5 @3.1.53, fjr4/6p8h/r9mr @3.1.54, 94p4 @3.1.55)
     "deptry>=0.25.1",  # /deps-audit Phase 1.7: dependency-usage hygiene check; declared to match what summarize_audit.py installs into this venv
 ]
 gpu = [
@@ -153,7 +153,53 @@ evaluation = ["*.json", "*.md"]
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
-# Last audit: 2026-08-06 (ML stack bump — closes the retrieval-library and torch holds from
+# Last audit: 2026-08-20 (`/deps-audit` — 177 packages, pip check clean throughout. First scan
+#             printed "[WARN] OSV fallback pass failed" and silently left torch 2.11.0+cu128
+#             unaudited (2 vulnerable packages / 3 CVEs, CVE-2025-3000 dropped with no
+#             indication why) — the local-only tools/summarize_audit.py's run_osv_fallback()
+#             collapsed timeout / subprocess-error / unparseable-JSON into a bare None, so
+#             main() could only print a contextless warning. Fixed: run_osv_fallback() now
+#             returns an OsvFallbackResult(data, error) NamedTuple distinguishing "no-runner" /
+#             "timeout" / "subprocess-error" / "invalid-json"; the hardcoded 180s subprocess
+#             timeout is now a 600s default exposed via --osv-timeout; one retry on
+#             timeout/transient failure before giving up. 10 new unit tests
+#             (tests/unit/tools/test_summarize_audit.py, gitignored alongside the tool it
+#             covers — importing the local-only module would break collection on any clone/CI
+#             without it on disk). Re-ran with the fix live: torch recovered via the OSV
+#             fallback pass, totals correctly read 3 vulnerable packages / 4 CVEs (setuptools,
+#             sqlitedict, torch). Per-cycle checks: torch CVE-2025-3000 deferral stands — the
+#             pinned cu128 wheel index (download.pytorch.org/whl/cu128/torch/) still tops out
+#             at 2.11.0, reopening condition (>=2.13.0 published) not met; setuptools 81.0.0
+#             (CVE-2026-59890/PYSEC-2026-3447, fix 83.0.0) stays unsatisfiable — torch 2.11.0
+#             and 2.12.0 both declare setuptools<82, only 2.13.0 relaxes it; sqlitedict
+#             CVE-2024-35515 pickle-RCE mitigation re-verified intact
+#             (search/metadata.py:65-81 passes encode=json.dumps/decode=json.loads,
+#             search/indexer.py:127 only import-checks SqliteDict, never instantiates it
+#             against untrusted data). Also corrected a same-file drift: the 2026-08-06 entry
+#             below stated torch 2.11.0's setuptools<82 side effect downgraded the venv from
+#             83.0.0 to "78.1.0" — the actual/lock value (uv.lock, live pip list) has always
+#             been 81.0.0; fixed in place, see the bracketed correction there and
+#             docs/PYTORCH_COMPATIBILITY.md:136. Applied the runtime/security subset (10
+#             packages via `pip install`, batched and unit-tested between batches, then
+#             `uv lock --upgrade-package` to match — pip installs first, lock brought to match,
+#             never the reverse): starlette 1.4.1->1.6.0, httpx2 2.9.1->2.12.0 (also releases
+#             httpcore2 2.9.1->2.12.0 transitively via mcp), uvicorn 0.52.1->0.52.4, nltk
+#             3.10.2->3.10.3, python-dotenv 1.2.2->1.2.3, gitpython 3.1.58->3.1.59, ruff
+#             0.16.1->0.16.3, pre-commit 4.6.1->4.6.2, uv 0.12.2->0.12.5, wheel 0.47.0->0.48.0.
+#             uv and wheel aren't uv.lock-tracked (uv is the tool itself; wheel is an unpinned
+#             [build-system] requirement resolved via PEP 517 isolation), so only the venv
+#             needed updating for those two. Held back deliberately: the 4-package otel
+#             1.43.0->1.44.0 sibling cluster (coordinated move, optional [otel] extra),
+#             sentence-transformers 6.0.0 (major, retrieval path — would invalidate the pinned
+#             deterministic canons without a fresh A/B gate), and the dev-only tail
+#             (basedpyright, cosmic_ray, pipdeptree, virtualenv, stevedore,
+#             nodejs-wheel-binaries, greenlet, SQLAlchemy, tiktoken, pyan3, pydantic-settings,
+#             typing-inspection, python-discovery, nab-python). Tested: full unit suite green
+#             (6160 passed, 1 skipped), pip check clean, CUDA verified intact (2.11.0+cu128,
+#             CUDA 12.8, RTX 4090). No benchmark A/B gate required — none of the 10 packages
+#             touches the retrieval substrate.
+#
+# Previous audit: 2026-08-06 (ML stack bump — closes the retrieval-library and torch holds from
 #             the same-day dep audit below. Two-stage upgrade, each gated on a fresh 63q
 #             intent-on benchmark arm vs. a same-day pre-side baseline (substrate-drift rule,
 #             evaluation/RECALL_CAMPAIGN_CLOSEOUT_20260802.md:72): Stage 1 (retrieval libs) —
@@ -188,9 +234,11 @@ evaluation = ["*.json", "*.md"]
 #             all five paired 95% CIs exactly [+0.0000,+0.0000], byte-identical retrieval outcome;
 #             --deterministic-gpu re-validation again zero RuntimeErrors. Side effect: torch
 #             2.11.0 declares setuptools<82, downgrading the venv's setuptools from 83.0.0 to
-#             78.1.0 — build-time-only exposure (no runtime import of setuptools/pkg_resources in
+#             81.0.0 — build-time-only exposure (no runtime import of setuptools/pkg_resources in
 #             this codebase; [build-system].requires>=83.0.0 still governs actual builds via PEP
-#             517 isolation; pip check clean). See docs/adr/0033-lift-torch-ceiling.md.
+#             517 isolation; pip check clean). See docs/adr/0033-lift-torch-ceiling.md. [Corrected
+#             2026-08-20: this entry originally read "78.1.0" — the actual/lock value has always
+#             been 81.0.0 (uv.lock, live pip list); see the 2026-08-20 audit entry below.]
 #
 # Previous audit: 2026-08-06 (`/deps-audit` — 169 packages, pip check clean throughout. Fixed
 #             tools/summarize_audit.py's silent skip_reason drop for real this time (the

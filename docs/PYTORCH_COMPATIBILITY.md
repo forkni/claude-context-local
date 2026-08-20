@@ -133,7 +133,7 @@ introduced the original `<2.9.0` ceiling, lifted 2026-08-06, see `docs/adr/0033-
   regression. There is no known reason to avoid `2.12.0`+ once the index publishes it; re-check
   each cycle and raise the ceiling opportunistically.
 - **Side effect**: `torch==2.11.0` declares `setuptools<82`, downgrading the venv's installed
-  `setuptools` from `83.0.0` (this project's runtime floor, `CVE-2026-59890`) to `78.1.0`. This
+  `setuptools` from `83.0.0` (this project's runtime floor, `CVE-2026-59890`) to `81.0.0`. This
   is build-time-only exposure — no module in this codebase imports `setuptools`/`pkg_resources`
   at runtime (verified via grep), and `[build-system].requires` still pins `>=83.0.0` for actual
   package builds, which run in a PEP 517 isolated environment unaffected by the venv's installed

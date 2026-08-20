@@ -321,6 +321,9 @@ audit_reports/
 test-audit*.json
 tools/summarize_audit.py
 tools/benchmark_models.py
+# Paired test coverage for the local-only tool above -- tracking it would break
+# collection on any clone/CI that lacks tools/summarize_audit.py on disk.
+tests/unit/tools/test_summarize_audit.py
 
 # Benchmark and ground truth testing tools (local-only)
 tools/update_ground_truth_merge.py
