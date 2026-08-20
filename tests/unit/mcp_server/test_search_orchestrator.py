@@ -749,7 +749,7 @@ class TestApplySourceOrderAndBudget:
             out = SearchOrchestrator._apply_source_order_and_budget(
                 _make_plan(max_context_tokens=0), outcome, list(results)
             )
-        mock_reorder.assert_called_once()
+        mock_reorder.assert_called_once_with(results)
         assert out == list(reversed(results))
 
     def test_source_order_with_reranking_logs_warning(self, caplog):

@@ -1581,7 +1581,10 @@ async def test_handle_delete_project_adds_to_cleanup_queue(tmp_path):
                 )
 
                 # Verify cleanup queue was used
-                mock_queue.add.assert_called_once()
+                mock_queue.add.assert_called_once_with(
+                    str(model_dir),
+                    f"{model_dir.name}: File locked - File is locked",
+                )
 
     assert result["success"] is False
     assert len(result.get("errors", [])) == 1

@@ -72,7 +72,7 @@ class TestBatchOperations(TestCase):
         # Verify
         self.assertEqual(result, 2)  # Should remove 2 chunks from file1.py
         self.mock_faiss_index.clear.assert_called_once()
-        self.mock_faiss_index.create.assert_called_once()
+        self.mock_faiss_index.create.assert_called_once_with(768, "flat")
         self.mock_metadata_store.delete.assert_called()
 
     def test_remove_files_no_matching_chunks(self):
@@ -160,7 +160,7 @@ class TestBatchOperations(TestCase):
 
         # Should clear and recreate index
         self.mock_faiss_index.clear.assert_called_once()
-        self.mock_faiss_index.create.assert_called_once()
+        self.mock_faiss_index.create.assert_called_once_with(768, "flat")
         self.mock_faiss_index.add.assert_called_once()
 
     def test_rebuild_index_without_all_chunks(self):

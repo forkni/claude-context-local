@@ -4,7 +4,7 @@ import dataclasses
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from search.call_edge_injection import InjectionStats
 from search.filters import PathFilter
@@ -160,7 +160,12 @@ class TestIncrementalIndexer:
 
             mock_indexer_class.assert_called_once()
             mock_embedder_class.assert_called_once()
-            mock_chunker_class.assert_called_once()
+            mock_chunker_class.assert_called_once_with(
+                include_dirs=None,
+                exclude_dirs=None,
+                enable_entity_tracking=ANY,
+                include_exclusive=False,
+            )
             # SnapshotManager not called when passed explicitly
             mock_snapshot_class.assert_not_called()
 
@@ -573,7 +578,7 @@ class TestIncrementalIndexer:
         # return value, so that call is already proven by the outcome check
         # below -- only the predicate's cardinality needs a direct assertion.
         assert result == mock_result
-        indexer.needs_reindex.assert_called_once()
+        indexer.needs_reindex.assert_called_once_with(str(self.project_path), 5)
 
     def test_auto_reindex_if_needed_no_reindex(self):
         """Test auto-reindex when no reindexing is needed."""
@@ -592,7 +597,7 @@ class TestIncrementalIndexer:
         assert result.success is True
         assert result.files_added == 0
         assert result.chunks_added == 0
-        indexer.needs_reindex.assert_called_once()
+        indexer.needs_reindex.assert_called_once_with(str(self.project_path), 5)
 
     @patch.object(IncrementalIndexer, "_release_and_verify_resources")
     def test_force_full_reindex(self, mock_release):
@@ -1304,7 +1309,9 @@ class TestIncrementalIndexer:
             result = indexer.incremental_index(str(self.project_path), "test_project")
 
         assert result.success is True
-        self.mock_snapshot_manager.delete_snapshot.assert_called_once()
+        self.mock_snapshot_manager.delete_snapshot.assert_called_once_with(
+            str(self.project_path)
+        )
         self.mock_indexer.clear_index.assert_called_once()
 
     def test_incremental_path_never_applies_dependency_only_guard(self):

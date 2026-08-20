@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
+from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
 from search.graph_integration import GraphIntegration
 
 
@@ -549,7 +550,16 @@ class TestPopulateFromEmbeddings(TestCase):
         )
 
         graph.populate_from_embeddings([result])
-        storage.add_relationship_edge.assert_called_once()
+        storage.add_relationship_edge.assert_called_once_with(
+            RelationshipEdge(
+                source_id="child.py:1-10:class:Child",
+                target_name="Base",
+                relationship_type=RelationshipType.INHERITS,
+                line_number=1,
+                confidence=1.0,
+                metadata={},
+            )
+        )
 
     def test_ambiguous_same_file_preferred(self):
         """When two candidates share a name, the one in the caller's file is preferred."""

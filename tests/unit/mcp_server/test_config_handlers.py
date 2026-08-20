@@ -73,7 +73,9 @@ async def test_configure_search_mode_valid_saves_config(
 
     assert "error" not in result
     assert result.get("success") is True
-    mock_config_manager.save_config.assert_called_once()
+    mock_config_manager.save_config.assert_called_once_with(
+        mock_config_manager.load_config.return_value
+    )
 
 
 @pytest.mark.asyncio
@@ -198,7 +200,9 @@ async def test_configure_reranking_saves_config(mock_config_manager):
 
     assert "error" not in result
     assert result.get("success") is True
-    mock_config_manager.save_config.assert_called_once()
+    mock_config_manager.save_config.assert_called_once_with(
+        mock_config_manager.load_config.return_value
+    )
 
 
 @pytest.mark.asyncio
@@ -351,7 +355,9 @@ async def test_chunking_all_valid_saves_config(mock_config_manager):
 
     assert "error" not in result
     assert result.get("success") is True
-    mock_config_manager.save_config.assert_called_once()
+    mock_config_manager.save_config.assert_called_once_with(
+        mock_config_manager.load_config.return_value
+    )
 
 
 # ============================================================================
