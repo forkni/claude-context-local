@@ -153,9 +153,9 @@ class IncrementalIndexer:
     def _build_write_pipeline(self) -> None:
         """(Re)build the resource-bound write pipeline.
 
-        Call from __init__ and again immediately after _release_and_verify_resources()
-        so IndexWriteStage is always bound to the current self.embedder /
-        self.indexer — never to released objects.
+        Call from __init__ and again immediately after the resource refresher
+        runs in _full_index() so IndexWriteStage is always bound to the
+        current self.embedder / self.indexer — never to released objects.
         """
         self._index_write_stage = IndexWriteStage(
             embedder=self.embedder,
@@ -557,20 +557,6 @@ class IncrementalIndexer:
                     )
             return result
 
-    def _release_and_verify_resources(self, project_path: str) -> None:
-        """Mandatory resource release and verification before full reindex.
-
-        Delegates to self._resource_refresher (search.resource_refresh) —
-        release/verify/reacquire is MCP process-state management, not
-        indexing logic. See ResourceRefresher.refresh_before_full_index's
-        docstring for the step-by-step behaviour.
-        """
-        self.embedder, self.indexer = (
-            self._resource_refresher.refresh_before_full_index(
-                project_path, self.embedder, self.indexer
-            )
-        )
-
     def _full_index(
         self, project_path: str, project_name: str, start_time: float
     ) -> IncrementalIndexResult:
@@ -586,7 +572,11 @@ class IncrementalIndexer:
         """
         try:
             # === MANDATORY: Release resources before full reindex ===
-            self._release_and_verify_resources(project_path)
+            self.embedder, self.indexer = (
+                self._resource_refresher.refresh_before_full_index(
+                    project_path, self.embedder, self.indexer
+                )
+            )
             # Rebind write pipeline to freshly acquired embedder/indexer so the
             # stage never runs against the released (stale) objects.
             self._build_write_pipeline()
@@ -802,12 +792,13 @@ class IncrementalIndexer:
         except Exception as e:
             logger.error(f"Full indexing failed: {e}", exc_info=True)
             # (#reindex-log-audit-2026-07-30) The searcher acquired above (see
-            # _release_and_verify_resources) was built with load_existing=False,
-            # so if this failure happened after construction but before
-            # clear_hybrid_indices()/rebuild completed, state.searcher is an
-            # empty write-only instance. Invalidate it — the compensating
-            # inverse of refresh_before_full_index — so the next call rebuilds
-            # from disk instead of returning an empty cached searcher.
+            # the resource refresher's refresh_before_full_index) was built
+            # with load_existing=False, so if this failure happened after
+            # construction but before clear_hybrid_indices()/rebuild
+            # completed, state.searcher is an empty write-only instance.
+            # Invalidate it — the compensating inverse of
+            # refresh_before_full_index — so the next call rebuilds from
+            # disk instead of returning an empty cached searcher.
             with contextlib.suppress(Exception):  # noqa: BLE001 - best-effort cache invalidation, never mask the original failure
                 self._resource_refresher.invalidate_searcher_cache()
             return self._zero_result(start_time, success=False, error=str(e))

@@ -958,10 +958,10 @@ async def _run_index_directory(arguments: dict[str, Any]) -> dict:
                 _embedder = get_embedder()
                 # load_existing=_incremental (#reindex-log-audit-2026-07-30):
                 # for a force-full reindex (_incremental=False) this searcher
-                # is about to be released and rebuilt by
-                # IncrementalIndexer._release_and_verify_resources() before any
-                # search happens, so loading the stale on-disk BM25 index here
-                # only costs time and logs spurious mismatch warnings.
+                # is about to be released and rebuilt by the resource
+                # refresher's refresh_before_full_index() before any search
+                # happens, so loading the stale on-disk BM25 index here only
+                # costs time and logs spurious mismatch warnings.
                 _searcher = get_searcher(_dir, load_existing=_incremental)
                 _indexer = _searcher if _enable_hybrid else get_index_manager(_dir)
                 return _run_indexing(

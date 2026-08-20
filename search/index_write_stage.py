@@ -293,10 +293,10 @@ class IndexWriteStage:
 
         Resolved lazily here — inside :meth:`run`, never at ``__init__`` —
         for two reasons. First, ``IndexWriteStage`` is rebuilt in
-        ``incremental_indexer.py``'s ``_build_write_pipeline`` after
-        ``_release_and_verify_resources()``, so a cache captured at
-        construction time could outlive that rebind stale; resolving per-run
-        sidesteps that. Second, several existing tests construct
+        ``incremental_indexer.py``'s ``_build_write_pipeline`` after the
+        resource refresher runs, so a cache captured at construction time
+        could outlive that rebind stale; resolving per-run sidesteps that.
+        Second, several existing tests construct
         ``IndexWriteStage(indexer=Mock(), ...)``, so eagerly building a
         ``Path`` from ``storage_dir`` at construction time would raise on a
         ``Mock``.
