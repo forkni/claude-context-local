@@ -2198,10 +2198,11 @@ class TestModuleSummaryInjection:
 
 
 class TestIncrementalCallEdgeInjection:
-    """`inject_on_incremental` (CallGraphConfig) gates whether the incremental
-    path re-runs resolver call-edge injection to counteract the decay
-    `_remove_old_chunks`/`_add_new_chunks` otherwise causes. See
-    `search/call_edge_injection.py` and `IndexWriteStage._inject_call_edges`.
+    """The incremental path delegates call-edge re-injection to
+    `IndexWriteStage.inject_call_edges_if_enabled`, which owns the
+    `inject_on_incremental` gate — gate on/off correctness is covered in
+    test_index_write_stage.py's TestInjectCallEdgesIfEnabled; here we only
+    pin the delegation and the stats threading into the result.
     """
 
     def setup_method(self):
@@ -2225,7 +2226,7 @@ class TestIncrementalCallEdgeInjection:
         )
 
     def _run_incremental_with_changes(
-        self, indexer: IncrementalIndexer, inject_on_incremental: bool
+        self, indexer: IncrementalIndexer
     ) -> IncrementalIndexResult:
         self.mock_snapshot_manager.has_snapshot.return_value = True
 
@@ -2266,42 +2267,19 @@ class TestIncrementalCallEdgeInjection:
             mock_embedding_result,
         ]
 
-        mock_config = Mock()
-        mock_config.call_graph.inject_on_incremental = inject_on_incremental
+        return indexer.incremental_index(str(self.project_path), "test_project")
 
-        with patch(
-            "search.incremental_indexer.get_search_config",
-            return_value=mock_config,
-        ):
-            return indexer.incremental_index(str(self.project_path), "test_project")
-
-    def test_enabled_injects_and_forwards_stats(self):
+    def test_delegates_to_write_stage_and_forwards_stats(self):
         indexer = self._make_indexer()
         sentinel_stats = InjectionStats(injected=7, resolvers_run=("pyan", "libcst"))
         with patch.object(
             indexer._index_write_stage,
-            "_inject_call_edges",
+            "inject_call_edges_if_enabled",
             return_value=sentinel_stats,
         ) as mock_inject:
-            result = self._run_incremental_with_changes(
-                indexer, inject_on_incremental=True
-            )
+            result = self._run_incremental_with_changes(indexer)
 
         assert result.success is True
         mock_inject.assert_called_once_with(str(self.project_path))
         assert result.call_edges_injected == 7
         assert result.call_edge_resolvers == ("pyan", "libcst")
-
-    def test_disabled_by_default_skips_injection(self):
-        indexer = self._make_indexer()
-        with patch.object(
-            indexer._index_write_stage, "_inject_call_edges"
-        ) as mock_inject:
-            result = self._run_incremental_with_changes(
-                indexer, inject_on_incremental=False
-            )
-
-        assert result.success is True
-        mock_inject.assert_not_called()
-        assert result.call_edges_injected == 0
-        assert result.call_edge_resolvers == ()

@@ -1600,12 +1600,12 @@ class CallGraphConfig:
 
     inject_on_incremental: bool = field(
         default=False,
-        metadata=spec(reader="search/incremental_indexer.py"),
+        metadata=spec(reader="search/index_write_stage.py"),
     )
     """Run the resolver-pipeline call-edge injection on incremental passes too.
 
-    Default ``False``: today, only a full-index pass calls
-    ``inject_call_edges`` (via ``IndexWriteStage.run``). Incremental passes
+    Default ``False``: gated in ``IndexWriteStage.inject_call_edges_if_enabled``,
+    so only a full-index pass injects (via ``IndexWriteStage.run``). Incremental passes
     prune graph nodes for changed/removed files (``remove_file_nodes``) and
     re-add them via ``add_embeddings``, which restores only the always-on
     AST-level edges — resolver-injected pyan/LibCST/LSP edges are lost for

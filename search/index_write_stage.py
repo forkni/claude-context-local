@@ -138,7 +138,7 @@ class IndexWriteStage:
         # save_indices (graph persisted).
         injection_stats = InjectionStats()
         if project_path:
-            injection_stats = self._inject_call_edges(project_path)
+            injection_stats = self.inject_call_edges(project_path)
 
         return self.finalize(
             dag=dag,
@@ -214,9 +214,11 @@ class IndexWriteStage:
         Shared tail of the full-index path (:meth:`run`) and the incremental
         path (``IncrementalIndexer.incremental_index``) — the part of an
         index pass that always runs once chunks are already embedded/added
-        (or removed) and just needs to be persisted. ``call_edges_injected``/
-        ``call_edge_resolvers`` default to 0/() since only :meth:`run`
-        performs injection today.
+        (or removed) and just needs to be persisted. Both passes inject
+        before calling this — :meth:`run` unconditionally via
+        :meth:`inject_call_edges`, the incremental path opt-in via
+        :meth:`inject_call_edges_if_enabled` — and thread the stats through
+        ``call_edges_injected``/``call_edge_resolvers``.
         """
         metadata = self._build_metadata(
             project_name=project_name,
@@ -252,7 +254,7 @@ class IndexWriteStage:
         )
 
     # ------------------------------------------------------------------
-    # Private helpers
+    # Helpers shared with the incremental path
     # ------------------------------------------------------------------
 
     def embed_and_attach_metadata(
@@ -305,8 +307,12 @@ class IndexWriteStage:
         """
         return resolve_chunk_cache(self._indexer.storage_dir, self._embedder)
 
-    def _inject_call_edges(self, project_path: str) -> InjectionStats:
-        """Resolve this run's collaborators and delegate to ``inject_call_edges``.
+    def inject_call_edges(self, project_path: str) -> InjectionStats:
+        """Resolve this run's collaborators and run the resolver pipeline.
+
+        Delegates to the module-level function of the same name in
+        ``search.call_edge_injection`` (the bare ``inject_call_edges(...)``
+        call below resolves to that import, not to this method).
 
         Runs *after* :meth:`add_embeddings` (graph nodes already populated) and
         *before* :meth:`save_indices` (edges persisted). A no-op (with a
@@ -345,3 +351,19 @@ class IndexWriteStage:
 
         cg_cfg = getattr(get_search_config(), "call_graph", None)
         return inject_call_edges(storage, meta_store, project_path, cg_cfg)
+
+    def inject_call_edges_if_enabled(self, project_path: str) -> InjectionStats:
+        """Run :meth:`inject_call_edges` only when the incremental opt-in is set.
+
+        Owns the ``CallGraphConfig.inject_on_incremental`` gate for the
+        incremental path (``IncrementalIndexer.incremental_index``): the
+        incremental pass destroys resolver edges for changed/removed files
+        via ``remove_file_nodes`` and restores only the always-on AST-level
+        edges, so re-injection is available — but opt-in only (default
+        ``False``, see ADR-0044) until its per-pass cost is priced in.
+        When the gate is off this does zero injection work and returns an
+        all-zero ``InjectionStats()``.
+        """
+        if not get_search_config().call_graph.inject_on_incremental:
+            return InjectionStats()
+        return self.inject_call_edges(project_path)

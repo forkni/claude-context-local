@@ -82,7 +82,7 @@ def test_full_index_injects_real_call_edges(mini_repo_project, tmp_path):
     against a Mock and the result being discarded is exactly how a project
     can end up with ``success=True`` and zero edges, silently.
     """
-    # _inject_call_edges reads self._indexer.dense_index.metadata_store and
+    # inject_call_edges reads self._indexer.dense_index.metadata_store and
     # self._indexer._graph — attributes CodeIndexManager alone does not
     # expose. Production wires a HybridSearcher as IncrementalIndexer's
     # "indexer" (mcp_server/tools/index_handlers.py:142, docstring: "indexer:

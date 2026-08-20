@@ -1,6 +1,6 @@
 """Pure resolver-to-graph transform: inject cross-module call edges into the code graph.
 
-Extracted from ``IndexWriteStage._inject_call_edges`` — the only part of that
+Extracted from ``IndexWriteStage.inject_call_edges`` — the only part of that
 class that passes the deletion test outright. Callers no longer need to know
 about ``run_resolvers``, the three resolver constructors, the ``min_confidence``
 floor, the confidence-precedence merge, or the ``resolver_source``-not-``source``

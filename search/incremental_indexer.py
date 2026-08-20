@@ -28,7 +28,6 @@ from utils.otel_attributes import (
 )
 from utils.timing import timed
 
-from .call_edge_injection import InjectionStats
 from .config import get_active_project_storage_dir, get_search_config
 from .index_write_stage import IncrementalIndexResult, IndexWriteStage
 from .indexer import CodeIndexManager as Indexer
@@ -323,17 +322,12 @@ class IncrementalIndexer:
                         start_time,
                     )
 
-            # Re-inject resolver call edges (pyan/LibCST/LSP), opt-in only:
-            # _remove_old_chunks above destroyed them for every changed/
-            # removed file via remove_file_nodes, and _add_new_chunks's
-            # add_embeddings restores only the always-on AST-level edges.
-            # Off by default until incremental-pass cost is measured — see
-            # CallGraphConfig.inject_on_incremental.
-            injection_stats = InjectionStats()
-            if get_search_config().call_graph.inject_on_incremental:
-                injection_stats = self._index_write_stage._inject_call_edges(
-                    project_path
-                )
+            # Re-inject resolver call edges (pyan/LibCST/LSP). Opt-in only —
+            # the write stage owns the inject_on_incremental gate and
+            # returns all-zero stats when it is off (ADR-0044).
+            injection_stats = self._index_write_stage.inject_call_edges_if_enabled(
+                project_path
+            )
 
             # Update snapshot, index, BM25 sync, and GPU cache; build the result.
             # After processing changes, calculate cumulative stats.
@@ -447,7 +441,7 @@ class IncrementalIndexer:
         tests; only CodeIndexManager defines validate_index_consistency, so
         calling it unconditionally is dead code on the real path. Reuses the
         dense_index accessor idiom already used for the same purpose in
-        index_write_stage.py's _inject_call_edges.
+        index_write_stage.py's inject_call_edges.
         """
         if hasattr(self.indexer, "validate_index_consistency"):
             return self.indexer

@@ -20,7 +20,8 @@ call-edge gap" plan, candidate 5 of an architecture review): Commit 1 unified th
 full/incremental pairs behind the `SummaryStage`/`IndexWriteStage` seams with zero behaviour
 change. Commit 2 added `CallGraphConfig.inject_on_incremental` (`search/config.py`, default
 `False`) and wired the incremental path in `incremental_indexer.py` to call
-`IndexWriteStage._inject_call_edges` when the flag is set, positioned after `add_embeddings`
+`IndexWriteStage._inject_call_edges` when the flag is set (the gate has since moved behind the
+seam as `IndexWriteStage.inject_call_edges_if_enabled` — see ADR-0052), positioned after `add_embeddings`
 (graph populated) and before `finalize`'s `save_indices` (graph persisted) — the same ordering
 invariant the full-index path already relies on.
 

@@ -199,7 +199,7 @@ GRADES: dict[str, dict[str, int]] = {
     },
     "Q131": {
         "chunking/relationships/call_edge_resolver.py:function:validate_py_files": 3,
-        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges": 2,
+        "search/index_write_stage.py:method:IndexWriteStage.inject_call_edges": 2,
         "chunking/relationships/call_edge_resolver.py:function:prepare_scoped_files": 2,
         "chunking/relationships/call_edge_resolver.py:function:scope_to_indexed_files": 1,
     },

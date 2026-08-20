@@ -181,7 +181,7 @@ Pre-validate every file with `ast.parse()` before passing to
 |--------|---------------|----------------|
 | **Wildcard fan-out** | `expand_unknowns` fans out all unresolved calls to every same-named function | `_TrackedVisitor` tags them `confidence=0.6`; filterable via `min_confidence` |
 | **Same-name collision** | Two functions named `process()` in different modules — pyan may merge them | Not fully mitigated; use LibCST tier to override |
-| **`namespace=None` phantom** | `contract_nonexistents` leaves wildcard nodes with `namespace=None` | Caller/callee `namespace is None` guards in `_inject_call_edges` |
+| **`namespace=None` phantom** | `contract_nonexistents` leaves wildcard nodes with `namespace=None` | Caller/callee `namespace is None` guards in `inject_call_edges` |
 | **`defined=False` external** | stdlib stubs and third-party symbols pyan can't locate | `defined=False` callee guard; excluded entirely |
 | **Duck-type calls** | `obj.method()` where `obj` type unknown — pyan guesses based on name | Same-name collision fallout; demoted to 0.6 or overridden by LibCST at 0.90 |
 

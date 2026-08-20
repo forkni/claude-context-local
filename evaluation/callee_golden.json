@@ -33,8 +33,8 @@
     {
       "id": "OB03",
       "category": "E",
-      "description": "_inject_call_edges calls run_resolvers and storage.upgrade_call_edge",
-      "target_chunk_id": "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges",
+      "description": "inject_call_edges calls run_resolvers and storage.upgrade_call_edge",
+      "target_chunk_id": "search/index_write_stage.py:method:IndexWriteStage.inject_call_edges",
       "expected_callees": [
         "chunking/relationships/call_edge_resolver.py:method:run_resolvers",
         "graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge"

@@ -326,7 +326,7 @@ def _install_patches(enable_hybrid: bool) -> None:
     # Phase 9 — call-edge resolvers.
     _timed_wrap(
         write_stage_mod.IndexWriteStage,
-        "_inject_call_edges",
+        "inject_call_edges",
         "phase9_inject_call_edges",
     )
     # run_resolvers is imported by name into index_write_stage's namespace

@@ -76,10 +76,10 @@
     {
       "id": "C007",
       "category": "E",
-      "description": "build_line_to_chunk_map is called from IndexWriteStage._inject_call_edges — cross-package call from search to evaluation (renamed from _inject_pyan_edges in commit 5ac2b7a)",
+      "description": "build_line_to_chunk_map is called from IndexWriteStage.inject_call_edges — cross-package call from search to evaluation (renamed from _inject_pyan_edges in commit 5ac2b7a)",
       "target_chunk_id": "evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
       "expected_callers": [
-        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges"
+        "search/index_write_stage.py:method:IndexWriteStage.inject_call_edges"
       ]
     }
   ]

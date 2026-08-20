@@ -3,6 +3,7 @@
 import time
 from unittest.mock import Mock, patch
 
+from search.call_edge_injection import InjectionStats
 from search.index_write_stage import IncrementalIndexResult, IndexWriteStage
 
 
@@ -216,12 +217,12 @@ class TestIndexWriteStageOrdering:
 
 
 # ---------------------------------------------------------------------------
-# Task 14 — min_confidence floor in _inject_call_edges
+# Task 14 — min_confidence floor in inject_call_edges
 # ---------------------------------------------------------------------------
 
 
 class TestInjectCallEdgesMinConfidence:
-    """_inject_call_edges must discard edges below min_confidence before injection."""
+    """inject_call_edges must discard edges below min_confidence before injection."""
 
     @staticmethod
     def _make_resolved_edge(
@@ -241,7 +242,7 @@ class TestInjectCallEdgesMinConfidence:
     @staticmethod
     def _make_stage_for_injection() -> IndexWriteStage:
         """Return an IndexWriteStage whose _indexer has all the attributes
-        _inject_call_edges accesses (graph, dense_index.metadata_store)."""
+        inject_call_edges accesses (graph, dense_index.metadata_store)."""
         import networkx as nx
 
         g = nx.MultiDiGraph()
@@ -303,7 +304,7 @@ class TestInjectCallEdgesMinConfidence:
             ),
             patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         # Only the 0.90 edge (caller_b → callee_b) should have been injected.
         calls = [str(c) for c in storage.add_call_edge.call_args_list]
@@ -337,7 +338,7 @@ class TestInjectCallEdgesMinConfidence:
             ),
             patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         calls = [str(c) for c in storage.add_call_edge.call_args_list]
         assert any("caller_a" in c and "callee_a" in c for c in calls), (
@@ -410,7 +411,7 @@ class TestInjectCallEdgesResolverSelection:
             patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
             patch("search.call_edge_injection.run_resolvers") as mock_run_resolvers,
         ):
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         mock_run_resolvers.assert_not_called()
         storage.add_call_edge.assert_not_called()
@@ -434,7 +435,7 @@ class TestInjectCallEdgesResolverSelection:
                 "search.call_edge_injection.run_resolvers", return_value={}
             ) as mock_run_resolvers,
         ):
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         mock_run_resolvers.assert_called_once()
         resolver_instances = mock_run_resolvers.call_args.args[0]
@@ -469,7 +470,7 @@ class TestInjectCallEdgesResolverSelection:
             ) as mock_run_resolvers,
             caplog.at_level(logging.WARNING, logger="search.call_edge_injection"),
         ):
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         mock_run_resolvers.assert_called_once()
         resolver_instances = mock_run_resolvers.call_args.args[0]
@@ -508,7 +509,7 @@ class TestInjectCallEdgesResolverSelection:
             ) as mock_run_resolvers,
             caplog.at_level(logging.WARNING, logger="search.call_edge_injection"),
         ):
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         mock_run_resolvers.assert_called_once()
         resolver_instances = mock_run_resolvers.call_args.args[0]
@@ -521,12 +522,70 @@ class TestInjectCallEdgesResolverSelection:
 
 
 # ---------------------------------------------------------------------------
+# inject_call_edges_if_enabled — the incremental opt-in gate (ADR-0044)
+# ---------------------------------------------------------------------------
+
+
+class TestInjectCallEdgesIfEnabled:
+    """The stage owns the `inject_on_incremental` gate: off (the default) is
+    zero injection work with all-zero stats; on delegates to inject_call_edges.
+    """
+
+    @staticmethod
+    def _make_stage() -> IndexWriteStage:
+        return IndexWriteStage(
+            embedder=Mock(),
+            indexer=Mock(),
+            snapshot_manager=Mock(),
+            build_metadata_fn=Mock(return_value={}),
+            clear_gpu_fn=Mock(),
+        )
+
+    @staticmethod
+    def _patch_config(enabled: bool):
+        mock_cfg = Mock()
+        mock_cfg.call_graph.inject_on_incremental = enabled
+        return patch(
+            "search.index_write_stage.get_search_config", return_value=mock_cfg
+        )
+
+    def test_gate_off_is_zero_work(self) -> None:
+        """Gate off must return all-zero InjectionStats without touching the
+        indexer's graph/metadata collaborators (ADR-0044's zero-work path)."""
+        stage = self._make_stage()
+        with (
+            self._patch_config(enabled=False),
+            patch.object(stage, "inject_call_edges") as mock_inject,
+        ):
+            stats = stage.inject_call_edges_if_enabled("/fake/project")
+
+        mock_inject.assert_not_called()
+        assert stats == InjectionStats()
+        assert stats.injected == 0
+        assert stats.resolvers_run == ()
+
+    def test_gate_on_delegates(self) -> None:
+        stage = self._make_stage()
+        sentinel = InjectionStats(injected=3, resolvers_run=("pyan",))
+        with (
+            self._patch_config(enabled=True),
+            patch.object(
+                stage, "inject_call_edges", return_value=sentinel
+            ) as mock_inject,
+        ):
+            stats = stage.inject_call_edges_if_enabled("/fake/project")
+
+        mock_inject.assert_called_once_with("/fake/project")
+        assert stats is sentinel
+
+
+# ---------------------------------------------------------------------------
 # MultiDiGraph edge-injection correctness (#3 follow-up)
 # ---------------------------------------------------------------------------
 
 
 class TestInjectCallEdgesMultiGraph:
-    """_inject_call_edges must handle MultiDiGraph edge keying correctly.
+    """inject_call_edges must handle MultiDiGraph edge keying correctly.
 
     Regression tests for the two bugs introduced by the DiGraph→MultiDiGraph migration
     that were missed by the original blast-radius sweep:
@@ -621,7 +680,7 @@ class TestInjectCallEdgesMultiGraph:
             patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
             # Must not raise ValueError (was the crash)
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         storage.upgrade_call_edge.assert_called_once()
         storage.add_call_edge.assert_not_called()
@@ -656,7 +715,7 @@ class TestInjectCallEdgesMultiGraph:
             patch("search.call_edge_injection.run_resolvers", return_value=merged),
             patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         # The "calls" edge did NOT exist → add_call_edge must be called, not upgrade.
         storage.add_call_edge.assert_called_once()
