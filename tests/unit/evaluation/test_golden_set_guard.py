@@ -34,7 +34,6 @@ from evaluation.metrics import normalize_chunk_id
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EVALUATION_DIR = REPO_ROOT / "evaluation"
-_CHUNKER = MultiLanguageChunker(str(REPO_ROOT))
 
 
 def _golden_ids(golden_path: Path) -> list[tuple[str, str]]:
@@ -79,6 +78,19 @@ def _golden_dataset_ids(golden_path: Path) -> list[tuple[str, str]]:
 
 
 @cache
+def _get_chunker() -> MultiLanguageChunker:
+    """Lazily construct the shared chunker on first use.
+
+    Previously a module-level `_CHUNKER = MultiLanguageChunker(...)` ran at
+    import time as a side effect of collecting this file (Phase 13.2.b).
+    `@cache` keeps it a true singleton -- one construction, reused by every
+    `_live_normalized_ids` call -- while deferring that construction until a
+    test actually needs it.
+    """
+    return MultiLanguageChunker(str(REPO_ROOT))
+
+
+@cache
 def _live_normalized_ids(file_path: str) -> frozenset[str]:
     """Fresh-chunk *file_path* (repo-relative) and return its normalized chunk_ids.
 
@@ -87,7 +99,7 @@ def _live_normalized_ids(file_path: str) -> frozenset[str]:
     re-chunk the same file hundreds of times across the parametrized sweep.
     """
     abs_path = REPO_ROOT / file_path
-    chunks = _CHUNKER.chunk_file(str(abs_path))
+    chunks = _get_chunker().chunk_file(str(abs_path))
     return frozenset(normalize_chunk_id(c.chunk_id) for c in chunks if c.chunk_id)
 
 
@@ -102,42 +114,56 @@ GOLDEN_DATASET_FILES = [
 ]
 
 
-def _all_golden_id_cases() -> list[tuple[str, str, str]]:
-    """(golden_file_name, source_label, chunk_id) for every referenced ID."""
-    cases = []
-    for golden_path in GOLDEN_FILES:
-        for label, chunk_id in _golden_ids(golden_path):
-            cases.append((golden_path.name, label, chunk_id))
-    for dataset_path in GOLDEN_DATASET_FILES:
-        for label, chunk_id in _golden_dataset_ids(dataset_path):
-            cases.append((dataset_path.name, label, chunk_id))
-    return cases
+ALL_GOLDEN_FILES = GOLDEN_FILES + GOLDEN_DATASET_FILES
+
+# Computed once at collection time (Phase 13.2.b). Previously this same work
+# (re-reading all 4 JSON files from disk) ran twice — once for @parametrize's
+# argvalues, once for its ids= — and expanded to ~2,218 collected cases,
+# ~39% of the entire unit tier, from what is really 2 def test_* functions.
+# Grouping by golden file collapses that to 4 cases with identical protection:
+# every drifted ID is still collected and reported, just as one aggregate
+# assertion per file instead of one case per ID.
+_CASES_BY_FILE: dict[Path, list[tuple[str, str]]] = {
+    golden_path: _golden_ids(golden_path) for golden_path in GOLDEN_FILES
+} | {
+    dataset_path: _golden_dataset_ids(dataset_path)
+    for dataset_path in GOLDEN_DATASET_FILES
+}
 
 
 @pytest.mark.parametrize(
-    "golden_file, source_label, chunk_id",
-    _all_golden_id_cases(),
-    ids=[f"{f}::{label}::{c}" for f, label, c in _all_golden_id_cases()],
+    "golden_path", ALL_GOLDEN_FILES, ids=[p.name for p in ALL_GOLDEN_FILES]
 )
-def test_golden_chunk_id_exists_in_live_index(golden_file, source_label, chunk_id):
-    """Every golden chunk_id must be producible by re-chunking its source file today.
+def test_golden_chunk_ids_exist_in_live_index(golden_path):
+    """Every golden chunk_id in *golden_path* must be producible by re-chunking
+    its source file today.
 
     A failure here means the golden set has drifted (renamed/moved/resplit
     symbol) and needs repair — same failure mode as OB01/OB03/OB06.
     """
-    file_path = chunk_id.split(":", 1)[0]
-    live_ids = _live_normalized_ids(file_path)
-    assert chunk_id in live_ids, (
-        f"{golden_file} [{source_label}] references {chunk_id!r}, which no "
-        f"longer exists among the chunks freshly produced from {file_path}. "
-        "The golden set has drifted -- repair the ID (see Step 1.3)."
+    drifted = []
+    for source_label, chunk_id in _CASES_BY_FILE[golden_path]:
+        file_path = chunk_id.split(":", 1)[0]
+        live_ids = _live_normalized_ids(file_path)
+        if chunk_id not in live_ids:
+            drifted.append((source_label, chunk_id, file_path))
+
+    assert not drifted, (
+        f"{golden_path.name} has {len(drifted)} drifted chunk_id(s) that no "
+        "longer exist among the chunks freshly produced from their source "
+        "file(s). The golden set has drifted -- repair the ID(s) (see Step "
+        "1.3):\n"
+        + "\n".join(
+            f"  [{label}] {chunk_id!r} (from {file_path})"
+            for label, chunk_id, file_path in drifted
+        )
     )
 
 
 def test_guard_detects_corrupted_id():
     """Sanity check: the guard must fail loudly on a deliberately wrong ID.
 
-    Proves test_golden_chunk_id_exists_in_live_index is not vacuously true.
+    Proves test_golden_chunk_ids_exist_in_live_index is not vacuously true.
     """
     corrupted = "chunking/relationships/call_edge_resolver.py:function:this_symbol_does_not_exist"
     file_path = corrupted.split(":", 1)[0]
