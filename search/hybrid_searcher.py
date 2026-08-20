@@ -49,7 +49,7 @@ from .reranking_engine import RerankingEngine
 from .result_factory import ResultFactory
 from .search_executor import SearchExecutor
 from .tokenization import augment_bm25_document
-from .types import RetrievalRequest
+from .types import ResultSource, RetrievalRequest
 
 
 def drop_nonpositive_ego_results(results: list[SearchResult]) -> list[SearchResult]:
@@ -68,7 +68,7 @@ def drop_nonpositive_ego_results(results: list[SearchResult]) -> list[SearchResu
     return [
         r
         for r in results
-        if r.source != "ego_graph"
+        if r.source != ResultSource.EGO_GRAPH
         or (r.metadata or {}).get("reranker_score") is None
         or r.metadata["reranker_score"] > 0
     ]
@@ -980,7 +980,7 @@ class HybridSearcher(BaseSearcher):
                             }
                         parent_results.append(
                             ResultFactory.from_expansion(
-                                parent_id, 0.0, metadata, "parent_expansion"
+                                parent_id, 0.0, metadata, ResultSource.PARENT_EXPANSION
                             )
                         )
                 except (KeyError, TypeError) as e:

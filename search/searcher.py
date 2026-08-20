@@ -10,6 +10,7 @@ from .config import SearchMode
 from .indexer import CodeIndexManager
 from .ranking_heuristics import RankingHeuristics
 from .reranker import SearchResult
+from .types import ResultSource
 
 
 if TYPE_CHECKING:
@@ -143,7 +144,7 @@ class IntelligentSearcher(BaseSearcher):
             chunk_id=chunk_id,
             score=similarity,
             metadata={**metadata, "context_info": {}},
-            source="semantic",
+            source=ResultSource.SEMANTIC,
         )
         self._enrich_result(result, context_depth)
         return result

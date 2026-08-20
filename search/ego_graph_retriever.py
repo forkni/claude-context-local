@@ -17,6 +17,7 @@ from search.graph_integration import is_chunk_id
 from search.graph_view import GraphView, PPRConvergenceError
 from search.reranker import SearchResult
 from search.result_factory import ResultFactory
+from search.types import ResultSource
 
 
 if TYPE_CHECKING:
@@ -467,7 +468,7 @@ class EgoGraphRetriever:
                                 chunk_id,
                                 anchor_score * similarity,
                                 metadata,
-                                "ego_graph",
+                                ResultSource.EGO_GRAPH,
                             )
                         )
                 except (RuntimeError, AttributeError, IndexError) as e:
@@ -485,7 +486,7 @@ class EgoGraphRetriever:
                 anchor_score = anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
                 neighbor_results.append(
                     ResultFactory.from_expansion(
-                        chunk_id, anchor_score * 0.5, metadata, "ego_graph"
+                        chunk_id, anchor_score * 0.5, metadata, ResultSource.EGO_GRAPH
                     )
                 )
         else:
@@ -495,7 +496,7 @@ class EgoGraphRetriever:
                 anchor_score = anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
                 neighbor_results.append(
                     ResultFactory.from_expansion(
-                        chunk_id, anchor_score * 0.5, metadata, "ego_graph"
+                        chunk_id, anchor_score * 0.5, metadata, ResultSource.EGO_GRAPH
                     )
                 )
 

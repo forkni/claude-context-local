@@ -19,7 +19,7 @@ from utils.timing import timed
 from .filters import FilterEngine
 from .reranker import SearchResult
 from .result_factory import ResultFactory
-from .types import RetrievalRequest
+from .types import ResultSource, RetrievalRequest
 
 
 if TYPE_CHECKING:
@@ -209,11 +209,15 @@ class SearchExecutor:
                 # interaction is unchanged, not extended to variant legs.
                 # Same tuple->SearchResult conversion rerank_simple performs
                 primary_bm25 = [
-                    SearchResult(chunk_id=c, score=s, metadata=m, source="bm25")
+                    SearchResult(
+                        chunk_id=c, score=s, metadata=m, source=ResultSource.BM25
+                    )
                     for c, s, m in bm25_results
                 ]
                 primary_dense = [
-                    SearchResult(chunk_id=c, score=s, metadata=m, source="dense")
+                    SearchResult(
+                        chunk_id=c, score=s, metadata=m, source=ResultSource.DENSE
+                    )
                     for c, s, m in dense_results
                 ]
                 final_results = self.reranker.rerank(
@@ -306,7 +310,10 @@ class SearchExecutor:
                 legs.append(
                     [
                         SearchResult(
-                            chunk_id=c, score=s, metadata=m, source="bm25_variant"
+                            chunk_id=c,
+                            score=s,
+                            metadata=m,
+                            source=ResultSource.BM25_VARIANT,
                         )
                         for c, s, m in tuples
                     ]
@@ -317,7 +324,10 @@ class SearchExecutor:
                 legs.append(
                     [
                         SearchResult(
-                            chunk_id=c, score=s, metadata=m, source="dense_variant"
+                            chunk_id=c,
+                            score=s,
+                            metadata=m,
+                            source=ResultSource.DENSE_VARIANT,
                         )
                         for c, s, m in tuples
                     ]

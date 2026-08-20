@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from search.config import GraphEnhancedConfig
 from search.intent_classifier import IntentDecision, QueryIntent
+from search.types import ResultSource
 
 
 if TYPE_CHECKING:
@@ -292,7 +293,7 @@ class GraphScoringStage:
                 ego_neighbor_ids = [
                     r["chunk_id"]
                     for r in results[k:]
-                    if r.get("source") == "ego_graph" and "chunk_id" in r
+                    if r.get("source") == ResultSource.EGO_GRAPH and "chunk_id" in r
                 ]
                 max_ego_in_subgraph = 10
                 if ego_neighbor_ids and len(ego_neighbor_ids) > max_ego_in_subgraph:

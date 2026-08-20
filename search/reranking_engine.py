@@ -14,6 +14,7 @@ from utils.timing import timed
 from .chunk_id import dedupe_results
 from .config import get_search_config
 from .rerank_window_policy import RerankWindowPolicy
+from .types import ResultSource
 
 
 # TYPE_CHECKING is always False at runtime; AddNot mutation on this guard is equivalent.
@@ -42,7 +43,7 @@ _TAIL_WINDOW = RerankWindowPolicy.tail()
 # merged_pool_policy="channel_priority" tier map for non-hop1 candidates.
 # Tier 0 (hop-1 survivors, metadata["hop1_rank"] is not None) is handled
 # separately in _order_merged_pool since it isn't keyed by `source`.
-_CHANNEL_TIER = {"multi_hop": 1, "graph_hop": 2}
+_CHANNEL_TIER = {ResultSource.MULTI_HOP: 1, ResultSource.GRAPH_HOP: 2}
 
 
 class RerankingEngine:
@@ -311,7 +312,7 @@ class RerankingEngine:
             # order between the signal-positive and signal-nonpositive bands.
             positive, graph, nonpositive = [], [], []
             for r in results:
-                if r.source == "graph_hop":
+                if r.source == ResultSource.GRAPH_HOP:
                     graph.append(r)
                 elif r.score > 0:
                     positive.append(r)
@@ -380,10 +381,10 @@ class RerankingEngine:
             if len(window) == top_k_candidates:
                 stopped_at = _idx
                 break
-            if r.source == "graph_hop" and graph_admitted >= cap:
+            if r.source == ResultSource.GRAPH_HOP and graph_admitted >= cap:
                 deferred.append(r)
             else:
-                if r.source == "graph_hop":
+                if r.source == ResultSource.GRAPH_HOP:
                     graph_admitted += 1
                 window.append(r)
 

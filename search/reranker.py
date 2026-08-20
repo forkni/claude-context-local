@@ -5,7 +5,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-from search.types import UNSCORED_SOURCES
+from search.types import UNSCORED_SOURCES, ResultSource
 
 
 # TM2C2 (Bruch, Gai & Ingber, ACM TOIS 2023, arXiv 2210.11934) theoretical
@@ -21,7 +21,7 @@ class SearchResult:
     chunk_id: str
     score: float
     metadata: dict[str, Any]
-    source: str = "unknown"  # "bm25", "dense", "hybrid"
+    source: ResultSource = ResultSource.UNKNOWN
     rank: int = 0  # Original rank in source list
 
     @property
@@ -131,7 +131,7 @@ class RRFReranker:
                         chunk_id=result.chunk_id,
                         score=result.score,  # Keep original score
                         metadata=result.metadata,
-                        source="hybrid",
+                        source=ResultSource.HYBRID,
                         rank=rank,
                     )
                     doc_results[chunk_id] = combined_result
@@ -245,14 +245,20 @@ class RRFReranker:
         # Convert tuples to SearchResult objects
         bm25_search_results = [
             SearchResult(
-                chunk_id=chunk_id, score=score, metadata=metadata, source="bm25"
+                chunk_id=chunk_id,
+                score=score,
+                metadata=metadata,
+                source=ResultSource.BM25,
             )
             for chunk_id, score, metadata in bm25_results
         ]
 
         dense_search_results = [
             SearchResult(
-                chunk_id=chunk_id, score=score, metadata=metadata, source="dense"
+                chunk_id=chunk_id,
+                score=score,
+                metadata=metadata,
+                source=ResultSource.DENSE,
             )
             for chunk_id, score, metadata in dense_results
         ]
@@ -345,13 +351,19 @@ class RRFReranker:
         """
         bm25_search_results = [
             SearchResult(
-                chunk_id=chunk_id, score=score, metadata=metadata, source="bm25"
+                chunk_id=chunk_id,
+                score=score,
+                metadata=metadata,
+                source=ResultSource.BM25,
             )
             for chunk_id, score, metadata in bm25_results
         ]
         dense_search_results = [
             SearchResult(
-                chunk_id=chunk_id, score=score, metadata=metadata, source="dense"
+                chunk_id=chunk_id,
+                score=score,
+                metadata=metadata,
+                source=ResultSource.DENSE,
             )
             for chunk_id, score, metadata in dense_results
         ]
@@ -368,7 +380,7 @@ class RRFReranker:
                         chunk_id=result.chunk_id,
                         score=result.score,
                         metadata=result.metadata,
-                        source="hybrid",
+                        source=ResultSource.HYBRID,
                         rank=rank,
                     )
 

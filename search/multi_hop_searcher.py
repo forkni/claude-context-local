@@ -19,7 +19,7 @@ from utils.timing import timed
 from .rerank_window_policy import RerankWindowPolicy
 from .reranker import SearchResult as RerankerSearchResult
 from .reranking_engine import RerankingEngine
-from .types import RetrievalRequest
+from .types import ResultSource, RetrievalRequest
 
 
 class MultiHopSearcher:
@@ -143,7 +143,7 @@ class MultiHopSearcher:
                                 chunk_id=cid,
                                 score=similarity,
                                 metadata=metadata,
-                                source="multi_hop",
+                                source=ResultSource.MULTI_HOP,
                             )
                             all_results[cid] = reranker_result
                             hop_discovered += 1
@@ -285,7 +285,7 @@ class MultiHopSearcher:
                 chunk_id=neighbor_id,
                 score=score,
                 metadata=metadata,
-                source="graph_hop",
+                source=ResultSource.GRAPH_HOP,
             )
 
         expansion_timings["graph"] = time.time() - hop_start

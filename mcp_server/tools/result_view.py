@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from graph.schema import get_reverse_relation
 from search.filters import normalize_path
+from search.types import ResultSource
 
 
 if TYPE_CHECKING:
@@ -328,7 +329,7 @@ def _annotate_each(
         chunk_id = item.get("chunk_id")
         if not chunk_id:
             continue
-        if skip_ego and item.get("source") == "ego_graph":
+        if skip_ego and item.get("source") == ResultSource.EGO_GRAPH:
             continue
         if item.get("kind") in skip_kinds:
             continue

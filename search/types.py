@@ -7,6 +7,7 @@ import it without pulling in the full analyzer or its graph dependencies.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from chunking.relationships.relationship_types import get_relationship_field_mapping
@@ -68,6 +69,48 @@ BUILTIN_TYPES: frozenset[str] = frozenset(
 )
 
 
+class ResultSource(StrEnum):
+    """The retrieval-funnel provenance tags stamped on SearchResult.source.
+
+    A real str subclass -- every ``== "hybrid"`` comparison, set/dict
+    lookup, and JSON round-trip (dataclasses.asdict + json.dump) keeps
+    working unchanged, including against plain strings replayed from
+    captured benchmark JSON (see scripts/benchmark/probe_rerank_window.py's
+    _SimResult shim). Centralizes the provenance vocabulary so a typo can't
+    silently create a 14th, unrecognized channel.
+
+    DENSE and SEMANTIC name the same dense-retrieval channel under two
+    different labels -- a pre-existing inconsistency between RRFReranker/
+    SearchExecutor (which stamp "dense") and ResultFactory.from_dense_results
+    (which stamps "semantic"). Nothing consumes either value today, so
+    unifying them is a behaviour-visible wire change deferred to its own
+    round -- both members are kept here verbatim.
+    """
+
+    # Legs (hop-1 single-channel results)
+    BM25 = "bm25"
+    DENSE = "dense"
+    SEMANTIC = "semantic"
+
+    # Fusion
+    HYBRID = "hybrid"
+
+    # Expansion (multi-hop, graph, ego, parent, query-variant legs)
+    MULTI_HOP = "multi_hop"
+    GRAPH_HOP = "graph_hop"
+    BM25_VARIANT = "bm25_variant"
+    DENSE_VARIANT = "dense_variant"
+    EGO_GRAPH = "ego_graph"
+    PARENT_EXPANSION = "parent_expansion"
+
+    # Lookup / similarity
+    DIRECT_LOOKUP = "direct_lookup"
+    SIMILARITY = "similarity"
+
+    # Default
+    UNKNOWN = "unknown"
+
+
 # Source tags whose SearchResult.score is a fabricated placeholder, not a
 # ranking signal -- SearchResult.is_unscored (search/reranker.py) reads this
 # set directly. Only sources whose 0.0 is *unconditional* belong here.
@@ -84,7 +127,7 @@ BUILTIN_TYPES: frozenset[str] = frozenset(
 # by RerankWindowPolicy.graph_hop_unscored, a caller-declared flag -- adding
 # "graph_hop" here unconditionally would mislabel every scored graph_hop
 # result as unscored whenever call-evidence scoring is on.
-UNSCORED_SOURCES: frozenset[str] = frozenset({"parent_expansion"})
+UNSCORED_SOURCES: frozenset[str] = frozenset({ResultSource.PARENT_EXPANSION})
 
 
 @dataclass(frozen=True, slots=True)
