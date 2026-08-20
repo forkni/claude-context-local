@@ -14,8 +14,15 @@ A minimal concrete ``_FakeSearcher`` stands in for ``HybridSearcher`` /
 subclass would from its own ``execute()``, so driving it through the public
 ``search()`` seam exercises both private helpers without reaching into them
 directly -- avoiding the private-API test touches the Phase 13 audit flagged.
+
+``TestValidateDimensions`` (Phase 14.1 rewrite) instruments ``_FakeIndex``/
+``_FakeEmbedder`` to record whether ``index.d``/``embedder.get_model_info()``
+were actually reached, so each "skips validation" test asserts the skip
+instead of relying on "must not raise" -- a body that validated and happened
+to pass was previously indistinguishable from one that never ran.
 """
 
+import logging
 from typing import Any
 
 import pytest
@@ -50,16 +57,28 @@ class _FakeSearcher(BaseSearcher):
 
 
 class _FakeIndex:
+    """Records whether ``.d`` was actually read, not just its value."""
+
     def __init__(self, d: int) -> None:
-        self.d = d
+        self._d = d
+        self.d_accessed = False
+
+    @property
+    def d(self) -> int:
+        self.d_accessed = True
+        return self._d
 
 
 class _FakeEmbedder:
+    """Records whether ``get_model_info()`` was actually called."""
+
     def __init__(self, embedding_dimension: int | None) -> None:
         self.model_name = "fake-model"
         self._embedding_dimension = embedding_dimension
+        self.get_model_info_called = False
 
     def get_model_info(self) -> dict[str, Any]:
+        self.get_model_info_called = True
         return {"embedding_dimension": self._embedding_dimension}
 
 
@@ -73,8 +92,14 @@ def _run(fake: _FakeSearcher) -> None:
 
 class TestValidateDimensions:
     def test_matching_dimensions_no_error(self):
-        fake = _FakeSearcher(index=_FakeIndex(768), embedder=_FakeEmbedder(768))
+        index = _FakeIndex(768)
+        embedder = _FakeEmbedder(768)
+        fake = _FakeSearcher(index=index, embedder=embedder)
         _run(fake)  # must not raise
+        assert index.d_accessed, "matching dimensions must still read index.d"
+        assert embedder.get_model_info_called, (
+            "matching dimensions must still consult the embedder"
+        )
 
     def test_mismatched_dimensions_raises(self):
         fake = _FakeSearcher(index=_FakeIndex(768), embedder=_FakeEmbedder(384))
@@ -82,22 +107,38 @@ class TestValidateDimensions:
             _run(fake)
 
     def test_none_index_skips_validation(self):
-        fake = _FakeSearcher(index=None, embedder=_FakeEmbedder(768))
-        _run(fake)  # no raise, no lookup attempted
+        embedder = _FakeEmbedder(768)
+        fake = _FakeSearcher(index=None, embedder=embedder)
+        _run(fake)  # no raise
+        assert not embedder.get_model_info_called, (
+            "a None index must short-circuit before the embedder is consulted"
+        )
 
     def test_none_embedder_skips_validation(self):
-        fake = _FakeSearcher(index=_FakeIndex(768), embedder=None)
-        _run(fake)
+        index = _FakeIndex(768)
+        fake = _FakeSearcher(index=index, embedder=None)
+        _run(fake)  # no raise
+        assert not index.d_accessed, (
+            "a None embedder must short-circuit before index.d is read"
+        )
 
     def test_missing_embedding_dimension_is_swallowed(self):
-        fake = _FakeSearcher(
-            index=_FakeIndex(768), embedder=_FakeEmbedder(embedding_dimension=None)
-        )
+        index = _FakeIndex(768)
+        embedder = _FakeEmbedder(embedding_dimension=None)
+        fake = _FakeSearcher(index=index, embedder=embedder)
         _run(fake)  # falsy embedder_dim short-circuits the mismatch check
+        assert index.d_accessed
+        assert embedder.get_model_info_called, (
+            "both sides must be read before the falsy embedder_dim short-circuits"
+        )
 
-    def test_attribute_error_on_index_d_is_swallowed(self):
+    def test_attribute_error_on_index_d_is_swallowed(self, caplog):
         fake = _FakeSearcher(index=_NoD(), embedder=_FakeEmbedder(768))
-        _run(fake)  # AttributeError from index.d is caught and logged, not raised
+        with caplog.at_level(logging.DEBUG, logger="search.base_searcher"):
+            _run(fake)  # AttributeError from index.d is caught, not raised
+        assert "Could not validate dimensions" in caplog.text, (
+            "the except branch must log the swallowed AttributeError, not just eat it"
+        )
 
 
 class TestEvictCacheIfNeeded:
