@@ -2695,3 +2695,143 @@ Commits:
 ```bash
 ./scripts/git/commit_enhanced.sh "chore: add complexity+CRAP gate, radon/crap4py deps (Phase 14.2)"
 ```
+
+### De-mock + mutation-test hybrid_searcher.py (Phase 14.3 — 2026-08-20)
+
+`search/hybrid_searcher.py` is the highest-value module in the repo — RRF fusion, ego-graph
+expansion, parent expansion, tail rerank — and mutation payoff ∝ 1/mock-density. All 42
+existing tests carried the same `@patch("search.hybrid_searcher.CodeIndexManager")` +
+`@patch("search.hybrid_searcher.BM25Index")` pair, so none of that logic ever ran against a
+real rank list; the file could not be a mutation-testing target in that state.
+
+| | Before | After |
+| --- | --- | --- |
+| `CodeIndexManager`/`BM25Index` patches | 42 per-test decorator pairs, scripted `Mock()` returns | 0 — module-level fixture backed by `FakeDenseIndex`/`FakeBM25Index` (`tests/fixtures/search_fakes.py`, new, 445 lines) |
+| Test count | 42 | 59 |
+| Mutation score (`cr-hybrid-searcher.toml`, 648 mutants) | never measured | 31.33% survived (203/648), down from an initial 50.31% (326/648) — see progression below |
+| `fail_under` | 84 | 84 (unchanged — production code untouched) |
+
+**De-mock refactor** (`2e47108`). Added `FakeDenseIndex`/`FakeBM25Index` to a new
+`tests/fixtures/search_fakes.py`, alongside the existing `mcp_mocks.py`/`installation_mocks.py`
+fixtures-module pattern — real in-memory add/search/save/load semantics (cosine similarity
+over an in-memory array is mathematically identical to FAISS `IndexFlatIP` on normalized
+vectors), so RRF fusion runs against genuine rank lists instead of scripted returns. Collapsed
+the 42 repeated `@patch` decorator pairs into one fixture returning the fakes, and converted
+`.assert_called*` interaction checks to outcome assertions on the returned rankings.
+
+De-mocking surfaced a latent bug in the tests themselves, not the production code: several
+tests patched `search.hybrid_searcher.get_search_config`, but `BaseSearcher.search()`
+re-resolves the name via a local `from search.config import get_search_config` on every call
+— so that patch target was a no-op, and real disk config / GPU reranker / network calls were
+silently leaking into what were supposed to be isolated unit tests. Retargeted to
+`search.config.get_search_config` everywhere in the file.
+
+**Mutation testing — three rounds.** `cr-hybrid-searcher.toml` targets the file with the
+absolute venv Python (bare `python` resolves to system Python via the Windows App Paths
+registry, the same trap `MUTATION-TESTING.md` documents for every other target config).
+
+- **Round 1** — first-ever run against the de-mocked file: **50.31% survived (326/648)**.
+  `cr-report.exe --surviving-only --show-diff` traced the largest clusters to two code paths
+  that were reachable through real fakes for the first time but still never actually
+  exercised: `_apply_ego_graph_expansion`'s neighbor cap (`hybrid_searcher.py:856`,
+  `min(max_neighbors_per_hop * k_hops, original_k * 3)`) and `_apply_parent_expansion`'s
+  `max_results_to_expand` slice guard and combine order — both had zero tests. Added
+  `TestEgoGraphExpansion` and `TestParentExpansion` (2 tests each) plus
+  `TestRemoveFilesCacheEviction` (2 tests, a third gap on the cache-eviction guard found in
+  the same pass). One of the six, `test_caps_neighbors_to_min_of_hop_budget_and_k_multiple`,
+  was initially weak: its constants (`max_neighbors_per_hop=3, k_hops=2, original_k=1`) made
+  `min(3*2, 1*3)` and `min(3+2, 1*3)` both evaluate to 3, so a `*`→`+` mutant on the cap
+  arithmetic was invisible to it. Fixed by choosing constants where the two terms diverge
+  (`max_neighbors_per_hop=4, k_hops=3, original_k=10` — `min(12,30)=12` vs the mutant's
+  `min(7,30)=7`), re-verified via manual mutation (backup file, hand-edit the mutant, confirm
+  the test fails, restore) that all six tests now genuinely catch their target mutants:
+  **37.19% survived (241/648)**.
+- **Round 2** — re-triaged the remaining 241 survivors and found four more genuinely-untested
+  code paths, distinct from the round-1 findings: `get_stats()`
+  (`hybrid_searcher.py:501-515`) and `get_index_size()` (`:517-521`) were entirely untested
+  (the existing `test_stats_collection` only covers the separate `.stats` property, a
+  different code path); `index_documents()`'s length-mismatch guard (`:572`, raises
+  `ValueError` when `documents`/`doc_ids`/`embeddings` disagree) was entirely untested;
+  `execute()`'s semantic-mode empty-index guard (`:666`, `elif search_mode ==
+  SearchMode.SEMANTIC:`) was entirely untested — no existing test called `search()` with
+  `search_mode="semantic"`; and `_apply_parent_expansion`'s `include_parent_content=False`
+  content-stripping branch (`:929-933`) couldn't be reached through a real index round trip
+  because `FakeDenseIndex.add_embeddings` already strips `"content"` from metadata at
+  indexing time, so `get_chunk_by_id` was mocked directly instead — a legitimate boundary
+  mock, since the fake structurally cannot produce the needed input. Added `TestIndexStats`,
+  `TestIndexDocumentsLengthValidation`, `TestSemanticModeEmptyIndexGuard`, and
+  `TestParentExpansionContentStripping` (8 tests). One test,
+  `test_semantic_search_on_empty_dense_index_returns_empty`, initially passed under its
+  target `==`→`!=` mutant: with an all-empty searcher, the correct semantic-only guard and
+  the mutant's fallthrough to the hybrid branch's combined-readiness check both return `[]`,
+  so the two paths were indistinguishable. Root-caused to the one scenario that does
+  distinguish them — BM25 empty, dense populated, bypassing `index_documents()` (which always
+  populates both together) by adding directly via `EmbeddingResult`/`dense_index.add_embeddings`
+  — and added `test_semantic_search_ignores_empty_bm25_when_dense_is_populated`, re-verified
+  it catches the mutant. Full campaign re-run: **31.33% survived (203/648)**.
+- **Round 3** — while writing this section, one more gap surfaced by inspection of the round-2
+  survivor diff: `test_get_stats_with_populated_indices` and
+  `test_get_index_size_reflects_populated_dense_index` both used equal bm25/dense counts, so
+  `get_stats()`'s `"synced": bm25_count == dense_count` (`:511`) and `get_index_size()`'s
+  empty-index ternary else-branch (`:520`) were only exercised in a way where `==`/`<=`/`>=`
+  all agree, and the empty-searcher case (where the ternary's else-value actually matters) was
+  never called for `get_index_size()` at all. Added
+  `test_get_index_size_on_empty_index`, `test_get_stats_synced_false_when_dense_exceeds_bm25`,
+  and `test_get_stats_synced_false_when_bm25_exceeds_dense`, verified via targeted manual
+  mutation (all four individual mutants — `511: ==→<=`, `511: ==→>=`, `520: if→if not`,
+  `520: else 0→else 1` — caught, file restored clean each time). **Not** re-measured with a
+  fourth full 648-job campaign — each full run costs on the order of an hour of wall-clock,
+  and the marginal survivor count at this point is a long tail of ones and twos; the manual
+  spot-check gives the same catch/no-catch answer for these specific mutants at a fraction of
+  the cost. The recorded score above (31.33%) predates this round's three tests and is
+  expected to drop somewhat further on a hypothetical fourth run.
+
+**Deliberately not remediated — documented, not chased:**
+
+- **Logging/observability-only branches** — the `__init__` index-mismatch warning guard
+  (`:190-194`, `abs(total_bm25 - dense_count) > 10`), `_load_dense_index`'s
+  fresh-vs-existing log branch (`:354`), the BM25 zero-indexed error-log guard (`:598`), an
+  OTel span attribute (`ATTR_RESULT_COUNT`), and the legacy `add_embeddings()` sync path's
+  content-stripping dict comprehension (`:1154` — textually identical to the round-2-fixed
+  `:932` line but a different call site, feeding only a metadata dict that downstream tests
+  don't assert on directly). None of these change a return value or observable state a test
+  can assert on without instrumenting the logger — consistent with this campaign's
+  established policy of not chasing logging-only mutants (Phase 14.1's `caplog` assertions
+  are the one place that policy is reversed, because there the log call *is* the entire
+  observable behavior of an otherwise-empty `except` arm).
+- **Pure timing** — `dense_time`/`bm25_time = time.time() - start_time` (`:586`, `:621`) feed
+  only log messages; inherently unproductive to test via mocked clocks for a value nothing
+  branches on.
+- **Deep-integration dispatch, deferred as disproportionate** — `execute()`'s
+  ego-graph-triggered rerank guard (`:741`, `elif (effective_config.ego_graph.enabled and
+  self.reranking_engine and len(results) > k):`) requires full `execute()`-level integration
+  (reranking engine mocked, ego-graph enabled, single-pass disabled, results exceeding `k`)
+  disproportionate to the remaining value at this point in the campaign. The one item here
+  with a plausible future test if this file is revisited.
+- **Equivalent-mutant debt** — `get_index_size()`'s empty-branch `else -1` mutant
+  (`:520`) is behaviorally equivalent for every valid input: `bm25_count` is never negative,
+  so `max(bm25_count, -1) == max(bm25_count, 0) == bm25_count` always. `get_stats()`'s
+  `"synced": bm25_count is dense_count` mutant (`:511`) is equivalent whenever both counts
+  fall inside CPython's small-int cache (`-5..256`), which covers every value any realistic
+  or test-constructed index size will ever take — no test can distinguish `is` from `==`
+  without deliberately constructing counts large enough to defeat interning, which would
+  assert a CPython implementation detail, not a behavior.
+
+**Gate:** all 59 tests green, zero internal `CodeIndexManager`/`BM25Index` patches remain
+(`grep -c 'patch("search.hybrid_searcher' tests/unit/search/test_hybrid_search.py` finds only
+the module docstring's historical description and one legitimate OTel-tracing boundary patch
+— neither is the pattern being gated on). Full `tests/unit/`/`tests/fast_integration/` suite
+re-confirmed green after every round (final: 4,151 passed, 2 skipped, 85.54% coverage,
+`fail_under` unchanged at 84). Mutation score **not** met against the plan's 15% fail-over
+threshold — recorded at 31.33% (203/648), with every surviving cluster traced to source and
+categorized above (logging/observability, timing, one deferred deep-integration branch, two
+CPython-equivalent-mutant edge cases). No further remediation is planned within this phase's
+scope.
+
+Commits:
+
+```bash
+./scripts/git/commit_enhanced.sh "test: de-mock test_hybrid_search.py (Phase 14.3)"
+./scripts/git/commit_enhanced.sh "test: close hybrid_searcher mutation-testing gaps (Phase 14.3)"
+./scripts/git/commit_enhanced.sh "docs: record Phase 14.3 in TESTING_GUIDE"
+```
