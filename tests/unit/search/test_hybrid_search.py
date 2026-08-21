@@ -347,6 +347,7 @@ class TestHybridSearcher:
         assert stats["average_times"]["bm25"] == 0.1
         assert stats["average_times"]["dense"] == 0.2
         assert stats["average_times"]["reranking"] == 0.05
+        assert stats["average_times"]["total"] == pytest.approx(0.35)
 
     def test_performance_tracking(self):
         """Test performance tracking during searches."""
@@ -1300,3 +1301,395 @@ class TestCaptureQueryText:
             if c.args[0] == ATTR_CAPTURE_QUERY
         ]
         assert calls == []
+
+
+class TestEgoGraphExpansion:
+    """_apply_ego_graph_expansion (search.hybrid_searcher:791-880) -- every
+    other test in this file sets ego_graph.enabled=False, so this method's
+    combine (867) and neighbor-cap (855-856) logic was entirely unexercised.
+    Phase 14.3 mutation testing surfaced ~35 surviving mutants here."""
+
+    def test_combines_anchors_then_neighbors_in_that_order(self):
+        from search.config import EgoGraphConfig
+        from search.reranker import SearchResult
+
+        searcher = HybridSearcher(tempfile.mkdtemp())
+        anchor = SearchResult(chunk_id="a.py:1-5:function:f", score=0.9, metadata={})
+        neighbor = SearchResult(chunk_id="b.py:1-5:function:g", score=0.5, metadata={})
+
+        searcher.ego_graph_retriever = Mock()
+        searcher.ego_graph_retriever.expand_search_results.return_value = (
+            [neighbor.chunk_id],
+            {},
+        )
+        searcher.ego_graph_retriever.score_neighbors.return_value = [neighbor]
+
+        combined = searcher._apply_ego_graph_expansion(
+            [anchor],
+            EgoGraphConfig(enabled=True, max_neighbors_per_hop=10, k_hops=2),
+            original_k=5,
+            query="test",
+        )
+
+        assert [r.chunk_id for r in combined] == [anchor.chunk_id, neighbor.chunk_id]
+
+    def test_caps_neighbors_to_min_of_hop_budget_and_k_multiple(self):
+        from search.config import EgoGraphConfig
+        from search.reranker import SearchResult
+
+        searcher = HybridSearcher(tempfile.mkdtemp())
+        anchor = SearchResult(
+            chunk_id="anchor.py:1-5:function:f", score=0.9, metadata={}
+        )
+        # max_neighbors_per_hop(4) * k_hops(3) = 12; original_k(10) * 3 = 30
+        # -- min is 12, the hop-budget term. Chosen so the two terms diverge
+        # under Add-for-Mul mutation of the hop-budget term (4+3=7 != 4*3=12)
+        # while the k-multiple term (30) stays clearly non-binding either way.
+        neighbors = [
+            SearchResult(
+                chunk_id=f"n{i}.py:1-5:function:g", score=1.0 - i * 0.05, metadata={}
+            )
+            for i in range(15)
+        ]
+
+        searcher.ego_graph_retriever = Mock()
+        searcher.ego_graph_retriever.expand_search_results.return_value = (
+            [n.chunk_id for n in neighbors],
+            {},
+        )
+        searcher.ego_graph_retriever.score_neighbors.return_value = list(neighbors)
+
+        combined = searcher._apply_ego_graph_expansion(
+            [anchor],
+            EgoGraphConfig(enabled=True, max_neighbors_per_hop=4, k_hops=3),
+            original_k=10,
+            query="test",
+        )
+
+        # Anchor plus the top-12 (by score, descending) neighbors, capped at
+        # min(max_neighbors_per_hop * k_hops, original_k * 3) == min(12, 30) == 12.
+        assert [r.chunk_id for r in combined] == [anchor.chunk_id] + [
+            f"n{i}.py:1-5:function:g" for i in range(12)
+        ]
+
+
+class TestParentExpansion:
+    """_apply_parent_expansion (search.hybrid_searcher:883-960) -- every
+    other test in this file sets parent_retrieval.enabled=False, so this
+    method's combine (946) and results-to-expand slice (909-914) logic was
+    entirely unexercised. Phase 14.3 mutation testing surfaced ~35 surviving
+    mutants here."""
+
+    def test_combines_original_then_parent_chunk_in_that_order(self):
+        from search.config import ParentRetrievalConfig
+        from search.reranker import SearchResult
+
+        searcher = HybridSearcher(tempfile.mkdtemp())
+        searcher.index_documents(
+            ["class Widget: ...", "def render(self): ..."],
+            ["widget.py:1-20:class:Widget", "widget.py:5-8:method:render"],
+            [[0.1, 0.2, 0.3, 0.4], [0.4, 0.3, 0.2, 0.1]],
+            {
+                "widget.py:1-20:class:Widget": {"kind": "class"},
+                "widget.py:5-8:method:render": {
+                    "kind": "method",
+                    "parent_chunk_id": "widget.py:1-20:class:Widget",
+                },
+            },
+        )
+        child = SearchResult(
+            chunk_id="widget.py:5-8:method:render",
+            score=0.9,
+            metadata={"parent_chunk_id": "widget.py:1-20:class:Widget"},
+        )
+
+        combined = searcher._apply_parent_expansion(
+            [child], ParentRetrievalConfig(enabled=True, include_parent_content=True)
+        )
+
+        assert [r.chunk_id for r in combined] == [
+            "widget.py:5-8:method:render",
+            "widget.py:1-20:class:Widget",
+        ]
+        assert combined[1].metadata.get("kind") == "class"
+
+    def test_max_results_to_expand_limits_which_children_are_scanned(self):
+        from search.config import ParentRetrievalConfig
+        from search.reranker import SearchResult
+
+        searcher = HybridSearcher(tempfile.mkdtemp())
+        searcher.index_documents(
+            [
+                "class A: ...",
+                "class B: ...",
+                "def a_m(self): ...",
+                "def b_m(self): ...",
+            ],
+            [
+                "a.py:1-5:class:A",
+                "b.py:1-5:class:B",
+                "a.py:6-8:method:m",
+                "b.py:6-8:method:m",
+            ],
+            [[0.1] * 4, [0.2] * 4, [0.3] * 4, [0.4] * 4],
+            {
+                "a.py:1-5:class:A": {"kind": "class"},
+                "b.py:1-5:class:B": {"kind": "class"},
+                "a.py:6-8:method:m": {"parent_chunk_id": "a.py:1-5:class:A"},
+                "b.py:6-8:method:m": {"parent_chunk_id": "b.py:1-5:class:B"},
+            },
+        )
+        children = [
+            SearchResult(
+                chunk_id="a.py:6-8:method:m",
+                score=0.9,
+                metadata={"parent_chunk_id": "a.py:1-5:class:A"},
+            ),
+            SearchResult(
+                chunk_id="b.py:6-8:method:m",
+                score=0.8,
+                metadata={"parent_chunk_id": "b.py:1-5:class:B"},
+            ),
+        ]
+
+        combined = searcher._apply_parent_expansion(
+            children,
+            ParentRetrievalConfig(enabled=True, include_parent_content=True),
+            max_results_to_expand=1,
+        )
+
+        # Only the first child (within the max_results_to_expand=1 slice)
+        # gets its parent looked up and appended.
+        assert [r.chunk_id for r in combined] == [
+            "a.py:6-8:method:m",
+            "b.py:6-8:method:m",
+            "a.py:1-5:class:A",
+        ]
+
+
+class TestRemoveFilesCacheEviction:
+    """remove_files (search.hybrid_searcher:1216-1223) delegates removal to
+    IndexSynchronizer and must evict the metadata cache only when something
+    was actually removed (#44 -- a stale cache entry surviving a no-op
+    remove would return wrong results after re-indexing the same path)."""
+
+    def test_clears_cache_when_files_were_removed(self):
+        searcher = HybridSearcher(tempfile.mkdtemp())
+        searcher._metadata_cache["stale.py:1-5:function:f"] = None
+        searcher.index_sync.remove_files = Mock(return_value=3)
+
+        removed = searcher.remove_files({"stale.py"}, "proj")
+
+        assert removed == 3
+        assert searcher._metadata_cache == {}
+
+    def test_leaves_cache_untouched_when_nothing_removed(self):
+        searcher = HybridSearcher(tempfile.mkdtemp())
+        searcher._metadata_cache["kept.py:1-5:function:f"] = None
+        searcher.index_sync.remove_files = Mock(return_value=0)
+
+        removed = searcher.remove_files({"missing.py"}, "proj")
+
+        assert removed == 0
+        assert "kept.py:1-5:function:f" in searcher._metadata_cache
+
+
+class TestIndexStats:
+    """get_stats (search.hybrid_searcher:501-515) and get_index_size
+    (:517-521) -- the MCP-facing stats surface -- had zero tests: only the
+    `.stats` property (test_stats_collection) and per-search-mode timing
+    (test_search_mode_stats) were covered. Both methods share the same
+    `dense_count = ... if self.dense_index.index else 0` ternary, which a
+    populated-index test is required to exercise the True branch of."""
+
+    def test_get_stats_with_populated_indices(self):
+        searcher = HybridSearcher(tempfile.mkdtemp())
+        searcher.index_documents(
+            ["def f(): ...", "def g(): ..."],
+            ["a.py:1-2:function:f", "b.py:1-2:function:g"],
+            [[0.1, 0.2], [0.3, 0.4]],
+        )
+
+        stats = searcher.get_stats()
+
+        assert stats["total_chunks"] == 2
+        assert stats["bm25_documents"] == 2
+        assert stats["dense_vectors"] == 2
+        assert stats["synced"] is True
+        assert stats["is_ready"] is True
+        assert stats["bm25_ready"] is True
+        assert stats["dense_ready"] is True
+
+    def test_get_stats_on_empty_index(self):
+        searcher = HybridSearcher(tempfile.mkdtemp())
+
+        stats = searcher.get_stats()
+
+        assert stats["total_chunks"] == 0
+        assert stats["synced"] is True
+        assert stats["is_ready"] is False
+        assert stats["bm25_ready"] is False
+        assert stats["dense_ready"] is False
+
+    def test_get_index_size_reflects_populated_dense_index(self):
+        searcher = HybridSearcher(tempfile.mkdtemp())
+        searcher.index_documents(
+            ["def f(): ...", "def g(): ...", "def h(): ..."],
+            ["a.py:1-2:function:f", "b.py:1-2:function:g", "c.py:1-2:function:h"],
+            [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]],
+        )
+
+        assert searcher.get_index_size() == 3
+
+    def test_get_index_size_on_empty_index(self):
+        """The populated test above always takes the ternary's if-branch
+        (index is truthy either way), so it can't distinguish `else 0` from
+        `else 1`/`else -1` -- only an empty (falsy) index reaches the else."""
+        searcher = HybridSearcher(tempfile.mkdtemp())
+
+        assert searcher.get_index_size() == 0
+
+    def test_get_stats_synced_false_when_dense_exceeds_bm25(self):
+        """The equal-count populated test above can't distinguish `==` from
+        `<=`/`>=`/`is` on "synced" -- all four agree when counts are equal.
+        Dense > bm25 catches `<=` (which would wrongly report True)."""
+        from embeddings.embedder import EmbeddingResult
+
+        searcher = HybridSearcher(tempfile.mkdtemp())
+        searcher.index_documents(
+            ["def f(): ...", "def g(): ..."],
+            ["a.py:1-2:function:f", "b.py:1-2:function:g"],
+            [[0.1, 0.2], [0.3, 0.4]],
+        )
+        searcher.dense_index.add_embeddings(
+            [
+                EmbeddingResult(
+                    embedding=np.array([0.5, 0.6], dtype=np.float32),
+                    chunk_id="c.py:1-2:function:h",
+                    metadata={},
+                )
+            ]
+        )
+
+        stats = searcher.get_stats()
+
+        assert stats["bm25_documents"] == 2
+        assert stats["dense_vectors"] == 3
+        assert stats["synced"] is False
+
+    def test_get_stats_synced_false_when_bm25_exceeds_dense(self):
+        """Bm25 > dense catches `>=` (which would wrongly report True)."""
+        searcher = HybridSearcher(tempfile.mkdtemp())
+        searcher.index_documents(
+            ["def f(): ...", "def g(): ...", "def h(): ..."],
+            ["a.py:1-2:function:f", "b.py:1-2:function:g", "c.py:1-2:function:h"],
+            [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]],
+        )
+        searcher.dense_index.remove_files({"c.py"})
+
+        stats = searcher.get_stats()
+
+        assert stats["bm25_documents"] == 3
+        assert stats["dense_vectors"] == 2
+        assert stats["synced"] is False
+
+
+class TestIndexDocumentsLengthValidation:
+    """index_documents (search.hybrid_searcher:564-573) raises ValueError
+    when documents/doc_ids/embeddings lengths disagree -- entirely
+    untested, so mutating either `!=` to `<` or the `or` to `and` survived."""
+
+    def test_raises_when_doc_ids_shorter_than_documents(self):
+        searcher = HybridSearcher(tempfile.mkdtemp())
+
+        with pytest.raises(ValueError, match="same length"):
+            searcher.index_documents(
+                ["def f(): ...", "def g(): ..."],
+                ["a.py:1-2:function:f"],
+                [[0.1, 0.2], [0.3, 0.4]],
+            )
+
+    def test_raises_when_embeddings_shorter_than_documents(self):
+        searcher = HybridSearcher(tempfile.mkdtemp())
+
+        with pytest.raises(ValueError, match="same length"):
+            searcher.index_documents(
+                ["def f(): ...", "def g(): ..."],
+                ["a.py:1-2:function:f", "b.py:1-2:function:g"],
+                [[0.1, 0.2]],
+            )
+
+
+class TestSemanticModeEmptyIndexGuard:
+    """execute (search.hybrid_searcher:666-672) short-circuits semantic-mode
+    search to [] when the dense index is empty -- every other test either
+    uses hybrid/bm25 mode or a populated index, so this branch and its
+    `search_mode == SearchMode.SEMANTIC` condition were never reached."""
+
+    def test_semantic_search_on_empty_dense_index_returns_empty(self):
+        searcher = HybridSearcher(tempfile.mkdtemp())
+
+        results = searcher.search("test query", k=5, search_mode="semantic")
+
+        assert results == []
+
+    def test_semantic_search_ignores_empty_bm25_when_dense_is_populated(self):
+        """Distinguishes the semantic-only guard (dense-only readiness) from
+        the `else` (hybrid) branch's `not is_ready`, which requires BOTH
+        indices -- an all-empty searcher can't tell these apart since both
+        branches return [] there. BM25 stays empty; only dense is
+        populated, bypassing index_documents (which populates both)."""
+        from embeddings.embedder import EmbeddingResult
+
+        embedder = Mock()
+        embedder.embed_query.return_value = np.array([0.1, 0.2], dtype=np.float32)
+        config = SearchConfig()
+        config.reranker.enabled = False
+        config.multi_hop.enabled = False
+        searcher = HybridSearcher(tempfile.mkdtemp(), embedder=embedder, config=config)
+        searcher.dense_index.add_embeddings(
+            [
+                EmbeddingResult(
+                    embedding=np.array([0.1, 0.2], dtype=np.float32),
+                    chunk_id="a.py:1-2:function:f",
+                    metadata={},
+                )
+            ]
+        )
+        assert searcher.bm25_index.is_empty
+
+        with patch("search.config.get_search_config", return_value=config):
+            results = searcher.search("test query", k=5, search_mode="semantic")
+
+        assert results
+        assert results[0].chunk_id == "a.py:1-2:function:f"
+
+
+class TestParentExpansionContentStripping:
+    """_apply_parent_expansion's include_parent_content=False branch
+    (search.hybrid_searcher:929-933) filters "content" out of parent
+    metadata. FakeDenseIndex.add_embeddings already strips "content" at
+    indexing time, so exercising this branch through a real index round
+    trip can't distinguish it -- get_chunk_by_id is mocked directly here,
+    a legitimate boundary since the fake cannot produce this input."""
+
+    def test_include_parent_content_false_strips_content_key(self):
+        from search.config import ParentRetrievalConfig
+        from search.reranker import SearchResult
+
+        searcher = HybridSearcher(tempfile.mkdtemp())
+        child = SearchResult(
+            chunk_id="widget.py:5-8:method:render",
+            score=0.9,
+            metadata={"parent_chunk_id": "widget.py:1-20:class:Widget"},
+        )
+        searcher.dense_index.get_chunk_by_id = Mock(
+            return_value={"content": "class Widget: ...", "kind": "class"}
+        )
+
+        combined = searcher._apply_parent_expansion(
+            [child], ParentRetrievalConfig(enabled=True, include_parent_content=False)
+        )
+
+        assert "content" not in combined[1].metadata
+        assert combined[1].metadata.get("kind") == "class"
