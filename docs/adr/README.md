@@ -61,6 +61,7 @@ for avoiding re-litigating settled questions.
 | [0053](0053-resource-refresher-protocol-seam.md) | Lift the MCP process-resource lifecycle out of `IncrementalIndexer` via a protocol seam | accepted | 2026-08-20 |
 | [0054](0054-route-cuda-extensions-to-cpp-grammar.md) | Route CUDA (.cu/.cuh) extensions to the existing tree-sitter-cpp grammar | accepted | 2026-08-22 |
 | [0055](0055-exclude-phantom-nodes-from-centrality.md) | Exclude phantom placeholder nodes from centrality computation (default off) | accepted | 2026-08-22 |
+| [0056](0056-spec-row-edge-emission-seam.md) | Spec-row seam (`EDGE_EMISSION_SPECS`) for tree-sitter chunker-native call/relationship edges | accepted | 2026-08-23 |
 
 ## Adding a new ADR
 

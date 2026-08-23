@@ -77,6 +77,14 @@ here only to close the door on introducing one as a substitute for libclang.
   plan doc) has landed — see [ADR-0037](0037-decline-index-version-bump-for-cpp-parity.md) and
   [ADR-0038](0038-cpp-only-container-traversal-seam.md). This ADR's own decision (tier 1 only,
   a tree-sitter `call_expression` walk) is unaffected and remains the open next step.
+- *(Update 2026-08-23: `chunking/relationships/edge_specs.py`'s `EDGE_EMISSION_SPECS` spec-row
+  table now exists — see [ADR-0056](0056-spec-row-edge-emission-seam.md), which generalized
+  GLSL's bridge into a lookup table keyed on language name. The tier-1 walk described above now
+  lands as one new row plus the tree-sitter walk itself, with zero edits to
+  `MultiLanguageChunker`. The chunk-type-allowlist and `is_method_call` hardcodes named earlier
+  in this ADR remain the two open follow-on items for that PR — ADR-0056 verified
+  `EDGE_EMISSION_SPECS.call_confidence` does not reach `CallGraphConfig.min_confidence`, so a
+  ≈0.6 C/C++ row is not filtered by that floor either.)*
 - Reopening condition for tiers 2–3: a consumer of this project has a real `compile_commands.json`
   (CMake/ninja or Bazel build), or clangd/libclang become available in this development
   environment. Until then, shipping those tiers would mean dead code paths for most Windows/

@@ -3,10 +3,11 @@
 Unlike Python, GLSL has no standalone `chunking/relationships/relationship_extractors/`
 classes — `GLSLChunker.extract_metadata` (chunking/languages/glsl.py) walks the parse
 tree once and appends plain relationship dicts to `metadata["relationships"]` inline
-(see `_add_relationship`), which `MultiLanguageChunker._extract_glsl_phase3_relationships`
-then converts into `RelationshipEdge` objects with no re-parse. So these tests operate
-at the `MultiLanguageChunker.chunk_file()` level — the same seam GLSL relationships
-actually flow through in production — rather than instantiating an extractor directly.
+(see `_add_relationship`), which `materialize_relationship_edges`
+(chunking/relationships/edge_specs.py) then converts into `RelationshipEdge` objects
+with no re-parse. So these tests operate at the `MultiLanguageChunker.chunk_file()`
+level — the same seam GLSL relationships actually flow through in production —
+rather than instantiating an extractor directly.
 
 Tests:
 - IMPORTS       (#include "x.glslinc")

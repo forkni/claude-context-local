@@ -423,7 +423,7 @@ def get_relationship_field_mapping() -> dict[str, tuple]:
         # 2026-08-03, resolved 2026-08-04). They remain RelationshipType enum members
         # (and stay in get_priority_groups()) so the GLSL tree-sitter path's dynamic
         # RelationshipType(rel["relationship_type"]) conversion
-        # (chunking/multi_language_chunker.py's _extract_glsl_phase3_relationships)
+        # (chunking/relationships/edge_specs.py's materialize_relationship_edges)
         # can't turn a stray edge of either type into a silently-swallowed ValueError.
         # But no extractor emits them, and adding one is a deliberate non-goal: unlike
         # uses_global/asserts_type below, attribute assignment/access is the

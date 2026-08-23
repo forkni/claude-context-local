@@ -54,6 +54,13 @@ harness. Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
 
 ### Changed
 
+- **GLSL's chunker-native call/relationship-edge bridge generalized into a spec-row table** —
+  `chunking/relationships/edge_specs.py`'s `EdgeEmissionSpec`/`EDGE_EMISSION_SPECS`, keyed by
+  language name, replaces `MultiLanguageChunker`'s three `tchunk.language == "glsl"` switches
+  and two bridge methods. Behavior-preserving (all `test_glsl_relationships.py` tests, the
+  `test_chunker_parity.py` snapshot gate, and the 63q/133q/F-via-similar SSCG canons
+  unchanged); clears the way for a C/C++ call-edge tier (ADR-0035) to land as one new row
+  instead of a widened switch. See `docs/adr/0056-spec-row-edge-emission-seam.md`.
 - **`DEFAULT_IGNORED_DIRS` grew by 12 vendored/dependency-tree directory names** (`third_party`,
   `thirdparty`, `third-party`, `3rdparty`, `vendor`, `vendored`, `extern`, `deps`, `_deps`,
   `subprojects`, `submodules`; mirrored into `DEPENDENCY_TREE_DIRS`). Files under these directory

@@ -157,10 +157,10 @@ def test_glsl_relationship_strings_are_valid_relationship_types():
     """Every string literal GLSLChunker's `_add_relationship` (chunking/languages/glsl.py)
     passes as `rel_type` must round-trip through `RelationshipType(...)`.
 
-    `MultiLanguageChunker._extract_glsl_phase3_relationships`
-    (chunking/multi_language_chunker.py:576) builds edges from these strings
-    dynamically via `RelationshipType(rel.get("relationship_type", "calls"))`,
-    wrapped in a swallowed `except (ValueError, KeyError, TypeError)` that only
+    `materialize_relationship_edges` (chunking/relationships/edge_specs.py)
+    builds edges from these strings dynamically via
+    `RelationshipType(rel.get("relationship_type", "calls"))`, wrapped in a
+    swallowed `except (ValueError, KeyError, TypeError)` that only
     `logger.debug`s and silently drops the edge. A typo in a GLSL
     `_add_relationship` call site would fail this way with no visible error --
     this test catches that at the string-literal level instead.

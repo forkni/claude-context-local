@@ -267,8 +267,9 @@ class GraphIntegration:
         function_definition node — it never re-parses a (possibly invalid)
         content fragment the way this method's ``ast.parse`` does — so a
         GLSL split_block's ``calls`` is either genuinely non-empty already
-        (handled by ``MultiLanguageChunker._extract_glsl_call_relationships``)
-        or genuinely empty (a fragment with no calls in its body slice), never
+        (handled by ``materialize_call_edges``,
+        chunking/relationships/edge_specs.py) or genuinely empty (a fragment
+        with no calls in its body slice), never
         empty-because-extraction-failed. The language guard below is what
         makes that distinction irrelevant here: any GLSL split_block that
         reaches this method with empty ``calls`` just returns ``[]`` again.
