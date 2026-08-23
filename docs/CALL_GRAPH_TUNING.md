@@ -36,7 +36,7 @@ for the authoritative "two namespaces" explanation):
 | pyan wildcard fan-out | `external_call_graph.py` | **0.6** | ✅ (but tagged by `_TrackedVisitor`) | `expand_unknowns` residue, demoted |
 | pyan direct | `external_call_graph.py` | 0.75 | via `resolvers` config | Cross-module, graph-inferred |
 | LibCST FQN | `libcst_call_graph.py` | 0.90 | via `resolvers` config | Import-aware, per-file |
-| LSP / basedpyright | `lsp_call_graph.py` | 0.98 | `lsp_enabled=True` | Most precise; opt-in |
+| LSP / basedpyright | `lsp_call_graph.py` | 0.98 | `lsp_enabled=True` (default) | Most precise; requires `pip install -e ".[lsp]"`, no-ops otherwise |
 
 **Two distinct confidence namespaces** (do not conflate): the AST rail's
 `CallEdge.confidence` (a float, always `1.0`, set at extraction time and not
@@ -344,21 +344,24 @@ Set in `search_config.json` under `call_graph`:
 ```json
 "call_graph": {
   "resolvers": ["pyan", "libcst"],
-  "min_confidence": 0.0
+  "min_confidence": 0.65
 }
 ```
 
 | Goal | `min_confidence` | Effect |
 |------|-----------------|--------|
-| Keep all edges (default) | `0.0` | No filtering |
-| Drop pyan wildcard fan-out | `0.65` | Drops 0.60-tagged edges; keeps direct pyan (0.75) |
+| Keep all edges | `0.0` | No filtering |
+| Drop pyan wildcard fan-out (default) | `0.65` | Drops 0.60-tagged edges; keeps direct pyan (0.75) |
 | Drop all pyan edges | `0.80` | Keeps LibCST (0.90) and LSP (0.98) only |
 | LSP-only (highest precision) | `0.95` | Requires `lsp_enabled: true` |
 
-**Observability**: dropped edges are logged at INFO level:
+**Observability**: this floor filters on `resolver_confidence` (the resolver
+pipeline's numeric precedence value — not the qualitative `confidence` tag
+`exact`/`recovered`/`ambiguous` written by the AST chunking pass). Logged at
+INFO when it drops at least one edge, DEBUG otherwise:
 
 ```
-[CALL_EDGES] min_confidence=0.65 dropped 142 edge(s) (confidence below threshold)
+[CALL_EDGES] resolver_confidence floor=0.65: dropped 142/210 edge(s) below threshold (ladder: pyan-wildcard 0.60 / pyan 0.75 / libcst 0.90 / lsp 0.98)
 ```
 
 ### 6.2 `use_pyproject_toml` — Src-Layout Projects
@@ -499,11 +502,15 @@ interval on a healthy run.
 
 | Use case | Settings |
 |----------|---------|
-| **Fast indexing, any precision** | `resolvers: ["pyan"]`, `min_confidence: 0.0` |
-| **Balanced (default)** | `resolvers: ["pyan", "libcst"]`, `min_confidence: 0.65` |
-| **High precision** | `resolvers: ["pyan", "libcst"]`, `min_confidence: 0.80` (drops all pyan; §6.1) |
-| **Highest precision (slow)** | `resolvers: ["pyan", "libcst"]`, `lsp_enabled: true`, `min_confidence: 0.80` |
+| **Fastest indexing (lowest precision)** | `resolvers: ["pyan"]`, `lsp_enabled: false`, `min_confidence: 0.0` |
+| **Balanced (default)** | `resolvers: ["pyan", "libcst"]`, `lsp_enabled: true`, `min_confidence: 0.65` |
+| **Highest precision (slower)** | `resolvers: ["pyan", "libcst"]`, `lsp_enabled: true`, `min_confidence: 0.80` (drops all pyan; §6.1) |
 | **Src-layout project** | Add `use_pyproject_toml: true` to any of the above |
+
+`lsp_enabled` defaults to `true` — it only takes effect (and only costs the extra indexing time)
+when the `[lsp]` extra is installed (`pip install -e ".[lsp]"`); otherwise the resolver's
+`available()` probe fails and it silently no-ops, so the "Balanced (default)" row above behaves
+identically to the pre-LSP pipeline on a machine that never installed the extra.
 
 ---
 

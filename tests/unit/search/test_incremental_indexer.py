@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from unittest.mock import ANY, Mock, patch
 
+from merkle.merkle_dag import MerkleNode
 from search.call_edge_injection import InjectionStats
 from search.filters import PathFilter
 from search.incremental_indexer import IncrementalIndexer, IncrementalIndexResult
@@ -227,6 +228,7 @@ class TestIncrementalIndexer:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py", "utils.py", "config.py"]
             mock_dag.path_filter = PathFilter(None, None, self.project_path)
+            mock_dag.nodes = {}
             mock_dag_class.return_value = mock_dag
 
             # Mock chunker
@@ -665,6 +667,7 @@ class TestIncrementalIndexer:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["error_file.py", "good_file.py"]
             mock_dag.path_filter = PathFilter(None, None, self.project_path)
+            mock_dag.nodes = {}
             mock_dag_class.return_value = mock_dag
 
             # Mock chunker - one file fails, one succeeds
@@ -2010,6 +2013,7 @@ class TestProbeWiring:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py", "utils.py"]
             mock_dag.path_filter = PathFilter(None, None, self.project_path)
+            mock_dag.nodes = {}
             mock_dag_class.return_value = mock_dag
 
             mock_chunk = Mock()
@@ -2164,6 +2168,7 @@ class TestModuleSummaryInjection:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py", "utils.py"]
             mock_dag.path_filter = PathFilter(None, None, self.project_path)
+            mock_dag.nodes = {}
             mock_dag_class.return_value = mock_dag
 
             mock_chunk = Mock()
@@ -2300,3 +2305,222 @@ class TestIncrementalCallEdgeInjection:
         mock_inject.assert_called_once_with(str(self.project_path))
         assert result.call_edges_injected == 7
         assert result.call_edge_resolvers == ("pyan", "libcst")
+
+
+class TestDuplicateContentReporting:
+    """Workstream B2 -- `_report_duplicate_content` byte-identical groups.
+
+    Report-only, on purpose: no skip/alias. Chunk IDs embed relative_path
+    and graph_storage.remove_file_nodes prunes by path prefix, so aliasing
+    would orphan every alias when the canonical file is later deleted (see
+    the method's own docstring). These tests call `_report_duplicate_content`
+    directly with a hand-built `dag.nodes` map rather than driving the whole
+    `_full_index` flow -- the method only reads `dag.nodes` and its
+    `supported_files` argument, so a real MerkleDAG walk buys nothing here.
+    """
+
+    def setup_method(self):
+        self.indexer = IncrementalIndexer(
+            indexer=Mock(),
+            embedder=Mock(),
+            chunker=Mock(),
+            snapshot_manager=Mock(),
+        )
+
+    @staticmethod
+    def _node(path: str, content_hash: str, size: int) -> MerkleNode:
+        return MerkleNode(path=path, hash=content_hash, is_file=True, size=size)
+
+    def test_duplicate_group_above_floor_is_logged(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        dag = Mock()
+        dag.nodes = {
+            "a.py": self._node("a.py", "hash1", 1000),
+            "b.py": self._node("b.py", "hash1", 1000),
+        }
+
+        self.indexer._report_duplicate_content(dag, ["a.py", "b.py"])
+
+        messages = [r.message for r in caplog.records]
+        summary = [m for m in messages if "duplicate-content group(s)" in m]
+        assert len(summary) == 1
+        assert "1 duplicate-content group(s)" in summary[0]
+        assert "1,000 redundant bytes" in summary[0]
+        detail = [m for m in messages if " copies x " in m]
+        assert len(detail) == 1
+        assert "2 copies x 1,000B (1,000B wasted): a.py + 1 more (b.py)" in detail[0]
+
+    def test_group_below_byte_floor_is_not_reported(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        dag = Mock()
+        dag.nodes = {
+            "a.py": self._node("a.py", "hash1", 100),
+            "b.py": self._node("b.py", "hash1", 100),
+        }
+
+        self.indexer._report_duplicate_content(dag, ["a.py", "b.py"])
+
+        assert not any(r.message.startswith("[DUP_CONTENT]") for r in caplog.records)
+
+    def test_unsupported_file_with_coincidental_hash_not_counted(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        dag = Mock()
+        # vendor/readme.txt shares a.py's content hash but is NOT a supported
+        # file -- merkle_dag hashes unsupported extensions by name:size:mtime,
+        # not content, so a coincidental match here is not a real duplicate
+        # and must never surface, because it was never passed in
+        # supported_files.
+        dag.nodes = {
+            "a.py": self._node("a.py", "hash1", 1000),
+            "vendor/readme.txt": self._node("vendor/readme.txt", "hash1", 1000),
+        }
+
+        self.indexer._report_duplicate_content(dag, ["a.py"])
+
+        assert not any(r.message.startswith("[DUP_CONTENT]") for r in caplog.records)
+
+    def test_no_duplicates_logs_nothing(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        dag = Mock()
+        dag.nodes = {
+            "a.py": self._node("a.py", "hash1", 1000),
+            "b.py": self._node("b.py", "hash2", 1000),
+            "c.py": self._node("c.py", "hash3", 1000),
+        }
+
+        self.indexer._report_duplicate_content(dag, ["a.py", "b.py", "c.py"])
+
+        assert not any(r.message.startswith("[DUP_CONTENT]") for r in caplog.records)
+
+    def test_missing_or_non_file_nodes_skipped_without_error(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        dag = Mock()
+        dag.nodes = {
+            "a.py": self._node("a.py", "hash1", 1000),
+            # "b.py" deliberately absent from dag.nodes.
+            "dir_stub": MerkleNode(
+                path="dir_stub", hash="hash1", is_file=False, size=0
+            ),
+        }
+
+        # Must not raise even though "b.py" has no node and "dir_stub" is a
+        # directory node that coincidentally shares a.py's hash.
+        self.indexer._report_duplicate_content(dag, ["a.py", "b.py", "dir_stub"])
+
+        assert not any(r.message.startswith("[DUP_CONTENT]") for r in caplog.records)
+
+    def test_more_than_five_groups_logs_only_top_five_by_wasted_bytes(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        dag = Mock()
+        nodes = {}
+        supported_files = []
+        # 6 groups, sizes 512..1012 in steps of 100 -- each group has exactly
+        # 2 files, so wasted bytes == size, giving 6 distinct totals and a
+        # deterministic top-5 cut. Group 0 (size 512, the floor) is the one
+        # expected to sort out of the top 5.
+        for i in range(6):
+            size = 512 + i * 100
+            path_a, path_b = f"dup_group_{i}/a.py", f"dup_group_{i}/b.py"
+            nodes[path_a] = self._node(path_a, f"hash{i}", size)
+            nodes[path_b] = self._node(path_b, f"hash{i}", size)
+            supported_files.extend([path_a, path_b])
+        dag.nodes = nodes
+
+        self.indexer._report_duplicate_content(dag, supported_files)
+
+        messages = [r.message for r in caplog.records]
+        summary = [m for m in messages if "duplicate-content group(s)" in m]
+        assert len(summary) == 1
+        assert "6 duplicate-content group(s)" in summary[0]
+        # Sum of ALL 6 groups' wasted bytes (512+612+712+812+912+1012=4,572),
+        # not just the 5 that get a detail line.
+        assert "4,572 redundant bytes" in summary[0]
+
+        detail = [m for m in messages if " copies x " in m]
+        assert len(detail) == 5
+        assert not any("dup_group_0/" in m for m in detail)
+        for i in range(1, 6):
+            assert any(f"dup_group_{i}/a.py" in m for m in detail)
+
+
+class TestExtensionSkipHistogram:
+    """Workstream C3 -- `_report_extension_skip_histogram` per-extension
+    diagnostics for files found but not indexed.
+
+    This is the log line that would have made the `.cu`/`.cuh` registration
+    gap (Workstream A3) self-evident without manual investigation: files in
+    `all_files` but not in `supported_files` are unsupported by extension,
+    and were previously invisible beyond the aggregate
+    "Found N supported files out of M total files" count.
+    """
+
+    def setup_method(self):
+        self.indexer = IncrementalIndexer(
+            indexer=Mock(),
+            embedder=Mock(),
+            chunker=Mock(),
+            snapshot_manager=Mock(),
+        )
+
+    def test_skipped_extensions_counted_and_logged(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        all_files = ["a.py", "b.py", "readme.md", "notes.md", "logo.bin"]
+        supported_files = ["a.py", "b.py"]
+
+        self.indexer._report_extension_skip_histogram(all_files, supported_files)
+
+        messages = [r.message for r in caplog.records]
+        summary = [m for m in messages if m.startswith("[SKIP_HISTOGRAM] 3 file(s)")]
+        assert len(summary) == 1
+        assert "0 extensionless" in summary[0]
+        detail = [m for m in messages if m.startswith("[SKIP_HISTOGRAM]   ")]
+        assert any(".md: 2" in m for m in detail)
+        assert any(".bin: 1" in m for m in detail)
+
+    def test_extensionless_files_counted_explicitly(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        all_files = ["a.py", "LICENSE", "Makefile"]
+        supported_files = ["a.py"]
+
+        self.indexer._report_extension_skip_histogram(all_files, supported_files)
+
+        messages = [r.message for r in caplog.records]
+        summary = [m for m in messages if m.startswith("[SKIP_HISTOGRAM]")]
+        assert any("2 file(s)" in m and "2 extensionless" in m for m in summary)
+        # Extensionless files never appear as a per-extension detail line --
+        # they're only reflected in the summary count.
+        detail = [m for m in messages if m.startswith("[SKIP_HISTOGRAM]   ")]
+        assert detail == []
+
+    def test_no_skipped_files_logs_nothing(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        all_files = ["a.py", "b.py"]
+        supported_files = ["a.py", "b.py"]
+
+        self.indexer._report_extension_skip_histogram(all_files, supported_files)
+
+        assert not any(r.message.startswith("[SKIP_HISTOGRAM]") for r in caplog.records)
+
+    def test_only_top_15_extensions_logged_by_descending_count(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        supported_files = ["a.py"]
+        all_files = ["a.py"]
+        # 20 distinct extensions, each with a distinct, deterministic count
+        # (ext_00 has 1 file, ext_19 has 20 files) so the top-15 cut and its
+        # ordering are unambiguous.
+        for i in range(20):
+            count = i + 1
+            for j in range(count):
+                all_files.append(f"file_{i}_{j}.ext{i:02d}")
+
+        self.indexer._report_extension_skip_histogram(all_files, supported_files)
+
+        messages = [r.message for r in caplog.records]
+        detail = [m for m in messages if m.startswith("[SKIP_HISTOGRAM]   ")]
+        assert len(detail) == 15
+        # The 5 lowest-count extensions (ext00..ext04, counts 1..5) must be
+        # dropped; the 15 highest-count ones (ext05..ext19) must all appear.
+        for i in range(5):
+            assert not any(f".ext{i:02d}:" in m for m in detail)
+        for i in range(5, 20):
+            assert any(f".ext{i:02d}:" in m for m in detail)

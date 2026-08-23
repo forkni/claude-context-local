@@ -736,7 +736,8 @@ The call edges are produced by a layered resolver pipeline:
 Higher-confidence resolvers upgrade lower-confidence edges for the same pair.
 Install `pip install -e ".[callgraph]"` to enable pyan3 + LibCST resolvers.
 `lsp_enabled` is requested by default in call_graph config; basedpyright LSP
-resolution no-ops unless the `[lsp]` extra is installed.""",
+resolution no-ops unless `pip install -e ".[lsp]"` is also run — install both
+extras to see `resolver_source: "lsp"` edges.""",
         input_schema={
             "type": "object",
             "properties": {
@@ -942,6 +943,10 @@ RETURNS:
                 "glsl_filter_td_prefix": {
                     **CONFIG_BACKED["configure_chunking.glsl_filter_td_prefix"],
                     "description": "Filter TouchDesigner's TD-prefixed shader-include builtins (TDPanelSize, TDOutputSwizzle, ...) out of GLSL call-graph metadata. Disable for non-TouchDesigner GLSL projects where a real user-defined symbol might start with 'TD'.",
+                },
+                "max_file_size_bytes": {
+                    **CONFIG_BACKED["configure_chunking.max_file_size_bytes"],
+                    "description": "Files larger than this are skipped by both the chunker and the adaptive-sizing profiler (never chunked, never indexed)",
                 },
                 "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },

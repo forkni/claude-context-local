@@ -673,8 +673,8 @@ echo regardless of the Project Overrides setting below ^(ADR-0014^).
 echo.
 echo All settings below are index-time - re-index the project to apply changes.
 echo.
-echo   1. Enable LSP Call-Graph Resolver   - Opt-in, +938 resolved edges, slower indexing
-echo   2. Disable LSP Call-Graph Resolver  - Default; AST + pyan3 + LibCST only
+echo   1. Enable LSP Call-Graph Resolver   - Default; highest accuracy (0.98), slower indexing
+echo   2. Disable LSP Call-Graph Resolver  - AST + pyan3 + LibCST only (no LSP edges)
 echo   3. Enable Chunk Embedding Cache     - 43x reindex speedup
 echo   4. Disable Chunk Embedding Cache
 echo   5. Enable Project Overrides         - Per-project auto-tuning ^(ADR-0014^)

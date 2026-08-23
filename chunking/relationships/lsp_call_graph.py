@@ -629,7 +629,8 @@ class LSPResolver:
         if not _LSP_AVAILABLE:
             logger.info(
                 "[LSP] basedpyright-langserver not found — skipping LSP call edges. "
-                "Install the '[lsp]' extra and set lsp_enabled=true to activate."
+                "lsp_enabled is already true; install the '[lsp]' extra "
+                '(pip install -e ".[lsp]") to activate this resolver.'
             )
             return []
 

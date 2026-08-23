@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 
+from chunking.language_registry import DEPENDENCY_TREE_DIRS
 from search.filters import (
     ALWAYS_IGNORED_DIRS,
     DEFAULT_IGNORED_DIRS,
@@ -573,3 +574,83 @@ class TestPatternClassification(TestCase):
             )
             is True
         )
+
+
+class TestVendoringDirectoryDefaults(TestCase):
+    """Workstream B1 -- vendored/third-party C/C++ dependency-tree names.
+
+    Verified impact (see the plan): `third_party/` holds `json.hpp` (35.6%
+    of one project's indexed lines) and a project can also vendor under
+    `vendor/`. Both sets get the *same* names so include_dirs re-admission
+    stays additive (ADR-0036), matching the existing `venv`/`site-packages`
+    behavior exercised above -- these are just new members of the same
+    mechanism, not a new code path.
+    """
+
+    VENDOR_NAMES = (
+        "third_party",
+        "thirdparty",
+        "third-party",
+        "3rdparty",
+        "vendor",
+        "vendored",
+        "extern",
+        "deps",
+        "_deps",
+        "subprojects",
+        "submodules",
+    )
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def test_vendor_names_are_default_ignored(self):
+        for name in self.VENDOR_NAMES:
+            assert name in DEFAULT_IGNORED_DIRS, name
+
+    def test_vendor_names_are_dependency_tree_dirs(self):
+        # Same name set in both -- keeps DEPENDENCY_TREE_DIRS <=
+        # DEFAULT_IGNORED_DIRS satisfied and makes an include pattern that
+        # names one of these additive rather than narrowing.
+        for name in self.VENDOR_NAMES:
+            assert name in DEPENDENCY_TREE_DIRS, name
+
+    def test_external_deliberately_held_back(self):
+        # The plan's one explicitly-contestable name: plausible as a
+        # first-party directory, so it stays a normal (narrowing-only, not
+        # auto-ignored) name rather than risking the
+        # only_dependency_paths_matched abort path for a project whose real
+        # source lives under external/.
+        assert "external" not in DEFAULT_IGNORED_DIRS
+        assert "external" not in DEPENDENCY_TREE_DIRS
+
+    def test_vendor_pattern_classifies_additive(self):
+        pat = parse_dir_pattern("third_party/foo", self.root)
+        assert is_dependency_pattern(pat) is True
+
+    def test_include_rescues_vendored_dir_and_admits_first_party_source(self):
+        # Mirrors test_include_rescues_default_ignored_dir above, for the
+        # new vendoring names: additive re-admission of one vendored
+        # subtree, first-party source is not discarded.
+        pf = PathFilter(["third_party/foo"], None, self.root)
+        assert pf.should_index_file("third_party/foo/mod.cpp") is True
+        # A sibling vendored library NOT named in include_dirs stays
+        # excluded -- additive widens scope to the target plus normal
+        # source, not "index everything under third_party".
+        assert pf.should_index_file("third_party/bar/mod.cpp") is False
+        assert pf.should_index_file("src/engine.cpp") is True
+
+    def test_vendored_dir_excluded_by_default_with_no_filters(self):
+        pf = PathFilter(None, None, self.root)
+        for name in self.VENDOR_NAMES:
+            assert pf.should_index_file(f"{name}/mod.cpp") is False, name
+
+    def test_deps_cmake_fetchcontent_dir_excluded_by_default(self):
+        # The most likely real-world collision: CMake FetchContent's
+        # default download/build directory nested under build/.
+        pf = PathFilter(None, None, self.root)
+        assert pf.should_index_file("build/_deps/googletest-src/gtest.cc") is False

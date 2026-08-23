@@ -1,6 +1,7 @@
 """Multi-language chunker that combines AST and tree-sitter approaches."""
 
 import logging
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -314,8 +315,27 @@ class MultiLanguageChunker:
             List of CodeChunk objects
         """
         if not self.is_supported(file_path):
-            logger.debug(f"File type not supported: {file_path}")
+            # Workstream C3: this branch does not fire on the production
+            # path — every caller (parallel_chunker.py, incremental_indexer
+            # via _get_supported_files) pre-filters with is_supported()
+            # before calling chunk_file(), so the debug log that used to
+            # live here never printed. Kept as a defensive early return for
+            # any caller that skips the pre-filter (e.g. direct test calls).
             return []
+
+        max_file_size_bytes = self._max_file_size_bytes()
+        if max_file_size_bytes is not None:
+            try:
+                file_size = os.path.getsize(file_path)
+            except OSError as e:
+                logger.warning(f"Could not stat {file_path}, skipping: {e}")
+                return []
+            if file_size > max_file_size_bytes:
+                logger.info(
+                    f"Skipping {file_path}: {file_size:,}B exceeds "
+                    f"max_file_size_bytes cap ({max_file_size_bytes:,}B)"
+                )
+                return []
 
         # Use tree-sitter for all  languages
         try:
@@ -325,6 +345,19 @@ class MultiLanguageChunker:
         except Exception as e:
             logger.error(f"Failed to chunk file {file_path}: {e}", exc_info=True)
             return []
+
+    def _max_file_size_bytes(self) -> int | None:
+        """Read ``ChunkingConfig.max_file_size_bytes``, or ``None`` if the search
+        config is unavailable (e.g. in isolated unit tests).
+
+        Lazily imported -- mirrors ``chunking/languages/base.py``'s
+        ``_get_chunking_config`` -- to avoid a ``search.config`` <-> ``chunking``
+        import cycle.
+        """
+        from search.config import get_chunking_config
+
+        chunking_config = get_chunking_config()
+        return chunking_config.max_file_size_bytes if chunking_config else None
 
     def _map_node_type(
         self,

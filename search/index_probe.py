@@ -591,13 +591,24 @@ def _measure_gpu() -> tuple[float | None, float | None, bool | None]:
         return None, None, None
 
 
-def _language_histogram(supported_files: list[str]) -> dict[str, int]:
+def language_histogram(supported_files: list[str]) -> dict[str, int]:
+    """Count supported files by lowercased extension.
+
+    Public since Workstream C3 (per-extension skip diagnostics) reuses this
+    exact bucketing shape for the *unsupported*-file histogram in
+    ``incremental_indexer.py`` rather than duplicating it.
+    """
     histogram: dict[str, int] = {}
     for file_path in supported_files:
         ext = Path(file_path).suffix.lower()
         if ext:
             histogram[ext] = histogram.get(ext, 0) + 1
     return histogram
+
+
+# Back-compat private alias — kept so any existing internal caller/import
+# spelled with the old leading-underscore name keeps working unchanged.
+_language_histogram = language_histogram
 
 
 def _probe_enabled() -> bool:
@@ -634,7 +645,7 @@ def probe_pre_chunking(
             gpu_bf16_supported=bf16,
             cpu_count=os.cpu_count() or 1,
             file_count=len(supported_files),
-            language_histogram=_language_histogram(supported_files),
+            language_histogram=language_histogram(supported_files),
             repo_profile=repo_profile,
             embedding_model=embedding_model,
         )
@@ -678,6 +689,14 @@ def probe_post_build(
 
     result = run_rules(measurements, "post_build")
     if not result.observations:
+        # A legitimate, data-dependent no-op (e.g. chunks/file below a rule's
+        # threshold) is otherwise indistinguishable from pass 2 silently
+        # failing to run at all — log it explicitly so it reads as "checked,
+        # nothing to report" rather than an unexplained absence.
+        logger.info(
+            "[INDEX_PROBE] Pass 2: no new observations (rules evaluated, "
+            "none triggered)"
+        )
         return None
     path = write_overrides_file(project_dir, result, mode="append")
     summary = result.summary("post_build")

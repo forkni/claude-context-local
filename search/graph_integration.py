@@ -575,7 +575,11 @@ class GraphIntegration:
 
         Returns:
             Stats dict with keys: ``nodes_added``, ``call_edges``,
-            ``resolved_edges``, ``phantom_edges``, ``rel_edges``.
+            ``resolved_edges``, ``ambiguous_edges``, ``phantom_edges``,
+            ``rel_edges``. ``ambiguous_edges`` counts calls resolved to
+            multiple candidate *real* chunk nodes (no phantom created);
+            ``phantom_edges`` counts calls that created a new bare-symbol
+            phantom node because no candidate chunk could be found at all.
         """
         if self.storage is None:
             return {}
@@ -622,6 +626,7 @@ class GraphIntegration:
         self._seen_split_methods = set()
         call_edges = 0
         resolved_edges = 0
+        ambiguous_edges = 0
         phantom_edges = 0
         rel_edges = 0
 
@@ -657,6 +662,8 @@ class GraphIntegration:
                             callee_qualified=callee_qualified,
                         )
                         if ambiguous:
+                            # Edges land between spec.chunk_id and real candidate
+                            # chunk nodes only — no phantom node is created here.
                             for candidate_id in ambiguous:
                                 self.storage.add_call_edge(
                                     caller_id=spec.chunk_id,
@@ -667,8 +674,10 @@ class GraphIntegration:
                                     confidence="ambiguous",
                                 )
                             call_edges += 1
-                            phantom_edges += 1
+                            ambiguous_edges += 1
                         else:
+                            # callee_name is a bare symbol, not a chunk id — this
+                            # is the only branch that creates a phantom node.
                             self.storage.add_call_edge(
                                 caller_id=spec.chunk_id,
                                 callee_name=callee_name,
@@ -690,6 +699,7 @@ class GraphIntegration:
             "nodes_added": nodes_added,
             "call_edges": call_edges,
             "resolved_edges": resolved_edges,
+            "ambiguous_edges": ambiguous_edges,
             "phantom_edges": phantom_edges,
             "rel_edges": rel_edges,
         }
@@ -807,6 +817,7 @@ class GraphIntegration:
             f"Populated graph from embeddings: {stats.get('nodes_added', 0)} nodes, "
             f"{stats.get('call_edges', 0)} call edges "
             f"({stats.get('resolved_edges', 0)} resolved, "
+            f"{stats.get('ambiguous_edges', 0)} ambiguous, "
             f"{stats.get('phantom_edges', 0)} phantom), "
             f"{stats.get('rel_edges', 0)} relationship edges"
         )
@@ -842,6 +853,7 @@ class GraphIntegration:
             f"Built graph from {stats.get('nodes_added', 0)} chunks: "
             f"{len(self.storage)} nodes, "
             f"{stats.get('resolved_edges', 0)} direct edges, "
+            f"{stats.get('ambiguous_edges', 0)} ambiguous edges, "
             f"{stats.get('phantom_edges', 0)} phantom edges"
         )
 

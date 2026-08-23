@@ -425,6 +425,74 @@ class TestRunResolvers:
         assert ("a", "b") in result
         assert result[("a", "b")].source == "thread_stub"
 
+    def test_unavailable_lsp_resolver_names_correct_extra(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Workstream C2: an unavailable resolver named 'lsp' must tell the
+        user to install '[lsp]', not the pyan/libcst '[callgraph]' extra."""
+        r = _make_resolver("lsp", 0.98, [], available=False)
+        with caplog.at_level(logging.INFO, logger="test_run_resolvers"):
+            run_resolvers([r], self._root, self._rlm, self._logger)
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert any("[lsp]" in m for m in messages)
+        assert not any("[callgraph]" in m for m in messages)
+
+    def test_unavailable_pyan_resolver_names_callgraph_extra(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An unavailable 'pyan' resolver must still report '[callgraph]'."""
+        r = _make_resolver("pyan", 0.75, [], available=False)
+        with caplog.at_level(logging.INFO, logger="test_run_resolvers"):
+            run_resolvers([r], self._root, self._rlm, self._logger)
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert any("[callgraph]" in m for m in messages)
+
+    def test_unavailable_unknown_resolver_defaults_to_callgraph(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A resolver name absent from RESOLVER_INSTALL_EXTRAS must fall back
+        to 'callgraph' rather than raising a KeyError."""
+        r = _make_resolver("mystery", 0.5, [], available=False)
+        with caplog.at_level(logging.INFO, logger="test_run_resolvers"):
+            run_resolvers([r], self._root, self._rlm, self._logger)
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert any("[callgraph]" in m for m in messages)
+
+    def test_dropped_equal_counter_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Two equal-confidence resolvers for the same pair: the second's
+        edge is dropped and counted as dropped_equal, not dropped_lower —
+        distinct from a genuinely lower-confidence drop, since equal-confidence
+        collisions may indicate a resolver-precedence ordering issue."""
+        e1 = ResolvedEdge("a", "b", 1, False, "res1", 0.75)
+        e2 = ResolvedEdge("a", "b", 2, False, "res2", 0.75)
+        r1 = _make_resolver("res1", 0.75, [e1])
+        r2 = _make_resolver("res2", 0.75, [e2])
+        with caplog.at_level(logging.INFO, logger="test_run_resolvers"):
+            run_resolvers([r1, r2], self._root, self._rlm, self._logger)
+        messages = [rec.getMessage() for rec in caplog.records]
+        res2_line = next(m for m in messages if m.startswith("[RESOLVERS] res2:"))
+        assert "dropped_equal=1" in res2_line
+        assert "dropped_lower=0" in res2_line
+
+    def test_dropped_lower_counter_logged(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A strictly-lower-confidence edge for an already-covered pair is
+        counted as dropped_lower, not dropped_equal — this is correct,
+        expected behaviour, unlike the dropped_equal case above."""
+        e_pyan = ResolvedEdge("a", "b", 1, False, "pyan", 0.85)  # high confidence tag
+        e_libcst = ResolvedEdge("a", "b", 2, False, "libcst", 0.70)  # lower tag
+        r_pyan = _make_resolver("pyan", 0.75, [e_pyan])
+        r_libcst = _make_resolver("libcst", 0.90, [e_libcst])
+        with caplog.at_level(logging.INFO, logger="test_run_resolvers"):
+            run_resolvers([r_pyan, r_libcst], self._root, self._rlm, self._logger)
+        messages = [rec.getMessage() for rec in caplog.records]
+        libcst_line = next(m for m in messages if m.startswith("[RESOLVERS] libcst:"))
+        assert "dropped_lower=1" in libcst_line
+        assert "dropped_equal=0" in libcst_line
+
 
 # ---------------------------------------------------------------------------
 # pyan_available / PyanResolver import guard

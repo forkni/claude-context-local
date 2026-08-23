@@ -612,6 +612,8 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 - `adaptive_multiplier_max` (float): T_max multiplier for low-complexity functions (1.0-2.0, default: 1.3)
 - `adaptive_multiplier_min` (float): T_min multiplier for high-complexity functions (0.1-1.0, default: 0.5)
 - `max_complexity_cap` (int): Cyclomatic complexity ceiling for normalization (5-100, default: 30)
+- `glsl_filter_td_prefix` (bool): Filter TouchDesigner `TD*`-prefixed builtins from GLSL call-graph edges (default: True)
+- `max_file_size_bytes` (int): Files larger than this are skipped by both the chunker and the adaptive-sizing profiler (1024-104857600, default: 5242880 / 5 MB)
 
 **Note**: Re-index project to apply changes.
 
@@ -863,7 +865,7 @@ Server startup:              0 MB VRAM (lazy loading)
 - AST resolver: 0.5 (intra-file) / 0.7 (cross-file) — always-on, in-house
 - pyan3 resolver: 0.75 — cross-module, requires `pip install -e ".[callgraph]"`
 - LibCST FQN resolver: 0.90 — `FullyQualifiedNameProvider`, requires `[callgraph]` extra
-- LSP/basedpyright resolver: 0.98 — highest accuracy, opt-in (`lsp_enabled=true` in `search_config.json` + `pip install -e ".[lsp]"`)
+- LSP/basedpyright resolver: 0.98 — highest accuracy, `lsp_enabled=true` by default in `search_config.json`; requires `pip install -e ".[lsp]"` to activate (no-ops otherwise)
 
 **Examples**:
 

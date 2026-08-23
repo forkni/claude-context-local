@@ -182,19 +182,28 @@ def inject_call_edges(
             resolvers, Path(project_path).resolve(), raw_line_map, logger
         )
 
-        # Apply min_confidence floor — discard edges below the threshold.
+        # Apply the resolver_confidence floor — discard edges below the
+        # threshold. `resolver_confidence` is the resolver pipeline's own
+        # numeric precedence value (ladder: pyan-wildcard 0.60 / pyan 0.75 /
+        # libcst 0.90 / lsp 0.98 — see ResolverConfidence in
+        # call_edge_resolver.py). It is a *different namespace* than the
+        # qualitative `confidence` tag ("exact"/"recovered"/"ambiguous")
+        # written by the AST chunking pass onto graph edges — do not conflate
+        # the two when reading this log line.
         min_conf: float = cg_cfg.min_confidence if cg_cfg else 0.0
         if min_conf > 0.0:
             before = len(merged)
             merged = {k: v for k, v in merged.items() if v.confidence >= min_conf}
             dropped = before - len(merged)
-            if dropped:
-                logger.info(
-                    "[CALL_EDGES] min_confidence=%.2f dropped %d edge(s) "
-                    "(confidence below threshold)",
-                    min_conf,
-                    dropped,
-                )
+            log = logger.info if dropped else logger.debug
+            log(
+                "[CALL_EDGES] resolver_confidence floor=%.2f: dropped %d/%d "
+                "edge(s) below threshold (ladder: pyan-wildcard 0.60 / "
+                "pyan 0.75 / libcst 0.90 / lsp 0.98)",
+                min_conf,
+                dropped,
+                before,
+            )
 
         # Inject / upgrade edges with confidence-precedence semantics.
         g = storage.graph

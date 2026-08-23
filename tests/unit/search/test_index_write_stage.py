@@ -345,6 +345,142 @@ class TestInjectCallEdgesMinConfidence:
             f"Expected pyan (0.75) edge injected with min_confidence=0.0; calls: {calls}"
         )
 
+    def test_dropped_edges_log_names_resolver_confidence_and_before_total(
+        self, caplog
+    ) -> None:
+        """Workstream C2: the drop-floor log must name `resolver_confidence`
+        explicitly (distinct from the qualitative `confidence` edge tag),
+        include the ladder, and report the `before` total -- not just the
+        dropped count -- and must log at INFO since >=1 edge was dropped."""
+        import logging
+
+        from search.config import CallGraphConfig
+
+        stage, storage = self._make_stage_for_injection()
+
+        pyan_edge = self._make_resolved_edge("caller_a", "callee_a", 0.75)
+        libcst_edge = self._make_resolved_edge(
+            "caller_b", "callee_b", 0.90, source="libcst"
+        )
+        merged_edges = {
+            ("caller_a", "callee_a"): pyan_edge,
+            ("caller_b", "callee_b"): libcst_edge,
+        }
+
+        cg_cfg = CallGraphConfig(min_confidence=0.80)
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.call_edge_injection.run_resolvers", return_value=merged_edges
+            ),
+            patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
+            caplog.at_level(logging.INFO, logger="search.call_edge_injection"),
+        ):
+            stage.inject_call_edges("/fake/project")
+
+        messages = [rec.getMessage() for rec in caplog.records]
+        floor_line = next(
+            (m for m in messages if "resolver_confidence floor=" in m), None
+        )
+        assert floor_line is not None, f"Expected a floor log line; got {messages}"
+        assert "dropped 1/2" in floor_line
+        assert "pyan-wildcard 0.60" in floor_line and "lsp 0.98" in floor_line
+
+    def test_nonzero_floor_with_zero_dropped_logs_at_debug_not_info(
+        self, caplog
+    ) -> None:
+        """A nonzero floor (min_conf > 0.0) that drops nothing must still emit
+        the floor line, but at DEBUG rather than INFO -- distinct from the
+        min_confidence=0.0 case, which skips the block entirely (see
+        test_floor_block_skipped_when_min_confidence_is_zero below)."""
+        import logging
+
+        from search.config import CallGraphConfig
+
+        stage, storage = self._make_stage_for_injection()
+
+        # Both edges clear a 0.50 floor, so dropped == 0 while the block
+        # still runs (min_conf=0.50 > 0.0).
+        pyan_edge = self._make_resolved_edge("caller_a", "callee_a", 0.75)
+        libcst_edge = self._make_resolved_edge(
+            "caller_b", "callee_b", 0.90, source="libcst"
+        )
+        merged_edges = {
+            ("caller_a", "callee_a"): pyan_edge,
+            ("caller_b", "callee_b"): libcst_edge,
+        }
+
+        cg_cfg = CallGraphConfig(min_confidence=0.50)
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.call_edge_injection.run_resolvers", return_value=merged_edges
+            ),
+            patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
+            caplog.at_level(logging.DEBUG, logger="search.call_edge_injection"),
+        ):
+            stage.inject_call_edges("/fake/project")
+
+        records = list(caplog.records)
+        floor_record = next(
+            (r for r in records if "resolver_confidence floor=" in r.getMessage()),
+            None,
+        )
+        assert floor_record is not None, (
+            f"Expected a floor line even with 0 dropped; got "
+            f"{[r.getMessage() for r in records]}"
+        )
+        assert floor_record.levelno == logging.DEBUG, (
+            f"Expected DEBUG level when dropped=0; got "
+            f"{logging.getLevelName(floor_record.levelno)}"
+        )
+        assert "dropped 0/2" in floor_record.getMessage()
+
+    def test_floor_block_skipped_when_min_confidence_is_zero(self, caplog) -> None:
+        """With min_confidence=0.0 (the default), the floor block is skipped
+        entirely -- no log line at all, at any level -- since a 0.0 floor is
+        a structural no-op, not just an empty drop."""
+        import logging
+
+        from search.config import CallGraphConfig
+
+        stage, storage = self._make_stage_for_injection()
+
+        pyan_edge = self._make_resolved_edge("caller_a", "callee_a", 0.75)
+        merged_edges = {("caller_a", "callee_a"): pyan_edge}
+
+        cg_cfg = CallGraphConfig(min_confidence=0.0)
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.call_edge_injection.run_resolvers", return_value=merged_edges
+            ),
+            patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
+            caplog.at_level(logging.DEBUG, logger="search.call_edge_injection"),
+        ):
+            stage.inject_call_edges("/fake/project")
+
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert not any("resolver_confidence floor=" in m for m in messages)
+
 
 # ---------------------------------------------------------------------------
 # resolvers=[] vs resolvers=None (config-driven resolver selection)

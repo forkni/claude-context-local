@@ -965,7 +965,7 @@ class OutputConfig:
 
 @dataclass
 class ChunkingConfig:
-    """Chunking algorithm settings (10 fields)."""
+    """Chunking algorithm settings (11 fields)."""
 
     # Large function splitting (cAST paper: AST-aware splitting improves Recall@5 +66%)
     enable_large_node_splitting: bool = field(
@@ -1048,6 +1048,22 @@ class ChunkingConfig:
     glsl_filter_td_prefix: bool = field(
         default=True,
         metadata=spec(mcp="chunking", reader="chunking/languages/glsl.py"),
+    )
+
+    # File-size cap on the chunking path (Workstream B3): repo_profiler.py
+    # already skips files over this size when building the adaptive-sizing
+    # profile, but chunk_file() had no equivalent guard, so a giant vendored
+    # file the profiler considered out of scope could still reach the
+    # chunker. Same default as the profiler's own (former) MAX_FILE_SIZE_BYTES
+    # constant, which now reads this field instead of hardcoding its own copy.
+    max_file_size_bytes: int = field(
+        default=5 * 1024 * 1024,  # 5 MB
+        metadata=spec(
+            range=(1024, 100 * 1024 * 1024),
+            flat_alias="max_file_size_bytes",
+            mcp="chunking",
+            reader="chunking/multi_language_chunker.py",
+        ),
     )
 
 

@@ -136,7 +136,7 @@ CONFIG_BACKED: dict[str, dict[str, Any]] = _build(
         "configure_reranking.enabled": (RerankerConfig, "enabled"),
         "configure_reranking.model_name": (RerankerConfig, "model_name"),
         "configure_reranking.top_k_candidates": (RerankerConfig, "top_k_candidates"),
-        # configure_chunking — all ten settle via _CHUNKING_FIELDS, 1:1 name match
+        # configure_chunking — all eleven settle via _CHUNKING_FIELDS, 1:1 name match
         "configure_chunking.enable_large_node_splitting": (
             ChunkingConfig,
             "enable_large_node_splitting",
@@ -167,6 +167,10 @@ CONFIG_BACKED: dict[str, dict[str, Any]] = _build(
         "configure_chunking.glsl_filter_td_prefix": (
             ChunkingConfig,
             "glsl_filter_td_prefix",
+        ),
+        "configure_chunking.max_file_size_bytes": (
+            ChunkingConfig,
+            "max_file_size_bytes",
         ),
         # Shared across all 18 tools — output_format is popped centrally in
         # mcp_server/server.py's handle_call_tool before any handler runs, so

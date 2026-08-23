@@ -436,7 +436,7 @@ The project uses a clean separation between runtime and development dependencies
 | Extra | Packages | Adds |
 |-------|----------|------|
 | `[callgraph]` | `pyan3>=2.6.0`, `libcst>=1.8.6` | pyan (0.75 confidence) + LibCST FQN resolver (0.90 confidence) |
-| `[lsp]` | `basedpyright>=1.21` | basedpyright LSP resolver (0.98 confidence, opt-in via `lsp_enabled=true`) |
+| `[lsp]` | `basedpyright>=1.21` | basedpyright LSP resolver (0.98 confidence; `lsp_enabled=true` by default, no-ops until this extra is installed) |
 
 The core install (no extras) uses only the in-house AST resolver (0.5/0.7 confidence).
 Cross-module call edges benefit most from `[callgraph]`; heavily-typed codebases benefit from `[lsp]`.
@@ -454,6 +454,16 @@ pip install -e ".[lsp]"
 # Full stack (test + callgraph + lsp)
 pip install -e ".[test,callgraph,lsp]"
 ```
+
+**A bare `uv sync` prunes optional extras it wasn't told to keep** — it resolves strictly to
+whatever `--extra`/`--all-extras` flags were passed on that invocation, so re-running plain
+`uv sync` (or `uv sync --extra callgraph` without also naming `lsp`) silently uninstalls
+`basedpyright` even if a previous `pip install -e ".[lsp]"` put it there. There is no supported
+"callgraph but not lsp" combination — `install-windows.cmd` option [4] (`--all-extras`) is the only
+documented path that installs `[lsp]`, and it pulls `test`, `dev`, `callgraph`, `otel`, and `gpu`
+alongside it. If you only want `[lsp]` added to an existing `uv`-managed environment without
+touching the others, use `uv sync --extra callgraph --extra lsp` explicitly rather than a bare
+`uv sync` or a plain `pip install`.
 
 To install with test dependencies:
 

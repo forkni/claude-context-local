@@ -633,6 +633,28 @@ class TestEntryPoints:
         assert summary is None
         assert (tmp_path / PROJECT_OVERRIDES_FILENAME).read_text() == before
 
+    def test_post_build_quiet_corpus_logs_explicit_no_op(self, tmp_path, caplog):
+        """Workstream C2: a quiet-corpus no-op (rules evaluated, none
+        triggered) must log an explicit INFO line -- otherwise it is
+        indistinguishable from pass 2 silently failing to run at all."""
+        import logging
+
+        probe_pre_chunking(
+            tmp_path,
+            supported_files=["a.py"],
+            repo_profile=None,
+            measurements=make_measurements(),
+        )
+        with caplog.at_level(logging.INFO, logger="search.index_probe"):
+            summary = probe_post_build(
+                tmp_path, stats={"total_chunks": 100, "files_indexed": 50}
+            )
+        assert summary is None
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert any("Pass 2: no new observations" in m for m in messages), (
+            f"Expected an explicit no-op log line; got {messages}"
+        )
+
     def test_env_escape_hatch_skips_both_passes(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CLAUDE_DISABLE_PROJECT_OVERRIDES", "1")
         assert (

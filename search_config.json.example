@@ -107,7 +107,8 @@
     "adaptive_multiplier_max": 1.3,
     "adaptive_multiplier_min": 0.5,
     "max_complexity_cap": 30,
-    "glsl_filter_td_prefix": true
+    "glsl_filter_td_prefix": true,
+    "max_file_size_bytes": 5242880
   },
   "ego_graph": {
     "enabled": true,

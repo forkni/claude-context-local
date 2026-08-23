@@ -41,6 +41,11 @@ from .summary_stage import SummaryStage
 
 logger = logging.getLogger(__name__)
 
+# Workstream B2: byte floor for the duplicate-content report — below this,
+# the report is dominated by empty/near-empty __init__.py-style files that
+# aren't worth flagging.
+_DUP_CONTENT_MIN_BYTES = 512
+
 
 class IncrementalIndexer:
     """Handles incremental indexing of code changes."""
@@ -628,6 +633,8 @@ class IncrementalIndexer:
             logger.info(
                 f"Found {len(supported_files)} supported files out of {len(all_files)} total files"
             )
+            self._report_duplicate_content(dag, supported_files)
+            self._report_extension_skip_histogram(all_files, supported_files)
 
             # Per-pattern diagnostics: a pattern that matched nothing is the
             # exact silent-failure class this whole filtering system exists to
@@ -823,6 +830,102 @@ class IncrementalIndexer:
             List of supported file paths
         """
         return [f for f in all_files if self._is_supported_file(project_path, f)]
+
+    def _report_duplicate_content(
+        self, dag: MerkleDAG, supported_files: list[str]
+    ) -> None:
+        """Log byte-identical supported-file groups — report only, no skip.
+
+        Reuses the content hash MerkleDAG.build_node already computed via
+        hash_file() for every supported-extension file — zero additional
+        I/O. Only supported_files are considered: non-code files hash by
+        `name:size:mtime` (merkle_dag.py's fast-path sentinel for files
+        outside supported_extensions), which is not a content hash and
+        would produce meaningless "duplicate" groups.
+
+        Reporting only, on purpose — actual dedup-skip is deferred until
+        this report is read after B1 (vendoring ignore-defaults) lands, and
+        chunk aliasing is out of scope: chunk_ids embed relative_path, and
+        graph_storage.remove_file_nodes prunes by path prefix, so an alias
+        would orphan every alias when the canonical file is deleted.
+
+        Args:
+            dag: The just-built MerkleDAG for this project (nodes carry the
+                content hash and size computed during dag.build()).
+            supported_files: Paths already filtered to supported extensions.
+        """
+        groups: dict[str, list[str]] = {}
+        for path in supported_files:
+            node = dag.nodes.get(path)
+            if node is None or not node.is_file:
+                continue
+            groups.setdefault(node.hash, []).append(path)
+
+        sized_groups: list[tuple[int, int, list[str]]] = []
+        for paths in groups.values():
+            if len(paths) < 2:
+                continue
+            node = dag.nodes[paths[0]]
+            if node.size < _DUP_CONTENT_MIN_BYTES:
+                continue
+            group_wasted = node.size * (len(paths) - 1)
+            sized_groups.append((group_wasted, node.size, paths))
+
+        if not sized_groups:
+            return
+
+        sized_groups.sort(key=lambda g: g[0], reverse=True)
+        total_wasted = sum(wasted for wasted, _, _ in sized_groups)
+        logger.info(
+            f"[DUP_CONTENT] {len(sized_groups)} duplicate-content group(s), "
+            f"{total_wasted:,} redundant bytes "
+            f"(>={_DUP_CONTENT_MIN_BYTES}B floor)"
+        )
+        for group_wasted, size, paths in sized_groups[:5]:
+            logger.info(
+                f"[DUP_CONTENT]   {len(paths)} copies x {size:,}B "
+                f"({group_wasted:,}B wasted): {paths[0]} + {len(paths) - 1} more "
+                f"({', '.join(paths[1:4])}{', ...' if len(paths) > 4 else ''})"
+            )
+
+    def _report_extension_skip_histogram(
+        self, all_files: list[str], supported_files: list[str]
+    ) -> None:
+        """Log a per-extension histogram of files found but not indexed.
+
+        Workstream C3: this is the single log line that would have made the
+        `.cu`/`.cuh` registration gap (Workstream A3) self-evident without
+        manual investigation — "found but unsupported" was previously
+        inferrable only by diffing `Found N supported files out of M total`
+        against a manual file listing.
+
+        Reuses index_probe.language_histogram's exact lowercased-suffix
+        bucketing shape rather than a new helper. Unlike that helper (which
+        silently drops extensionless files — a `.py` vs. no-extension
+        distinction that doesn't matter for its use), extensionless files
+        are counted here explicitly, since silently folding them out would
+        make the skip total not add up to `len(all_files) - len(supported_files)`.
+
+        Args:
+            all_files: Every file the DAG walk found, relative to project root.
+            supported_files: The subset of all_files that passed
+                _is_supported_file — already computed by the caller.
+        """
+        from .index_probe import language_histogram
+
+        skipped = list(set(all_files) - set(supported_files))
+        if not skipped:
+            return
+
+        extensionless = sum(1 for f in skipped if not Path(f).suffix)
+        histogram = language_histogram(skipped)
+        logger.info(
+            f"[SKIP_HISTOGRAM] {len(skipped)} file(s) found but not indexed "
+            f"(unsupported extension), {extensionless} extensionless"
+        )
+        top = sorted(histogram.items(), key=lambda kv: kv[1], reverse=True)[:15]
+        for ext, count in top:
+            logger.info(f"[SKIP_HISTOGRAM]   {ext}: {count}")
 
     def _build_snapshot_metadata(
         self,
