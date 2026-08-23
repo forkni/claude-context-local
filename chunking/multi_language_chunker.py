@@ -635,7 +635,7 @@ class MultiLanguageChunker:
                     logger.warning(
                         f"Failed to extract calls for {chunk.name}: {e}", exc_info=True
                     )
-        elif tchunk.language == "glsl" and CALL_GRAPH_AVAILABLE:
+        elif CALL_GRAPH_AVAILABLE:
             spec = EDGE_EMISSION_SPECS.get(tchunk.language)
             if spec is not None:
                 calls = materialize_call_edges(chunk, tchunk.metadata, chunk_id, spec)
@@ -660,7 +660,7 @@ class MultiLanguageChunker:
                 dedented twice per chunk. Computed lazily when None (e.g. direct
                 unit-test callers).
         """
-        if tchunk.language == "glsl" and CALL_GRAPH_AVAILABLE:
+        if CALL_GRAPH_AVAILABLE:
             spec = EDGE_EMISSION_SPECS.get(tchunk.language)
             if spec is not None:
                 relationships = materialize_relationship_edges(
@@ -668,7 +668,7 @@ class MultiLanguageChunker:
                 )
                 if relationships:
                     chunk.relationships = relationships
-            return
+                return
         if tchunk.language != "python":
             return
 
