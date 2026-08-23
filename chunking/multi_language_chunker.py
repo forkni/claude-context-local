@@ -60,6 +60,23 @@ class _FailureTally:
     first_message: str = ""
 
 
+def _in_split_block_window(chunk: CodeChunk, line: int) -> bool:
+    """Whether `line` falls within `chunk`'s own `[start_line, end_line]` window.
+
+    A large GLSL function's `split_block` fragments all share the *same*
+    `metadata["calls"]` / `metadata["relationships"]`: `_create_split_chunk`
+    (chunking/languages/base.py) calls `extract_metadata` on the original,
+    unsplit node for every fragment. Filtering by each fragment's own
+    `[chunk.start_line, chunk.end_line]` here (rather than in `GLSLChunker`,
+    which has no per-fragment context) is what keeps every split fragment
+    from reporting the whole function's calls/relationships.
+
+    Used by both `_extract_glsl_call_relationships` and
+    `_extract_glsl_phase3_relationships` — previously duplicated inline in each.
+    """
+    return chunk.start_line <= line <= chunk.end_line
+
+
 class MultiLanguageChunker:
     """Unified chunker supporting multiple programming languages."""
 
@@ -655,13 +672,8 @@ class MultiLanguageChunker:
         "split_block" chunk types can carry it — GLSL has no methods or
         decorators, so the allowlist is narrower than Python's.
 
-        A large function's `split_block` fragments all share the *same*
-        `metadata["calls"]`: `_create_split_chunk` (chunking/languages/base.py)
-        calls `extract_metadata` on the original, unsplit node for every
-        fragment. Filtering by each fragment's own `[chunk.start_line,
-        chunk.end_line]` here (rather than in `GLSLChunker`, which has no
-        per-fragment context) is what keeps every split fragment from
-        reporting the whole function's calls.
+        See `_in_split_block_window` for why every candidate call is also
+        filtered by the chunk's own line range.
 
         Args:
             chunk: CodeChunk to populate with call relationships.
@@ -682,7 +694,7 @@ class MultiLanguageChunker:
                 callee_qualified=None,
             )
             for name, line in raw_calls
-            if chunk.start_line <= line <= chunk.end_line
+            if _in_split_block_window(chunk, line)
         ]
         if chunk.calls:
             logger.debug(f"Extracted {len(chunk.calls)} calls from {chunk_id}")
@@ -705,11 +717,8 @@ class MultiLanguageChunker:
         for imports) — so there is no single chunk_type allowlist here; presence
         of `metadata["relationships"]` is the only gate.
 
-        A large function's `split_block` fragments all share the *same*
-        `metadata["relationships"]` (extract_metadata runs once against the
-        original, unsplit node for every fragment) — filtering by each
-        fragment's own `[chunk.start_line, chunk.end_line]` here is what keeps
-        every split fragment from reporting the whole function's relationships.
+        See `_in_split_block_window` for why every candidate relationship is
+        also filtered by the chunk's own line range.
 
         Args:
             chunk: CodeChunk to populate with relationship edges.
@@ -723,7 +732,7 @@ class MultiLanguageChunker:
         relationships: list[RelationshipEdge] = []
         for rel in raw_relationships:
             line = rel.get("line_number", 0)
-            if not (chunk.start_line <= line <= chunk.end_line):
+            if not _in_split_block_window(chunk, line):
                 continue
             try:
                 relationships.append(
