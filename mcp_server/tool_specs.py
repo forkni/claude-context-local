@@ -8,11 +8,13 @@ in sync by hand now derive from it instead:
   server.py and the HTTP ``switch_project`` route.
 - ``ADVANCED_TOOLS`` / ``build_tool_list`` — the advanced-tools tier and the
   published tool list (see tool-count budget below).
-- The mutation-lock / index-guard coverage tests in
-  ``tests/unit/mcp_server/test_tool_specs.py`` — each row's ``mutation_lock``
-  and ``requires_index`` flags are checked against the handler's actual
-  decorator chain, so a spec that drifts from its handler fails a structural
-  test instead of silently going unchecked.
+- The mutation-lock / index-guard flags — ``mutation_lock`` and
+  ``requires_index`` are derived properties, read off each handler's
+  ``__mcp_guards__`` stamp (set by ``@with_mutation_lock`` /
+  ``@require_indexed_project``) rather than hand-typed per row, so a spec can
+  no longer drift from its handler's actual decorator chain (docs/adr/0057).
+  ``tests/unit/mcp_server/test_tool_specs.py`` pins that derivation against
+  an independently recomputed stamp.
 
 This supersedes the former ``tool_registry.py`` / ``tool_handlers.py`` split,
 which held the same 18-tool knowledge in two hand-synced tables (joined only
@@ -102,13 +104,9 @@ class ToolSpec:
     input_schema: published verbatim in list_tools; built the same way as
         before (CONFIG_BACKED / HAND_TYPED fragment spreads, ADR-0042/0046).
     handler: the decorated async handler TOOL_DISPATCH resolves to.
-    mutation_lock: "decorator" if the handler itself is wrapped in
-        @with_mutation_lock, "internal" if it acquires the lock explicitly
-        further down the call stack instead (index_directory — see
-        handle_index_directory's docstring for why it can't be decorated
-        directly), or None if the tool never mutates shared ApplicationState.
-    requires_index: True if the handler is wrapped in
-        @require_indexed_project (the four search_handlers.py tools).
+    mutation_lock / requires_index: not stored — reported by the properties
+        below, read off handler.__mcp_guards__ (docs/adr/0057). A row can no
+        longer drift from what its handler is actually decorated with.
     advanced: True if this tool sits in the ADVANCED_TOOLS tier (hidden from
         list_tools unless MCP_EXPOSE_ADVANCED_TOOLS=1 — see module docstring).
     """
@@ -117,9 +115,27 @@ class ToolSpec:
     description: str
     input_schema: dict[str, Any]
     handler: Callable[[dict], Awaitable[dict | list]]
-    mutation_lock: Literal["decorator", "internal", None]
-    requires_index: bool
     advanced: bool
+
+    @property
+    def mutation_lock(self) -> Literal["decorator", "internal", None]:
+        """Returns "decorator" if the handler itself is wrapped in
+        @with_mutation_lock, "internal" if it acquires the lock explicitly
+        further down the call stack instead (index_directory — see
+        handle_index_directory's docstring for why it can't be decorated
+        directly), or None if the tool never mutates shared ApplicationState.
+        """
+        guards = getattr(self.handler, "__mcp_guards__", frozenset())
+        if "mutation_lock:internal" in guards:
+            return "internal"
+        return "decorator" if "mutation_lock" in guards else None
+
+    @property
+    def requires_index(self) -> bool:
+        """True if the handler is wrapped in @require_indexed_project (the
+        four search_handlers.py tools)."""
+        guards = getattr(self.handler, "__mcp_guards__", frozenset())
+        return "requires_index" in guards
 
 
 TOOL_SPECS: tuple[ToolSpec, ...] = (
@@ -250,8 +266,6 @@ RETURNS:
             "required": [],
         },
         handler=handle_search_code,
-        mutation_lock=None,
-        requires_index=True,
         advanced=False,
     ),
     ToolSpec(
@@ -315,8 +329,6 @@ RETURNS:
             "required": ["directory_path"],
         },
         handler=handle_index_directory,
-        mutation_lock="internal",
-        requires_index=False,
         advanced=False,
     ),
     ToolSpec(
@@ -360,8 +372,6 @@ RETURNS:
             "required": ["chunk_id"],
         },
         handler=handle_find_similar_code,
-        mutation_lock=None,
-        requires_index=True,
         advanced=False,
     ),
     ToolSpec(
@@ -392,8 +402,6 @@ RETURNS:
             "required": [],
         },
         handler=handle_get_index_status,
-        mutation_lock=None,
-        requires_index=False,
         advanced=False,
     ),
     ToolSpec(
@@ -417,8 +425,6 @@ RETURNS:
             "required": [],
         },
         handler=handle_list_projects,
-        mutation_lock=None,
-        requires_index=False,
         advanced=False,
     ),
     ToolSpec(
@@ -448,8 +454,6 @@ RETURNS:
             "required": ["project_path"],
         },
         handler=handle_switch_project,
-        mutation_lock="decorator",
-        requires_index=False,
         advanced=False,
     ),
     ToolSpec(
@@ -478,8 +482,6 @@ RETURNS:
             "required": [],
         },
         handler=handle_clear_index,
-        mutation_lock="decorator",
-        requires_index=False,
         advanced=True,
     ),
     ToolSpec(
@@ -520,8 +522,6 @@ RETURNS:
             "required": ["project_path"],
         },
         handler=handle_delete_project,
-        mutation_lock="decorator",
-        requires_index=False,
         advanced=True,
     ),
     ToolSpec(
@@ -544,8 +544,6 @@ RETURNS:
             "required": [],
         },
         handler=handle_get_memory_status,
-        mutation_lock=None,
-        requires_index=False,
         advanced=False,
     ),
     ToolSpec(
@@ -564,8 +562,6 @@ RETURNS:
             "required": [],
         },
         handler=handle_cleanup_resources,
-        mutation_lock=None,
-        requires_index=False,
         advanced=False,
     ),
     ToolSpec(
@@ -614,8 +610,6 @@ RETURNS:
             "required": [],
         },
         handler=handle_configure_search_mode,
-        mutation_lock="decorator",
-        requires_index=False,
         advanced=True,
     ),
     ToolSpec(
@@ -642,8 +636,6 @@ RETURNS:
             "required": [],
         },
         handler=handle_get_search_config_status,
-        mutation_lock=None,
-        requires_index=False,
         advanced=True,
     ),
     ToolSpec(
@@ -666,8 +658,6 @@ RETURNS:
             "required": [],
         },
         handler=handle_list_embedding_models,
-        mutation_lock=None,
-        requires_index=False,
         advanced=True,
     ),
     ToolSpec(
@@ -695,8 +685,6 @@ RETURNS:
             "required": ["model_name"],
         },
         handler=handle_switch_embedding_model,
-        mutation_lock="decorator",
-        requires_index=False,
         advanced=True,
     ),
     ToolSpec(
@@ -775,8 +763,6 @@ extras to see `resolver_source: "lsp"` edges.""",
             "required": [],
         },
         handler=handle_find_connections,
-        mutation_lock=None,
-        requires_index=True,
         advanced=False,
     ),
     ToolSpec(
@@ -831,8 +817,6 @@ RETURNS:
             "required": [],
         },
         handler=handle_find_path,
-        mutation_lock=None,
-        requires_index=True,
         advanced=False,
     ),
     ToolSpec(
@@ -878,8 +862,6 @@ RETURNS:
             "required": [],
         },
         handler=handle_configure_reranking,
-        mutation_lock="decorator",
-        requires_index=False,
         advanced=True,
     ),
     ToolSpec(
@@ -953,8 +935,6 @@ RETURNS:
             "required": [],
         },
         handler=handle_configure_chunking,
-        mutation_lock="decorator",
-        requires_index=False,
         advanced=True,
     ),
 )

@@ -406,3 +406,53 @@ class TestHandTypedSchemaSeam:
             "spread from HAND_TYPED[key].schema / CONFIG_BACKED[key], never "
             "restated inline (docs/adr/0046)"
         )
+
+
+def _derive_mutation_lock(handler):
+    """Same derivation ToolSpec.mutation_lock performs off the handler's
+    __mcp_guards__ stamp (mcp_server/tools/decorators.py, docs/adr/0057).
+    Computed independently here rather than imported, so this test can't
+    pass by construction if the property's own logic breaks.
+    """
+    guards = getattr(handler, "__mcp_guards__", frozenset())
+    if "mutation_lock:internal" in guards:
+        return "internal"
+    return "decorator" if "mutation_lock" in guards else None
+
+
+def _derive_requires_index(handler):
+    guards = getattr(handler, "__mcp_guards__", frozenset())
+    return "requires_index" in guards
+
+
+class TestGuardFlagsDerivedFromDecoratorStamps:
+    """mutation_lock / requires_index are derived from each handler's
+    __mcp_guards__ stamp (set by @with_mutation_lock / @require_indexed_project,
+    or directly on handle_index_directory for its "internal" case), not
+    hand-typed per row — see docs/adr/0057. A row that drifts from its
+    handler's actual decorator chain fails here instead of silently going
+    unchecked.
+    """
+
+    @pytest.mark.parametrize("spec", TOOL_SPECS, ids=lambda s: s.name)
+    def test_mutation_lock_matches_handler_guard_stamp(self, spec):
+        assert spec.mutation_lock == _derive_mutation_lock(spec.handler)
+
+    @pytest.mark.parametrize("spec", TOOL_SPECS, ids=lambda s: s.name)
+    def test_requires_index_matches_handler_guard_stamp(self, spec):
+        assert spec.requires_index == _derive_requires_index(spec.handler)
+
+    def test_index_directory_is_not_also_decorator_guarded(self):
+        """handle_index_directory must stay undecorated by @with_mutation_lock
+        itself -- decorating it would only guard job creation under
+        wait=False, not the actual indexing work run on create_task (the real
+        lock acquisition lives in _run_index_directory instead). The derived
+        property returns "internal" whenever the internal stamp is present,
+        so it would silently mask accidental double decoration -- this pins
+        the guarantee explicitly, on the stamp set itself.
+        """
+        guards = getattr(
+            TOOL_SPECS_BY_NAME["index_directory"].handler, "__mcp_guards__", frozenset()
+        )
+        assert "mutation_lock" not in guards
+        assert "mutation_lock:internal" in guards
