@@ -57,7 +57,7 @@ class EdgeEmissionSpec:
             (like GLSL) with no methods or decorators.
         imports_from_relationships: When True, a chunk's ``RelationshipType.IMPORTS``
             edges also populate ``CodeChunk.imports``. Scoped per-language on purpose
-            — see ``multi_language_chunker.py``'s switch-3 comment for why this does
+            — see ``materialize_relationship_edges``'s docstring for why this does
             not extend to Python by default.
     """
 
@@ -153,6 +153,7 @@ def materialize_relationship_edges(
     chunk: CodeChunk,
     metadata: dict,
     chunk_id: str,
+    spec: EdgeEmissionSpec,
 ) -> list[RelationshipEdge]:
     """Convert a chunker's metadata["relationships"] dicts into RelationshipEdge objects.
 
@@ -172,15 +173,33 @@ def materialize_relationship_edges(
     See `_in_split_block_window` for why every candidate relationship is also
     filtered by the chunk's own line range.
 
+    When `spec.imports_from_relationships` is set, this also populates
+    `chunk.imports` from any `RelationshipType.IMPORTS` edges found — moved here
+    verbatim from `MultiLanguageChunker._convert_tree_chunks`'s language check.
+    GLSL's IMPORTS edges (from `#include`) are the only relationship type that
+    also populates `CodeChunk.imports`; the general "imports=[] for every
+    tree-sitter language" gap predates this and is left alone — flipping it on
+    for every language would change `_build_file_summary`'s "# Imports:" section
+    for every Python file, which needs its own before/after review, not a
+    per-row one. `imports_from_relationships` is what keeps this scoped to the
+    language(s) that opt in, rather than switching on for anyone else by
+    accident. This is the one place this function mutates `chunk` directly — it
+    reads the locally materialized `relationships` list (not `chunk.relationships`,
+    which the caller has not assigned yet at this point) so the gate is exactly
+    "would this call's own result populate chunk.relationships", independent of
+    assignment order.
+
     Args:
-        chunk: CodeChunk being populated with relationship edges. Read for
-            `start_line`, `end_line` — never mutated here; the caller assigns
-            the returned list to `chunk.relationships` only when non-empty (see
+        chunk: CodeChunk being populated with relationship edges, and — when
+            `spec.imports_from_relationships` is set — with `chunk.imports`.
+            Read for `start_line`, `end_line`; the caller assigns the returned
+            list to `chunk.relationships` only when non-empty (see
             `materialize_relationship_edges`'s callers — `CodeChunk.relationships`
             defaults to `None`, not `[]`, so an unconditional assignment here
             would turn "nothing computed" into "computed, found nothing").
         metadata: The originating `TreeSitterChunk.metadata` dict.
         chunk_id: Chunk identifier, becomes RelationshipEdge.source_id.
+        spec: This language's row from `EDGE_EMISSION_SPECS`.
 
     Returns:
         Always a list, possibly empty — the caller decides whether an empty
@@ -214,4 +233,12 @@ def materialize_relationship_edges(
 
     if relationships:
         logger.debug(f"Extracted {len(relationships)} relationships from {chunk_id}")
+
+    if spec.imports_from_relationships and relationships:
+        chunk.imports = [
+            rel.target_name
+            for rel in relationships
+            if rel.relationship_type == RelationshipType.IMPORTS
+        ]
+
     return relationships

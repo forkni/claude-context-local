@@ -42,7 +42,6 @@ try:
         ExtractorContext,
         build_relationship_extractors,
     )
-    from chunking.relationships.relationship_types import RelationshipType
 
     CALL_GRAPH_AVAILABLE = True
 except ImportError:
@@ -664,7 +663,7 @@ class MultiLanguageChunker:
             spec = EDGE_EMISSION_SPECS.get(tchunk.language)
             if spec is not None:
                 relationships = materialize_relationship_edges(
-                    chunk, tchunk.metadata, chunk_id
+                    chunk, tchunk.metadata, chunk_id, spec
                 )
                 if relationships:
                     chunk.relationships = relationships
@@ -925,19 +924,11 @@ class MultiLanguageChunker:
                 chunk, tchunk, chunk_id, dedented_content
             )
 
-            # GLSL's IMPORTS edges (from #include) are the only relationship
-            # type that also populates CodeChunk.imports. The general
-            # "imports=[] for every tree-sitter language" gap above predates
-            # this and is left alone here — flipping it for Python too would
-            # change _build_file_summary's "# Imports:" section for every
-            # Python file, which needs its own before/after review, not a
-            # GLSL-scoped one.
-            if tchunk.language == "glsl" and chunk.relationships:
-                chunk.imports = [
-                    rel.target_name
-                    for rel in chunk.relationships
-                    if rel.relationship_type == RelationshipType.IMPORTS
-                ]
+            # chunk.imports (for languages whose spec row sets
+            # imports_from_relationships) is populated inside
+            # _extract_phase3_relationships -> materialize_relationship_edges,
+            # not here — see that function's docstring in
+            # chunking/relationships/edge_specs.py.
 
             code_chunks.append(chunk)
 
