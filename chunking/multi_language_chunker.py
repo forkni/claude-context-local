@@ -26,24 +26,23 @@ from .python_ast_chunker import CodeChunk
 from .tree_sitter import TreeSitterChunk, TreeSitterChunker
 
 
-# Import call graph extractor for Python (also used to convert GLSL's plain
-# metadata["calls"] pairs into CallEdge objects — see _extract_glsl_call_relationships).
-# RelationshipEdge/RelationshipType are the analogous conversion target for GLSL's
-# plain metadata["relationships"] dicts — see _extract_glsl_phase3_relationships.
+# Import call graph extractor for Python. Tree-sitter languages that emit their own
+# metadata["calls"] / metadata["relationships"] (e.g. GLSL — see
+# chunking/languages/glsl.py) are materialized via chunking.relationships.edge_specs
+# instead: EDGE_EMISSION_SPECS keyed by language name, consumed by
+# materialize_call_edges / materialize_relationship_edges below.
 try:
-    from chunking.relationships.call_graph_extractor import (
-        CallEdge,
-        CallGraphExtractorFactory,
+    from chunking.relationships.call_graph_extractor import CallGraphExtractorFactory
+    from chunking.relationships.edge_specs import (
+        EDGE_EMISSION_SPECS,
+        materialize_call_edges,
+        materialize_relationship_edges,
     )
-    from chunking.relationships.edge_specs import EDGE_EMISSION_SPECS
     from chunking.relationships.relationship_extractors.registry import (
         ExtractorContext,
         build_relationship_extractors,
     )
-    from chunking.relationships.relationship_types import (
-        RelationshipEdge,
-        RelationshipType,
-    )
+    from chunking.relationships.relationship_types import RelationshipType
 
     CALL_GRAPH_AVAILABLE = True
 except ImportError:
@@ -59,23 +58,6 @@ class _FailureTally:
     count: int = 0
     first_chunk_id: str = ""
     first_message: str = ""
-
-
-def _in_split_block_window(chunk: CodeChunk, line: int) -> bool:
-    """Whether `line` falls within `chunk`'s own `[start_line, end_line]` window.
-
-    A large GLSL function's `split_block` fragments all share the *same*
-    `metadata["calls"]` / `metadata["relationships"]`: `_create_split_chunk`
-    (chunking/languages/base.py) calls `extract_metadata` on the original,
-    unsplit node for every fragment. Filtering by each fragment's own
-    `[chunk.start_line, chunk.end_line]` here (rather than in `GLSLChunker`,
-    which has no per-fragment context) is what keeps every split fragment
-    from reporting the whole function's calls/relationships.
-
-    Used by both `_extract_glsl_call_relationships` and
-    `_extract_glsl_phase3_relationships` — previously duplicated inline in each.
-    """
-    return chunk.start_line <= line <= chunk.end_line
 
 
 class MultiLanguageChunker:
@@ -654,110 +636,11 @@ class MultiLanguageChunker:
                         f"Failed to extract calls for {chunk.name}: {e}", exc_info=True
                     )
         elif tchunk.language == "glsl" and CALL_GRAPH_AVAILABLE:
-            self._extract_glsl_call_relationships(chunk, tchunk, chunk_id)
-
-    def _extract_glsl_call_relationships(
-        self, chunk: CodeChunk, tchunk: TreeSitterChunk, chunk_id: str
-    ) -> None:
-        """Convert GLSLChunker's metadata["calls"] pairs into CallEdge objects.
-
-        `GLSLChunker.extract_metadata` (chunking/languages/glsl.py) already
-        walks `call_expression` nodes and filters builtins, type
-        constructors, and (by default) TD-prefixed globals at parse time —
-        this just materializes the surviving `(callee_name, line_number)`
-        pairs into `CallEdge`s, with no re-parse and no
-        `chunking/relationships/` import inside the language chunker.
-
-        `metadata["calls"]` is only set for `function_definition` nodes
-        (see `GLSLChunker._extract_call_metadata`), so only "function" and
-        "split_block" chunk types can carry it — GLSL has no methods or
-        decorators, so the allowlist is narrower than Python's.
-
-        See `_in_split_block_window` for why every candidate call is also
-        filtered by the chunk's own line range.
-
-        Args:
-            chunk: CodeChunk to populate with call relationships.
-            tchunk: Tree-sitter chunk carrying GLSLChunker's metadata.
-            chunk_id: Chunk identifier, becomes CallEdge.caller_id.
-        """
-        spec = EDGE_EMISSION_SPECS["glsl"]
-        raw_calls = tchunk.metadata.get("calls")
-        if raw_calls is None or chunk.chunk_type not in spec.call_chunk_types:
-            return
-
-        chunk.calls = [
-            CallEdge(
-                caller_id=chunk_id,
-                callee_name=name,
-                line_number=line,
-                is_method_call=False,
-                confidence=spec.call_confidence,
-                callee_qualified=None,
-            )
-            for name, line in raw_calls
-            if _in_split_block_window(chunk, line)
-        ]
-        if chunk.calls:
-            logger.debug(f"Extracted {len(chunk.calls)} calls from {chunk_id}")
-
-    def _extract_glsl_phase3_relationships(
-        self, chunk: CodeChunk, tchunk: TreeSitterChunk, chunk_id: str
-    ) -> None:
-        """Convert GLSLChunker's metadata["relationships"] dicts into RelationshipEdge objects.
-
-        Mirrors `_extract_glsl_call_relationships`: `GLSLChunker.extract_metadata`
-        (chunking/languages/glsl.py) already walks the parse tree and classifies
-        each relationship (imports, uses_type, instantiates, defines_field,
-        defines_constant) at parse time — this just materializes the surviving
-        plain dicts into `RelationshipEdge` objects, with no re-parse and no
-        `chunking/relationships/` import inside the language chunker.
-
-        Unlike calls, GLSL relationships originate from several chunk types
-        (function/split_block for uses_type+instantiates, struct/union/enum for
-        defines_field+uses_type, declaration/macro for defines_constant, include
-        for imports) — so there is no single chunk_type allowlist here; presence
-        of `metadata["relationships"]` is the only gate.
-
-        See `_in_split_block_window` for why every candidate relationship is
-        also filtered by the chunk's own line range.
-
-        Args:
-            chunk: CodeChunk to populate with relationship edges.
-            tchunk: Tree-sitter chunk carrying GLSLChunker's metadata.
-            chunk_id: Chunk identifier, becomes RelationshipEdge.source_id.
-        """
-        raw_relationships = tchunk.metadata.get("relationships")
-        if not raw_relationships:
-            return
-
-        relationships: list[RelationshipEdge] = []
-        for rel in raw_relationships:
-            line = rel.get("line_number", 0)
-            if not _in_split_block_window(chunk, line):
-                continue
-            try:
-                relationships.append(
-                    RelationshipEdge(
-                        source_id=chunk_id,
-                        target_name=rel.get("target_name", "unknown"),
-                        relationship_type=RelationshipType(
-                            rel.get("relationship_type", "calls")
-                        ),
-                        line_number=line,
-                        metadata=rel.get("metadata", {}),
-                    )
-                )
-            except (ValueError, KeyError, TypeError) as e:
-                logger.debug(
-                    f"Skipping malformed GLSL relationship dict for {chunk_id}: {e}"
-                )
-
-        if relationships:
-            chunk.relationships = relationships
-            logger.debug(
-                f"Extracted {len(relationships)} relationships from {chunk_id}"
-            )
+            spec = EDGE_EMISSION_SPECS.get(tchunk.language)
+            if spec is not None:
+                calls = materialize_call_edges(chunk, tchunk.metadata, chunk_id, spec)
+                if calls is not None:
+                    chunk.calls = calls
 
     def _extract_phase3_relationships(
         self,
@@ -778,7 +661,13 @@ class MultiLanguageChunker:
                 unit-test callers).
         """
         if tchunk.language == "glsl" and CALL_GRAPH_AVAILABLE:
-            self._extract_glsl_phase3_relationships(chunk, tchunk, chunk_id)
+            spec = EDGE_EMISSION_SPECS.get(tchunk.language)
+            if spec is not None:
+                relationships = materialize_relationship_edges(
+                    chunk, tchunk.metadata, chunk_id
+                )
+                if relationships:
+                    chunk.relationships = relationships
             return
         if tchunk.language != "python":
             return
