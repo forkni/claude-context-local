@@ -671,6 +671,18 @@ async def handle_index_directory(arguments: dict[str, Any]) -> dict:
     return await _start_index_directory_job(arguments)
 
 
+# index_directory is the one mutator that cannot be decorated with
+# @with_mutation_lock directly: under wait=False, handle_index_directory
+# hands the real work to asyncio.create_task and returns immediately, so a
+# decorator on the handler would only cover the fast job-creation call, not
+# the actual indexing. Instead _run_index_directory takes
+# get_mutation_lock() explicitly around its state-mutating prologue (see its
+# docstring) and releases it before the reindex rwlock body runs. Stamp the
+# handler so ToolSpec.mutation_lock can still derive "internal" for this row
+# instead of falling back to a hand-typed exception.
+handle_index_directory.__mcp_guards__ = frozenset({"mutation_lock:internal"})
+
+
 async def _start_index_directory_job(arguments: dict[str, Any]) -> dict:
     """Launch ``_run_index_directory`` as a tracked background task.
 
