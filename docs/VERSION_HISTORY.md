@@ -8,7 +8,7 @@ Complete version history and feature timeline for claude-context-local MCP serve
 - **Status**: Production-ready, concurrency-safe
 - **Test Coverage**: 5,892 unit tests · 102 fast_integration · 19 integration · 108 slow_integration (2026-08-14)
 - **Dependencies**: 36 direct (`pyproject.toml`) + optional `[callgraph]` / `[lsp]` / `[test]` / `[dev]` / `[gpu]` / `[otel]` extras
-- **SSCG Benchmark**: MRR 0.8722 (canonical, 63q, k=10, deterministic, r1==r2 bit-identical) / 0.6843 (expanded, 133 non-D, k=10) — 2026-08-14 remaining-levers re-pin, superseding `canon_l1`'s 0.8603/0.6789; see `docs/BENCHMARKS.md` and `evaluation/REMAINING_LEVERS_AB_20260814.md`
+- **SSCG Benchmark**: MRR 0.8462 (canonical, 63q, k=10, deterministic, r1==r2 bit-identical) / 0.6482 (expanded, 133 non-D, k=10) — 2026-08-22 close-out §4 LSP re-baseline, superseding the 2026-08-14 remaining-levers pin's 0.8722/0.6843 (comparability break: index growth + LSP outage/restore); see `docs/BENCHMARKS.md` and `evaluation/CANON_20260822_LSP_REBASELINE.md`
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
 - **Recent**: Unreleased (2026-08-14) — Track A + remaining-levers retrieval campaigns closed: B1
   `hide_ambiguous` (find_connections) and B4 `include_top_callers` (search_code) shipped as opt-in

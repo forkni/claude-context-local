@@ -29,11 +29,11 @@
 
 ## Highlights
 
-- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-08-14, 63 queries, hybrid k=10, deterministic): **MRR 0.8722, Recall@5 0.7002, Recall@10 0.8089** - [benchmarks](docs/BENCHMARKS.md)
+- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-08-22, 63 queries, hybrid k=10, deterministic): **MRR 0.8462, Recall@5 0.6562, Recall@10 0.7618** - [benchmarks](docs/BENCHMARKS.md)
 - **Neural Reranking**: Cross-encoder models (default: `Alibaba-NLP/gte-reranker-modernbert-base`; alternatives: jinaai/jina-reranker-v3, Qwen3-Reranker-0.6B) improve ranking quality by 15-25% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
 - **SSCG Integration**: Structural-Semantic Code Graph — 21 relationship types, PageRank centrality reranking; see [benchmarks](docs/BENCHMARKS.md) for mode-comparison history
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
-- **Layered Call-Graph Resolver Pipeline**: `find_connections` returns callers **and** callees with per-entry provenance (`resolver_source`, `resolver_confidence`). Confidence ladder: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98. Install `pip install -e ".[callgraph]"` for pyan3 + LibCST; core is Apache-2.0-clean — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
+- **Layered Call-Graph Resolver Pipeline**: `find_connections` returns callers **and** callees with per-entry provenance (`resolver_source`, `resolver_confidence`). Confidence ladder: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98 (`lsp_enabled` defaults to `true`, no-ops without the extra). Install `pip install -e ".[callgraph]"` for pyan3 + LibCST, and `pip install -e ".[lsp]"` for basedpyright LSP resolution; core is Apache-2.0-clean — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
 - **OTel Tracing** (opt-in): Zero-overhead `traced_block` / `@timed` spans across the search and index pipeline — export to Jaeger, Tempo, or any OTLP collector. See [Observability](docs/OBSERVABILITY.md).
 - **Persistent Chunk Embedding Cache**: content-hash-keyed cache of chunk embedding vectors cuts a full reindex's embedding phase from ~34s to well under 1s once the codebase is unchanged; invalidates automatically on model or precision/backend changes - [configuration](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md#chunk-embedding-cache-configuration)
 - **27 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
@@ -440,17 +440,17 @@ claude-context-local/
 
 ## Benchmark Results
 
-### Latest Validation (2026-08-14, hybrid-only, k=10, deterministic)
+### Latest Validation (2026-08-22, hybrid-only, k=10, deterministic, LSP re-baseline)
 
-Provenance: `evaluation/REMAINING_LEVERS_AB_20260814.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`, `--set intent.enabled=true` matching the shipped default), PYTHONHASHSEED=0 deterministic harness (ADR-0021). These are the base runs of the 2026-08-14 remaining-levers campaign; the 63q run was repeated twice and came back **bit-identical (0 per-query movers)**. Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
+Provenance: `evaluation/CANON_20260822_LSP_REBASELINE.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`, `--set intent.enabled=true` matching the shipped default), PYTHONHASHSEED=0 deterministic harness (ADR-0021). Measured after the `[lsp]` extra — pruned by a bare `uv sync` 2026-08-20, re-locked 2026-08-22 — was confirmed live via a full reindex (217 files/2,611 chunks; resolver mix `lsp 1355 / pyan 1136 / libcst 475`); the 63q run was repeated twice and came back **bit-identical (0 per-query movers)**. Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
 
 | Dataset | Queries | MRR | Recall@5 | Recall@10 | NDCG@5 | pool_hit_rate |
 |---|---|---|---|---|---|---|
-| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8722** | 0.7002 | 0.8089 | 0.7219 | 0.9206 |
-| Expanded (`golden_dataset_expanded.json`, non-D, 133 queries) | 133 | **0.6843** | 0.6668 | 0.7898 | 0.6460 | 0.9248 |
-| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.9021** (`canon_l1`, 2026-08-06 — not re-measured this generation) | 0.6633 | 0.7804 | 0.7047 | 1.0000 |
+| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8462** | 0.6562 | 0.7618 | 0.6854 | 1.0000 |
+| Expanded (`golden_dataset_expanded.json`, non-D, 133 queries) | 133 | **0.6482** | 0.6233 | 0.7403 | 0.6066 | — |
+| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.9034** (re-measured 2026-08-22, supersedes `canon_l1`'s 0.9021) | 0.6630 | 0.7775 | 0.7021 | — |
 
-Deltas vs the prior `canon_l1` figures (0.8603/0.6789, 2026-08-06) are substrate drift across the intervening commits, not attributable to any single change — the 63q run-pair identity doubles as proof the campaign's implementation commits were quality-neutral at their defaults. See `docs/BENCHMARKS.md` for the full comparability-break log.
+Deltas vs the prior pin (0.8722/0.6843, 2026-08-14) are a comparability break: index growth (2,403→2,611 vectors) compounded with the 08-20→08-22 `[lsp]` dark/restore cycle — the 63q run-pair identity doubles as proof the measurement itself is stable on this substrate. See `docs/BENCHMARKS.md` for the full comparability-break log.
 
 **Comparability breaks** — do not read the numbers above as a trend against older figures in this repo's history:
 
@@ -463,7 +463,9 @@ Deltas vs the prior `canon_l1` figures (0.8603/0.6789, 2026-08-06) are substrate
 - ADR-0030 (`canon_i1`) deepened the config→searcher seam and corrected six construction-baked liveness tags; measured 0 flips, all deltas attributed to substrate drift.
 - ADR-0031 (`canon_j1`) deleted the two intent policy tables (both previously measured inert/flat); a pre-registered gate passed cleanly — `canon_j1`'s intent-on arm superseded `canon_i1`.
 - ADR-0033 (`canon_l1`, `docs/adr/0033-lift-torch-ceiling.md`) bumped the ML stack (transformers/sentence-transformers/faiss-cpu/huggingface-hub/hf-xet, then torch 2.8.0+cu128 → 2.10.0+cu128 → 2.11.0+cu128) across three independently-gated stages — `canon_l1`'s intent-on arm was the published baseline from 2026-08-06 to 2026-08-14, superseding `canon_j1`/`canon_k1`/`canon_k2`.
-- The 2026-08-14 remaining-levers campaign (`evaluation/REMAINING_LEVERS_AB_20260814.md`) re-pinned both canons on the post-Track-A/B1/B4/A4/A3-probe substrate: 63q **0.8722**, 133q **0.6843** — the published baseline above, superseding `canon_l1`. No defaults flipped: the campaign shipped only the opt-in `hide_ambiguous` (find_connections) and `include_top_callers` (search_code) display params; A1/A2/A4 mechanisms and jina-reranker-v3.5 were measured and rejected as defaults.
+- The 2026-08-14 remaining-levers campaign (`evaluation/REMAINING_LEVERS_AB_20260814.md`) re-pinned both canons on the post-Track-A/B1/B4/A4/A3-probe substrate: 63q 0.8722, 133q 0.6843 — superseding `canon_l1`. No defaults flipped: the campaign shipped only the opt-in `hide_ambiguous` (find_connections) and `include_top_callers` (search_code) display params; A1/A2/A4 mechanisms and jina-reranker-v3.5 were measured and rejected as defaults.
+- The 2026-08-16 (`evaluation/CONFIDENCE_EGO_AB_20260816.md`, 63q 0.8357/133q 0.6647) and 2026-08-19 (`evaluation/DEFECT_CLOSURE_20260819.md`, 63q 0.8323/133q 0.6526, unpublished) pins were both measured mid-way through index growth and a subsequent LSP outage.
+- The 2026-08-22 close-out §4 re-baseline (`evaluation/CANON_20260822_LSP_REBASELINE.md`) supersedes all of the above with a single authoritative pin — 63q **0.8462**, 133q **0.6482** — measured with `[lsp]` confirmed live on 217 files / 2,611 chunks. This is the published baseline above.
 - The 2026-07-28 golden-dataset repair (`6df36db`) changed scoring for 3-part `split_block` chunks; nothing measured before that commit is comparable to what's measured after.
 - The 2026-08-02 H-category promotion grew the expanded set 108→145 queries (94→131 non-D); the 2026-08-04 top-up grew it further to 147 (133 non-D). H queries are harder by construction (single-file, ≤2 golds), so treat each generation's figure as a separate measurement, not a before/after comparison.
 - `0.797` in the historical table below (2026-06-08, 13 queries) predates the golden-dataset repair, the H-promotion, the SDK v2 migration, and every re-pin since; kept only for continuity.

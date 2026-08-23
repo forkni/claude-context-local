@@ -34,10 +34,11 @@ harness. Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
 
 ### Changed
 
-- **Benchmark canons re-pinned** (deterministic, PYTHONHASHSEED=0): 63q MRR **0.8722** (r1==r2
-  bit-identical), 133q MRR **0.6843** — supersede `canon_l1`'s 0.8603/0.6789 (substrate drift
-  across the campaign's implementation commits; no default behavior changed). See
-  `docs/BENCHMARKS.md`.
+- **Benchmark canons re-pinned** (deterministic, PYTHONHASHSEED=0): 63q MRR **0.8462** (r1==r2
+  bit-identical), 133q MRR **0.6482** — 2026-08-22 close-out §4 LSP re-baseline, superseding this
+  same entry's own 0.8722/0.6843 pin (comparability break: index grew 2,403→2,611 chunks and the
+  `[lsp]` extra went dark 2026-08-20→2026-08-22 before being re-locked; no default behavior
+  changed). See `docs/BENCHMARKS.md` and `evaluation/CANON_20260822_LSP_REBASELINE.md`.
 - **`mcp_server/tool_registry.py`'s config-backed bounds/enums now derive from `search/config.py`'s
   `spec()` metadata** (new `mcp_server/config_schema.py`, pure refactor — every property is
   byte-identical to the post-fix schema above except the deletions "publish invariants, never
@@ -492,6 +493,10 @@ plus an MCP SDK major-version migration; see `### Removed` for the breaking chan
 - **Base install trimmed** — fewer transitive packages after the DSPy and ONNX removals below.
 - `tmp/` and `temp/` directories added to default index excludes (`838c24d`) — these were
   previously indexed as ordinary source, polluting search results with scratch files.
+- **`CallGraphConfig` defaults flipped** (`70c8904`): `lsp_enabled` `False` → `True` (LSP is now
+  requested by default; it still no-ops unless the `[lsp]` extra is installed), and
+  `min_confidence` `0.0` → `0.65` (drops pyan-wildcard-tagged 0.60 edges from injection by
+  default). Prior docs describing LSP as "opt-in, default off" predate this flip.
 
 ### Fixed
 

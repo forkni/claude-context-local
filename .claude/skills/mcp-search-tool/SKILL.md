@@ -40,9 +40,9 @@ candidates, not definitive answers — always scan all returned results.**
 duplicate figures elsewhere — every other reference file in this skill points back to `docs/BENCHMARKS.md` instead of restating numbers that will
 drift out of date on the next benchmark run.
 
-**Current headline (2026-08-14 remaining-levers re-pin, canonical 63-query set, hybrid, k=10, intent-on, deterministic PYTHONHASHSEED=0):** MRR
-**0.8722**, Recall@5 0.7002, Recall@10 0.8089, NDCG@5 0.7219, pool_hit_rate 0.9206 (r1==r2 bit-identical — zero run-to-run flap on the deterministic
-harness). Expanded 133-query set: MRR 0.6843, pool_hit_rate 0.9248. Provenance: `evaluation/REMAINING_LEVERS_AB_20260814.md`.
+**Current headline (2026-08-22 close-out §4 LSP re-baseline, canonical 63-query set, hybrid, k=10, intent-on, deterministic PYTHONHASHSEED=0):** MRR
+**0.8462**, Recall@5 0.6562, Recall@10 0.7618, NDCG@5 0.6854, pool_hit_rate 1.0000 (r1==r2 bit-identical — zero run-to-run flap on the deterministic
+harness). Expanded 133-query set: MRR 0.6482. Provenance: `evaluation/CANON_20260822_LSP_REBASELINE.md`.
 The dataset has been repaired and expanded multiple times since earlier benchmark runs (comparability breaks are
 logged in `docs/BENCHMARKS.md`) — do not compare an older cached number here against a fresh run without checking both the dataset size/date and the
 config it ran under. Engine default is `k=7`; pass it explicitly when correctness matters. Use `k=10` for architectural/global queries.
