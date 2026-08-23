@@ -62,6 +62,7 @@ _CUDA_ATTRS = re.compile(
 )
 _LAUNCH_CFG = re.compile(rb"<<<[^>]*>>>")
 
+
 class CudaChunker(CppChunker):
     def preprocess_source_for_parse(self, source_bytes: bytes) -> bytes:
         rewritten = super().preprocess_source_for_parse(source_bytes)
