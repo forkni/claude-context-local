@@ -439,23 +439,13 @@ def collapse_graph(nx_graph, max_phantom_degree: int):
     seed=42 and cannot vary seeds."""
     import networkx as nx
 
-    from graph.schema import (
-        NODE_ATTR_IS_TARGET_NAME,
-        NODE_ATTR_TYPE,
-        NODE_TYPE_SYMBOL_NAME,
-    )
+    from graph.schema import is_phantom_node
 
     chunk_nodes = [
-        n
-        for n, attrs in nx_graph.nodes(data=True)
-        if attrs.get(NODE_ATTR_TYPE) != NODE_TYPE_SYMBOL_NAME
-        and not attrs.get(NODE_ATTR_IS_TARGET_NAME, False)
+        n for n, attrs in nx_graph.nodes(data=True) if not is_phantom_node(attrs)
     ]
     phantom_nodes = [
-        n
-        for n, attrs in nx_graph.nodes(data=True)
-        if attrs.get(NODE_ATTR_TYPE) == NODE_TYPE_SYMBOL_NAME
-        or attrs.get(NODE_ATTR_IS_TARGET_NAME, False)
+        n for n, attrs in nx_graph.nodes(data=True) if is_phantom_node(attrs)
     ]
     collapsed = nx.Graph()
     chunk_set = set(chunk_nodes)

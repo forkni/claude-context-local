@@ -22,11 +22,11 @@ gates share one load:
    phantom and most real chunks already clear the threshold, the hypothesis
    is falsified and Workstream E is dropped without spending A/B time.
 
-Phantom predicate matches ``CodeGraphStorage.prune_orphan_symbol_nodes``'s
-own predicate exactly (NOT the colon-count heuristic in
+Phantom predicate is ``graph.schema.is_phantom_node`` -- the single shared
+definition also used by ``CodeGraphStorage.prune_orphan_symbol_nodes`` and
+``GraphQueryEngine`` (NOT the colon-count heuristic in
 ``search/chunk_id.py::is_chunk_id``, which the plan calls out as less
-robust): a node is a phantom iff its ``NODE_ATTR_TYPE`` is
-``NODE_TYPE_SYMBOL_NAME`` or its ``NODE_ATTR_IS_TARGET_NAME`` flag is set.
+robust). See ADR-0055.
 
 Read-only: loads the persisted graph JSON and computes pagerank in memory.
 Never mutates or saves ``CodeGraphStorage``.
@@ -47,23 +47,11 @@ from pathlib import Path
 
 from graph.graph_queries import GraphQueryEngine
 from graph.graph_storage import CodeGraphStorage
-from graph.schema import (
-    NODE_ATTR_IS_TARGET_NAME,
-    NODE_ATTR_TYPE,
-    NODE_TYPE_SYMBOL_NAME,
-)
+from graph.schema import is_phantom_node as is_phantom
 from search.config import GraphEnhancedConfig
 
 
 DEFAULT_STORAGE_DIR = Path.home() / ".claude_code_search" / "projects"
-
-
-def is_phantom(node_data: dict) -> bool:
-    """Same predicate as ``CodeGraphStorage.prune_orphan_symbol_nodes``."""
-    return bool(
-        node_data.get(NODE_ATTR_TYPE) == NODE_TYPE_SYMBOL_NAME
-        or node_data.get(NODE_ATTR_IS_TARGET_NAME)
-    )
 
 
 def find_call_graph_dir(storage_root: Path, project_name: str) -> Path:

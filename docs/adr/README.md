@@ -60,6 +60,7 @@ for avoiding re-litigating settled questions.
 | [0052](0052-index-write-stage-owns-add-and-inject-for-incremental-passes.md) | IndexWriteStage owns index-adds and the injection gate for both passes | accepted | 2026-08-20 |
 | [0053](0053-resource-refresher-protocol-seam.md) | Lift the MCP process-resource lifecycle out of `IncrementalIndexer` via a protocol seam | accepted | 2026-08-20 |
 | [0054](0054-route-cuda-extensions-to-cpp-grammar.md) | Route CUDA (.cu/.cuh) extensions to the existing tree-sitter-cpp grammar | accepted | 2026-08-22 |
+| [0055](0055-exclude-phantom-nodes-from-centrality.md) | Exclude phantom placeholder nodes from centrality computation (default off) | accepted | 2026-08-22 |
 
 ## Adding a new ADR
 

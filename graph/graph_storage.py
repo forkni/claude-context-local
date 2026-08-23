@@ -29,6 +29,7 @@ from graph.schema import (
     NODE_TYPE_SYMBOL_NAME,
     edge_relation_type,
     get_reverse_relation,
+    is_phantom_node,
 )
 from utils.atomic_io import write_json_atomic
 from utils.path_utils import normalize_path
@@ -1199,11 +1200,7 @@ class CodeGraphStorage:
         to_remove = [
             n
             for n, data in self.graph.nodes(data=True)
-            if (
-                data.get(NODE_ATTR_TYPE) == NODE_TYPE_SYMBOL_NAME
-                or data.get(NODE_ATTR_IS_TARGET_NAME)
-            )
-            and self.graph.degree(n) == 0
+            if is_phantom_node(data) and self.graph.degree(n) == 0
         ]
 
         for node_id in to_remove:

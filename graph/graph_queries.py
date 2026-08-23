@@ -17,26 +17,13 @@ from .graph_storage import CodeGraphStorage
 from .schema import (
     EDGE_ATTR_TYPE,
     NODE_ATTR_FILE,
-    NODE_ATTR_IS_TARGET_NAME,
     NODE_ATTR_NAME,
     NODE_ATTR_TYPE,
-    NODE_TYPE_SYMBOL_NAME,
     edge_relation_type,
 )
-
-
-def _is_phantom_node(node_data: dict) -> bool:
-    """True for placeholder symbol nodes (unresolved call/symbol targets).
-
-    Same predicate as ``CodeGraphStorage.prune_orphan_symbol_nodes`` and
-    ``scripts/benchmark/graph_phantom_preflight.py::is_phantom`` -- kept in
-    sync deliberately rather than colon-count heuristics like
-    ``search/chunk_id.py::is_chunk_id``.
-    """
-    return bool(
-        node_data.get(NODE_ATTR_TYPE) == NODE_TYPE_SYMBOL_NAME
-        or node_data.get(NODE_ATTR_IS_TARGET_NAME)
-    )
+from .schema import (
+    is_phantom_node as _is_phantom_node,
+)
 
 
 @dataclass

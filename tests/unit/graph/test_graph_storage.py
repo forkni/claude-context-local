@@ -654,12 +654,20 @@ class TestCodeGraphStorage:
     def test_prune_orphan_symbol_nodes_leaves_unrelated_name_index_entries_intact(
         self, graph_storage
     ):
-        """Phantoms created via add_call_edge are never added to
-        _name_index -- only add_node populates it (see get_nodes_by_name's
-        docstring). The defensive _name_index cleanup in
-        prune_orphan_symbol_nodes (mirroring remove_file_nodes) must
-        therefore be a no-op here, and must not disturb unrelated entries
-        for real chunk nodes."""
+        """On the in-memory add path, phantoms created via add_call_edge are
+        never added to _name_index -- only add_node populates it (see
+        get_nodes_by_name's docstring). So the _name_index cleanup in
+        prune_orphan_symbol_nodes is a no-op HERE specifically because this
+        test never persists and reloads the graph.
+
+        That is NOT true in general: CodeGraphStorage.load() rebuilds
+        _name_index from every node carrying a `name` attribute, and phantoms
+        do carry NODE_ATTR_NAME -- so on any persisted-then-reloaded index
+        (every real one) phantoms ARE in _name_index and this cleanup is
+        load-bearing, not defensive. See
+        test_prune_orphan_symbol_nodes_cleans_name_index_after_reload below
+        for that branch.
+        """
         graph_storage.add_node(
             "src/main.py:1-5:function:main", "main", "function", "src/main.py"
         )
@@ -679,6 +687,45 @@ class TestCodeGraphStorage:
 
         assert "bystander" in graph_storage._name_index
         assert "helper_func" not in graph_storage._name_index
+
+    def test_prune_orphan_symbol_nodes_cleans_name_index_after_reload(
+        self, graph_storage, temp_storage_dir
+    ):
+        """The branch test_..._leaves_unrelated_name_index_entries_intact
+        above doesn't cover: after save()/reload, the phantom genuinely is in
+        _name_index (CodeGraphStorage.load() rebuilds it from every node
+        carrying NODE_ATTR_NAME, which phantoms do), so the cleanup inside
+        prune_orphan_symbol_nodes actually does work here, not just
+        defensively."""
+        graph_storage.add_node(
+            "src/main.py:1-5:function:main", "main", "function", "src/main.py"
+        )
+        graph_storage.add_node(
+            "src/other.py:1-5:function:bystander",
+            "bystander",
+            "function",
+            "src/other.py",
+        )
+        graph_storage.add_call_edge(
+            "src/main.py:1-5:function:main", "helper_func", line_number=3
+        )
+        graph_storage.remove_file_nodes("src/main.py")
+        assert graph_storage.graph.degree("helper_func") == 0
+        graph_storage.save()
+
+        reloaded = CodeGraphStorage(
+            project_id="test_project", storage_dir=temp_storage_dir
+        )
+        # Confirms the premise: after a reload, the phantom really is in
+        # _name_index -- the opposite of the in-memory-only case above.
+        assert "helper_func" in reloaded._name_index
+        assert "bystander" in reloaded._name_index
+
+        pruned = reloaded.prune_orphan_symbol_nodes()
+
+        assert pruned == 1
+        assert "helper_func" not in reloaded._name_index
+        assert "bystander" in reloaded._name_index
 
     def test_prune_orphan_symbol_nodes_no_match_returns_zero(self, graph_storage):
         """No orphan candidates → returns 0."""

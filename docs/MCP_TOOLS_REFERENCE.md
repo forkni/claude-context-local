@@ -613,7 +613,7 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 - `adaptive_multiplier_min` (float): T_min multiplier for high-complexity functions (0.1-1.0, default: 0.5)
 - `max_complexity_cap` (int): Cyclomatic complexity ceiling for normalization (5-100, default: 30)
 - `glsl_filter_td_prefix` (bool): Filter TouchDesigner `TD*`-prefixed builtins from GLSL call-graph edges (default: True)
-- `max_file_size_bytes` (int): Files larger than this are skipped by both the chunker and the adaptive-sizing profiler (1024-104857600, default: 5242880 / 5 MB)
+- `max_file_size_bytes` (int): Files larger than this are skipped by the chunker (1024-104857600, default: 5242880 / 5 MB). Does not affect the adaptive-sizing profiler, which reads its own import-time-seeded 5 MB default independently of this setting.
 
 **Note**: Re-index project to apply changes.
 
@@ -649,6 +649,7 @@ High-centrality chunks (base classes, utility functions, heavily-imported module
 | `centrality_boost_threshold` | `0.02` | Centrality score minimum to trigger boost |
 | `centrality_boost_factor` | `5.0` | Multiplier: `boost = centrality × factor` |
 | `centrality_boost_cap` | `0.15` | Maximum additive boost to blended_score |
+| `centrality_exclude_phantoms` | `False` | Exclude phantom placeholder nodes (unresolved call/symbol targets, e.g. `str`/`int`/`__init__`) from centrality computation. **File-only** — not settable via `configure_*` MCP tools; it's a `FORBIDDEN_AUTO_TUNE_KEYS` entry pending a pre-registered A/B (ADR-0055), so it must be hand-edited in `search_config.json` and is intentionally not exposed for MCP-driven tuning. |
 
 ### File-Role Tagging (`role:src/test/doc/config`)
 
@@ -1213,7 +1214,7 @@ def process_order(order: Order, payment: PaymentGateway):
 
 ## Supported Features
 
-- **Languages**: Python, JavaScript, TypeScript, Go, Rust, C, C++, C#, GLSL (9 languages, 27 extensions)
+- **Languages**: Python, JavaScript, TypeScript, Go, Rust, C, C++ (incl. CUDA), C#, GLSL (9 languages, 29 extensions)
 - **Parsing**: AST (Python) + Tree-sitter (all others)
 - **Search Modes**: Semantic, BM25, Hybrid
 - **Chunking**: Functions, classes, methods, interfaces, enums, modules, etc.

@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 from unittest.mock import ANY, Mock, patch
 
+from graph.graph_storage import CodeGraphStorage
+from merkle.change_detector import FileChanges
 from merkle.merkle_dag import MerkleNode
 from search.call_edge_injection import InjectionStats
 from search.filters import PathFilter
@@ -2524,3 +2526,83 @@ class TestExtensionSkipHistogram:
             assert not any(f".ext{i:02d}:" in m for m in detail)
         for i in range(5, 20):
             assert any(f".ext{i:02d}:" in m for m in detail)
+
+
+class TestRemoveOldChunksPrunesOrphanPhantoms:
+    """Workstream D wiring gate (F3, ADR-0055).
+
+    `prune_orphan_symbol_nodes` has 7 unit tests of its own
+    (tests/unit/graph/test_graph_storage.py) but its single production call
+    site, `_remove_old_chunks`, had zero coverage -- a refactor that dropped
+    the call would leave every other test green while phantom placeholder
+    nodes silently resumed accumulating across incremental reindexes.
+    """
+
+    def _make_indexer(self, graph_storage=None):
+        indexer = IncrementalIndexer(
+            indexer=Mock(),
+            embedder=Mock(),
+            chunker=Mock(),
+            snapshot_manager=Mock(),
+        )
+        if graph_storage is not None:
+            indexer.indexer.graph_storage = graph_storage
+        indexer.indexer.remove_files = Mock(return_value=5)
+        indexer.change_detector.get_files_to_remove = Mock(
+            return_value=["a.py", "b.py"]
+        )
+        return indexer
+
+    @staticmethod
+    def _changes() -> FileChanges:
+        return FileChanges(
+            added=[], removed=["a.py", "b.py"], modified=[], unchanged=[]
+        )
+
+    def test_prune_called_after_remove_file_nodes_loop(self):
+        graph_storage = Mock(spec=CodeGraphStorage)
+        graph_storage.remove_file_nodes = Mock(return_value=0)
+        graph_storage.prune_orphan_symbol_nodes = Mock(return_value=3)
+        indexer = self._make_indexer(graph_storage)
+
+        result = indexer._remove_old_chunks(self._changes(), "test_project")
+
+        assert result == 5
+        assert graph_storage.remove_file_nodes.call_count == 2
+        graph_storage.remove_file_nodes.assert_any_call("a.py")
+        graph_storage.remove_file_nodes.assert_any_call("b.py")
+        graph_storage.prune_orphan_symbol_nodes.assert_called_once_with()
+        # Ordering matters: a phantom's incident edges from the just-removed
+        # files must already be gone before degree-0 pruning can see it —
+        # mock_calls records child-mock calls in the order they happened.
+        call_names = [c[0] for c in graph_storage.mock_calls]
+        assert call_names == [
+            "remove_file_nodes",
+            "remove_file_nodes",
+            "prune_orphan_symbol_nodes",
+        ]
+
+    def test_prune_not_called_when_no_files_removed(self):
+        graph_storage = Mock(spec=CodeGraphStorage)
+        graph_storage.remove_file_nodes = Mock(return_value=0)
+        graph_storage.prune_orphan_symbol_nodes = Mock(return_value=0)
+        indexer = self._make_indexer(graph_storage)
+        indexer.change_detector.get_files_to_remove = Mock(return_value=[])
+        indexer.indexer.remove_files = Mock(return_value=0)
+
+        result = indexer._remove_old_chunks(self._changes(), "test_project")
+
+        assert result == 0
+        graph_storage.remove_file_nodes.assert_not_called()
+        graph_storage.prune_orphan_symbol_nodes.assert_not_called()
+
+    def test_prune_skipped_when_indexer_has_no_graph_storage(self):
+        # No spec=CodeGraphStorage graph_storage set -- Mock() auto-vivifies
+        # a plain Mock() for the attribute access, which fails the
+        # isinstance(graph_storage, CodeGraphStorage) guard just like a real
+        # indexer built without call-graph support.
+        indexer = self._make_indexer()
+
+        result = indexer._remove_old_chunks(self._changes(), "test_project")
+
+        assert result == 5

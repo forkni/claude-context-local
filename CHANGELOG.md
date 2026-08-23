@@ -31,8 +31,36 @@ harness. Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
   shipped depth/floor), A4 `reranker.doc_representation_mode="signature_head"` (CI-negative recall
   on both datasets; −19% reranker latency is the only win — priced-in opt-in, settled into
   `FORBIDDEN_AUTO_TUNE_KEYS`). A3 final-pool graph reserve was NOT built (probe gate failed).
+- **CUDA (`.cu`/`.cuh`) indexing support** — routed to the existing `tree-sitter-cpp` grammar via a
+  `CudaChunker` that blanks CUDA-only execution-space attributes (`__global__`, `__device__`, ...)
+  and `<<<grid, block>>>` kernel-launch syntax ahead of parsing (0 → 18 files / 2,091 lines indexed
+  on the motivating projects, ERROR-line rate 3.0% → 0.0%). No new dependency; `language_name`
+  stays `"cpp"`. See `docs/adr/0054-route-cuda-extensions-to-cpp-grammar.md`.
+- **`chunking.max_file_size_bytes`** (default `5242880` / 5 MB, range 1024–104857600) — caps file
+  size on the chunking path via `configure_chunking`; `chunk_file()` previously had no size guard
+  even though the adaptive-sizing profiler did.
+- **`graph_enhanced.centrality_exclude_phantoms`** (default `False`, file-only —
+  `FORBIDDEN_AUTO_TUNE_KEYS`) — excludes phantom placeholder nodes (unresolved call/symbol targets)
+  from centrality computation across all four centrality methods. Read-only pre-flight found
+  phantoms are 60.7% of graph nodes and 75% of the top-20 raw-PageRank nodes on this repo's own
+  index, with the single highest-PageRank node itself a phantom (`"str"`) — max-normalizing against
+  it suppresses `centrality_bm25_boost` for over 99% of real chunks. Ships default-off pending a
+  pre-registered A/B (re-tuning `centrality_boost_threshold` inside the arm, not just flipping the
+  flag). See `docs/adr/0055-exclude-phantom-nodes-from-centrality.md`.
+- **`CodeGraphStorage.prune_orphan_symbol_nodes()`** — removes phantom placeholder nodes once they
+  drop to degree 0, wired into the incremental-reindex path right after the `remove_file_nodes`
+  loop. Insurance against unbounded phantom accumulation on long-lived incrementally-reindexed
+  projects; provably a no-op on a from-scratch index. Same ADR as above.
 
 ### Changed
+
+- **`DEFAULT_IGNORED_DIRS` grew by 12 vendored/dependency-tree directory names** (`third_party`,
+  `thirdparty`, `third-party`, `3rdparty`, `vendor`, `vendored`, `extern`, `deps`, `_deps`,
+  `subprojects`, `submodules`; mirrored into `DEPENDENCY_TREE_DIRS`). Files under these directory
+  names drop out of the merkle walk on the next reindex and their chunks are removed — an
+  unannounced but correct index shrink for any existing project with a directory matching one of
+  these names. Use additive `include_dirs` (ADR-0036) to bring specific paths back if needed; the
+  effective exclusion list is visible via `get_index_status`'s `default_excluded_dirs`.
 
 - **Benchmark canons re-pinned** (deterministic, PYTHONHASHSEED=0): 63q MRR **0.8462** (r1==r2
   bit-identical), 133q MRR **0.6482** — 2026-08-22 close-out §4 LSP re-baseline, superseding this
@@ -76,6 +104,21 @@ harness. Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
   `output_format` description was also reconciled to the long-form text used by the other 17.
   `get_search_config_status` gained two previously-missing keys, `ego_graph_k_hops` /
   `ego_graph_max_neighbors_per_hop`, so that pointer is truthful.
+- **BOM-tolerant pyan/import resolvers** — files starting with a UTF-8 byte-order mark previously
+  failed silently in the pyan and import-resolver call-edge tiers; both now strip a leading BOM
+  before parsing.
+- **Ambiguous-resolution edges were miscounted as phantom edges** — an ambiguous call-target
+  resolution creates no phantom node, but was counted in `phantom_edges` as if it had. Split out
+  into a separate `ambiguous_edges` counter in `search/graph_integration.py`.
+
+### Migration
+
+- **Existing C/C++ indexes need one `incremental=False` reindex** to pick up the declarator-recovery
+  and preprocessor-conditional-neutralization parsing fixes bundled in this batch — both change how
+  *already-registered* `.c`/`.cpp`/`.h` extensions parse, so an incremental pass alone won't
+  reprocess unchanged files. `.cu`/`.cuh` are exempt: registering them flips their merkle
+  hash-strategy from name/size/mtime to content, so they read as modified and self-migrate on the
+  next incremental pass with no explicit reindex required.
 
 ## [0.25.0] - 2026-08-13
 

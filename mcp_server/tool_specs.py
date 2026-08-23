@@ -946,7 +946,7 @@ RETURNS:
                 },
                 "max_file_size_bytes": {
                     **CONFIG_BACKED["configure_chunking.max_file_size_bytes"],
-                    "description": "Files larger than this are skipped by both the chunker and the adaptive-sizing profiler (never chunked, never indexed)",
+                    "description": "Files larger than this are skipped by the chunker (never chunked, never indexed). Does not affect the adaptive-sizing profiler, which reads its own import-time-seeded 5 MB default and is not affected by this setting.",
                 },
                 "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
