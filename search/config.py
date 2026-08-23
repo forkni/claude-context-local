@@ -1248,6 +1248,21 @@ class GraphEnhancedConfig:
             flat_alias="centrality_boost_cap", reader="search/centrality_ranker.py"
         ),
     )
+    # Excludes phantom placeholder nodes (unresolved call/symbol targets, e.g.
+    # "str"/"int"/"__init__") from centrality computation. Pre-flight on this
+    # repo's own index (scripts/benchmark/graph_phantom_preflight.py) found
+    # phantoms are 75% of the top-20 raw-PageRank nodes and the #1 node
+    # ("str") is a phantom -- max-normalizing against it pushes ~99% of real
+    # chunks below centrality_boost_threshold. FORBIDDEN_AUTO_TUNE_KEYS
+    # pending pre-registered A/B (ADR-0055); default False keeps every path
+    # byte-identical until that A/B lands.
+    centrality_exclude_phantoms: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="centrality_exclude_phantoms",
+            reader="search/centrality_ranker.py",
+        ),
+    )
     # Post-centrality result cap: total results kept = k * this multiplier
     # (k primary + (multiplier-1)*k graph/ego/parent context chunks)
     max_results_multiplier: int = field(

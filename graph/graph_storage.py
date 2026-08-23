@@ -1165,6 +1165,63 @@ class CodeGraphStorage:
             )
         return len(to_remove)
 
+    def prune_orphan_symbol_nodes(self) -> int:
+        """Remove placeholder symbol nodes left with no remaining edges.
+
+        Workstream D: `remove_file_nodes` cannot reach phantom nodes -- they are
+        bare unresolved-symbol names with no ``path:`` prefix, so the
+        ``node_id.startswith(prefix)`` match never fires for them. When every
+        file that referenced a phantom is deleted via incremental reindex, the
+        phantom's incident edges go with it, but the phantom node itself is
+        never revisited and accumulates across incremental runs indefinitely.
+        A from-scratch index (via `clear()`) is unaffected, since the whole
+        graph -- phantoms included -- is discarded together.
+
+        Predicate, matching the placeholder-node convention set at node
+        creation (`add_call_edge`, `add_relationship_edge`): a node is a
+        symbol-name placeholder if its ``NODE_ATTR_TYPE`` is
+        ``NODE_TYPE_SYMBOL_NAME`` or its ``NODE_ATTR_IS_TARGET_NAME`` flag is
+        set. Only nodes matching that predicate *and* with degree 0 (no
+        incident edges in either direction) are removed -- a real chunk node
+        that happens to have degree 0 (e.g. a leaf function with no callers
+        and no callees) is never touched, since it fails the type/flag half
+        of the predicate.
+
+        Intended to run after the `remove_file_nodes` loop in an incremental
+        reindex, where degree-0 is exactly the right test: incident edges
+        from deleted files are already gone by the time this runs, so a
+        phantom whose only referents were deleted drops to degree 0 in the
+        same pass.
+
+        Returns:
+            Number of orphan symbol nodes removed.
+        """
+        to_remove = [
+            n
+            for n, data in self.graph.nodes(data=True)
+            if (
+                data.get(NODE_ATTR_TYPE) == NODE_TYPE_SYMBOL_NAME
+                or data.get(NODE_ATTR_IS_TARGET_NAME)
+            )
+            and self.graph.degree(n) == 0
+        ]
+
+        for node_id in to_remove:
+            node_name = self.graph.nodes[node_id].get("name")
+            if node_name and node_name in self._name_index:
+                with contextlib.suppress(ValueError):
+                    self._name_index[node_name].remove(node_id)
+                if not self._name_index[node_name]:
+                    del self._name_index[node_name]
+            self.graph.remove_node(node_id)
+
+        if to_remove:
+            self._bump_version()
+            self.logger.debug(
+                f"[GRAPH_PRUNE] Removed {len(to_remove)} orphan symbol node(s)"
+            )
+        return len(to_remove)
+
     def get_stats(self) -> dict[str, Any]:
         """
         Get graph statistics.

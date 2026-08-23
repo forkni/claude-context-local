@@ -69,7 +69,8 @@ GLSL_EXTENSIONS = frozenset(
 # ADR-0013; bm25_reserved_slots rejected; query_expansion ADR-0012 closed FAIL;
 # bm25_tokenizer is INDEX_VERSION 4; multi_hop tuned; doc_representation_mode
 # rejected 2026-08-14; merged_pool_policy rejected 2026-08-15;
-# graph_hop_window_cap rejected 2026-08-15. See BENCHMARK_LOCK_CITATIONS
+# graph_hop_window_cap rejected 2026-08-15; centrality_exclude_phantoms
+# pending pre-registered A/B (ADR-0055). See BENCHMARK_LOCK_CITATIONS
 # below for the per-key citation (ADR-0022) shown in start_mcp_server.cmd's
 # ":tuned_parameters" menu.
 FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
@@ -83,6 +84,7 @@ FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
         "search_mode.bm25_tokenizer",
         "search_mode.bm25_reserved_slots",
         "graph_enhanced.centrality_alpha",
+        "graph_enhanced.centrality_exclude_phantoms",
         "reranker.single_pass",
         "reranker.hop1_reserved_slots",
         "reranker.doc_representation_mode",
@@ -135,6 +137,11 @@ BENCHMARK_LOCK_CITATIONS: dict[str, str] = {
         "CONFIDENCE_EGO_AB_20260816: recall@20 CI excludes zero on the loss "
         "side on both 63q and 133q; recall@10 upside CI includes zero both "
         "sets — fails the Phase 5 gate, stays default-off"
+    ),
+    "graph_enhanced.centrality_exclude_phantoms": (
+        "ADR-0055 pending: pre-flight found phantoms are 75% of the top-20 "
+        "raw-PageRank nodes on this repo's own index and the #1 node is a "
+        "phantom; pre-registered A/B result not yet recorded, stays default-off"
     ),
 }
 

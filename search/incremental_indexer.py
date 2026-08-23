@@ -1020,6 +1020,18 @@ class IncrementalIndexer:
                     f"across {len(files_to_remove)} files"
                 )
 
+            # Workstream D: phantom placeholder nodes (unresolved call/symbol
+            # targets) have no path: prefix, so remove_file_nodes above never
+            # reaches them. Run right after it in the same pass — incident
+            # edges from the just-deleted files are already gone, so a
+            # phantom whose only referents were deleted drops to degree 0
+            # here and is pruned instead of accumulating indefinitely.
+            orphans_removed = graph_storage.prune_orphan_symbol_nodes()
+            if orphans_removed:
+                logger.info(
+                    f"[GRAPH_PRUNE] Pruned {orphans_removed} orphan symbol node(s)"
+                )
+
         return chunks_removed
 
     @timed("index.incremental")

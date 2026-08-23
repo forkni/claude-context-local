@@ -88,6 +88,7 @@ class TestGuardrails:
             "search_mode.bm25_tokenizer",
             "search_mode.bm25_reserved_slots",
             "graph_enhanced.centrality_alpha",
+            "graph_enhanced.centrality_exclude_phantoms",
             "reranker.single_pass",
             "reranker.hop1_reserved_slots",
             "reranker.doc_representation_mode",

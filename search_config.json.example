@@ -163,6 +163,7 @@
     "centrality_boost_threshold": 0.02,
     "centrality_boost_factor": 5.0,
     "centrality_boost_cap": 0.15,
+    "centrality_exclude_phantoms": false,
     "max_results_multiplier": 8,
     "graph_hop_call_evidence_enabled": false,
     "graph_hop_call_evidence_lambda": 0.05,
