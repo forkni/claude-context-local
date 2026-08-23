@@ -61,6 +61,15 @@ harness. Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
   `test_chunker_parity.py` snapshot gate, and the 63q/133q/F-via-similar SSCG canons
   unchanged); clears the way for a C/C++ call-edge tier (ADR-0035) to land as one new row
   instead of a widened switch. See `docs/adr/0056-spec-row-edge-emission-seam.md`.
+- **`ToolSpec.mutation_lock`/`.requires_index` are now derived properties**, read off each
+  handler's `__mcp_guards__` stamp (set by `@with_mutation_lock`/`@require_indexed_project` via
+  `functools.wraps` propagation) instead of 36 hand-typed kwargs across the 18 spec rows — a row
+  can no longer drift from its handler's actual decorator chain. Replaces the ~130-line
+  bytecode-reflection test (`co_names` grepping) with a stamp-derivation ratchet in
+  `test_tool_specs.py` plus a new behavioural test proving `index_directory`'s internal lock is
+  actually acquired at runtime. Behavior-preserving: derived values are byte-identical to the
+  pre-refactor hand-typed ones on all 18 rows. See
+  `docs/adr/0057-derive-tool-guard-flags-from-decorators.md`.
 - **`DEFAULT_IGNORED_DIRS` grew by 12 vendored/dependency-tree directory names** (`third_party`,
   `thirdparty`, `third-party`, `3rdparty`, `vendor`, `vendored`, `extern`, `deps`, `_deps`,
   `subprojects`, `submodules`; mirrored into `DEPENDENCY_TREE_DIRS`). Files under these directory
