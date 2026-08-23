@@ -35,6 +35,7 @@ try:
         CallEdge,
         CallGraphExtractorFactory,
     )
+    from chunking.relationships.edge_specs import EDGE_EMISSION_SPECS
     from chunking.relationships.relationship_extractors.registry import (
         ExtractorContext,
         build_relationship_extractors,
@@ -680,8 +681,9 @@ class MultiLanguageChunker:
             tchunk: Tree-sitter chunk carrying GLSLChunker's metadata.
             chunk_id: Chunk identifier, becomes CallEdge.caller_id.
         """
+        spec = EDGE_EMISSION_SPECS["glsl"]
         raw_calls = tchunk.metadata.get("calls")
-        if raw_calls is None or chunk.chunk_type not in ("function", "split_block"):
+        if raw_calls is None or chunk.chunk_type not in spec.call_chunk_types:
             return
 
         chunk.calls = [
@@ -690,7 +692,7 @@ class MultiLanguageChunker:
                 callee_name=name,
                 line_number=line,
                 is_method_call=False,
-                confidence=0.9,
+                confidence=spec.call_confidence,
                 callee_qualified=None,
             )
             for name, line in raw_calls
