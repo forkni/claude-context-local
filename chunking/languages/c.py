@@ -4,7 +4,7 @@ from typing import Any
 
 from tree_sitter import Language
 
-from ._c_family import unwrap_declarator_name
+from ._c_family import neutralize_preprocessor_conditionals, unwrap_declarator_name
 from .base import LanguageChunker
 
 
@@ -13,6 +13,21 @@ class CChunker(LanguageChunker):
 
     def __init__(self, language: Language | None = None) -> None:
         super().__init__("c", language)
+
+    def preprocess_source_for_parse(self, source_bytes: bytes) -> bytes:
+        """Blank preprocessor conditional directives before parsing.
+
+        See `neutralize_preprocessor_conditionals` (_c_family.py) for the
+        rewrite, why it preserves byte offsets, and the measured impact. A
+        no-op substitution on source with no `#if`/`#ifdef`/.../`#endif`.
+
+        Args:
+            source_bytes: UTF-8-encoded original source.
+
+        Returns:
+            Source bytes with preprocessor conditionals blanked.
+        """
+        return neutralize_preprocessor_conditionals(source_bytes)
 
     def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract C-specific metadata."""

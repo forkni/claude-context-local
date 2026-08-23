@@ -10,6 +10,7 @@ Supported languages (9, all via tree-sitter):
 - Rust (.rs)
 - C (.c)
 - C++ (.cpp, .cc, .cxx, .c++, .h, .hpp, .hh, .hxx, .inl, .ipp, .tpp)
+- CUDA (.cu, .cuh)
 - C# (.cs)
 - GLSL (.glsl, .frag, .vert, .comp, .geom, .tesc, .tese, .glslinc)
 - Python (.py)
@@ -35,6 +36,7 @@ from .languages import (
     CChunker,
     CppChunker,
     CSharpChunker,
+    CudaChunker,
     GLSLChunker,
     GoChunker,
     JavaScriptChunker,
@@ -300,6 +302,11 @@ class TreeSitterChunker:
         ".inl": (EXT_TO_LANGUAGE[".inl"], lambda lang: CppChunker(lang)),
         ".ipp": (EXT_TO_LANGUAGE[".ipp"], lambda lang: CppChunker(lang)),
         ".tpp": (EXT_TO_LANGUAGE[".tpp"], lambda lang: CppChunker(lang)),
+        # CUDA routes to the cpp grammar (language_name stays "cpp") with an
+        # extra blanking pass for CUDA-only syntax -- see cpp.py's
+        # CudaChunker and docs/adr/0054-route-cuda-extensions-to-cpp-grammar.md.
+        ".cu": (EXT_TO_LANGUAGE[".cu"], lambda lang: CudaChunker(lang)),
+        ".cuh": (EXT_TO_LANGUAGE[".cuh"], lambda lang: CudaChunker(lang)),
         ".cs": (EXT_TO_LANGUAGE[".cs"], lambda lang: CSharpChunker(lang)),
         ".glsl": (EXT_TO_LANGUAGE[".glsl"], lambda lang: GLSLChunker(lang)),
         ".frag": (EXT_TO_LANGUAGE[".frag"], lambda lang: GLSLChunker(lang)),

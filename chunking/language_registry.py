@@ -38,6 +38,8 @@ EXT_TO_LANGUAGE: dict[str, str] = {
     ".inl": "cpp",
     ".ipp": "cpp",
     ".tpp": "cpp",
+    ".cu": "cpp",
+    ".cuh": "cpp",
     ".cs": "csharp",
     ".glsl": "glsl",
     ".frag": "glsl",

@@ -1,4 +1,4 @@
-"""Byte-parity snapshot tests for all 9 leaf LanguageChunker implementations.
+"""Byte-parity snapshot tests for all 10 leaf LanguageChunker implementations.
 
 Each parametrized case serializes ``[c.to_dict() for c in chunks]`` for a
 small feature-exercising fixture and pins the result with Syrupy JSON
@@ -42,6 +42,7 @@ CORPUS_EXTENSIONS = [
     ".rs",
     ".c",
     ".cpp",
+    ".cu",
     ".cs",
     ".glsl",
 ]

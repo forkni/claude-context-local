@@ -856,6 +856,13 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
         repo-profiling pass, via TreeSitterChunker.parse_file) should call
         `chunk_parsed` directly to avoid re-parsing the same source.
 
+        Routes the parse through `self.preprocess_source_for_parse` -- the
+        same seam `TreeSitterChunker.parse_file` uses -- so a C/C++ caller
+        of this adapter gets the same conditional-neutralization/error-
+        recovery behavior as the live indexing path, instead of silently
+        bypassing it. `chunk_parsed` still receives the original,
+        un-rewritten `source_code` for chunk text and name slicing.
+
         Args:
             source_code: Source code string
             config: Optional ChunkingConfig for merge settings.
@@ -869,7 +876,7 @@ class LanguageChunker(ABC):  # noqa: B024 — abstract by documentation; _extra_
             List of TreeSitterChunk objects (may include merged chunks)
         """
         source_bytes = bytes(source_code, "utf-8")
-        tree = self.parser.parse(source_bytes)
+        tree = self.parser.parse(self.preprocess_source_for_parse(source_bytes))
         return self.chunk_parsed(
             tree, source_code, config=config, repo_profile=repo_profile
         )

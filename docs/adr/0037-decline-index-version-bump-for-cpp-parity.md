@@ -68,6 +68,18 @@ Ship Phases 1–4 as a code-only change; handle the one project that actually ne
   (not BM25 document format), that is a new, purpose-built mechanism — not a repurposing of
   `INDEX_VERSION` and not a resurrection of this deferred `chunker_version` marker without first
   designing how it avoids false-alarming non-affected languages.
+- **Ruling re-applied, 2026-08-22 (pointer, not a replacement number — per
+  [ADR-0043](0043-point-stale-prose-counts-at-derived-source.md)):** the C/C++ declarator-recovery and
+  preprocessor-conditional-neutralization fixes and CUDA `.cu`/`.cuh` registration (see
+  [ADR-0054](0054-route-cuda-extensions-to-cpp-grammar.md)) change chunk shape for already-
+  registered C/C++ extensions the same way the original parity work did, and hit the identical
+  question this ADR already settled. No `INDEX_VERSION` bump and no `chunker_version` marker
+  shipped for this change set either, for the same reasons above — the staleness window is
+  closed the same way, by documenting the `incremental=False` reindex requirement in
+  `CHANGELOG.md`'s Migration section rather than by adding automated detection. This is the
+  second time this exact gap has come up, matching the reopening condition this record already
+  named for building `chunker_version` for real; it was considered again here and still declined
+  as out of proportion to a two-instance pattern.
 
 ## Out of scope
 
