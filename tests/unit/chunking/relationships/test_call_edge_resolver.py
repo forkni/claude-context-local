@@ -227,6 +227,24 @@ class TestValidatePyFiles:
         assert len(result) == 1
         assert "good.py" in result[0]
 
+    def test_bom_prefixed_file_survives(self, tmp_path: Path) -> None:
+        """Workstream C1: a UTF-8 BOM at position 0 must not make ast.parse
+        raise SyntaxError and drop the file from every resolver's scope."""
+        f = tmp_path / "bom.py"
+        f.write_bytes(b"\xef\xbb\xbf" + b"def foo():\n    pass\n")
+        log = logging.getLogger("test_validate")
+        result = validate_py_files([str(f)], log)
+        assert str(f) in result
+
+    def test_bom_less_file_unchanged(self, tmp_path: Path) -> None:
+        """A BOM-less file must still validate identically (utf-8-sig is a
+        strict superset of utf-8 on the decode side for BOM-less input)."""
+        f = tmp_path / "no_bom.py"
+        f.write_bytes(b"def foo():\n    pass\n")
+        log = logging.getLogger("test_validate")
+        result = validate_py_files([str(f)], log)
+        assert str(f) in result
+
 
 # ---------------------------------------------------------------------------
 # run_resolvers — merge logic

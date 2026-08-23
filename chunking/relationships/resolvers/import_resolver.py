@@ -114,7 +114,10 @@ class ImportResolver:
             return imports
 
         try:
-            with open(file_path, encoding="utf-8") as f:
+            # utf-8-sig strips a leading BOM if present and is byte-identical
+            # to plain utf-8 decoding for BOM-less files — without it, a BOM
+            # left at position 0 makes ast.parse raise SyntaxError below.
+            with open(file_path, encoding="utf-8-sig") as f:
                 file_content = f.read()
 
             tree = ast.parse(file_content)

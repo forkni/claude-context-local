@@ -748,6 +748,27 @@ def func2():
             assert method_call2.callee_name == "SuccessHandler.process"
 
 
+class TestReadFileImportsBomTolerance:
+    """Workstream C1: a UTF-8 BOM at position 0 must not make ast.parse raise
+    SyntaxError and silently empty out read_file_imports' result."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.extractor = PythonCallGraphExtractor()
+
+    def test_bom_prefixed_file_still_yields_imports(self, tmp_path):
+        f = tmp_path / "bom.py"
+        f.write_bytes(b"\xef\xbb\xbf" + b"from handlers import ErrorHandler\n")
+        imports = self.extractor._import_resolver.read_file_imports(str(f))
+        assert imports.get("ErrorHandler") == "handlers.ErrorHandler"
+
+    def test_bom_less_file_unchanged(self, tmp_path):
+        f = tmp_path / "no_bom.py"
+        f.write_bytes(b"from handlers import ErrorHandler\n")
+        imports = self.extractor._import_resolver.read_file_imports(str(f))
+        assert imports.get("ErrorHandler") == "handlers.ErrorHandler"
+
+
 class TestCalleeQualifiedExtraction:
     """Direct tests for CallEdge.callee_qualified (Part 1 of the
     call-graph-resolution deepening).

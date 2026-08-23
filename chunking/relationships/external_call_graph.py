@@ -56,7 +56,8 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from evaluation.chunk_mapping import chunk_id_from_fqn, find_enclosing_chunk
@@ -148,10 +149,26 @@ try:
             # Reads + symtable-analyses + ast.parses every file, once, before
             # pass 1 even starts (analyzer.py process():286-287) -- without a
             # tick here this stretch is silent even once pass 1/2 report.
+            # process() runs this for EVERY file before pass 1/2 even start,
+            # so one bad file here must not abort __init__() and cost the
+            # whole pyan tier -- same resilience contract as process_one()
+            # below, just one phase earlier. BOM files no longer land here
+            # (see _bom_tolerant_pyan_reader below); this guard now covers
+            # any *other* per-file analysis failure pyan's readers can hit.
             if self._past_deadline():
                 return
-            super()._prescan_one(filename)
-            self._tick(phase="prescan")
+            try:
+                super()._prescan_one(filename)
+            except Exception:  # noqa: BLE001 - resilience: one bad file must not cost the whole pyan tier
+                first_sight = filename not in self._failed_files
+                self._failed_files.add(filename)
+                self.logger.warning(
+                    "[PYAN] skipping %s (analysis failed)",
+                    filename,
+                    exc_info=first_sight,
+                )
+            finally:
+                self._tick(phase="prescan")
 
         def process_one(self, filename):  # type: ignore[override]
             # One third-party file with a pyan-hostile construct (e.g. the
@@ -260,6 +277,50 @@ def pyan_available() -> bool:
     extra is absent.
     """
     return _PYAN_AVAILABLE
+
+
+@contextmanager
+def _bom_tolerant_pyan_reader() -> Iterator[None]:
+    """Widen pyan's own two source reads from utf-8 to utf-8-sig.
+
+    ``pyan.analyzer._prescan_one`` (:308) and ``process_one`` (:346) both do
+    ``open(filename, encoding="utf-8")`` and hand the raw string to BOTH
+    ``symtable.symtable()`` and ``ast.parse()`` -- each of which rejects a
+    leading U+FEFF, so patching ``analyze_scopes`` alone would not be enough.
+    Every reader this repo owns already reads utf-8-sig for exactly this
+    reason (call_edge_resolver.py:283, import_resolver.py:120,
+    tree_sitter.py:434); pyan's is the one reader that fix could not reach,
+    so ``prepare_scoped_files()`` admits a BOM file as valid and pyan then
+    silently drops it (``_TrackedVisitor._prescan_one``/``process_one``
+    above log "[PYAN] skipping ..." and move on rather than aborting the
+    whole tier, but the BOM file itself never contributes an edge).
+
+    utf-8-sig is byte-identical to utf-8 for BOM-less input, so widening is
+    safe by construction. A module global named ``open`` shadows the
+    builtin for that module only (the mechanism ``unittest.mock.patch``
+    relies on), so nothing outside ``pyan.analyzer`` is affected -- and
+    ``run_resolvers()`` runs ``PyanResolver`` in its own child process
+    anyway, so the concurrently-running libcst resolver is not even in the
+    same interpreter.
+    """
+    import pyan.analyzer as _pyan_analyzer  # inline, as visit_Lambda already does
+
+    sentinel = object()
+    previous = getattr(_pyan_analyzer, "open", sentinel)
+
+    def _bom_tolerant_open(file, *args, **kwargs):
+        if kwargs.get("encoding") == "utf-8":
+            kwargs["encoding"] = "utf-8-sig"
+        return open(file, *args, **kwargs)
+
+    _pyan_analyzer.open = _bom_tolerant_open
+    try:
+        yield
+    finally:
+        if previous is sentinel:
+            del _pyan_analyzer.open
+        else:
+            _pyan_analyzer.open = previous
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +464,10 @@ class PyanResolver:
         # constructor runs the entire 5-stage process() synchronously, so the
         # heartbeat context must wrap construction itself, not a call after it.
         deadline = time.monotonic() + budget
-        with heartbeat(logger, "[PYAN]", len(py_files), unit="files") as tick:
+        with (
+            heartbeat(logger, "[PYAN]", len(py_files), unit="files") as tick,
+            _bom_tolerant_pyan_reader(),
+        ):
             visitor = _TrackedVisitor(
                 py_files,
                 root=str(project_root),

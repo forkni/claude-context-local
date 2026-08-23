@@ -265,7 +265,11 @@ def validate_py_files(
     parseable: list[str] = []
     for fn in py_files:
         try:
-            source = Path(fn).read_text(encoding="utf-8", errors="replace")
+            # utf-8-sig strips a leading BOM if present and is byte-identical
+            # to plain utf-8 decoding for BOM-less files — without it, a BOM
+            # left at position 0 makes ast.parse raise SyntaxError, silently
+            # dropping the file from every resolver's scoped file list.
+            source = Path(fn).read_text(encoding="utf-8-sig", errors="replace")
             ast.parse(source, filename=fn)
             parseable.append(fn)
         except SyntaxError as exc:

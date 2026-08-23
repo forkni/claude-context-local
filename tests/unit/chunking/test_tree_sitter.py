@@ -389,6 +389,34 @@ class TestParseFileSingleRead(TestCase):
         assert result is not None
         assert result.content == "def hello():\n    return 42\n"
 
+    def test_bom_prefixed_file_parses_without_phantom_bytes(self):
+        """Workstream C1: a leading UTF-8 BOM must be stripped after the
+        binary sniff and before decode -- content must be byte-identical to
+        the BOM-less version, with no phantom-byte offset shift."""
+        import chunking.tree_sitter as tsf
+
+        if "python" not in tsf.AVAILABLE_LANGUAGES:
+            self.skipTest("tree-sitter-python not installed")
+
+        source = "def hello():\n    return 42\n"
+        bom_path = Path(self.temp_dir) / "bom.py"
+        bom_path.write_bytes(b"\xef\xbb\xbf" + source.encode("utf-8"))
+
+        result = self.chunker.parse_file(str(bom_path))
+        assert result is not None
+        assert result.content == source  # BOM stripped, not decoded into content
+        assert not result.content.startswith("﻿")
+
+    def test_bom_prefixed_binary_file_is_still_skipped(self):
+        """A BOM-prefixed file that also contains a null byte in its first
+        8KB must still be recognized as binary and skipped -- the BOM strip
+        happens after the sniff, so it must not interfere with it."""
+        file_path = Path(self.temp_dir) / "bom_binary.py"
+        file_path.write_bytes(b"\xef\xbb\xbfimport os\x00\x01\x02binary garbage")
+
+        result = self.chunker.parse_file(str(file_path))
+        assert result is None
+
     def test_crlf_line_endings_normalized_to_lf(self):
         """A raw bytes read + manual decode() skips text-mode open()'s
         universal-newline translation unless done explicitly — regression

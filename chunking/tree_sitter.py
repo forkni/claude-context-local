@@ -17,6 +17,7 @@ Supported languages (9, all via tree-sitter):
 
 from __future__ import annotations
 
+import codecs
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -418,6 +419,13 @@ class TreeSitterChunker:
                 if b"\x00" in raw[:8192]:
                     logger.debug(f"[BINARY] Skipping binary file: {file_path}")
                     return None
+
+                # Strip a leading UTF-8 BOM *after* the binary sniff (so the
+                # sniff still sees the file's original prefix) and *before*
+                # decode (so tree-sitter offsets aren't shifted by 3 phantom
+                # bytes a BOM would otherwise leave at position 0).
+                if raw.startswith(codecs.BOM_UTF8):
+                    raw = raw[len(codecs.BOM_UTF8) :]
 
                 try:
                     content = raw.decode("utf-8")
