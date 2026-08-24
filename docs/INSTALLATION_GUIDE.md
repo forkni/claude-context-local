@@ -894,14 +894,11 @@ pip install "numpy<2.0"
 **Solution**:
 
 ```bash
-# Install transformers preview with EmbeddingGemma support
-pip install git+https://github.com/huggingface/transformers@v4.56.0-Embedding-Gemma-preview
-
-# Or use UV for automatic resolution
-uv sync  # This will install correct transformers version
+# Re-sync the project's supported dependencies
+uv sync
 ```
 
-**Root Cause**: Standard transformers 4.51.3 doesn't include gemma3_text architecture. The v4.56.0-Embedding-Gemma-preview branch includes the required support.
+**Root Cause**: The project requires Transformers 5.14.1 or newer (below 6), which includes the `gemma3_text` architecture used by EmbeddingGemma. The old Transformers 4.x preview command is no longer part of the supported installation path.
 
 #### 5. MCP stdio Transport Issues
 
