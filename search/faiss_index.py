@@ -212,6 +212,21 @@ class FaissVectorIndex:
         # Move to GPU if available
         self.move_to_gpu()
 
+    def close(self) -> None:
+        """Release the mmap handle without deleting any files.
+
+        Idempotent: safe to call multiple times. Unlike ``clear()``, this
+        does not touch ``index_path``/``chunk_id_path``/``_mmap_path`` on
+        disk -- it only drops the in-process handle backing
+        ``_mmap_storage``, so the caller can release its own mapping before
+        another instance clears or rewrites the same files (WinError 32 on
+        Windows otherwise: unlinking or truncating a file with a live
+        mmap.mmap section fails while any handle to it stays open).
+        """
+        if self._mmap_storage is not None:
+            self._mmap_storage.close()
+            self._mmap_storage = None
+
     def load(self) -> bool:
         """Load existing FAISS index from disk.
 
@@ -338,6 +353,14 @@ class FaissVectorIndex:
                 try:
                     from search.mmap_vectors import MmapVectorStorage
 
+                    # Release this instance's own mapping (if any) before
+                    # truncating and rewriting the same file through a new
+                    # MmapVectorStorage below -- a live mapping left pointing
+                    # into a truncated-and-rewritten file is stale/corrupt,
+                    # and on Windows a live handle blocks the rewrite outright
+                    # (WinError 32).
+                    self.close()
+
                     dimension = self._index.d
                     mmap_storage = MmapVectorStorage(self._mmap_path, dimension)
 
@@ -354,6 +377,9 @@ class FaissVectorIndex:
             else:
                 # Below threshold: delete mmap if it exists (from previous larger index)
                 if self._mmap_path.exists():
+                    # Release this instance's own mapping before unlinking --
+                    # same rationale as the rewrite branch above.
+                    self.close()
                     self._mmap_path.unlink()
                     self._logger.info(
                         f"Deleted mmap file (below threshold): {vector_count} vectors < {MMAP_THRESHOLD}"
@@ -499,24 +525,23 @@ class FaissVectorIndex:
         self._index = None
         self._chunk_ids = []
 
-        # Close and release the mmap handle before unlinking its file, else
-        # a loaded storage keeps serving reconstruct() reads from a deleted
-        # file (and unlink() itself fails with WinError 32 on Windows while
-        # the handle is still open).
-        if self._mmap_storage is not None:
-            self._mmap_storage.close()
-            self._mmap_storage = None
+        # Close and release the mmap handle, then unlink it FIRST, before
+        # index_path/chunk_id_path below. A residual WinError 32 here (this
+        # instance's own handle is released above, but another live
+        # CodeIndexManager may still map the same file -- see
+        # search.indexer.CodeIndexManager.close()) then aborts before
+        # anything else is destroyed, instead of leaving a half-wiped index
+        # that only "recovers" by accident on retry.
+        self.close()
+        if self._mmap_path.exists():
+            self._mmap_path.unlink()
+            self._logger.info(f"Removed old mmap file: {self._mmap_path.name}")
 
         # Remove index files
         if self.index_path.exists():
             self.index_path.unlink()
         if self.chunk_id_path.exists():
             self.chunk_id_path.unlink()
-
-        # Remove mmap files (from before threshold implementation or old indices)
-        if self._mmap_path.exists():
-            self._mmap_path.unlink()
-            self._logger.info(f"Removed old mmap file: {self._mmap_path.name}")
 
         self._logger.info("FAISS index cleared")
 

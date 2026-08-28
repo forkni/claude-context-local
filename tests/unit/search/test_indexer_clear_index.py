@@ -13,11 +13,16 @@ deleted.
 """
 
 import os
+import pickle
 from pathlib import Path
 
+import faiss
+import numpy as np
 import pytest
 
+from search.faiss_index import FaissVectorIndex
 from search.indexer import CodeIndexManager, probe_metadata_deletable
+from search.mmap_vectors import MmapVectorStorage
 
 
 class TestClearIndexPreservesChunkCache:
@@ -156,3 +161,81 @@ class TestClearIndexFailsFastOnLockedMetadata:
         result = probe_metadata_deletable(metadata_path)
 
         assert result == metadata_path
+
+
+class TestCloseReleasesFaissMmapHandle:
+    """Regression test for the WinError 32 force-reindex failure.
+
+    CodeIndexManager.close() previously closed only the metadata store —
+    its docstring said outright "Does not touch the FAISS index" — leaving
+    a mapped code_vectors.mmap live until GC got around to it. A stack-
+    referenced CodeIndexManager (searcher #1, built write-only via
+    get_searcher(..., load_existing=False)) could then block a second
+    instance's clear_index() from unlinking the shared mmap file
+    (PermissionError / WinError 32 on Windows). __exit__ had the same gap:
+    it inlined its own metadata-close instead of calling close(), so it
+    silently skipped the new mmap release too. See
+    tests/unit/search/test_faiss_vector_index.py's
+    test_close_releases_mmap_handle_so_second_instance_can_clear for the
+    FaissVectorIndex-level version of this test.
+    """
+
+    @staticmethod
+    def _plant_index_with_mmap(storage_dir: Path) -> None:
+        """Plant a real on-disk index + mmap file directly (bypassing
+        MMAP_THRESHOLD, which only gates FaissVectorIndex.save() — load()
+        maps whatever mmap file already exists, threshold or not)."""
+        rng = np.random.RandomState(42)
+        embeddings = rng.randn(3, 8).astype(np.float32)
+        chunk_ids = [f"chunk_{i}" for i in range(3)]
+
+        seed = FaissVectorIndex(storage_dir / "code.index")
+        seed.create(8, "flat")
+        seed.add(embeddings, chunk_ids)
+        # pyrefly: ignore [missing-attribute]
+        faiss.write_index(seed.index, str(seed.index_path))
+        with open(seed.chunk_id_path, "wb") as f:
+            pickle.dump(chunk_ids, f)
+        MmapVectorStorage(seed._mmap_path, dimension=8).save(embeddings, chunk_ids)
+
+    def test_close_releases_faiss_mmap_handle(self, tmp_path):
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+        self._plant_index_with_mmap(storage_dir)
+
+        manager = CodeIndexManager(storage_dir=str(storage_dir))
+        assert manager._faiss_index._mmap_storage is not None
+
+        manager.close()
+
+        assert manager._faiss_index._mmap_storage is None
+
+    def test_exit_delegates_to_close_and_releases_faiss_mmap_handle(self, tmp_path):
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+        self._plant_index_with_mmap(storage_dir)
+
+        with CodeIndexManager(storage_dir=str(storage_dir)) as manager:
+            assert manager._faiss_index._mmap_storage is not None
+
+        assert manager._faiss_index._mmap_storage is None
+
+    def test_close_lets_a_second_manager_clear_the_shared_mmap_file(self, tmp_path):
+        """End-to-end version at the CodeIndexManager seam: mirrors the
+        production sequence (searcher #1 loads, gets closed by
+        _cleanup_previous_resources, searcher #2 loads and clears) rather
+        than poking _mmap_storage directly."""
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+        self._plant_index_with_mmap(storage_dir)
+
+        manager1 = CodeIndexManager(storage_dir=str(storage_dir))
+        manager2 = CodeIndexManager(storage_dir=str(storage_dir))
+        assert manager1._faiss_index._mmap_storage is not None
+        assert manager2._faiss_index._mmap_storage is not None
+
+        manager1.close()
+        manager2.clear_index()
+
+        assert manager2._faiss_index._mmap_storage is None
+        assert not manager2._faiss_index._mmap_path.exists()

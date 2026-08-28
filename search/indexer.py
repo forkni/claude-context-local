@@ -909,21 +909,26 @@ class CodeIndexManager:
         exc_tb: Any,
     ) -> bool:
         """Context manager exit - cleanup resources."""
-        if self._metadata_store is not None:
-            self._metadata_store.close()
+        self.close()
         return False  # Don't suppress exceptions
 
     def close(self) -> None:
-        """Close database connections without deleting index files.
+        """Close database connections and release the FAISS mmap handle.
 
         Idempotent: safe to call multiple times.  Closes the MetadataStore
         connection, releasing its file handle.  Identity stays stable per
         ADR-0025 -- the object is not replaced, so it lazily reopens on the
         next access and ``_batch_ops._metadata_store`` needs no re-wiring.
-        Does not touch the FAISS index or graph storage.
+        Also releases ``_faiss_index``'s mmap handle (``FaissVectorIndex.close()``)
+        so a live ``CodeIndexManager`` never blocks another instance from
+        unlinking or rewriting the same on-disk files (WinError 32 on
+        Windows otherwise -- see ADR-0025's amendment). Does not delete any
+        index files or touch graph storage.
         """
         if hasattr(self, "_metadata_store"):
             self._metadata_store.close()
+        if hasattr(self, "_faiss_index"):
+            self._faiss_index.close()
 
     def __del__(self) -> None:
         """Cleanup when object is destroyed."""
