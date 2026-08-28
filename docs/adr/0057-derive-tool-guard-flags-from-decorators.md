@@ -58,7 +58,9 @@ thing it describes. `co_names` was not the disease; verifying a mirror was.
 wrapped function already carries:
 
 ```python
-wrapper.__mcp_guards__ = getattr(func, "__mcp_guards__", frozenset()) | {"mutation_lock"}
+wrapper.__mcp_guards__ = getattr(func, "__mcp_guards__", frozenset()) | {
+    "mutation_lock"
+}
 ```
 
 The union (not a plain assignment) matters because `functools.wraps` — already used by both
@@ -88,6 +90,7 @@ def mutation_lock(self) -> Literal["decorator", "internal", None]:
     if "mutation_lock:internal" in guards:
         return "internal"
     return "decorator" if "mutation_lock" in guards else None
+
 
 @property
 def requires_index(self) -> bool:
@@ -143,8 +146,8 @@ never in question. What changed is which artifact is the source of truth. Before
 truth was two independent, hand-synced statements (the decorator chain and the row), with a
 bytecode-shaped test papering over the gap between them. After, the decorator chain *is* the source
 of truth, and the row is a projection of it — the Speculative Generality (a declared field driving
-nothing), Duplicated Code (the guard stated twice), and Shotgun Surgery (adding a tool touched row
-+ decorator + reflection test) are gone because there is only one place left to edit.
+nothing), Duplicated Code (the guard stated twice), and Shotgun Surgery (adding a tool touched row +
+decorator + reflection test) are gone because there is only one place left to edit.
 
 ## Verification
 
