@@ -21,6 +21,7 @@ from mcp_server.tools.decorators import error_handler
 from merkle.snapshot_manager import SnapshotManager
 from search.config import (
     MODEL_REGISTRY,
+    get_model_slug,
 )
 
 
@@ -126,6 +127,10 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
         if not projects_dir.exists():
             return None
 
+        # One SnapshotManager for the whole sweep — construction does a
+        # storage-dir resolution + mkdir, not worth repeating per project.
+        snapshot_mgr = SnapshotManager()
+
         # Group projects by path
         projects_by_path = {}  # project_path -> project_data
 
@@ -172,8 +177,29 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
                 "model": project_info["embedding_model"],
                 "dimension": project_info["model_dimension"],
                 "chunks": None,
+                # NOTE: created_at is when this project/model was first indexed
+                # (project_info.json is written once, never updated on re-index).
+                # It is NOT a freshness signal — see last_indexed_at below.
                 "created_at": project_info.get("created_at"),
             }
+
+            # Live freshness, from Merkle metadata's last_snapshot (updated on
+            # every re-index, incremental or full) — resolved per-model so a
+            # project with multiple indexed models doesn't get one model's
+            # timestamp attached to all of them.
+            try:
+                model_slug = get_model_slug(project_info["embedding_model"])
+                metadata = snapshot_mgr.load_metadata(
+                    project_path,
+                    dimension=project_info["model_dimension"],
+                    model_slug=model_slug,
+                )
+                if metadata:
+                    last_indexed_at = metadata.get("last_snapshot")
+                    if last_indexed_at is not None:
+                        model_info["last_indexed_at"] = last_indexed_at
+            except Exception as e:  # noqa: BLE001 - resilience: optional freshness enrichment, degrade to no timestamp
+                logger.debug(f"Could not get last_indexed_at for {project_path}: {e}")
 
             # Try to load chunk count from stats
             stats_file = project_dir / "index" / "stats.json"

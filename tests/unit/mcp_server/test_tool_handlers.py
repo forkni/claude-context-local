@@ -246,6 +246,187 @@ async def test_handle_list_projects_with_projects(tmp_path):
             assert result["projects"][0]["project_name"] == "test_project"
 
 
+def _write_project_info(
+    project_dir: Path,
+    *,
+    project_path: str,
+    embedding_model: str = "BAAI/bge-m3",
+    model_dimension: int = 1024,
+    created_at: str,
+) -> None:
+    """Write a project_info.json fixture matching storage_manager's real schema."""
+    project_dir.mkdir(parents=True, exist_ok=True)
+    (project_dir / "project_info.json").write_text(
+        json.dumps(
+            {
+                "project_name": Path(project_path).name,
+                "project_path": project_path,
+                "project_hash": "test_hash",
+                "embedding_model": embedding_model,
+                "model_dimension": model_dimension,
+                "created_at": created_at,
+            }
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_list_projects_includes_last_indexed_at(tmp_path):
+    """list_projects surfaces last_indexed_at from Merkle metadata (last_snapshot),
+    alongside the pre-existing created_at field.
+    """
+    projects_dir = tmp_path / "projects"
+    _write_project_info(
+        projects_dir / "test_project",
+        project_path=str(tmp_path),
+        created_at="2026-08-22T13:12:06.243607",
+    )
+
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.get_storage_dir", return_value=tmp_path
+        ),
+        patch("mcp_server.state._app_state.current_project", str(tmp_path)),
+        patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+    ):
+        mock_snapshot_mgr = Mock()
+        mock_snapshot_mgr.load_metadata.return_value = {
+            "last_snapshot": "2026-08-30T17:55:07.290674",
+        }
+        mock_snapshot_cls.return_value = mock_snapshot_mgr
+
+        result = await tool_specs.handle_list_projects({})
+
+    model_info = result["projects"][0]["models_indexed"][0]
+    assert model_info["created_at"] == "2026-08-22T13:12:06.243607"
+    assert model_info["last_indexed_at"] == "2026-08-30T17:55:07.290674"
+
+
+@pytest.mark.asyncio
+async def test_handle_list_projects_created_at_frozen_while_last_indexed_at_advances(
+    tmp_path,
+):
+    """Regression test for the false-staleness bug: project_info.json's created_at
+    is written once at first index and never updated by later re-indexing, so it
+    must NOT be read as a freshness signal. Simulates a re-index (Merkle
+    last_snapshot advances) while project_info.json (created_at) is untouched --
+    exactly the divergence that produced a false "index is N days stale" claim.
+    """
+    projects_dir = tmp_path / "projects"
+    first_indexed = "2026-08-22T13:12:06.243607"
+    _write_project_info(
+        projects_dir / "test_project",
+        project_path=str(tmp_path),
+        created_at=first_indexed,
+    )
+
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.get_storage_dir", return_value=tmp_path
+        ),
+        patch("mcp_server.state._app_state.current_project", str(tmp_path)),
+        patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+    ):
+        # Simulate a full re-index that happened days after first indexing.
+        re_indexed = "2026-08-30T17:55:07.290674"
+        mock_snapshot_mgr = Mock()
+        mock_snapshot_mgr.load_metadata.return_value = {"last_snapshot": re_indexed}
+        mock_snapshot_cls.return_value = mock_snapshot_mgr
+
+        result = await tool_specs.handle_list_projects({})
+
+    model_info = result["projects"][0]["models_indexed"][0]
+    # created_at is frozen at first-index time...
+    assert model_info["created_at"] == first_indexed
+    # ...while last_indexed_at reflects the actual, later re-index.
+    assert model_info["last_indexed_at"] == re_indexed
+    assert model_info["last_indexed_at"] != model_info["created_at"]
+
+
+@pytest.mark.asyncio
+async def test_handle_list_projects_multi_model_distinct_last_indexed_at(tmp_path):
+    """Each indexed model for a project must resolve its OWN Merkle timestamp --
+    not have one model's re-index time attached to every model entry.
+    """
+    projects_dir = tmp_path / "projects"
+    _write_project_info(
+        projects_dir / "test_project_bge",
+        project_path=str(tmp_path),
+        embedding_model="BAAI/bge-m3",
+        model_dimension=1024,
+        created_at="2026-08-01T00:00:00",
+    )
+    _write_project_info(
+        projects_dir / "test_project_f2llm",
+        project_path=str(tmp_path),
+        embedding_model="codefuse-ai/F2LLM-v2-0.6B",
+        model_dimension=1024,
+        created_at="2026-08-05T00:00:00",
+    )
+
+    timestamps_by_slug = {
+        "bge-m3": "2026-08-20T10:00:00",
+        "f2llm-v2-0.6b": "2026-08-30T17:55:07",
+    }
+
+    def _load_metadata(project_path, dimension=None, model_slug=None):
+        ts = timestamps_by_slug.get(model_slug)
+        return {"last_snapshot": ts} if ts else None
+
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.get_storage_dir", return_value=tmp_path
+        ),
+        patch("mcp_server.state._app_state.current_project", str(tmp_path)),
+        patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+    ):
+        mock_snapshot_mgr = Mock()
+        mock_snapshot_mgr.load_metadata.side_effect = _load_metadata
+        mock_snapshot_cls.return_value = mock_snapshot_mgr
+
+        result = await tool_specs.handle_list_projects({})
+
+    assert len(result["projects"]) == 1
+    models_by_slug = {
+        m["model"]: m["last_indexed_at"]
+        for m in result["projects"][0]["models_indexed"]
+    }
+    assert models_by_slug["BAAI/bge-m3"] == "2026-08-20T10:00:00"
+    assert models_by_slug["codefuse-ai/F2LLM-v2-0.6B"] == "2026-08-30T17:55:07"
+
+
+@pytest.mark.asyncio
+async def test_handle_list_projects_missing_merkle_metadata_omits_field(tmp_path):
+    """A project with no (or unreadable) Merkle metadata still lists successfully,
+    simply without a last_indexed_at field -- listing must never fail because one
+    project's freshness lookup errors out.
+    """
+    projects_dir = tmp_path / "projects"
+    _write_project_info(
+        projects_dir / "test_project",
+        project_path=str(tmp_path),
+        created_at="2026-08-22T13:12:06",
+    )
+
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.get_storage_dir", return_value=tmp_path
+        ),
+        patch("mcp_server.state._app_state.current_project", str(tmp_path)),
+        patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+    ):
+        mock_snapshot_mgr = Mock()
+        mock_snapshot_mgr.load_metadata.side_effect = OSError("corrupt metadata file")
+        mock_snapshot_cls.return_value = mock_snapshot_mgr
+
+        result = await tool_specs.handle_list_projects({})
+
+    assert "error" not in result
+    model_info = result["projects"][0]["models_indexed"][0]
+    assert "last_indexed_at" not in model_info
+    assert model_info["created_at"] == "2026-08-22T13:12:06"
+
+
 @pytest.mark.asyncio
 async def test_handle_get_memory_status():
     """Test get_memory_status returns system info."""

@@ -249,6 +249,7 @@ active project is a common silent error — results look plausible but are from 
 | Issue | Solution |
 |-------|----------|
 | **No results** | 1. Check active project: `code-search:list_projects` → `code-search:switch_project` if needed. 2. Verify index not empty/stale: `code-search:get_index_status`. 3. If index is missing or stale: **rebuild with `code-search:index_directory(directory_path)`**. |
+| **Judging whether a project's index is stale** | Use `last_indexed_at` from `code-search:list_projects` (or `last_indexed_time` from `get_index_status` for the active project) — both read live Merkle snapshot data that advances on every re-index, incremental or full. **Never** judge staleness from `list_projects`' `created_at` — that field is frozen at first-index registration and never updates on later re-indexing, so a freshly-rebuilt project can still show a `created_at` from days or weeks ago. |
 | **Bad results / wrong project** | Run pre-flight checks above. If the project was recently changed, re-run `switch_project` to confirm. |
 | **Bad results (right project)** | Try different mode: hybrid → semantic → bm25. Add filters: `file_pattern`, `chunk_type`. Increase k |
 | **Wrong result at rank-1** | Scan all k results — answer likely at rank 2-4. Use `chunk_type` filter to exclude module summary chunks |
@@ -262,8 +263,9 @@ active project is a common silent error — results look plausible but are from 
 
 When the user invokes the skill with the argument `status` (e.g. `/mcp-search-tool status`), run this exact sequence and report the result:
 
-1. `code-search:list_projects` — show which project is active, when it was last indexed
-2. `code-search:get_index_status` — chunk count, staleness, graph data presence
+1. `code-search:list_projects` — show which project is active, and each indexed model's live freshness via `last_indexed_at`. Do **not** read
+   `created_at` for freshness — it's frozen at first-index registration and never advances on re-index.
+2. `code-search:get_index_status` — chunk count, staleness (`last_indexed_time`, active project only), graph data presence
 3. `code-search:get_search_config_status` — current search_mode, BM25/dense weights, reranker state. **This is an advanced tool with no in-band
    alternative — it is unlisted unless `MCP_EXPOSE_ADVANCED_TOOLS=1` is set (see "Tool Tiers" below).** If it isn't listed, do NOT fail the whole
    status check: skip this step, report "search mode/reranker state: unavailable under the 10-tool default (set `MCP_EXPOSE_ADVANCED_TOOLS=1` and

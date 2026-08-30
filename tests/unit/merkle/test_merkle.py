@@ -1,5 +1,6 @@
 """Unit tests for Merkle tree change detection."""
 
+import json
 import tempfile
 import time
 from pathlib import Path
@@ -515,6 +516,65 @@ class TestSnapshotManager(TestCase):
         # raw tempfile.mkdtemp() string.
         assert metadata["project_path"] == str(self.test_path.resolve())
         assert metadata["file_count"] == 1
+
+    def test_get_metadata_path_uses_explicit_model_slug(self):
+        """An explicit model_slug must be used verbatim, bypassing config
+        resolution -- this is what lets a caller (e.g. list_projects) address
+        a specific model's metadata file without depending on which model
+        happens to be configured right now.
+        """
+        path_a = self.manager.get_metadata_path(
+            str(self.test_path), dimension=1024, model_slug="model-a"
+        )
+        path_b = self.manager.get_metadata_path(
+            str(self.test_path), dimension=1024, model_slug="model-b"
+        )
+
+        assert path_a != path_b
+        assert "model-a" in path_a.name
+        assert "model-b" in path_b.name
+
+    def test_load_metadata_with_explicit_model_slug_reads_correct_file(self):
+        """load_metadata(model_slug=...) must read that model's own file, not
+        whichever model the current config points at -- otherwise a project
+        indexed with multiple models would have one model's timestamp bleed
+        into every model's entry (the exact class of bug this parameter
+        exists to prevent, one layer below the false-staleness report).
+        """
+        path_a = self.manager.get_metadata_path(
+            str(self.test_path), dimension=1024, model_slug="model-a"
+        )
+        path_b = self.manager.get_metadata_path(
+            str(self.test_path), dimension=1024, model_slug="model-b"
+        )
+        path_a.parent.mkdir(parents=True, exist_ok=True)
+        path_a.write_text(
+            json.dumps({"last_snapshot": "2026-08-20T10:00:00", "tag": "a"})
+        )
+        path_b.write_text(
+            json.dumps({"last_snapshot": "2026-08-30T17:55:07", "tag": "b"})
+        )
+
+        loaded_a = self.manager.load_metadata(
+            str(self.test_path), dimension=1024, model_slug="model-a"
+        )
+        loaded_b = self.manager.load_metadata(
+            str(self.test_path), dimension=1024, model_slug="model-b"
+        )
+
+        assert loaded_a["tag"] == "a"
+        assert loaded_b["tag"] == "b"
+        assert loaded_a["last_snapshot"] != loaded_b["last_snapshot"]
+
+    def test_get_metadata_path_defaults_unchanged_without_model_slug(self):
+        """Omitting model_slug/dimension must still resolve via the current
+        config, exactly as before this parameter existed -- non-breaking
+        default for every pre-existing caller.
+        """
+        path_before = self.manager.get_metadata_path(str(self.test_path))
+        path_after = self.manager.get_metadata_path(str(self.test_path))
+
+        assert path_before == path_after
 
     def test_snapshot_existence_check(self):
         """Test checking if snapshot exists."""

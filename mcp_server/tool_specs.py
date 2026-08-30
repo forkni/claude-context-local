@@ -389,7 +389,10 @@ RETURNS:
   elapsed_seconds, and result (when done) or error (when failed)
 - no job_id: index_statistics (total_chunks and, when hybrid search is
   enabled, bm25_documents, dense_vectors, synced), model_information,
-  storage_directory, current_project, last_indexed_time""",
+  storage_directory, current_project, last_indexed_time (freshness of the
+  ACTIVE project only — from Merkle metadata, updated on every re-index;
+  for any other project's freshness without switching, use list_projects'
+  last_indexed_at instead of switch_project + get_index_status)""",
         input_schema={
             "type": "object",
             "properties": {
@@ -412,10 +415,17 @@ WHEN TO USE:
 - Unsure which projects are indexed or what their exact paths are
 - Confirming a project was indexed under the expected name/path
 - Checking whether a project has been indexed with more than one embedding model
+- Checking any project's index freshness without mutating server state via
+  switch_project (get_index_status only reports the ACTIVE project)
 
 RETURNS:
 - projects: list of {project_name, project_path, project_hash, path_exists,
-  models_indexed: [{model, dimension, chunks, created_at}]}
+  models_indexed: [{model, dimension, chunks, created_at, last_indexed_at}]}
+  NOTE: created_at is when this project/model was FIRST indexed — it is
+  frozen at that point and never updated by later re-indexing. It is NOT a
+  staleness signal. To judge whether an index reflects recent commits, use
+  last_indexed_at (from Merkle metadata, updated on every re-index, omitted
+  if unavailable) instead — do not infer staleness from created_at.
 - current_project: the currently active project path""",
         input_schema={
             "type": "object",
