@@ -237,13 +237,22 @@ async def test_handle_list_projects_with_projects(tmp_path):
         )
     )
 
-    with patch("mcp_server.tools.status_handlers.get_storage_dir") as mock_storage:
+    with (
+        patch("mcp_server.tools.status_handlers.get_storage_dir") as mock_storage,
+        patch("mcp_server.state._app_state.current_project", str(tmp_path)),
+        # Without this, SnapshotManager() constructs for real inside
+        # handle_list_projects and reads/writes the developer's actual
+        # ~/.claude_code_search/merkle directory -- a test-isolation leak
+        # (defect 3, see docs/adr/0058-index-freshness-verdict.md).
+        patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+    ):
         mock_storage.return_value = tmp_path
-        with patch("mcp_server.state._app_state.current_project", str(tmp_path)):
-            result = await tool_specs.handle_list_projects({})
+        mock_snapshot_cls.return_value = Mock(load_metadata=Mock(return_value=None))
 
-            assert len(result["projects"]) == 1
-            assert result["projects"][0]["project_name"] == "test_project"
+        result = await tool_specs.handle_list_projects({})
+
+        assert len(result["projects"]) == 1
+        assert result["projects"][0]["project_name"] == "test_project"
 
 
 def _write_project_info(
@@ -425,6 +434,78 @@ async def test_handle_list_projects_missing_merkle_metadata_omits_field(tmp_path
     model_info = result["projects"][0]["models_indexed"][0]
     assert "last_indexed_at" not in model_info
     assert model_info["created_at"] == "2026-08-22T13:12:06"
+
+
+@pytest.mark.asyncio
+async def test_handle_list_projects_check_freshness_true_returns_verdict_per_model(
+    tmp_path,
+):
+    """check_freshness=True must attach the definitive index_is_current /
+    pending_changes verdict (ADR-0058) to each model entry, sourced from
+    compute_index_freshness -- not from last_indexed_at/created_at.
+    """
+    projects_dir = tmp_path / "projects"
+    _write_project_info(
+        projects_dir / "test_project",
+        project_path=str(tmp_path),
+        created_at="2026-08-22T13:12:06",
+    )
+
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.get_storage_dir", return_value=tmp_path
+        ),
+        patch("mcp_server.state._app_state.current_project", str(tmp_path)),
+        patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+        patch(
+            "mcp_server.index_freshness.compute_index_freshness"
+        ) as mock_compute_freshness,
+    ):
+        mock_snapshot_cls.return_value = Mock(load_metadata=Mock(return_value=None))
+        mock_compute_freshness.return_value = {
+            "index_is_current": False,
+            "pending_changes": {"added": 0, "modified": 1, "removed": 0},
+        }
+
+        result = await tool_specs.handle_list_projects({"check_freshness": True})
+
+    mock_compute_freshness.assert_called_once()
+    model_info = result["projects"][0]["models_indexed"][0]
+    assert model_info["index_is_current"] is False
+    assert model_info["pending_changes"] == {"added": 0, "modified": 1, "removed": 0}
+
+
+@pytest.mark.asyncio
+async def test_handle_list_projects_default_omits_freshness_and_skips_scan(tmp_path):
+    """The default call (check_freshness omitted) must neither compute nor
+    attach a freshness verdict -- it is an opt-in, heavier per-project scan
+    (ADR-0058), not something every list_projects caller should pay for.
+    """
+    projects_dir = tmp_path / "projects"
+    _write_project_info(
+        projects_dir / "test_project",
+        project_path=str(tmp_path),
+        created_at="2026-08-22T13:12:06",
+    )
+
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.get_storage_dir", return_value=tmp_path
+        ),
+        patch("mcp_server.state._app_state.current_project", str(tmp_path)),
+        patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+        patch(
+            "mcp_server.index_freshness.compute_index_freshness"
+        ) as mock_compute_freshness,
+    ):
+        mock_snapshot_cls.return_value = Mock(load_metadata=Mock(return_value=None))
+
+        result = await tool_specs.handle_list_projects({})
+
+    mock_compute_freshness.assert_not_called()
+    model_info = result["projects"][0]["models_indexed"][0]
+    assert "index_is_current" not in model_info
+    assert "pending_changes" not in model_info
 
 
 @pytest.mark.asyncio

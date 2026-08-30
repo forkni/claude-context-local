@@ -48,6 +48,11 @@ def _is_index_stale(project_path: str, max_age_minutes: float) -> bool:
     acquiring the project's reindex write lock (``search_orchestrator._execute``)
     so a steady stream of fresh-index searches never contends for that lock.
 
+    Age-gated: an index older than ``max_age_minutes`` counts as stale even
+    with zero content changes. Callers needing a content-only verdict (does
+    the index match the tree, regardless of age) should use
+    ``mcp_server.index_freshness.compute_index_freshness`` instead.
+
     Args:
         project_path: Path to the project
         max_age_minutes: Maximum age of index before it's considered stale
@@ -55,39 +60,9 @@ def _is_index_stale(project_path: str, max_age_minutes: float) -> bool:
     Returns:
         True if the index needs reindexing, False if confirmed fresh.
     """
-    import json
+    from mcp_server.index_freshness import build_change_detector
 
-    from chunking.tree_sitter import TreeSitterChunker
-    from merkle.change_detector import ChangeDetector
-    from merkle.snapshot_manager import SnapshotManager
-
-    project_storage = get_project_storage_dir(project_path)
-    project_info_file = project_storage / "project_info.json"
-
-    include_dirs = None
-    exclude_dirs = None
-    include_exclusive = False
-    if project_info_file.exists():
-        try:
-            with open(project_info_file) as f:
-                project_info = json.load(f)
-
-            from search.filters import get_effective_filters
-
-            include_dirs, exclude_dirs, include_exclusive = get_effective_filters(
-                project_info
-            )
-        except Exception as e:  # noqa: BLE001 - parse-recovery: project_info.json read, fall back to no filters
-            logger.warning(f"[AUTO_REINDEX] Failed to load filters: {e}")
-
-    snapshot_mgr = SnapshotManager()
-    change_detector = ChangeDetector(
-        snapshot_mgr,
-        include_dirs,
-        exclude_dirs,
-        supported_extensions=set(TreeSitterChunker.get_supported_extensions()),
-        include_exclusive=include_exclusive,
-    )
+    change_detector, snapshot_mgr = build_change_detector(project_path)
 
     if snapshot_mgr.has_snapshot(project_path):
         age = snapshot_mgr.get_snapshot_age(project_path)

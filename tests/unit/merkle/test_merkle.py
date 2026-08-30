@@ -567,14 +567,101 @@ class TestSnapshotManager(TestCase):
         assert loaded_a["last_snapshot"] != loaded_b["last_snapshot"]
 
     def test_get_metadata_path_defaults_unchanged_without_model_slug(self):
-        """Omitting model_slug/dimension must still resolve via the current
-        config, exactly as before this parameter existed -- non-breaking
-        default for every pre-existing caller.
+        """Omitting model_slug/dimension must resolve to the exact filename
+        the current config would produce -- pinned against an independently
+        computed expected name, not just checked for self-consistency across
+        two calls. A stub that always returns some other constant path would
+        pass a call-twice-and-compare assertion; it fails this one.
         """
-        path_before = self.manager.get_metadata_path(str(self.test_path))
-        path_after = self.manager.get_metadata_path(str(self.test_path))
+        from search.config import get_model_slug, get_search_config
 
-        assert path_before == path_after
+        config = get_search_config()
+        expected_slug = get_model_slug(config.embedding.model_name)
+        expected_dimension = config.embedding.dimension
+        expected_project_id = self.manager.get_project_id(str(self.test_path))
+
+        path = self.manager.get_metadata_path(str(self.test_path))
+
+        assert (
+            path.name
+            == f"{expected_project_id}_{expected_slug}_{expected_dimension}d_metadata.json"
+        )
+
+    def test_save_snapshot_then_load_metadata_with_explicit_model_slug_round_trips(
+        self,
+    ):
+        """A real save_snapshot() write must be readable back via
+        load_metadata(model_slug=...) using that write's own resolved slug.
+        Proves writer and reader agree on the same on-disk file -- unlike a
+        test that mocks SnapshotManager wholesale, which only asserts a
+        Mock's return value was copied into a dict and would stay green even
+        if the slug/dimension resolution used to write and to read diverged.
+        """
+        from search.config import get_model_slug, get_search_config
+
+        config = get_search_config()
+        model_slug = get_model_slug(config.embedding.model_name)
+        dimension = config.embedding.dimension
+
+        dag = MerkleDAG(str(self.test_path))
+        dag.build()
+        self.manager.save_snapshot(dag, {"tag": "roundtrip"})
+
+        metadata = self.manager.load_metadata(
+            str(self.test_path), dimension=dimension, model_slug=model_slug
+        )
+
+        assert metadata is not None
+        assert metadata["tag"] == "roundtrip"
+        assert "last_snapshot" in metadata
+
+    def test_get_snapshot_path_uses_explicit_model_slug(self):
+        """get_snapshot_path must accept model_slug like get_metadata_path
+        does -- the asymmetry between the two blocked per-model freshness
+        checks from resolving the correct snapshot file for a non-active
+        model.
+        """
+        path_a = self.manager.get_snapshot_path(
+            str(self.test_path), dimension=1024, model_slug="model-a"
+        )
+        path_b = self.manager.get_snapshot_path(
+            str(self.test_path), dimension=1024, model_slug="model-b"
+        )
+
+        assert path_a != path_b
+        assert "model-a" in path_a.name
+        assert "model-b" in path_b.name
+
+    def test_load_snapshot_with_explicit_model_slug_reads_correct_file(self):
+        """load_snapshot(model_slug=...) must read that model's own snapshot
+        file, not whichever model the current config points at.
+        """
+        dag_a = MerkleDAG(str(self.test_path))
+        dag_a.build()
+        dag_b = MerkleDAG(str(self.test_path))
+        dag_b.build()
+
+        path_a = self.manager.get_snapshot_path(
+            str(self.test_path), dimension=1024, model_slug="model-a"
+        )
+        path_b = self.manager.get_snapshot_path(
+            str(self.test_path), dimension=1024, model_slug="model-b"
+        )
+        path_a.parent.mkdir(parents=True, exist_ok=True)
+        path_a.write_text(json.dumps({"version": "1.0", "dag": dag_a.to_dict()}))
+        path_b.write_text(json.dumps({"version": "1.0", "dag": dag_b.to_dict()}))
+
+        loaded_a = self.manager.load_snapshot(
+            str(self.test_path), dimension=1024, model_slug="model-a"
+        )
+        loaded_b = self.manager.load_snapshot(
+            str(self.test_path), dimension=1024, model_slug="model-b"
+        )
+
+        assert loaded_a is not None
+        assert loaded_b is not None
+        assert loaded_a.get_root_hash() == dag_a.get_root_hash()
+        assert loaded_b.get_root_hash() == dag_b.get_root_hash()
 
     def test_snapshot_existence_check(self):
         """Test checking if snapshot exists."""

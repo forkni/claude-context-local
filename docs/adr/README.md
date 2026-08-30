@@ -63,6 +63,7 @@ for avoiding re-litigating settled questions.
 | [0055](0055-exclude-phantom-nodes-from-centrality.md) | Exclude phantom placeholder nodes from centrality computation (default off) | accepted | 2026-08-22 |
 | [0056](0056-spec-row-edge-emission-seam.md) | Spec-row seam (`EDGE_EMISSION_SPECS`) for tree-sitter chunker-native call/relationship edges | accepted | 2026-08-23 |
 | [0057](0057-derive-tool-guard-flags-from-decorators.md) | Derive `ToolSpec.mutation_lock` / `.requires_index` from decorator stamps | accepted | 2026-08-23 |
+| [0058](0058-index-freshness-verdict.md) | Add a content-only `index_is_current` freshness verdict | accepted | 2026-08-30 |
 
 ## Adding a new ADR
 

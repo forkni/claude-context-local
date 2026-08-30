@@ -234,7 +234,7 @@ These are non-obvious traps from real session experience — not things the docs
 you're working with:
 
 ```
-code-search:get_index_status   # confirms active project path, chunk count, staleness
+code-search:get_index_status   # confirms active project path, chunk count, index_is_current
 code-search:list_projects      # if unsure which project is active
 code-search:switch_project     # if the active project is wrong
 ```
@@ -263,9 +263,12 @@ active project is a common silent error — results look plausible but are from 
 
 When the user invokes the skill with the argument `status` (e.g. `/mcp-search-tool status`), run this exact sequence and report the result:
 
-1. `code-search:list_projects` — show which project is active, and each indexed model's live freshness via `last_indexed_at`. Do **not** read
-   `created_at` for freshness — it's frozen at first-index registration and never advances on re-index.
-2. `code-search:get_index_status` — chunk count, staleness (`last_indexed_time`, active project only), graph data presence
+1. `code-search:list_projects(check_freshness=True)` — show which project is active, and each indexed model's definitive freshness via
+   `index_is_current`/`pending_changes` (a content-only Merkle diff against the working tree). Do **not** read `created_at` or `last_indexed_at`
+   for staleness — both only say *when* the indexer last ran, not whether the index still matches the tree; `created_at` is additionally frozen
+   at first-index registration and never advances on re-index at all.
+2. `code-search:get_index_status` — chunk count, `index_is_current`/`pending_changes` (active project only, same definitive check), graph data
+   presence
 3. `code-search:get_search_config_status` — current search_mode, BM25/dense weights, reranker state. **This is an advanced tool with no in-band
    alternative — it is unlisted unless `MCP_EXPOSE_ADVANCED_TOOLS=1` is set (see "Tool Tiers" below).** If it isn't listed, do NOT fail the whole
    status check: skip this step, report "search mode/reranker state: unavailable under the 10-tool default (set `MCP_EXPOSE_ADVANCED_TOOLS=1` and

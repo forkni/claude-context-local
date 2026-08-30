@@ -56,6 +56,8 @@ class ChangeDetector:
         supported_extensions: set[str] | None = None,
         *,
         include_exclusive: bool = False,
+        model_slug: str | None = None,
+        dimension: int | None = None,
     ):
         """Initialize change detector.
 
@@ -76,12 +78,25 @@ class ChangeDetector:
                 overridden by whatever the loaded snapshot itself recorded
                 (see :meth:`_build_current_dag`), the same inheritance rule
                 already applied to include_dirs/exclude_dirs above.
+            model_slug: Optional explicit model slug forwarded to
+                ``SnapshotManager.load_snapshot``. If None, auto-detects from
+                current config — same as before. Pass explicitly to compare
+                against a model other than the currently configured one (e.g.
+                when checking freshness for a project's non-active model).
+            dimension: Optional explicit model dimension forwarded alongside
+                ``model_slug``. Required together with ``model_slug`` to
+                correctly resolve a non-active model's snapshot file — passing
+                only ``model_slug`` still resolves dimension from the
+                *currently configured* model, which is wrong for a project
+                whose checked model differs from what's active.
         """
         self.snapshot_manager = snapshot_manager or SnapshotManager()
         self.include_dirs = include_dirs
         self.exclude_dirs = exclude_dirs
         self.supported_extensions = supported_extensions
         self.include_exclusive = include_exclusive
+        self.model_slug = model_slug
+        self.dimension = dimension
 
     def _add_snapshot_ignore(self, dag: MerkleDAG, project_path: str) -> None:
         """Add the snapshot directory to *dag*'s ignore patterns.
@@ -201,7 +216,9 @@ class ChangeDetector:
             Tuple of (FileChanges, current MerkleDAG)
         """
         # Load previous snapshot first to potentially inherit filters
-        old_dag = self.snapshot_manager.load_snapshot(project_path)
+        old_dag = self.snapshot_manager.load_snapshot(
+            project_path, dimension=self.dimension, model_slug=self.model_slug
+        )
         current_dag = self._build_current_dag(project_path, old_dag)
 
         if old_dag is None:
@@ -226,7 +243,9 @@ class ChangeDetector:
             True if project has changed or no snapshot exists
         """
         # Load previous snapshot; no snapshot means changes are unknown → True
-        old_dag = self.snapshot_manager.load_snapshot(project_path)
+        old_dag = self.snapshot_manager.load_snapshot(
+            project_path, dimension=self.dimension, model_slug=self.model_slug
+        )
         if old_dag is None:
             return True
 

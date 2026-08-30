@@ -102,18 +102,52 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
         except Exception as e:  # noqa: BLE001 - resilience: optional metadata enrichment, degrade to no timestamp
             logger.debug(f"Could not get last_indexed_time: {e}")
 
+    # Real freshness verdict — content-only, never consults *when* the index
+    # was built (see ADR-0058: a timestamp answers a different question than
+    # "does the index match the tree"). Default-on: an opt-in flag would just
+    # reproduce the original bug, since callers keep reading whichever field
+    # is simply present.
+    index_is_current = None
+    pending_changes = None
+    if state.current_project:
+        try:
+
+            def _compute_freshness() -> dict | None:
+                from mcp_server.index_freshness import compute_index_freshness
+
+                return compute_index_freshness(state.current_project)
+
+            freshness = await asyncio.to_thread(_compute_freshness)
+            if freshness:
+                index_is_current = freshness["index_is_current"]
+                pending_changes = freshness["pending_changes"]
+        except Exception as e:  # noqa: BLE001 - resilience: optional freshness enrichment, degrade to absent
+            logger.debug(f"Could not compute index freshness: {e}")
+
     return {
         "index_statistics": stats,
         "model_information": model_info,
         "storage_directory": str(get_storage_dir()),
         "last_indexed_time": last_indexed_time,
+        "index_is_current": index_is_current,
+        "pending_changes": pending_changes,
         "current_project": state.current_project,
     }
 
 
 @error_handler("List projects")
 async def handle_list_projects(arguments: dict[str, Any]) -> dict:
-    """List all indexed projects grouped by path with model details."""
+    """List all indexed projects grouped by path with model details.
+
+    ``check_freshness`` (default False) additionally computes a real,
+    content-only ``index_is_current``/``pending_changes`` verdict per model
+    via a Merkle diff against the working tree (see ADR-0058) — unlike
+    ``created_at``/``last_indexed_at``, which only say *when* the indexer
+    last ran. Opt-in because it's a full filesystem scan per project/model:
+    measured ~13.9s sequential across 13 real projects, so it is fanned out
+    concurrently here (bounded by the slowest project, not the sum).
+    """
+    check_freshness = bool(arguments.get("check_freshness", False))
     base_dir = get_storage_dir()
     projects_dir = base_dir / "projects"
 
@@ -218,6 +252,39 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
             "projects": [],
             "message": "No projects indexed yet",
         }
+
+    if check_freshness:
+        from mcp_server.index_freshness import compute_index_freshness
+
+        def _freshness_for(project_path: str, model_info: dict) -> dict | None:
+            model_slug = get_model_slug(model_info["model"])
+            return compute_index_freshness(
+                project_path, model_slug=model_slug, dimension=model_info["dimension"]
+            )
+
+        # Skip projects that no longer exist at their stored path (and have no
+        # relocated_to) — nothing on disk to diff against.
+        targets = [
+            (project.get("relocated_to") or project["project_path"], model_info)
+            for project in projects
+            if project.get("path_exists")
+            for model_info in project["models_indexed"]
+        ]
+
+        results = await asyncio.gather(
+            *(
+                asyncio.to_thread(_freshness_for, path, model_info)
+                for path, model_info in targets
+            ),
+            return_exceptions=True,
+        )
+        for (path, _model_info), result in zip(targets, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.debug(f"Could not compute freshness for {path}: {result}")
+                continue
+            if result:
+                _model_info["index_is_current"] = result["index_is_current"]
+                _model_info["pending_changes"] = result["pending_changes"]
 
     return {
         "projects": projects,

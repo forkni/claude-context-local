@@ -389,10 +389,16 @@ RETURNS:
   elapsed_seconds, and result (when done) or error (when failed)
 - no job_id: index_statistics (total_chunks and, when hybrid search is
   enabled, bm25_documents, dense_vectors, synced), model_information,
-  storage_directory, current_project, last_indexed_time (freshness of the
-  ACTIVE project only — from Merkle metadata, updated on every re-index;
-  for any other project's freshness without switching, use list_projects'
-  last_indexed_at instead of switch_project + get_index_status)""",
+  storage_directory, current_project, last_indexed_time (when the indexer
+  last ran on the ACTIVE project — from Merkle metadata, updated on every
+  re-index; NOT a staleness signal by itself), index_is_current (the
+  definitive answer: True/False/null — a content-only Merkle diff against
+  the working tree, so a freshly-built index never reads stale just because
+  a timestamp is old; null if never indexed or the check failed),
+  pending_changes ({added, modified, removed} counts, null alongside
+  index_is_current=null). For any other project's freshness without
+  switching, use list_projects(check_freshness=True) instead of
+  switch_project + get_index_status.""",
         input_schema={
             "type": "object",
             "properties": {
@@ -416,20 +422,33 @@ WHEN TO USE:
 - Confirming a project was indexed under the expected name/path
 - Checking whether a project has been indexed with more than one embedding model
 - Checking any project's index freshness without mutating server state via
-  switch_project (get_index_status only reports the ACTIVE project)
+  switch_project (get_index_status only reports the ACTIVE project) — pass
+  check_freshness=True for the definitive per-model verdict
 
 RETURNS:
 - projects: list of {project_name, project_path, project_hash, path_exists,
-  models_indexed: [{model, dimension, chunks, created_at, last_indexed_at}]}
+  models_indexed: [{model, dimension, chunks, created_at, last_indexed_at,
+  index_is_current, pending_changes}]}
   NOTE: created_at is when this project/model was FIRST indexed — it is
   frozen at that point and never updated by later re-indexing. It is NOT a
-  staleness signal. To judge whether an index reflects recent commits, use
-  last_indexed_at (from Merkle metadata, updated on every re-index, omitted
-  if unavailable) instead — do not infer staleness from created_at.
+  staleness signal. last_indexed_at (from Merkle metadata, updated on every
+  re-index) says only *when* the indexer last ran — also not a staleness
+  signal by itself, since an index can be old but still match the tree, or
+  young but already behind it. index_is_current/pending_changes are the
+  definitive answer — a content-only Merkle diff against the working tree —
+  and are ONLY present when check_freshness=True (default False, since a
+  full scan across every project/model costs ~14s sequential; this handler
+  fans checks out concurrently, bounded by the slowest project). Do not
+  infer staleness from created_at or last_indexed_at when index_is_current
+  is available.
 - current_project: the currently active project path""",
         input_schema={
             "type": "object",
             "properties": {
+                "check_freshness": {
+                    "type": "boolean",
+                    "description": "If true, additionally compute a real index_is_current/pending_changes verdict per model via a Merkle diff against the working tree (default false — a definitive but heavier per-project check; see RETURNS).",
+                },
                 "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
