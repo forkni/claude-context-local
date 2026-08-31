@@ -128,8 +128,24 @@ reasonable next step, deferred here to keep this change's diff scoped to the rep
 ## Verification
 
 `./scripts/test/run_tests.sh tests/unit/merkle/ tests/unit/mcp_server/ tests/unit/search/ -q` —
-all pass. Live verification against real on-disk storage (not mocks): `_is_index_stale` and
-`compute_index_freshness` compared directly on two real projects before/after the extraction,
-byte-identical bool verdicts; `get_index_status` and `list_projects(check_freshness=True)` run
-against the running server's live index, `list_projects()` (default) confirmed to omit the new
-fields entirely and add no measurable latency.
+2384 pass. `./scripts/git/check_lint.sh --modified-only` — ruff, format, and markdownlint clean.
+
+Confirmed over the live wire, after restarting the MCP server and re-indexing (not just
+in-process): `get_index_status` on `claude-context-local` returns `index_is_current: true`
+with `pending_changes` all zero; `list_projects()` (default) omits both fields on all 13
+indexed projects; `list_projects(check_freshness=True)` returns a verdict for **13/13**
+projects with no swallowed exceptions, exercising the `asyncio.gather(...,
+return_exceptions=True)` fan-out and per-model `model_slug` threading end-to-end.
+
+That sweep produced concrete instances of the two failure directions this ADR's Context
+argues a timestamp can't distinguish:
+
+- **Old but correct**: `agentic-perf-loop` — `last_indexed_at` 34 days old, yet
+  `index_is_current: true` with zero pending changes. A timestamp heuristic reads this as a
+  month stale; it is not.
+- **Recent but already wrong**: `TD_INSTALLATION_MONITOR` — `last_indexed_at` only 5 days
+  old, but 35 files modified since → `index_is_current: false`.
+- **The original bug, closed**: `voro-engine` still carries
+  `created_at: 2026-08-22T13:12:06` — the exact value the agent in the original report read
+  as a build timestamp — now sitting directly beside `index_is_current: true`. The
+  misleading field is still there; it is no longer the only field there.
