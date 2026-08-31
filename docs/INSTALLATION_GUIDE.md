@@ -678,7 +678,7 @@ The project includes 37 test files organized into professional categories.
 The tracked installation tools are available from the repository root:
 
 - `verify-installation.cmd` runs the installation checks.
-- `scripts\\batch\\repair_installation.bat` provides the repair menu.
+- `scripts/batch/repair_installation.bat` provides the repair menu.
 
 📚 **Complete testing guide**: [tests/README.md](../tests/README.md)
 
