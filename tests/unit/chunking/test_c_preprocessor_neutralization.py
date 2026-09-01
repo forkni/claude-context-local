@@ -32,6 +32,7 @@ import re
 from chunking.languages._c_family import neutralize_preprocessor_conditionals
 from chunking.languages.c import CChunker
 from chunking.languages.cpp import CppChunker
+from tests.unit.chunking.conftest import assert_length_and_newline_invariants
 
 
 def _names(chunker, source):
@@ -124,15 +125,11 @@ class TestByteLengthAndNewlinePositionInvariants:
     end_line are computed against the rewritten buffer and must line up with
     the original source `chunk_parsed` actually slices text from."""
 
-    def _assert_invariants(self, original: bytes, rewritten: bytes) -> None:
-        assert len(rewritten) == len(original)
-        original_newlines = [i for i, b in enumerate(original) if b == 0x0A]
-        rewritten_newlines = [i for i, b in enumerate(rewritten) if b == 0x0A]
-        assert rewritten_newlines == original_newlines
-
     def test_simple_ifdef_endif_preserves_length_and_newlines(self):
         source = b"#ifdef DEBUG\nint x;\n#endif\nint y;\n"
-        self._assert_invariants(source, neutralize_preprocessor_conditionals(source))
+        assert_length_and_newline_invariants(
+            source, neutralize_preprocessor_conditionals(source)
+        )
 
     def test_backslash_continued_directive_preserves_length_and_newlines(self):
         """The naive-blanker trap: a `#if` continued onto a second physical
@@ -141,7 +138,7 @@ class TestByteLengthAndNewlinePositionInvariants:
         them stays exactly where it was."""
         source = b"#if defined(FOO) \\\n    && defined(BAR)\nint y;\n#endif\nint z;\n"
         rewritten = neutralize_preprocessor_conditionals(source)
-        self._assert_invariants(source, rewritten)
+        assert_length_and_newline_invariants(source, rewritten)
         # The directive's own two lines are blanked to spaces only -- no
         # stray '#', 'if', 'defined', etc. survives inside them.
         rewritten_lines = rewritten.split(b"\n")
@@ -172,7 +169,9 @@ class TestByteLengthAndNewlinePositionInvariants:
         source = (
             b"#if A\nint a;\n#elif B\nint b;\n#else\nint c;\n#endif\nvoid f(void) {}\n"
         )
-        self._assert_invariants(source, neutralize_preprocessor_conditionals(source))
+        assert_length_and_newline_invariants(
+            source, neutralize_preprocessor_conditionals(source)
+        )
 
 
 class TestIncludeDefinePragmaNotBlanked:

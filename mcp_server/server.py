@@ -153,26 +153,93 @@ class _ColorFormatter(logging.Formatter):
 class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
     """RotatingFileHandler that tolerates Windows file locks during rollover.
 
-    Swallows WinError 32 (another process holds the file open) so rotation skips
-    gracefully rather than spamming stderr with logging-error tracebacks.
+    Windows keeps an exclusive lock on an open file, so both halves of
+    rollover -- the rename in ``rotate()`` and the reopen in ``doRollover()``
+    -- can raise ``OSError`` while another process (or this one, mid-
+    ``emit``) still holds the handle. A prior version only guarded the
+    rename: on a failed rename it left ``self.stream = None`` forever (the
+    reopen was gated on ``if not self.delay``, which is never true here), so
+    the very next ``emit()`` raised the same error again -- every record for
+    the rest of the process, printing a full traceback to stderr on each one
+    (load-bearing output under ``--transport stdio``).
 
-    Backup files are named ``mcp_server_<mmddyyhhmmss>.log`` where the timestamp
-    is fixed at session start - unique per server run, no numeric suffix needed.
+    The ``_rollover_failed`` latch is deliberately permanent for the process
+    lifetime, not cleared on the next successful ``emit()``: a transient lock
+    (e.g. an antivirus scan) disables rotation for the rest of the run and
+    the base file grows past ``maxBytes``. That is the accepted trade against
+    printing a traceback to stderr on every subsequent record.
+
+    ``utils/progress.py``'s ``configure_child_logging`` documents the same
+    Windows file-lock hazard from the other side and answers it differently:
+    avoidance (child processes log to stderr and never touch the shared
+    file) rather than tolerance. This handler only covers the single-process
+    case -- another process, or thread, holding the file open (an editor, a
+    `tail`, an antivirus scan) -- not multiple processes rotating it.
+
+    Backup files are named ``mcp_server_<mmddyyhhmmss>_<n>.log``: the
+    timestamp is fixed at session start, ``<n>`` is a per-instance rollover
+    counter. A fixed, counter-less name (the prior scheme) collided with
+    itself on a second rollover in one session -- ``os.rename`` raised
+    ``FileExistsError``, suppressed, so the base file could never rotate
+    again for the rest of that session.
     """
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._rollover_failed = False
+        self._rollover_count = 0
+
     def rotate(self, source: str, dest: str) -> None:
-        with contextlib.suppress(PermissionError, OSError):
+        try:
             super().rotate(source, dest)
+        except OSError:
+            self._rollover_failed = True
+
+    def shouldRollover(self, record: logging.LogRecord) -> bool:  # noqa: N802
+        if self._rollover_failed:
+            return False
+        return bool(super().shouldRollover(record))
 
     def doRollover(self) -> None:  # noqa: N802
         if self.stream:
             self.stream.close()
             self.stream = None  # pyrefly: ignore [bad-assignment]  # stdlib sets stream=None during rollover; typeshed stub is non-optional
+        self._rollover_count += 1
         stem = Path(self.baseFilename).stem  # "mcp_server"
-        dfn = str(Path(self.baseFilename).parent / f"{stem}_{_SESSION_START}.log")
-        self.rotate(self.baseFilename, dfn)  # suppresses PermissionError/OSError
-        if not self.delay:
+        dfn = str(
+            Path(self.baseFilename).parent
+            / f"{stem}_{_SESSION_START}_{self._rollover_count}.log"
+        )
+        self.rotate(self.baseFilename, dfn)  # sets _rollover_failed on failure
+        with contextlib.suppress(OSError):
             self.stream = self._open()
+        if not self._rollover_failed:
+            self._prune_backups()
+
+    def _prune_backups(self) -> None:
+        """Honor backupCount by deleting the oldest backups beyond the
+        configured count. The stdlib's own pruning
+        (BaseRotatingHandler.getFilesToDelete) is keyed to its numeric-suffix
+        naming convention and never runs here, since doRollover is fully
+        overridden with a different naming scheme above."""
+        if self.backupCount <= 0:
+            return
+        stem = Path(self.baseFilename).stem
+        parent = Path(self.baseFilename).parent
+        backups = sorted(
+            (p for p in parent.glob(f"{stem}_*.log") if p != Path(self.baseFilename)),
+            key=lambda p: p.stat().st_mtime,
+        )
+        excess = len(backups) - self.backupCount
+        for old in backups[:excess]:
+            with contextlib.suppress(OSError):
+                old.unlink()
+
+    def handleError(self, record: logging.LogRecord) -> None:  # noqa: N802
+        exc_type = sys.exc_info()[0]
+        if exc_type is not None and issubclass(exc_type, OSError):
+            return
+        super().handleError(record)
 
 
 def _configure_logging() -> None:

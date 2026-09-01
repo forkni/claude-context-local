@@ -51,6 +51,12 @@ def probe_metadata_deletable(metadata_path: Path) -> Path:
     runs it again before touching FAISS. The second call is a no-op — it
     finds the already-renamed ``.deleting`` sibling and returns it unchanged.
 
+    A live ``metadata.db`` always wins over a stale ``.deleting`` sibling left
+    behind by a previously aborted clear (e.g. a mid-chain ``WinError 32``):
+    if both exist, the stale sibling is discarded and the live DB is renamed
+    in its place, so an old generation's rows can never survive under a
+    ``.deleting`` path that this clear then skips unlinking.
+
     Args:
         metadata_path: Path to metadata.db.
 
@@ -63,15 +69,20 @@ def probe_metadata_deletable(metadata_path: Path) -> Path:
     Raises:
         OSError: If metadata.db exists but cannot be renamed (e.g. a
             lingering open handle) — the signal that the whole clear must
-            abort before BM25 or FAISS state is destroyed.
+            abort before BM25 or FAISS state is destroyed. Left untouched
+            (not unlinked) so a failed probe is a clean no-op, not a
+            half-clear.
     """
     deleting_path = Path(str(metadata_path) + ".deleting")
+    if metadata_path.exists():
+        if deleting_path.exists():
+            # Debris from an aborted clear; never let it shadow the live DB.
+            deleting_path.unlink()
+        os.replace(metadata_path, deleting_path)
+        return deleting_path
     if deleting_path.exists():
         return deleting_path
-    if not metadata_path.exists():
-        return metadata_path
-    os.replace(metadata_path, deleting_path)
-    return deleting_path
+    return metadata_path
 
 
 class CodeIndexManager:
@@ -244,9 +255,12 @@ class CodeIndexManager:
             # Populate call graph via integration layer
             if self._graph.is_available:
                 self._graph.add_chunk(chunk_id, cast(dict[str, Any], result.metadata))
-                self._logger.debug(
-                    f"Graph storage check: chunk_id={chunk_id}, type={result.metadata.get('chunk_type')}, graph_nodes={len(self._graph)}"
-                )
+
+        # One aggregate summary instead of a per-chunk DEBUG record -- see
+        # GraphIntegration.log_chunk_add_summary()'s docstring for why.
+        if self._graph.is_available:
+            self._graph.log_chunk_add_summary()
+            self._logger.debug(f"Graph storage check: graph_nodes={len(self._graph)}")
 
         self._logger.info(f"Added {len(embedding_results)} embeddings to index")
 
@@ -693,6 +707,17 @@ class CodeIndexManager:
         """
         return False, 0
 
+    def find_orphaned_metadata_keys(self) -> list[str]:
+        """Return metadata keys with no corresponding entry in chunk_ids.
+
+        Shared by check 4 of :meth:`validate_index_consistency` (to name
+        surplus rows in the issue message) and the full-index self-heal
+        prune step in ``IncrementalIndexer._full_index`` (to know exactly
+        which rows are debris) -- one computation, two consumers.
+        """
+        chunk_id_set = set(self.chunk_ids)
+        return [key for key in self.metadata_store.keys() if key not in chunk_id_set]  # noqa: SIM118
+
     def validate_index_consistency(self) -> tuple[bool, list[str]]:
         """Validate consistency between FAISS index, chunk_ids, and metadata.
 
@@ -759,9 +784,23 @@ class CodeIndexManager:
         # Check 4: Metadata database size consistency
         metadata_size = len(self.metadata_store)
         if metadata_size != chunk_ids_size:
-            issues.append(
-                f"Metadata database size ({metadata_size}) != chunk_ids length ({chunk_ids_size})"
-            )
+            if metadata_size > chunk_ids_size:
+                orphaned_keys = self.find_orphaned_metadata_keys()
+                orphaned_files = sorted({key.split(":", 1)[0] for key in orphaned_keys})
+                issues.append(
+                    f"Metadata database size ({metadata_size}) != chunk_ids length "
+                    f"({chunk_ids_size}); {len(orphaned_keys)} orphaned row(s) across "
+                    f"{len(orphaned_files)} file(s): {', '.join(orphaned_keys[:5])}"
+                    + (
+                        f" ... and {len(orphaned_keys) - 5} more"
+                        if len(orphaned_keys) > 5
+                        else ""
+                    )
+                )
+            else:
+                issues.append(
+                    f"Metadata database size ({metadata_size}) != chunk_ids length ({chunk_ids_size})"
+                )
 
         is_valid = len(issues) == 0
 
@@ -780,11 +819,21 @@ class CodeIndexManager:
         return is_valid, issues
 
     def preflight_clear(self) -> Path:
-        """Reset the metadata store in place, then verify metadata.db is
+        """Empty the metadata store in place, then verify metadata.db is
         actually deletable before the caller destroys FAISS/graph state.
 
-        ``MetadataStore.reset()`` closes the current SQLite handle
-        (releasing the Windows file lock) without replacing the
+        ``MetadataStore.clear()`` runs first, when there is anything to
+        clear, and deletes every row while the connection is still open --
+        row-emptiness no longer depends on the file-unlink step below
+        succeeding (that step can silently no-op, as it did when a stale
+        ``.deleting`` sibling previously shadowed the live DB). It is
+        skipped when ``metadata.db`` has never been created (nothing has
+        ever been opened or written): opening a store just to clear rows
+        that don't exist would create a fresh empty DB as a side effect,
+        which is both wasted work and, on Windows, one more file that has
+        to round-trip through SQLite's WAL machinery before the probe below
+        even runs. ``MetadataStore.reset()`` then closes the current SQLite
+        handle (releasing the Windows file lock) without replacing the
         ``MetadataStore`` object -- identity stays stable per ADR-0025, so
         no caller needs re-wiring (``_batch_ops._metadata_store`` still
         points at the same, now-reset, instance).
@@ -799,6 +848,8 @@ class CodeIndexManager:
         Returns:
             The path metadata.db now lives at post-probe.
         """
+        if self.metadata_path.exists():
+            self._metadata_store.clear()
         self._metadata_store.reset()
 
         import gc
@@ -864,6 +915,27 @@ class CodeIndexManager:
                 self._logger.warning(
                     f"Could not delete legacy community file {legacy}: {e}"
                 )
+
+        # Post-condition: a clear that leaves rows behind must fail loudly
+        # here, attributably, rather than surface two minutes later as an
+        # unexplained consistency-check mismatch after the rebuild has
+        # already run on top of the stale rows.
+        #
+        # Only open the store to check when metadata.db still exists on
+        # disk. If it's genuinely gone, remaining is trivially 0 — that IS
+        # what removal means — and len() would otherwise force
+        # MetadataStore's lazy _ensure_open() to recreate an empty
+        # metadata.db (with a fresh WAL sidecar) immediately after this
+        # method just finished proving there was nothing left to remove.
+        # When metadata.db does still exist here (the exact bug this
+        # assertion exists to catch — the unlink dance above silently
+        # no-op'd), len() opens the real, still-present file and reports
+        # its real row count.
+        remaining = len(self._metadata_store) if self.metadata_path.exists() else 0
+        if remaining:
+            raise RuntimeError(
+                f"clear_index left {remaining} metadata rows at {self.metadata_path}"
+            )
 
         self._logger.info("Index cleared")
 

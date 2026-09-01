@@ -109,7 +109,15 @@ class TestClearIndexFailsFastOnLockedMetadata:
         stats = storage_dir / "stats.json"
         stats.write_text("{}")
         metadata_db = storage_dir / "metadata.db"
-        metadata_db.write_bytes(b"fake sqlite db")
+        # A real, openable metadata.db (not garbage bytes): preflight_clear()
+        # now clears rows in place before probing deletability, so this must
+        # be a store that can actually be opened -- the failure this test
+        # exercises is the *rename* (os.replace) failing, e.g. a still-open
+        # Windows handle from another process, not an unopenable file.
+        manager.metadata_store.set("a.py:1-2:function:f", 0, {"relative_path": "a.py"})
+        manager.metadata_store.commit()
+        manager.metadata_store.close()
+        assert metadata_db.exists()
 
         def _raise_permission_error(*_args, **_kwargs):
             raise PermissionError("[WinError 32] file in use by another process")
@@ -138,6 +146,17 @@ class TestClearIndexFailsFastOnLockedMetadata:
         )
         assert stats.exists(), "stats.json must survive an aborted clear too"
 
+    # A metadata.db that exists but can't be opened as SQLite at all (as
+    # opposed to a valid-but-locked one) is deliberately not covered by a
+    # test here: MetadataStore.clear() -> _ensure_open() would raise
+    # sqlite3.DatabaseError from SqliteDict's background connection thread,
+    # and that thread's own unhandled-exception report surfaces via pytest's
+    # thread-exception plugin at the *next* test's setup, not this one --
+    # polluting an unrelated test rather than failing cleanly here. The
+    # no-half-clear guarantee still holds in that scenario (clear() raises
+    # before FAISS/reset/probe run), it's just not practical to assert
+    # without destabilizing the suite; see preflight_clear()'s docstring.
+
     def test_probe_metadata_deletable_is_idempotent(self, tmp_path):
         metadata_path = tmp_path / "metadata.db"
         metadata_path.write_bytes(b"fake sqlite db")
@@ -161,6 +180,65 @@ class TestClearIndexFailsFastOnLockedMetadata:
         result = probe_metadata_deletable(metadata_path)
 
         assert result == metadata_path
+
+
+class TestClearIndexDiscardsStaleDeletingDebris:
+    """Regression test for the force-full-reindex metadata-orphan bug.
+
+    A stale ``metadata.db.deleting`` sibling — stranded by a previously
+    aborted clear (e.g. mid-chain WinError 32) — used to shadow the live
+    ``metadata.db``: probe_metadata_deletable() short-circuited on it and
+    returned the stale path without renaming the live DB, so clear_index()
+    unlinked only the stale sibling while the real DB, still holding a
+    previous index generation's rows, was silently reopened untouched. This
+    is exactly what happened on voro-engine's force-full reindex: 148 rows
+    from a pre-rename generation (cito_* symbols in a project since renamed
+    to voro_*) survived a reported-successful "full" clear and failed the
+    post-index consistency check minutes later.
+    """
+
+    def test_stale_deleting_sibling_does_not_shadow_live_metadata(self, tmp_path):
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+
+        manager = CodeIndexManager(storage_dir=str(storage_dir))
+        manager.metadata_store.set("a.py:1-2:function:f", 0, {"relative_path": "a.py"})
+        manager.metadata_store.commit()
+        manager.metadata_store.close()
+
+        # Debris from an aborted clear, planted before this clear runs.
+        (storage_dir / "metadata.db.deleting").write_bytes(b"stale")
+
+        manager.clear_index()
+
+        assert len(manager.metadata_store) == 0, (
+            "a live metadata.db must always be renamed and cleared, even "
+            "when a stale .deleting sibling already exists"
+        )
+
+    def test_probe_metadata_deletable_discards_stale_sibling_and_renames_live_db(
+        self, tmp_path
+    ):
+        metadata_path = tmp_path / "metadata.db"
+        metadata_path.write_bytes(b"live sqlite db")
+        deleting_path = Path(str(metadata_path) + ".deleting")
+        deleting_path.write_bytes(b"stale debris from an aborted clear")
+
+        result = probe_metadata_deletable(metadata_path)
+
+        assert result == deleting_path
+        assert deleting_path.read_bytes() == b"live sqlite db", (
+            "the live DB's bytes must win — the stale sibling is discarded, "
+            "not the other way around"
+        )
+        assert not metadata_path.exists()
+
+        # Second call in the chain (e.g. CodeIndexManager.clear_index()'s
+        # own probe, after IndexSynchronizer.clear_index() already ran it)
+        # must still be a no-op — metadata.db is gone, .deleting stands.
+        second = probe_metadata_deletable(metadata_path)
+        assert second == deleting_path
+        assert second.read_bytes() == b"live sqlite db"
 
 
 class TestCloseReleasesFaissMmapHandle:

@@ -461,6 +461,47 @@ class IncrementalIndexer:
             return self.indexer
         return getattr(self.indexer, "dense_index", None)
 
+    @staticmethod
+    def _is_sole_orphan_surplus_issue(issues: list[str]) -> bool:
+        """True iff *issues* is exactly check 4's metadata-surplus message.
+
+        Checks 1-3 (FAISS/chunk_ids size, missing metadata, invalid
+        index_id) each append their own, independently-worded issue when
+        triggered. Check 4 only appends the "orphaned row(s)" surplus form
+        when ``metadata_size > chunk_ids_size``. So a single issue matching
+        that exact form proves checks 1-3 are clean by construction — the
+        FAISS/chunk_ids side of the index is provably intact, which is the
+        only condition under which pruning surplus metadata rows is safe.
+        Full-index only: a full index makes metadata == chunk_ids by
+        construction, so any surplus here is provably stale debris rather
+        than a real signal (unlike the incremental path, where recovery
+        already owns this case).
+        """
+        return (
+            len(issues) == 1
+            and issues[0].startswith("Metadata database size (")
+            and "orphaned row(s)" in issues[0]
+        )
+
+    def _prune_orphaned_metadata_and_revalidate(
+        self, consistency_target: Any
+    ) -> tuple[bool, list[str]]:
+        """Delete surplus metadata rows left by a stale ``.deleting`` sibling
+        surviving a prior clear, then re-run consistency validation.
+
+        Only called when :meth:`_is_sole_orphan_surplus_issue` has already
+        confirmed checks 1-3 passed — see that method's docstring for why
+        that guard makes pruning safe here.
+        """
+        orphaned_keys = consistency_target.find_orphaned_metadata_keys()
+        pruned = consistency_target.metadata_store.delete_batch(orphaned_keys)
+        consistency_target.metadata_store.commit()
+        logger.warning(
+            f"[FULL_INDEX] Pruned {pruned} orphaned metadata row(s) left by a "
+            f"stale prior generation, e.g. {orphaned_keys[:3]}"
+        )
+        return consistency_target.validate_index_consistency()
+
     _RECOVERY_MARKER_NAME = "index_recovery_failed.marker"
 
     def _recovery_marker_path(self) -> Path | None:
@@ -779,6 +820,10 @@ class IncrementalIndexer:
             _consistency_target = self._consistency_target()
             if _consistency_target is not None:
                 is_valid, issues = _consistency_target.validate_index_consistency()
+                if not is_valid and self._is_sole_orphan_surplus_issue(issues):
+                    is_valid, issues = self._prune_orphaned_metadata_and_revalidate(
+                        _consistency_target
+                    )
                 if not is_valid:
                     logger.error(
                         f"[FULL_INDEX] Index inconsistent after full index: {issues}"

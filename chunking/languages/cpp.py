@@ -6,12 +6,11 @@ from typing import Any
 from tree_sitter import Language
 
 from ._c_family import (
+    _CFamilyChunker,
     blank_preserving_layout,
     declarator_is_function_shaped,
-    neutralize_preprocessor_conditionals,
     unwrap_declarator_name,
 )
-from .base import LanguageChunker
 
 
 def _anonymous_typedef_name(node: Any) -> Any | None:
@@ -33,30 +32,18 @@ def _anonymous_typedef_name(node: Any) -> Any | None:
     return None
 
 
-class CppChunker(LanguageChunker):
-    """C++-specific chunker using tree-sitter."""
+class CppChunker(_CFamilyChunker):
+    """C++-specific chunker using tree-sitter.
+
+    Inherits `_CFamilyChunker`'s `_neutralize`/`preprocess_source_for_parse`
+    composition (_c_family.py) unchanged. `CudaChunker` below overrides
+    `_neutralize` to layer its own, also-textual CUDA rewrites in ahead of
+    the base's preprocessor-conditional blanking, while still inheriting
+    the parse-dependent macro repair unchanged.
+    """
 
     def __init__(self, language: Language | None = None) -> None:
         super().__init__("cpp", language)
-
-    # ------------------------------------------------------------------
-    # Parse-error neutralization
-    # ------------------------------------------------------------------
-
-    def preprocess_source_for_parse(self, source_bytes: bytes) -> bytes:
-        """Blank preprocessor conditional directives before parsing.
-
-        See `neutralize_preprocessor_conditionals` (_c_family.py) for the
-        rewrite, why it preserves byte offsets, and the measured impact. A
-        no-op substitution on source with no `#if`/`#ifdef`/.../`#endif`.
-
-        Args:
-            source_bytes: UTF-8-encoded original source.
-
-        Returns:
-            Source bytes with preprocessor conditionals blanked.
-        """
-        return neutralize_preprocessor_conditionals(source_bytes)
 
     # ------------------------------------------------------------------
     # Container seam (v0.24 header parity)
@@ -311,15 +298,20 @@ class CudaChunker(CppChunker):
     and correct definition names/line numbers, not attribute-token recall.
     """
 
-    def preprocess_source_for_parse(self, source_bytes: bytes) -> bytes:
+    def _neutralize(self, source_bytes: bytes) -> bytes:
         """Blank CUDA-specific syntax, then preprocessor conditionals.
 
-        Order matters only in that both rewrites are independently length-
-        and newline-position-preserving, so composing them in either order
-        produces the same result -- `super()` first keeps the CUDA-specific
-        rules scoped to bytes that have already had `#if`/`#ifdef`/...
-        directive lines blanked, avoiding any chance of a CUDA regex
-        matching text that lives inside a blanked directive line.
+        Overrides `CppChunker._neutralize`, not `preprocess_source_for_parse`
+        -- both rewrites here are purely textual (no reparse), so this stays
+        in the textual half of the pipeline and the inherited
+        `preprocess_source_for_parse` still runs the parse-dependent macro
+        repair last, after this. Order between the two rewrites here only
+        matters in that both are independently length- and newline-
+        position-preserving, so composing them in either order produces the
+        same result -- `super()` first keeps the CUDA-specific rules scoped
+        to bytes that have already had `#if`/`#ifdef`/... directive lines
+        blanked, avoiding any chance of a CUDA regex matching text that
+        lives inside a blanked directive line.
 
         Args:
             source_bytes: UTF-8-encoded original source.
@@ -329,7 +321,7 @@ class CudaChunker(CppChunker):
             preprocessor conditionals all blanked. Identical in total length
             and newline positions to `source_bytes`.
         """
-        rewritten = super().preprocess_source_for_parse(source_bytes)
+        rewritten = super()._neutralize(source_bytes)
         rewritten = _CUDA_ATTRS.sub(blank_preserving_layout, rewritten)
         rewritten = _LAUNCH_CFG.sub(blank_preserving_layout, rewritten)
         return rewritten

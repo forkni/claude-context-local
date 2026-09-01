@@ -337,6 +337,20 @@ class MetadataStore:
             self._db.close()
             self._db = None
 
+    def clear(self) -> None:
+        """Delete every row in place, keeping the connection open.
+
+        Unlike :meth:`reset`, which only releases the SQLite handle, this
+        actually empties the store — delegates to ``SqliteDict.clear()``
+        (``DELETE FROM`` the backing table between two commits). Callers that
+        need both a truly empty store and the handle released for a
+        subsequent file operation should call this before :meth:`reset`.
+        """
+        self._ensure_open()
+        # pyrefly: ignore [missing-attribute]
+        self._db.clear()
+        self._symbol_cache = SymbolHashCache()
+
     def reset(self) -> None:
         """Reset to a fresh, empty state at the same ``db_path``, in place.
 

@@ -17,6 +17,7 @@ both blanked, 0 ERROR lines (0.0%).
 
 from chunking.languages.cpp import _LAUNCH_CFG, CudaChunker
 from chunking.multi_language_chunker import MultiLanguageChunker
+from tests.unit.chunking.conftest import assert_length_and_newline_invariants
 
 
 class TestExtensionRegisteredAndChunkFileWired:
@@ -149,12 +150,6 @@ class TestLaunchConfigNewlinePreservation:
     def setup_method(self):
         self.chunker = CudaChunker()
 
-    def _assert_invariants(self, original: bytes, rewritten: bytes) -> None:
-        assert len(original) == len(rewritten)
-        original_newlines = [i for i, b in enumerate(original) if b == 10]
-        rewritten_newlines = [i for i, b in enumerate(rewritten) if b == 10]
-        assert original_newlines == rewritten_newlines
-
     def test_multiline_launch_config_preserves_length_and_newlines(self):
         source = (
             "void launch(int* data, int n) {\n"
@@ -166,7 +161,7 @@ class TestLaunchConfigNewlinePreservation:
         )
         source_bytes = source.encode("utf-8")
         rewritten = self.chunker.preprocess_source_for_parse(source_bytes)
-        self._assert_invariants(source_bytes, rewritten)
+        assert_length_and_newline_invariants(source_bytes, rewritten)
 
     def test_multiline_launch_config_yields_zero_error_lines(self):
         source = (

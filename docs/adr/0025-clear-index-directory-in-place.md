@@ -143,3 +143,38 @@ correct. What changed is that "release a handle" needed its own explicit method
 (`FaissVectorIndex.close()`) wired into every teardown path, the same discipline item 4 already
 established for the metadata connection; it had just stopped short of the FAISS side once the
 mmap complexity kicked in.
+
+## Amendment (2026-08-31): the two-party emptying contract had no enforcement
+
+The Consequences section above states the contract plainly: `MetadataStore.reset()` releases a
+handle, it does not delete data; true emptying depends on `probe_metadata_deletable()` actually
+unlinking the renamed file afterwards. That contract had a hole neither half of this ADR closed:
+`probe_metadata_deletable()` short-circuited whenever a `metadata.db.deleting` sibling already
+existed, returning that stale path **without renaming the live `metadata.db`**. `clear_index()`
+then unlinked only the stale sibling — the real DB was never touched, and the next
+`_ensure_open()` silently reopened it with its previous generation's rows intact.
+
+This surfaced in production on `voro-engine`'s force-full reindex: a stale `.deleting` sibling
+(stranded by an earlier aborted clear — this repo's recurring `WinError 32` mmap-handle failure,
+same failure class as the amendment above, is one way to strand it) shadowed the live DB, and 148
+rows from a previous index generation (pre-rename `cito_*` symbols, in a project since renamed to
+`voro_*`) survived a reported-successful "full" clear. The rebuilt FAISS/chunk_ids side was
+completely correct; only the leftover metadata rows failed the post-index consistency check,
+minutes after the real work had already succeeded and saved.
+
+Fix, in the same spirit as item 1 (self-handle close) above: a live `metadata.db` now always wins
+over stale `.deleting` debris — the sibling is discarded first if both exist, then the live DB is
+renamed as before. `MetadataStore` gained an actual `clear()` (delegates to `SqliteDict.clear()`),
+called before `reset()` in `preflight_clear()`, so row-emptiness stops depending on the file-unlink
+step succeeding at all. `clear_index()` now asserts the post-condition — zero remaining metadata
+rows — and raises immediately, attributably, if it doesn't, rather than letting a stale generation
+surface as an unexplained mismatch two minutes later. `IncrementalIndexer._full_index` also
+self-heals: if a full index's *only* consistency issue is check 4's metadata surplus (checks 1-3
+having already proven the FAISS/chunk_ids side intact), the orphan rows are pruned and the run
+succeeds — full-index-only, since a full index makes metadata == chunk_ids by construction and any
+surplus is provably stale debris, unlike the incremental path where surplus is a real signal
+recovery already owns.
+
+The decision itself is unaffected. What changed is the same lesson as the amendment above,
+applied to the metadata side instead of the FAISS side: a documented two-party contract needs an
+enforced post-condition, not just a comment describing the intended handoff.

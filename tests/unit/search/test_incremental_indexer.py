@@ -1521,8 +1521,16 @@ class TestConsistencyTarget:
         )
 
         self.mock_snapshot_manager.has_snapshot.return_value = False
+        # Production wording (indexer.py's validate_index_consistency, check 1):
+        # a prior version of this mock used "metadata rows (10) != ..." here,
+        # a string no production code ever emits — so this test was green
+        # while exercising zero characters of the real check-4 orphan-surplus
+        # path. Using the FAISS-size-mismatch form (check 1, never prunable)
+        # keeps this test about "validation failure fails the run", while
+        # TestFullIndexOrphanSelfHeal below covers the actual check-4 wording
+        # and its self-heal prune path.
         self.mock_indexer.validate_index_consistency = Mock(
-            return_value=(False, ["metadata rows (10) != chunk_ids length (11)"])
+            return_value=(False, ["FAISS index size (10) != chunk_ids length (11)"])
         )
 
         with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
@@ -1544,7 +1552,120 @@ class TestConsistencyTarget:
 
         assert result.success is False
         assert result.error is not None
-        assert "metadata rows (10) != chunk_ids length (11)" in result.error
+        assert "FAISS index size (10) != chunk_ids length (11)" in result.error
+
+
+class TestFullIndexOrphanSelfHeal:
+    """Regression tests for the full-index self-heal prune (docs/adr/0025's
+    2026-08-31 amendment): after a full index, metadata must equal chunk_ids
+    by construction, so if check 4's metadata-surplus message is the *only*
+    consistency issue, checks 1-3 have already proven the FAISS/chunk_ids
+    side intact and the surplus rows are provably stale debris from a prior
+    generation surviving a clear (the voro-engine incident: 148 pre-rename
+    cito_* rows survived a reported-successful force-full clear).
+
+    Exercises the guard predicate and the prune-and-revalidate helper
+    directly against a real CodeIndexManager (real metadata store, real
+    FAISS index) — the smallest seam that touches genuine storage state
+    without driving the full chunk/embed/write pipeline.
+    """
+
+    @staticmethod
+    def _make_indexer_with(manager):
+        return IncrementalIndexer(
+            indexer=manager,
+            embedder=Mock(),
+            chunker=Mock(),
+            snapshot_manager=Mock(),
+        )
+
+    def test_sole_orphan_surplus_issue_is_recognized(self):
+        issues = [
+            "Metadata database size (602) != chunk_ids length (454); "
+            "148 orphaned row(s) across 1 file(s): a.py:1-2:function:f"
+        ]
+        assert IncrementalIndexer._is_sole_orphan_surplus_issue(issues)
+
+    def test_non_surplus_or_multiple_issues_are_not_treated_as_prunable(self):
+        # Check 1's wording, never prunable.
+        assert not IncrementalIndexer._is_sole_orphan_surplus_issue(
+            ["FAISS index size (10) != chunk_ids length (11)"]
+        )
+        # Surplus present, but not the *only* issue — checks 1-3 have not
+        # proven the FAISS/chunk_ids side intact, so pruning must decline.
+        assert not IncrementalIndexer._is_sole_orphan_surplus_issue(
+            [
+                "FAISS index size (10) != chunk_ids length (11)",
+                "Metadata database size (12) != chunk_ids length (11); "
+                "1 orphaned row(s) across 1 file(s): x.py:1-1:function:g",
+            ]
+        )
+
+    def test_prune_and_revalidate_clears_orphans_and_succeeds(self, tmp_path):
+        import numpy as np
+
+        from search.indexer import CodeIndexManager
+
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+        manager = CodeIndexManager(storage_dir=str(storage_dir))
+
+        embeddings = np.random.RandomState(0).randn(1, 8).astype(np.float32)
+        manager._faiss_index.create(8, "flat")
+        manager._faiss_index.add(embeddings, ["a.py:1-2:function:f"])
+        manager.metadata_store.set("a.py:1-2:function:f", 0, {"relative_path": "a.py"})
+        # Orphan from a previous generation — no corresponding chunk_id,
+        # mirroring the pre-rename cito_* rows found in the real incident.
+        manager.metadata_store.set(
+            "old.py:1-2:function:cito_old", 99, {"relative_path": "old.py"}
+        )
+        manager.metadata_store.commit()
+
+        is_valid, issues = manager.validate_index_consistency()
+        assert not is_valid
+        assert IncrementalIndexer._is_sole_orphan_surplus_issue(issues)
+
+        indexer = self._make_indexer_with(manager)
+        is_valid, issues = indexer._prune_orphaned_metadata_and_revalidate(manager)
+
+        assert is_valid, issues
+        assert len(manager.metadata_store) == 1
+        assert manager.metadata_store.get("old.py:1-2:function:cito_old") is None
+        assert manager.metadata_store.get("a.py:1-2:function:f") is not None
+
+    def test_prune_guard_declines_when_faiss_side_also_broken(self, tmp_path):
+        import numpy as np
+
+        from search.indexer import CodeIndexManager
+
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+        manager = CodeIndexManager(storage_dir=str(storage_dir))
+
+        embeddings = np.random.RandomState(0).randn(2, 8).astype(np.float32)
+        manager._faiss_index.create(8, "flat")
+        manager._faiss_index.add(
+            embeddings, ["a.py:1-2:function:f", "b.py:1-2:function:g"]
+        )
+        manager.metadata_store.set("a.py:1-2:function:f", 0, {"relative_path": "a.py"})
+        manager.metadata_store.set("b.py:1-2:function:g", 1, {"relative_path": "b.py"})
+        # Also a surplus orphan, so check 4 fires too.
+        manager.metadata_store.set(
+            "old.py:1-2:function:cito_old", 99, {"relative_path": "old.py"}
+        )
+        manager.metadata_store.commit()
+        # White-box: desync chunk_ids from the FAISS vectors that were just
+        # added, so check 1 also fires alongside check 4's surplus.
+        manager._faiss_index._chunk_ids = ["a.py:1-2:function:f"]
+
+        is_valid, issues = manager.validate_index_consistency()
+        assert not is_valid
+        assert len(issues) > 1
+        assert not IncrementalIndexer._is_sole_orphan_surplus_issue(issues), (
+            "must not attempt pruning when checks 1-3 have not already "
+            "proven the FAISS/chunk_ids side intact"
+        )
+        assert len(manager.metadata_store) == 3, "nothing pruned"
 
 
 class TestBoundedRecovery:
