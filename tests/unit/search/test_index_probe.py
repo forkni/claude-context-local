@@ -8,6 +8,7 @@ benchmark-validated keys never appear as override rules.
 
 import json
 from dataclasses import replace
+from typing import Literal
 
 import pytest
 
@@ -62,11 +63,15 @@ def make_profile(**kwargs) -> RepoProfile:
     return RepoProfile(**defaults)
 
 
-def overrides_for(m: ProbeMeasurements, stage: str = "pre_chunking") -> dict:
+def overrides_for(
+    m: ProbeMeasurements, stage: Literal["pre_chunking", "post_build"] = "pre_chunking"
+) -> dict:
     return run_rules(m, stage).overrides
 
 
-def dotted_overrides(m: ProbeMeasurements, stage: str = "pre_chunking") -> set:
+def dotted_overrides(
+    m: ProbeMeasurements, stage: Literal["pre_chunking", "post_build"] = "pre_chunking"
+) -> set:
     return set(_dotted_keys(overrides_for(m, stage)))
 
 
@@ -702,6 +707,7 @@ class TestMergedSummary:
             "post_build",
         ).summary("post_build")
         merged = merged_probe_summary(pass1, pass2)
+        assert merged is not None
         assert merged["probe_version"] == PROBE_VERSION
         assert "performance.max_chunking_workers" in merged["override_keys"]
         assert "ego_graph.max_neighbors_per_hop" in merged["observation_keys"]
@@ -709,5 +715,6 @@ class TestMergedSummary:
     def test_pass1_only(self):
         pass1 = run_rules(make_measurements(), "pre_chunking").summary("pre_chunking")
         merged = merged_probe_summary(pass1, None)
+        assert merged is not None
         assert merged["override_keys"] == pass1["override_keys"]
         assert merged["observation_keys"] == pass1["observation_keys"]
