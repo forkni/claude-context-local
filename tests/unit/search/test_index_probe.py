@@ -112,6 +112,14 @@ class TestGuardrails:
             "embedding.model_name"
         }
 
+    def test_spec_rows_agree_with_index_probe_literals(self):
+        """TEMPORARY (C2 step 1): spec(benchmark_locked=...) rows and the
+        hand-typed index_probe literals coexist and must agree byte-for-byte.
+        Deleted in C2 step 2 when the literals become derivations."""
+        from search.config import SearchConfig
+
+        assert SearchConfig._BENCHMARK_LOCK_CITATIONS == BENCHMARK_LOCK_CITATIONS
+
     def test_no_override_rule_touches_forbidden_keys(self):
         for rule in RULES:
             if rule.kind == "override":

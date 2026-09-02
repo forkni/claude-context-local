@@ -79,10 +79,11 @@ def spec(
     reader: str | None = None,
     schema_only: bool = False,
     construction_baked: bool = False,
+    benchmark_locked: str | None = None,
 ) -> dict[str, Any]:
     """Build a ``field(metadata=...)`` dict for one config field — the single
     declaration site for its validation rule, legacy/env alias, MCP exposure,
-    and liveness anchor (see ADR-0022).
+    liveness anchor, and benchmark lock (see ADR-0022).
 
     Every key is explicit and defaults to absent/``None`` — nothing here is
     inferred from the field's name, so a field with no alias or no env var
@@ -95,6 +96,12 @@ def spec(
     call — mutating it on the config singleton is a no-op until that
     collaborator is rebuilt (see ``evaluation/arm_overrides.py``'s
     ``requires_rebuild`` and Part 2 / C1 of the ADR-0018 follow-on plan).
+    ``benchmark_locked`` is the human-readable "why this must not be
+    re-tuned" citation (an ADR, a recorded sweep, or an A/B report) for a
+    field whose value was pinned by a benchmark on this repo's golden set;
+    ``search/index_probe.py`` derives ``FORBIDDEN_AUTO_TUNE_KEYS`` and the
+    ``:tuned_parameters`` Benchmark-Locked panel from these rows, so the
+    citation lives once, next to the value it protects.
     """
     meta: dict[str, Any] = {}
     if range is not None:
@@ -113,6 +120,8 @@ def spec(
         meta["schema_only"] = True
     if construction_baked:
         meta["construction_baked"] = True
+    if benchmark_locked is not None:
+        meta["benchmark_locked"] = benchmark_locked
     return meta
 
 
@@ -255,6 +264,7 @@ class SearchModeConfig:
             env="CLAUDE_BM25_WEIGHT",
             mcp="search_mode",
             reader="search/hybrid_searcher.py",
+            benchmark_locked="ADR-0019 (intent-adaptive fusion rejected, static weights kept)",
         ),
     )
     dense_weight: float = field(
@@ -265,6 +275,7 @@ class SearchModeConfig:
             env="CLAUDE_DENSE_WEIGHT",
             mcp="search_mode",
             reader="search/hybrid_searcher.py",
+            benchmark_locked="ADR-0019 (intent-adaptive fusion rejected, static weights kept)",
         ),
     )
 
@@ -288,6 +299,7 @@ class SearchModeConfig:
             flat_alias="bm25_k1",
             reader="search/hybrid_searcher.py",
             construction_baked=True,
+            benchmark_locked="fusion sweep saturated",
         ),
     )
     bm25_b: float = field(
@@ -296,6 +308,7 @@ class SearchModeConfig:
             flat_alias="bm25_b",
             reader="search/hybrid_searcher.py",
             construction_baked=True,
+            benchmark_locked="fusion sweep saturated",
         ),
     )
     # Also in FORBIDDEN_AUTO_TUNE_KEYS (A/B 2026-08-01: removing regresses
@@ -306,6 +319,7 @@ class SearchModeConfig:
             flat_alias="bm25_use_stopwords",
             reader="search/hybrid_searcher.py",
             construction_baked=True,
+            benchmark_locked="A/B 2026-08-01: removing regresses recall@5/MRR",
         ),
     )
     # Not in FORBIDDEN_AUTO_TUNE_KEYS — covered by neither guardrail today.
@@ -335,6 +349,7 @@ class SearchModeConfig:
             flat_alias="bm25_tokenizer",
             reader="search/hybrid_searcher.py",
             construction_baked=True,
+            benchmark_locked="INDEX_VERSION 4 (identifier-preserving 'whole' tokenizer)",
         ),
     )
     # Reserved fused-pool slots for BM25-unique candidates. Under weighted RRF
@@ -346,7 +361,9 @@ class SearchModeConfig:
     bm25_reserved_slots: int = field(
         default=0,
         metadata=spec(
-            flat_alias="bm25_reserved_slots", reader="search/search_executor.py"
+            flat_alias="bm25_reserved_slots",
+            reader="search/search_executor.py",
+            benchmark_locked="rejected 2026-07-28 (9/9 sweep runs, no Q12 pool_hit)",
         ),
     )
     min_bm25_score: float = field(
@@ -407,6 +424,7 @@ class SearchModeConfig:
             flat_alias="rrf_k_parameter",
             reader="search/hybrid_searcher.py",
             construction_baked=True,
+            benchmark_locked="fusion sweep saturated, do not re-sweep",
         ),
     )
 
@@ -614,6 +632,7 @@ class MultiHopConfig:
             flat_alias="multi_hop_expansion",
             env="CLAUDE_MULTI_HOP_EXPANSION",
             reader="search/hybrid_searcher.py",
+            benchmark_locked="expansion_factor stays 0.5 (0.25 arm rejected 2026-08-02)",
         ),
     )
     initial_k_multiplier: float = field(
@@ -627,7 +646,9 @@ class MultiHopConfig:
     multi_hop_mode: str = field(
         default="hybrid",  # "semantic" | "graph" | "hybrid"
         metadata=spec(
-            flat_alias="multi_hop_mode", reader="search/multi_hop_searcher.py"
+            flat_alias="multi_hop_mode",
+            reader="search/multi_hop_searcher.py",
+            benchmark_locked="tuned; do not re-tune without a new A/B",
         ),
     )
     edge_weights: dict[str, float] | None = field(
@@ -764,6 +785,7 @@ class RerankerConfig:
             flat_alias="reranker_single_pass",
             env="CLAUDE_RERANKER_SINGLE_PASS",
             reader="search/search_executor.py",
+            benchmark_locked="kills recall; latency knob only, not quality",
         ),
     )
     instruction: str = field(
@@ -834,6 +856,10 @@ class RerankerConfig:
             env="CLAUDE_RERANKER_DOC_REPRESENTATION_MODE",
             reader="search/neural_reranker.py",
             construction_baked=True,
+            benchmark_locked=(
+                "signature_head rejected 2026-08-14 (REMAINING_LEVERS_AB: recall@10/20 "
+                "CI-negative on 133q, 11 pool_hit losses vs 2 gains)"
+            ),
         ),
     )  # A4 pilot (docs/plans/RAG_IMPROVEMENT_ROADMAP_20260814.md): how
     # _build_rerank_document renders each candidate for the listwise/generative
@@ -865,6 +891,7 @@ class RerankerConfig:
             flat_alias="reranker_hop1_reserved_slots",
             env="CLAUDE_RERANKER_HOP1_RESERVED_SLOTS",
             reader="search/rerank_window_policy.py",
+            benchmark_locked="ADR-0013",
         ),
     )
     merged_pool_policy: str = field(
@@ -903,6 +930,10 @@ class RerankerConfig:
             choices=("score", "score_reserve_fix", "channel_priority"),
             flat_alias="reranker_merged_pool_policy",
             reader="search/rerank_window_policy.py",
+            benchmark_locked=(
+                "POOL_ORDER_AB_20260815: channel_priority breaches 63q MRR/recall@5 "
+                "guard-rail; score_reserve_fix never clears the recall CI upside bar"
+            ),
         ),
     )
     graph_hop_window_cap: int = field(
@@ -925,6 +956,11 @@ class RerankerConfig:
             flat_alias="reranker_graph_hop_window_cap",
             env="CLAUDE_RERANKER_GRAPH_HOP_WINDOW_CAP",
             reader="search/rerank_window_policy.py",
+            benchmark_locked=(
+                "POOL_ORDER_CAP_AB_20260815: neither cap=2 nor cap=3 clears the "
+                "133q recall@10/recall@20 upside CI (both include zero, both point "
+                "estimates negative)"
+            ),
         ),
     )
 
@@ -1091,6 +1127,11 @@ class EgoGraphConfig:
             range=(1, 50),
             flat_alias="ego_graph_max_neighbors_per_hop",
             reader="search/ego_graph_retriever.py",
+            benchmark_locked=(
+                "EGO_GATE2_AB_20260901: w50-vs-w15 recall@10/recall@20 upside CI "
+                "includes zero on both 63q and 133q; 133q latency +311ms/query "
+                "flagged — gate-2 cap-relief seam rejected, stays at canon default 10"
+            ),
         ),
     )
     relation_types: list | None = field(
@@ -1151,6 +1192,11 @@ class EgoGraphConfig:
         metadata=spec(
             flat_alias="drop_nonpositive_output",
             reader="search/hybrid_searcher.py",
+            benchmark_locked=(
+                "CONFIDENCE_EGO_AB_20260816: recall@20 CI excludes zero on the loss "
+                "side on both 63q and 133q; recall@10 upside CI includes zero both "
+                "sets — fails the Phase 5 gate, stays default-off"
+            ),
         ),
     )
 
@@ -1186,7 +1232,9 @@ class GraphEnhancedConfig:
     centrality_alpha: float = field(
         default=0.0,
         metadata=spec(
-            flat_alias="centrality_alpha", reader="search/graph_scoring_stage.py"
+            flat_alias="centrality_alpha",
+            reader="search/graph_scoring_stage.py",
+            benchmark_locked="higher alphas cost recall (replicated)",
         ),
     )
     centrality_annotation: bool = field(
@@ -1261,6 +1309,11 @@ class GraphEnhancedConfig:
         metadata=spec(
             flat_alias="centrality_exclude_phantoms",
             reader="search/centrality_ranker.py",
+            benchmark_locked=(
+                "ADR-0055 pending: pre-flight found phantoms are 75% of the top-20 "
+                "raw-PageRank nodes on this repo's own index and the #1 node is a "
+                "phantom; pre-registered A/B result not yet recorded, stays default-off"
+            ),
         ),
     )
     # Post-centrality result cap: total results kept = k * this multiplier
@@ -1330,6 +1383,10 @@ class GraphEnhancedConfig:
         metadata=spec(
             flat_alias="drop_ambiguous_traversal_edges",
             reader="graph/traversal_policy.py",
+            benchmark_locked=(
+                "AMBIGUOUS_EDGE_AB_20260902: live 63q/133q A/B gated on recall@10/"
+                "recall@20 paired bootstrap; retrieval-quality knob, human decision"
+            ),
         ),
     )
     # Fix #2 (partial mitigation): default for find_connections' `hide_ambiguous`
@@ -1424,6 +1481,7 @@ class QueryExpansionConfig:
         metadata=spec(
             flat_alias="query_expansion_enabled",
             reader="search/search_executor.py",
+            benchmark_locked="ADR-0012 re-eval closed 2026-08-02, stays disabled",
         ),
     )  # Opt-in pending A/B (flip on pass, BM25-only)
     variants_path: str = field(
@@ -1813,6 +1871,26 @@ def _derive_construction_baked_fields(
     return frozenset(baked)
 
 
+def _derive_benchmark_locks(subconfig_types: dict[str, type]) -> dict[str, str]:
+    """Derive ``{"section.field": citation}`` for every field declared with
+    ``spec(benchmark_locked=...)``.
+
+    Single declaration site per ADR-0022: a benchmark-pinned field carries its
+    own "do not re-tune" citation on its ``spec()`` row instead of being
+    restated in a hand-typed frozenset and a parallel citations dict in
+    ``search/index_probe.py``. ``index_probe.FORBIDDEN_AUTO_TUNE_KEYS`` and
+    ``index_probe.BENCHMARK_LOCK_CITATIONS`` are views over this table (plus
+    the one non-benchmark routing lock, ``embedding.model_name``).
+    """
+    locks: dict[str, str] = {}
+    for section_name, section_cls in subconfig_types.items():
+        for f in dataclasses.fields(section_cls):
+            citation = f.metadata.get("benchmark_locked")
+            if citation is not None:
+                locks[f"{section_name}.{f.name}"] = citation
+    return locks
+
+
 class SearchConfig:
     """Root configuration with nested sub-configs.
 
@@ -1953,6 +2031,13 @@ class SearchConfig:
     # evaluation/arm_overrides.py's requires_rebuild().
     _CONSTRUCTION_BAKED_FIELDS: frozenset[tuple[str, str]] = (
         _derive_construction_baked_fields(_SUBCONFIG_TYPES)
+    )
+
+    # "section.field" -> why it must not be auto-tuned. Derived from each
+    # field's spec(benchmark_locked=...) — see ADR-0022. search/index_probe.py
+    # builds FORBIDDEN_AUTO_TUNE_KEYS / BENCHMARK_LOCK_CITATIONS from this.
+    _BENCHMARK_LOCK_CITATIONS: dict[str, str] = _derive_benchmark_locks(
+        _SUBCONFIG_TYPES
     )
 
     @staticmethod
