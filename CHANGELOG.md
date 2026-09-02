@@ -260,6 +260,17 @@ routing (ADR-0054), test-suite hardening Phases 13-14, and three canon re-baseli
 
 ### Dependencies
 
+- **Dependency audit 2026-09-02** (`audit_reports/2026-09-02-1253-audit-summary.md`) — 180
+  packages audited, 5 CVEs across 4 packages:
+  - **setuptools 81.0.0 → 84.0.0** — fixes CVE-2026-59890 / GHSA-h35f-9h28-mq5c (high);
+    applied and `uv.lock` re-synced in this release.
+  - **torch 2.11.0+cu128** — CVE-2025-3000 (GHSA-rrmf-rvhw-rf47), fix at 2.13.0; deferred
+    — ML-core, requires tested ecosystem upgrade beyond this release scope.
+  - **nltk 3.10.3** — PYSEC-2026-3740 / CVE-2026-81726, no fix released yet; monitor.
+  - **sqlitedict 2.1.0** — PYSEC-2026-1939 / CVE-2024-35515, no fix released yet; monitor.
+  - 56 packages outdated beyond the above (priority items: `pyan3` 2.6.2→2.8.1,
+    `sentence-transformers` 5.7.0→6.0.1, `tree-sitter` 0.25.2→0.26.0); no regressions
+    expected on this release, deferred to a follow-up sweep.
 - Dependency audits 2026-08-20 and 2026-09-01 (`audit_reports/`); `setproctitle` repaired;
   `uv.lock` synced for radon/crap4py; `evaluation/` packaged as importable.
 
