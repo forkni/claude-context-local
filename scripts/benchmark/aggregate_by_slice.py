@@ -28,7 +28,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-METRICS = ("mrr", "recall@5", "recall@10", "ndcg@5", "hit")
+METRICS = ("mrr", "recall@5", "recall@10", "recall@20", "ndcg@5", "hit")
 
 
 def _mean(values: list[float]) -> float:

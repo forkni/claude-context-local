@@ -80,6 +80,7 @@ from evaluation.metrics import (  # noqa: E402
     resolve_chunk_ids_to_ranges,
     to_file_entries,
 )
+from evaluation.paired_bootstrap import paired_bootstrap_ci  # noqa: E402
 from evaluation.probe_harness import ensure_pinned_hash_seed  # noqa: E402
 from search.config import SearchConfig  # noqa: E402
 
@@ -1492,7 +1493,7 @@ def print_per_query_drilldown(
 
 # Metrics reported by the paired-CI summary in compare_runs(). Kept in sync
 # with aggregate_by_slice.py's METRICS so the two post-hoc report tools agree.
-_PAIRED_CI_METRICS = ("mrr", "recall@5", "recall@10", "ndcg@5", "hit")
+_PAIRED_CI_METRICS = ("mrr", "recall@5", "recall@10", "recall@20", "ndcg@5", "hit")
 
 # Below this many non-zero-delta pairs, a normal-approximation CI is not
 # meaningful (a single moved query can already look "significant") -- print
@@ -1565,7 +1566,10 @@ def compare_runs(result_files: list[str], split: str | None = None) -> None:
             f"\n--- Paired delta: '{r1['config_name']}' -> '{r2['config_name']}' "
             f"(n={len(set(q1) & set(q2))} shared queries{split_str}) ---"
         )
-        header = f"{'metric':<12}{'mean_d':>10}{'SE':>9}  {'95% CI':>19}{'n_moved':>9}{'n':>6}"
+        header = (
+            f"{'metric':<12}{'mean_d':>10}{'SE':>9}  {'95% CI (normal)':>19}"
+            f"{'95% CI (bootstrap)':>21}{'n_moved':>9}{'n':>6}"
+        )
         print(header)
         print("-" * len(header))
         for metric in _PAIRED_CI_METRICS:
@@ -1575,9 +1579,16 @@ def compare_runs(result_files: list[str], split: str | None = None) -> None:
                 continue
             mean_delta, se, ci95, n_moved, n = summary
             ci_str = f"[{mean_delta - ci95:+.4f}, {mean_delta + ci95:+.4f}]"
+            metric_deltas = [
+                float(q.get(metric, 0.0)) - float(q1[qid].get(metric, 0.0))
+                for qid, q in q2.items()
+                if qid in q1 and metric in q and metric in q1[qid]
+            ]
+            _, boot_lo, boot_hi = paired_bootstrap_ci(metric_deltas)
+            boot_str = f"[{boot_lo:+.4f}, {boot_hi:+.4f}]"
             print(
                 f"{metric:<12}{mean_delta:>+10.4f}{se:>9.4f}  {ci_str:>19}"
-                f"{n_moved:>9}{n:>6}"
+                f"{boot_str:>21}{n_moved:>9}{n:>6}"
             )
 
         deltas = []

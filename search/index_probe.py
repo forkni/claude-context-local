@@ -94,6 +94,7 @@ FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
         "multi_hop.expansion",
         "multi_hop.multi_hop_mode",
         "ego_graph.drop_nonpositive_output",
+        "ego_graph.max_neighbors_per_hop",
         "embedding.model_name",  # routes to a different per-model index dir
     }
 )
@@ -137,6 +138,11 @@ BENCHMARK_LOCK_CITATIONS: dict[str, str] = {
         "CONFIDENCE_EGO_AB_20260816: recall@20 CI excludes zero on the loss "
         "side on both 63q and 133q; recall@10 upside CI includes zero both "
         "sets — fails the Phase 5 gate, stays default-off"
+    ),
+    "ego_graph.max_neighbors_per_hop": (
+        "EGO_GATE2_AB_20260901: w50-vs-w15 recall@10/recall@20 upside CI "
+        "includes zero on both 63q and 133q; 133q latency +311ms/query "
+        "flagged — gate-2 cap-relief seam rejected, stays at canon default 10"
     ),
     "graph_enhanced.centrality_exclude_phantoms": (
         "ADR-0055 pending: pre-flight found phantoms are 75% of the top-20 "
