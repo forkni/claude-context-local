@@ -15,7 +15,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from mcp_server.tool_handlers import handle_index_directory
+from mcp_server.tool_specs import handle_index_directory
 
 
 def _dry_run(
@@ -27,7 +27,7 @@ def _dry_run(
     (defaults + include + exclude) the real indexing path uses, but skips
     hashing/chunking/embedding entirely. Prints a per-pattern breakdown of
     matched files/size, and flags any pattern that matched zero
-    files/directories — the silent-failure class this preview exists to catch
+    files/directories - the silent-failure class this preview exists to catch
     (e.g. a typo'd or absent package name under site-packages).
 
     Args:
@@ -179,13 +179,13 @@ def main():
         "--include-dirs",
         help='Comma-separated directories to include (e.g., "src,lib"). Omit to reuse '
         "the stored list; passing this REPLACES it wholesale (not merged) and forces "
-        "a full reindex — always re-pass every directory you still want included.",
+        "a full reindex - always re-pass every directory you still want included.",
     )
     parser.add_argument(
         "--exclude-dirs",
         help='Comma-separated directories to exclude (e.g., "tests,vendor"). Omit to '
         "reuse the stored list; passing this REPLACES it wholesale (not merged) and "
-        "forces a full reindex — always re-pass every directory you still want excluded, "
+        "forces a full reindex - always re-pass every directory you still want excluded, "
         "or the omitted ones silently become indexable again.",
     )
     parser.add_argument(
@@ -228,7 +228,7 @@ def main():
     if args.include_dirs:
         include_dirs = [d.strip() for d in args.include_dirs.split(",") if d.strip()]
     elif args.mode == "new":
-        # "new" means first-time/from-scratch indexing — explicitly clear any
+        # "new" means first-time/from-scratch indexing - explicitly clear any
         # filters stored from a prior index of this same path instead of
         # silently inheriting them. None (the default when the flag is
         # omitted) means "caller didn't specify" and triggers snapshot
@@ -324,7 +324,7 @@ def main():
             # Single-model results
             else:
                 # Effective filters actually used for this run (explicit CLI
-                # flag or, when omitted, the project's stored filters) —
+                # flag or, when omitted, the project's stored filters) -
                 # surfaced here so a corpus-size surprise (e.g. 9,211 chunks
                 # instead of ~2,182) is visible instead of silently indexing
                 # the whole tree.

@@ -241,6 +241,68 @@ def test_get_centrality_scores_memo_hit_returns_equal_but_distinct_dict(
     assert first is not second
 
 
+def test_get_centrality_scores_passes_exclude_phantoms_false_when_no_config(
+    mock_graph_query_engine,
+):
+    """No config (config=None) must call compute_centrality with
+    exclude_phantoms=False -- the pre-existing default behavior, unchanged."""
+    ranker = CentralityRanker(mock_graph_query_engine, method="pagerank", alpha=0.3)
+    ranker.get_centrality_scores()
+    _, kwargs = mock_graph_query_engine.compute_centrality.call_args
+    assert kwargs["exclude_phantoms"] is False
+
+
+def test_get_centrality_scores_passes_exclude_phantoms_true_when_configured(
+    mock_graph_query_engine,
+):
+    """config.centrality_exclude_phantoms=True must thread through to
+    compute_centrality's exclude_phantoms kwarg (Workstream E, ADR-0055)."""
+    from search.config import GraphEnhancedConfig
+
+    config = GraphEnhancedConfig(centrality_exclude_phantoms=True)
+    ranker = CentralityRanker(
+        mock_graph_query_engine, method="pagerank", alpha=0.3, config=config
+    )
+    ranker.get_centrality_scores()
+    _, kwargs = mock_graph_query_engine.compute_centrality.call_args
+    assert kwargs["exclude_phantoms"] is True
+
+
+def test_composite_cache_key_does_not_collide_across_flag_values(
+    mock_graph_query_engine,
+):
+    """Two rankers sharing one storage -- one with exclude_phantoms=True, one
+    with False -- must not serve each other's cached scores. The storage-level
+    memo (CodeGraphStorage.get_cached_centrality/set_cached_centrality) keys on
+    method alone, so the composite cache key ('<method>:no_phantoms' vs plain
+    '<method>') is what prevents the collision."""
+    from search.config import GraphEnhancedConfig
+
+    plain_ranker = CentralityRanker(
+        mock_graph_query_engine, method="pagerank", alpha=0.3
+    )
+    excluding_config = GraphEnhancedConfig(centrality_exclude_phantoms=True)
+    excluding_ranker = CentralityRanker(
+        mock_graph_query_engine, method="pagerank", alpha=0.3, config=excluding_config
+    )
+
+    plain_ranker.get_centrality_scores()
+    excluding_ranker.get_centrality_scores()
+
+    cache = mock_graph_query_engine.storage._centrality_cache
+    assert "pagerank" in cache
+    assert "pagerank:no_phantoms" in cache
+
+    # Each ranker's second call must hit its own memo entry, not recompute.
+    call_count_after_first_round = mock_graph_query_engine.compute_centrality.call_count
+    plain_ranker.get_centrality_scores()
+    excluding_ranker.get_centrality_scores()
+    assert (
+        mock_graph_query_engine.compute_centrality.call_count
+        == call_count_after_first_round
+    )
+
+
 def test_convergence_failure_returns_empty_scores():
     """Test that PageRank convergence failure returns empty scores."""
     engine = MagicMock()

@@ -138,6 +138,20 @@ class TestProfileRepositoryStatistics:
 
         assert profile is None  # the only file was skipped -> 0 functions found
 
+    def test_max_file_size_bytes_derives_from_chunking_config(self):
+        """Workstream B3: MAX_FILE_SIZE_BYTES must come from
+        ChunkingConfig.max_file_size_bytes's default, not an independently
+        hand-maintained `5 * 1024 * 1024` literal that could silently drift
+        from MultiLanguageChunker.chunk_file's cap
+        (chunking/multi_language_chunker.py)."""
+        import chunking.repo_profiler as repo_profiler_module
+        from search.config import ChunkingConfig
+
+        assert (
+            ChunkingConfig().max_file_size_bytes
+            == repo_profiler_module.MAX_FILE_SIZE_BYTES
+        )
+
     def test_missing_file_is_skipped_not_raised(self, tmp_path):
         content = _make_source(_MIXED_BODIES)
         rel_path = _write(tmp_path, "sample.py", content)
@@ -148,12 +162,15 @@ class TestProfileRepositoryStatistics:
         assert profile.function_count == len(_MIXED_BODIES)
 
     def test_counters_sum_to_total_supported_files(self, tmp_path, monkeypatch, caplog):
-        """scanned + skipped + empty must equal len(supported_files) (item C).
-        Two `continue` paths in profile_repository -- parse_file returning
-        None, and empty/whitespace-only content -- previously incremented
-        neither counter, so `Scanned N files (M skipped)` silently
-        under-reported against the file count the indexer said it would
-        profile."""
+        """scanned + skipped + unparsed + empty must equal len(supported_files)
+        (item C). Two `continue` paths in profile_repository -- parse_file
+        returning None (`unparsed`), and empty/whitespace-only content
+        (`empty`) -- previously incremented neither counter, so
+        `Scanned N files (M skipped)` silently under-reported against the
+        file count the indexer said it would profile. The two paths are
+        counted separately (Workstream C2) since they have different causes:
+        `unparsed` covers several distinct parse_file failure modes, while
+        `empty` is specifically blank/whitespace-only content."""
         import chunking.repo_profiler as repo_profiler_module
 
         monkeypatch.setattr(repo_profiler_module, "MAX_FILE_SIZE_BYTES", 100)
@@ -177,13 +194,15 @@ class TestProfileRepositoryStatistics:
         ]
         assert len(scan_lines) == 1
         match = re.search(
-            r"Scanned (\d+) files \((\d+) skipped, (\d+) empty\)", scan_lines[0]
+            r"Scanned (\d+) files \((\d+) skipped, (\d+) unparsed, (\d+) empty\)",
+            scan_lines[0],
         )
         assert match is not None, scan_lines[0]
-        scanned, skipped, empty = (int(g) for g in match.groups())
-        assert scanned + skipped + empty == len(supported_files)
+        scanned, skipped, unparsed, empty = (int(g) for g in match.groups())
+        assert scanned + skipped + unparsed + empty == len(supported_files)
         assert scanned == 1  # normal.py
         assert skipped == 1  # oversized.py
+        assert unparsed == 0  # nothing hits the parse_file-returned-None path here
         assert empty == 1  # empty.py
 
 

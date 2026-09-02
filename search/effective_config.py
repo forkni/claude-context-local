@@ -54,18 +54,27 @@ def build_effective_config(
         return config_copy
 
     if is_hybrid:
-        if plan.ego_graph_enabled:
+        # Tri-state gate: None means the request omitted ego_graph_enabled and defers
+        # to base_config's own ego_graph.enabled default (no copy, no override at all).
+        # True/False are explicit per-request overrides — both mutate a copy, but only
+        # True also applies the hop-count overrides; an explicit False just turns
+        # expansion off and leaves k_hops/max_neighbors_per_hop untouched.
+        if plan.ego_graph_enabled is not None:
             cfg = mutable_config()
-            cfg.ego_graph = replace(
-                cfg.ego_graph,
-                enabled=plan.ego_graph_enabled,
-                k_hops=plan.ego_graph_k_hops,
-                max_neighbors_per_hop=plan.ego_graph_max_neighbors,
-            )
-            logger.info(
-                f"[EGO_GRAPH] Enabled with k_hops={plan.ego_graph_k_hops}, "
-                f"max_neighbors_per_hop={plan.ego_graph_max_neighbors}"
-            )
+            if plan.ego_graph_enabled:
+                cfg.ego_graph = replace(
+                    cfg.ego_graph,
+                    enabled=True,
+                    k_hops=plan.ego_graph_k_hops,
+                    max_neighbors_per_hop=plan.ego_graph_max_neighbors,
+                )
+                logger.info(
+                    f"[EGO_GRAPH] Enabled with k_hops={plan.ego_graph_k_hops}, "
+                    f"max_neighbors_per_hop={plan.ego_graph_max_neighbors}"
+                )
+            else:
+                cfg.ego_graph = replace(cfg.ego_graph, enabled=False)
+                logger.info("[EGO_GRAPH] Explicitly disabled")
 
         if plan.include_parent:
             cfg = mutable_config()

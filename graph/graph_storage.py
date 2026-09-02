@@ -29,7 +29,9 @@ from graph.schema import (
     NODE_TYPE_SYMBOL_NAME,
     edge_relation_type,
     get_reverse_relation,
+    is_phantom_node,
 )
+from graph.traversal_policy import TraversalPolicy
 from utils.atomic_io import write_json_atomic
 from utils.path_utils import normalize_path
 
@@ -45,6 +47,88 @@ import networkx as nx
 # These must be passed through unchanged by get_edge_data — do NOT coerce to float.
 # Downstream enrichers (_enrich_callers/_enrich_callees) read them as string tokens.
 _LEGACY_CONFIDENCE_TAGS: frozenset[str] = frozenset({"exact", "ambiguous", "recovered"})
+
+# Numeric proxy for the legacy string confidence tags, used only by
+# `edge_confidence()` below when no float `resolver_confidence` is present.
+# Values are below every real resolver score (pyan 0.75 / libcst 0.90 / lsp 0.98)
+# so a tagged-but-unresolved edge never outranks a resolver-verified one.
+AST_CONFIDENCE_BY_TAG: dict[str, float] = {
+    "ambiguous": 0.5,
+    "recovered": 0.5,
+    "exact": 0.7,
+}
+
+
+def edge_confidence(edge_data: dict, edge_type: "str | None" = None) -> "float | None":
+    """Resolve an edge's confidence to a float, or ``None`` when truly unknown.
+
+    Canonical confidence-resolution algorithm, used directly by
+    :meth:`CodeGraphStorage.get_neighbors` (traversal), which maps ``None`` to
+    ``1.0`` (permissive — never silently prune). Two other layers apply this
+    same "unknown" policy but do not call this function directly, because
+    doing so would pull in the string-tag mapping below and change their
+    existing ordering (out of scope for a no-op fix — see
+    ``search/relationship_analyzer.py:220,226,483,574``, which defaults bare
+    ``resolver_confidence`` to ``0.5`` and intentionally ignores the
+    ``confidence`` string tag for sort/dedup purposes — it is read
+    separately and surfaced as ``d["confidence"]``, so folding it into the
+    float here would double-count it and shift every ``exact``-tagged edge
+    from ``0.5`` to ``0.7`` — and ``mcp_server/tools/result_view.py``'s
+    ``_enrich_results_with_top_callers``, which defaults to ``0.0`` so
+    unranked callers always sort last). Returning ``None`` for "unknown"
+    here — rather than baking in one of those three defaults — is what lets
+    each layer keep its own documented policy instead of silently agreeing on
+    one magic constant.
+
+    Resolution order:
+      1. Float ``resolver_confidence`` (written by the resolver pipeline:
+         pyan 0.75 / libcst 0.90 / lsp 0.98) — the ground truth when present.
+      2. Legacy string ``confidence`` tag ("exact"/"ambiguous"/"recovered"),
+         mapped via :data:`AST_CONFIDENCE_BY_TAG`.
+      3. ``0.5`` when ``edge_type == "calls"`` and neither of the above is
+         present — the common case for untagged base-AST call edges when the
+         ``[callgraph]`` extras are not installed (~80% of `calls` edges on a
+         typical index carry no confidence signal at all).
+      4. ``None`` otherwise — non-call relationship edges with no tag/float.
+
+    Args:
+        edge_data: Edge attribute dict from the NetworkX graph.
+        edge_type: The edge's forward relationship type (e.g. from
+            :func:`graph.schema.edge_relation_type`), or ``None`` if unknown
+            to the caller.
+
+    Returns:
+        A confidence float, or ``None`` when no signal is available.
+    """
+    confidence = edge_data.get("resolver_confidence")
+    if isinstance(confidence, (int, float)):
+        return float(confidence)
+    tag = edge_data.get("confidence")
+    if isinstance(tag, str) and tag in AST_CONFIDENCE_BY_TAG:
+        return AST_CONFIDENCE_BY_TAG[tag]
+    if edge_type == "calls":
+        return 0.5
+    return None
+
+
+def is_ambiguous_call_edge(edge_data: dict) -> bool:
+    """True for a ``tag:ambiguous`` call edge: an AST-resolver edge carrying
+    the legacy ``confidence == "ambiguous"`` string tag and no float
+    ``resolver_confidence`` (a resolver that later validated the edge writes a
+    float, which supersedes the tag exactly as in :func:`edge_confidence`).
+
+    These are the AST resolver's same-name fan-out edges (one call site to
+    every same-named definition). ``find_connections`` already hides them by
+    default (``hide_ambiguous_edges_default``); this predicate lets traversal
+    drop them too (``GraphEnhancedConfig.drop_ambiguous_traversal_edges``).
+    """
+    if isinstance(edge_data.get("resolver_confidence"), (int, float)):
+        return False
+    return (
+        edge_relation_type(edge_data) == "calls"
+        and edge_data.get("confidence") == "ambiguous"
+    )
+
 
 # Edge-type weights for weighted BFS (SOG paper: data flow > control flow > effect flow)
 # Higher weight = higher priority in graph traversal
@@ -443,46 +527,37 @@ class CodeGraphStorage:
         # In a directed graph, successors are callees
         return list(self.graph.successors(normalized_chunk_id))
 
-    def get_neighbors(
-        self,
-        chunk_id: str,
-        relation_types: list[str] | None = None,
-        max_depth: int = 1,
-        exclude_import_categories: list[str] | None = None,
-        edge_weights: dict[str, float] | None = None,
-    ) -> set[str]:
+    def _traverse_neighbors(
+        self, normalized_chunk_id: str, policy: TraversalPolicy
+    ) -> Iterator[str]:
+        """Shared BFS/priority traversal, yielding each neighbor exactly once
+        at first discovery.
+
+        ``policy`` (see :class:`~graph.traversal_policy.TraversalPolicy`)
+        carries everything about the walk: relation filter, depth, import
+        exclusions, weights, and the edge gates. Each edge passes through
+        :meth:`TraversalPolicy.admits` with its resolved ambiguity flag and
+        confidence; dropped edges drop only themselves, so a node stays
+        reachable via any surviving edge.
+
+        This is the single generator behind both ``get_neighbors`` (collects
+        the yielded IDs into a ``set``) and ``get_neighbors_ranked`` (keeps
+        them as an ordered ``list``) — the two callers can never drift apart
+        on *which* nodes are reachable because they share this one walk.
+
+        Unweighted mode (``policy.edge_weights is None``) yields in BFS level
+        order (queue pop order). Weighted mode yields in priority-queue pop
+        order (higher edge-type weight, optionally scaled by
+        ``policy.confidence_weighting``, expands first). Both orders are
+        deterministic given a fixed graph and fixed edge-iteration order (see
+        ``_iter_matching_neighbors``) — no ``set`` iteration is involved in
+        either path.
         """
-        Get all related chunks within max_depth hops.
+        relation_types = policy.effective_relation_types
+        exclude_import_categories = policy.exclude_import_categories
+        max_depth = policy.max_depth
+        edge_weights = policy.edge_weights
 
-        Args:
-            chunk_id: Starting chunk ID
-            relation_types: Types of relations to follow (e.g., ["calls", "called_by", "inherits", "imports"])
-                Supports all 21 relationship types. Use "_by" suffix for reverse direction
-                (e.g., "called_by", "imported_by", "inherited_by")
-            max_depth: Maximum graph traversal depth
-            exclude_import_categories: Categories to exclude for "imports" edges
-                (e.g., ["stdlib", "third_party"] to filter out noise)
-            edge_weights: Optional edge-type weights for weighted BFS (higher weight = higher priority).
-                When None, uses unweighted BFS (default behavior). When provided, uses priority queue
-                to expand higher-weight edges first.
-
-        Returns:
-            Set of related chunk IDs
-        """
-        # Normalize path separators to forward slashes for consistent lookup
-        # Query path normalization mismatch
-        normalized_chunk_id = normalize_path(chunk_id)
-
-        if normalized_chunk_id not in self.graph:
-            return set()
-
-        # Default to both directions of call relationships for backward compatibility
-        if relation_types is None:
-            relation_types = ["calls", "called_by"]
-
-        neighbors = set()
-
-        # Choose BFS implementation based on edge_weights parameter
         if edge_weights is None:
             # Unweighted BFS (original behavior, backward compatible)
             queue = deque([(normalized_chunk_id, 0)])
@@ -492,12 +567,17 @@ class CodeGraphStorage:
                 current_id, depth = queue.popleft()
                 if depth >= max_depth:
                     continue
-                for neighbor, _edge_type in self._iter_matching_neighbors(
+                for neighbor, edge_type, edge_data in self._iter_matching_neighbors(
                     current_id, relation_types, exclude_import_categories
                 ):
+                    if policy.gates_edges and not policy.admits(
+                        ambiguous=is_ambiguous_call_edge(edge_data),
+                        confidence=self._edge_confidence(edge_data, edge_type),
+                    ):
+                        continue  # Drop this edge; neighbor may arrive via another
                     if neighbor not in visited:
-                        neighbors.add(neighbor)
                         visited.add(neighbor)
+                        yield neighbor
                         queue.append((neighbor, depth + 1))
 
         else:
@@ -512,32 +592,160 @@ class CodeGraphStorage:
                 _neg_weight, _, current_id, depth = heapq.heappop(pq)
                 if depth >= max_depth:
                     continue
-                for neighbor, edge_type in self._iter_matching_neighbors(
+                for neighbor, edge_type, edge_data in self._iter_matching_neighbors(
                     current_id, relation_types, exclude_import_categories
                 ):
+                    confidence = self._edge_confidence(edge_data, edge_type)
+                    if policy.gates_edges and not policy.admits(
+                        ambiguous=is_ambiguous_call_edge(edge_data),
+                        confidence=confidence,
+                    ):
+                        continue  # Drop this edge; neighbor may arrive via another
                     if neighbor not in visited:
-                        neighbors.add(neighbor)
                         visited.add(neighbor)
+                        yield neighbor
                         # Get weight for the forward edge type (not reverse)
                         weight = edge_weights.get(edge_type, 0.5)
+                        if policy.confidence_weighting:
+                            weight *= confidence
                         counter += 1
                         heapq.heappush(pq, (-weight, counter, neighbor, depth + 1))
 
-        return neighbors
+    def get_neighbors(
+        self,
+        chunk_id: str,
+        relation_types: list[str] | None = None,
+        max_depth: int = 1,
+        exclude_import_categories: list[str] | None = None,
+        edge_weights: dict[str, float] | None = None,
+        min_confidence: float = 0.0,
+        confidence_weighting: bool = False,
+        drop_ambiguous: bool = False,
+    ) -> set[str]:
+        """
+        Get all related chunks within max_depth hops.
+
+        Convenience form of :meth:`get_neighbors_ranked`: the loose keyword
+        arguments below are bundled into a
+        :class:`~graph.traversal_policy.TraversalPolicy` and the ordered
+        result is collapsed to a ``set``.
+
+        Args:
+            chunk_id: Starting chunk ID
+            relation_types: Types of relations to follow (e.g., ["calls", "called_by", "inherits", "imports"])
+                Supports all 21 relationship types. Use "_by" suffix for reverse direction
+                (e.g., "called_by", "imported_by", "inherited_by")
+            max_depth: Maximum graph traversal depth
+            exclude_import_categories: Categories to exclude for "imports" edges
+                (e.g., ["stdlib", "third_party"] to filter out noise)
+            edge_weights: Optional edge-type weights for weighted BFS (higher weight = higher priority).
+                When None, uses unweighted BFS (default behavior). When provided, uses priority queue
+                to expand higher-weight edges first.
+            min_confidence: Drop edges whose confidence (see
+                :func:`edge_confidence`) falls below this floor (both BFS
+                modes). Resolver-verified edges use their float
+                ``resolver_confidence``; legacy-tagged ``calls`` edges
+                ("exact"/"ambiguous"/"recovered") and untagged ``calls`` edges
+                resolve to 0.7/0.5 via :data:`AST_CONFIDENCE_BY_TAG`; edges
+                with no confidence signal at all (non-call relationship
+                types) default to 1.0 and always survive. Default 0.0 = no-op.
+                Drops edges, not nodes — a neighbor also reachable through a
+                surviving edge is still returned.
+            confidence_weighting: Weighted BFS only — multiply each edge's
+                type-weight by its resolved confidence (see
+                :func:`edge_confidence`) so unvalidated (ambiguous-AST) edges
+                stop competing equally with resolver-validated ones for
+                expansion priority. Default False = no-op.
+            drop_ambiguous: Skip every ``tag:ambiguous`` call edge (see
+                :func:`is_ambiguous_call_edge`) in both modes, independently
+                of ``min_confidence``. Default False = no-op.
+
+        Returns:
+            Set of related chunk IDs. Order is not preserved — callers that
+            truncate the result (e.g. ``list(neighbors)[:n]``) get Python's
+            set-iteration order, which is stable within one process but not
+            guaranteed across processes/graph states. Use
+            :meth:`get_neighbors_ranked` when truncation needs to be
+            deterministic and priority-ordered instead.
+        """
+        policy = TraversalPolicy(
+            relation_types=relation_types,
+            max_depth=max_depth,
+            exclude_import_categories=exclude_import_categories,
+            edge_weights=edge_weights,
+            min_confidence=min_confidence,
+            confidence_weighting=confidence_weighting,
+            drop_ambiguous=drop_ambiguous,
+        )
+        return set(self.get_neighbors_ranked(chunk_id, policy))
+
+    def get_neighbors_ranked(
+        self,
+        chunk_id: str,
+        policy: TraversalPolicy | None = None,
+    ) -> list[str]:
+        """Neighbors of ``chunk_id`` in discovery/priority order.
+
+        This is the traversal seam: one anchor, one
+        :class:`~graph.traversal_policy.TraversalPolicy` (``None`` = the
+        all-defaults policy — both call directions, depth 1, unweighted BFS,
+        no gates). :meth:`get_neighbors` is the loose-keyword convenience
+        wrapper over this method, so ``set(get_neighbors_ranked(id, policy))
+        == get_neighbors(id, **policy fields)`` always holds — only the
+        return type differs. Use this when a caller truncates the result
+        (``result[:n]``): unweighted BFS order is level order (closer nodes
+        first); weighted order is edge-type-weight priority (optionally
+        scaled by ``policy.confidence_weighting``). Both are deterministic
+        given a fixed graph, unlike truncating ``list(get_neighbors(...))[:n]``,
+        which depends on Python's set-iteration order.
+
+        Returns:
+            List of related chunk IDs in traversal order, each appearing once;
+            ``[]`` when ``chunk_id`` is not in the graph.
+        """
+        # Normalize path separators to forward slashes for consistent lookup
+        normalized_chunk_id = normalize_path(chunk_id)
+
+        if normalized_chunk_id not in self.graph:
+            return []
+
+        if policy is None:
+            policy = TraversalPolicy()
+
+        return list(self._traverse_neighbors(normalized_chunk_id, policy))
+
+    @staticmethod
+    def _edge_confidence(edge_data: dict, edge_type: "str | None" = None) -> float:
+        """Resolver confidence of an edge for traversal decisions.
+
+        Thin delegate to the module-level :func:`edge_confidence`, applying
+        this layer's own policy for the "unknown" case: **permissive** —
+        default to 1.0 so an edge with no confidence signal is never silently
+        pruned by ``min_confidence`` and traverses exactly as before this
+        helper existed. This is deliberately different from the 0.5 default
+        used by ``relationship_analyzer`` (display ordering) and the 0.0
+        default used by ``result_view`` (caller-hint ranking) — each layer's
+        risk from misjudging an unknown edge is different, so each keeps its
+        own default rather than sharing one magic constant.
+        """
+        confidence = edge_confidence(edge_data, edge_type)
+        return confidence if confidence is not None else 1.0
 
     def _iter_matching_neighbors(
         self,
         current_id: str,
         relation_types: list[str],
         exclude_import_categories: list[str] | None,
-    ) -> Iterator[tuple[str, str]]:
-        """Yield ``(neighbor_id, edge_type)`` for each edge of ``current_id`` that matches.
+    ) -> Iterator[tuple[str, str, dict]]:
+        """Yield ``(neighbor_id, edge_type, edge_data)`` for each matching edge of ``current_id``.
 
         Forward (outgoing) edges are yielded first, then reverse (incoming) edges — the
         same order the BFS bodies in :meth:`get_neighbors` relied on.  ``edge_type`` is
         always the *forward* (stored) relationship type, so callers can compute edge
         weights from it (preserving the "weight for the forward edge type, not reverse"
-        invariant used by the weighted BFS).
+        invariant used by the weighted BFS).  ``edge_data`` is the edge's attribute
+        dict, so callers can additionally read per-edge attributes such as
+        ``resolver_confidence`` (confidence-weighted traversal) without re-querying.
 
         This is the single source of truth for edge-type resolution, requested-type
         matching, and the ``imports`` exclusion filter that was previously duplicated
@@ -564,7 +772,7 @@ class CodeGraphStorage:
                     )
                 ):
                     continue
-                yield target, edge_type
+                yield target, edge_type, edge_data
         # Reverse (incoming) relationships — reverse type matched, forward type yielded
         for source, _, edge_data in self.graph.in_edges(current_id, data=True):
             edge_type = edge_relation_type(edge_data)
@@ -583,7 +791,7 @@ class CodeGraphStorage:
                     )
                 ):
                     continue
-                yield source, edge_type
+                yield source, edge_type, edge_data
 
     def _get_reverse_relation_type(self, relation_type: str) -> str:
         """
@@ -964,6 +1172,59 @@ class CodeGraphStorage:
             self._bump_version()
             self.logger.debug(
                 f"[GRAPH_PRUNE] Removed {len(to_remove)} nodes for '{normalized}'"
+            )
+        return len(to_remove)
+
+    def prune_orphan_symbol_nodes(self) -> int:
+        """Remove placeholder symbol nodes left with no remaining edges.
+
+        Workstream D: `remove_file_nodes` cannot reach phantom nodes -- they are
+        bare unresolved-symbol names with no ``path:`` prefix, so the
+        ``node_id.startswith(prefix)`` match never fires for them. When every
+        file that referenced a phantom is deleted via incremental reindex, the
+        phantom's incident edges go with it, but the phantom node itself is
+        never revisited and accumulates across incremental runs indefinitely.
+        A from-scratch index (via `clear()`) is unaffected, since the whole
+        graph -- phantoms included -- is discarded together.
+
+        Predicate, matching the placeholder-node convention set at node
+        creation (`add_call_edge`, `add_relationship_edge`): a node is a
+        symbol-name placeholder if its ``NODE_ATTR_TYPE`` is
+        ``NODE_TYPE_SYMBOL_NAME`` or its ``NODE_ATTR_IS_TARGET_NAME`` flag is
+        set. Only nodes matching that predicate *and* with degree 0 (no
+        incident edges in either direction) are removed -- a real chunk node
+        that happens to have degree 0 (e.g. a leaf function with no callers
+        and no callees) is never touched, since it fails the type/flag half
+        of the predicate.
+
+        Intended to run after the `remove_file_nodes` loop in an incremental
+        reindex, where degree-0 is exactly the right test: incident edges
+        from deleted files are already gone by the time this runs, so a
+        phantom whose only referents were deleted drops to degree 0 in the
+        same pass.
+
+        Returns:
+            Number of orphan symbol nodes removed.
+        """
+        to_remove = [
+            n
+            for n, data in self.graph.nodes(data=True)
+            if is_phantom_node(data) and self.graph.degree(n) == 0
+        ]
+
+        for node_id in to_remove:
+            node_name = self.graph.nodes[node_id].get("name")
+            if node_name and node_name in self._name_index:
+                with contextlib.suppress(ValueError):
+                    self._name_index[node_name].remove(node_id)
+                if not self._name_index[node_name]:
+                    del self._name_index[node_name]
+            self.graph.remove_node(node_id)
+
+        if to_remove:
+            self._bump_version()
+            self.logger.debug(
+                f"[GRAPH_PRUNE] Removed {len(to_remove)} orphan symbol node(s)"
             )
         return len(to_remove)
 

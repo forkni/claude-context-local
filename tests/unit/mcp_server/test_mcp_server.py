@@ -113,7 +113,7 @@ class TestToolHandlers:
         self, mock_get_search_config
     ):
         """Verify config status returns auto_reindex settings (Issue #3)."""
-        from mcp_server.tool_handlers import handle_get_search_config_status
+        from mcp_server.tool_specs import handle_get_search_config_status
 
         # Mock config with nested structure
         mock_config = MagicMock()
@@ -162,7 +162,7 @@ class TestToolHandlers:
         mock_snapshot_manager_class,
     ):
         """Verify get_index_status returns last_indexed_time from Merkle metadata (Issue #2)."""
-        from mcp_server.tool_handlers import handle_get_index_status
+        from mcp_server.tool_specs import handle_get_index_status
 
         # Mock state
         mock_state = MagicMock()
@@ -214,7 +214,7 @@ class TestToolHandlers:
         self, mock_get_search_config
     ):
         """Verify config status returns multi-hop and stemming settings."""
-        from mcp_server.tool_handlers import handle_get_search_config_status
+        from mcp_server.tool_specs import handle_get_search_config_status
 
         # Mock config with nested structure
         mock_config = MagicMock()
@@ -261,7 +261,7 @@ class TestToolHandlers:
         self, mock_get_search_config, mock_get_config_manager
     ):
         """Config status surfaces per-project overrides provenance (ADR-0014)."""
-        from mcp_server.tool_handlers import handle_get_search_config_status
+        from mcp_server.tool_specs import handle_get_search_config_status
 
         mock_get_search_config.return_value = MagicMock()
 
@@ -300,7 +300,7 @@ class TestToolHandlers:
     @patch("mcp_server.tools.status_handlers.get_state")
     async def test_list_embedding_models_includes_vram(self, mock_get_state):
         """Verify list_embedding_models includes vram_gb field."""
-        from mcp_server.tool_handlers import handle_list_embedding_models
+        from mcp_server.tool_specs import handle_list_embedding_models
 
         # Mock state
         mock_state = MagicMock()
@@ -343,7 +343,7 @@ class TestToolHandlers:
         mock_cuda_available,
     ):
         """Verify memory status returns GPU hardware details."""
-        from mcp_server.tool_handlers import handle_get_memory_status
+        from mcp_server.tool_specs import handle_get_memory_status
 
         # Mock GPU properties
         mock_props = MagicMock()
@@ -433,3 +433,171 @@ class TestToolHandlers:
         assert "No indexed project found" in result["error"]
         assert result["current_project"] is None
         assert "index_directory" in result["message"]
+
+
+class TestIsCarvedOutErrorShape:
+    """Direct unit tests for _is_carved_out_error_shape (D5).
+
+    Before this fix, handle_call_tool never set CallToolResult(is_error=True) for
+    a handler's own error dicts -- only for exceptions that escaped the handler
+    entirely (the try/except Exception at the bottom of handle_call_tool). This
+    helper is the discriminator that lets handle_call_tool tell a genuine
+    handler-level failure apart from the two shapes below, which carry a
+    top-level "error" key despite the *call itself* having succeeded.
+    """
+
+    def test_failed_job_status_poll_is_carved_out(self):
+        """Job.to_status_dict() (job_registry.py:52-53) on a failed job: the poll
+        succeeded, it's reporting that the polled *job* failed."""
+        from mcp_server.server import _is_carved_out_error_shape
+
+        result = {
+            "job_id": "abc123",
+            "status": "error",
+            "error": "indexing failed: disk full",
+        }
+        assert _is_carved_out_error_shape(result) is True
+
+    def test_client_disconnected_is_carved_out(self):
+        """responses.client_disconnected() (responses.py:67-69)."""
+        from mcp_server.server import _is_carved_out_error_shape
+
+        result = {"error": "Client disconnected", "status": "cancelled"}
+        assert _is_carved_out_error_shape(result) is True
+
+    def test_genuine_handler_error_without_status_key_is_not_carved_out(self):
+        """The common shape (e.g. responses.error()'s "No indexed project found"):
+        no sibling "status" key, so this must NOT be treated as a carve-out."""
+        from mcp_server.server import _is_carved_out_error_shape
+
+        result = {"error": "No indexed project found", "current_project": None}
+        assert _is_carved_out_error_shape(result) is False
+
+    def test_running_job_status_poll_is_also_carved_out(self):
+        """status="running"/"done" are JobStatus values too (job_registry.py:24)
+        -- included in the discriminator for completeness even though
+        to_status_dict() only adds the "error" key when status=="error"
+        (handle_call_tool only calls this helper once "error" in result)."""
+        from mcp_server.server import _is_carved_out_error_shape
+
+        result = {"job_id": "abc123", "status": "running", "error": "n/a"}
+        assert _is_carved_out_error_shape(result) is True
+
+
+class TestHandleCallToolErrorClassification:
+    """End-to-end tests for handle_call_tool's is_error wiring (D5).
+
+    Before this fix, an MCP client that only inspected CallToolResult.is_error
+    (rather than parsing the response body for an "error" key) could never
+    detect a handler-level failure -- is_error stayed False on every path except
+    an escaped exception. These exercise the real dispatch path (TOOL_DISPATCH ->
+    handler -> is_error classification), the layer the original plan flagged as
+    having zero coverage.
+    """
+
+    @staticmethod
+    def _params(name, arguments=None):
+        from mcp.types import CallToolRequestParams
+
+        return CallToolRequestParams(name=name, arguments=arguments or {})
+
+    @staticmethod
+    def _mock_output_config():
+        mock_config = MagicMock()
+        mock_config.output.format = "json"
+        return mock_config
+
+    @pytest.mark.asyncio
+    async def test_genuine_handler_error_sets_is_error_true(self):
+        from mcp_server.server import handle_call_tool
+
+        async def fake_handler(arguments):
+            return {"error": "No indexed project found", "current_project": None}
+
+        with (
+            patch.dict(
+                "mcp_server.tool_specs.TOOL_DISPATCH",
+                {"fake_tool": fake_handler},
+                clear=True,
+            ),
+            patch(
+                "search.config.get_search_config",
+                return_value=self._mock_output_config(),
+            ),
+        ):
+            result = await handle_call_tool(MagicMock(), self._params("fake_tool"))
+
+        assert result.is_error is True
+
+    @pytest.mark.asyncio
+    async def test_failed_job_status_poll_stays_is_error_false(self):
+        """Carve-out 1: get_index_status(job_id=...) on a failed job."""
+        from mcp_server.server import handle_call_tool
+
+        async def fake_handler(arguments):
+            return {
+                "job_id": "abc123",
+                "status": "error",
+                "error": "indexing failed: disk full",
+            }
+
+        with (
+            patch.dict(
+                "mcp_server.tool_specs.TOOL_DISPATCH",
+                {"fake_tool": fake_handler},
+                clear=True,
+            ),
+            patch(
+                "search.config.get_search_config",
+                return_value=self._mock_output_config(),
+            ),
+        ):
+            result = await handle_call_tool(MagicMock(), self._params("fake_tool"))
+
+        assert result.is_error is False
+
+    @pytest.mark.asyncio
+    async def test_client_disconnected_stays_is_error_false(self):
+        """Carve-out 2: responses.client_disconnected()."""
+        from mcp_server.server import handle_call_tool
+        from mcp_server.tools import responses
+
+        async def fake_handler(arguments):
+            return responses.client_disconnected()
+
+        with (
+            patch.dict(
+                "mcp_server.tool_specs.TOOL_DISPATCH",
+                {"fake_tool": fake_handler},
+                clear=True,
+            ),
+            patch(
+                "search.config.get_search_config",
+                return_value=self._mock_output_config(),
+            ),
+        ):
+            result = await handle_call_tool(MagicMock(), self._params("fake_tool"))
+
+        assert result.is_error is False
+
+    @pytest.mark.asyncio
+    async def test_successful_result_stays_is_error_false(self):
+        from mcp_server.server import handle_call_tool
+
+        async def fake_handler(arguments):
+            return {"results": [], "query": "test"}
+
+        with (
+            patch.dict(
+                "mcp_server.tool_specs.TOOL_DISPATCH",
+                {"fake_tool": fake_handler},
+                clear=True,
+            ),
+            patch(
+                "search.config.get_search_config",
+                return_value=self._mock_output_config(),
+            ),
+        ):
+            result = await handle_call_tool(MagicMock(), self._params("fake_tool"))
+
+        assert result.is_error is False

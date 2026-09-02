@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING
 from utils.timing import timed
 
 from .chunk_id import dedupe_results
-from .config import SearchMode, get_search_config
+from .config import get_search_config
+from .rerank_window_policy import RerankWindowPolicy
+from .types import ResultSource
 
 
 # TYPE_CHECKING is always False at runtime; AddNot mutation on this guard is equivalent.
@@ -23,6 +25,7 @@ if TYPE_CHECKING:  # pragma: no mutate
         JinaRerankerV3,
         NeuralReranker,
     )
+    from .reranker import SearchResult
 
 try:
     import torch
@@ -31,6 +34,16 @@ except ImportError:  # pragma: no mutate
     torch = None
 
 from .neural_reranker import create_reranker
+
+
+# RerankWindowPolicy is frozen, so one shared instance is safe as a default —
+# module-level singleton instead of calling .tail() in the signature (B008).
+_TAIL_WINDOW = RerankWindowPolicy.tail()
+
+# merged_pool_policy="channel_priority" tier map for non-hop1 candidates.
+# Tier 0 (hop-1 survivors, metadata["hop1_rank"] is not None) is handled
+# separately in _order_merged_pool since it isn't keyed by `source`.
+_CHANNEL_TIER = {ResultSource.MULTI_HOP: 1, ResultSource.GRAPH_HOP: 2}
 
 
 class RerankingEngine:
@@ -165,6 +178,7 @@ class RerankingEngine:
                 doc_max_chars=config.reranker.doc_max_chars,
                 listwise_doc_max_chars=config.reranker.listwise_doc_max_chars,
                 listwise_dtype=config.reranker.listwise_dtype,
+                doc_representation_mode=config.reranker.doc_representation_mode,
             )
             self._logger.debug(f"{log_prefix} Neural reranker initialized")
         elif (
@@ -187,6 +201,7 @@ class RerankingEngine:
                 doc_max_chars=config.reranker.doc_max_chars,
                 listwise_doc_max_chars=config.reranker.listwise_doc_max_chars,
                 listwise_dtype=config.reranker.listwise_dtype,
+                doc_representation_mode=config.reranker.doc_representation_mode,
             )
         elif not should_enable and self.neural_reranker is not None:
             self.neural_reranker.cleanup()
@@ -251,10 +266,136 @@ class RerankingEngine:
             return candidates
 
     @staticmethod
+    def _order_merged_pool(
+        results: list, policy: str, graph_hop_unscored: bool = False
+    ) -> list:
+        """Order the merged multi-hop pool before the ``top_k_candidates`` cut.
+
+        ``"score"`` (default) is the literal pre-existing behaviour — sort by
+        raw ``.score`` descending — kept as its own branch so the default
+        path is provably byte-identical to before this policy existed. It
+        mixes three incomparable scales (see module docstring context in
+        ``rerank_by_query``'s docstring and ADR-0013); ``"score_reserve_fix"``
+        uses the same sort (the fix lives in ``_apply_hop1_reserve``'s
+        ``evict_policy``, not here). ``"channel_priority"`` replaces the sort
+        with a three-tier ordering that never compares across scales: tier 0
+        = hop-1 survivors (``metadata["hop1_rank"]`` is not None) ordered by
+        that rank ascending; tier 1 = ``source == "multi_hop"`` ordered by
+        score descending; tier 2 = ``source == "graph_hop"`` in stable
+        insertion order; tier 3 = anything else, stable insertion order.
+
+        ``graph_hop_unscored`` (default ``False``, only meaningful for
+        ``"score"``/``"score_reserve_fix"``): the caller's declaration that
+        every ``source == "graph_hop"`` candidate in ``results`` carries
+        ``MultiHopSearcher``'s fabricated placeholder score (literal ``0.0``,
+        never a real relevance signal — see ADR-0039). When ``True``, the
+        sort is replaced by an explicit three-band ordering — signal-positive
+        candidates (score > 0) descending, then every ``graph_hop`` candidate
+        in its original insertion order, then signal-nonpositive candidates
+        (score <= 0) descending — instead of relying on ``0.0``'s incidental
+        position under a plain numeric sort. Measured behaviour-preserving:
+        the two orderings diverge only when a non-graph candidate scores
+        exactly ``0.0`` (0 of 4,129 non-graph pool entries in the
+        `evaluation/probe_rerank_window_20260815.json` capture); the pinned
+        tie rule places such a candidate in the nonpositive band, i.e. after
+        graph. Callers set this from the same config gate that decides
+        whether ``graph_hop`` scores are placeholders
+        (``graph_enhanced.graph_hop_call_evidence_enabled``) — see
+        ``MultiHopSearcher.search``.
+        """
+        if policy in ("score", "score_reserve_fix"):
+            if not graph_hop_unscored:
+                return sorted(results, key=lambda r: r.score, reverse=True)
+            # Provenance bands: graph_hop carries no real score at all (the
+            # caller has declared its 0.0 is a placeholder), so it is never
+            # compared against a real score — it is ordered by insertion
+            # order between the signal-positive and signal-nonpositive bands.
+            positive, graph, nonpositive = [], [], []
+            for r in results:
+                if r.source == ResultSource.GRAPH_HOP:
+                    graph.append(r)
+                elif r.score > 0:
+                    positive.append(r)
+                else:
+                    nonpositive.append(r)
+            positive.sort(key=lambda r: r.score, reverse=True)
+            nonpositive.sort(key=lambda r: r.score, reverse=True)
+            return positive + graph + nonpositive
+        if policy == "channel_priority":
+
+            def _sort_key(item: "tuple[int, SearchResult]") -> tuple[int, float, int]:
+                index, r = item
+                hop1_rank = r.metadata.get("hop1_rank")
+                if hop1_rank is not None:
+                    return (0, hop1_rank, index)
+                tier = _CHANNEL_TIER.get(r.source, 3)
+                if tier == 1:
+                    return (tier, -r.score, index)
+                return (tier, 0.0, index)
+
+            return [r for _, r in sorted(enumerate(results), key=_sort_key)]
+        raise ValueError(f"Unknown merged_pool_policy: {policy!r}")
+
+    @staticmethod
+    def _apply_graph_hop_window_cap(
+        sorted_results: list, top_k_candidates: int, cap: int
+    ) -> list:
+        """Cap how many ``source == "graph_hop"`` candidates occupy the
+        ``top_k_candidates`` rerank window, without comparing scores across
+        channels.
+
+        Runs after ``_order_merged_pool`` (still under the deployed
+        ``"score"`` policy) and before ``_apply_hop1_reserve``. Every
+        ``graph_hop`` candidate carries the literal score ``0.0``
+        (``MultiHopSearcher``'s graph-expansion branch), and
+        ``_order_merged_pool`` always keeps ``graph_hop`` entries contiguous
+        in their original graph-expansion order — incidentally, via stable
+        sort tie-breaking, when ``graph_hop_unscored=False``; structurally,
+        by explicit banding, when ``True`` (ADR-0039) — so either way the
+        first ``cap`` graph entries encountered here are exactly the first
+        ``cap`` in that order: "first admitted" never depends on a
+        cross-scale score comparison.
+
+        Single stable pass over ``sorted_results``: non-graph candidates are
+        admitted to the window freely; ``graph_hop`` candidates are admitted
+        only while fewer than ``cap`` have been admitted already, after
+        which excess graph candidates are deferred to just below the window
+        (their relative order preserved) so non-graph candidates further
+        back in the pool backfill the freed slots. The unscanned tail is
+        untouched. Output is always a permutation of the input — deferred
+        entries are reinserted immediately after the window, ahead of
+        whatever wasn't scanned.
+
+        No-op (returns ``sorted_results`` unchanged, same object) when
+        ``cap <= 0`` or the pool doesn't exceed ``top_k_candidates`` — the
+        deployed default ``cap=0`` is byte-identical to before this existed.
+        """
+        if cap <= 0 or len(sorted_results) <= top_k_candidates:
+            return sorted_results
+
+        window: list = []
+        deferred: list = []
+        graph_admitted = 0
+        stopped_at = len(sorted_results)
+        for _idx, r in enumerate(sorted_results):
+            if len(window) == top_k_candidates:
+                stopped_at = _idx
+                break
+            if r.source == ResultSource.GRAPH_HOP and graph_admitted >= cap:
+                deferred.append(r)
+            else:
+                if r.source == ResultSource.GRAPH_HOP:
+                    graph_admitted += 1
+                window.append(r)
+
+        return window + deferred + sorted_results[stopped_at:]
+
+    @staticmethod
     def _apply_hop1_reserve(
         sorted_results: list,
         top_k_candidates: int,
         reserved_slots: int,
+        evict_policy: str = "tail",
     ) -> list:
         """Promote hop-1-ranked candidates cut from the rerank window back in.
 
@@ -270,6 +411,25 @@ class RerankingEngine:
         Intra-window order doesn't matter — the listwise model re-scores the
         whole window. No-op when the pool doesn't exceed the window or no
         tail candidate is hop1-tagged.
+
+        Args:
+            evict_policy: ``"tail"`` (default) evicts from the window's
+                score-sorted tail — the pre-existing behaviour. Because the
+                caller's score sort puts every hop-1 survivor below every
+                semantic-expansion candidate (see module context above), the
+                window's tail *is* the hop-1 region: promoting a rank-3..N
+                hop-1 candidate can evict a better-ranked (rank 1-2) one
+                already sitting there. ``"lowest_non_hop1"`` instead evicts
+                the window's lowest-scored entries that are *not*
+                hop1-tagged first, so a hop-1 promotion prefers evicting a
+                non-hop1 incumbent over a hop-1 one; only falls back to
+                evicting hop1 window entries if there aren't enough non-hop1
+                ones to make room (rare: window is almost entirely
+                hop1-tagged). Both policies evict exactly
+                ``min(reserved_slots-worth-of-promotions, len(window))``
+                window entries, so total output length is identical between
+                the two — they differ only in *which* window entries are
+                dropped.
         """
         if reserved_slots <= 0 or len(sorted_results) <= top_k_candidates:
             return sorted_results
@@ -289,8 +449,31 @@ class RerankingEngine:
         promote = [r for _, _, r in tail_hop1[:reserved_slots]]
         promote_ids = {r.chunk_id for r in promote}
         remaining_tail = [r for r in tail if r.chunk_id not in promote_ids]
+        num_evict = len(promote)
 
-        kept_window = window[: max(0, len(window) - len(promote))]
+        if evict_policy == "lowest_non_hop1":
+            # window is score-sorted descending; prefer evicting the
+            # lowest-scored entries that aren't hop1-tagged (tail-up), only
+            # falling back to hop1-tagged window entries (also tail-up) if
+            # there aren't enough non-hop1 ones to make room. This keeps the
+            # total eviction count identical to "tail" (min(num_evict,
+            # len(window))) — the two policies differ only in target choice.
+            non_hop1_tail_first = [
+                r for r in reversed(window) if r.metadata.get("hop1_rank") is None
+            ]
+            hop1_tail_first = [
+                r for r in reversed(window) if r.metadata.get("hop1_rank") is not None
+            ]
+            evict_ids = {
+                r.chunk_id for r in (non_hop1_tail_first + hop1_tail_first)[:num_evict]
+            }
+            kept_window = [r for r in window if r.chunk_id not in evict_ids]
+            return kept_window + promote + remaining_tail
+
+        if evict_policy != "tail":
+            raise ValueError(f"Unknown evict_policy: {evict_policy!r}")
+
+        kept_window = window[: max(0, len(window) - num_evict)]
         return kept_window + promote + remaining_tail
 
     def rerank_by_query(
@@ -298,9 +481,8 @@ class RerankingEngine:
         query: str,
         results: list,
         k: int,
-        search_mode: str = SearchMode.HYBRID,
-        hop1_reserved_slots: int = 0,
-        config: "SearchConfig | None" = None,
+        config: "SearchConfig",
+        window: RerankWindowPolicy = _TAIL_WINDOW,
     ) -> list:
         """
         Re-rank results by sorted score, then apply neural reranking.
@@ -309,18 +491,19 @@ class RerankingEngine:
             query: Original search query
             results: List of SearchResult objects to re-rank
             k: Number of top results to return
-            search_mode: Search mode for re-ranking strategy
-            hop1_reserved_slots: Reserve up to this many hop-1-tagged
-                (``metadata["hop1_rank"]``) candidates into the
-                ``top_k_candidates`` rerank window when the pool exceeds it.
-                0 (default) is a no-op — only ``MultiHopSearcher.search``
-                passes a non-zero value; the ego-graph/parent-expansion tail
-                call sites stay byte-identical.
-            config: Optional pre-fetched SearchConfig snapshot — the effective
-                config for this request (see ADR-0018). Callers that already
-                hold one pass it through so the whole rerank pass reads a
-                single snapshot instead of re-fetching the process global;
-                fetched here if omitted.
+            config: The effective SearchConfig snapshot for this request (see
+                ADR-0018). Required — callers hold one already, so the whole
+                rerank pass reads a single snapshot instead of each helper
+                independently re-fetching the process global.
+            window: Which rerank pass this is — see CONTEXT.md's "Rerank
+                pass" glossary entry and ``RerankWindowPolicy``.
+                ``RerankWindowPolicy.tail()`` (default) is the post-expansion
+                pass: no hop-1 reserve, plain score order, real scores —
+                byte-identical to the pre-``RerankWindowPolicy`` defaults.
+                ``RerankWindowPolicy.merged_pool(config)`` is
+                ``MultiHopSearcher``'s Pass-2 over the merged pool; the
+                ego-graph/parent-expansion tail call sites always pass
+                ``tail()``.
 
         Returns:
             Top k results sorted by query relevance
@@ -328,18 +511,31 @@ class RerankingEngine:
         if not results:
             return []
 
-        # Sort by score (descending)
-        sorted_results = sorted(results, key=lambda r: r.score, reverse=True)
+        sorted_results = self._order_merged_pool(
+            results, window.merged_pool_policy, window.graph_hop_unscored
+        )
         self.last_candidate_ids = [r.chunk_id for r in sorted_results]
 
-        # Neural reranking (Quality First mode) — always re-check config for runtime
-        # changes. Fetch once per pass (R1) and thread through both helpers instead
-        # of each independently re-fetching (was 3 fetches/call, now 1).
-        if config is None:
-            config = get_search_config()
-        if hop1_reserved_slots > 0:
+        if window.graph_hop_window_cap > 0:
+            sorted_results = self._apply_graph_hop_window_cap(
+                sorted_results,
+                config.reranker.top_k_candidates,
+                window.graph_hop_window_cap,
+            )
+
+        # Neural reranking (Quality First mode) — always re-check config for
+        # runtime changes.
+        if window.hop1_reserved_slots > 0:
+            evict_policy = (
+                "lowest_non_hop1"
+                if window.merged_pool_policy == "score_reserve_fix"
+                else "tail"
+            )
             sorted_results = self._apply_hop1_reserve(
-                sorted_results, config.reranker.top_k_candidates, hop1_reserved_slots
+                sorted_results,
+                config.reranker.top_k_candidates,
+                window.hop1_reserved_slots,
+                evict_policy=evict_policy,
             )
         if sorted_results and self._ensure_reranker("[RERANK]", config=config):
             sorted_results = self._run_rerank(

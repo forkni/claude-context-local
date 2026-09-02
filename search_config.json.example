@@ -24,6 +24,9 @@
     "bm25_tokenizer": "whole",
     "bm25_reserved_slots": 0,
     "min_bm25_score": 0.1,
+    "leg_search_multiplier": 5,
+    "fusion_function": "rrf",
+    "tm2c2_alpha": 0.8,
     "rrf_k_parameter": 100,
     "default_k": 7,
     "max_k": 50,
@@ -75,7 +78,10 @@
     "doc_max_chars": 4000,
     "listwise_doc_max_chars": 1000,
     "listwise_dtype": "auto",
-    "hop1_reserved_slots": 6
+    "doc_representation_mode": "full",
+    "hop1_reserved_slots": 6,
+    "merged_pool_policy": "score",
+    "graph_hop_window_cap": 0
   },
   "query_expansion": {
     "enabled": false,
@@ -101,7 +107,8 @@
     "adaptive_multiplier_max": 1.3,
     "adaptive_multiplier_min": 0.5,
     "max_complexity_cap": 30,
-    "glsl_filter_td_prefix": true
+    "glsl_filter_td_prefix": true,
+    "max_file_size_bytes": 5242880
   },
   "ego_graph": {
     "enabled": true,
@@ -137,7 +144,8 @@
     },
     "expansion_mode": "bfs",
     "ppr_alpha": 0.85,
-    "min_similarity_threshold": 0.15
+    "min_similarity_threshold": 0.15,
+    "drop_nonpositive_output": false
   },
   "parent_retrieval": {
     "enabled": false,
@@ -155,7 +163,14 @@
     "centrality_boost_threshold": 0.02,
     "centrality_boost_factor": 5.0,
     "centrality_boost_cap": 0.15,
-    "max_results_multiplier": 8
+    "centrality_exclude_phantoms": false,
+    "max_results_multiplier": 8,
+    "graph_hop_call_evidence_enabled": false,
+    "graph_hop_call_evidence_lambda": 0.05,
+    "min_traversal_confidence": 0.0,
+    "traversal_confidence_weighting_enabled": false,
+    "drop_ambiguous_traversal_edges": false,
+    "hide_ambiguous_edges_default": true
   },
   "observability": {
     "enabled": false,
@@ -179,6 +194,7 @@
     "pyan_seconds_per_file": 2.5,
     "pyan_total_timeout_cap_seconds": 3600.0,
     "use_pyproject_toml": false,
-    "min_confidence": 0.65
+    "min_confidence": 0.65,
+    "inject_on_incremental": false
   }
 }

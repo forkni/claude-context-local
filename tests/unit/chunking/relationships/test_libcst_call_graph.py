@@ -15,6 +15,7 @@ Tests cover:
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -35,6 +36,38 @@ from chunking.relationships.libcst_call_graph import LibCSTResolver, libcst_avai
 
 _LOG = logging.getLogger("test_libcst")
 _EMPTY_RLM: dict = {}
+
+
+# ---------------------------------------------------------------------------
+# Loud-skip guard (Phase 13.2.d)
+# ---------------------------------------------------------------------------
+
+
+class TestLibCSTAvailableInCI:
+    """CI always installs `--extra callgraph` (`branch-protection.yml`), which
+    pins `libcst>=1.8.6` in `pyproject.toml` -- so in CI, libcst must be
+    importable. Without this guard, the 11 `pytest.skip("libcst not
+    installed")` calls in this file silently no-op if the extra ever fails
+    to install (a broken lockfile, a platform wheel gap, a typo'd extras
+    flag) and nothing in the suite would notice; they'd just quietly vanish
+    from the run instead of failing it.
+    """
+
+    def test_libcst_available_when_ci(self) -> None:
+        if os.environ.get("CI") != "true":
+            pytest.skip(
+                "only enforced in CI, where --extra callgraph is always installed"
+            )
+
+        import chunking.relationships.libcst_call_graph as lcg
+
+        assert lcg._LIBCST_AVAILABLE, (
+            "libcst is unavailable in a CI run, but CI always installs "
+            "--extra callgraph (pyproject.toml pins libcst>=1.8.6) -- this "
+            "means the extra failed to install, not that libcst is "
+            "optional here. All 11 'libcst not installed' skips in this "
+            "file would silently vanish from the run without this guard."
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -27,8 +27,26 @@ logger = logging.getLogger(__name__)
 # Minimum number of functions needed for a meaningful profile
 MIN_FUNCTIONS_FOR_PROFILE = 10
 
-# File read size cap: skip giant files during profiling (same as chunking)
-MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
+
+def _default_max_file_size_bytes() -> int:
+    """Read ChunkingConfig's default so this module's cap and
+    MultiLanguageChunker.chunk_file's cap (chunking/multi_language_chunker.py)
+    cannot drift apart into two independently hand-maintained literals.
+
+    Deliberately a bare ``ChunkingConfig()`` default, not the live
+    ``get_chunking_config()`` singleton: this only needs to seed the
+    module-level constant once at import time, so ``MAX_FILE_SIZE_BYTES``
+    stays a plain mutable module attribute existing tests can monkeypatch
+    directly (see test_repo_profiler.py's `test_skips_file_over_max_size`).
+    A live per-call config lookup here would make that monkeypatch a no-op.
+    """
+    from search.config import ChunkingConfig
+
+    return ChunkingConfig().max_file_size_bytes
+
+
+# File read size cap: skip giant files during profiling (same as chunking).
+MAX_FILE_SIZE_BYTES = _default_max_file_size_bytes()
 
 
 @dataclass
@@ -86,6 +104,7 @@ def profile_repository(
 
     files_scanned = 0
     files_skipped = 0
+    files_unparsed = 0
     files_empty = 0
 
     for rel_path in supported_files:
@@ -115,7 +134,11 @@ def profile_repository(
             continue
 
         if parsed_source is None:
-            files_empty += 1
+            # parse_file() returned None — one of several distinct failure
+            # paths (binary sniff, unsupported grammar, read timeout, etc.),
+            # not necessarily an empty file. Counted separately from a
+            # genuinely blank file below so the two causes aren't conflated.
+            files_unparsed += 1
             continue
 
         if not parsed_source.content.strip():
@@ -127,7 +150,8 @@ def profile_repository(
 
     logger.info(
         f"[PROFILER] Scanned {files_scanned} files "
-        f"({files_skipped} skipped, {files_empty} empty), found {len(sizes)} functions"
+        f"({files_skipped} skipped, {files_unparsed} unparsed, "
+        f"{files_empty} empty), found {len(sizes)} functions"
     )
 
     if len(sizes) < MIN_FUNCTIONS_FOR_PROFILE:

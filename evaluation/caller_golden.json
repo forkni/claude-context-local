@@ -16,12 +16,21 @@
     {
       "id": "C001",
       "category": "E",
-      "description": "normalize_chunk_id strips line-range from chunk IDs; called by normalize_chunk_ids, build_chunk_line_lookup, resolve_chunk_ids_to_ranges within same file",
+      "description": "normalize_chunk_id strips line-range from chunk IDs; called by five same-file helpers in evaluation/metrics.py plus build_line_to_chunk_map, three evaluation/probe_harness.py sites, and three evaluation/tracer/scoring.py sites (2026-09-02 repair: the 3-caller list was incomplete, 9 direct callers confirmed by source reading and by the traced golden TC001)",
       "target_chunk_id": "evaluation/metrics.py:function:normalize_chunk_id",
       "expected_callers": [
         "evaluation/metrics.py:function:normalize_chunk_ids",
         "evaluation/metrics.py:function:build_chunk_line_lookup",
-        "evaluation/metrics.py:function:resolve_chunk_ids_to_ranges"
+        "evaluation/metrics.py:function:resolve_chunk_ids_to_ranges",
+        "evaluation/metrics.py:function:expand_retrieved_with_containment",
+        "evaluation/metrics.py:function:expand_retrieved_with_community_credit",
+        "evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
+        "evaluation/probe_harness.py:function:load_golden_queries",
+        "evaluation/probe_harness.py:method:ProbeSession.replay_legs",
+        "evaluation/probe_harness.py:decorated_definition:ProbeSession.instrument",
+        "evaluation/tracer/scoring.py:function:extract_static_edges",
+        "evaluation/tracer/scoring.py:function:make_source_lookup",
+        "evaluation/tracer/scoring.py:function:emit_traced_golden"
       ]
     },
     {
@@ -76,10 +85,11 @@
     {
       "id": "C007",
       "category": "E",
-      "description": "build_line_to_chunk_map is called from IndexWriteStage._inject_call_edges — cross-package call from search to evaluation (renamed from _inject_pyan_edges in commit 5ac2b7a)",
+      "description": "build_line_to_chunk_map is called from search/call_edge_injection.py:inject_call_edges (cross-package call from search to evaluation; the IndexWriteStage.inject_call_edges method now only delegates to it) and from evaluation/tracer/build.py:build_line_map (2026-09-02 repair: previous caller IndexWriteStage.inject_call_edges was stale after the injection body moved to call_edge_injection.py; the module-level function is >100 lines so the index stores it as split_block fragments that normalize to the method: form)",
       "target_chunk_id": "evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
       "expected_callers": [
-        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges"
+        "search/call_edge_injection.py:method:inject_call_edges",
+        "evaluation/tracer/build.py:function:build_line_map"
       ]
     }
   ]

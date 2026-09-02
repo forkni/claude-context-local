@@ -28,7 +28,8 @@ do not participate in the keep-max merge.  The pipeline only manages the
 - **PyanResolver** (Stage 1)  — whole-project name resolution; GPL-2.0 optional extra.
   Wildcard fan-out edges (``expand_unknowns``) get :attr:`ResolverConfidence.PYAN_WILDCARD`.
 - **LibCSTResolver** (Stage 2) — ``FullyQualifiedNameProvider``; MIT, permissive.
-- **LSPResolver** (Stage 3)   — basedpyright JSON-RPC call hierarchy; opt-in.
+- **LSPResolver** (Stage 3)   — basedpyright JSON-RPC call hierarchy; requested by default
+  (``lsp_enabled=True``), no-ops unless the ``[lsp]`` extra is installed.
 
 Each resolver emits :class:`ResolvedEdge` instances.  :func:`run_resolvers` merges all
 edges from all available resolvers by ``(caller_id, callee_id)`` key, keeping the
@@ -120,6 +121,17 @@ class ResolverConfidence:
         0.98  # pragma: no mutate — numeric constant, consumed by external resolvers
     )
     """basedpyright type-inference–level call hierarchy."""
+
+
+# Maps each resolver's ``name`` to the PyPI extra that installs its optional
+# dependency, so the unavailability message below tells the user the right
+# thing to install instead of a hardcoded "[callgraph]" for every resolver
+# (pyan/libcst live in the ``callgraph`` extra; lsp is its own ``lsp`` extra).
+RESOLVER_INSTALL_EXTRAS: dict[str, str] = {
+    "pyan": "callgraph",
+    "libcst": "callgraph",
+    "lsp": "lsp",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +277,11 @@ def validate_py_files(
     parseable: list[str] = []
     for fn in py_files:
         try:
-            source = Path(fn).read_text(encoding="utf-8", errors="replace")
+            # utf-8-sig strips a leading BOM if present and is byte-identical
+            # to plain utf-8 decoding for BOM-less files — without it, a BOM
+            # left at position 0 makes ast.parse raise SyntaxError, silently
+            # dropping the file from every resolver's scoped file list.
+            source = Path(fn).read_text(encoding="utf-8-sig", errors="replace")
             ast.parse(source, filename=fn)
             parseable.append(fn)
         except SyntaxError as exc:
@@ -422,10 +438,12 @@ def run_resolvers(
         if resolver.available():
             available_resolvers.append(resolver)
         else:
+            extra = RESOLVER_INSTALL_EXTRAS.get(resolver.name, "callgraph")
             logger.info(
                 "[RESOLVERS] %s resolver unavailable (optional dep missing) — "
-                "install '[callgraph]' extra for higher-recall cross-module edges",
+                "install '[%s]' extra for higher-recall cross-module edges",
                 resolver.name,
+                extra,
             )
 
     if not available_resolvers:
@@ -502,7 +520,7 @@ def run_resolvers(
                 )
                 continue
 
-            added = upgraded = (
+            added = upgraded = dropped_equal = dropped_lower = (
                 0  # pragma: no mutate — logging counters only; value doesn't affect logic
             )
             for edge in edges:
@@ -514,13 +532,26 @@ def run_resolvers(
                 elif edge.confidence > existing.confidence:
                     merged[key] = edge
                     upgraded += 1  # pragma: no mutate — logging counter
+                elif edge.confidence == existing.confidence:
+                    # Different signature than dropped_lower: two resolvers
+                    # agreeing on precedence for the same pair may indicate a
+                    # resolver-ordering issue worth investigating, whereas the
+                    # first (lower-precedence) value is deliberately kept.
+                    dropped_equal += 1  # pragma: no mutate — logging counter
+                else:
+                    # Correct behaviour — a lower-confidence resolver's edge
+                    # for a pair a higher-confidence resolver already covered.
+                    dropped_lower += 1  # pragma: no mutate — logging counter
 
             logger.info(
-                "[RESOLVERS] %s: %d edges → added=%d, upgraded=%d (total merged so far: %d)",
+                "[RESOLVERS] %s: %d edges → added=%d, upgraded=%d, "
+                "dropped_equal=%d, dropped_lower=%d (total merged so far: %d)",
                 resolver.name,
                 len(edges),
                 added,
                 upgraded,
+                dropped_equal,
+                dropped_lower,
                 len(merged),
             )
     finally:

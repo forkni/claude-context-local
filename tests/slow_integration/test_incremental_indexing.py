@@ -12,6 +12,7 @@ from huggingface_hub import get_token
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
+from mcp_server.resource_manager import McpResourceRefresher
 from merkle.change_detector import ChangeDetector
 from merkle.merkle_dag import MerkleDAG
 from merkle.snapshot_manager import SnapshotManager
@@ -161,6 +162,7 @@ class User:
             embedder=embedder,
             chunker=chunker,
             snapshot_manager=self.snapshot_manager,
+            resource_refresher=McpResourceRefresher(),
         )
 
         # First index should be full
@@ -212,6 +214,7 @@ class User:
             embedder=embedder,
             chunker=chunker,
             snapshot_manager=self.snapshot_manager,
+            resource_refresher=McpResourceRefresher(),
         )
 
         # First index
@@ -266,6 +269,7 @@ class User:
             embedder=embedder,
             chunker=chunker,
             snapshot_manager=self.snapshot_manager,
+            resource_refresher=McpResourceRefresher(),
         )
 
         # Initial index
@@ -341,6 +345,7 @@ class Calculator:
             embedder=embedder,
             chunker=chunker,
             snapshot_manager=self.snapshot_manager,
+            resource_refresher=McpResourceRefresher(),
         )
 
         # Initial index
@@ -405,6 +410,7 @@ class NewClass:
             embedder=embedder,
             chunker=chunker,
             snapshot_manager=self.snapshot_manager,
+            resource_refresher=McpResourceRefresher(),
         )
 
         # Initial index
@@ -484,6 +490,7 @@ class NewClass:
             embedder=embedder,
             chunker=chunker,
             snapshot_manager=self.snapshot_manager,
+            resource_refresher=McpResourceRefresher(),
         )
 
         # Should need index initially
@@ -538,6 +545,7 @@ class NewClass:
             embedder=embedder,
             chunker=chunker,
             snapshot_manager=self.snapshot_manager,
+            resource_refresher=McpResourceRefresher(),
         )
 
         # No stats initially

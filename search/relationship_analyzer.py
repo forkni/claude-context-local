@@ -123,7 +123,7 @@ class RelationshipAnalyzer:
                 indirect_raw, exclude_dirs
             )
             direct_callers = self._dedup_and_sort_edges(enriched_direct)
-            indirect_callers = enriched_indirect
+            indirect_callers = self._dedup_and_sort_edges(enriched_indirect)
             stale_count = stale_d + stale_i
         else:
             inbound = []
@@ -982,3 +982,49 @@ class RelationshipAnalyzer:
             return normalize_path(cid.split(":")[0])
         file_path = item.get("file", "")
         return normalize_path(file_path) if file_path else ""
+
+
+_AMBIGUOUS_FILTERED_KEYS = ("direct_callers", "direct_callees", "indirect_callers")
+
+# The two of the three filtered keys that ImpactReport.to_dict() now emits
+# unconditionally (D13, matching output_formatter.NEVER_DROP_EMPTY_KEYS) --
+# filtering ALL of a symbol's callers/callees down to nothing must leave the
+# key present as [], not delete it, or this filter would silently re-open the
+# hole D13 closed. indirect_callers stays conditional (to_dict() still omits
+# it when empty; ordinary absence-of-data, not a contract-carrying key).
+_NEVER_DROP_FILTERED_KEYS = frozenset({"direct_callers", "direct_callees"})
+
+
+def filter_ambiguous_edges(report_dict: dict[str, Any]) -> dict[str, Any]:
+    """Drop call edges tagged ``confidence == "ambiguous"`` from a report dict.
+
+    Display-layer filter for ``find_connections``' ``hide_ambiguous`` option.
+    Operates on the output of :meth:`ImpactReport.to_dict` and touches ONLY the
+    three call-edge lists (``direct_callers``, ``direct_callees``,
+    ``indirect_callers``) — the ``confidence`` key is polymorphic and holds a
+    *float* on the non-call relationship buckets, which must pass through
+    untouched.
+
+    Aggregate fields (``total_impacted``, ``file_count``/``affected_files``,
+    ``caller_confidence``/``callee_confidence``) are deliberately left as
+    pre-filter totals: the confidence breakdowns are the "N ambiguous edges
+    existed but were hidden" signal.
+
+    A list emptied by the filter is removed entirely, matching ``to_dict()``'s
+    omit-empty contract for ``indirect_callers``. ``direct_callers`` and
+    ``direct_callees`` are the opposite: ``to_dict()`` emits them
+    unconditionally (D13), so an all-ambiguous list is kept here too, as
+    ``[]`` — deleting it would reintroduce the exact "key silently absent"
+    defect D13 fixed, one layer downstream of the producer.
+    """
+    filtered = dict(report_dict)
+    for key in _AMBIGUOUS_FILTERED_KEYS:
+        entries = filtered.get(key)
+        if not entries:
+            continue
+        kept = [e for e in entries if e.get("confidence") != "ambiguous"]
+        if kept or key in _NEVER_DROP_FILTERED_KEYS:
+            filtered[key] = kept
+        else:
+            del filtered[key]
+    return filtered

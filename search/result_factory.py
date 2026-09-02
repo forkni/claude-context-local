@@ -5,6 +5,7 @@ from various search result formats (BM25, dense/semantic, direct lookup).
 """
 
 from .reranker import SearchResult
+from .types import ResultSource
 
 
 class ResultFactory:
@@ -20,7 +21,7 @@ class ResultFactory:
     """
 
     @staticmethod
-    def _from_tuples(results: list[tuple], source: str) -> list[SearchResult]:
+    def _from_tuples(results: list[tuple], source: ResultSource) -> list[SearchResult]:
         """Build SearchResult list from (chunk_id, score, metadata) tuples.
 
         Single implementation shared by from_bm25_results, from_dense_results,
@@ -65,7 +66,7 @@ class ResultFactory:
             >>> results[0].source
             'bm25'
         """
-        return ResultFactory._from_tuples(bm25_results, "bm25")
+        return ResultFactory._from_tuples(bm25_results, ResultSource.BM25)
 
     @staticmethod
     def from_dense_results(dense_results: list[tuple]) -> list[SearchResult]:
@@ -88,7 +89,7 @@ class ResultFactory:
             >>> results[0].source
             'semantic'
         """
-        return ResultFactory._from_tuples(dense_results, "semantic")
+        return ResultFactory._from_tuples(dense_results, ResultSource.SEMANTIC)
 
     @staticmethod
     def from_direct_lookup(chunk_id: str, metadata: dict) -> SearchResult:
@@ -125,19 +126,24 @@ class ResultFactory:
             chunk_id=chunk_id,
             score=1.0,
             metadata=metadata,
-            source="direct_lookup",
+            source=ResultSource.DIRECT_LOOKUP,
             rank=0,
         )
 
     @staticmethod
     def from_expansion(
-        chunk_id: str, score: float, metadata: dict, source: str
+        chunk_id: str, score: float, metadata: dict, source: ResultSource
     ) -> SearchResult:
         """Create SearchResult for ego-graph or parent-expansion hits.
 
         Args:
             chunk_id: Chunk identifier
-            score: Expansion score (anchor × similarity, or 0.0 for parents)
+            score: Expansion score (anchor × similarity for ego-graph hits), or
+                0.0 for parent-expansion hits -- that 0.0 is not a score at all,
+                it is a fixed placeholder HybridSearcher._apply_parent_expansion
+                always passes (D9): a parent chunk is unranked context, never
+                itself a ranked hit. See SearchResult.is_unscored, which reads
+                ``source`` to tell the two apart.
             metadata: Chunk metadata dictionary
             source: Source tag ("ego_graph", "parent_expansion", ...)
 
@@ -157,7 +163,8 @@ class ResultFactory:
 
     @staticmethod
     def from_similarity_results(
-        similar_chunks: list[tuple[str, float, dict]], source: str = "similarity"
+        similar_chunks: list[tuple[str, float, dict]],
+        source: ResultSource = ResultSource.SIMILARITY,
     ) -> list[SearchResult]:
         """Convert similarity search results to SearchResult format.
 

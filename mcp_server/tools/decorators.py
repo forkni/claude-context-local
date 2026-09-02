@@ -126,6 +126,12 @@ def with_mutation_lock(func: Callable) -> Callable:
         @error_handler("Project switch")
         @with_mutation_lock
         async def handle_switch_project(arguments): ...
+
+    Stamps ``__mcp_guards__`` on the wrapper with ``"mutation_lock"`` added to
+    whatever the wrapped function already carries (``functools.wraps`` copies
+    that forward via ``__dict__`` before this line runs, so a bare assignment
+    would clobber an inner decorator's stamp) — this is what lets
+    ``ToolSpec.mutation_lock`` derive its value instead of declaring it.
     """
 
     @functools.wraps(func)
@@ -133,6 +139,9 @@ def with_mutation_lock(func: Callable) -> Callable:
         async with get_state().get_mutation_lock():
             return await func(arguments)
 
+    wrapper.__mcp_guards__ = getattr(func, "__mcp_guards__", frozenset()) | {
+        "mutation_lock"
+    }
     return wrapper
 
 
@@ -145,6 +154,11 @@ def require_indexed_project(func: Callable) -> Callable:
         @error_handler("Search")
         @require_indexed_project
         async def handle_search_code(arguments): ...
+
+    Stamps ``__mcp_guards__`` on the wrapper with ``"requires_index"`` added to
+    whatever the wrapped function already carries, mirroring
+    ``with_mutation_lock`` — this is what lets ``ToolSpec.requires_index``
+    derive its value instead of declaring it.
     """
 
     @functools.wraps(func)
@@ -153,4 +167,7 @@ def require_indexed_project(func: Callable) -> Callable:
             return responses.no_indexed_project()
         return await func(arguments)
 
+    wrapper.__mcp_guards__ = getattr(func, "__mcp_guards__", frozenset()) | {
+        "requires_index"
+    }
     return wrapper

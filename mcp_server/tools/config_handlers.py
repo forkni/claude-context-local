@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from mcp_server.config_schema import arg
 from mcp_server.project_persistence import save_project_selection
 from mcp_server.resource_manager import (
     _cleanup_previous_resources,
@@ -25,6 +26,7 @@ from search.config import (
     ChunkingConfig,
     PerformanceConfig,
     RerankerConfig,
+    SearchConfig,
     SearchMode,
     SearchModeConfig,
     _derive_mcp_field_names,
@@ -80,6 +82,26 @@ _PERFORMANCE_SEARCH_FIELDS: tuple[tuple[str, str], ...] = (
 
 # default_mode stays out of _SEARCH_MODE_FIELDS: it is set unconditionally
 # above (and drives enable_hybrid), not a skip-if-absent patch.
+
+
+def _touched_flat_keys(
+    arguments: dict[str, Any],
+    field_map: tuple[tuple[str, str], ...],
+    section: str,
+) -> dict[str, Any]:
+    """Dotted-key ``{"section.field": value}`` subset of *field_map* whose
+    ``arg_key`` is actually present in *arguments* (D7).
+
+    Mirrors apply_config_patch's own skip-if-absent rule so the two stay in
+    sync: a field this call didn't touch must never count toward
+    SearchConfig.requires_rebuild, or an unrelated argument would trigger an
+    unnecessary reset_searcher().
+    """
+    return {
+        f"{section}.{attr}": arguments[arg_key]
+        for arg_key, attr in field_map
+        if arguments.get(arg_key) is not None
+    }
 
 
 def apply_config_patch(
@@ -169,7 +191,7 @@ async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
     this call; the rest are patched via apply_config_patch, matching
     handle_configure_reranking/handle_configure_chunking's skip-if-absent pattern.
     """
-    search_mode = arguments.get("search_mode", SearchMode.HYBRID)
+    search_mode = arg(arguments, "configure_search_mode.search_mode")
 
     err = validate_field_value(SearchModeConfig, "default_mode", search_mode)
     if err:
@@ -197,9 +219,28 @@ async def handle_configure_search_mode(arguments: dict[str, Any]) -> dict:
 
     config_manager.save_config(config)
 
-    # Reset searcher to pick up new config
+    # Reset the searcher only if a construction-baked field was actually
+    # touched (D7): default_mode/enable_hybrid/bm25_weight/dense_weight/
+    # use_parallel_search are all read live from effective_config on every
+    # search() call, so resetting for them was pure pessimisation — an
+    # unconditional reset forces a full HybridSearcher rebuild (model/BM25
+    # index reload) on every configure_search_mode call regardless of what
+    # changed. None of this handler's settable fields are construction_baked
+    # today, so this is a no-op at runtime; it exists so a future baked
+    # search_mode/performance field (e.g. bm25_tokenizer, rrf_k_parameter —
+    # see SearchConfig._CONSTRUCTION_BAKED_FIELDS — becoming MCP-settable)
+    # is handled correctly without anyone having to remember to wire it in.
+    touched = {
+        "search_mode.default_mode": search_mode,
+        "search_mode.enable_hybrid": config.search_mode.enable_hybrid,
+    }
+    touched.update(_touched_flat_keys(arguments, _SEARCH_MODE_FIELDS, "search_mode"))
+    touched.update(
+        _touched_flat_keys(arguments, _PERFORMANCE_SEARCH_FIELDS, "performance")
+    )
     state = get_state()
-    state.reset_searcher()
+    if SearchConfig.requires_rebuild(touched):
+        state.reset_searcher()
 
     return responses.ok(
         success=True,
@@ -262,6 +303,18 @@ async def handle_configure_reranking(arguments: dict[str, Any]) -> dict:
 
     config_manager.save_config(config)
 
+    # Reset only if a construction-baked reranker field was actually touched
+    # (D7). None of enabled/model_name/top_k_candidates — this handler's
+    # three MCP-settable fields — is construction_baked today (see
+    # SearchConfig._CONSTRUCTION_BAKED_FIELDS), so this is a no-op at
+    # runtime and the "next search" promise below is currently true. Wired
+    # in anyway, mirroring handle_configure_search_mode, so a future baked
+    # settable reranker field doesn't silently break that promise.
+    touched = _touched_flat_keys(arguments, _RERANKER_FIELDS, "reranker")
+    if SearchConfig.requires_rebuild(touched):
+        state = get_state()
+        state.reset_searcher()
+
     return responses.ok(
         success=True,
         config={attr: getattr(config.reranker, attr) for attr in _RERANKER_ECHO},
@@ -281,7 +334,11 @@ async def handle_configure_chunking(arguments: dict[str, Any]) -> dict:
     max_split_chars (1000-10000), enable_file_summaries,
     sizing_mode ("fixed"|"adaptive"), adaptive_multiplier_max (1.0-2.0),
     adaptive_multiplier_min (0.1-1.0), max_complexity_cap (5-100),
-    glsl_filter_td_prefix (bool).
+    glsl_filter_td_prefix (bool), max_file_size_bytes (1024-104857600).
+    Note: max_file_size_bytes only affects the chunker's own cap — the
+    adaptive-sizing profiler (``chunking/repo_profiler.py``) reads its own
+    import-time-seeded default independently and is not affected by this
+    setting.
     """
     config_manager = get_config_manager()
     config = config_manager.load_config()

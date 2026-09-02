@@ -1,0 +1,58 @@
+[
+  {
+    "content": "float square(float x) {\n    return x * x;\n}",
+    "end_line": 5,
+    "language": "cpp",
+    "metadata": {
+      "complexity_score": 1,
+      "name": "square",
+      "node_type": "function_definition"
+    },
+    "start_line": 3,
+    "type": "function_definition"
+  },
+  {
+    "content": "void computeSquares(const float* input, float* output, int n) {\n    int idx = blockIdx.x * blockDim.x + threadIdx.x;\n    if (idx < n) {\n        output[idx] = square(input[idx]);\n    }\n}",
+    "end_line": 12,
+    "language": "cpp",
+    "metadata": {
+      "complexity_score": 1,
+      "name": "computeSquares",
+      "node_type": "function_definition"
+    },
+    "start_line": 7,
+    "type": "function_definition"
+  },
+  {
+    "content": "void launchComputeSquares(const float* input, float* output, int n) {\n    int threads = 256;\n    int blocks = (n + threads - 1) / threads;\n    computeSquares<<<blocks, threads>>>(input, output, n);\n}",
+    "end_line": 22,
+    "language": "cpp",
+    "metadata": {
+      "complexity_score": 1,
+      "name": "launchComputeSquares",
+      "node_type": "function_definition"
+    },
+    "start_line": 18,
+    "type": "function_definition"
+  },
+  {
+    "content": "// Tiny CUDA fixture: device helper, global kernel, constant, host launcher.",
+    "end_line": 1,
+    "language": "cpp",
+    "metadata": {
+      "type": "module_preamble"
+    },
+    "start_line": 1,
+    "type": "module_preamble"
+  },
+  {
+    "content": "float kScaleFactor = 2.0f;",
+    "end_line": 14,
+    "language": "cpp",
+    "metadata": {
+      "type": "module_preamble"
+    },
+    "start_line": 14,
+    "type": "module_preamble"
+  }
+]

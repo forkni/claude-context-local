@@ -26,7 +26,7 @@ class TestSystemDetection:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "Python 3.11.1"
 
-            # This would be the actual function from install-windows.bat
+            # This would be the actual function from install-windows.cmd
             # For now we simulate the logic
             version = self._extract_python_version("Python 3.11.1")
             assert version == "3.11.1"

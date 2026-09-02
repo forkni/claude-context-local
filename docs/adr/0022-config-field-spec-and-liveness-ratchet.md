@@ -160,6 +160,16 @@ manual bump.
 
 ### `:tuned_parameters`'s Benchmark-Locked list now derives from `FORBIDDEN_AUTO_TUNE_KEYS`
 
+> **Superseded (2026-09-02).** The two hand-typed tables described below no longer
+> exist. Each benchmark-pinned field now declares its own citation on its `spec()` row
+> via `spec(benchmark_locked="...")`; `SearchConfig._BENCHMARK_LOCK_CITATIONS` is
+> derived from those rows (`_derive_benchmark_locks`), and `search/index_probe.py`'s
+> `BENCHMARK_LOCK_CITATIONS` / `FORBIDDEN_AUTO_TUNE_KEYS` are views over it plus the
+> single routing lock `INDEX_ROUTING_LOCKED_KEYS = {"embedding.model_name"}`. The
+> public names, the `start_mcp_server.cmd` one-liner, and the guardrail tests are
+> unchanged; the pinning test now pins the derived set. Treat the `spec()` rows in
+> `search/config.py` as the source of truth for what is locked and why.
+
 `start_mcp_server.cmd`'s `:tuned_parameters` menu hand-typed eight `print()` calls citing
 ADRs and sweep results for "do not re-tune" fields, and `search/index_probe.py`'s
 `FORBIDDEN_AUTO_TUNE_KEYS` separately pinned 12 dotted keys the auto-tune probe must never
@@ -171,7 +181,9 @@ forbidden set, meaning a future probe rule touching them would sail past the gua
 silently.
 
 Both gaps are closed the same way: `bm25_k1`, `bm25_b`, and `bm25_use_stopwords` were added
-to `FORBIDDEN_AUTO_TUNE_KEYS` (now 15 keys), and a new `BENCHMARK_LOCK_CITATIONS: dict[str,
+to `FORBIDDEN_AUTO_TUNE_KEYS` (15 keys as of this round; 19 keys live as of ADR-0042's audit —
+treat `search/index_probe.py`'s `FORBIDDEN_AUTO_TUNE_KEYS` frozenset, not this number, as the
+current source), and a new `BENCHMARK_LOCK_CITATIONS: dict[str,
 str]` in `index_probe.py`, keyed identically to the frozenset minus `embedding.model_name`
 (which is locked for index-routing safety, not a benchmark result, and stays displayed
 separately under the menu's "Observation only" section), replaces the eight hand-typed

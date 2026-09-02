@@ -4,10 +4,30 @@ import dataclasses
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
+from graph.graph_storage import CodeGraphStorage
+from merkle.change_detector import FileChanges
+from merkle.merkle_dag import MerkleNode
+from search.call_edge_injection import InjectionStats
 from search.filters import PathFilter
 from search.incremental_indexer import IncrementalIndexer, IncrementalIndexResult
+from search.resource_refresh import NullResourceRefresher
+
+
+class _SwappingRefresher:
+    """Test double: returns a pre-built fresh (embedder, indexer) pair,
+    simulating a real refresh swapping stale test doubles for fresh ones."""
+
+    def __init__(self, embedder, indexer):
+        self._embedder = embedder
+        self._indexer = indexer
+
+    def refresh_before_full_index(self, project_path, embedder, indexer):
+        return self._embedder, self._indexer
+
+    def invalidate_searcher_cache(self) -> None:
+        return None
 
 
 class TestIncrementalIndexResult:
@@ -159,7 +179,12 @@ class TestIncrementalIndexer:
 
             mock_indexer_class.assert_called_once()
             mock_embedder_class.assert_called_once()
-            mock_chunker_class.assert_called_once()
+            mock_chunker_class.assert_called_once_with(
+                include_dirs=None,
+                exclude_dirs=None,
+                enable_entity_tracking=ANY,
+                include_exclusive=False,
+            )
             # SnapshotManager not called when passed explicitly
             mock_snapshot_class.assert_not_called()
 
@@ -187,14 +212,14 @@ class TestIncrementalIndexer:
             str(self.project_path)
         )
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_full_index_no_snapshot(self, mock_release):
+    def test_full_index_no_snapshot(self):
         """Test full indexing when no snapshot exists."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Mock no snapshot exists
@@ -205,6 +230,7 @@ class TestIncrementalIndexer:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py", "utils.py", "config.py"]
             mock_dag.path_filter = PathFilter(None, None, self.project_path)
+            mock_dag.nodes = {}
             mock_dag_class.return_value = mock_dag
 
             # Mock chunker
@@ -233,9 +259,10 @@ class TestIncrementalIndexer:
             assert result.files_removed == 0
             assert result.files_modified == 0
 
-            # Verify components were called
+            # Verify components were called. embed_chunks itself is a stub
+            # supplying data -- chunks_added == 3 above already proves it ran
+            # and its output was consumed; no separate interaction assertion.
             self.mock_indexer.clear_index.assert_called_once()
-            self.mock_embedder.embed_chunks.assert_called()
             self.mock_indexer.add_embeddings.assert_called_once()
             self.mock_indexer.save_indices.assert_called_once()
 
@@ -340,6 +367,10 @@ class TestIncrementalIndexer:
         time. cache_full_pass=False matters because a full-pass eviction cap
         here would wrongly collapse a cache built by prior full indexes down
         to this run's handful of live keys — see ChunkEmbeddingCache._evict.
+
+        The embed call now runs through IndexWriteStage.embed_and_attach_metadata
+        (shared with the full-index path), so resolve_chunk_cache is patched at
+        its call site in search.index_write_stage, not search.incremental_indexer.
         """
         self.mock_indexer.storage_dir = "/fake/storage_dir"
         indexer = IncrementalIndexer(
@@ -381,7 +412,7 @@ class TestIncrementalIndexer:
 
         sentinel_cache = Mock()
         with patch(
-            "search.incremental_indexer.resolve_chunk_cache",
+            "search.index_write_stage.resolve_chunk_cache",
             return_value=sentinel_cache,
         ) as mock_resolve:
             result = indexer.incremental_index(str(self.project_path), "test_project")
@@ -392,14 +423,14 @@ class TestIncrementalIndexer:
         assert call_kwargs["cache"] is sentinel_cache
         assert call_kwargs["cache_full_pass"] is False
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_error_handling_full_index(self, mock_release):
+    def test_error_handling_full_index(self):
         """Test error handling during full index."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Mock no snapshot exists
@@ -563,9 +594,11 @@ class TestIncrementalIndexer:
 
         result = indexer.auto_reindex_if_needed(str(self.project_path))
 
+        # result's object identity is only reachable via incremental_index's
+        # return value, so that call is already proven by the outcome check
+        # below -- only the predicate's cardinality needs a direct assertion.
         assert result == mock_result
-        indexer.needs_reindex.assert_called_once()
-        indexer.incremental_index.assert_called_once()
+        indexer.needs_reindex.assert_called_once_with(str(self.project_path), 5)
 
     def test_auto_reindex_if_needed_no_reindex(self):
         """Test auto-reindex when no reindexing is needed."""
@@ -584,16 +617,16 @@ class TestIncrementalIndexer:
         assert result.success is True
         assert result.files_added == 0
         assert result.chunks_added == 0
-        indexer.needs_reindex.assert_called_once()
+        indexer.needs_reindex.assert_called_once_with(str(self.project_path), 5)
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_force_full_reindex(self, mock_release):
+    def test_force_full_reindex(self):
         """Test force full reindex functionality."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Mock components for full index
@@ -619,14 +652,14 @@ class TestIncrementalIndexer:
             assert result.success is True
             self.mock_indexer.clear_index.assert_called_once()
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_chunking_error_handling(self, mock_release):
+    def test_chunking_error_handling(self):
         """Test handling of chunking errors."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Mock no snapshot exists (triggers full index)
@@ -636,6 +669,7 @@ class TestIncrementalIndexer:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["error_file.py", "good_file.py"]
             mock_dag.path_filter = PathFilter(None, None, self.project_path)
+            mock_dag.nodes = {}
             mock_dag_class.return_value = mock_dag
 
             # Mock chunker - one file fails, one succeeds
@@ -660,14 +694,14 @@ class TestIncrementalIndexer:
             assert result.success is True
             assert result.chunks_added == 1  # Only one file succeeded
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_embedding_error_handling(self, mock_release):
+    def test_embedding_error_handling(self):
         """Test handling of embedding errors."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Mock no snapshot exists
@@ -740,14 +774,14 @@ class TestIncrementalIndexer:
         # Verify validation was called
         self.mock_indexer.validate_index_consistency.assert_called_once()
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_batch_removal_validation_failure_triggers_full_reindex(self, mock_release):
+    def test_batch_removal_validation_failure_triggers_full_reindex(self):
         """Test that validation failure triggers full re-index recovery."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Mock snapshot exists
@@ -813,14 +847,14 @@ class TestIncrementalIndexer:
             # more by _full_index's own tail check once recovery completes.
             assert self.mock_indexer.validate_index_consistency.call_count == 2
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_error_recovery_via_full_reindex(self, mock_release):
+    def test_error_recovery_via_full_reindex(self):
         """Test that errors during incremental indexing trigger full re-index recovery."""
         indexer = IncrementalIndexer(
             indexer=self.mock_indexer,
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Mock snapshot exists
@@ -896,7 +930,9 @@ class TestIncrementalIndexer:
         assert result.files_removed == 10
         assert result.chunks_removed == 30  # 10 files * 3 chunks each
         # Verify batch removal was called once with all files
-        self.mock_indexer.remove_files.assert_called_once()
+        self.mock_indexer.remove_files.assert_called_once_with(
+            set(files_to_remove), "test_project"
+        )
 
     def test_recovery_failure_returns_error(self):
         """Test that recovery failure is properly reported."""
@@ -1028,8 +1064,7 @@ class TestIncrementalIndexer:
         assert result.bm25_resync_count == 0
         self.mock_indexer.resync_if_desynced.assert_not_called()
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_filter_persistence_in_full_index(self, mock_release):
+    def test_filter_persistence_in_full_index(self):
         """Test that filters are preserved when _full_index is triggered."""
         # Create indexer WITH filters
         include_dirs = ["src/", "lib/"]
@@ -1041,6 +1076,7 @@ class TestIncrementalIndexer:
             snapshot_manager=self.mock_snapshot_manager,
             include_dirs=include_dirs,
             exclude_dirs=exclude_dirs,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Real files under the include targets. MerkleDAG is NOT mocked in
@@ -1091,8 +1127,7 @@ class TestIncrementalIndexer:
         assert saved_dag.directory_filter.include_dirs == include_dirs
         assert saved_dag.directory_filter.exclude_dirs == exclude_dirs
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_filter_recovery_from_snapshot_in_full_index(self, mock_release):
+    def test_filter_recovery_from_snapshot_in_full_index(self):
         """Test that filters are recovered from snapshot if not passed to indexer."""
         from search.filters import DirectoryFilter
 
@@ -1104,6 +1139,7 @@ class TestIncrementalIndexer:
             snapshot_manager=self.mock_snapshot_manager,
             include_dirs=None,  # No filters passed!
             exclude_dirs=None,
+            resource_refresher=NullResourceRefresher(),
         )
 
         # Create a mock snapshot WITH filters
@@ -1185,8 +1221,7 @@ class TestIncrementalIndexer:
         )
         return mock_path_filter
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_full_index_aborts_when_only_dependency_paths_matched(self, mock_release):
+    def test_full_index_aborts_when_only_dependency_paths_matched(self):
         """Backstop guard: a narrowing include list (or include_exclusive)
         that resolves entirely inside a dependency tree must hard-abort
         _full_index BEFORE delete_snapshot/clear_index run -- this is the
@@ -1199,6 +1234,7 @@ class TestIncrementalIndexer:
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
             include_dirs=["site-packages/torch"],
+            resource_refresher=NullResourceRefresher(),
         )
         self.mock_snapshot_manager.has_snapshot.return_value = False
 
@@ -1222,8 +1258,7 @@ class TestIncrementalIndexer:
         self.mock_snapshot_manager.delete_snapshot.assert_not_called()
         self.mock_indexer.clear_index.assert_not_called()
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_full_index_all_includes_unmatched_takes_precedence(self, mock_release):
+    def test_full_index_all_includes_unmatched_takes_precedence(self):
         """all_includes_unmatched (a typo'd/absent pattern) is checked first
         and gives a more specific error than the dependency-only guard --
         the guard must not even be consulted once that abort has already
@@ -1234,6 +1269,7 @@ class TestIncrementalIndexer:
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
             include_dirs=["nonexistent_dir"],
+            resource_refresher=NullResourceRefresher(),
         )
         self.mock_snapshot_manager.has_snapshot.return_value = False
 
@@ -1256,10 +1292,7 @@ class TestIncrementalIndexer:
         self.mock_snapshot_manager.delete_snapshot.assert_not_called()
         self.mock_indexer.clear_index.assert_not_called()
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_full_index_include_exclusive_downgrades_guard_to_warning(
-        self, mock_release
-    ):
+    def test_full_index_include_exclusive_downgrades_guard_to_warning(self):
         """include_exclusive=True is the deliberate override: the guard must
         still fire (log a warning) but let indexing proceed rather than
         aborting."""
@@ -1270,6 +1303,7 @@ class TestIncrementalIndexer:
             snapshot_manager=self.mock_snapshot_manager,
             include_dirs=["site-packages/torch"],
             include_exclusive=True,
+            resource_refresher=NullResourceRefresher(),
         )
         self.mock_snapshot_manager.has_snapshot.return_value = False
 
@@ -1294,7 +1328,9 @@ class TestIncrementalIndexer:
             result = indexer.incremental_index(str(self.project_path), "test_project")
 
         assert result.success is True
-        self.mock_snapshot_manager.delete_snapshot.assert_called_once()
+        self.mock_snapshot_manager.delete_snapshot.assert_called_once_with(
+            str(self.project_path)
+        )
         self.mock_indexer.clear_index.assert_called_once()
 
     def test_incremental_path_never_applies_dependency_only_guard(self):
@@ -1346,18 +1382,9 @@ class TestIncrementalIndexer:
         assert result.success is True
         mock_dag.path_filter.only_dependency_paths_matched.assert_not_called()
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_write_pipeline_rebound_after_resource_refresh(self, mock_release):
+    def test_write_pipeline_rebound_after_resource_refresh(self):
         """IndexWriteStage must use the freshly acquired embedder/indexer after
-        _release_and_verify_resources() swaps them in — not the original stale ones."""
-        indexer = IncrementalIndexer(
-            indexer=self.mock_indexer,
-            embedder=self.mock_embedder,
-            chunker=self.mock_chunker,
-            snapshot_manager=self.mock_snapshot_manager,
-        )
-
-        # Simulate _release_and_verify_resources replacing embedder/indexer
+        the resource refresher swaps them in — not the original stale ones."""
         fresh_embedder = Mock()
         fresh_embedding_result = Mock()
         fresh_embedding_result.metadata = {}
@@ -1368,11 +1395,13 @@ class TestIncrementalIndexer:
         # _consistency_target() -- give it the same clean default as self.mock_indexer.
         fresh_indexer.validate_index_consistency = Mock(return_value=(True, []))
 
-        def swap_resources(project_path):
-            indexer.embedder = fresh_embedder
-            indexer.indexer = fresh_indexer
-
-        mock_release.side_effect = swap_resources
+        indexer = IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=_SwappingRefresher(fresh_embedder, fresh_indexer),
+        )
 
         self.mock_snapshot_manager.has_snapshot.return_value = False
 
@@ -1479,8 +1508,7 @@ class TestConsistencyTarget:
 
         assert target is self.mock_indexer
 
-    @patch.object(IncrementalIndexer, "_release_and_verify_resources")
-    def test_full_index_validation_failure_marks_result_failed(self, mock_release):
+    def test_full_index_validation_failure_marks_result_failed(self):
         """Fix 2: _full_index's tail now actually re-validates. Before this fix
         the check was dead code (hasattr false on the real HybridSearcher shape)
         so a corrupted index would still come back success=True."""
@@ -1489,11 +1517,20 @@ class TestConsistencyTarget:
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
         self.mock_snapshot_manager.has_snapshot.return_value = False
+        # Production wording (indexer.py's validate_index_consistency, check 1):
+        # a prior version of this mock used "metadata rows (10) != ..." here,
+        # a string no production code ever emits — so this test was green
+        # while exercising zero characters of the real check-4 orphan-surplus
+        # path. Using the FAISS-size-mismatch form (check 1, never prunable)
+        # keeps this test about "validation failure fails the run", while
+        # TestFullIndexOrphanSelfHeal below covers the actual check-4 wording
+        # and its self-heal prune path.
         self.mock_indexer.validate_index_consistency = Mock(
-            return_value=(False, ["metadata rows (10) != chunk_ids length (11)"])
+            return_value=(False, ["FAISS index size (10) != chunk_ids length (11)"])
         )
 
         with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
@@ -1515,7 +1552,120 @@ class TestConsistencyTarget:
 
         assert result.success is False
         assert result.error is not None
-        assert "metadata rows (10) != chunk_ids length (11)" in result.error
+        assert "FAISS index size (10) != chunk_ids length (11)" in result.error
+
+
+class TestFullIndexOrphanSelfHeal:
+    """Regression tests for the full-index self-heal prune (docs/adr/0025's
+    2026-08-31 amendment): after a full index, metadata must equal chunk_ids
+    by construction, so if check 4's metadata-surplus message is the *only*
+    consistency issue, checks 1-3 have already proven the FAISS/chunk_ids
+    side intact and the surplus rows are provably stale debris from a prior
+    generation surviving a clear (the voro-engine incident: 148 pre-rename
+    cito_* rows survived a reported-successful force-full clear).
+
+    Exercises the guard predicate and the prune-and-revalidate helper
+    directly against a real CodeIndexManager (real metadata store, real
+    FAISS index) — the smallest seam that touches genuine storage state
+    without driving the full chunk/embed/write pipeline.
+    """
+
+    @staticmethod
+    def _make_indexer_with(manager):
+        return IncrementalIndexer(
+            indexer=manager,
+            embedder=Mock(),
+            chunker=Mock(),
+            snapshot_manager=Mock(),
+        )
+
+    def test_sole_orphan_surplus_issue_is_recognized(self):
+        issues = [
+            "Metadata database size (602) != chunk_ids length (454); "
+            "148 orphaned row(s) across 1 file(s): a.py:1-2:function:f"
+        ]
+        assert IncrementalIndexer._is_sole_orphan_surplus_issue(issues)
+
+    def test_non_surplus_or_multiple_issues_are_not_treated_as_prunable(self):
+        # Check 1's wording, never prunable.
+        assert not IncrementalIndexer._is_sole_orphan_surplus_issue(
+            ["FAISS index size (10) != chunk_ids length (11)"]
+        )
+        # Surplus present, but not the *only* issue — checks 1-3 have not
+        # proven the FAISS/chunk_ids side intact, so pruning must decline.
+        assert not IncrementalIndexer._is_sole_orphan_surplus_issue(
+            [
+                "FAISS index size (10) != chunk_ids length (11)",
+                "Metadata database size (12) != chunk_ids length (11); "
+                "1 orphaned row(s) across 1 file(s): x.py:1-1:function:g",
+            ]
+        )
+
+    def test_prune_and_revalidate_clears_orphans_and_succeeds(self, tmp_path):
+        import numpy as np
+
+        from search.indexer import CodeIndexManager
+
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+        manager = CodeIndexManager(storage_dir=str(storage_dir))
+
+        embeddings = np.random.RandomState(0).randn(1, 8).astype(np.float32)
+        manager._faiss_index.create(8, "flat")
+        manager._faiss_index.add(embeddings, ["a.py:1-2:function:f"])
+        manager.metadata_store.set("a.py:1-2:function:f", 0, {"relative_path": "a.py"})
+        # Orphan from a previous generation — no corresponding chunk_id,
+        # mirroring the pre-rename cito_* rows found in the real incident.
+        manager.metadata_store.set(
+            "old.py:1-2:function:cito_old", 99, {"relative_path": "old.py"}
+        )
+        manager.metadata_store.commit()
+
+        is_valid, issues = manager.validate_index_consistency()
+        assert not is_valid
+        assert IncrementalIndexer._is_sole_orphan_surplus_issue(issues)
+
+        indexer = self._make_indexer_with(manager)
+        is_valid, issues = indexer._prune_orphaned_metadata_and_revalidate(manager)
+
+        assert is_valid, issues
+        assert len(manager.metadata_store) == 1
+        assert manager.metadata_store.get("old.py:1-2:function:cito_old") is None
+        assert manager.metadata_store.get("a.py:1-2:function:f") is not None
+
+    def test_prune_guard_declines_when_faiss_side_also_broken(self, tmp_path):
+        import numpy as np
+
+        from search.indexer import CodeIndexManager
+
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+        manager = CodeIndexManager(storage_dir=str(storage_dir))
+
+        embeddings = np.random.RandomState(0).randn(2, 8).astype(np.float32)
+        manager._faiss_index.create(8, "flat")
+        manager._faiss_index.add(
+            embeddings, ["a.py:1-2:function:f", "b.py:1-2:function:g"]
+        )
+        manager.metadata_store.set("a.py:1-2:function:f", 0, {"relative_path": "a.py"})
+        manager.metadata_store.set("b.py:1-2:function:g", 1, {"relative_path": "b.py"})
+        # Also a surplus orphan, so check 4 fires too.
+        manager.metadata_store.set(
+            "old.py:1-2:function:cito_old", 99, {"relative_path": "old.py"}
+        )
+        manager.metadata_store.commit()
+        # White-box: desync chunk_ids from the FAISS vectors that were just
+        # added, so check 1 also fires alongside check 4's surplus.
+        manager._faiss_index._chunk_ids = ["a.py:1-2:function:f"]
+
+        is_valid, issues = manager.validate_index_consistency()
+        assert not is_valid
+        assert len(issues) > 1
+        assert not IncrementalIndexer._is_sole_orphan_surplus_issue(issues), (
+            "must not attempt pruning when checks 1-3 have not already "
+            "proven the FAISS/chunk_ids side intact"
+        )
+        assert len(manager.metadata_store) == 3, "nothing pruned"
 
 
 class TestBoundedRecovery:
@@ -1975,19 +2125,18 @@ class TestProbeWiring:
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
     def _run_full_index(self, indexer: IncrementalIndexer) -> IncrementalIndexResult:
         """Drive a full index with the same mock scaffolding as
         test_full_index_no_snapshot."""
         self.mock_snapshot_manager.has_snapshot.return_value = False
-        with (
-            patch.object(IncrementalIndexer, "_release_and_verify_resources"),
-            patch("search.incremental_indexer.MerkleDAG") as mock_dag_class,
-        ):
+        with patch("search.incremental_indexer.MerkleDAG") as mock_dag_class:
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py", "utils.py"]
             mock_dag.path_filter = PathFilter(None, None, self.project_path)
+            mock_dag.nodes = {}
             mock_dag_class.return_value = mock_dag
 
             mock_chunk = Mock()
@@ -2108,6 +2257,7 @@ class TestModuleSummaryInjection:
             embedder=self.mock_embedder,
             chunker=self.mock_chunker,
             snapshot_manager=self.mock_snapshot_manager,
+            resource_refresher=NullResourceRefresher(),
         )
 
     def _run_full_index(
@@ -2123,7 +2273,6 @@ class TestModuleSummaryInjection:
         mock_config.chunking.enable_file_summaries = enable_file_summaries
 
         with (
-            patch.object(IncrementalIndexer, "_release_and_verify_resources"),
             patch("search.incremental_indexer.MerkleDAG") as mock_dag_class,
             patch(
                 "search.incremental_indexer.get_active_project_storage_dir",
@@ -2133,10 +2282,16 @@ class TestModuleSummaryInjection:
                 "search.incremental_indexer.get_search_config",
                 return_value=mock_config,
             ),
+            # The enable_file_summaries gate is read inside SummaryStage.
+            patch(
+                "search.summary_stage.get_search_config",
+                return_value=mock_config,
+            ),
         ):
             mock_dag = Mock()
             mock_dag.get_all_files.return_value = ["main.py", "utils.py"]
             mock_dag.path_filter = PathFilter(None, None, self.project_path)
+            mock_dag.nodes = {}
             mock_dag_class.return_value = mock_dag
 
             mock_chunk = Mock()
@@ -2185,3 +2340,390 @@ class TestModuleSummaryInjection:
 
         assert result.success is True
         mock_generate.assert_not_called()
+
+
+class TestIncrementalCallEdgeInjection:
+    """The incremental path delegates call-edge re-injection to
+    `IndexWriteStage.inject_call_edges_if_enabled`, which owns the
+    `inject_on_incremental` gate — gate on/off correctness is covered in
+    test_index_write_stage.py's TestInjectCallEdgesIfEnabled; here we only
+    pin the delegation and the stats threading into the result.
+    """
+
+    def setup_method(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.project_path = Path(self.temp_dir) / "test_project"
+        self.project_path.mkdir(parents=True, exist_ok=True)
+
+        self.mock_indexer = Mock()
+        self.mock_indexer.resync_if_desynced.return_value = (False, 0)
+        self.mock_indexer.validate_index_consistency = Mock(return_value=(True, []))
+        self.mock_embedder = Mock()
+        self.mock_chunker = Mock()
+        self.mock_snapshot_manager = Mock()
+
+    def _make_indexer(self) -> IncrementalIndexer:
+        return IncrementalIndexer(
+            indexer=self.mock_indexer,
+            embedder=self.mock_embedder,
+            chunker=self.mock_chunker,
+            snapshot_manager=self.mock_snapshot_manager,
+        )
+
+    def _run_incremental_with_changes(
+        self, indexer: IncrementalIndexer
+    ) -> IncrementalIndexResult:
+        self.mock_snapshot_manager.has_snapshot.return_value = True
+
+        mock_changes = Mock()
+        mock_changes.has_changes.return_value = True
+        mock_changes.added = ["new_file.py"]
+        mock_changes.removed = ["old_file.py"]
+        mock_changes.modified = ["changed_file.py"]
+        mock_dag = Mock()
+        mock_dag.get_all_files.return_value = [
+            "new_file.py",
+            "old_file.py",
+            "changed_file.py",
+        ]
+        mock_dag.path_filter = PathFilter(None, None, self.project_path)
+
+        indexer.change_detector.detect_changes_from_snapshot = Mock(
+            return_value=(mock_changes, mock_dag)
+        )
+        indexer.change_detector.get_files_to_remove = Mock(
+            return_value=["old_file.py", "changed_file.py"]
+        )
+        indexer.change_detector.get_files_to_reindex = Mock(
+            return_value=["new_file.py", "changed_file.py"]
+        )
+
+        self.mock_indexer.remove_files = Mock(return_value=10)
+
+        mock_chunk = Mock()
+        mock_chunk.content = "test content"
+        self.mock_chunker.is_supported.return_value = True
+        self.mock_chunker.chunk_file.return_value = [mock_chunk]
+
+        mock_embedding_result = Mock()
+        mock_embedding_result.metadata = {}
+        self.mock_embedder.embed_chunks.return_value = [
+            mock_embedding_result,
+            mock_embedding_result,
+        ]
+
+        return indexer.incremental_index(str(self.project_path), "test_project")
+
+    def test_delegates_to_write_stage_and_forwards_stats(self):
+        indexer = self._make_indexer()
+        sentinel_stats = InjectionStats(injected=7, resolvers_run=("pyan", "libcst"))
+        with patch.object(
+            indexer._index_write_stage,
+            "inject_call_edges_if_enabled",
+            return_value=sentinel_stats,
+        ) as mock_inject:
+            result = self._run_incremental_with_changes(indexer)
+
+        assert result.success is True
+        mock_inject.assert_called_once_with(str(self.project_path))
+        assert result.call_edges_injected == 7
+        assert result.call_edge_resolvers == ("pyan", "libcst")
+
+
+class TestDuplicateContentReporting:
+    """Workstream B2 -- `_report_duplicate_content` byte-identical groups.
+
+    Report-only, on purpose: no skip/alias. Chunk IDs embed relative_path
+    and graph_storage.remove_file_nodes prunes by path prefix, so aliasing
+    would orphan every alias when the canonical file is later deleted (see
+    the method's own docstring). These tests call `_report_duplicate_content`
+    directly with a hand-built `dag.nodes` map rather than driving the whole
+    `_full_index` flow -- the method only reads `dag.nodes` and its
+    `supported_files` argument, so a real MerkleDAG walk buys nothing here.
+    """
+
+    def setup_method(self):
+        self.indexer = IncrementalIndexer(
+            indexer=Mock(),
+            embedder=Mock(),
+            chunker=Mock(),
+            snapshot_manager=Mock(),
+        )
+
+    @staticmethod
+    def _node(path: str, content_hash: str, size: int) -> MerkleNode:
+        return MerkleNode(path=path, hash=content_hash, is_file=True, size=size)
+
+    def test_duplicate_group_above_floor_is_logged(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        dag = Mock()
+        dag.nodes = {
+            "a.py": self._node("a.py", "hash1", 1000),
+            "b.py": self._node("b.py", "hash1", 1000),
+        }
+
+        self.indexer._report_duplicate_content(dag, ["a.py", "b.py"])
+
+        messages = [r.message for r in caplog.records]
+        summary = [m for m in messages if "duplicate-content group(s)" in m]
+        assert len(summary) == 1
+        assert "1 duplicate-content group(s)" in summary[0]
+        assert "1,000 redundant bytes" in summary[0]
+        detail = [m for m in messages if " copies x " in m]
+        assert len(detail) == 1
+        assert "2 copies x 1,000B (1,000B wasted): a.py + 1 more (b.py)" in detail[0]
+
+    def test_group_below_byte_floor_is_not_reported(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        dag = Mock()
+        dag.nodes = {
+            "a.py": self._node("a.py", "hash1", 100),
+            "b.py": self._node("b.py", "hash1", 100),
+        }
+
+        self.indexer._report_duplicate_content(dag, ["a.py", "b.py"])
+
+        assert not any(r.message.startswith("[DUP_CONTENT]") for r in caplog.records)
+
+    def test_unsupported_file_with_coincidental_hash_not_counted(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        dag = Mock()
+        # vendor/readme.txt shares a.py's content hash but is NOT a supported
+        # file -- merkle_dag hashes unsupported extensions by name:size:mtime,
+        # not content, so a coincidental match here is not a real duplicate
+        # and must never surface, because it was never passed in
+        # supported_files.
+        dag.nodes = {
+            "a.py": self._node("a.py", "hash1", 1000),
+            "vendor/readme.txt": self._node("vendor/readme.txt", "hash1", 1000),
+        }
+
+        self.indexer._report_duplicate_content(dag, ["a.py"])
+
+        assert not any(r.message.startswith("[DUP_CONTENT]") for r in caplog.records)
+
+    def test_no_duplicates_logs_nothing(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        dag = Mock()
+        dag.nodes = {
+            "a.py": self._node("a.py", "hash1", 1000),
+            "b.py": self._node("b.py", "hash2", 1000),
+            "c.py": self._node("c.py", "hash3", 1000),
+        }
+
+        self.indexer._report_duplicate_content(dag, ["a.py", "b.py", "c.py"])
+
+        assert not any(r.message.startswith("[DUP_CONTENT]") for r in caplog.records)
+
+    def test_missing_or_non_file_nodes_skipped_without_error(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        dag = Mock()
+        dag.nodes = {
+            "a.py": self._node("a.py", "hash1", 1000),
+            # "b.py" deliberately absent from dag.nodes.
+            "dir_stub": MerkleNode(
+                path="dir_stub", hash="hash1", is_file=False, size=0
+            ),
+        }
+
+        # Must not raise even though "b.py" has no node and "dir_stub" is a
+        # directory node that coincidentally shares a.py's hash.
+        self.indexer._report_duplicate_content(dag, ["a.py", "b.py", "dir_stub"])
+
+        assert not any(r.message.startswith("[DUP_CONTENT]") for r in caplog.records)
+
+    def test_more_than_five_groups_logs_only_top_five_by_wasted_bytes(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        dag = Mock()
+        nodes = {}
+        supported_files = []
+        # 6 groups, sizes 512..1012 in steps of 100 -- each group has exactly
+        # 2 files, so wasted bytes == size, giving 6 distinct totals and a
+        # deterministic top-5 cut. Group 0 (size 512, the floor) is the one
+        # expected to sort out of the top 5.
+        for i in range(6):
+            size = 512 + i * 100
+            path_a, path_b = f"dup_group_{i}/a.py", f"dup_group_{i}/b.py"
+            nodes[path_a] = self._node(path_a, f"hash{i}", size)
+            nodes[path_b] = self._node(path_b, f"hash{i}", size)
+            supported_files.extend([path_a, path_b])
+        dag.nodes = nodes
+
+        self.indexer._report_duplicate_content(dag, supported_files)
+
+        messages = [r.message for r in caplog.records]
+        summary = [m for m in messages if "duplicate-content group(s)" in m]
+        assert len(summary) == 1
+        assert "6 duplicate-content group(s)" in summary[0]
+        # Sum of ALL 6 groups' wasted bytes (512+612+712+812+912+1012=4,572),
+        # not just the 5 that get a detail line.
+        assert "4,572 redundant bytes" in summary[0]
+
+        detail = [m for m in messages if " copies x " in m]
+        assert len(detail) == 5
+        assert not any("dup_group_0/" in m for m in detail)
+        for i in range(1, 6):
+            assert any(f"dup_group_{i}/a.py" in m for m in detail)
+
+
+class TestExtensionSkipHistogram:
+    """Workstream C3 -- `_report_extension_skip_histogram` per-extension
+    diagnostics for files found but not indexed.
+
+    This is the log line that would have made the `.cu`/`.cuh` registration
+    gap (Workstream A3) self-evident without manual investigation: files in
+    `all_files` but not in `supported_files` are unsupported by extension,
+    and were previously invisible beyond the aggregate
+    "Found N supported files out of M total files" count.
+    """
+
+    def setup_method(self):
+        self.indexer = IncrementalIndexer(
+            indexer=Mock(),
+            embedder=Mock(),
+            chunker=Mock(),
+            snapshot_manager=Mock(),
+        )
+
+    def test_skipped_extensions_counted_and_logged(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        all_files = ["a.py", "b.py", "readme.md", "notes.md", "logo.bin"]
+        supported_files = ["a.py", "b.py"]
+
+        self.indexer._report_extension_skip_histogram(all_files, supported_files)
+
+        messages = [r.message for r in caplog.records]
+        summary = [m for m in messages if m.startswith("[SKIP_HISTOGRAM] 3 file(s)")]
+        assert len(summary) == 1
+        assert "0 extensionless" in summary[0]
+        detail = [m for m in messages if m.startswith("[SKIP_HISTOGRAM]   ")]
+        assert any(".md: 2" in m for m in detail)
+        assert any(".bin: 1" in m for m in detail)
+
+    def test_extensionless_files_counted_explicitly(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        all_files = ["a.py", "LICENSE", "Makefile"]
+        supported_files = ["a.py"]
+
+        self.indexer._report_extension_skip_histogram(all_files, supported_files)
+
+        messages = [r.message for r in caplog.records]
+        summary = [m for m in messages if m.startswith("[SKIP_HISTOGRAM]")]
+        assert any("2 file(s)" in m and "2 extensionless" in m for m in summary)
+        # Extensionless files never appear as a per-extension detail line --
+        # they're only reflected in the summary count.
+        detail = [m for m in messages if m.startswith("[SKIP_HISTOGRAM]   ")]
+        assert detail == []
+
+    def test_no_skipped_files_logs_nothing(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        all_files = ["a.py", "b.py"]
+        supported_files = ["a.py", "b.py"]
+
+        self.indexer._report_extension_skip_histogram(all_files, supported_files)
+
+        assert not any(r.message.startswith("[SKIP_HISTOGRAM]") for r in caplog.records)
+
+    def test_only_top_15_extensions_logged_by_descending_count(self, caplog):
+        caplog.set_level("INFO", logger="search.incremental_indexer")
+        supported_files = ["a.py"]
+        all_files = ["a.py"]
+        # 20 distinct extensions, each with a distinct, deterministic count
+        # (ext_00 has 1 file, ext_19 has 20 files) so the top-15 cut and its
+        # ordering are unambiguous.
+        for i in range(20):
+            count = i + 1
+            for j in range(count):
+                all_files.append(f"file_{i}_{j}.ext{i:02d}")
+
+        self.indexer._report_extension_skip_histogram(all_files, supported_files)
+
+        messages = [r.message for r in caplog.records]
+        detail = [m for m in messages if m.startswith("[SKIP_HISTOGRAM]   ")]
+        assert len(detail) == 15
+        # The 5 lowest-count extensions (ext00..ext04, counts 1..5) must be
+        # dropped; the 15 highest-count ones (ext05..ext19) must all appear.
+        for i in range(5):
+            assert not any(f".ext{i:02d}:" in m for m in detail)
+        for i in range(5, 20):
+            assert any(f".ext{i:02d}:" in m for m in detail)
+
+
+class TestRemoveOldChunksPrunesOrphanPhantoms:
+    """Workstream D wiring gate (F3, ADR-0055).
+
+    `prune_orphan_symbol_nodes` has 7 unit tests of its own
+    (tests/unit/graph/test_graph_storage.py) but its single production call
+    site, `_remove_old_chunks`, had zero coverage -- a refactor that dropped
+    the call would leave every other test green while phantom placeholder
+    nodes silently resumed accumulating across incremental reindexes.
+    """
+
+    def _make_indexer(self, graph_storage=None):
+        indexer = IncrementalIndexer(
+            indexer=Mock(),
+            embedder=Mock(),
+            chunker=Mock(),
+            snapshot_manager=Mock(),
+        )
+        if graph_storage is not None:
+            indexer.indexer.graph_storage = graph_storage
+        indexer.indexer.remove_files = Mock(return_value=5)
+        indexer.change_detector.get_files_to_remove = Mock(
+            return_value=["a.py", "b.py"]
+        )
+        return indexer
+
+    @staticmethod
+    def _changes() -> FileChanges:
+        return FileChanges(
+            added=[], removed=["a.py", "b.py"], modified=[], unchanged=[]
+        )
+
+    def test_prune_called_after_remove_file_nodes_loop(self):
+        graph_storage = Mock(spec=CodeGraphStorage)
+        graph_storage.remove_file_nodes = Mock(return_value=0)
+        graph_storage.prune_orphan_symbol_nodes = Mock(return_value=3)
+        indexer = self._make_indexer(graph_storage)
+
+        result = indexer._remove_old_chunks(self._changes(), "test_project")
+
+        assert result == 5
+        assert graph_storage.remove_file_nodes.call_count == 2
+        graph_storage.remove_file_nodes.assert_any_call("a.py")
+        graph_storage.remove_file_nodes.assert_any_call("b.py")
+        graph_storage.prune_orphan_symbol_nodes.assert_called_once_with()
+        # Ordering matters: a phantom's incident edges from the just-removed
+        # files must already be gone before degree-0 pruning can see it —
+        # mock_calls records child-mock calls in the order they happened.
+        call_names = [c[0] for c in graph_storage.mock_calls]
+        assert call_names == [
+            "remove_file_nodes",
+            "remove_file_nodes",
+            "prune_orphan_symbol_nodes",
+        ]
+
+    def test_prune_not_called_when_no_files_removed(self):
+        graph_storage = Mock(spec=CodeGraphStorage)
+        graph_storage.remove_file_nodes = Mock(return_value=0)
+        graph_storage.prune_orphan_symbol_nodes = Mock(return_value=0)
+        indexer = self._make_indexer(graph_storage)
+        indexer.change_detector.get_files_to_remove = Mock(return_value=[])
+        indexer.indexer.remove_files = Mock(return_value=0)
+
+        result = indexer._remove_old_chunks(self._changes(), "test_project")
+
+        assert result == 0
+        graph_storage.remove_file_nodes.assert_not_called()
+        graph_storage.prune_orphan_symbol_nodes.assert_not_called()
+
+    def test_prune_skipped_when_indexer_has_no_graph_storage(self):
+        # No spec=CodeGraphStorage graph_storage set -- Mock() auto-vivifies
+        # a plain Mock() for the attribute access, which fails the
+        # isinstance(graph_storage, CodeGraphStorage) guard just like a real
+        # indexer built without call-graph support.
+        indexer = self._make_indexer()
+
+        result = indexer._remove_old_chunks(self._changes(), "test_project")
+
+        assert result == 5

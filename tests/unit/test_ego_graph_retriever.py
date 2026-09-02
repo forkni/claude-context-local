@@ -4,6 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from graph.traversal_policy import TraversalPolicy
 from search.config import EgoGraphConfig
 from search.ego_graph_retriever import EgoGraphRetriever
 
@@ -29,7 +30,7 @@ class TestEgoGraphRetriever:
     def test_retrieve_ego_graph_basic(self, retriever, mock_graph_storage):
         """Test basic ego-graph retrieval."""
         # Setup mock - use valid chunk_id format (file:lines:type:name)
-        mock_graph_storage.get_neighbors = Mock(
+        mock_graph_storage.get_neighbors_ranked = Mock(
             return_value=[
                 "file1.py:10-20:function:neighbor1",
                 "file2.py:30-40:function:neighbor2",
@@ -44,17 +45,50 @@ class TestEgoGraphRetriever:
             "file1.py:10-20:function:neighbor1",
             "file2.py:30-40:function:neighbor2",
         ]
-        mock_graph_storage.get_neighbors.assert_called_once_with(
+        mock_graph_storage.get_neighbors_ranked.assert_called_once_with(
             "anchor1",
-            relation_types=None,
-            max_depth=2,
-            exclude_import_categories=["stdlib", "builtin", "third_party"],
-            edge_weights=None,
+            TraversalPolicy(
+                relation_types=None,
+                max_depth=2,
+                exclude_import_categories=["stdlib", "builtin", "third_party"],
+                edge_weights=None,
+                min_confidence=0.0,
+                confidence_weighting=False,
+                drop_ambiguous=False,
+            ),
         )
+
+    def test_retrieve_ego_graph_forwards_policy_unchanged(
+        self, retriever, mock_graph_storage
+    ):
+        """An explicit policy reaches get_neighbors_ranked as-is, config
+        untouched."""
+        mock_graph_storage.get_neighbors_ranked = Mock(return_value=[])
+        config = EgoGraphConfig(k_hops=2, max_neighbors_per_hop=10, edge_weights=None)
+        policy = TraversalPolicy(max_depth=1, drop_ambiguous=True, min_confidence=0.7)
+
+        retriever.retrieve_ego_graph(["anchor1"], config, policy)
+
+        mock_graph_storage.get_neighbors_ranked.assert_called_once_with(
+            "anchor1", policy
+        )
+
+    def test_expand_search_results_forwards_policy(self, retriever, mock_graph_storage):
+        """expand_search_results -> retrieve_ego_graph -> get_neighbors_ranked
+        carries one policy the whole way down."""
+        mock_graph_storage.get_neighbors_ranked = Mock(return_value=[])
+        config = EgoGraphConfig(enabled=True)
+        policy = TraversalPolicy(drop_ambiguous=True)
+
+        retriever.expand_search_results(
+            [{"chunk_id": "c1", "score": 1.0}], config, policy
+        )
+
+        mock_graph_storage.get_neighbors_ranked.assert_called_once_with("c1", policy)
 
     def test_retrieve_ego_graph_multiple_anchors(self, retriever, mock_graph_storage):
         """Test retrieval for multiple anchors."""
-        mock_graph_storage.get_neighbors = Mock(
+        mock_graph_storage.get_neighbors_ranked = Mock(
             side_effect=[
                 [
                     "file1.py:10-20:function:n1",
@@ -84,7 +118,7 @@ class TestEgoGraphRetriever:
         """Test that neighbors are limited to prevent explosion."""
         # Return 30 neighbors but limit should cap at max_neighbors_per_hop * k_hops
         many_neighbors = [f"file{i}.py:10-20:function:neighbor{i}" for i in range(30)]
-        mock_graph_storage.get_neighbors = Mock(return_value=many_neighbors)
+        mock_graph_storage.get_neighbors_ranked = Mock(return_value=many_neighbors)
 
         config = EgoGraphConfig(k_hops=2, max_neighbors_per_hop=5)  # 2 * 5 = 10 max
         result = retriever.retrieve_ego_graph(["anchor1"], config)
@@ -102,7 +136,7 @@ class TestEgoGraphRetriever:
         self, retriever, mock_graph_storage
     ):
         """Test retrieval with relation type filter."""
-        mock_graph_storage.get_neighbors = Mock(
+        mock_graph_storage.get_neighbors_ranked = Mock(
             return_value=["file1.py:10-20:function:n1"]
         )
 
@@ -110,8 +144,8 @@ class TestEgoGraphRetriever:
         retriever.retrieve_ego_graph(["anchor1"], config)
 
         # Verify relation types were passed
-        call_args = mock_graph_storage.get_neighbors.call_args
-        assert call_args[1]["relation_types"] == ["CALLS", "INHERITS"]
+        policy = mock_graph_storage.get_neighbors_ranked.call_args.args[1]
+        assert policy.relation_types == ["CALLS", "INHERITS"]
 
     def test_flatten_for_context_basic(self, retriever):
         """Test flattening ego-graphs to chunk list."""
@@ -178,7 +212,7 @@ class TestEgoGraphRetriever:
         ]
 
         # Mock neighbors for each chunk - use valid chunk_id format
-        mock_graph_storage.get_neighbors = Mock(
+        mock_graph_storage.get_neighbors_ranked = Mock(
             side_effect=[
                 [
                     "file1.py:10-20:function:n1",
@@ -218,7 +252,9 @@ class TestEgoGraphRetriever:
 
     def test_error_handling(self, retriever, mock_graph_storage):
         """Test error handling when graph retrieval fails."""
-        mock_graph_storage.get_neighbors = Mock(side_effect=Exception("Graph error"))
+        mock_graph_storage.get_neighbors_ranked = Mock(
+            side_effect=Exception("Graph error")
+        )
 
         config = EgoGraphConfig()
         result = retriever.retrieve_ego_graph(["anchor1"], config)
@@ -240,7 +276,7 @@ class TestEgoGraphRetriever:
 
         # 20 neighbors but cap = k_hops * max_neighbors_per_hop = 2*5 = 10
         neighbors = [f"file{i}.py:10-20:function:n{i}" for i in range(20)]
-        mock_graph_storage.get_neighbors = Mock(return_value=neighbors)
+        mock_graph_storage.get_neighbors_ranked = Mock(return_value=neighbors)
 
         # n10-n19 have highest centrality scores
         centrality = {f"file{i}.py:10-20:function:n{i}": i / 20.0 for i in range(20)}
@@ -257,7 +293,7 @@ class TestEgoGraphRetriever:
     def test_without_centrality_uses_bfs_order(self, retriever, mock_graph_storage):
         """Without centrality scores, truncation preserves BFS order (first N)."""
         neighbors = [f"file{i}.py:10-20:function:n{i}" for i in range(20)]
-        mock_graph_storage.get_neighbors = Mock(return_value=neighbors)
+        mock_graph_storage.get_neighbors_ranked = Mock(return_value=neighbors)
 
         config = EgoGraphConfig(k_hops=2, max_neighbors_per_hop=5)
         result = retriever.retrieve_ego_graph(["anchor1"], config)
@@ -265,6 +301,29 @@ class TestEgoGraphRetriever:
         assert len(result["anchor1"]) == 10
         # Without centrality, should be the first 10 (BFS discovery order)
         assert result["anchor1"] == neighbors[:10]
+
+    def test_truncation_stable_across_two_calls_with_empty_centrality(
+        self, mock_graph_storage
+    ):
+        """Fix #3: with centrality empty (e.g. immediately after a reindex
+        clears it -- hybrid_searcher.clear_index), two independent
+        retrieve_ego_graph calls over the identical ranked-neighbor list
+        truncate to the identical subset. This is the property that used to
+        depend on Python's set-iteration order (stable within one process,
+        not guaranteed across process restarts)."""
+        neighbors = [f"file{i}.py:10-20:function:n{i}" for i in range(20)]
+        mock_graph_storage.get_neighbors_ranked = Mock(return_value=neighbors)
+        config = EgoGraphConfig(k_hops=2, max_neighbors_per_hop=5)
+
+        first_retriever = EgoGraphRetriever(mock_graph_storage)
+        second_retriever = EgoGraphRetriever(mock_graph_storage)
+        assert first_retriever._centrality_scores == {}
+        assert second_retriever._centrality_scores == {}
+
+        first = first_retriever.retrieve_ego_graph(["anchor1"], config)
+        second = second_retriever.retrieve_ego_graph(["anchor1"], config)
+
+        assert first["anchor1"] == second["anchor1"] == neighbors[:10]
 
     # --- QW3: Personalized PageRank expansion mode ---
 

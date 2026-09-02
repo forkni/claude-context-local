@@ -95,7 +95,7 @@ class TestConfigureLoggingIdempotent:
 
 class TestIndexHandlersConfiguresLoggingEagerly:
     """Log-hygiene item F: a real force-reindex (tools/batch_index.py ->
-    mcp_server.tool_handlers.handle_index_directory) showed zero INFO-level
+    mcp_server.tool_specs.handle_index_directory) showed zero INFO-level
     "Call graph extraction enabled..." lines from chunking.multi_language_chunker,
     though exactly one is expected per index run (MultiLanguageChunker.__init__
     logs it once, at INFO; worker threads log the same message at DEBUG).
@@ -108,7 +108,7 @@ class TestIndexHandlersConfiguresLoggingEagerly:
     deferred: it only happens later in the same call, inside
     search_factory.get_searcher() (called from _setup_and_run(), after the
     chunker already exists). batch_index.py's own import graph
-    (mcp_server.tool_handlers -> mcp_server.tools.index_handlers) never
+    (mcp_server.tool_specs -> mcp_server.tools.index_handlers) never
     imports mcp_server.server directly, so in a fresh process the chunker's
     one INFO record is emitted while root.level is still WARNING --
     logger.isEnabledFor(INFO) is False at the source, so the record never
@@ -288,20 +288,29 @@ class TestDropBenignUvicornErrors:
         assert _drop_benign_uvicorn_errors(record) is True
 
 
+@pytest.fixture
+def rotating_handler(request, tmp_path):
+    """A `_SafeRotatingFileHandler` over a fresh `tmp_path/test.log`, closed on
+    teardown. `backupCount` defaults to 1 -- parametrize indirectly for a
+    different value, e.g. `@pytest.mark.parametrize("rotating_handler", [5],
+    indirect=True)`."""
+    from mcp_server.server import _SafeRotatingFileHandler
+
+    backup_count = getattr(request, "param", 1)
+    handler = _SafeRotatingFileHandler(
+        str(tmp_path / "test.log"), maxBytes=50, backupCount=backup_count, delay=True
+    )
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    yield handler
+    handler.close()
+
+
 class TestSafeRotatingFileHandler:
     """_SafeRotatingFileHandler.rotate() must swallow file-lock errors gracefully."""
 
     def test_permission_error_on_rename_does_not_raise(
-        self, tmp_path: pytest.FixtureDef
+        self, rotating_handler: logging.handlers.RotatingFileHandler
     ) -> None:
-        from mcp_server.server import _SafeRotatingFileHandler
-
-        log_file = tmp_path / "test.log"
-        handler = _SafeRotatingFileHandler(
-            str(log_file), maxBytes=50, backupCount=1, delay=True
-        )
-        handler.setFormatter(logging.Formatter("%(message)s"))
-
         def _locked_rename(source: str, dest: str) -> None:
             raise PermissionError("[WinError 32] The process cannot access the file")
 
@@ -316,22 +325,16 @@ class TestSafeRotatingFileHandler:
                 args=(),
                 exc_info=None,
             )
-            handler.emit(record)  # must not raise
+            rotating_handler.emit(record)  # must not raise
 
-        handler.close()
-        assert log_file.exists(), "Handler must keep writing after a failed rollover"
+        rotating_handler.close()
+        assert Path(rotating_handler.baseFilename).exists(), (
+            "Handler must keep writing after a failed rollover"
+        )
 
     def test_os_error_on_rename_does_not_raise(
-        self, tmp_path: pytest.FixtureDef
+        self, rotating_handler: logging.handlers.RotatingFileHandler
     ) -> None:
-        from mcp_server.server import _SafeRotatingFileHandler
-
-        log_file = tmp_path / "test.log"
-        handler = _SafeRotatingFileHandler(
-            str(log_file), maxBytes=50, backupCount=1, delay=True
-        )
-        handler.setFormatter(logging.Formatter("%(message)s"))
-
         def _ioerror_rename(source: str, dest: str) -> None:
             raise OSError("disk full")
 
@@ -345,9 +348,84 @@ class TestSafeRotatingFileHandler:
                 args=(),
                 exc_info=None,
             )
-            handler.emit(record)  # must not raise
+            rotating_handler.emit(record)  # must not raise
 
-        handler.close()
-        assert log_file.exists(), "Handler must keep writing after a failed rollover"
+        rotating_handler.close()
+        assert Path(rotating_handler.baseFilename).exists(), (
+            "Handler must keep writing after a failed rollover"
+        )
 
-        handler.close()
+
+class TestRolloverFailureLatchAndReopen:
+    """Plan verification step 6 (error-log-10-37-28-search-goofy-fog.md): the four
+    assertions a single failed rollover / two-rollover session must satisfy, beyond the
+    "emit() must not raise" coverage in TestSafeRotatingFileHandler above."""
+
+    def test_next_emit_after_failed_rollover_does_not_call_handle_error(
+        self, rotating_handler: logging.handlers.RotatingFileHandler
+    ) -> None:
+        """A failed rollover must latch (_rollover_failed=True /
+        shouldRollover()=False afterwards) so the *next* record's emit() never
+        re-attempts the rollover that is guaranteed to fail again -- handleError must
+        not fire a second time."""
+        with patch.object(os, "rename", side_effect=PermissionError("locked")):
+            rotating_handler.emit(
+                _make_record("x" * 100)
+            )  # triggers + swallows rollover
+
+        with patch.object(rotating_handler, "handleError") as mock_handle_error:
+            rotating_handler.emit(_make_record("x" * 100))  # must NOT retry rollover
+            mock_handle_error.assert_not_called()
+
+    def test_nothing_written_to_stderr_across_failed_rollover_and_next_emit(
+        self,
+        rotating_handler: logging.handlers.RotatingFileHandler,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with patch.object(os, "rename", side_effect=PermissionError("locked")):
+            rotating_handler.emit(_make_record("x" * 100))
+        rotating_handler.emit(_make_record("x" * 100))
+        rotating_handler.close()
+
+        captured = capsys.readouterr()
+        assert captured.err == "", (
+            f"Rollover failure must never reach stderr (load-bearing under "
+            f"--transport stdio): {captured.err!r}"
+        )
+
+    def test_should_rollover_returns_false_after_failed_rollover(
+        self, rotating_handler: logging.handlers.RotatingFileHandler
+    ) -> None:
+        with patch.object(os, "rename", side_effect=PermissionError("locked")):
+            rotating_handler.emit(_make_record("x" * 100))
+
+        assert rotating_handler._rollover_failed is True
+        # An oversized record would normally trigger another rollover attempt;
+        # the latch must suppress that regardless of record size.
+        assert rotating_handler.shouldRollover(_make_record("x" * 100)) is False
+
+    @pytest.mark.parametrize("rotating_handler", [5], indirect=True)
+    def test_two_rollovers_in_one_session_produce_distinct_destination_filenames(
+        self, rotating_handler: logging.handlers.RotatingFileHandler, tmp_path: Path
+    ) -> None:
+        """dfn must include a per-instance rollover counter, not just the
+        session-start timestamp -- a fixed name collides with itself (FileExistsError,
+        suppressed) on the second rollover, permanently disabling rotation for the rest
+        of the session."""
+        log_file = Path(rotating_handler.baseFilename)
+
+        rotating_handler.emit(
+            _make_record("x" * 100)
+        )  # rollover #1 (real rename, no patch)
+        rotating_handler.emit(_make_record("x" * 100))  # rollover #2
+        rotating_handler.close()
+
+        assert rotating_handler._rollover_failed is False, (
+            "Sanity check: both rollovers must have succeeded for this test to "
+            "prove anything about naming, not about the failure latch."
+        )
+        backups = sorted(p.name for p in tmp_path.glob("test_*.log") if p != log_file)
+        assert len(backups) == 2, (
+            f"Expected 2 distinct backup files after 2 rollovers, got {backups}"
+        )
+        assert backups[0] != backups[1]

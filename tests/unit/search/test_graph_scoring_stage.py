@@ -171,6 +171,35 @@ class TestApplyCentrality:
 
         assert out_results == results
 
+    def test_inject_ego_centrality_skips_searcher_without_ego_graph_retriever(self):
+        """A searcher with no ``ego_graph_retriever`` attribute at all (e.g.
+        IntelligentSearcher, or a bare Mock() with the attribute unset) must
+        not have set_centrality_scores called on it.
+
+        ADR-0004: this guard used to also check ``SearcherView(searcher).is_hybrid``
+        before the ``hasattr``/``is not None`` pair below — that first clause was
+        redundant (only HybridSearcher ever sets ego_graph_retriever) and its
+        removal deleted graph_scoring_stage.py's only upward mcp_server import.
+        This test pins the surviving guard's own behaviour directly, independent
+        of that redundant clause.
+        """
+        stage = GraphScoringStage()
+        searcher = Mock(spec=[])  # no attributes at all, including ego_graph_retriever
+        stage._inject_ego_centrality(searcher, {"a.py:1-5:function:foo": 0.9})
+        assert not hasattr(searcher, "set_centrality_scores")
+
+    def test_inject_ego_centrality_calls_set_centrality_scores_when_present(self):
+        """A searcher with a real (non-None) ego_graph_retriever and non-empty
+        centrality_scores gets set_centrality_scores called on it."""
+        stage = GraphScoringStage()
+        searcher = Mock()
+        searcher.ego_graph_retriever = Mock()
+        fake_scores = {"a.py:1-5:function:foo": 0.9}
+        stage._inject_ego_centrality(searcher, fake_scores)
+        searcher.ego_graph_retriever.set_centrality_scores.assert_called_once_with(
+            fake_scores
+        )
+
     def test_centrality_scores_forwarded_to_subgraph_extractor(self):
         """centrality_scores from Block F reach extract_subgraph as a kwarg."""
         stage = GraphScoringStage()

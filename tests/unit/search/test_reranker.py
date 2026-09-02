@@ -545,3 +545,97 @@ class TestReservedSlots:
             reserved_slots=2,
         )
         assert [r.chunk_id for r in results] == ["d1", "d2", "b1", "b2"]
+
+
+class TestTM2C2Fusion:
+    """TM2C2 theoretical-min/max convex-combination fusion (Gate B knob,
+    evaluation/LEG_DEPTH_FUSION_PROBE_20260814.md). Exact-arithmetic tests
+    mirror scripts/benchmark/probe_tm2c2_fusion.py's reference implementation
+    that these were lifted from."""
+
+    def setup_method(self):
+        self.reranker = RRFReranker(k=100)
+
+    def test_normalize_exact_arithmetic(self):
+        norm = self.reranker._theoretical_min_max_normalize(
+            [("b1", 10.0), ("b2", 5.0)], 0.0
+        )
+        assert abs(norm["b1"] - 1.0) < 1e-9
+        assert abs(norm["b2"] - 0.5) < 1e-9
+
+    def test_normalize_degenerate_denominator_is_all_zero(self):
+        """empirical_max == theoretical_min yields all-zero norms, not a division error."""
+        norm = self.reranker._theoretical_min_max_normalize([("b1", 0.0)], 0.0)
+        assert norm == {"b1": 0.0}
+
+    def test_normalize_empty_is_empty(self):
+        assert self.reranker._theoretical_min_max_normalize([], 0.0) == {}
+
+    def test_fuse_tm2c2_exact_arithmetic(self):
+        """BM25 theoretical_min=0.0, dense theoretical_min=-1.0 (module constants)."""
+        bm25 = [("b1", 10.0, {}), ("b2", 5.0, {})]
+        dense = [("d1", 0.9, {}), ("d2", 0.5, {})]
+
+        fused = dict(self.reranker.fuse_tm2c2(bm25, dense, alpha=0.8))
+
+        # bm25 norms: b1=10/10=1.0, b2=5/10=0.5 -> *(1-0.8)
+        assert abs(fused["b1"] - 0.2) < 1e-9
+        assert abs(fused["b2"] - 0.1) < 1e-9
+        # dense norms: d1=(0.9+1)/1.9=1.0, d2=(0.5+1)/1.9=1.5/1.9 -> *0.8
+        assert abs(fused["d1"] - 0.8) < 1e-9
+        assert abs(fused["d2"] - 0.8 * (1.5 / 1.9)) < 1e-9
+
+    def test_fuse_tm2c2_sorted_descending(self):
+        bm25 = [("b1", 10.0, {}), ("b2", 5.0, {})]
+        dense = [("d1", 0.9, {}), ("d2", 0.5, {})]
+
+        fused = self.reranker.fuse_tm2c2(bm25, dense, alpha=0.8)
+        scores = [score for _, score in fused]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_rerank_tm2c2_orders_by_fused_score(self):
+        bm25 = [("b1", 10.0, {}), ("b2", 5.0, {})]
+        dense = [("d1", 0.9, {}), ("d2", 0.5, {})]
+
+        results = self.reranker.rerank_tm2c2(
+            bm25_results=bm25, dense_results=dense, max_results=10, alpha=0.8
+        )
+
+        assert [r.chunk_id for r in results] == ["d1", "d2", "b1", "b2"]
+
+    def test_rerank_tm2c2_keeps_original_score_and_fusion_metadata(self):
+        """.score stays the leg's raw score (mirrors rerank's convention);
+        the fused value lives in metadata["fusion_score"]."""
+        bm25 = [("b1", 10.0, {})]
+        dense = [("d1", 0.9, {})]
+
+        results = self.reranker.rerank_tm2c2(
+            bm25_results=bm25, dense_results=dense, max_results=10, alpha=0.8
+        )
+
+        by_id = {r.chunk_id: r for r in results}
+        assert by_id["b1"].score == 10.0
+        assert by_id["d1"].score == 0.9
+        assert abs(by_id["d1"].metadata["fusion_score"] - 0.8) < 1e-9
+        assert by_id["d1"].metadata["fusion_function"] == "tm2c2"
+
+    def test_rerank_tm2c2_reuses_select_with_reserve(self):
+        """reserved_slots injects BM25-unique candidates via the same
+        _select_with_reserve mechanism RRF uses — unchanged, just fed
+        TM2C2-fused sorted_docs instead of rrf_scores."""
+        bm25 = [("b1", 10.0, {}), ("b2", 9.0, {})]
+        dense = [(f"d{i}", 1.0 - i * 0.1, {}) for i in range(1, 7)]
+
+        plain = self.reranker.rerank_tm2c2(
+            bm25_results=bm25, dense_results=dense, max_results=4, alpha=0.8
+        )
+        assert "b1" not in [r.chunk_id for r in plain]
+
+        reserved = self.reranker.rerank_tm2c2(
+            bm25_results=bm25,
+            dense_results=dense,
+            max_results=4,
+            alpha=0.8,
+            reserved_slots=2,
+        )
+        assert [r.chunk_id for r in reserved] == ["d1", "d2", "b1", "b2"]

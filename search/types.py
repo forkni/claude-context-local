@@ -7,6 +7,7 @@ import it without pulling in the full analyzer or its graph dependencies.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from chunking.relationships.relationship_types import get_relationship_field_mapping
@@ -68,6 +69,67 @@ BUILTIN_TYPES: frozenset[str] = frozenset(
 )
 
 
+class ResultSource(StrEnum):
+    """The retrieval-funnel provenance tags stamped on SearchResult.source.
+
+    A real str subclass -- every ``== "hybrid"`` comparison, set/dict
+    lookup, and JSON round-trip (dataclasses.asdict + json.dump) keeps
+    working unchanged, including against plain strings replayed from
+    captured benchmark JSON (see scripts/benchmark/probe_rerank_window.py's
+    _SimResult shim). Centralizes the provenance vocabulary so a typo can't
+    silently create a 14th, unrecognized channel.
+
+    DENSE and SEMANTIC name the same dense-retrieval channel under two
+    different labels -- a pre-existing inconsistency between RRFReranker/
+    SearchExecutor (which stamp "dense") and ResultFactory.from_dense_results
+    (which stamps "semantic"). Nothing consumes either value today, so
+    unifying them is a behaviour-visible wire change deferred to its own
+    round -- both members are kept here verbatim.
+    """
+
+    # Legs (hop-1 single-channel results)
+    BM25 = "bm25"
+    DENSE = "dense"
+    SEMANTIC = "semantic"
+
+    # Fusion
+    HYBRID = "hybrid"
+
+    # Expansion (multi-hop, graph, ego, parent, query-variant legs)
+    MULTI_HOP = "multi_hop"
+    GRAPH_HOP = "graph_hop"
+    BM25_VARIANT = "bm25_variant"
+    DENSE_VARIANT = "dense_variant"
+    EGO_GRAPH = "ego_graph"
+    PARENT_EXPANSION = "parent_expansion"
+
+    # Lookup / similarity
+    DIRECT_LOOKUP = "direct_lookup"
+    SIMILARITY = "similarity"
+
+    # Default
+    UNKNOWN = "unknown"
+
+
+# Source tags whose SearchResult.score is a fabricated placeholder, not a
+# ranking signal -- SearchResult.is_unscored (search/reranker.py) reads this
+# set directly. Only sources whose 0.0 is *unconditional* belong here.
+#
+# parent_expansion is unconditional: HybridSearcher._apply_parent_expansion
+# always calls ResultFactory.from_expansion(parent_id, 0.0, ...) (D9) -- there
+# is no config path that ever gives a parent chunk a real score.
+#
+# graph_hop is deliberately excluded even though it also stamps 0.0 on some
+# candidates (MultiHopSearcher._score_graph_hop_candidates): whether a given
+# graph_hop result is scored is conditional per query on
+# SearchConfig.graph_enhanced.graph_hop_call_evidence_enabled (ADR-0039), not
+# a static property of the source tag. That per-call distinction is carried
+# by RerankWindowPolicy.graph_hop_unscored, a caller-declared flag -- adding
+# "graph_hop" here unconditionally would mislabel every scored graph_hop
+# result as unscored whenever call-evidence scoring is on.
+UNSCORED_SOURCES: frozenset[str] = frozenset({ResultSource.PARENT_EXPANSION})
+
+
 @dataclass(frozen=True, slots=True)
 class RetrievalRequest:
     """Everything one retrieval executes against.
@@ -79,8 +141,8 @@ class RetrievalRequest:
 
     NB: shallow freeze — `config` is a mutable SearchConfig reachable through
     this object. Nothing may mutate it mid-request; the orchestrator's only
-    config mutation happens before construction (search_orchestrator.py:498-501,
-    before the search call at :511).
+    config mutation happens before construction (search_orchestrator.py:414-416,
+    before the search call at :424).
     """
 
     query: str
@@ -92,6 +154,75 @@ class RetrievalRequest:
     use_parallel: bool
     filters: dict[str, Any] | None
     config: SearchConfig
+
+    # Context-chunk expansion depth. Only IntelligentSearcher.execute reads
+    # this today (HybridSearcher.execute ignores it, same as it always has)
+    # — see ADR-0048. Defaulted so every existing keyword-only constructor
+    # call site needs no edit.
+    context_depth: int = 1
+
+    @classmethod
+    def build(
+        cls,
+        query: str,
+        k: int,
+        config: SearchConfig,
+        *,
+        search_mode: str | SearchMode,
+        bm25_weight: float | None = None,
+        dense_weight: float | None = None,
+        min_bm25_score: float | None = None,
+        use_parallel: bool = True,
+        filters: dict[str, Any] | None = None,
+        context_depth: int = 1,
+    ) -> RetrievalRequest:
+        """Resolve every field from explicit overrides + config, in one place.
+
+        Mirrors HybridSearcher.search's historical inline resolution, except
+        for ``min_bm25_score``: an unrecognized ``search_mode`` string falls
+        back to hybrid, and ``None`` weights -- including ``min_bm25_score``
+        -- fall back to ``config.search_mode`` (ADR-0048). This is the one
+        BM25 floor: callers that previously relied on the undeclared literal
+        ``0.0`` (``RelationshipAnalyzer._resolve_by_symbol`` /
+        ``_resolve_type_chunk``) now see config's ``0.1`` instead.
+        BaseSearcher.search always supplies ``search_mode`` (via its
+        subclass's ``_DEFAULT_SEARCH_MODE``), so it has no default of its
+        own.
+
+        ``SearchMode`` is imported locally, not at module scope, so this
+        module carries no runtime dependency on ``search/config.py``.
+        """
+        from search.config import SearchMode as _SearchMode
+
+        try:
+            normalized_mode = _SearchMode(search_mode)
+        except ValueError:
+            normalized_mode = _SearchMode.HYBRID
+
+        return cls(
+            query=query,
+            k=k,
+            search_mode=normalized_mode,
+            bm25_weight=(
+                bm25_weight
+                if bm25_weight is not None
+                else config.search_mode.bm25_weight
+            ),
+            dense_weight=(
+                dense_weight
+                if dense_weight is not None
+                else config.search_mode.dense_weight
+            ),
+            min_bm25_score=(
+                min_bm25_score
+                if min_bm25_score is not None
+                else config.search_mode.min_bm25_score
+            ),
+            use_parallel=use_parallel,
+            filters=filters,
+            config=config,
+            context_depth=context_depth,
+        )
 
 
 # The 23 relationship buckets ImpactReport.to_dict() has always emitted, in
@@ -202,8 +333,13 @@ class ImpactReport:
             "chunk_id": self.chunk_id,
         }
 
-        if self.direct_callers:
-            result["direct_callers"] = self.direct_callers
+        # Unconditional (D13): unlike the other relationship buckets below, which
+        # are ordinary absence-of-data, direct_callers/direct_callees are two of
+        # NEVER_DROP_EMPTY_KEYS' four allowlisted keys (output_formatter.py) --
+        # the formatter's post-pass can only re-add a key that was present here
+        # to begin with, so gating this emission on truthiness silently defeated
+        # the allowlist for every symbol with no callers.
+        result["direct_callers"] = self.direct_callers
         if self.indirect_callers:
             result["indirect_callers"] = self.indirect_callers
         if self.similar_code:
@@ -237,9 +373,9 @@ class ImpactReport:
                 "ambiguous": self.direct_callers_ambiguous,
             }
 
-        # Outbound callees (bidirectional)
-        if self.direct_callees:
-            result["direct_callees"] = self.direct_callees
+        # Outbound callees (bidirectional). Unconditional for the same reason as
+        # direct_callers above (D13).
+        result["direct_callees"] = self.direct_callees
         if (
             self.direct_callees_exact
             or self.direct_callees_recovered

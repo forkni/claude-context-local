@@ -44,6 +44,27 @@ for avoiding re-litigating settled questions.
 | [0036](0036-include-dirs-additive-for-dependency-trees.md) | Make `include_dirs` additive for dependency trees, narrowing for source | accepted | 2026-08-07 |
 | [0037](0037-decline-index-version-bump-for-cpp-parity.md) | Decline an `INDEX_VERSION` bump for C++ chunking parity | accepted | 2026-08-12 |
 | [0038](0038-cpp-only-container-traversal-seam.md) | Fix the container-traversal seam for C++ only; defer the Rust/C# analogues | accepted | 2026-08-12 |
+| [0039](0039-merged-pool-provenance-bands.md) | Replace the merged-pool score sort's incidental graph band with an explicit one | accepted | 2026-08-15 |
+| [0040](0040-probe-harness-seam.md) | Shared interface for offline retrieval probes: `evaluation/probe_harness.py` | accepted | 2026-08-17 |
+| [0041](0041-find-connections-indirect-caller-fanout.md) | Dedup/sort `find_connections`' `indirect_callers`; decline the fan-out cap | accepted | 2026-08-18 |
+| [0042](0042-publish-invariants-not-values.md) | Derive the MCP tool schema's bounds/enums from `spec()`; never derive `default` | accepted | 2026-08-19 |
+| [0043](0043-point-stale-prose-counts-at-derived-source.md) | Point stale ADR/README prose counts at their derived source, not a re-pinned number | accepted | 2026-08-19 |
+| [0044](0044-incremental-call-edge-injection-opt-in-only.md) | Incremental-pass call-edge re-injection: opt-in only, default stays off | accepted | 2026-08-19 |
+| [0045](0045-extract-embedding-document-composer.md) | Extract the embedding-document composer from `CodeEmbedder` | accepted | 2026-08-19 |
+| [0046](0046-single-source-mcp-parameter-defaults.md) | Single-source hand-typed MCP parameter defaults through `config_schema.py` | accepted | 2026-08-19 |
+| [0047](0047-result-source-strenum.md) | Replace `SearchResult.source`'s bare `str` with a `ResultSource` StrEnum | accepted | 2026-08-19 |
+| [0048](0048-base-searcher-execute-seam.md) | One retrieval seam on `BaseSearcher`: `execute(request)` behind `search(...)` | accepted | 2026-08-19 |
+| [0049](0049-enricher-spec-rows.md) | One spec row per request-scoped result enricher; derive schema, default, plan, and gate | accepted | 2026-08-20 |
+| [0050](0050-per-layer-confidence-unknown-defaults.md) | Decline a shared policy object for the four `resolver_confidence`-unknown defaults | accepted | 2026-08-20 |
+| [0051](0051-delete-graph-scoring-stage-upward-import.md) | Delete `GraphScoringStage`'s upward `mcp_server` import instead of moving the class | accepted | 2026-08-20 |
+| [0052](0052-index-write-stage-owns-add-and-inject-for-incremental-passes.md) | IndexWriteStage owns index-adds and the injection gate for both passes | accepted | 2026-08-20 |
+| [0053](0053-resource-refresher-protocol-seam.md) | Lift the MCP process-resource lifecycle out of `IncrementalIndexer` via a protocol seam | accepted | 2026-08-20 |
+| [0054](0054-route-cuda-extensions-to-cpp-grammar.md) | Route CUDA (.cu/.cuh) extensions to the existing tree-sitter-cpp grammar | accepted | 2026-08-22 |
+| [0055](0055-exclude-phantom-nodes-from-centrality.md) | Exclude phantom placeholder nodes from centrality computation (default off) | accepted | 2026-08-22 |
+| [0056](0056-spec-row-edge-emission-seam.md) | Spec-row seam (`EDGE_EMISSION_SPECS`) for tree-sitter chunker-native call/relationship edges | accepted | 2026-08-23 |
+| [0057](0057-derive-tool-guard-flags-from-decorators.md) | Derive `ToolSpec.mutation_lock` / `.requires_index` from decorator stamps | accepted | 2026-08-23 |
+| [0058](0058-index-freshness-verdict.md) | Add a content-only `index_is_current` freshness verdict | accepted | 2026-08-30 |
+| [0059](0059-execution-witnessed-callgraph-ground-truth.md) | Execution-witnessed call-graph ground truth for resolver-tier calibration | accepted | 2026-09-02 |
 
 ## Adding a new ADR
 

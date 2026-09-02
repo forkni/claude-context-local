@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from mcp_server import tool_handlers
+from mcp_server import tool_specs
 from search.config import SearchConfig
 from tests.fixtures.mcp_mocks import (
     make_app_config_mock,
@@ -67,8 +67,8 @@ async def test_handle_search_code_does_not_mutate_config_singleton():
         # _assemble helpers (prevent format/subgraph code from blowing up on mock data)
         patch("mcp_server.tools.result_view._format_search_results", return_value=[]),
         patch(
-            "mcp_server.tools.result_view._enrich_results_with_graph_data",
-            side_effect=lambda r, _: r,
+            "mcp_server.tools.result_view.enrich_results",
+            side_effect=lambda r, _im, _gates: r,
         ),
     ):
         mock_orch_state.return_value.current_project = "/test"
@@ -83,7 +83,7 @@ async def test_handle_search_code_does_not_mutate_config_singleton():
         ic_instance.classify.return_value = intent_decision
         mock_ic_cls.return_value = ic_instance
 
-        await tool_handlers.handle_search_code(
+        await tool_specs.handle_search_code(
             {
                 "query": "find all callers of init",
                 "k": 5,

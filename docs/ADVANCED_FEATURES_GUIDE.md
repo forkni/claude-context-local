@@ -422,7 +422,7 @@ set CLAUDE_EMBEDDING_MODEL=google/embeddinggemma-300m
 **Interactive Selection**:
 
 ```bash
-start_mcp_server.bat → 3 (Search Config) → 4 (Select Model)
+start_mcp_server.cmd → 3 (Search Config) → 4 (Select Model)
 ```
 
 **Python Command**:
@@ -2194,15 +2194,15 @@ v0.14.0 introduced a pluggable `CallEdgeResolver` protocol with confidence-prece
 | In-house AST (cross-file) | 0.7 | nothing | Always-on |
 | pyan3 | 0.75 | `pip install -e ".[callgraph]"` | GPL-2.0, optional |
 | LibCST (`FullyQualifiedNameProvider`) | 0.90 | `pip install -e ".[callgraph]"` | MIT, optional |
-| LSP/basedpyright | 0.98 | `pip install -e ".[lsp]"` + `lsp_enabled=true` | Highest accuracy |
+| LSP/basedpyright | 0.98 | `pip install -e ".[lsp]"` | Highest accuracy; `lsp_enabled` defaults to `true`, resolver no-ops if the extra isn't installed |
 
-**Configuration** (`search_config.json`):
+**Configuration** (`search_config.json`, shown at its shipped defaults):
 
 ```json
 {
   "call_graph": {
     "resolvers": ["pyan", "libcst"],
-    "lsp_enabled": false,
+    "lsp_enabled": true,
     "lsp_timeout_seconds": 30.0
   }
 }

@@ -87,12 +87,17 @@ class SnapshotManager:
         return None
 
     def _get_model_slug_and_dimension(
-        self, dimension: int | None = None
+        self, dimension: int | None = None, model_slug: str | None = None
     ) -> tuple[str, int]:
         """Get model slug and dimension, auto-detecting from config if needed.
 
         Args:
             dimension: Optional explicit dimension. If None, auto-detects from config.
+            model_slug: Optional explicit model slug (e.g. from ``search.config.get_model_slug``).
+                When given, used verbatim instead of resolving from the *current* config —
+                needed by callers inspecting a project/model pair that isn't necessarily the
+                one currently configured (e.g. ``list_projects`` iterating multiple indexed
+                models). If None, falls back to the current config, same as before.
 
         Returns:
             Tuple of (model_slug, dimension)
@@ -103,12 +108,14 @@ class SnapshotManager:
 
                 config = get_search_config()
                 dimension = config.embedding.dimension
-                model_slug = get_model_slug(config.embedding.model_name)
+                if model_slug is None:
+                    model_slug = get_model_slug(config.embedding.model_name)
             except (AttributeError, KeyError, RuntimeError):
                 # Fallback to default if config unavailable
                 dimension = 768
-                model_slug = "unknown"
-        else:
+                if model_slug is None:
+                    model_slug = "unknown"
+        elif model_slug is None:
             # If dimension is provided explicitly, we need to get the current model slug
             try:
                 from search.config import get_model_slug, get_search_config
@@ -121,7 +128,10 @@ class SnapshotManager:
         return model_slug, dimension
 
     def get_snapshot_path(
-        self, project_path: str, dimension: int | None = None
+        self,
+        project_path: str,
+        dimension: int | None = None,
+        model_slug: str | None = None,
     ) -> Path:
         """Get the snapshot file path for a project, checking both new and legacy hashes.
 
@@ -129,11 +139,17 @@ class SnapshotManager:
             project_path: Path to project
             dimension: Model dimension (768 for Gemma, 1024 for BGE-M3).
                       If None, auto-detects from current config.
+            model_slug: Optional explicit model slug. If None, auto-detects from
+                current config — same as before. Pass explicitly to look up a
+                model other than the currently configured one (e.g. when a
+                project has multiple indexed models).
 
         Returns:
             Path to snapshot file with model slug and dimension suffix
         """
-        model_slug, dimension = self._get_model_slug_and_dimension(dimension)
+        model_slug, dimension = self._get_model_slug_and_dimension(
+            dimension, model_slug
+        )
 
         # Try new hash first (drive-agnostic)
         new_id = self.get_project_id(project_path)
@@ -155,7 +171,10 @@ class SnapshotManager:
         return new_path
 
     def get_metadata_path(
-        self, project_path: str, dimension: int | None = None
+        self,
+        project_path: str,
+        dimension: int | None = None,
+        model_slug: str | None = None,
     ) -> Path:
         """Get the metadata file path for a project, checking both new and legacy hashes.
 
@@ -163,11 +182,17 @@ class SnapshotManager:
             project_path: Path to project
             dimension: Model dimension (768 for Gemma, 1024 for BGE-M3).
                       If None, auto-detects from current config.
+            model_slug: Optional explicit model slug. If None, auto-detects from
+                current config — same as before. Pass explicitly to look up a
+                model other than the currently configured one (e.g. when a
+                project has multiple indexed models).
 
         Returns:
             Path to metadata file with model slug and dimension suffix
         """
-        model_slug, dimension = self._get_model_slug_and_dimension(dimension)
+        model_slug, dimension = self._get_model_slug_and_dimension(
+            dimension, model_slug
+        )
 
         # Try new hash first (drive-agnostic)
         new_id = self.get_project_id(project_path)
@@ -223,16 +248,26 @@ class SnapshotManager:
 
         write_json_atomic(metadata_path, metadata_data)
 
-    def load_snapshot(self, project_path: str) -> MerkleDAG | None:
+    def load_snapshot(
+        self,
+        project_path: str,
+        dimension: int | None = None,
+        model_slug: str | None = None,
+    ) -> MerkleDAG | None:
         """Load a Merkle DAG snapshot from disk.
 
         Args:
             project_path: Path to project
+            dimension: Optional explicit model dimension. If None, auto-detects
+                from current config — same as before.
+            model_slug: Optional explicit model slug. If None, auto-detects from
+                current config — same as before. Pass explicitly when reading
+                the snapshot for a model other than the currently configured one.
 
         Returns:
             MerkleDAG or None if no snapshot exists
         """
-        snapshot_path = self.get_snapshot_path(project_path)
+        snapshot_path = self.get_snapshot_path(project_path, dimension, model_slug)
 
         if not snapshot_path.exists():
             return None
@@ -255,16 +290,26 @@ class SnapshotManager:
             logger.error("Error loading snapshot: %s", e, exc_info=True)
             return None
 
-    def load_metadata(self, project_path: str) -> dict | None:
+    def load_metadata(
+        self,
+        project_path: str,
+        dimension: int | None = None,
+        model_slug: str | None = None,
+    ) -> dict | None:
         """Load metadata for a project.
 
         Args:
             project_path: Path to project
+            dimension: Optional explicit model dimension. If None, auto-detects
+                from current config — same as before.
+            model_slug: Optional explicit model slug. If None, auto-detects from
+                current config — same as before. Pass explicitly when reading
+                metadata for a model other than the currently configured one.
 
         Returns:
             Metadata dictionary or None if not found
         """
-        metadata_path = self.get_metadata_path(project_path)
+        metadata_path = self.get_metadata_path(project_path, dimension, model_slug)
 
         if not metadata_path.exists():
             return None
@@ -276,16 +321,26 @@ class SnapshotManager:
             logger.error("Error loading metadata: %s", e, exc_info=True)
             return None
 
-    def has_snapshot(self, project_path: str) -> bool:
+    def has_snapshot(
+        self,
+        project_path: str,
+        dimension: int | None = None,
+        model_slug: str | None = None,
+    ) -> bool:
         """Check if a snapshot exists for a project.
 
         Args:
             project_path: Path to project
+            dimension: Optional explicit model dimension. If None, auto-detects
+                from current config — same as before.
+            model_slug: Optional explicit model slug. If None, auto-detects from
+                current config — same as before. Pass explicitly to check a
+                model other than the currently configured one.
 
         Returns:
             True if snapshot exists
         """
-        return self.get_snapshot_path(project_path).exists()
+        return self.get_snapshot_path(project_path, dimension, model_slug).exists()
 
     def delete_snapshot(self, project_path: str) -> None:
         """Delete snapshot and metadata for a project.

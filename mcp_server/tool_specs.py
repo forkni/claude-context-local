@@ -1,6 +1,27 @@
-"""Tool registry for low-level MCP server.
+"""Tool specs for the low-level MCP server.
 
-Contains JSON schemas for all 18 tools following MCP specification.
+One ``ToolSpec`` row is the single declaration of an MCP tool's wire schema,
+handler, and dispatch-time guards. Three things a caller used to have to keep
+in sync by hand now derive from it instead:
+
+- ``TOOL_DISPATCH`` — ``{name: handler}``, used by ``handle_call_tool`` in
+  server.py and the HTTP ``switch_project`` route.
+- ``ADVANCED_TOOLS`` / ``build_tool_list`` — the advanced-tools tier and the
+  published tool list (see tool-count budget below).
+- The mutation-lock / index-guard flags — ``mutation_lock`` and
+  ``requires_index`` are derived properties, read off each handler's
+  ``__mcp_guards__`` stamp (set by ``@with_mutation_lock`` /
+  ``@require_indexed_project``) rather than hand-typed per row, so a spec can
+  no longer drift from its handler's actual decorator chain (docs/adr/0057).
+  ``tests/unit/mcp_server/test_tool_specs.py`` pins that derivation against
+  an independently recomputed stamp.
+
+This supersedes the former ``tool_registry.py`` / ``tool_handlers.py`` split,
+which held the same 18-tool knowledge in two hand-synced tables (joined only
+by a parity test) plus a hand-maintained, bytecode-inspecting mutation-lock
+test set. It extends ADR-0049's ``EnricherSpec`` pattern
+(``mcp_server/enricher_specs.py``) from request-scoped display parameters to
+whole tools.
 
 Tool-count budget (§VI-C, "MCP Server Architecture Patterns for LLM-Integrated
 Applications", Rodrigues & Vas, arXiv:2606.30317): LLM tool-selection accuracy
@@ -8,37 +29,59 @@ falls below 90% once a context holds ~10-15 tools (Haiku-class models) / ~20-30
 (Sonnet-class). Listing all 18 tools unconditionally risks that budget once this
 server is loaded alongside other MCP servers in the same client session.
 
-Tools are tagged CORE or ADVANCED (see ADVANCED_TOOLS below). By default
+Tools are tagged CORE or ADVANCED (see ``advanced=`` on each row). By default
 build_tool_list() returns CORE tools only (10). Set the environment variable
 MCP_EXPOSE_ADVANCED_TOOLS=1 to list all 18. This only affects what list_tools
-advertises to the LLM — TOOL_DISPATCH in tool_handlers.py still dispatches every
-tool by name regardless of this flag, so advanced tools remain callable by any
-client that already knows their name/schema (tests, scripts, power users).
+advertises to the LLM — TOOL_DISPATCH still dispatches every tool by name
+regardless of this flag, so advanced tools remain callable by any client that
+already knows their name/schema (tests, scripts, power users).
+
+Config-backed properties (bounds/enum sourced from search/config.py's spec()
+metadata) spread their fragment from mcp_server.config_schema.CONFIG_BACKED;
+see that module's docstring for why a field's default is never published here.
+Properties with no config field backing them (see config_schema.HAND_TYPED for
+the rationale) stay hand-typed in place.
 """
 
 import os
-from typing import Any
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from mcp.types import Tool
 
-from search.config import SearchMode
-
-
-# Tools gated behind MCP_EXPOSE_ADVANCED_TOOLS (default: hidden from list_tools).
-# These are runtime-tuning / destructive / rarely-needed-day-to-day operations;
-# hiding them by default keeps the advertised tool count within the accuracy
-# budget above without removing the capability (see module docstring).
-ADVANCED_TOOLS: frozenset[str] = frozenset(
-    {
-        "configure_search_mode",
-        "configure_reranking",
-        "configure_chunking",
-        "switch_embedding_model",
-        "list_embedding_models",
-        "get_search_config_status",
-        "clear_index",
-        "delete_project",
-    }
+from mcp_server.config_schema import (
+    CONFIG_BACKED,
+    HAND_TYPED,
+    OUTPUT_FORMAT_PROPERTY,
+    SEARCH_MODE_ENUM,
+)
+from mcp_server.enricher_specs import ENRICHER_SPECS
+from mcp_server.tools.config_handlers import (
+    handle_configure_chunking,
+    handle_configure_reranking,
+    handle_configure_search_mode,
+    handle_switch_embedding_model,
+    handle_switch_project,
+)
+from mcp_server.tools.index_handlers import (
+    handle_clear_index,
+    handle_delete_project,
+    handle_index_directory,
+)
+from mcp_server.tools.search_handlers import (
+    handle_find_connections,
+    handle_find_path,
+    handle_find_similar_code,
+    handle_search_code,
+)
+from mcp_server.tools.status_handlers import (
+    handle_cleanup_resources,
+    handle_get_index_status,
+    handle_get_memory_status,
+    handle_get_search_config_status,
+    handle_list_embedding_models,
+    handle_list_projects,
 )
 
 
@@ -51,10 +94,54 @@ def _advanced_tools_enabled() -> bool:
     return os.getenv("MCP_EXPOSE_ADVANCED_TOOLS", "").lower() in ("1", "true", "yes")
 
 
-# Complete tool registry with JSON schemas
-TOOL_REGISTRY: dict[str, dict[str, Any]] = {
-    "search_code": {
-        "description": """PREFERRED: Use this tool for code analysis and understanding tasks. Provides semantic search with intelligent multi-model routing for optimal results.
+@dataclass(frozen=True)
+class ToolSpec:
+    """The wire interface and dispatch-time guards of one MCP tool.
+
+    name: MCP tool name, as published to clients and used as the
+        TOOL_DISPATCH key.
+    description: published verbatim in list_tools.
+    input_schema: published verbatim in list_tools; built the same way as
+        before (CONFIG_BACKED / HAND_TYPED fragment spreads, ADR-0042/0046).
+    handler: the decorated async handler TOOL_DISPATCH resolves to.
+    mutation_lock / requires_index: not stored — reported by the properties
+        below, read off handler.__mcp_guards__ (docs/adr/0057). A row can no
+        longer drift from what its handler is actually decorated with.
+    advanced: True if this tool sits in the ADVANCED_TOOLS tier (hidden from
+        list_tools unless MCP_EXPOSE_ADVANCED_TOOLS=1 — see module docstring).
+    """
+
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    handler: Callable[[dict], Awaitable[dict | list]]
+    advanced: bool
+
+    @property
+    def mutation_lock(self) -> Literal["decorator", "internal", None]:
+        """Returns "decorator" if the handler itself is wrapped in
+        @with_mutation_lock, "internal" if it acquires the lock explicitly
+        further down the call stack instead (index_directory — see
+        handle_index_directory's docstring for why it can't be decorated
+        directly), or None if the tool never mutates shared ApplicationState.
+        """
+        guards = getattr(self.handler, "__mcp_guards__", frozenset())
+        if "mutation_lock:internal" in guards:
+            return "internal"
+        return "decorator" if "mutation_lock" in guards else None
+
+    @property
+    def requires_index(self) -> bool:
+        """True if the handler is wrapped in @require_indexed_project (the
+        four search_handlers.py tools)."""
+        guards = getattr(self.handler, "__mcp_guards__", frozenset())
+        return "requires_index" in guards
+
+
+TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        name="search_code",
+        description="""PREFERRED: Use this tool for code analysis and understanding tasks. Provides semantic search with intelligent multi-model routing for optimal results.
 
 WHEN TO USE:
 - Understanding how specific functionality is implemented
@@ -75,7 +162,7 @@ RETURNS:
   source ("ego_graph" for expanded graph-neighbor results)
 - subgraph_nodes / subgraph_edges: present when a result subgraph is serialized
 - system_message: routing/reindex guidance for the calling model""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "query": {
@@ -87,16 +174,13 @@ RETURNS:
                     "description": 'Direct lookup by chunk_id (from previous search results). Format: "file.py:10-20:function:name". Use this for unambiguous follow-up queries. Provide either query OR chunk_id, not both.',
                 },
                 "k": {
-                    "type": "integer",
-                    "default": 4,
-                    "description": "Number of results to return (default: 4, max recommended: 20)",
-                    "minimum": 1,
-                    "maximum": 100,
+                    **CONFIG_BACKED["search_code.k"],
+                    "description": "Number of results to return (default: the configured search_mode.default_k, max recommended: 20)",
                 },
                 "search_mode": {
                     "type": "string",
-                    "enum": [m.value for m in SearchMode],
-                    "default": SearchMode.AUTO.value,
+                    "enum": list(SEARCH_MODE_ENUM),
+                    **HAND_TYPED["search_code.search_mode"].schema,
                     "description": "Search mode selection",
                 },
                 "file_pattern": {
@@ -133,63 +217,60 @@ RETURNS:
                 },
                 "include_context": {
                     "type": "boolean",
-                    "default": True,
+                    **HAND_TYPED["search_code.include_context"].schema,
                     "description": "Include similar chunks and relationships (default: True, recommended)",
                 },
                 "auto_reindex": {
-                    "type": "boolean",
-                    "default": True,
-                    "description": "Automatically reindex if index is stale (schema default: True; "
-                    "the running server may be configured with a different effective default — "
-                    "check get_search_config_status.auto_reindex_enabled)",
+                    **CONFIG_BACKED["search_code.auto_reindex"],
+                    "description": "Automatically reindex if index is stale. Omit to use the server's configured value (get_search_config_status.auto_reindex_enabled).",
                 },
                 "max_age_minutes": {
-                    "type": "number",
-                    "default": 5,
-                    "description": "Maximum age of index in minutes before auto-reindex triggers (schema default: 5; the running server may be configured with a different effective default — check get_search_config_status.max_index_age_minutes)",
+                    **CONFIG_BACKED["search_code.max_age_minutes"],
+                    "description": "Maximum age of index in minutes before auto-reindex triggers. Omit to use the server's configured value (get_search_config_status.max_index_age_minutes).",
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
                 "ego_graph_enabled": {
                     "type": "boolean",
-                    "default": False,
-                    "description": "Enable RepoGraph-style k-hop ego-graph expansion (default: False). When enabled, expands search results by retrieving graph neighbors (callers, callees, related code) for richer context. Based on ICLR 2025 RepoGraph paper showing 32.8% improvement.",
+                    "description": "Per-call override for RepoGraph-style k-hop ego-graph expansion. This is a real two-way gate: pass True to force expansion on for this call, or False to force it off, regardless of the server's configured default. Omit the argument entirely to defer to the running server's default instead (check get_search_config_status.ego_graph_enabled) — that is the only way to get the server default; an explicit False here always disables expansion for this call. When enabled, expands search results by retrieving graph neighbors (callers, callees, related code) for richer context. Based on ICLR 2025 RepoGraph paper showing 32.8% improvement.",
                 },
                 "ego_graph_k_hops": {
-                    "type": "integer",
-                    "default": 2,
-                    "minimum": 1,
-                    "maximum": 5,
-                    "description": "Depth of ego-graph traversal (default: 2). Controls how many relationship hops to follow. Higher values provide more context but may include less relevant code.",
+                    **CONFIG_BACKED["search_code.ego_graph_k_hops"],
+                    "description": "Depth of ego-graph traversal. Controls how many relationship hops to follow. Higher values provide more context but may include less relevant code. Omit to use the server's configured value (get_search_config_status.ego_graph_k_hops).",
                 },
                 "ego_graph_max_neighbors_per_hop": {
-                    "type": "integer",
-                    "default": 10,
-                    "minimum": 1,
-                    "maximum": 50,
-                    "description": "Maximum neighbors to retrieve per hop (default: 10). Limits expansion to prevent context explosion while maintaining relevance.",
+                    **CONFIG_BACKED["search_code.ego_graph_max_neighbors_per_hop"],
+                    "description": "Maximum neighbors to retrieve per hop. Limits expansion to prevent context explosion while maintaining relevance. Omit to use the server's configured value (get_search_config_status.ego_graph_max_neighbors_per_hop).",
                 },
                 "include_parent": {
                     "type": "boolean",
-                    "default": False,
+                    **HAND_TYPED["search_code.include_parent"].schema,
                     "description": "Enable parent chunk retrieval (default: False). When a method is matched, also retrieves its enclosing class for fuller context. Implements 'Match Small, Retrieve Big' pattern for improved comprehension.",
                 },
+                # Request-scoped enricher opt-ins: one derived property per
+                # EnricherSpec row (mcp_server/enricher_specs.py) — default
+                # still routes through HAND_TYPED so the ADR-0046 ratchet
+                # keeps guarding schema/handler agreement.
+                **{
+                    s.param: {
+                        "type": "boolean",
+                        **HAND_TYPED[f"search_code.{s.param}"].schema,
+                        "description": s.description,
+                    }
+                    for s in ENRICHER_SPECS
+                },
                 "max_context_tokens": {
-                    "type": "integer",
-                    "default": 0,
-                    "minimum": 0,
+                    **CONFIG_BACKED["search_code.max_context_tokens"],
                     "description": "Maximum total tokens in results (0 = unlimited). Prevents LLM context overflow by truncating results when budget exceeded.",
                 },
             },
             "required": [],
         },
-    },
-    "index_directory": {
-        "description": """SETUP REQUIRED: Index a codebase for semantic search. Must run this before using search_code on a new project. Supports 9 languages: Python, JavaScript, TypeScript (including TSX), Go, Rust, C, C++, C#, and GLSL.
+        handler=handle_search_code,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="index_directory",
+        description="""SETUP REQUIRED: Index a codebase for semantic search. Must run this before using search_code on a new project. Supports 9 languages: Python, JavaScript, TypeScript (including TSX), Go, Rust, C, C++, C#, and GLSL.
 
 WHEN TO USE:
 - First time analyzing a new codebase
@@ -212,25 +293,21 @@ RETURNS:
 - wait=false: success, job_id, status="running", project — poll with
   get_index_status(job_id=...) until status is "done" (result holds the
   fields above) or "error" (error holds the failure message)""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "directory_path": {
                     "type": "string",
                     "description": "Absolute path to project root",
                 },
-                "project_name": {
-                    "type": "string",
-                    "description": "Optional name for organization (defaults to directory name)",
-                },
                 "incremental": {
                     "type": "boolean",
-                    "default": True,
+                    **HAND_TYPED["index_directory.incremental"].schema,
                     "description": "Use incremental indexing if snapshot exists (default: True)",
                 },
                 "wait": {
                     "type": "boolean",
-                    "default": True,
+                    **HAND_TYPED["index_directory.wait"].schema,
                     "description": "If true (default), block until indexing finishes and return the full result inline. If false, return immediately with a job_id and index in the background — poll get_index_status(job_id=...) for progress. Use false for large repos or first-time full indexes that may take minutes.",
                 },
                 "include_dirs": {
@@ -245,21 +322,18 @@ RETURNS:
                 },
                 "include_exclusive": {
                     "type": "boolean",
-                    "default": False,
                     "description": 'Escape hatch back to whitelist-only include_dirs. By default, an include_dirs pattern that reaches into a dependency tree (venv, site-packages, node_modules, ...) is ADDITIVE — it re-admits that path on top of the normal root-down scope, so your own source is still indexed. Any other include_dirs pattern (e.g. "src/core") is NARROWING — it restricts indexing to just the paths named, same as before. Set include_exclusive=true to force EVERY include_dirs pattern to be narrowing, i.e. index ONLY the named paths and nothing else — use this when you deliberately want a dependency-only index. Omit to reuse the stored value from project creation. Changing this on an existing project forces a full (non-incremental) reindex.',
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": ["directory_path"],
         },
-    },
-    "find_similar_code": {
-        "description": """SPECIALIZED: Find code chunks functionally similar to a specific reference chunk. Use this when you want to discover code that does similar things to a known piece of code.
+        handler=handle_index_directory,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="find_similar_code",
+        description="""SPECIALIZED: Find code chunks functionally similar to a specific reference chunk. Use this when you want to discover code that does similar things to a known piece of code.
 
 WHEN TO USE:
 - Finding alternative implementations of the same functionality
@@ -274,9 +348,10 @@ WORKFLOW:
 
 RETURNS:
 - reference_chunk: the input chunk_id (normalized)
-- similar_chunks: ranked list, each with chunk_id, file, lines, kind, score,
-  and name when available""",
-        "input_schema": {
+- similar_chunks: ranked list of chunks, each with chunk_id, file, lines, kind
+  (function/class/method/module/...), score, and — when available — name,
+  complexity_score, summary (module docstring preview), source ("similarity")""",
+        input_schema={
             "type": "object",
             "properties": {
                 "chunk_id": {
@@ -289,21 +364,19 @@ RETURNS:
                 },
                 "exclude_same_file": {
                     "type": "boolean",
-                    "default": False,
+                    **HAND_TYPED["find_similar_code.exclude_same_file"].schema,
                     "description": "Set true when you want cross-file analogues (sibling implementations in other files) — the reference chunk's own-file neighbors often dominate the top ranks. Leave false when you want neighbors within the reference chunk's own file (e.g. other methods of the same class).",
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": ["chunk_id"],
         },
-    },
-    "get_index_status": {
-        "description": """Check whether the active project's index exists, how large it is, and how stale it is. Also doubles as the poll target for a background index_directory(wait=false) job.
+        handler=handle_find_similar_code,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="get_index_status",
+        description="""Check whether the active project's index exists, how large it is, and how stale it is. Also doubles as the poll target for a background index_directory(wait=false) job.
 
 WHEN TO USE:
 - Before the first search_code call in a new session, to confirm a project is indexed
@@ -316,51 +389,76 @@ RETURNS:
   elapsed_seconds, and result (when done) or error (when failed)
 - no job_id: index_statistics (total_chunks and, when hybrid search is
   enabled, bm25_documents, dense_vectors, synced), model_information,
-  storage_directory, current_project, last_indexed_time""",
-        "input_schema": {
+  storage_directory, current_project, last_indexed_time (when the indexer
+  last ran on the ACTIVE project — from Merkle metadata, updated on every
+  re-index; NOT a staleness signal by itself), index_is_current (the
+  definitive answer: True/False/null — a content-only Merkle diff against
+  the working tree, so a freshly-built index never reads stale just because
+  a timestamp is old; null if never indexed or the check failed),
+  pending_changes ({added, modified, removed} counts, null alongside
+  index_is_current=null). For any other project's freshness without
+  switching, use list_projects(check_freshness=True) instead of
+  switch_project + get_index_status.""",
+        input_schema={
             "type": "object",
             "properties": {
                 "job_id": {
                     "type": "string",
                     "description": "Optional job_id returned by index_directory(wait=false). When set, returns that background job's status instead of the regular index snapshot.",
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "list_projects": {
-        "description": """List every project that has been indexed on this machine, with per-model chunk counts. Use this to find the exact project_path before switch_project.
+        handler=handle_get_index_status,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="list_projects",
+        description="""List every project that has been indexed on this machine, with per-model chunk counts. Use this to find the exact project_path before switch_project.
 
 WHEN TO USE:
 - Unsure which projects are indexed or what their exact paths are
 - Confirming a project was indexed under the expected name/path
 - Checking whether a project has been indexed with more than one embedding model
+- Checking any project's index freshness without mutating server state via
+  switch_project (get_index_status only reports the ACTIVE project) — pass
+  check_freshness=True for the definitive per-model verdict
 
 RETURNS:
 - projects: list of {project_name, project_path, project_hash, path_exists,
-  models_indexed: [{model, dimension, chunks, created_at}]}
+  models_indexed: [{model, dimension, chunks, created_at, last_indexed_at,
+  index_is_current, pending_changes}]}
+  NOTE: created_at is when this project/model was FIRST indexed — it is
+  frozen at that point and never updated by later re-indexing. It is NOT a
+  staleness signal. last_indexed_at (from Merkle metadata, updated on every
+  re-index) says only *when* the indexer last ran — also not a staleness
+  signal by itself, since an index can be old but still match the tree, or
+  young but already behind it. index_is_current/pending_changes are the
+  definitive answer — a content-only Merkle diff against the working tree —
+  and are ONLY present when check_freshness=True (default False, since a
+  full scan across every project/model costs ~14s sequential; this handler
+  fans checks out concurrently, bounded by the slowest project). Do not
+  infer staleness from created_at or last_indexed_at when index_is_current
+  is available.
 - current_project: the currently active project path""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                "check_freshness": {
+                    "type": "boolean",
+                    "description": "If true, additionally compute a real index_is_current/pending_changes verdict per model via a Merkle diff against the working tree (default false — a definitive but heavier per-project check; see RETURNS).",
                 },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "switch_project": {
-        "description": """Switch the active project so subsequent search_code / find_connections / find_path calls target a different indexed codebase.
+        handler=handle_list_projects,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="switch_project",
+        description="""Switch the active project so subsequent search_code / find_connections / find_path calls target a different indexed codebase.
 
 WHEN TO USE:
 - Multiple projects are indexed and the wrong one is currently active
@@ -373,25 +471,23 @@ with get_index_status if in doubt.
 RETURNS:
 - success, project (resolved path), indexed (bool)
 - warning (if not yet indexed) or message confirming the switch""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "project_path": {
                     "type": "string",
                     "description": "Path to the project directory",
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": ["project_path"],
         },
-    },
-    "clear_index": {
-        "description": """Clear the entire search index and metadata for the current project. Deletes ALL dimension indices (768d, 1024d, etc.) and associated Merkle snapshots.
+        handler=handle_switch_project,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="clear_index",
+        description="""Clear the entire search index and metadata for the current project. Deletes ALL dimension indices (768d, 1024d, etc.) and associated Merkle snapshots.
 
 WHEN TO USE:
 - Forcing a full rebuild from scratch (e.g. after a config change with no incremental path)
@@ -407,21 +503,19 @@ HTTP transport this affects all connected clients working on that project.
 RETURNS:
 - success, cleared_models (list of model-dir names whose indices were deleted)
 - snapshots_cleared (Merkle snapshot count; omitted when zero)""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "delete_project": {
-        "description": """Safely delete an indexed project and all associated data.
+        handler=handle_clear_index,
+        advanced=True,
+    ),
+    ToolSpec(
+        name="delete_project",
+        description="""Safely delete an indexed project and all associated data.
 
 Properly closes database connections before deletion to prevent file lock errors.
 Handles deletion of: vector indices (FAISS), metadata databases (SQLite), BM25 indices,
@@ -440,7 +534,7 @@ RETURNS:
 - deleted_snapshots: number of Merkle snapshots deleted
 - errors: list of any deletion errors (omitted on full success)
 - hint: suggestion text when deletion was blocked (e.g. file locks)""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "project_path": {
@@ -449,21 +543,19 @@ RETURNS:
                 },
                 "force": {
                     "type": "boolean",
-                    "default": False,
+                    **HAND_TYPED["delete_project.force"].schema,
                     "description": "Force delete even if this is the current project (default: False)",
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": ["project_path"],
         },
-    },
-    "get_memory_status": {
-        "description": """Get current memory usage status for the index and system.
+        handler=handle_delete_project,
+        advanced=True,
+    ),
+    ToolSpec(
+        name="get_memory_status",
+        description="""Get current memory usage status for the index and system.
 
 Shows available RAM/VRAM, current index memory usage, and whether GPU acceleration is active. Useful for monitoring memory consumption and optimizing performance.
 
@@ -473,41 +565,37 @@ RETURNS:
   {"status": "No GPU available"}
 - index_memory: {vectors, dimension, estimated_mb}, or {"status": "No index loaded"}
 - per_model_vram_mb: VRAM usage per currently loaded embedding model""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "cleanup_resources": {
-        "description": """Manually cleanup all resources to free memory.
+        handler=handle_get_memory_status,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="cleanup_resources",
+        description="""Manually cleanup all resources to free memory.
 
 Forces cleanup of indexes, embedding model(s), and GPU memory. Useful when switching between large projects or when memory is running low.
 
 RETURNS:
 - success, message confirming cleanup completed""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "configure_search_mode": {
-        "description": """Configure search mode and hybrid search parameters.
+        handler=handle_cleanup_resources,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="configure_search_mode",
+        description="""Configure search mode and hybrid search parameters.
 
 WHEN TO USE:
 - Tuning the BM25/dense balance for a codebase where one signal underperforms
@@ -525,46 +613,37 @@ get_search_config_status if in doubt.
 
 RETURNS:
 - success, config: {search_mode, bm25_weight, dense_weight, enable_parallel}""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "search_mode": {
                     "type": "string",
-                    "enum": [m.value for m in SearchMode],
-                    "default": SearchMode.HYBRID.value,
+                    "enum": list(SEARCH_MODE_ENUM),
+                    **HAND_TYPED["configure_search_mode.search_mode"].schema,
                     "description": 'Default search mode - "hybrid", "semantic", "bm25", or "auto"',
                 },
                 "bm25_weight": {
-                    "type": "number",
-                    "default": 0.35,
-                    "minimum": 0.0,
-                    "maximum": 1.0,
+                    **CONFIG_BACKED["configure_search_mode.bm25_weight"],
                     "description": "Weight for BM25 sparse search (0.0 to 1.0)",
                 },
                 "dense_weight": {
-                    "type": "number",
-                    "default": 0.65,
-                    "minimum": 0.0,
-                    "maximum": 1.0,
+                    **CONFIG_BACKED["configure_search_mode.dense_weight"],
                     "description": "Weight for dense vector search (0.0 to 1.0)",
                 },
                 "enable_parallel": {
-                    "type": "boolean",
-                    "default": True,
+                    **CONFIG_BACKED["configure_search_mode.enable_parallel"],
                     "description": "Enable parallel BM25 + Dense search execution",
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "get_search_config_status": {
-        "description": """Show the search engine's live configuration — current mode, weights, reranker state, multi-hop settings, and k defaults.
+        handler=handle_configure_search_mode,
+        advanced=True,
+    ),
+    ToolSpec(
+        name="get_search_config_status",
+        description="""Show the search engine's live configuration — current mode, weights, reranker state, multi-hop settings, and k defaults.
 
 WHEN TO USE:
 - Verifying a configure_search_mode / configure_reranking / configure_chunking call took effect
@@ -578,21 +657,19 @@ RETURNS:
 - bm25_use_stemming, multi_hop_enabled, multi_hop_count, multi_hop_expansion
 - reranker_enabled, reranker_model, reranker_top_k_candidates
 - default_k, max_k""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "list_embedding_models": {
-        "description": """List every embedding model available for indexing/search, with dimension, VRAM footprint, context length, and whether it's currently loaded.
+        handler=handle_get_search_config_status,
+        advanced=True,
+    ),
+    ToolSpec(
+        name="list_embedding_models",
+        description="""List every embedding model available for indexing/search, with dimension, VRAM footprint, context length, and whether it's currently loaded.
 
 WHEN TO USE:
 - Choosing a model before the first index_directory on a new project
@@ -602,21 +679,19 @@ RETURNS:
 - models: list of {name, dimension, description, recommended_batch_size,
   vram_gb, max_context, loaded}
 - current_model: the embedding model active for the current project""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "switch_embedding_model": {
-        "description": """Switch to a different embedding model without deleting existing indices.
+        handler=handle_list_embedding_models,
+        advanced=True,
+    ),
+    ToolSpec(
+        name="switch_embedding_model",
+        description="""Switch to a different embedding model without deleting existing indices.
 
 Per-model indices enable instant switching - if you've already indexed a project with a model, switching back to it requires no re-indexing.
 
@@ -627,25 +702,23 @@ get_search_config_status if in doubt.
 RETURNS:
 - success, old_model, new_model
 - message, note (existing indices for other models are preserved per-model)""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "model_name": {
                     "type": "string",
                     "description": 'Model identifier from MODEL_REGISTRY (e.g., "BAAI/bge-m3")',
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": ["model_name"],
         },
-    },
-    "find_connections": {
-        "description": """Find all code connections to a given symbol.
+        handler=handle_switch_embedding_model,
+        advanced=True,
+    ),
+    ToolSpec(
+        name="find_connections",
+        description="""Find all code connections to a given symbol.
 
 Discovers code connected to the target symbol through multiple relationship types:
 - Direct callers (functions that call this)
@@ -668,6 +741,8 @@ RETURNS:
     - resolver_confidence: float (0.5–0.98, higher = more trusted)
 - direct_callees: list of chunks this symbol calls (outbound), same fields
 - caller_confidence / callee_confidence: breakdown (exact/recovered/ambiguous counts)
+  (always pre-filter totals — unaffected by hide_ambiguous, so a hidden-edge
+  count remains visible)
 - indirect_callers: multi-hop callers up to max_depth
 - similar_code: semantically similar implementations
 - dependency_graph: DOT-format graph for visualization
@@ -678,8 +753,9 @@ The call edges are produced by a layered resolver pipeline:
 Higher-confidence resolvers upgrade lower-confidence edges for the same pair.
 Install `pip install -e ".[callgraph]"` to enable pyan3 + LibCST resolvers.
 `lsp_enabled` is requested by default in call_graph config; basedpyright LSP
-resolution no-ops unless the `[lsp]` extra is installed.""",
-        "input_schema": {
+resolution no-ops unless `pip install -e ".[lsp]"` is also run — install both
+extras to see `resolver_source: "lsp"` edges.""",
+        input_schema={
             "type": "object",
             "properties": {
                 "chunk_id": {
@@ -692,7 +768,7 @@ resolution no-ops unless the `[lsp]` extra is installed.""",
                 },
                 "max_depth": {
                     "type": "integer",
-                    "default": 3,
+                    **HAND_TYPED["find_connections.max_depth"].schema,
                     "minimum": 1,
                     "maximum": 5,
                     "description": "Maximum depth for dependency traversal (default: 3, affects indirect callers)",
@@ -707,18 +783,20 @@ resolution no-ops unless the `[lsp]` extra is installed.""",
                     "items": {"type": "string"},
                     "description": 'Filter to only include specific relationship types (e.g., ["inherits", "imports", "decorates"]). If not provided, all relationship types are included. Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager. Note: uses_global and asserts_type require entity tracking (enable_entity_tracking, default True) and a reindex to populate on an existing index.',
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                "hide_ambiguous": {
+                    **CONFIG_BACKED["find_connections.hide_ambiguous"],
+                    "description": 'Hide call edges tagged confidence="ambiguous" from direct_callers, direct_callees, and indirect_callers. Omit to use the server\'s configured value (get_search_config_status.hide_ambiguous_edges_default). Display-layer filter only: total_impacted, affected_files, and the caller_confidence/callee_confidence breakdowns remain pre-filter totals, so the ambiguous count stays visible even when the edges are hidden.',
                 },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "find_path": {
-        "description": """Find shortest path between two code entities in the relationship graph.
+        handler=handle_find_connections,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="find_path",
+        description="""Find shortest path between two code entities in the relationship graph.
 
 Traces how two symbols connect through calls, inheritance, imports, or other relationships.
 
@@ -732,7 +810,7 @@ RETURNS:
 - Path as sequence of nodes with metadata
 - Edge types traversed (calls, inherits, imports, etc.)
 - Path length (number of hops)""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "source": {
@@ -753,7 +831,7 @@ RETURNS:
                 },
                 "max_hops": {
                     "type": "integer",
-                    "default": 10,
+                    **HAND_TYPED["find_path.max_hops"].schema,
                     "minimum": 1,
                     "maximum": 20,
                     "description": "Maximum path length in edges (default: 10)",
@@ -763,22 +841,22 @@ RETURNS:
                     "items": {"type": "string"},
                     "description": 'Filter path to only use specific relationship types (e.g., ["calls", "inherits"]). Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, assigns_to, reads_from. If not provided, all relationship types are considered.',
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular).",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "configure_reranking": {
-        "description": """Configure neural reranker settings.
+        handler=handle_find_path,
+        advanced=False,
+    ),
+    ToolSpec(
+        name="configure_reranking",
+        description="""Configure neural reranker settings.
 
 Args:
     enabled: Enable/disable neural reranking (default: True)
-    model_name: Cross-encoder model to use (default: Alibaba-NLP/gte-reranker-modernbert-base)
+    model_name: Reranker model to use (default: Alibaba-NLP/gte-reranker-modernbert-base).
+        Also supports the Jina listwise rerankers jinaai/jina-reranker-v3 and
+        jinaai/jina-reranker-v3.5, Qwen/Qwen3-Reranker-0.6B, and BAAI/bge-reranker-v2-m3.
     top_k_candidates: Number of candidates to rerank (default: 30)
 
 NOTE: this changes global server config (one active setting at a time). On the
@@ -788,35 +866,36 @@ get_search_config_status if in doubt.
 RETURNS:
 - success, config: {enabled, model_name, top_k_candidates, min_vram_gb, batch_size}
 - system_message noting changes take effect on the next search""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "enabled": {
-                    "type": "boolean",
+                    **CONFIG_BACKED["configure_reranking.enabled"],
                     "description": "Enable/disable neural reranking",
                 },
                 "model_name": {
-                    "type": "string",
-                    "description": "Cross-encoder model name",
+                    **CONFIG_BACKED["configure_reranking.model_name"],
+                    "description": (
+                        "Reranker model name, e.g. "
+                        "Alibaba-NLP/gte-reranker-modernbert-base, "
+                        "jinaai/jina-reranker-v3, jinaai/jina-reranker-v3.5, "
+                        "Qwen/Qwen3-Reranker-0.6B, BAAI/bge-reranker-v2-m3."
+                    ),
                 },
                 "top_k_candidates": {
-                    "type": "integer",
+                    **CONFIG_BACKED["configure_reranking.top_k_candidates"],
                     "description": "Number of candidates to rerank",
-                    "minimum": 5,
-                    "maximum": 100,
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
-                },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
-    "configure_chunking": {
-        "description": """Configure code chunking and splitting parameters. Changes are persisted to config; re-index the project to apply them to existing chunks.
+        handler=handle_configure_reranking,
+        advanced=True,
+    ),
+    ToolSpec(
+        name="configure_chunking",
+        description="""Configure code chunking and splitting parameters. Changes are persisted to config; re-index the project to apply them to existing chunks.
 
 WHEN TO USE:
 - Tuning chunk granularity (max_chunk_lines, max_split_chars, sizing_mode) for
@@ -833,76 +912,79 @@ HTTP transport this affects all connected clients.
 RETURNS:
 - success, config: echo of the chunking fields after the patch is applied
 - system_message noting that re-indexing is required to apply changes""",
-        "input_schema": {
+        input_schema={
             "type": "object",
             "properties": {
                 "enable_large_node_splitting": {
-                    "type": "boolean",
+                    **CONFIG_BACKED["configure_chunking.enable_large_node_splitting"],
                     "description": "Enable/disable AST block splitting for large functions",
                 },
                 "max_chunk_lines": {
-                    "type": "integer",
+                    **CONFIG_BACKED["configure_chunking.max_chunk_lines"],
                     "description": "Maximum lines per chunk before splitting at AST boundaries",
-                    "minimum": 10,
-                    "maximum": 1000,
                 },
                 "split_size_method": {
-                    "type": "string",
-                    "enum": ["lines", "characters"],
+                    **CONFIG_BACKED["configure_chunking.split_size_method"],
                     "description": "Size method for splitting - 'lines' or 'characters'",
                 },
                 "max_split_chars": {
-                    "type": "integer",
+                    **CONFIG_BACKED["configure_chunking.max_split_chars"],
                     "description": "Maximum characters per split chunk",
-                    "minimum": 1000,
-                    "maximum": 10000,
                 },
                 "enable_file_summaries": {
-                    "type": "boolean",
+                    **CONFIG_BACKED["configure_chunking.enable_file_summaries"],
                     "description": "Enable/disable file-level module summary chunks (A2 feature)",
                 },
                 "sizing_mode": {
-                    "type": "string",
-                    "enum": ["fixed", "adaptive"],
+                    **CONFIG_BACKED["configure_chunking.sizing_mode"],
                     "description": "Chunk sizing algorithm: 'fixed' uses static thresholds, 'adaptive' profiles the repo (P75 baseline) and modulates per-function complexity",
                 },
                 "adaptive_multiplier_max": {
-                    "type": "number",
+                    **CONFIG_BACKED["configure_chunking.adaptive_multiplier_max"],
                     "description": "T_max multiplier: P75_baseline × this gives the chunk size for low-complexity functions",
-                    "minimum": 1.0,
-                    "maximum": 2.0,
                 },
                 "adaptive_multiplier_min": {
-                    "type": "number",
+                    **CONFIG_BACKED["configure_chunking.adaptive_multiplier_min"],
                     "description": "T_min multiplier: P75_baseline × this gives the chunk size for high-complexity functions",
-                    "minimum": 0.1,
-                    "maximum": 1.0,
                 },
                 "max_complexity_cap": {
-                    "type": "integer",
+                    **CONFIG_BACKED["configure_chunking.max_complexity_cap"],
                     "description": "Cyclomatic complexity ceiling for Cv normalization — functions above this are treated as maximally complex",
-                    "minimum": 5,
-                    "maximum": 100,
                 },
                 "glsl_filter_td_prefix": {
-                    "type": "boolean",
+                    **CONFIG_BACKED["configure_chunking.glsl_filter_td_prefix"],
                     "description": "Filter TouchDesigner's TD-prefixed shader-include builtins (TDPanelSize, TDOutputSwizzle, ...) out of GLSL call-graph metadata. Disable for non-TouchDesigner GLSL projects where a real user-defined symbol might start with 'TD'.",
                 },
-                "output_format": {
-                    "type": "string",
-                    "enum": ["verbose", "compact", "ultra"],
-                    "default": "compact",
-                    "description": "Output format: 'verbose' (full), 'compact' (omit empty, default), 'ultra' (tabular: 'key[N]{field1,field2}': [[val1,val2], ...]). See docs/MCP_TOOLS_REFERENCE.md for details.",
+                "max_file_size_bytes": {
+                    **CONFIG_BACKED["configure_chunking.max_file_size_bytes"],
+                    "description": "Files larger than this are skipped by the chunker (never chunked, never indexed). Does not affect the adaptive-sizing profiler, which reads its own import-time-seeded 5 MB default and is not affected by this setting.",
                 },
+                "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },
             "required": [],
         },
-    },
+        handler=handle_configure_chunking,
+        advanced=True,
+    ),
+)
+"""All 18 tool specs, in published-schema order (matches the former
+TOOL_REGISTRY key order)."""
+
+
+TOOL_DISPATCH: dict[str, Callable[[dict], Awaitable[dict | list]]] = {
+    s.name: s.handler for s in TOOL_SPECS
 }
+"""name -> handler, derived from TOOL_SPECS. Used by handle_call_tool
+(server.py) and the HTTP switch_project route."""
+
+ADVANCED_TOOLS: frozenset[str] = frozenset(s.name for s in TOOL_SPECS if s.advanced)
+"""Tools gated behind MCP_EXPOSE_ADVANCED_TOOLS (default: hidden from
+list_tools). Derived from each row's advanced= flag — see module docstring
+for the tool-count budget this protects."""
 
 
 def build_tool_list(include_advanced: bool | None = None) -> list[Tool]:
-    """Build MCP Tool list from registry.
+    """Build the MCP Tool list from TOOL_SPECS.
 
     Args:
         include_advanced: Whether to include ADVANCED_TOOLS. Defaults to the
@@ -912,15 +994,18 @@ def build_tool_list(include_advanced: bool | None = None) -> list[Tool]:
     if include_advanced is None:
         include_advanced = _advanced_tools_enabled()
 
-    tools = []
-    for name, meta in TOOL_REGISTRY.items():
-        if not include_advanced and name in ADVANCED_TOOLS:
-            continue
-        tools.append(
-            Tool(
-                name=name,
-                description=meta["description"],
-                input_schema=meta["input_schema"],
-            )
-        )
-    return tools
+    return [
+        Tool(name=s.name, description=s.description, input_schema=s.input_schema)
+        for s in TOOL_SPECS
+        if include_advanced or not s.advanced
+    ]
+
+
+__all__ = [
+    "ToolSpec",
+    "TOOL_SPECS",
+    "TOOL_DISPATCH",
+    "ADVANCED_TOOLS",
+    "build_tool_list",
+    *(s.handler.__name__ for s in TOOL_SPECS),
+]

@@ -113,8 +113,11 @@ Two architecture improvements surfaced during this investigation.
     `IncrementalIndexResult` now lives here (moved from `incremental_indexer.py`).
     Interface: `IndexWriteStage(embedder, indexer, snapshot_manager, bm25_sync,
     build_metadata_fn, clear_gpu_fn).run(...) -> IncrementalIndexResult`.
-  - `_full_index` is now a ~14-line driver: prologue (resource release, DAG
-    build, chunking) → `CommunityStage.run()` → `IndexWriteStage.run()`.
+  - `_full_index` (`search/incremental_indexer.py:667-917`, ~250 lines) drives:
+    prologue (resource release, DAG build, chunking) → `CommunityStage.run()`
+    → `IndexWriteStage.run()`. (Note: an earlier version of this ADR claimed
+    a ~14-line driver — that undercounted the prologue and error-handling
+    surrounding the three calls.)
   - Sibling candidate: `_refresh_affected_community_summaries:1162-1310`
     (complexity 34) has the same shape and may follow the same treatment.
 

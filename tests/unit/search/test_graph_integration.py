@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
+from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
 from search.graph_integration import GraphIntegration
 
 
@@ -549,7 +550,16 @@ class TestPopulateFromEmbeddings(TestCase):
         )
 
         graph.populate_from_embeddings([result])
-        storage.add_relationship_edge.assert_called_once()
+        storage.add_relationship_edge.assert_called_once_with(
+            RelationshipEdge(
+                source_id="child.py:1-10:class:Child",
+                target_name="Base",
+                relationship_type=RelationshipType.INHERITS,
+                line_number=1,
+                confidence=1.0,
+                metadata={},
+            )
+        )
 
     def test_ambiguous_same_file_preferred(self):
         """When two candidates share a name, the one in the caller's file is preferred."""
@@ -845,6 +855,81 @@ class TestTwoPassBuild(TestCase):
         self.assertEqual(stats["resolved_edges"], 1)
         self.assertEqual(stats["call_edges"], 1)
         self.assertEqual(stats["phantom_edges"], 0)
+
+    def test_ambiguous_call_counted_separately_from_phantom(self):
+        """Workstream C2: a call resolving to multiple same-named candidates
+        (still-ambiguous, no unique winner) must increment ambiguous_edges,
+        not phantom_edges -- it creates edges between real chunk nodes only,
+        no phantom node at all."""
+        graph, storage = self._make_graph()
+        from search.graph_integration import _BuildSpec
+
+        callee_a = _BuildSpec(
+            chunk_id="a.py:1-5:function:helper",
+            name="helper",
+            chunk_type="function",
+            file_path="a.py",
+            language="python",
+            parent_name=None,
+            calls=[],
+            relationships=[],
+        )
+        callee_b = _BuildSpec(
+            chunk_id="b.py:1-5:function:helper",
+            name="helper",
+            chunk_type="function",
+            file_path="b.py",
+            language="python",
+            parent_name=None,
+            calls=[],
+            relationships=[],
+        )
+        caller_spec = _BuildSpec(
+            chunk_id="c.py:1-5:function:main",
+            name="main",
+            chunk_type="function",
+            file_path="c.py",
+            language="python",
+            parent_name=None,
+            calls=[
+                {"callee_name": "helper", "line_number": 3, "is_method_call": False}
+            ],
+            relationships=[],
+        )
+        stats = graph._two_pass_build([callee_a, callee_b, caller_spec], clear=False)
+        self.assertEqual(stats["ambiguous_edges"], 1)
+        self.assertEqual(stats["phantom_edges"], 0)
+        self.assertEqual(stats["resolved_edges"], 0)
+        self.assertEqual(stats["call_edges"], 1)
+
+    def test_true_phantom_call_counted_separately_from_ambiguous(self):
+        """A call to a name with zero project-side candidates increments
+        phantom_edges, not ambiguous_edges -- this is the only branch that
+        creates a bare-symbol phantom node."""
+        graph, storage = self._make_graph()
+        from search.graph_integration import _BuildSpec
+
+        caller_spec = _BuildSpec(
+            chunk_id="c.py:1-5:function:main",
+            name="main",
+            chunk_type="function",
+            file_path="c.py",
+            language="python",
+            parent_name=None,
+            calls=[
+                {
+                    "callee_name": "totally_unresolvable_symbol",
+                    "line_number": 3,
+                    "is_method_call": False,
+                }
+            ],
+            relationships=[],
+        )
+        stats = graph._two_pass_build([caller_spec], clear=False)
+        self.assertEqual(stats["phantom_edges"], 1)
+        self.assertEqual(stats["ambiguous_edges"], 0)
+        self.assertEqual(stats["resolved_edges"], 0)
+        self.assertEqual(stats["call_edges"], 1)
 
 
 class TestBuildGraphFromChunks(TestCase):

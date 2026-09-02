@@ -79,10 +79,11 @@ def spec(
     reader: str | None = None,
     schema_only: bool = False,
     construction_baked: bool = False,
+    benchmark_locked: str | None = None,
 ) -> dict[str, Any]:
     """Build a ``field(metadata=...)`` dict for one config field — the single
     declaration site for its validation rule, legacy/env alias, MCP exposure,
-    and liveness anchor (see ADR-0022).
+    liveness anchor, and benchmark lock (see ADR-0022).
 
     Every key is explicit and defaults to absent/``None`` — nothing here is
     inferred from the field's name, so a field with no alias or no env var
@@ -95,6 +96,12 @@ def spec(
     call — mutating it on the config singleton is a no-op until that
     collaborator is rebuilt (see ``evaluation/arm_overrides.py``'s
     ``requires_rebuild`` and Part 2 / C1 of the ADR-0018 follow-on plan).
+    ``benchmark_locked`` is the human-readable "why this must not be
+    re-tuned" citation (an ADR, a recorded sweep, or an A/B report) for a
+    field whose value was pinned by a benchmark on this repo's golden set;
+    ``search/index_probe.py`` derives ``FORBIDDEN_AUTO_TUNE_KEYS`` and the
+    ``:tuned_parameters`` Benchmark-Locked panel from these rows, so the
+    citation lives once, next to the value it protects.
     """
     meta: dict[str, Any] = {}
     if range is not None:
@@ -113,6 +120,8 @@ def spec(
         meta["schema_only"] = True
     if construction_baked:
         meta["construction_baked"] = True
+    if benchmark_locked is not None:
+        meta["benchmark_locked"] = benchmark_locked
     return meta
 
 
@@ -158,29 +167,35 @@ class EmbeddingConfig:
     enable_import_context: bool = field(
         default=True,  # Include import statements in embeddings
         metadata=spec(
-            flat_alias="enable_import_context", reader="embeddings/embedder.py"
+            flat_alias="enable_import_context",
+            reader="embeddings/document_composer.py",
         ),
     )
     enable_class_context: bool = field(
         default=True,  # Include parent class signature for methods
         metadata=spec(
-            flat_alias="enable_class_context", reader="embeddings/embedder.py"
+            flat_alias="enable_class_context",
+            reader="embeddings/document_composer.py",
         ),
     )
     max_import_lines: int = field(
         default=25,  # Maximum import lines to extract
-        metadata=spec(flat_alias="max_import_lines", reader="embeddings/embedder.py"),
+        metadata=spec(
+            flat_alias="max_import_lines", reader="embeddings/document_composer.py"
+        ),
     )
     max_class_signature_lines: int = field(
         default=20,  # Maximum lines for class signature
         metadata=spec(
-            flat_alias="max_class_signature_lines", reader="embeddings/embedder.py"
+            flat_alias="max_class_signature_lines",
+            reader="embeddings/document_composer.py",
         ),
     )
     enable_structural_header: bool = field(
         default=True,  # Prepend file path + chunk type + qualified name
         metadata=spec(
-            flat_alias="enable_structural_header", reader="embeddings/embedder.py"
+            flat_alias="enable_structural_header",
+            reader="embeddings/document_composer.py",
         ),
     )
 
@@ -249,6 +264,7 @@ class SearchModeConfig:
             env="CLAUDE_BM25_WEIGHT",
             mcp="search_mode",
             reader="search/hybrid_searcher.py",
+            benchmark_locked="ADR-0019 (intent-adaptive fusion rejected, static weights kept)",
         ),
     )
     dense_weight: float = field(
@@ -259,6 +275,7 @@ class SearchModeConfig:
             env="CLAUDE_DENSE_WEIGHT",
             mcp="search_mode",
             reader="search/hybrid_searcher.py",
+            benchmark_locked="ADR-0019 (intent-adaptive fusion rejected, static weights kept)",
         ),
     )
 
@@ -270,11 +287,10 @@ class SearchModeConfig:
     # construction (BM25Index build/load/rebuild), not at query time: mutating
     # a live SearchConfig singleton is inert until the index reloads or the
     # searcher is rebuilt (construction_baked=True below drives
-    # arm_overrides.requires_rebuild() accordingly). Both are also in
-    # index_probe.py's FORBIDDEN_AUTO_TUNE_KEYS — fusion sweep saturated, do
-    # not re-sweep; that frozenset governs whether the ADR-0014 auto-tuning
-    # probe may write a key, a different question from whether a benchmark
-    # arm must rebuild the cached searcher. (Replaces the dead
+    # arm_overrides.requires_rebuild() accordingly). Both are benchmark_locked
+    # (see their spec() rows); that lock governs whether the ADR-0014
+    # auto-tuning probe may write a key, a different question from whether a
+    # benchmark arm must rebuild the cached searcher. (Replaces the dead
     # ``bm25_k_parameter`` field, which was never read by any scoring path.)
     bm25_k1: float = field(
         default=1.5,
@@ -282,6 +298,7 @@ class SearchModeConfig:
             flat_alias="bm25_k1",
             reader="search/hybrid_searcher.py",
             construction_baked=True,
+            benchmark_locked="fusion sweep saturated",
         ),
     )
     bm25_b: float = field(
@@ -290,16 +307,17 @@ class SearchModeConfig:
             flat_alias="bm25_b",
             reader="search/hybrid_searcher.py",
             construction_baked=True,
+            benchmark_locked="fusion sweep saturated",
         ),
     )
-    # Also in FORBIDDEN_AUTO_TUNE_KEYS (A/B 2026-08-01: removing regresses
-    # recall@5/MRR) — read once at construction, same rebuild caveat as k1/b.
+    # Read once at construction, same rebuild caveat as k1/b.
     bm25_use_stopwords: bool = field(
         default=True,
         metadata=spec(
             flat_alias="bm25_use_stopwords",
             reader="search/hybrid_searcher.py",
             construction_baked=True,
+            benchmark_locked="A/B 2026-08-01: removing regresses recall@5/MRR",
         ),
     )
     # Not in FORBIDDEN_AUTO_TUNE_KEYS — covered by neither guardrail today.
@@ -317,9 +335,7 @@ class SearchModeConfig:
     # split + stemming; "whole" = identifiers kept intact, no stemming;
     # "additive" = whole identifiers + camel/snake sub-tokens. Changing this
     # requires a re-index (index/query tokenization must match) — also read
-    # once at construction (construction_baked=True) and in
-    # FORBIDDEN_AUTO_TUNE_KEYS (INDEX_VERSION 4, identifier-preserving
-    # "whole" tokenizer).
+    # once at construction (construction_baked=True).
     # Default "whole": +0.05/+0.07 Recall@5, +0.09/+0.10 MRR vs legacy on the
     # 96q/63q golden sets (BM25-standalone, bm25_tokenizer_ab.py 2026-07-26).
     bm25_tokenizer: str = field(
@@ -329,6 +345,7 @@ class SearchModeConfig:
             flat_alias="bm25_tokenizer",
             reader="search/hybrid_searcher.py",
             construction_baked=True,
+            benchmark_locked="INDEX_VERSION 4 (identifier-preserving 'whole' tokenizer)",
         ),
     )
     # Reserved fused-pool slots for BM25-unique candidates. Under weighted RRF
@@ -340,12 +357,60 @@ class SearchModeConfig:
     bm25_reserved_slots: int = field(
         default=0,
         metadata=spec(
-            flat_alias="bm25_reserved_slots", reader="search/search_executor.py"
+            flat_alias="bm25_reserved_slots",
+            reader="search/search_executor.py",
+            benchmark_locked="rejected 2026-07-28 (9/9 sweep runs, no Q12 pool_hit)",
         ),
     )
     min_bm25_score: float = field(
         default=0.1,
         metadata=spec(flat_alias="min_bm25_score", reader="search/search_executor.py"),
+    )
+    # Leg-search depth multiplier: search_k = max(reranker_budget, k * this).
+    # Widening legs does NOT widen the fused pool (fusion_k stays at
+    # reranker_budget) — it only changes which candidates compete for the
+    # existing cut. 5 = today's hardcoded behavior, byte-identical default.
+    # Screening probe (evaluation/LEG_DEPTH_FUSION_PROBE_20260814.md): depth
+    # 200 (multiplier 10 at hop-1's k=20) nets +3 gold-membership rescues on
+    # both golden sets under RRF — a passed gate, not a predicted end-metric
+    # win; membership gains have historically not always converted (see
+    # bm25_reserved_slots above). Live, not construction-baked.
+    leg_search_multiplier: int = field(
+        default=5,
+        metadata=spec(
+            range=(1, 40),
+            flat_alias="leg_search_multiplier",
+            reader="search/search_executor.py",
+        ),
+    )
+    # Fusion function for combining BM25 + dense legs. "rrf" = today's
+    # weighted reciprocal-rank fusion (byte-identical default). "tm2c2" =
+    # theoretical-min/max-normalized convex combination (Bruch, Gai & Ingber,
+    # ACM TOIS 2023, arXiv 2210.11934) — only reopened as viable at leg depth
+    # >= 100 (evaluation/LEG_DEPTH_FUSION_PROBE_20260814.md Gate B; at the
+    # depth-50 leg the golds it fuses were never retrieved at all, see the
+    # closed evaluation/TM2C2_FUSION_PROBE_20260814.md). Variant legs
+    # (query_expansion) always fall back to RRF regardless of this setting.
+    fusion_function: str = field(
+        default="rrf",
+        metadata=spec(
+            choices=("rrf", "tm2c2"),
+            flat_alias="fusion_function",
+            reader="search/search_executor.py",
+        ),
+    )
+    # TM2C2 convex-combination weight on the normalized dense leg (1 - alpha
+    # on BM25). Only read when fusion_function="tm2c2". Pre-registered
+    # alpha=0.8 passed Gate B (net +3 gold rescues, 133q, depth 100);
+    # alpha=0.65 failed badly (net -4 to -12 across both datasets/depths) and
+    # stays rejected — do not sweep other values without a new probe.
+    tm2c2_alpha: float = field(
+        default=0.8,
+        metadata=spec(
+            range=(0.0, 1.0),
+            flat_alias="tm2c2_alpha",
+            reader="search/search_executor.py",
+        ),
     )
 
     # Reranking Configuration
@@ -355,6 +420,7 @@ class SearchModeConfig:
             flat_alias="rrf_k_parameter",
             reader="search/hybrid_searcher.py",
             construction_baked=True,
+            benchmark_locked="fusion sweep saturated, do not re-sweep",
         ),
     )
 
@@ -372,11 +438,13 @@ class SearchModeConfig:
     max_k: int = field(
         default=50,
         metadata=spec(
+            range=(1, 100),
             flat_alias="max_k",
             env="CLAUDE_MAX_K",
             reader="mcp_server/tools/search_orchestrator.py",
         ),
-    )
+    )  # range is the invariant ceiling the search_code.k schema publishes; max_k's
+    # own *value* (a per-install setting) is a separate, unpublished runtime clamp
 
     # Context budget (0 = unlimited)
     default_max_context_tokens: int = field(
@@ -560,6 +628,7 @@ class MultiHopConfig:
             flat_alias="multi_hop_expansion",
             env="CLAUDE_MULTI_HOP_EXPANSION",
             reader="search/hybrid_searcher.py",
+            benchmark_locked="expansion_factor stays 0.5 (0.25 arm rejected 2026-08-02)",
         ),
     )
     initial_k_multiplier: float = field(
@@ -573,7 +642,9 @@ class MultiHopConfig:
     multi_hop_mode: str = field(
         default="hybrid",  # "semantic" | "graph" | "hybrid"
         metadata=spec(
-            flat_alias="multi_hop_mode", reader="search/multi_hop_searcher.py"
+            flat_alias="multi_hop_mode",
+            reader="search/multi_hop_searcher.py",
+            benchmark_locked="tuned; do not re-tune without a new A/B",
         ),
     )
     edge_weights: dict[str, float] | None = field(
@@ -637,7 +708,7 @@ class IntentConfig:
 
 @dataclass
 class RerankerConfig:
-    """Neural reranker settings (12 fields)."""
+    """Neural reranker settings (15 fields)."""
 
     enabled: bool = field(
         default=True,  # Enabled by default (Quality First)
@@ -682,8 +753,9 @@ class RerankerConfig:
     )
     batch_size: int = field(
         default=16,  # NeuralReranker/GenerativeReranker inference batch size.
-        # Ignored by JinaRerankerV3 (the deployed default), which batches
-        # internally and never reads this field.
+        # Ignored by the Jina listwise rerankers (v3/v3.5, class JinaRerankerV3;
+        # v3 is the deployed default), which batch internally and never read
+        # this field.
         metadata=spec(
             flat_alias="reranker_batch_size",
             env="CLAUDE_RERANKER_BATCH_SIZE",
@@ -709,6 +781,7 @@ class RerankerConfig:
             flat_alias="reranker_single_pass",
             env="CLAUDE_RERANKER_SINGLE_PASS",
             reader="search/search_executor.py",
+            benchmark_locked="kills recall; latency knob only, not quality",
         ),
     )
     instruction: str = field(
@@ -732,14 +805,19 @@ class RerankerConfig:
         ),
     )
     listwise_doc_max_chars: int = field(
-        default=1000,  # JinaRerankerV3 only (listwise — ALL
-        # candidates share one context window, so cost is O(n^2) in the packed
-        # sequence length via attention activation memory — not context-window
-        # occupancy). A 4-run SSCG sweep at 4000 measured peak_vram_reserved_gb
-        # 27.66 on a 24GB card (WDDM shared-memory spill, no OOM raised — see
-        # allow_ram_fallback), 42-45/96 queries stalling past 8s (max 354.9s),
-        # and every quality metric flat-to-negative within the +/-0.02 MRR noise
-        # floor vs this default. See docs/adr/0011-listwise-reranker-doc-cap.md.
+        default=1000,  # Jina listwise rerankers only (v3/v3.5, class
+        # JinaRerankerV3) — ALL candidates share one context window, so cost
+        # scales with the packed sequence length via attention activation
+        # memory — not context-window occupancy. A 4-run SSCG sweep at 4000
+        # measured peak_vram_reserved_gb 27.66 on a 24GB card (WDDM
+        # shared-memory spill, no OOM raised — see allow_ram_fallback), 42-45/96
+        # queries stalling past 8s (max 354.9s), and every quality metric
+        # flat-to-negative within the +/-0.02 MRR noise floor vs this default.
+        # Measured on v3 (docs/adr/0011-listwise-reranker-doc-cap.md); v3's
+        # cost model is O(n^2) full attention, v3.5's hybrid sliding-window
+        # attention may not reproduce this cliff at the same value — a v3.5
+        # cap sweep is a follow-up only if v3.5 wins its own head-to-head
+        # (see evaluation/JINA_V35_AB_*.md).
         metadata=spec(
             flat_alias="reranker_listwise_doc_max_chars",
             env="CLAUDE_RERANKER_LISTWISE_DOC_MAX_CHARS",
@@ -756,8 +834,8 @@ class RerankerConfig:
             reader="search/reranking_engine.py",
             construction_baked=True,
         ),
-    )  # JinaRerankerV3 only. Weight dtype for the
-    # listwise reranker: "auto" (checkpoint default — bf16), "fp32", "bf16",
+    )  # Jina listwise rerankers only (v3/v3.5, class JinaRerankerV3). Weight
+    # dtype for the listwise reranker: "auto" (checkpoint default — bf16), "fp32", "bf16",
     # or "fp16". bf16 listwise scoring is run-to-run non-deterministic at
     # ranking boundaries (4-5 golden queries flip between identical SSCG
     # runs); "fp32" trades ~2x reranker VRAM (~2.4 GB for the 0.6B model)
@@ -766,6 +844,29 @@ class RerankerConfig:
     # config change needs a searcher reset to take effect (the SSCG
     # benchmark's --reranker-dtype handles this via
     # _maybe_reset_for_construction_overrides).
+    doc_representation_mode: str = field(
+        default="full",
+        metadata=spec(
+            choices=("full", "signature_head"),
+            flat_alias="reranker_doc_representation_mode",
+            env="CLAUDE_RERANKER_DOC_REPRESENTATION_MODE",
+            reader="search/neural_reranker.py",
+            construction_baked=True,
+            benchmark_locked=(
+                "signature_head rejected 2026-08-14 (REMAINING_LEVERS_AB: recall@10/20 "
+                "CI-negative on 133q, 11 pool_hit losses vs 2 gains)"
+            ),
+        ),
+    )  # A4 pilot (docs/plans/RAG_IMPROVEMENT_ROADMAP_20260814.md): how
+    # _build_rerank_document renders each candidate for the listwise/generative
+    # rerankers. "full" = current behaviour (byte-identical). "signature_head" =
+    # ID header + path/parent line + capped docstring + ~12 head lines — a
+    # body-light representation probing whether full-body documents *dilute*
+    # listwise ranking. Default stays "full" unless the consolidated A/B
+    # campaign passes its recall CI gate. Construction-baked: the SSCG
+    # --reranker-sweep mode iterates configs within ONE process and
+    # _ensure_reranker() reloads only on model_name change — a mode-only
+    # change between sweep entries silently no-ops; use one process per arm.
     hop1_reserved_slots: int = field(
         default=6,  # Reserve up to N hop-1-ranked candidates into
         # the multi-hop rerank window (rerank_by_query) when hop-2 expansion pushes
@@ -776,11 +877,86 @@ class RerankerConfig:
         # on the 96q set). N=6: MRR flat within +/-0.02 noise on 96q and 63q,
         # recall@20/recall@50/pool_hit_rate all positive on both, no latency cost.
         # 0 disables (byte-identical to pre-fix behaviour). See
-        # docs/adr/0013-hop1-reserve-at-final-pool.md.
+        # docs/adr/0013-hop1-reserve-at-final-pool.md. NOTE: under the tail
+        # eviction this reserve has always used, promoting a rank-3..N hop-1
+        # candidate can evict a *better*-ranked (rank 1-2) hop-1 candidate
+        # already sitting in the window's score-sorted tail — see
+        # merged_pool_policy's "score_reserve_fix" evict_policy below, which
+        # targets this specific defect.
         metadata=spec(
             flat_alias="reranker_hop1_reserved_slots",
             env="CLAUDE_RERANKER_HOP1_RESERVED_SLOTS",
-            reader="search/multi_hop_searcher.py",
+            reader="search/rerank_window_policy.py",
+            benchmark_locked="ADR-0013",
+        ),
+    )
+    merged_pool_policy: str = field(
+        default="score",  # How RerankingEngine.rerank_by_query orders the
+        # merged multi-hop pool before the top_k_candidates cut. "score"
+        # (default, byte-identical) sorts by raw .score across three
+        # incommensurable scales -- hop-1 survivors carry an overwritten jina
+        # relevance score (~-0.12..+0.22), semantic-expansion candidates carry
+        # raw FAISS cosine (~0.5-0.9), graph-expansion candidates carry a
+        # fabricated literal 0.0 (never a real relevance signal). Measured
+        # over the 124-query capture (evaluation/probe_rerank_window_20260815
+        # .json): every graph-expansion candidate's score is exactly 0.0 and
+        # no non-graph candidate's is, so the stable sort places all graph
+        # candidates in a single contiguous band between the signal-positive
+        # and signal-negative candidates -- it does not, contrary to an
+        # earlier version of this comment, make graph candidates structurally
+        # outrank every hop-1 winner (see docs/adr/0013-hop1-reserve-at-final
+        # -pool.md, evaluation/POOL_ORDER_AB_20260815.md, and
+        # docs/adr/0039-merged-pool-provenance-bands.md, which replaces the
+        # incidental band with an explicit one under a caller-declared flag).
+        # "score_reserve_fix" keeps the score sort but changes
+        # hop1_reserved_slots' eviction target from the
+        # window's blind score-sorted tail to the lowest-scored non-hop1
+        # entries, so promoting a hop-1 candidate can no longer evict a
+        # better-ranked one. "channel_priority" replaces the sort entirely
+        # with a three-tier ordering (hop-1 by hop1_rank asc, then
+        # source=="multi_hop" by score desc, then source=="graph_hop" by
+        # insertion order) that never compares across scales; under this
+        # policy hop1_reserved_slots is provably inert (all hop-1 candidates
+        # already sit in tier 0). Only MultiHopSearcher's Pass-2 rerank call
+        # reads this; the ego-graph/parent-expansion tail rerank calls
+        # (hybrid_searcher.py's two rerank_by_query call sites) don't pass it
+        # and always take the "score" default. Not construction_baked -- live
+        # per call, valid as a --set arm with no searcher rebuild required.
+        metadata=spec(
+            choices=("score", "score_reserve_fix", "channel_priority"),
+            flat_alias="reranker_merged_pool_policy",
+            reader="search/rerank_window_policy.py",
+            benchmark_locked=(
+                "POOL_ORDER_AB_20260815: channel_priority breaches 63q MRR/recall@5 "
+                "guard-rail; score_reserve_fix never clears the recall CI upside bar"
+            ),
+        ),
+    )
+    graph_hop_window_cap: int = field(
+        default=0,  # Cap how many source=="graph_hop" candidates occupy the
+        # top_k_candidates rerank window (RerankingEngine._apply_graph_hop_window_cap),
+        # applied after _order_merged_pool's sort and before hop1_reserved_slots'
+        # eviction. 0 disables (byte-identical -- the static returns the input
+        # object unchanged). Every graph_hop candidate carries a literal 0.0
+        # score, so "first N admitted" == insertion order -- the cap never
+        # compares scores across channels, unlike merged_pool_policy's
+        # "channel_priority" (rejected, evaluation/POOL_ORDER_AB_20260815.md).
+        # Standalone knob, not a merged_pool_policy choice, since that key is
+        # benchmark_locked. Offline replay
+        # probe (evaluation/POOL_ORDER_CAP_PROBE_20260815.md) gated cap=2/3 for
+        # the Phase 3 A/B before this field existed. Only MultiHopSearcher's
+        # Pass-2 rerank call reads this; hybrid_searcher.py's tail rerank calls
+        # don't pass it and always take the 0 default.
+        metadata=spec(
+            range=(0, 30),
+            flat_alias="reranker_graph_hop_window_cap",
+            env="CLAUDE_RERANKER_GRAPH_HOP_WINDOW_CAP",
+            reader="search/rerank_window_policy.py",
+            benchmark_locked=(
+                "POOL_ORDER_CAP_AB_20260815: neither cap=2 nor cap=3 clears the "
+                "133q recall@10/recall@20 upside CI (both include zero, both point "
+                "estimates negative)"
+            ),
         ),
     )
 
@@ -791,7 +967,11 @@ class OutputConfig:
 
     format: str = field(
         default="ultra",  # verbose, compact, ultra (default: ultra for 45-55% token reduction)
-        metadata=spec(flat_alias="output_format", reader="mcp_server/server.py"),
+        metadata=spec(
+            choices=("verbose", "compact", "ultra"),
+            flat_alias="output_format",
+            reader="mcp_server/server.py",
+        ),
     )
     source_order_output: bool = field(
         default=False,  # Emit results in relevance order (blended_score desc); set True to restore DOS-RAG file/line ordering
@@ -817,7 +997,7 @@ class OutputConfig:
 
 @dataclass
 class ChunkingConfig:
-    """Chunking algorithm settings (10 fields)."""
+    """Chunking algorithm settings (11 fields)."""
 
     # Large function splitting (cAST paper: AST-aware splitting improves Recall@5 +66%)
     enable_large_node_splitting: bool = field(
@@ -861,7 +1041,7 @@ class ChunkingConfig:
     # File-level module summaries (A2: improve GLOBAL query recall)
     enable_file_summaries: bool = field(
         default=True,  # Generate module-summary chunks per file
-        metadata=spec(mcp="chunking", reader="search/incremental_indexer.py"),
+        metadata=spec(mcp="chunking", reader="search/summary_stage.py"),
     )
 
     # Adaptive chunk sizing (research: P75 baseline + complexity modulation)
@@ -902,6 +1082,22 @@ class ChunkingConfig:
         metadata=spec(mcp="chunking", reader="chunking/languages/glsl.py"),
     )
 
+    # File-size cap on the chunking path (Workstream B3): repo_profiler.py
+    # already skips files over this size when building the adaptive-sizing
+    # profile, but chunk_file() had no equivalent guard, so a giant vendored
+    # file the profiler considered out of scope could still reach the
+    # chunker. Same default as the profiler's own (former) MAX_FILE_SIZE_BYTES
+    # constant, which now reads this field instead of hardcoding its own copy.
+    max_file_size_bytes: int = field(
+        default=5 * 1024 * 1024,  # 5 MB
+        metadata=spec(
+            range=(1024, 100 * 1024 * 1024),
+            flat_alias="max_file_size_bytes",
+            mcp="chunking",
+            reader="chunking/multi_language_chunker.py",
+        ),
+    )
+
 
 @dataclass
 class EgoGraphConfig:
@@ -924,15 +1120,21 @@ class EgoGraphConfig:
     max_neighbors_per_hop: int = field(
         default=10,  # Max neighbors per hop
         metadata=spec(
+            range=(1, 50),
             flat_alias="ego_graph_max_neighbors_per_hop",
             reader="search/ego_graph_retriever.py",
+            benchmark_locked=(
+                "EGO_GATE2_AB_20260901: w50-vs-w15 recall@10/recall@20 upside CI "
+                "includes zero on both 63q and 133q; 133q latency +311ms/query "
+                "flagged — gate-2 cap-relief seam rejected, stays at canon default 10"
+            ),
         ),
     )
     relation_types: list | None = field(
         default=None,  # Filter to specific relations (None = all)
         metadata=spec(
             flat_alias="ego_graph_relation_types",
-            reader="search/ego_graph_retriever.py",
+            reader="graph/traversal_policy.py",
         ),
     )
     include_anchor: bool = field(
@@ -951,16 +1153,16 @@ class EgoGraphConfig:
     # RepoGraph relation filtering (Feature #5)
     exclude_stdlib_imports: bool = field(
         default=True,  # Filter stdlib from graph traversal
-        metadata=spec(reader="search/ego_graph_retriever.py"),
+        metadata=spec(reader="graph/traversal_policy.py"),
     )
     exclude_third_party_imports: bool = field(
         default=True,  # Filter third-party from traversal
-        metadata=spec(reader="search/ego_graph_retriever.py"),
+        metadata=spec(reader="graph/traversal_policy.py"),
     )
     # Weighted graph traversal
     edge_weights: dict[str, float] | None = field(
         default_factory=lambda: DEFAULT_EDGE_WEIGHTS.copy(),
-        metadata=spec(reader="search/ego_graph_retriever.py"),
+        metadata=spec(reader="graph/traversal_policy.py"),
     )  # Use weighted BFS by default (calls > imports priority)
     # QW3: expansion mode — "bfs" (default) or "ppr" (Personalized PageRank)
     expansion_mode: str = field(
@@ -975,6 +1177,23 @@ class EgoGraphConfig:
     min_similarity_threshold: float = field(
         default=0.15,  # Neighbors below this are filtered out
         metadata=spec(reader="search/ego_graph_retriever.py"),
+    )
+    # Fix #4: bound ego-graph output by dropping the cross-encoder's own
+    # negative judgments instead of a relative-ratio floor (which inverts
+    # when best_score <= 0 and needs a per-query-unstable magic constant).
+    # Only source == "ego_graph" results with reranker_score <= 0 are
+    # dropped; anchors and multi_hop/graph_hop results are never filtered.
+    drop_nonpositive_output: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="drop_nonpositive_output",
+            reader="search/hybrid_searcher.py",
+            benchmark_locked=(
+                "CONFIDENCE_EGO_AB_20260816: recall@20 CI excludes zero on the loss "
+                "side on both 63q and 133q; recall@10 upside CI includes zero both "
+                "sets — fails the Phase 5 gate, stays default-off"
+            ),
+        ),
     )
 
 
@@ -1009,7 +1228,9 @@ class GraphEnhancedConfig:
     centrality_alpha: float = field(
         default=0.0,
         metadata=spec(
-            flat_alias="centrality_alpha", reader="search/graph_scoring_stage.py"
+            flat_alias="centrality_alpha",
+            reader="search/graph_scoring_stage.py",
+            benchmark_locked="higher alphas cost recall (replicated)",
         ),
     )
     centrality_annotation: bool = field(
@@ -1071,12 +1292,115 @@ class GraphEnhancedConfig:
             flat_alias="centrality_boost_cap", reader="search/centrality_ranker.py"
         ),
     )
+    # Excludes phantom placeholder nodes (unresolved call/symbol targets, e.g.
+    # "str"/"int"/"__init__") from centrality computation. Pre-flight on this
+    # repo's own index (scripts/benchmark/graph_phantom_preflight.py) found
+    # phantoms are 75% of the top-20 raw-PageRank nodes and the #1 node
+    # ("str") is a phantom -- max-normalizing against it pushes ~99% of real
+    # chunks below centrality_boost_threshold. Benchmark-locked pending the
+    # pre-registered A/B (ADR-0055); default False keeps every path
+    # byte-identical until that A/B lands.
+    centrality_exclude_phantoms: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="centrality_exclude_phantoms",
+            reader="search/centrality_ranker.py",
+            benchmark_locked=(
+                "ADR-0055 pending: pre-flight found phantoms are 75% of the top-20 "
+                "raw-PageRank nodes on this repo's own index and the #1 node is a "
+                "phantom; pre-registered A/B result not yet recorded, stays default-off"
+            ),
+        ),
+    )
     # Post-centrality result cap: total results kept = k * this multiplier
     # (k primary + (multiplier-1)*k graph/ego/parent context chunks)
     max_results_multiplier: int = field(
         default=8,
         metadata=spec(
             flat_alias="max_results_multiplier", reader="search/graph_scoring_stage.py"
+        ),
+    )
+    # RepoScope-style call-evidence scoring for graph-hop candidates (A1):
+    # _graph_expand assigns min(anchor·cosine + λ·log2(1 + shared hop-1 call
+    # links), anchor) instead of the flat 0.0 that sorted graph candidates
+    # below every other score scale at the rerank-window cut. Ships disabled
+    # pending paired-CI A/B (docs/plans/RAG_IMPROVEMENT_ROADMAP_20260814.md).
+    graph_hop_call_evidence_enabled: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="graph_hop_call_evidence_enabled",
+            reader="search/multi_hop_searcher.py",
+        ),
+    )
+    # λ per log2 unit of shared-reference call links. The paper's λ1:λ2 = 1:2
+    # ratio rescaled to this pipeline's score range (anchor·cosine typically
+    # ~0.1-0.5); tuned only via the A/B arms, never hand-tuned.
+    graph_hop_call_evidence_lambda: float = field(
+        default=0.05,
+        metadata=spec(
+            flat_alias="graph_hop_call_evidence_lambda",
+            reader="search/multi_hop_searcher.py",
+        ),
+    )
+    # DyCoder-style confidence-weighted traversal (A2): drop graph edges whose
+    # resolved confidence (graph.graph_storage.edge_confidence) falls below
+    # this floor during _graph_expand's get_neighbors BFS. Resolver-verified
+    # edges use their float resolver_confidence; legacy-tagged and untagged
+    # `calls` edges resolve to 0.5-0.7; only a non-call edge with neither a
+    # float nor a tag counts as 1.0 and always survives. Ships as 0.0 =
+    # byte-identical no-op pending A/B.
+    min_traversal_confidence: float = field(
+        default=0.0,
+        metadata=spec(
+            flat_alias="min_traversal_confidence",
+            reader="graph/traversal_policy.py",
+        ),
+    )
+    # Weighted BFS only: multiply each edge's type-weight by its resolved
+    # confidence so ambiguous-AST edges (0.5) stop competing equally with
+    # resolver-validated edges (0.98) for expansion priority.
+    traversal_confidence_weighting_enabled: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="traversal_confidence_weighting_enabled",
+            reader="graph/traversal_policy.py",
+        ),
+    )
+    # Drop `tag:ambiguous` call edges (AST same-name fan-out, no float
+    # resolver_confidence; graph.graph_storage.is_ambiguous_call_edge) from
+    # ego-graph and multi-hop traversal. Unlike min_traversal_confidence this
+    # touches nothing else: tag:exact (0.7), phantom-callee edges (0.5) and
+    # every resolver-validated edge survive. Offline replay 2026-09-02
+    # (evaluation/AMBIGUOUS_EDGE_REPLAY_20260902.md) passed the >=2 net-rescue
+    # bar on both 63q and 133q; ships default-off pending the live A/B and is
+    # benchmark_locked (see its spec() row).
+    drop_ambiguous_traversal_edges: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="drop_ambiguous_traversal_edges",
+            reader="graph/traversal_policy.py",
+            benchmark_locked=(
+                "AMBIGUOUS_EDGE_AB_20260902: live 63q/133q A/B gated on recall@10/"
+                "recall@20 paired bootstrap; retrieval-quality knob, human decision"
+            ),
+        ),
+    )
+    # Fix #2 (partial mitigation): default for find_connections' `hide_ambiguous`
+    # arg when the caller omits it. When true, callees/callers tagged
+    # confidence == "ambiguous" are dropped from the returned list (but not
+    # from the pre-filter callee_confidence/caller_confidence counts).
+    # `recovered`-tagged symbol-retry edges are NOT covered by this filter and
+    # can still be false — see docs/adr (Fix #2 partial-mitigation note).
+    # Promoted True 2026-08-16 (evaluation/CONFIDENCE_EGO_AB_20260816.md):
+    # run_caller_recall gate passed both directions — recall byte-identical
+    # (callers 11/13, callees 5/7 edges found in both arms), precision up
+    # (callers 0.4051->0.4082, callees 0.2648->0.4014). Explicit `hide_ambiguous:
+    # false` in a call still overrides this default.
+    hide_ambiguous_edges_default: bool = field(
+        default=True,
+        metadata=spec(
+            flat_alias="hide_ambiguous_edges_default",
+            reader="mcp_server/tools/search_handlers.py",
         ),
     )
 
@@ -1153,6 +1477,7 @@ class QueryExpansionConfig:
         metadata=spec(
             flat_alias="query_expansion_enabled",
             reader="search/search_executor.py",
+            benchmark_locked="ADR-0012 re-eval closed 2026-08-02, stays disabled",
         ),
     )  # Opt-in pending A/B (flip on pass, BM25-only)
     variants_path: str = field(
@@ -1194,7 +1519,7 @@ class QueryExpansionConfig:
 
 @dataclass
 class CallGraphConfig:
-    """Call-graph resolver pipeline settings (11 fields).
+    """Call-graph resolver pipeline settings (12 fields).
 
     Controls which static-analysis backends run at full-index time to inject
     cross-module ``calls`` edges into the code graph.
@@ -1373,6 +1698,27 @@ class CallGraphConfig:
     to keep only LibCST and LSP edges.
     """
 
+    inject_on_incremental: bool = field(
+        default=False,
+        metadata=spec(reader="search/index_write_stage.py"),
+    )
+    """Run the resolver-pipeline call-edge injection on incremental passes too.
+
+    Default ``False``: gated in ``IndexWriteStage.inject_call_edges_if_enabled``,
+    so only a full-index pass injects (via ``IndexWriteStage.run``). Incremental passes
+    prune graph nodes for changed/removed files (``remove_file_nodes``) and
+    re-add them via ``add_embeddings``, which restores only the always-on
+    AST-level edges — resolver-injected pyan/LibCST/LSP edges are lost for
+    any file touched by an incremental pass and never regenerated short of a
+    full reindex. Setting this to ``True`` closes that gap by re-running
+    injection at the end of every incremental pass (scoped to the full
+    indexed set, not just the changed files — see
+    ``chunking/relationships/call_edge_resolver.py``'s ``prepare_scoped_files``).
+
+    Stays ``False`` until incremental-pass latency, edges recovered, and the
+    RW-lock hold time (ADR-0008) are measured and judged acceptable.
+    """
+
     def __post_init__(self) -> None:
         if self.resolvers is None:
             self.resolvers = ["pyan", "libcst"]
@@ -1521,6 +1867,26 @@ def _derive_construction_baked_fields(
     return frozenset(baked)
 
 
+def _derive_benchmark_locks(subconfig_types: dict[str, type]) -> dict[str, str]:
+    """Derive ``{"section.field": citation}`` for every field declared with
+    ``spec(benchmark_locked=...)``.
+
+    Single declaration site per ADR-0022: a benchmark-pinned field carries its
+    own "do not re-tune" citation on its ``spec()`` row instead of being
+    restated in a hand-typed frozenset and a parallel citations dict in
+    ``search/index_probe.py``. ``index_probe.FORBIDDEN_AUTO_TUNE_KEYS`` and
+    ``index_probe.BENCHMARK_LOCK_CITATIONS`` are views over this table (plus
+    the one non-benchmark routing lock, ``embedding.model_name``).
+    """
+    locks: dict[str, str] = {}
+    for section_name, section_cls in subconfig_types.items():
+        for f in dataclasses.fields(section_cls):
+            citation = f.metadata.get("benchmark_locked")
+            if citation is not None:
+                locks[f"{section_name}.{f.name}"] = citation
+    return locks
+
+
 class SearchConfig:
     """Root configuration with nested sub-configs.
 
@@ -1662,6 +2028,40 @@ class SearchConfig:
     _CONSTRUCTION_BAKED_FIELDS: frozenset[tuple[str, str]] = (
         _derive_construction_baked_fields(_SUBCONFIG_TYPES)
     )
+
+    # "section.field" -> why it must not be auto-tuned. Derived from each
+    # field's spec(benchmark_locked=...) — see ADR-0022. search/index_probe.py
+    # builds FORBIDDEN_AUTO_TUNE_KEYS / BENCHMARK_LOCK_CITATIONS from this.
+    _BENCHMARK_LOCK_CITATIONS: dict[str, str] = _derive_benchmark_locks(
+        _SUBCONFIG_TYPES
+    )
+
+    @staticmethod
+    def requires_rebuild(flat: dict[str, Any]) -> bool:
+        """True if any dotted-key override in *flat* touches a
+        ``spec(construction_baked=True)`` field.
+
+        *flat* keys are ``"section.field"`` dotted paths (e.g.
+        ``"reranker.top_k_candidates"``), matching
+        ``evaluation/arm_overrides.py``'s ``normalize_overrides`` shape. This
+        is the public predicate that module's own ``requires_rebuild``
+        delegates to (D7) instead of reading ``_CONSTRUCTION_BAKED_FIELDS``
+        directly across the layer; ``mcp_server/tools/config_handlers.py``'s
+        config handlers use it the same way to skip an unnecessary
+        ``reset_searcher()`` when nothing touched actually requires one.
+
+        Malformed keys (no ``"."``, or an unrecognized section) simply never
+        match anything in ``_CONSTRUCTION_BAKED_FIELDS`` and are treated as
+        not baked — this function does not validate; callers that need a
+        hard failure on a bad key (e.g. ``arm_overrides.validate_overrides``)
+        do that separately, before calling this.
+        """
+        touched = {
+            cast(tuple[str, str], tuple(key.split(".", 1)))
+            for key in flat
+            if "." in key
+        }
+        return bool(touched & SearchConfig._CONSTRUCTION_BAKED_FIELDS)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to nested dictionary for JSON serialization.

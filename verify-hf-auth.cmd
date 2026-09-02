@@ -17,7 +17,7 @@ pushd "%PROJECT_DIR%" || (
 REM Check if virtual environment exists
 if not exist ".venv" (
     echo [ERROR] Virtual environment not found
-    echo Please run install-windows.bat first
+    echo Please run install-windows.cmd first
     pause
     exit /b 1
 )
@@ -35,7 +35,7 @@ if %EXIT_CODE% neq 0 (
     echo   scripts\powershell\hf_auth.ps1 -Token "your_hf_token"
     echo.
     echo [INFO] Or re-run the installer which includes auth setup:
-    echo   install-windows.bat
+    echo   install-windows.cmd
 )
 
 echo.

@@ -2,27 +2,67 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-08-13)
+## Current Status: All Features Operational (2026-09-02)
 
-- **Version**: 0.25.0
+- **Version**: 0.26.0
 - **Status**: Production-ready, concurrency-safe
-- **Test Coverage**: 5,823 unit tests · 102 fast_integration · 19 integration · 108 slow_integration (2026-08-13)
+- **Test Coverage**: 4,351 unit tests · 102 fast_integration · 20 integration · 108 slow_integration (2026-09-02; unit count dropped from 5,8xx when Phase 13.2b collapsed the parametrized golden-set guard — no coverage lost)
 - **Dependencies**: 36 direct (`pyproject.toml`) + optional `[callgraph]` / `[lsp]` / `[test]` / `[dev]` / `[gpu]` / `[otel]` extras
-- **SSCG Benchmark**: MRR 0.8603 (canonical, 63q, k=10, `canon_l1` intent-on arm, shipped default) / 0.6789 (expanded, 133 non-D, k=10, `canon_l1` intent-on arm) — see `docs/BENCHMARKS.md` for full provenance (ADR-0033 re-pin after the ML-stack/torch bump, superseding `canon_h1`/`canon_i1`/`canon_j1`/`canon_k1`/`canon_k2`); README's Highlights headline cites the same `canon_l1` figures
+- **SSCG Benchmark**: MRR 0.8419 (canonical, 63q, k=10, deterministic) / 0.6378 (expanded, 133 non-D, k=10) / 0.8843 (F-via-similar) — 2026-09-01 P0 re-baseline on 219 files / 2,642 chunks, superseding the 2026-08-22 LSP re-baseline's 0.8462/0.6482/0.9034 (comparability break: index growth after the architecture wave, not a regression); see `docs/BENCHMARKS.md` and `evaluation/CANON_20260901_REBASELINE.md`
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: v0.25.0 — C++ chunking parity (20 → 27 file extensions, headers now indexed for the
-  first time), nested same-named container `parent_chunk_id` linkage fix, templated header-only
-  prototype/alias naming fix; v0.24.0 — retro-tagged v0.23.0, documentation/skill sync against
-  `development` (test counts, benchmark re-pin, ADR-0036 `include_dirs` semantics), call-graph
-  resolver hardening, pyan GPL-2.0-or-later quarantine (ADR-0034), C++ call-edge tier scope
-  (ADR-0035), additive/narrowing `include_dirs` for dependency trees (ADR-0036); v0.23.0 — MCP
-  Python SDK v1→v2 migration, community/DSPy/ONNX subsystems removed (86 commits since v0.22.0,
-  three models dropped from the registries), per-project config overrides (ADR-0014), config field
-  liveness audit (ADR-0020); v0.22.0 — GLSL indexing parity, persistent chunk embedding cache (43×
-  reindex speedup), BM25 path/symbol augmentation (MRR +0.113), `HybridSearcher.clear_index()`
-  truthiness fix (was discarding 100% of resolver-derived call edges)
+- **Recent**: v0.26.0 — retrieval campaigns closed (Track A, remaining levers, merged-pool
+  ordering, ego gate-2; every arm measured-and-rejected, `hide_ambiguous` promoted to default-on),
+  ADR-0039→0059 architecture-deepening wave (`BaseSearcher.execute`, `IndexWriteStage`,
+  `ResourceRefresher`, enricher spec rows, `ToolSpec` table, `TraversalPolicy`,
+  `spec(benchmark_locked=…)`), real `index_is_current` freshness verdict (ADR-0058), CUDA→cpp
+  routing (ADR-0054), execution-witnessed call-graph ground truth (ADR-0059), test-suite
+  hardening Phases 13–14, three canon re-baselines; v0.25.0 — C++ chunking parity (20 → 27 file
+  extensions, headers indexed for the first time), container-node traversal seam (ADR-0038);
+  v0.24.0 — retro-tagged v0.23.0, pyan GPL quarantine (ADR-0034), C++ call-edge tier scope
+  (ADR-0035), additive/narrowing `include_dirs` (ADR-0036); v0.23.0 — MCP Python SDK v1→v2
+  migration, community/DSPy/ONNX subsystems removed, per-project config overrides (ADR-0014),
+  config field liveness audit (ADR-0020); v0.22.0 — GLSL indexing parity, persistent chunk
+  embedding cache (43× reindex speedup), BM25 path/symbol augmentation (MRR +0.113)
 
 ---
+
+## v0.26.0 - Retrieval Campaigns Closed, Architecture Wave, Index-Freshness Verdict (2026-09-02)
+
+158 commits since v0.25.0, three threads. **Retrieval**: the Track A + remaining-levers campaigns
+(2026-08-14) shipped `hide_ambiguous` (find_connections) and `include_top_callers` (search_code)
+as opt-in display params and measured-and-rejected A1 call-evidence scoring, A2
+confidence-weighted traversal, A4 `signature_head` documents, and jina-reranker-v3.5 as default;
+A3 final-pool graph reserve was not built (probe gate failed). The merged-pool / ego-graph log
+that followed (2026-08-15 → 2026-09-02) repaired the rerank-window ordering into explicit
+provenance bands (ADR-0039) and then rejected every arm on top of it — `graph_hop_window_cap`
+at both doses, the evidence-ordered band probe (zero headroom), leg-depth × fusion / TM2C2, the
+ego tail cut `drop_nonpositive_output`, and ego gate-2 cap relief `max_neighbors_per_hop` 10→50
+(`evaluation/EGO_GATE2_AB_20260901.md`); all now benchmark-locked. Four live-MCP call-graph
+defects (2026-08-16) and the D1–D12 defect-closure sweep (2026-08-19) were fixed, and
+`hide_ambiguous` was promoted to default-on after its A/B passed (recall byte-identical,
+precision up both directions). New opt-ins: `include_top_callees` and `include_signatures` on
+`search_code`, `graph_enhanced.drop_ambiguous_traversal_edges` (replay-screened, off pending live
+A/B), `call_graph.inject_on_incremental` (ADR-0044). **Architecture**: the ADR-0039 → ADR-0059
+deepening wave, each step behaviour-preserving and ratcheted by a test — `BaseSearcher.execute`
+(ADR-0048), `IndexWriteStage` (ADR-0052), `ResourceRefresher` (ADR-0053), enricher spec rows
+(ADR-0049), single-sourced MCP defaults (ADR-0046), `ResultSource` StrEnum (ADR-0047),
+embedding-document composer (ADR-0045), `ToolSpec` table with decorator-derived guard flags
+(ADR-0057), `TraversalPolicy` parameter object (`graph/traversal_policy.py`; seven traversal
+knobs as one frozen dataclass, `get_neighbors_ranked(chunk_id, policy)` seam, 63q canon 0 MRR
+movers), and benchmark locks declared on `spec(benchmark_locked=…)` rows so
+`FORBIDDEN_AUTO_TUNE_KEYS` / `BENCHMARK_LOCK_CITATIONS` are derived views (ADR-0022 addendum).
+**Substrate**: a real content-based `index_is_current` verdict + `pending_changes` on
+`get_index_status` and `list_projects(check_freshness=True)` (ADR-0058); CUDA `.cu`/`.cuh` route
+to the `cpp` grammar (ADR-0054); phantom-node centrality exclusion knob (ADR-0055);
+execution-witnessed call-graph ground truth with a split-aware golden guard (ADR-0059);
+`evaluation.probe_harness` seam (ADR-0040); FAISS mmap handle released before force reindex;
+metadata-clear self-heal and C-family macro-wrapped declaration repair (ADR-0025 addenda).
+**Testing**: hardening Phases 13–14 — package-scoped ratcheted coverage, `pytest-timeout`,
+golden-set guard collapsed (5,8xx → 4,351 unit tests, no coverage lost), radon/crap4py complexity
+gate, `test_hybrid_search.py` de-mocked. **Benchmarks**: three canon re-baselines, each a
+comparability break — 0.8722/0.6843 (08-14) → 0.8462/0.6482 (08-22, LSP dark/restore) →
+**0.8419 / 0.6378 / 0.8843** (2026-09-01 P0, published). Full CHANGELOG entry: `CHANGELOG.md`
+`[0.26.0]`.
 
 ## v0.25.0 - C++ Chunking Parity, Headers Indexed (2026-08-13)
 

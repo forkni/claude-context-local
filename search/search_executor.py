@@ -8,7 +8,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -19,7 +19,42 @@ from utils.timing import timed
 from .filters import FilterEngine
 from .reranker import SearchResult
 from .result_factory import ResultFactory
-from .types import RetrievalRequest
+from .types import ResultSource, RetrievalRequest
+
+
+if TYPE_CHECKING:
+    from search.config import SearchConfig
+
+
+def leg_search_depth(config: "SearchConfig", k: int) -> int:
+    """Per-leg retrieval depth for the hybrid funnel.
+
+    Widened funnel (R1a): retrieve enough per leg that the fused pool can
+    actually fill the neural reranker's candidate budget
+    (reranker.top_k_candidates, deployed 30) instead of starving it at k*2.
+    Exact FlatIP dense search makes the wider sweep ~free.
+
+    This is the single source of the hop-1 funnel-width arithmetic. Anything
+    that needs to replicate the production funnel outside execute_single_hop
+    (offline probes, tests) must call this rather than re-deriving it inline
+    -- inline copies drift the moment leg_search_multiplier changes under them.
+    """
+    reranker_budget = config.reranker.top_k_candidates
+    return max(reranker_budget, k * config.search_mode.leg_search_multiplier)
+
+
+def fused_pool_cut(config: "SearchConfig", k: int) -> int:
+    """Fused-pool size handed to the reranker.
+
+    Keep the fused pool at the reranker budget rather than k: RRF ordering
+    decides *membership* of the neural-rerank pool, the neural reranker
+    decides the final top-k. When reranking is disabled/unavailable,
+    apply_neural_reranking returns the pool unchanged and the caller's [:k]
+    reproduces the old RRF top-k.
+
+    Canonical source of this arithmetic -- see leg_search_depth's docstring.
+    """
+    return max(k, config.reranker.top_k_candidates)
 
 
 class SearchExecutor:
@@ -122,12 +157,8 @@ class SearchExecutor:
             rerank_time = 0.0  # No reranking for single mode
 
         else:  # hybrid mode
-            # Widened funnel (R1a): retrieve enough per leg that the fused pool
-            # can actually fill the neural reranker's candidate budget
-            # (reranker.top_k_candidates, deployed 30) instead of starving it at
-            # k*2. Exact FlatIP dense search makes the wider sweep ~free.
-            reranker_budget = config.reranker.top_k_candidates
-            search_k = max(reranker_budget, k * 5)
+            # See leg_search_depth's docstring for the funnel-width rationale.
+            search_k = leg_search_depth(config, k)
 
             if use_parallel and not self._is_shutdown:
                 # Parallel execution
@@ -169,12 +200,8 @@ class SearchExecutor:
                 f"[RERANK] Using weights: BM25={eff_bm25}, Dense={eff_dense}, "
                 f"BM25_results={len(bm25_results)}, Dense_results={len(dense_results)}"
             )
-            # Keep the fused pool at the reranker budget rather than k: RRF
-            # ordering decides *membership* of the neural-rerank pool, the
-            # neural reranker decides the final top-k. When reranking is
-            # disabled/unavailable, apply_neural_reranking returns the pool
-            # unchanged and the [:k] below reproduces the old RRF top-k.
-            fusion_k = max(k, reranker_budget)
+            # See fused_pool_cut's docstring for the fused-pool-size rationale.
+            fusion_k = fused_pool_cut(config, k)
             if variant_legs:
                 # Generic N-list fusion: primary legs keep their weights,
                 # variant legs enter discounted; reserved slots stay pointed
@@ -182,11 +209,15 @@ class SearchExecutor:
                 # interaction is unchanged, not extended to variant legs.
                 # Same tuple->SearchResult conversion rerank_simple performs
                 primary_bm25 = [
-                    SearchResult(chunk_id=c, score=s, metadata=m, source="bm25")
+                    SearchResult(
+                        chunk_id=c, score=s, metadata=m, source=ResultSource.BM25
+                    )
                     for c, s, m in bm25_results
                 ]
                 primary_dense = [
-                    SearchResult(chunk_id=c, score=s, metadata=m, source="dense")
+                    SearchResult(
+                        chunk_id=c, score=s, metadata=m, source=ResultSource.DENSE
+                    )
                     for c, s, m in dense_results
                 ]
                 final_results = self.reranker.rerank(
@@ -195,6 +226,14 @@ class SearchExecutor:
                     max_results=fusion_k,
                     reserved_slots=config.search_mode.bm25_reserved_slots,
                     reserve_list_idx=0,
+                )
+            elif config.search_mode.fusion_function == "tm2c2":
+                final_results = self.reranker.rerank_tm2c2(
+                    bm25_results=bm25_results,
+                    dense_results=dense_results,
+                    max_results=fusion_k,
+                    alpha=config.search_mode.tm2c2_alpha,
+                    reserved_slots=config.search_mode.bm25_reserved_slots,
                 )
             else:
                 final_results = self.reranker.rerank_simple(
@@ -271,7 +310,10 @@ class SearchExecutor:
                 legs.append(
                     [
                         SearchResult(
-                            chunk_id=c, score=s, metadata=m, source="bm25_variant"
+                            chunk_id=c,
+                            score=s,
+                            metadata=m,
+                            source=ResultSource.BM25_VARIANT,
                         )
                         for c, s, m in tuples
                     ]
@@ -282,7 +324,10 @@ class SearchExecutor:
                 legs.append(
                     [
                         SearchResult(
-                            chunk_id=c, score=s, metadata=m, source="dense_variant"
+                            chunk_id=c,
+                            score=s,
+                            metadata=m,
+                            source=ResultSource.DENSE_VARIANT,
                         )
                         for c, s, m in tuples
                     ]

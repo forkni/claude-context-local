@@ -10,6 +10,7 @@ from .config import SearchMode
 from .indexer import CodeIndexManager
 from .ranking_heuristics import RankingHeuristics
 from .reranker import SearchResult
+from .types import ResultSource, RetrievalRequest
 
 
 if TYPE_CHECKING:
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
 
 class IntelligentSearcher(BaseSearcher):
     """Intelligent code search with query optimization and context awareness."""
+
+    _DEFAULT_SEARCH_MODE = SearchMode.SEMANTIC
 
     def __init__(
         self, index_manager: CodeIndexManager, embedder: CodeEmbedder, config=None
@@ -52,15 +55,7 @@ class IntelligentSearcher(BaseSearcher):
             self.index_manager.index is not None and self.index_manager.index.ntotal > 0
         )
 
-    # pyrefly: ignore [bad-override]
-    def search(
-        self,
-        query: str,
-        k: int = 4,
-        search_mode: str = SearchMode.SEMANTIC,
-        context_depth: int = 1,
-        filters: dict[str, Any] | None = None,
-    ) -> list[SearchResult]:
+    def execute(self, request: RetrievalRequest) -> list[SearchResult]:
         """Semantic search for code understanding.
 
         This provides semantic search capabilities. For complete search coverage:
@@ -69,15 +64,15 @@ class IntelligentSearcher(BaseSearcher):
         - Combine both for comprehensive results
 
         Args:
-            query: Natural language query
-            k: Number of results
-            search_mode: Currently "semantic" only
-            context_depth: Include related chunks
-            filters: Optional filters
+            request: The resolved request (see RetrievalRequest.build). Only
+                query, k, context_depth, and filters are read — search_mode
+                is currently ignored (semantic-only).
         """
 
         # Focus on semantic search - our specialty
-        return self._semantic_search(query, k, context_depth, filters)
+        return self._semantic_search(
+            request.query, request.k, request.context_depth, request.filters
+        )
 
     def _semantic_search(
         self,
@@ -143,7 +138,7 @@ class IntelligentSearcher(BaseSearcher):
             chunk_id=chunk_id,
             score=similarity,
             metadata={**metadata, "context_info": {}},
-            source="semantic",
+            source=ResultSource.SEMANTIC,
         )
         self._enrich_result(result, context_depth)
         return result

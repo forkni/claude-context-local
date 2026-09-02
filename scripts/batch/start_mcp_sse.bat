@@ -25,7 +25,7 @@ REM set MCP_DEBUG=1  (removed for clean logging)
 REM Silent validation - only show errors
 if not exist "%~dp0..\..\.venv\Scripts\python.exe" (
     echo [ERROR] Python NOT found at: %~dp0..\..\.venv\Scripts\python.exe
-    echo [ERROR] Run install-windows.bat first
+    echo [ERROR] Run install-windows.cmd first
     pause
     exit /b 1
 )
@@ -49,7 +49,7 @@ if "!EXIT_CODE!"=="0" (
     echo.
     echo Possible issues:
     echo   - Port 8765 already in use
-    echo   - Missing dependencies ^(run install-windows.bat^)
+    echo   - Missing dependencies ^(run install-windows.cmd^)
     echo   - Python path incorrect
     echo   - Module import errors ^(check error above^)
 )

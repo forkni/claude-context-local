@@ -565,7 +565,7 @@ except Exception as e:
         # Overall status
         if self.fail_count > 0:
             print("[OVERALL] Installation has CRITICAL ISSUES")
-            print("Recommendation: Run install-windows.bat to repair installation")
+            print("Recommendation: Run install-windows.cmd to repair installation")
         elif self.warn_count > 0:
             print("[OVERALL] Installation is MOSTLY WORKING")
             print("Some optional components may need attention")
@@ -603,10 +603,10 @@ else:
         print()
         print("Next Steps:")
         if self.fail_count > 0:
-            print("1. Fix critical issues by running: install-windows.bat")
-            print("2. Re-run verification: verify-installation.bat")
+            print("1. Fix critical issues by running: install-windows.cmd")
+            print("2. Re-run verification: verify-installation.cmd")
         else:
-            print("1. Start MCP server: start_mcp_server.bat")
+            print("1. Start MCP server: start_mcp_server.cmd")
             print(
                 "2. Configure Claude Code: scripts\\powershell\\configure_claude_code.ps1"
             )

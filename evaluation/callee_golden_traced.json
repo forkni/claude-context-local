@@ -1,0 +1,76 @@
+{
+  "_meta": {
+    "description": "Execution-witnessed direct callees",
+    "semantics": "positive-only; missing != absent",
+    "categories": {
+      "T": "traced under tests/unit with the callgraph plugin"
+    },
+    "normalization": "evaluation/metrics.py:normalize_chunk_id; method:C.__init__ callees appear as class:C",
+    "total_queries": 5,
+    "skipped": [
+      {
+        "id": "OB05",
+        "reason": "no traced direct edges"
+      },
+      {
+        "id": "OB06",
+        "reason": "no traced direct edges"
+      }
+    ]
+  },
+  "queries": [
+    {
+      "id": "TOB01",
+      "category": "T",
+      "description": "traced callees of chunking/relationships/call_edge_resolver.py:method:run_resolvers",
+      "target_chunk_id": "chunking/relationships/call_edge_resolver.py:method:run_resolvers",
+      "expected_callees": [
+        "chunking/relationships/call_edge_resolver.py:function:prepare_scoped_files",
+        "chunking/relationships/libcst_call_graph.py:method:LibCSTResolver.available",
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver.available",
+        "utils/observability.py:function:wrap_in_context"
+      ]
+    },
+    {
+      "id": "TOB02",
+      "category": "T",
+      "description": "traced callees of chunking/relationships/external_call_graph.py:method:PyanResolver.resolve",
+      "target_chunk_id": "chunking/relationships/external_call_graph.py:method:PyanResolver.resolve",
+      "expected_callees": [
+        "chunking/relationships/call_edge_resolver.py:function:prepare_scoped_files",
+        "chunking/relationships/external_call_graph.py:class:_TrackedVisitor",
+        "chunking/relationships/external_call_graph.py:function:_node_to_raw_chunk_id"
+      ]
+    },
+    {
+      "id": "TOB03",
+      "category": "T",
+      "description": "traced callees of search/index_write_stage.py:method:IndexWriteStage.inject_call_edges",
+      "target_chunk_id": "search/index_write_stage.py:method:IndexWriteStage.inject_call_edges",
+      "expected_callees": [
+        "search/call_edge_injection.py:method:inject_call_edges",
+        "search/config.py:function:get_search_config"
+      ]
+    },
+    {
+      "id": "TOB04",
+      "category": "T",
+      "description": "traced callees of search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callees",
+      "target_chunk_id": "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callees",
+      "expected_callees": [
+        "search/filters.py:function:matches_directory_filter",
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer._resolve_by_symbol"
+      ]
+    },
+    {
+      "id": "TOB07",
+      "category": "T",
+      "description": "traced callees of graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge",
+      "target_chunk_id": "graph/graph_storage.py:method:CodeGraphStorage.upgrade_call_edge",
+      "expected_callees": [
+        "graph/graph_storage.py:method:CodeGraphStorage._bump_version",
+        "utils/path_utils.py:function:normalize_path"
+      ]
+    }
+  ]
+}

@@ -345,8 +345,8 @@ def _add_relationship(
 
     Mirrors the metadata["calls"] convention (Phase 2b): this emits plain
     data only, converted into `RelationshipEdge` objects downstream by
-    `MultiLanguageChunker._extract_glsl_phase3_relationships` — keeps
-    `chunking/relationships/` out of this language chunker.
+    `materialize_relationship_edges` (chunking/relationships/edge_specs.py) —
+    keeps `chunking/relationships/` out of this language chunker.
 
     Args:
         metadata: Metadata dict being populated; must already have a

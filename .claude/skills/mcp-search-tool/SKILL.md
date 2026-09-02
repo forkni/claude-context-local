@@ -10,7 +10,7 @@ argument-hint: "search query or 'status' for index health"
 # requires MCP_EXPOSE_ADVANCED_TOOLS=1 on the server process + reconnect. See "Tool Tiers" below.
 allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources"
 metadata:
-  version: 0.25.0
+  version: 0.26.0
   mcp-server: code-search
 ---
 
@@ -40,8 +40,10 @@ candidates, not definitive answers — always scan all returned results.**
 duplicate figures elsewhere — every other reference file in this skill points back to `docs/BENCHMARKS.md` instead of restating numbers that will
 drift out of date on the next benchmark run.
 
-**Current headline (`canon_j1`, 2026-08-05, canonical 63-query set, hybrid, k=10, intent-on):** MRR **0.8603**, Recall@5 0.6676, Recall@10 0.7864,
-NDCG@5 0.7052, pool_hit_rate 0.9048. The dataset has been repaired and expanded multiple times since earlier benchmark runs (comparability breaks are
+**Current headline (2026-09-01 P0 re-baseline, canonical 63-query set, hybrid, k=10, intent-on, deterministic PYTHONHASHSEED=0):** MRR
+**0.8419**, Recall@5 0.6432, Recall@10 0.7553, NDCG@5 0.6763, pool_hit_rate 1.0000 (single-round capture on the seed-pinned harness, which was
+shown bit-identical r1==r2 on the previous substrate). Expanded 133-query set: MRR 0.6378. Provenance: `evaluation/CANON_20260901_REBASELINE.md`.
+The dataset has been repaired and expanded multiple times since earlier benchmark runs (comparability breaks are
 logged in `docs/BENCHMARKS.md`) — do not compare an older cached number here against a fresh run without checking both the dataset size/date and the
 config it ran under. Engine default is `k=7`; pass it explicitly when correctness matters. Use `k=10` for architectural/global queries.
 
@@ -58,18 +60,20 @@ instrumentation makes the scan-all-k rule concrete: on the canonical set essenti
 (pool_hit_rate ≈ 0.90–1.0 depending on the run), so most benchmark misses are *ordering* misses — the right answer can legitimately sit at rank 5–7
 of an otherwise-correct result set, not just missing outright.
 
-**Baseline rule:** **pass `k=7` explicitly when correctness matters.** The `search_code` tool schema declares `k`'s default as `4`
-(`mcp_server/tool_registry.py`), but the handler falls back to `search_config.search_mode.default_k` whenever `k` is omitted — both the shipped
-`search_config.json.example` and this deployment's config set that to **7**, which is what makes `k=7` the effective default in practice, not the
-schema value. Pass it explicitly regardless: an MCP client isn't guaranteed to omit the field the same way in every context, and targets may still
-rank 6–7 on complex or multi-target queries. Use `k=10` for architectural / global queries.
+**Baseline rule:** **pass `k=7` explicitly when correctness matters.** The `search_code` tool schema publishes no `default` for `k` at all
+(`mcp_server/tool_registry.py`) — only `minimum: 1`/`maximum: 100` (the invariant ceiling of `SearchModeConfig.max_k`, itself a separate per-install
+value, not the bound's own number). The handler falls back to `search_config.search_mode.default_k` whenever `k` is omitted — both the shipped
+`search_config.json.example` and this deployment's config set that to **7**, which is what makes `k=7` the effective default in practice. Pass it
+explicitly regardless: an MCP client isn't guaranteed to omit the field the same way in every context, and targets may still rank 6–7 on complex or
+multi-target queries. Use `k=10` for architectural / global queries.
 
 **Result Interpretation Workflow:**
 
-1. Call `code-search:search_code(query="<your query>", k=7)`. Multi-hop, graph-hop, **and ego-graph** expansion of the initial hits all run
-   **always-on**; `ego_graph_enabled` (schema default `false`) does not gate ego-graph expansion, it only *widens* `ego_graph_k_hops`/
-   `ego_graph_max_neighbors_per_hop` when `true` (see Gotchas) — expect `source: "ego_graph"` rows in every result set regardless. `include_context`
-   has **no effect on the default `HybridSearcher` search path**
+1. Call `code-search:search_code(query="<your query>", k=7)`. Multi-hop and graph-hop expansion of the initial hits run **always-on and unconditionally**.
+   Ego-graph expansion runs **by default** (`EgoGraphConfig.enabled=True`) but is a genuine tri-state gate via `ego_graph_enabled`: omit it to defer to
+   the server's configured default (on, in this deployment), pass `true` to force it on and apply the `ego_graph_k_hops`/
+   `ego_graph_max_neighbors_per_hop` overrides, or pass `false` to force it off for that call (see Gotchas) — so expect `source: "ego_graph"` rows in
+   every result set unless you explicitly disable it. `include_context` has **no effect on the default `HybridSearcher` search path**
    (`SearchOrchestrator._search` in `mcp_server/tools/search_orchestrator.py` only threads it through for a non-default searcher) — don't rely on it.
    Use `k=10` for architectural / global queries.
 2. **Scan ALL k results** — results are pre-sorted in relevance order (centrality-reranked blended_score descending) under the server default;
@@ -211,7 +215,7 @@ These are non-obvious traps from real session experience — not things the docs
 |---|---|
 | Results are pre-sorted by `blended_score` descending under the server default (`source_order_output=false`, v0.18.0+); module summaries are demoted to the tail for non-GLOBAL queries | Array position 0 is already the best default-order match. For strict cross-encoder order instead, re-sort by `reranker_score` then `blended_score`: `sorted(results, key=lambda r: (r.get("reranker_score", 0), r.get("blended_score", 0)), reverse=True)`. **Caveat:** this re-promotes demoted summary chunks (e.g. a `module:hybrid_searcher` summary with `reranker_score=0.94` moves from position 28 to position 0) — apply it only when you specifically want pure cross-encoder ranking |
 | `search_code` returns metadata only — `file`, `lines`, `kind`, `score`, `chunk_id`, usually `name` — never a code body (full field list: [references/parameters.md](references/parameters.md)) | Don't spend extra calls "confirming" a candidate's body; names, kinds, and scores are sufficient to judge relevance |
-| **Ego-graph expansion is always-on and cannot be disabled from the MCP boundary.** `EgoGraphConfig.enabled` defaults to `True` in the dataclass (`search/config.py`), and `search/effective_config.py`'s `build_effective_config()` only ever *turns it on* (there is no branch that sets `enabled=False`). The `ego_graph_enabled` tool argument (schema default `false`) does not gate the feature — it only raises `ego_graph_k_hops`/`ego_graph_max_neighbors_per_hop` when `true` | Expect `source="ego_graph"` rows interleaved into every result set, carrying their own `blended_score` — count them toward your top-k window, don't filter them out. `ego_graph_enabled=true` is for *widening* the neighborhood, not switching it on |
+| **Ego-graph expansion is on by default, but `ego_graph_enabled` is a real tri-state gate, not a widen-only knob.** `EgoGraphConfig.enabled` defaults to `True` in the dataclass (`search/config.py`). `search/effective_config.py`'s `build_effective_config()` reads the tool argument as tri-state: omitted (`None`) defers to that server default; explicit `true` forces expansion on *and* applies the `ego_graph_k_hops`/`ego_graph_max_neighbors_per_hop` overrides; explicit `false` sets `EgoGraphConfig.enabled=False` for that call (logs `"[EGO_GRAPH] Explicitly disabled"`) and leaves the hop-count args untouched. The schema itself publishes no `default` for this argument (only the description tells you to omit it to get the server's configured value) | Expect `source="ego_graph"` rows interleaved into every result set unless you pass `ego_graph_enabled=false` to suppress them for that call. When they're present, count them toward your top-k window, don't filter them out |
 | `k` is not the result count — multi-hop/graph-hop/ego-graph expansion adds rows *after* `k` is applied to the initial retrieval. Measured on the live index, same query: `k=1` → 4 results, `k=5` → 20, `k` omitted (effective 7) → 26 | Don't size a context budget off `k` directly — expect roughly 3–5× more rows back than `k`. Total rows are capped at `k × graph_enhanced.max_results_multiplier` (default 8) |
 | `find_connections`'s `relationship_types` filter only scopes *some* response sections — `direct_callers`, `indirect_callers`, `direct_callees`, and `similar_code` come back unfiltered no matter what you pass; only sections like `uses_types`/`exceptions_caught`/`instantiates` are actually narrowed by it | Don't rely on `relationship_types` to prune caller/callee lists — filter those client-side by their own `resolver_source`/edge-type fields instead |
 | `split_block` pieces of one long function (e.g. `file.py:10-40:split_block:fn` + `file.py:41-80:split_block:fn`) are one logical hit | Normalize/dedupe by stripping the line range (`file.py:10-40:type:name` → `file.py:type:name`) before counting unique chunks in Recall/Hit metrics. Since v0.12.1 they also carry full `uses_type`/`imports` edges, so `find_connections` returns these too |
@@ -230,7 +234,7 @@ These are non-obvious traps from real session experience — not things the docs
 you're working with:
 
 ```
-code-search:get_index_status   # confirms active project path, chunk count, staleness
+code-search:get_index_status   # confirms active project path, chunk count, index_is_current
 code-search:list_projects      # if unsure which project is active
 code-search:switch_project     # if the active project is wrong
 ```
@@ -245,6 +249,7 @@ active project is a common silent error — results look plausible but are from 
 | Issue | Solution |
 |-------|----------|
 | **No results** | 1. Check active project: `code-search:list_projects` → `code-search:switch_project` if needed. 2. Verify index not empty/stale: `code-search:get_index_status`. 3. If index is missing or stale: **rebuild with `code-search:index_directory(directory_path)`**. |
+| **Judging whether a project's index is stale** | Use `last_indexed_at` from `code-search:list_projects` (or `last_indexed_time` from `get_index_status` for the active project) — both read live Merkle snapshot data that advances on every re-index, incremental or full. **Never** judge staleness from `list_projects`' `created_at` — that field is frozen at first-index registration and never updates on later re-indexing, so a freshly-rebuilt project can still show a `created_at` from days or weeks ago. |
 | **Bad results / wrong project** | Run pre-flight checks above. If the project was recently changed, re-run `switch_project` to confirm. |
 | **Bad results (right project)** | Try different mode: hybrid → semantic → bm25. Add filters: `file_pattern`, `chunk_type`. Increase k |
 | **Wrong result at rank-1** | Scan all k results — answer likely at rank 2-4. Use `chunk_type` filter to exclude module summary chunks |
@@ -258,8 +263,12 @@ active project is a common silent error — results look plausible but are from 
 
 When the user invokes the skill with the argument `status` (e.g. `/mcp-search-tool status`), run this exact sequence and report the result:
 
-1. `code-search:list_projects` — show which project is active, when it was last indexed
-2. `code-search:get_index_status` — chunk count, staleness, graph data presence
+1. `code-search:list_projects(check_freshness=True)` — show which project is active, and each indexed model's definitive freshness via
+   `index_is_current`/`pending_changes` (a content-only Merkle diff against the working tree). Do **not** read `created_at` or `last_indexed_at`
+   for staleness — both only say *when* the indexer last ran, not whether the index still matches the tree; `created_at` is additionally frozen
+   at first-index registration and never advances on re-index at all.
+2. `code-search:get_index_status` — chunk count, `index_is_current`/`pending_changes` (active project only, same definitive check), graph data
+   presence
 3. `code-search:get_search_config_status` — current search_mode, BM25/dense weights, reranker state. **This is an advanced tool with no in-band
    alternative — it is unlisted unless `MCP_EXPOSE_ADVANCED_TOOLS=1` is set (see "Tool Tiers" below).** If it isn't listed, do NOT fail the whole
    status check: skip this step, report "search mode/reranker state: unavailable under the 10-tool default (set `MCP_EXPOSE_ADVANCED_TOOLS=1` and

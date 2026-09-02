@@ -36,7 +36,7 @@ for the authoritative "two namespaces" explanation):
 | pyan wildcard fan-out | `external_call_graph.py` | **0.6** | ✅ (but tagged by `_TrackedVisitor`) | `expand_unknowns` residue, demoted |
 | pyan direct | `external_call_graph.py` | 0.75 | via `resolvers` config | Cross-module, graph-inferred |
 | LibCST FQN | `libcst_call_graph.py` | 0.90 | via `resolvers` config | Import-aware, per-file |
-| LSP / basedpyright | `lsp_call_graph.py` | 0.98 | `lsp_enabled=True` | Most precise; opt-in |
+| LSP / basedpyright | `lsp_call_graph.py` | 0.98 | `lsp_enabled=True` (default) | Most precise; requires `pip install -e ".[lsp]"`, no-ops otherwise |
 
 **Two distinct confidence namespaces** (do not conflate): the AST rail's
 `CallEdge.confidence` (a float, always `1.0`, set at extraction time and not
@@ -102,11 +102,13 @@ __init__
   → _analyze()              # AST walk, fills uses_edges
   → contract_nonexistents() # collapses undefined → wildcard nodes
   → expand_unknowns()       # fans out wildcard calls to all matching names
-  → cull_inherited()        # removes edges redundant due to inheritance
   → collapse_inner()        # collapses nested-scope nodes into parents
+  → cull_subsumed()         # drops module-level edges a finer edge already conveys
 ```
 
-**None of these passes can be disabled via constructor arguments.**  The
+(pyan3 ≥ 2.8 order; 2.6 ran `cull_inherited()` before `collapse_inner()` instead.)
+**Only `cull_subsumed` can be disabled via a constructor argument
+(`cull_subsumed_edges=False`); the rest always run.**  The
 correct precision lever is **read-time filtering** of `uses_edges` (described
 in §2.5).
 
@@ -181,7 +183,7 @@ Pre-validate every file with `ast.parse()` before passing to
 |--------|---------------|----------------|
 | **Wildcard fan-out** | `expand_unknowns` fans out all unresolved calls to every same-named function | `_TrackedVisitor` tags them `confidence=0.6`; filterable via `min_confidence` |
 | **Same-name collision** | Two functions named `process()` in different modules — pyan may merge them | Not fully mitigated; use LibCST tier to override |
-| **`namespace=None` phantom** | `contract_nonexistents` leaves wildcard nodes with `namespace=None` | Caller/callee `namespace is None` guards in `_inject_call_edges` |
+| **`namespace=None` phantom** | `contract_nonexistents` leaves wildcard nodes with `namespace=None` | Caller/callee `namespace is None` guards in `inject_call_edges` |
 | **`defined=False` external** | stdlib stubs and third-party symbols pyan can't locate | `defined=False` callee guard; excluded entirely |
 | **Duck-type calls** | `obj.method()` where `obj` type unknown — pyan guesses based on name | Same-name collision fallout; demoted to 0.6 or overridden by LibCST at 0.90 |
 
@@ -344,21 +346,24 @@ Set in `search_config.json` under `call_graph`:
 ```json
 "call_graph": {
   "resolvers": ["pyan", "libcst"],
-  "min_confidence": 0.0
+  "min_confidence": 0.65
 }
 ```
 
 | Goal | `min_confidence` | Effect |
 |------|-----------------|--------|
-| Keep all edges (default) | `0.0` | No filtering |
-| Drop pyan wildcard fan-out | `0.65` | Drops 0.60-tagged edges; keeps direct pyan (0.75) |
+| Keep all edges | `0.0` | No filtering |
+| Drop pyan wildcard fan-out (default) | `0.65` | Drops 0.60-tagged edges; keeps direct pyan (0.75) |
 | Drop all pyan edges | `0.80` | Keeps LibCST (0.90) and LSP (0.98) only |
 | LSP-only (highest precision) | `0.95` | Requires `lsp_enabled: true` |
 
-**Observability**: dropped edges are logged at INFO level:
+**Observability**: this floor filters on `resolver_confidence` (the resolver
+pipeline's numeric precedence value — not the qualitative `confidence` tag
+`exact`/`recovered`/`ambiguous` written by the AST chunking pass). Logged at
+INFO when it drops at least one edge, DEBUG otherwise:
 
 ```
-[CALL_EDGES] min_confidence=0.65 dropped 142 edge(s) (confidence below threshold)
+[CALL_EDGES] resolver_confidence floor=0.65: dropped 142/210 edge(s) below threshold (ladder: pyan-wildcard 0.60 / pyan 0.75 / libcst 0.90 / lsp 0.98)
 ```
 
 ### 6.2 `use_pyproject_toml` — Src-Layout Projects
@@ -499,11 +504,46 @@ interval on a healthy run.
 
 | Use case | Settings |
 |----------|---------|
-| **Fast indexing, any precision** | `resolvers: ["pyan"]`, `min_confidence: 0.0` |
-| **Balanced (default)** | `resolvers: ["pyan", "libcst"]`, `min_confidence: 0.65` |
-| **High precision** | `resolvers: ["pyan", "libcst"]`, `min_confidence: 0.80` (drops all pyan; §6.1) |
-| **Highest precision (slow)** | `resolvers: ["pyan", "libcst"]`, `lsp_enabled: true`, `min_confidence: 0.80` |
+| **Fastest indexing (lowest precision)** | `resolvers: ["pyan"]`, `lsp_enabled: false`, `min_confidence: 0.0` |
+| **Balanced (default)** | `resolvers: ["pyan", "libcst"]`, `lsp_enabled: true`, `min_confidence: 0.65` |
+| **Highest precision (slower)** | `resolvers: ["pyan", "libcst"]`, `lsp_enabled: true`, `min_confidence: 0.80` (drops all pyan; §6.1) |
 | **Src-layout project** | Add `use_pyproject_toml: true` to any of the above |
+
+`lsp_enabled` defaults to `true` — it only takes effect (and only costs the extra indexing time)
+when the `[lsp]` extra is installed (`pip install -e ".[lsp]"`); otherwise the resolver's
+`available()` probe fails and it silently no-ops, so the "Balanced (default)" row above behaves
+identically to the pre-LSP pipeline on a machine that never installed the extra.
+
+### 6.7 `inject_on_incremental` — Resolver Edges on Incremental Passes (ADR-0044)
+
+```json
+"call_graph": {
+  "inject_on_incremental": false
+}
+```
+
+Incremental passes prune and re-add graph nodes for changed files, which restores only the
+always-on AST edges — resolver-injected pyan/LibCST/LSP edges for touched files are lost until
+the next full pass. `true` re-runs the injection pipeline on every incremental pass (measured
++1.58 s per pass on this repo); the default keeps incremental passes cheap. Gated in
+`IndexWriteStage.inject_call_edges_if_enabled` (ADR-0052).
+
+### 6.8 Traversal Gates — `TraversalPolicy`
+
+The gates that decide which *stored* edges ego-graph and multi-hop expansion may walk live on
+`GraphEnhancedConfig`, not `CallGraphConfig`, and travel through the graph layer as one frozen
+`TraversalPolicy` object (`graph/traversal_policy.py`; seam
+`CodeGraphStorage.get_neighbors_ranked(chunk_id, policy)`):
+
+| Key | Default | Effect |
+|-----|---------|--------|
+| `graph_enhanced.min_traversal_confidence` | `0.0` | Skip edges whose resolver confidence is below the floor (A2 arm; structurally inert at depth 1 with floor ≤ 0.65) |
+| `graph_enhanced.traversal_confidence_weighting_enabled` | `false` | Weight BFS priority by edge confidence (A2 arm, measured neutral) |
+| `graph_enhanced.drop_ambiguous_traversal_edges` | `false` | Drop `tag:ambiguous` call edges during traversal — the traversal-time counterpart of `find_connections(hide_ambiguous=True)`, which only filters display. Replay-screened 2026-09-02 (`evaluation/AMBIGUOUS_EDGE_REPLAY_20260902.md`), benchmark-locked, off pending a live A/B |
+
+`TraversalPolicy.ego(...)` and `.graph_hop(...)` derive these from config at the two production
+call sites; `policy.gates_edges` short-circuits the per-edge lookups when no gate is armed, so
+the defaults cost nothing.
 
 ---
 

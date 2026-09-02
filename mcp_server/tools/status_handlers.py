@@ -21,6 +21,7 @@ from mcp_server.tools.decorators import error_handler
 from merkle.snapshot_manager import SnapshotManager
 from search.config import (
     MODEL_REGISTRY,
+    get_model_slug,
 )
 
 
@@ -101,18 +102,52 @@ async def handle_get_index_status(arguments: dict[str, Any]) -> dict:
         except Exception as e:  # noqa: BLE001 - resilience: optional metadata enrichment, degrade to no timestamp
             logger.debug(f"Could not get last_indexed_time: {e}")
 
+    # Real freshness verdict — content-only, never consults *when* the index
+    # was built (see ADR-0058: a timestamp answers a different question than
+    # "does the index match the tree"). Default-on: an opt-in flag would just
+    # reproduce the original bug, since callers keep reading whichever field
+    # is simply present.
+    index_is_current = None
+    pending_changes = None
+    if state.current_project:
+        try:
+
+            def _compute_freshness() -> dict | None:
+                from mcp_server.index_freshness import compute_index_freshness
+
+                return compute_index_freshness(state.current_project)
+
+            freshness = await asyncio.to_thread(_compute_freshness)
+            if freshness:
+                index_is_current = freshness["index_is_current"]
+                pending_changes = freshness["pending_changes"]
+        except Exception as e:  # noqa: BLE001 - resilience: optional freshness enrichment, degrade to absent
+            logger.debug(f"Could not compute index freshness: {e}")
+
     return {
         "index_statistics": stats,
         "model_information": model_info,
         "storage_directory": str(get_storage_dir()),
         "last_indexed_time": last_indexed_time,
+        "index_is_current": index_is_current,
+        "pending_changes": pending_changes,
         "current_project": state.current_project,
     }
 
 
 @error_handler("List projects")
 async def handle_list_projects(arguments: dict[str, Any]) -> dict:
-    """List all indexed projects grouped by path with model details."""
+    """List all indexed projects grouped by path with model details.
+
+    ``check_freshness`` (default False) additionally computes a real,
+    content-only ``index_is_current``/``pending_changes`` verdict per model
+    via a Merkle diff against the working tree (see ADR-0058) — unlike
+    ``created_at``/``last_indexed_at``, which only say *when* the indexer
+    last ran. Opt-in because it's a full filesystem scan per project/model:
+    measured ~13.9s sequential across 13 real projects, so it is fanned out
+    concurrently here (bounded by the slowest project, not the sum).
+    """
+    check_freshness = bool(arguments.get("check_freshness", False))
     base_dir = get_storage_dir()
     projects_dir = base_dir / "projects"
 
@@ -125,6 +160,10 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
 
         if not projects_dir.exists():
             return None
+
+        # One SnapshotManager for the whole sweep — construction does a
+        # storage-dir resolution + mkdir, not worth repeating per project.
+        snapshot_mgr = SnapshotManager()
 
         # Group projects by path
         projects_by_path = {}  # project_path -> project_data
@@ -172,8 +211,29 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
                 "model": project_info["embedding_model"],
                 "dimension": project_info["model_dimension"],
                 "chunks": None,
+                # NOTE: created_at is when this project/model was first indexed
+                # (project_info.json is written once, never updated on re-index).
+                # It is NOT a freshness signal — see last_indexed_at below.
                 "created_at": project_info.get("created_at"),
             }
+
+            # Live freshness, from Merkle metadata's last_snapshot (updated on
+            # every re-index, incremental or full) — resolved per-model so a
+            # project with multiple indexed models doesn't get one model's
+            # timestamp attached to all of them.
+            try:
+                model_slug = get_model_slug(project_info["embedding_model"])
+                metadata = snapshot_mgr.load_metadata(
+                    project_path,
+                    dimension=project_info["model_dimension"],
+                    model_slug=model_slug,
+                )
+                if metadata:
+                    last_indexed_at = metadata.get("last_snapshot")
+                    if last_indexed_at is not None:
+                        model_info["last_indexed_at"] = last_indexed_at
+            except Exception as e:  # noqa: BLE001 - resilience: optional freshness enrichment, degrade to no timestamp
+                logger.debug(f"Could not get last_indexed_at for {project_path}: {e}")
 
             # Try to load chunk count from stats
             stats_file = project_dir / "index" / "stats.json"
@@ -192,6 +252,39 @@ async def handle_list_projects(arguments: dict[str, Any]) -> dict:
             "projects": [],
             "message": "No projects indexed yet",
         }
+
+    if check_freshness:
+        from mcp_server.index_freshness import compute_index_freshness
+
+        def _freshness_for(project_path: str, model_info: dict) -> dict | None:
+            model_slug = get_model_slug(model_info["model"])
+            return compute_index_freshness(
+                project_path, model_slug=model_slug, dimension=model_info["dimension"]
+            )
+
+        # Skip projects that no longer exist at their stored path (and have no
+        # relocated_to) — nothing on disk to diff against.
+        targets = [
+            (project.get("relocated_to") or project["project_path"], model_info)
+            for project in projects
+            if project.get("path_exists")
+            for model_info in project["models_indexed"]
+        ]
+
+        results = await asyncio.gather(
+            *(
+                asyncio.to_thread(_freshness_for, path, model_info)
+                for path, model_info in targets
+            ),
+            return_exceptions=True,
+        )
+        for (path, _model_info), result in zip(targets, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.debug(f"Could not compute freshness for {path}: {result}")
+                continue
+            if result:
+                _model_info["index_is_current"] = result["index_is_current"]
+                _model_info["pending_changes"] = result["pending_changes"]
 
     return {
         "projects": projects,
@@ -378,6 +471,11 @@ async def handle_get_search_config_status(arguments: dict[str, Any]) -> dict:
         "reranker_top_k_candidates": config.reranker.top_k_candidates,
         "default_k": config.search_mode.default_k,
         "max_k": config.search_mode.max_k,
+        "output_format": config.output.format,
+        "ego_graph_enabled": config.ego_graph.enabled,
+        "ego_graph_k_hops": config.ego_graph.k_hops,
+        "ego_graph_max_neighbors_per_hop": config.ego_graph.max_neighbors_per_hop,
+        "hide_ambiguous_edges_default": config.graph_enhanced.hide_ambiguous_edges_default,
     }
 
 

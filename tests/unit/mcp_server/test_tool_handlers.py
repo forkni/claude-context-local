@@ -1,6 +1,6 @@
 """Unit tests for low-level MCP tool handlers.
 
-Tests all 14 tool handlers with mocked dependencies.
+Tests all 18 tool handlers with mocked dependencies.
 """
 
 import json
@@ -11,30 +11,16 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 
 # Import handlers
-from mcp_server import tool_handlers
-from mcp_server.tool_handlers import TOOL_DISPATCH
-from mcp_server.tool_registry import TOOL_REGISTRY
+from mcp_server import tool_specs
 from search.config import SearchConfig
 
 
-# ============================================================================
-# PARITY: TOOL_DISPATCH must mirror TOOL_REGISTRY exactly
-# ============================================================================
-
-
-def test_tool_dispatch_registry_parity():
-    """TOOL_DISPATCH and TOOL_REGISTRY must have identical key sets.
-
-    Catches the 'added a schema but forgot to wire dispatch' class of bug
-    that the old getattr convention tolerated silently.
-    """
-    dispatch_keys = set(TOOL_DISPATCH)
-    registry_keys = set(TOOL_REGISTRY)
-    assert dispatch_keys == registry_keys, (
-        f"TOOL_DISPATCH and TOOL_REGISTRY are out of sync.\n"
-        f"  In DISPATCH but not REGISTRY: {dispatch_keys - registry_keys}\n"
-        f"  In REGISTRY but not DISPATCH: {registry_keys - dispatch_keys}"
-    )
+# Structural guard coverage (ToolSpec.mutation_lock / .requires_index vs. each
+# handler's actual decorator chain) now lives in
+# tests/unit/mcp_server/test_tool_specs.py's TestGuardFlagsDerivedFromDecoratorStamps
+# -- since docs/adr/0057, those flags are derived properties reading the
+# handler's __mcp_guards__ stamp rather than hand-typed fields, so there is no
+# longer a second declaration that could drift from the decorator chain.
 
 
 # ============================================================================
@@ -56,7 +42,9 @@ def mock_get_project_storage_dir_global(tmp_path):
     """Mock get_project_storage_dir globally to prevent production pollution.
 
     Patches server location and handler modules that use it.
-    Note: tool_handlers.py is now a re-export facade, so we patch the actual modules.
+    Note: tool_specs.py re-exports each handler by name (not a facade around
+    a separate implementation module), so we patch the actual handler
+    modules where get_project_storage_dir is imported, not tool_specs.py.
     Only patch in modules that actually import get_project_storage_dir.
     """
     mock_storage_dir = tmp_path / "mock_project_storage"
@@ -104,7 +92,7 @@ async def test_handle_get_index_status_success():
         with patch("mcp_server.state.get_state") as mock_state:
             state = mock_state.return_value
             state.embedders = {"default": None}
-            result = await tool_handlers.handle_get_index_status({})
+            result = await tool_specs.handle_get_index_status({})
 
             assert "index_statistics" in result
             assert result["index_statistics"]["total_chunks"] == 100
@@ -117,7 +105,7 @@ async def test_handle_get_index_status_error():
     with patch("mcp_server.tools.status_handlers.get_index_manager") as mock_manager:
         mock_manager.side_effect = Exception("Index not found")
 
-        result = await tool_handlers.handle_get_index_status({})
+        result = await tool_specs.handle_get_index_status({})
 
         assert "error" in result
         assert "Index not found" in result["error"]
@@ -168,7 +156,7 @@ async def test_handle_get_index_status_with_hybrid_searcher():
                     state = mock_state.return_value
                     state.embedders = {"default": None}
 
-                    result = await tool_handlers.handle_get_index_status({})
+                    result = await tool_specs.handle_get_index_status({})
 
                     # Verify basic stats
                     assert "index_statistics" in result
@@ -179,9 +167,11 @@ async def test_handle_get_index_status_with_hybrid_searcher():
                     assert "dense_vectors" in result["index_statistics"]
                     assert "synced" in result["index_statistics"]
                     assert result["index_statistics"]["synced"] is True
-
-                    # Verify get_searcher was called (proving lazy init happened)
-                    mock_get_searcher.assert_called_once()
+                    # bm25_documents/dense_vectors/synced above come exclusively
+                    # from mock_searcher.get_stats.return_value, and mock_searcher
+                    # is exclusively reachable via mock_get_searcher.return_value --
+                    # those checks already prove get_searcher() fired (lazy init),
+                    # so a separate assert_called_once() would be redundant.
 
 
 @pytest.mark.asyncio
@@ -195,7 +185,7 @@ async def test_handle_get_index_status_with_job_id_reports_job_status():
     job = await registry.create(kind="index_directory", target="/proj")
     await registry.mark_done(job.job_id, {"chunks_added": 5})
 
-    result = await tool_handlers.handle_get_index_status({"job_id": job.job_id})
+    result = await tool_specs.handle_get_index_status({"job_id": job.job_id})
 
     assert result["status"] == "done"
     assert result["result"] == {"chunks_added": 5}
@@ -204,7 +194,7 @@ async def test_handle_get_index_status_with_job_id_reports_job_status():
 
 @pytest.mark.asyncio
 async def test_handle_get_index_status_unknown_job_id_returns_error():
-    result = await tool_handlers.handle_get_index_status({"job_id": "does-not-exist"})
+    result = await tool_specs.handle_get_index_status({"job_id": "does-not-exist"})
 
     assert "error" in result
     assert "does-not-exist" in result["error"]
@@ -216,7 +206,7 @@ async def test_handle_list_projects_no_projects():
     with patch("mcp_server.tools.status_handlers.get_storage_dir") as mock_storage:
         mock_storage.return_value = Path("/tmp/nonexistent")
 
-        result = await tool_handlers.handle_list_projects({})
+        result = await tool_specs.handle_list_projects({})
 
         assert len(result["projects"]) == 0
         assert "No projects indexed" in result["message"]
@@ -247,13 +237,275 @@ async def test_handle_list_projects_with_projects(tmp_path):
         )
     )
 
-    with patch("mcp_server.tools.status_handlers.get_storage_dir") as mock_storage:
+    with (
+        patch("mcp_server.tools.status_handlers.get_storage_dir") as mock_storage,
+        patch("mcp_server.state._app_state.current_project", str(tmp_path)),
+        # Without this, SnapshotManager() constructs for real inside
+        # handle_list_projects and reads/writes the developer's actual
+        # ~/.claude_code_search/merkle directory -- a test-isolation leak
+        # (defect 3, see docs/adr/0058-index-freshness-verdict.md).
+        patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+    ):
         mock_storage.return_value = tmp_path
-        with patch("mcp_server.state._app_state.current_project", str(tmp_path)):
-            result = await tool_handlers.handle_list_projects({})
+        mock_snapshot_cls.return_value = Mock(load_metadata=Mock(return_value=None))
 
-            assert len(result["projects"]) == 1
-            assert result["projects"][0]["project_name"] == "test_project"
+        result = await tool_specs.handle_list_projects({})
+
+        assert len(result["projects"]) == 1
+        assert result["projects"][0]["project_name"] == "test_project"
+
+
+def _write_project_info(
+    project_dir: Path,
+    *,
+    project_path: str,
+    embedding_model: str = "BAAI/bge-m3",
+    model_dimension: int = 1024,
+    created_at: str,
+) -> None:
+    """Write a project_info.json fixture matching storage_manager's real schema."""
+    project_dir.mkdir(parents=True, exist_ok=True)
+    (project_dir / "project_info.json").write_text(
+        json.dumps(
+            {
+                "project_name": Path(project_path).name,
+                "project_path": project_path,
+                "project_hash": "test_hash",
+                "embedding_model": embedding_model,
+                "model_dimension": model_dimension,
+                "created_at": created_at,
+            }
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_list_projects_includes_last_indexed_at(tmp_path):
+    """list_projects surfaces last_indexed_at from Merkle metadata (last_snapshot),
+    alongside the pre-existing created_at field.
+    """
+    projects_dir = tmp_path / "projects"
+    _write_project_info(
+        projects_dir / "test_project",
+        project_path=str(tmp_path),
+        created_at="2026-08-22T13:12:06.243607",
+    )
+
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.get_storage_dir", return_value=tmp_path
+        ),
+        patch("mcp_server.state._app_state.current_project", str(tmp_path)),
+        patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+    ):
+        mock_snapshot_mgr = Mock()
+        mock_snapshot_mgr.load_metadata.return_value = {
+            "last_snapshot": "2026-08-30T17:55:07.290674",
+        }
+        mock_snapshot_cls.return_value = mock_snapshot_mgr
+
+        result = await tool_specs.handle_list_projects({})
+
+    model_info = result["projects"][0]["models_indexed"][0]
+    assert model_info["created_at"] == "2026-08-22T13:12:06.243607"
+    assert model_info["last_indexed_at"] == "2026-08-30T17:55:07.290674"
+
+
+@pytest.mark.asyncio
+async def test_handle_list_projects_created_at_frozen_while_last_indexed_at_advances(
+    tmp_path,
+):
+    """Regression test for the false-staleness bug: project_info.json's created_at
+    is written once at first index and never updated by later re-indexing, so it
+    must NOT be read as a freshness signal. Simulates a re-index (Merkle
+    last_snapshot advances) while project_info.json (created_at) is untouched --
+    exactly the divergence that produced a false "index is N days stale" claim.
+    """
+    projects_dir = tmp_path / "projects"
+    first_indexed = "2026-08-22T13:12:06.243607"
+    _write_project_info(
+        projects_dir / "test_project",
+        project_path=str(tmp_path),
+        created_at=first_indexed,
+    )
+
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.get_storage_dir", return_value=tmp_path
+        ),
+        patch("mcp_server.state._app_state.current_project", str(tmp_path)),
+        patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+    ):
+        # Simulate a full re-index that happened days after first indexing.
+        re_indexed = "2026-08-30T17:55:07.290674"
+        mock_snapshot_mgr = Mock()
+        mock_snapshot_mgr.load_metadata.return_value = {"last_snapshot": re_indexed}
+        mock_snapshot_cls.return_value = mock_snapshot_mgr
+
+        result = await tool_specs.handle_list_projects({})
+
+    model_info = result["projects"][0]["models_indexed"][0]
+    # created_at is frozen at first-index time...
+    assert model_info["created_at"] == first_indexed
+    # ...while last_indexed_at reflects the actual, later re-index.
+    assert model_info["last_indexed_at"] == re_indexed
+    assert model_info["last_indexed_at"] != model_info["created_at"]
+
+
+@pytest.mark.asyncio
+async def test_handle_list_projects_multi_model_distinct_last_indexed_at(tmp_path):
+    """Each indexed model for a project must resolve its OWN Merkle timestamp --
+    not have one model's re-index time attached to every model entry.
+    """
+    projects_dir = tmp_path / "projects"
+    _write_project_info(
+        projects_dir / "test_project_bge",
+        project_path=str(tmp_path),
+        embedding_model="BAAI/bge-m3",
+        model_dimension=1024,
+        created_at="2026-08-01T00:00:00",
+    )
+    _write_project_info(
+        projects_dir / "test_project_f2llm",
+        project_path=str(tmp_path),
+        embedding_model="codefuse-ai/F2LLM-v2-0.6B",
+        model_dimension=1024,
+        created_at="2026-08-05T00:00:00",
+    )
+
+    timestamps_by_slug = {
+        "bge-m3": "2026-08-20T10:00:00",
+        "f2llm-v2-0.6b": "2026-08-30T17:55:07",
+    }
+
+    def _load_metadata(project_path, dimension=None, model_slug=None):
+        ts = timestamps_by_slug.get(model_slug)
+        return {"last_snapshot": ts} if ts else None
+
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.get_storage_dir", return_value=tmp_path
+        ),
+        patch("mcp_server.state._app_state.current_project", str(tmp_path)),
+        patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+    ):
+        mock_snapshot_mgr = Mock()
+        mock_snapshot_mgr.load_metadata.side_effect = _load_metadata
+        mock_snapshot_cls.return_value = mock_snapshot_mgr
+
+        result = await tool_specs.handle_list_projects({})
+
+    assert len(result["projects"]) == 1
+    models_by_slug = {
+        m["model"]: m["last_indexed_at"]
+        for m in result["projects"][0]["models_indexed"]
+    }
+    assert models_by_slug["BAAI/bge-m3"] == "2026-08-20T10:00:00"
+    assert models_by_slug["codefuse-ai/F2LLM-v2-0.6B"] == "2026-08-30T17:55:07"
+
+
+@pytest.mark.asyncio
+async def test_handle_list_projects_missing_merkle_metadata_omits_field(tmp_path):
+    """A project with no (or unreadable) Merkle metadata still lists successfully,
+    simply without a last_indexed_at field -- listing must never fail because one
+    project's freshness lookup errors out.
+    """
+    projects_dir = tmp_path / "projects"
+    _write_project_info(
+        projects_dir / "test_project",
+        project_path=str(tmp_path),
+        created_at="2026-08-22T13:12:06",
+    )
+
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.get_storage_dir", return_value=tmp_path
+        ),
+        patch("mcp_server.state._app_state.current_project", str(tmp_path)),
+        patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+    ):
+        mock_snapshot_mgr = Mock()
+        mock_snapshot_mgr.load_metadata.side_effect = OSError("corrupt metadata file")
+        mock_snapshot_cls.return_value = mock_snapshot_mgr
+
+        result = await tool_specs.handle_list_projects({})
+
+    assert "error" not in result
+    model_info = result["projects"][0]["models_indexed"][0]
+    assert "last_indexed_at" not in model_info
+    assert model_info["created_at"] == "2026-08-22T13:12:06"
+
+
+@pytest.mark.asyncio
+async def test_handle_list_projects_check_freshness_true_returns_verdict_per_model(
+    tmp_path,
+):
+    """check_freshness=True must attach the definitive index_is_current /
+    pending_changes verdict (ADR-0058) to each model entry, sourced from
+    compute_index_freshness -- not from last_indexed_at/created_at.
+    """
+    projects_dir = tmp_path / "projects"
+    _write_project_info(
+        projects_dir / "test_project",
+        project_path=str(tmp_path),
+        created_at="2026-08-22T13:12:06",
+    )
+
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.get_storage_dir", return_value=tmp_path
+        ),
+        patch("mcp_server.state._app_state.current_project", str(tmp_path)),
+        patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+        patch(
+            "mcp_server.index_freshness.compute_index_freshness"
+        ) as mock_compute_freshness,
+    ):
+        mock_snapshot_cls.return_value = Mock(load_metadata=Mock(return_value=None))
+        mock_compute_freshness.return_value = {
+            "index_is_current": False,
+            "pending_changes": {"added": 0, "modified": 1, "removed": 0},
+        }
+
+        result = await tool_specs.handle_list_projects({"check_freshness": True})
+
+    mock_compute_freshness.assert_called_once()
+    model_info = result["projects"][0]["models_indexed"][0]
+    assert model_info["index_is_current"] is False
+    assert model_info["pending_changes"] == {"added": 0, "modified": 1, "removed": 0}
+
+
+@pytest.mark.asyncio
+async def test_handle_list_projects_default_omits_freshness_and_skips_scan(tmp_path):
+    """The default call (check_freshness omitted) must neither compute nor
+    attach a freshness verdict -- it is an opt-in, heavier per-project scan
+    (ADR-0058), not something every list_projects caller should pay for.
+    """
+    projects_dir = tmp_path / "projects"
+    _write_project_info(
+        projects_dir / "test_project",
+        project_path=str(tmp_path),
+        created_at="2026-08-22T13:12:06",
+    )
+
+    with (
+        patch(
+            "mcp_server.tools.status_handlers.get_storage_dir", return_value=tmp_path
+        ),
+        patch("mcp_server.state._app_state.current_project", str(tmp_path)),
+        patch("mcp_server.tools.status_handlers.SnapshotManager") as mock_snapshot_cls,
+        patch(
+            "mcp_server.index_freshness.compute_index_freshness"
+        ) as mock_compute_freshness,
+    ):
+        mock_snapshot_cls.return_value = Mock(load_metadata=Mock(return_value=None))
+
+        result = await tool_specs.handle_list_projects({})
+
+    mock_compute_freshness.assert_not_called()
+    model_info = result["projects"][0]["models_indexed"][0]
+    assert "index_is_current" not in model_info
+    assert "pending_changes" not in model_info
 
 
 @pytest.mark.asyncio
@@ -269,7 +521,7 @@ async def test_handle_get_memory_status():
         mock_vmem.return_value = mock_mem
 
         with patch("torch.cuda.is_available", return_value=False):
-            result = await tool_handlers.handle_get_memory_status({})
+            result = await tool_specs.handle_get_memory_status({})
 
             assert "system_memory" in result
             assert result["system_memory"]["total_gb"] == 16.0
@@ -329,7 +581,7 @@ async def test_handle_cleanup_resources():
     with patch(
         "mcp_server.tools.status_handlers._cleanup_previous_resources"
     ) as mock_cleanup:
-        result = await tool_handlers.handle_cleanup_resources({})
+        result = await tool_specs.handle_cleanup_resources({})
 
         assert result["success"] is True
         assert "cleaned up" in result["message"].lower()
@@ -352,7 +604,7 @@ async def test_handle_get_search_config_status():
         mock_config.return_value = mock_cfg
 
         with patch("mcp_server.tools.status_handlers.get_state"):
-            result = await tool_handlers.handle_get_search_config_status({})
+            result = await tool_specs.handle_get_search_config_status({})
 
             assert result["search_mode"] == "hybrid"
             assert result["bm25_weight"] == 0.4
@@ -376,7 +628,7 @@ async def test_handle_list_embedding_models():
         mock_cfg.embedding.model_name = "model1"
         mock_config.return_value = mock_cfg
 
-        result = await tool_handlers.handle_list_embedding_models({})
+        result = await tool_specs.handle_list_embedding_models({})
 
         assert len(result["models"]) == 2
         assert result["current_model"] == "model1"
@@ -408,7 +660,7 @@ async def test_handle_list_embedding_models_loaded_true_when_in_vram():
         mock_cfg.embedding.model_name = "Qwen/Qwen3-Embedding-0.6B"
         mock_config.return_value = mock_cfg
 
-        result = await tool_handlers.handle_list_embedding_models({})
+        result = await tool_specs.handle_list_embedding_models({})
 
     models = {m["name"]: m for m in result["models"]}
     assert models["Qwen/Qwen3-Embedding-0.6B"]["loaded"] is True
@@ -437,7 +689,7 @@ async def test_handle_list_embedding_models_none_slot_is_not_loaded():
         mock_cfg.embedding.model_name = "Qwen/Qwen3-Embedding-0.6B"
         mock_config.return_value = mock_cfg
 
-        result = await tool_handlers.handle_list_embedding_models({})
+        result = await tool_specs.handle_list_embedding_models({})
 
     assert result["models"][0]["loaded"] is False
 
@@ -468,7 +720,7 @@ async def test_handle_switch_project_success(tmp_path):
             patch("mcp_server.tools.config_handlers._cleanup_previous_resources"),
             patch("mcp_server.state._app_state.current_project", None),
         ):
-            result = await tool_handlers.handle_switch_project(
+            result = await tool_specs.handle_switch_project(
                 {"project_path": str(project_path)}
             )
 
@@ -491,7 +743,7 @@ async def test_handle_switch_project_not_indexed(tmp_path):
         mock_storage.return_value = mock_project_dir
 
         with patch("mcp_server.tools.config_handlers._cleanup_previous_resources"):
-            result = await tool_handlers.handle_switch_project(
+            result = await tool_specs.handle_switch_project(
                 {"project_path": str(project_path)}
             )
 
@@ -503,7 +755,7 @@ async def test_handle_switch_project_not_indexed(tmp_path):
 @pytest.mark.asyncio
 async def test_handle_switch_project_not_exist():
     """Test switch_project fails when path doesn't exist."""
-    result = await tool_handlers.handle_switch_project(
+    result = await tool_specs.handle_switch_project(
         {"project_path": "/nonexistent/path"}
     )
 
@@ -558,7 +810,7 @@ async def test_handle_clear_index():
                 "mcp_server.tools.index_handlers.get_storage_dir", return_value=base_dir
             ),
         ):
-            result = await tool_handlers.handle_clear_index({})
+            result = await tool_specs.handle_clear_index({})
 
             assert result["success"] is True
             assert "cleared_models" in result
@@ -591,7 +843,7 @@ async def test_handle_clear_index():
 async def test_handle_clear_index_no_project():
     """Test clear_index fails when no active project."""
     with patch("mcp_server.state._app_state.current_project", None):
-        result = await tool_handlers.handle_clear_index({})
+        result = await tool_specs.handle_clear_index({})
 
         assert "error" in result
         assert "no active project" in result["error"].lower()
@@ -611,7 +863,7 @@ async def test_handle_configure_search_mode():
         mock_manager.return_value.save_config = Mock()
 
         with patch("mcp_server.state._app_state.searcher", Mock()):
-            result = await tool_handlers.handle_configure_search_mode(
+            result = await tool_specs.handle_configure_search_mode(
                 {"search_mode": "hybrid", "bm25_weight": 0.4, "dense_weight": 0.6}
             )
 
@@ -641,7 +893,7 @@ async def test_handle_switch_embedding_model():
             state.index_manager = None
             state.searcher = None
             state.clear_embedders = Mock()
-            result = await tool_handlers.handle_switch_embedding_model(
+            result = await tool_specs.handle_switch_embedding_model(
                 {"model_name": "new_model"}
             )
 
@@ -682,7 +934,7 @@ async def test_handle_find_similar_code():
         mock_searcher_instance.find_similar_to_chunk.return_value = [mock_result]
         mock_searcher.return_value = mock_searcher_instance
 
-        result = await tool_handlers.handle_find_similar_code(
+        result = await tool_specs.handle_find_similar_code(
             {"chunk_id": "ref_chunk_id", "k": 5}
         )
 
@@ -714,7 +966,7 @@ async def test_handle_find_similar_code_exclude_same_file_passthrough():
         mock_searcher_instance.find_similar_to_chunk.return_value = []
         mock_searcher.return_value = mock_searcher_instance
 
-        result = await tool_handlers.handle_find_similar_code(
+        result = await tool_specs.handle_find_similar_code(
             {"chunk_id": "ref_chunk_id", "k": 4, "exclude_same_file": True}
         )
 
@@ -756,11 +1008,259 @@ async def test_handle_find_similar_code_default_k_from_config():
         mock_searcher_instance.find_similar_to_chunk.return_value = []
         mock_searcher.return_value = mock_searcher_instance
 
-        await tool_handlers.handle_find_similar_code({"chunk_id": "ref_chunk_id"})
+        await tool_specs.handle_find_similar_code({"chunk_id": "ref_chunk_id"})
 
         mock_searcher_instance.find_similar_to_chunk.assert_called_once_with(
             "ref_chunk_id", k=7, exclude_same_file=False
         )
+
+
+# ============================================================================
+# FIND_CONNECTIONS TESTS - hide_ambiguous display filter
+# ============================================================================
+
+
+def _make_impact_report_with_ambiguous():
+    """Real ImpactReport containing one exact and one ambiguous direct caller."""
+    from search.types import ImpactReport
+
+    return ImpactReport(
+        symbol={"name": "target"},
+        chunk_id="src/t.py:function:target",
+        direct_callers=[
+            {
+                "chunk_id": "a.py:1-2:function:a",
+                "confidence": "exact",
+                "resolver_confidence": 0.9,
+            },
+            {
+                "chunk_id": "b.py:1-2:function:b",
+                "confidence": "ambiguous",
+                "resolver_confidence": 0.5,
+            },
+        ],
+        indirect_callers=[],
+        similar_code=[],
+        total_impacted=2,
+        unique_files={"a.py", "b.py"},
+        dependency_graph={},
+        direct_callers_exact=1,
+        direct_callers_ambiguous=1,
+    )
+
+
+def _patch_find_connections_deps():
+    """Common patch stack for handle_find_connections tests."""
+    return (
+        patch("mcp_server.tools.search_handlers.get_searcher"),
+        patch("mcp_server.tools.search_handlers.get_state"),
+        patch("mcp_server.tools.decorators.get_state"),
+        patch("mcp_server.tools.search_handlers.RelationshipAnalyzer"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_find_connections_default_hides_ambiguous():
+    """Omitted hide_ambiguous now defaults to True (promoted 2026-08-16,
+    GraphEnhancedConfig.hide_ambiguous_edges_default) — the real (unmocked)
+    SearchConfig default drops ambiguous callers while caller_confidence
+    stays a pre-filter total."""
+    p_searcher, p_state, p_dec_state, p_analyzer = _patch_find_connections_deps()
+    with (
+        p_searcher,
+        p_state as mock_get_state,
+        p_dec_state as mock_dec_state,
+        p_analyzer as mock_analyzer_cls,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
+
+        mock_analyzer = Mock()
+        mock_analyzer.analyze_impact.return_value = _make_impact_report_with_ambiguous()
+        mock_analyzer_cls.from_searcher.return_value = mock_analyzer
+
+        result = await tool_specs.handle_find_connections(
+            {"chunk_id": "src/t.py:function:target"}
+        )
+
+        assert [e["chunk_id"] for e in result["direct_callers"]] == [
+            "a.py:1-2:function:a",
+        ]
+        assert result["caller_confidence"]["ambiguous"] == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_find_connections_hide_ambiguous_filters_edges():
+    """hide_ambiguous=True drops ambiguous call edges but keeps the
+    pre-filter caller_confidence breakdown and total_impacted."""
+    p_searcher, p_state, p_dec_state, p_analyzer = _patch_find_connections_deps()
+    with (
+        p_searcher,
+        p_state as mock_get_state,
+        p_dec_state as mock_dec_state,
+        p_analyzer as mock_analyzer_cls,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
+
+        mock_analyzer = Mock()
+        mock_analyzer.analyze_impact.return_value = _make_impact_report_with_ambiguous()
+        mock_analyzer_cls.from_searcher.return_value = mock_analyzer
+
+        result = await tool_specs.handle_find_connections(
+            {"chunk_id": "src/t.py:function:target", "hide_ambiguous": True}
+        )
+
+        assert [e["chunk_id"] for e in result["direct_callers"]] == [
+            "a.py:1-2:function:a"
+        ]
+        # Pre-filter totals remain the "N were hidden" signal
+        assert result["caller_confidence"]["ambiguous"] == 1
+        assert result["total_impacted"] == 2
+
+
+@pytest.mark.asyncio
+async def test_handle_find_connections_omitted_falls_back_to_config_default():
+    """Omitted hide_ambiguous picks up
+    GraphEnhancedConfig.hide_ambiguous_edges_default when the config sets it
+    True — Phase 6 promotion path (default flip) must actually take effect
+    without every caller having to pass the arg explicitly."""
+    from search.config import SearchConfig
+
+    p_searcher, p_state, p_dec_state, p_analyzer = _patch_find_connections_deps()
+    with (
+        p_searcher,
+        p_state as mock_get_state,
+        p_dec_state as mock_dec_state,
+        p_analyzer as mock_analyzer_cls,
+        patch(
+            "mcp_server.tools.search_handlers.get_search_config"
+        ) as mock_search_config,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
+
+        config = SearchConfig()
+        config.graph_enhanced.hide_ambiguous_edges_default = True
+        mock_search_config.return_value = config
+
+        mock_analyzer = Mock()
+        mock_analyzer.analyze_impact.return_value = _make_impact_report_with_ambiguous()
+        mock_analyzer_cls.from_searcher.return_value = mock_analyzer
+
+        result = await tool_specs.handle_find_connections(
+            {"chunk_id": "src/t.py:function:target"}
+        )
+
+        assert [e["chunk_id"] for e in result["direct_callers"]] == [
+            "a.py:1-2:function:a"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_handle_find_connections_explicit_false_overrides_config_default():
+    """An explicit hide_ambiguous=False always wins over the config default,
+    even when the config default is True."""
+    from search.config import SearchConfig
+
+    p_searcher, p_state, p_dec_state, p_analyzer = _patch_find_connections_deps()
+    with (
+        p_searcher,
+        p_state as mock_get_state,
+        p_dec_state as mock_dec_state,
+        p_analyzer as mock_analyzer_cls,
+        patch(
+            "mcp_server.tools.search_handlers.get_search_config"
+        ) as mock_search_config,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
+
+        config = SearchConfig()
+        config.graph_enhanced.hide_ambiguous_edges_default = True
+        mock_search_config.return_value = config
+
+        mock_analyzer = Mock()
+        mock_analyzer.analyze_impact.return_value = _make_impact_report_with_ambiguous()
+        mock_analyzer_cls.from_searcher.return_value = mock_analyzer
+
+        result = await tool_specs.handle_find_connections(
+            {"chunk_id": "src/t.py:function:target", "hide_ambiguous": False}
+        )
+
+        assert [e["chunk_id"] for e in result["direct_callers"]] == [
+            "a.py:1-2:function:a",
+            "b.py:1-2:function:b",
+        ]
+
+
+def _make_impact_report_no_callers():
+    """A leaf symbol: no callers, no callees. Exercises the D13 zero-caller
+    path -- ImpactReport.to_dict() must still emit direct_callers/
+    direct_callees as [] rather than omitting the keys."""
+    from search.types import ImpactReport
+
+    return ImpactReport(
+        symbol={"name": "leaf"},
+        chunk_id="src/t.py:function:leaf",
+        direct_callers=[],
+        indirect_callers=[],
+        similar_code=[],
+        total_impacted=0,
+        unique_files=set(),
+        dependency_graph={},
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_find_connections_zero_callers_survives_formatting():
+    """D13 regression guard: a leaf symbol's empty direct_callers/
+    direct_callees must reach format_response as *present* keys (not
+    omitted), in all three output formats -- exercising the real
+    handle_find_connections -> format_response chain rather than a
+    hand-authored dict, which is exactly the isolation gap that let D13 hide
+    behind an otherwise-green TestZeroResultContract suite (both keys were
+    already covered there, but only at the formatter layer)."""
+    from mcp_server.output_formatter import format_response
+
+    p_searcher, p_state, p_dec_state, p_analyzer = _patch_find_connections_deps()
+    with (
+        p_searcher,
+        p_state as mock_get_state,
+        p_dec_state as mock_dec_state,
+        p_analyzer as mock_analyzer_cls,
+    ):
+        mock_state = Mock()
+        mock_state.current_project = "/test/project"
+        mock_get_state.return_value = mock_state
+        mock_dec_state.return_value = mock_state
+
+        mock_analyzer = Mock()
+        mock_analyzer.analyze_impact.return_value = _make_impact_report_no_callers()
+        mock_analyzer_cls.from_searcher.return_value = mock_analyzer
+
+        result = await tool_specs.handle_find_connections(
+            {"chunk_id": "src/t.py:function:leaf"}
+        )
+
+        # The handler's raw dict must already carry both keys (D13) -- this
+        # is what a conditional to_dict() emission would fail before any
+        # formatter runs.
+        assert result["direct_callers"] == []
+        assert result["direct_callees"] == []
+
+        for fmt in ("verbose", "compact", "ultra"):
+            formatted = format_response(result, fmt)
+            assert formatted["direct_callers"] == [], fmt
+            assert formatted["direct_callees"] == [], fmt
 
 
 # ============================================================================
@@ -826,7 +1326,7 @@ async def test_handle_search_code_no_index():
         mock_searcher_obj.index_manager.get_stats.return_value = {"total_chunks": 0}
         mock_searcher.return_value = mock_searcher_obj
 
-        result = await tool_handlers.handle_search_code({"query": "test query", "k": 5})
+        result = await tool_specs.handle_search_code({"query": "test query", "k": 5})
 
         assert "error" in result
         assert "no indexed project" in result["error"].lower()
@@ -872,8 +1372,8 @@ async def test_handle_search_code_hybrid_searcher_ready():
             ],
         ),
         patch(
-            "mcp_server.tools.result_view._enrich_results_with_graph_data",
-            side_effect=lambda r, _im: r,
+            "mcp_server.tools.result_view.enrich_results",
+            side_effect=lambda r, _im, _gates: r,
         ),
     ):
         mock_state = Mock()
@@ -913,7 +1413,7 @@ async def test_handle_search_code_hybrid_searcher_ready():
         mock_get_searcher.return_value = mock_searcher
 
         # Execute search
-        result = await tool_handlers.handle_search_code({"query": "test query", "k": 5})
+        result = await tool_specs.handle_search_code({"query": "test query", "k": 5})
 
         # Should succeed without "No indexed project found" error
         assert "error" not in result
@@ -971,7 +1471,7 @@ async def test_handle_search_code_hybrid_searcher_not_ready():
         mock_get_searcher.return_value = mock_searcher
 
         # Execute search
-        result = await tool_handlers.handle_search_code({"query": "test query", "k": 5})
+        result = await tool_specs.handle_search_code({"query": "test query", "k": 5})
 
         # Should return error
         assert "error" in result
@@ -981,7 +1481,7 @@ async def test_handle_search_code_hybrid_searcher_not_ready():
 @pytest.mark.asyncio
 async def test_handle_index_directory_not_exist():
     """Test index_directory fails when directory doesn't exist."""
-    result = await tool_handlers.handle_index_directory(
+    result = await tool_specs.handle_index_directory(
         {"directory_path": "/nonexistent/directory"}
     )
 
@@ -1071,7 +1571,7 @@ async def test_handle_delete_project_success(tmp_path):
     ):
         mock_sm.return_value.delete_all_snapshots.return_value = 2
 
-        result = await tool_handlers.handle_delete_project(
+        result = await tool_specs.handle_delete_project(
             {"project_path": str(project_path)}
         )
 
@@ -1095,7 +1595,7 @@ async def test_handle_delete_project_current_project_without_force(tmp_path):
     mock_state.current_project = project_path_str
 
     with patch("mcp_server.tools.index_handlers.get_state", return_value=mock_state):
-        result = await tool_handlers.handle_delete_project(
+        result = await tool_specs.handle_delete_project(
             {"project_path": str(project_path)}
         )
 
@@ -1135,7 +1635,7 @@ async def test_handle_delete_project_current_project_with_force(tmp_path):
     ):
         mock_sm.return_value.delete_all_snapshots.return_value = 1
 
-        result = await tool_handlers.handle_delete_project(
+        result = await tool_specs.handle_delete_project(
             {"project_path": str(project_path), "force": True}
         )
 
@@ -1147,7 +1647,7 @@ async def test_handle_delete_project_current_project_with_force(tmp_path):
 @pytest.mark.asyncio
 async def test_handle_delete_project_not_exist():
     """Test delete_project fails when project path doesn't exist."""
-    result = await tool_handlers.handle_delete_project(
+    result = await tool_specs.handle_delete_project(
         {"project_path": "/nonexistent/path"}
     )
 
@@ -1158,7 +1658,7 @@ async def test_handle_delete_project_not_exist():
 @pytest.mark.asyncio
 async def test_handle_delete_project_missing_path():
     """Test delete_project fails when project_path not provided."""
-    result = await tool_handlers.handle_delete_project({})
+    result = await tool_specs.handle_delete_project({})
 
     assert "error" in result
     assert "project_path is required" in result["error"]
@@ -1203,12 +1703,15 @@ async def test_handle_delete_project_adds_to_cleanup_queue(tmp_path):
                 mock_queue = Mock()
                 mock_queue_cls.return_value = mock_queue
 
-                result = await tool_handlers.handle_delete_project(
+                result = await tool_specs.handle_delete_project(
                     {"project_path": str(project_path)}
                 )
 
                 # Verify cleanup queue was used
-                mock_queue.add.assert_called_once()
+                mock_queue.add.assert_called_once_with(
+                    str(model_dir),
+                    f"{model_dir.name}: File locked - File is locked",
+                )
 
     assert result["success"] is False
     assert len(result.get("errors", [])) == 1
@@ -1254,7 +1757,7 @@ async def test_handle_clear_index_deletes_under_reindex_write_lock(tmp_path):
     ):
         mock_close.side_effect = lambda *a, **kw: events.append("teardown")
 
-        result = await tool_handlers.handle_clear_index({})
+        result = await tool_specs.handle_clear_index({})
 
     assert result["success"] is True
     # Lock keyed by the active project, and teardown happened inside it.
@@ -1303,7 +1806,7 @@ async def test_handle_clear_index_write_lock_drains_inflight_reader(tmp_path):
         reader = asyncio.create_task(inflight_search())
         await reader_holding.wait()
 
-        clear = asyncio.create_task(tool_handlers.handle_clear_index({}))
+        clear = asyncio.create_task(tool_specs.handle_clear_index({}))
         # Real wall-clock (not just loop turns) so the handler could have
         # reached its to_thread teardown if write() failed to block.
         await asyncio.sleep(0.05)
@@ -1352,7 +1855,7 @@ async def test_handle_delete_project_deletes_under_reindex_write_lock(tmp_path):
         mock_close.side_effect = lambda *a, **kw: events.append("teardown")
         mock_sm.return_value.delete_all_snapshots.return_value = 0
 
-        result = await tool_handlers.handle_delete_project(
+        result = await tool_specs.handle_delete_project(
             {"project_path": str(project_path)}
         )
 
@@ -1417,7 +1920,7 @@ async def test_handle_delete_project_write_lock_drains_inflight_reader(tmp_path)
         await reader_holding.wait()
 
         delete = asyncio.create_task(
-            tool_handlers.handle_delete_project({"project_path": str(project_path)})
+            tool_specs.handle_delete_project({"project_path": str(project_path)})
         )
         # Real wall-clock (not just loop turns) so the handler could have
         # reached its to_thread teardown if write() failed to block.

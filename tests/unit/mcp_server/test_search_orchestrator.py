@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import threading
 import time
 from types import SimpleNamespace
@@ -11,8 +12,14 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 
 from mcp_server.state import ApplicationState
+from mcp_server.tools.result_view import RESULT_ENRICHERS
 from mcp_server.tools.search_orchestrator import ExecutionOutcome, SearchOrchestrator
-from search.config import EgoGraphConfig, ParentRetrievalConfig, SearchConfig
+from search.config import (
+    EgoGraphConfig,
+    OutputConfig,
+    ParentRetrievalConfig,
+    SearchConfig,
+)
 from search.exceptions import DimensionMismatchError
 from search.hybrid_searcher import HybridSearcher
 
@@ -27,7 +34,7 @@ def _make_plan(
     k=4,
     intent_decision=None,
     search_mode="hybrid",
-    ego_graph_enabled=False,
+    ego_graph_enabled=None,
     ego_graph_k_hops=2,
     ego_graph_max_neighbors=10,
     include_parent=False,
@@ -39,9 +46,13 @@ def _make_plan(
     auto_reindex=True,
     max_age_minutes=5.0,
     max_context_tokens=0,
+    display_params=None,
 ):
     from mcp_server.tools.search_orchestrator import SearchPlan
 
+    # display_params=None omits the field so SearchPlan's default factory
+    # (one all-off gate per EnricherSpec row) applies.
+    extra = {} if display_params is None else {"display_params": display_params}
     return SearchPlan(
         query=query,
         k=k,
@@ -59,6 +70,7 @@ def _make_plan(
         auto_reindex=auto_reindex,
         max_age_minutes=max_age_minutes,
         max_context_tokens=max_context_tokens,
+        **extra,
     )
 
 
@@ -592,6 +604,150 @@ class TestBuildResponse:
         assert "subgraph_order" not in response
 
 
+class TestAssembleEnrichmentGates:
+    """_assemble (Block E): the gate map resolved by _enrichment_gates is what
+    reaches the single result_view.enrich_results call site.
+
+    Post-candidate-4b, _assemble no longer calls the individual enricher
+    functions directly (they are reached only through RESULT_ENRICHERS, whose
+    entries are captured as direct function references at module load) — so
+    patching an individual `_enrich_results_with_*` name here would silently
+    no-op rather than intercept. The single seam left to observe is
+    `result_view.enrich_results` itself; these tests assert on the `gates`
+    dict it receives.
+    """
+
+    def _run_assemble(self, plan, effective_config=None):
+        orch = SearchOrchestrator()
+        orch._graph_scoring_stage = Mock()
+        orch._graph_scoring_stage.run.return_value = ([], None)
+        outcome = _make_outcome(effective_config=effective_config)
+        with (
+            patch(
+                "mcp_server.guidance.add_system_message",
+                side_effect=lambda r, **kw: r,
+            ),
+            patch(
+                "mcp_server.tools.result_view.enrich_results",
+                side_effect=lambda results, *a, **kw: results,
+            ) as mock_enrich,
+        ):
+            orch._assemble(plan, outcome)
+        mock_enrich.assert_called_once()
+        return mock_enrich.call_args.args[2]
+
+    def test_default_off_all_gates_false(self):
+        """No plan opt-ins, no config opt-in: every gate is False — byte
+        identity with pre-4b behavior."""
+        gates = self._run_assemble(_make_plan())
+        assert gates == {
+            "graph": False,
+            "top_callers": False,
+            "top_callees": False,
+            "signatures": False,
+        }
+
+    def test_top_callers_opt_in_sets_only_its_gate(self):
+        gates = self._run_assemble(
+            _make_plan(display_params={"top_callers": True, "signatures": False})
+        )
+        assert gates["top_callers"] is True
+        assert gates["signatures"] is False
+        assert gates["graph"] is False
+
+    def test_signatures_opt_in_sets_only_its_gate(self):
+        gates = self._run_assemble(
+            _make_plan(display_params={"top_callers": False, "signatures": True})
+        )
+        assert gates["signatures"] is True
+        assert gates["top_callers"] is False
+        assert gates["graph"] is False
+
+    def test_include_result_graph_config_sets_only_its_gate(self):
+        """The graph gate is config-scoped (OutputConfig), not plan-scoped —
+        closes a coverage gap that existed before this refactor."""
+        sc = SearchConfig()
+        sc.output.include_result_graph = True
+        gates = self._run_assemble(_make_plan(), effective_config=sc)
+        assert gates["graph"] is True
+        assert gates["top_callers"] is False
+        assert gates["signatures"] is False
+
+
+class TestEnrichmentGatesRegistry:
+    """_enrichment_gates as a pure function, independent of _assemble's
+    wiring (covered by TestAssembleEnrichmentGates above)."""
+
+    def test_enrichment_gates_cover_every_registered_enricher(self):
+        """Catches 'added an enricher to RESULT_ENRICHERS, forgot to wire its
+        gate' — the two must enumerate the same key set."""
+        gates = SearchOrchestrator._enrichment_gates(_make_plan(), OutputConfig())
+        assert set(gates) == {e.key for e in RESULT_ENRICHERS}
+
+    def test_enricher_specs_join_result_enrichers_on_key(self):
+        """The wire side (ENRICHER_SPECS) and the application side
+        (RESULT_ENRICHERS) are separate registries joined on key: every spec
+        row must have an apply row, and every apply row except the
+        config-scoped 'graph' must have a spec row."""
+        from mcp_server.enricher_specs import ENRICHER_SPECS
+
+        assert {s.key for s in ENRICHER_SPECS} | {"graph"} == {
+            e.key for e in RESULT_ENRICHERS
+        }
+
+    def test_enrichment_gates_reflect_plan_and_config(self):
+        """Each gate reads from its own declared scope: graph from
+        OutputConfig, top_callers/signatures from SearchPlan. Closes a
+        coverage gap — include_result_graph had zero test hits before this
+        refactor."""
+        output_cfg = OutputConfig()
+        output_cfg.include_result_graph = True
+        plan = _make_plan(
+            display_params={
+                "top_callers": True,
+                "top_callees": True,
+                "signatures": True,
+            }
+        )
+        gates = SearchOrchestrator._enrichment_gates(plan, output_cfg)
+        assert gates == {
+            "graph": True,
+            "top_callers": True,
+            "top_callees": True,
+            "signatures": True,
+        }
+
+    def test_enrichment_gates_all_off_by_default(self):
+        gates = SearchOrchestrator._enrichment_gates(_make_plan(), OutputConfig())
+        assert gates == {
+            "graph": False,
+            "top_callers": False,
+            "top_callees": False,
+            "signatures": False,
+        }
+
+
+class TestAssembleEnrichmentOwnership:
+    """Ownership gate: RESULT_ENRICHERS + _enrichment_gates is the single
+    enumeration of result enrichers — _assemble itself must not carry a
+    per-enricher `if` block (that asymmetry is exactly what candidate 4b
+    removed)."""
+
+    def test_assemble_has_no_per_enricher_if_block(self):
+        source = inspect.getsource(SearchOrchestrator._assemble)
+        for gate_key in (
+            "include_top_callers",
+            "include_top_callees",
+            "include_signatures",
+            "include_result_graph",
+        ):
+            assert gate_key not in source, (
+                f"_assemble references {gate_key!r} directly — enrichment "
+                "gating must go through _enrichment_gates + "
+                "result_view.enrich_results, not a per-enricher `if` block."
+            )
+
+
 class TestApplySourceOrderAndBudget:
     """_apply_source_order_and_budget (Block H)."""
 
@@ -615,7 +771,7 @@ class TestApplySourceOrderAndBudget:
             out = SearchOrchestrator._apply_source_order_and_budget(
                 _make_plan(max_context_tokens=0), outcome, list(results)
             )
-        mock_reorder.assert_called_once()
+        mock_reorder.assert_called_once_with(results)
         assert out == list(reversed(results))
 
     def test_source_order_with_reranking_logs_warning(self, caplog):
@@ -699,6 +855,37 @@ class TestApplySourceOrderAndBudget:
             plan, outcome, list(results)
         )
         assert len(out) == 10
+
+    def test_signature_bytes_counted_by_budget(self):
+        """L3's signature field is added at Block E, which runs before Block
+        H's max_context_tokens truncation (_assemble's Block ordering) — the
+        budget estimate (json.dumps(r) // 4) must therefore include it rather
+        than silently exceeding the caller's budget. Same tight-budget shape
+        as test_context_budget_truncates, but comparing a bare result set
+        against an otherwise-identical set carrying a signature field: more
+        bare results must survive the same budget.
+        """
+        sc = SearchConfig()
+        sc.output.source_order_output = False
+        outcome = _make_outcome(effective_config=sc)
+        plan = _make_plan(max_context_tokens=50)  # tight budget, as in truncates test
+        bare_results = [
+            {"chunk_id": f"f.py:{i}-{i + 10}:function:f{i}"} for i in range(5)
+        ]
+        signed_results = [
+            {
+                "chunk_id": f"f.py:{i}-{i + 10}:function:f{i}",
+                "signature": "x" * 150,
+            }
+            for i in range(5)
+        ]
+        bare_out = SearchOrchestrator._apply_source_order_and_budget(
+            plan, outcome, list(bare_results)
+        )
+        signed_out = SearchOrchestrator._apply_source_order_and_budget(
+            plan, outcome, list(signed_results)
+        )
+        assert len(signed_out) < len(bare_out)
 
 
 # ---------------------------------------------------------------------------

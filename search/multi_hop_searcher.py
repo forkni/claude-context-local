@@ -9,13 +9,17 @@ import time
 from dataclasses import replace
 from typing import Any
 
-from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
+import numpy as np
+
+from graph.traversal_policy import TraversalPolicy
 from search.config import SearchMode
 from search.graph_integration import is_chunk_id
 from utils.timing import timed
 
+from .rerank_window_policy import RerankWindowPolicy
 from .reranker import SearchResult as RerankerSearchResult
-from .types import RetrievalRequest
+from .reranking_engine import RerankingEngine
+from .types import ResultSource, RetrievalRequest
 
 
 class MultiHopSearcher:
@@ -139,7 +143,7 @@ class MultiHopSearcher:
                                 chunk_id=cid,
                                 score=similarity,
                                 metadata=metadata,
-                                source="multi_hop",
+                                source=ResultSource.MULTI_HOP,
                             )
                             all_results[cid] = reranker_result
                             hop_discovered += 1
@@ -168,10 +172,18 @@ class MultiHopSearcher:
         expansion_k: int,
         k: int,
         edge_weights: dict[str, float] | None = None,
+        query_embedding: np.ndarray | None = None,
+        config=None,
     ) -> dict[int | str, float]:
         """Expand results via graph neighbor traversal (weighted BFS).
 
         Modifies all_chunk_ids and all_results IN-PLACE.
+
+        When config.graph_enhanced.graph_hop_call_evidence_enabled is set,
+        discovered candidates get a real score on the anchor's scale
+        (see _score_graph_candidates) instead of the legacy flat 0.0 that
+        sorted them below every other score scale at the merged pool's
+        rerank-window cut. Default-off: byte-identical to legacy behavior.
 
         Returns:
             Dict mapping hop number/name to duration in seconds.
@@ -194,12 +206,26 @@ class MultiHopSearcher:
 
         source_results = initial_results[:k]
 
+        # Snapshot the hop-1 reference set before expansion mutates it —
+        # call-evidence scoring is conditioned on what the query surfaced,
+        # not on other expansion candidates.
+        reference_ids = frozenset(all_chunk_ids)
+        # (neighbor_id, metadata, anchor_score) awaiting score assignment
+        pending: list[tuple[str, dict, float]] = []
+
+        ge_cfg = getattr(config, "graph_enhanced", None) if config is not None else None
+        # Weighted one-hop walk: prioritizes calls (1.0) over imports (0.3);
+        # the three traversal gates come off GraphEnhancedConfig (no-ops
+        # when config is None).
+        policy = TraversalPolicy.graph_hop(ge_cfg, edge_weights)
+
         for result in source_results:
-            # Weighted BFS -- prioritizes calls (1.0) over imports (0.3)
-            neighbors: set[str] = self.graph_storage.get_neighbors(
-                chunk_id=result.chunk_id,
-                max_depth=1,
-                edge_weights=edge_weights or DEFAULT_EDGE_WEIGHTS,
+            # get_neighbors_ranked (not get_neighbors) so the `break` below
+            # truncates by priority order, not Python's set-iteration order —
+            # the latter made `added_for_source >= expansion_k` pick a
+            # different neighbor subset across process restarts.
+            neighbors: list[str] = self.graph_storage.get_neighbors_ranked(
+                result.chunk_id, policy
             )
 
             added_for_source = 0
@@ -221,14 +247,40 @@ class MultiHopSearcher:
                     continue  # In graph but not in search index
 
                 all_chunk_ids.add(neighbor_id)
-                all_results[neighbor_id] = RerankerSearchResult(
-                    chunk_id=neighbor_id,
-                    score=0.0,  # Reranker assigns final score
-                    metadata=metadata,
-                    source="graph_hop",
-                )
+                pending.append((neighbor_id, metadata, result.score))
                 hop_discovered += 1
                 added_for_source += 1
+
+        if pending and ge_cfg is not None and ge_cfg.graph_hop_call_evidence_enabled:
+            try:
+                scores = self._score_graph_candidates(
+                    pending,
+                    query_embedding=query_embedding,
+                    lambda_weight=ge_cfg.graph_hop_call_evidence_lambda,
+                    reference_ids=reference_ids,
+                )
+            except Exception as e:  # noqa: BLE001 - resilience: scoring is an enhancement; fall back to legacy 0.0
+                self._logger.warning(
+                    f"[MULTI_HOP] Call-evidence scoring failed: {e}; using 0.0"
+                )
+                scores = [0.0] * len(pending)
+        else:
+            # Legacy: no real score assigned here — 0.0 is a placeholder, not
+            # a relevance signal. RerankingEngine._order_merged_pool treats
+            # every source=="graph_hop" candidate in this pool as carrying
+            # this placeholder (graph_hop_unscored=True, ADR-0039) rather
+            # than comparing it against real scores from other channels.
+            scores = [0.0] * len(pending)
+
+        for (neighbor_id, metadata, _anchor), score in zip(
+            pending, scores, strict=True
+        ):
+            all_results[neighbor_id] = RerankerSearchResult(
+                chunk_id=neighbor_id,
+                score=score,
+                metadata=metadata,
+                source=ResultSource.GRAPH_HOP,
+            )
 
         expansion_timings["graph"] = time.time() - hop_start
 
@@ -239,6 +291,102 @@ class MultiHopSearcher:
 
         return expansion_timings
 
+    def _score_graph_candidates(
+        self,
+        pending: list[tuple[str, dict, float]],
+        query_embedding: np.ndarray | None,
+        lambda_weight: float,
+        reference_ids: frozenset[str],
+    ) -> list[float]:
+        """Score graph-hop candidates on their anchor's score scale (A1).
+
+        score = min(anchor_score * cosine(query, candidate) + call_evidence,
+        anchor_score) — anchored to the hop-1 scale so the merged pool's
+        raw-score sort in RerankingEngine.rerank_by_query compares like with
+        like, and capped so a candidate never outranks its own anchor. This
+        anchoring only matters under merged_pool_policy="score" (or
+        "score_reserve_fix", same sort) — "channel_priority" ignores raw
+        score for graph_hop placement entirely (stable insertion order
+        within its own tier), so this scoring's benefit is inert there.
+        call_evidence = lambda_weight * log2(1 + distinct reference_ids the
+        candidate shares a calls-edge with); see
+        GraphQueryEngine.score_call_evidence for the query-conditioning
+        rationale.
+
+        Args:
+            pending: (chunk_id, metadata, anchor_score) per candidate
+            query_embedding: Pre-computed query embedding (None in BM25 mode)
+            lambda_weight: Call-evidence multiplier per log2 unit
+            reference_ids: Hop-1 chunk IDs the evidence is conditioned on
+
+        Returns:
+            One score per pending entry, in order.
+        """
+        from graph.graph_queries import GraphQueryEngine
+
+        # Only called from _graph_expand's ge_cfg branch, which is
+        # reached exclusively after that method's own `if not
+        # self.graph_storage: return` guard -- narrow here since pyrefly
+        # can't see that invariant across methods.
+        assert self.graph_storage is not None
+        engine = GraphQueryEngine(self.graph_storage)
+        similarities = self._graph_candidate_similarities(
+            [chunk_id for chunk_id, _, _ in pending], query_embedding
+        )
+
+        scores = []
+        for (chunk_id, _metadata, anchor_score), similarity in zip(
+            pending, similarities, strict=True
+        ):
+            evidence = engine.score_call_evidence(
+                chunk_id, reference_ids, lambda_weight
+            )
+            scores.append(min(anchor_score * similarity + evidence, anchor_score))
+        return scores
+
+    def _graph_candidate_similarities(
+        self, chunk_ids: list[str], query_embedding: np.ndarray | None
+    ) -> list[float]:
+        """Query-candidate cosines via batched FAISS reconstruction.
+
+        Mirrors EgoGraphRetriever.score_neighbors: reconstruct stored
+        (L2-normalized) embeddings by FAISS position, one matmul against the
+        query — zero new embedding compute. Falls back to a neutral 0.5
+        decay per candidate when the embedding is unavailable (BM25 mode,
+        id not in the dense index) or reconstruction fails, same as the ego
+        path's decay fallback.
+        """
+        similarities = [0.5] * len(chunk_ids)
+        if query_embedding is None or not chunk_ids:
+            return similarities
+
+        try:
+            id_to_faiss_idx = {
+                cid: i for i, cid in enumerate(self.dense_index.chunk_ids)
+            }
+            mapped = [
+                (pos, id_to_faiss_idx[cid])
+                for pos, cid in enumerate(chunk_ids)
+                if cid in id_to_faiss_idx
+            ]
+            if not mapped:
+                return similarities
+            embeddings = np.stack(
+                [
+                    self.dense_index._faiss_index.reconstruct(int(faiss_idx))
+                    for _, faiss_idx in mapped
+                ]
+            )
+            batch = embeddings @ query_embedding
+            for (pos, _), sim in zip(mapped, batch, strict=True):
+                similarities[pos] = float(sim)
+        except (RuntimeError, AttributeError, IndexError, TypeError) as e:
+            self._logger.debug(
+                f"[MULTI_HOP] Graph-hop similarity reconstruction failed ({e}); "
+                "using 0.5 decay fallback"
+            )
+        return similarities
+
     def _hybrid_expand(
         self,
         initial_results: list,
@@ -248,6 +396,8 @@ class MultiHopSearcher:
         hops: int,
         k: int,
         edge_weights: dict[str, float] | None = None,
+        query_embedding: np.ndarray | None = None,
+        config=None,
     ) -> dict[int | str, float]:
         """Expand using graph neighbors first, then semantic similarity.
 
@@ -264,6 +414,8 @@ class MultiHopSearcher:
             expansion_k=expansion_k,
             k=k,
             edge_weights=edge_weights,
+            query_embedding=query_embedding,
+            config=config,
         )
 
         # Semantic expansion (skips IDs already found via graph)
@@ -441,6 +593,8 @@ class MultiHopSearcher:
                 expansion_k=expansion_k,
                 k=k,
                 edge_weights=edge_weights,
+                query_embedding=query_embedding,
+                config=config,
             )
         elif multi_hop_mode == "hybrid" and self.graph_storage:
             timings["expansion"] = self._hybrid_expand(
@@ -451,6 +605,8 @@ class MultiHopSearcher:
                 hops=hops,
                 k=k,
                 edge_weights=edge_weights,
+                query_embedding=query_embedding,
+                config=config,
             )
         else:
             # "semantic" (default) or fallback when graph_storage is None
@@ -477,20 +633,31 @@ class MultiHopSearcher:
 
         rerank_start = time.time()
         merged_results = list(all_results.values())
+
+        # This pool's graph_hop candidates carry MultiHopSearcher's own
+        # fabricated placeholder score (see _graph_expand) unless the A1
+        # call-evidence scorer is on and produced real anchor-conditioned
+        # scores — same gate _graph_expand itself reads (ADR-0039).
+        # RerankWindowPolicy.merged_pool() derives this from `config`; both
+        # branches below need the same value, so it's read off the policy
+        # once rather than recomputed.
+        window = RerankWindowPolicy.merged_pool(config)
+
         if config.reranker.single_pass:
             # Q3 single-pass: defer neural reranking to the one listwise pass
             # at the tail of HybridSearcher.search(); keep fusion/expansion
             # score order so ego expansion still seeds from this top-k.
-            merged_results.sort(key=lambda r: r.score, reverse=True)
+            merged_results = RerankingEngine._order_merged_pool(
+                merged_results, "score", window.graph_hop_unscored
+            )
             final_results = merged_results[:k]
         else:
             final_results = self.reranking_engine.rerank_by_query(
                 query=query,
                 results=merged_results,
                 k=k,
-                search_mode=search_mode,
-                hop1_reserved_slots=config.reranker.hop1_reserved_slots,
                 config=config,
+                window=window,
             )
 
         timings["rerank"] = time.time() - rerank_start

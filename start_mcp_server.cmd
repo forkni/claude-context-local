@@ -13,7 +13,7 @@ pushd "%PROJECT_DIR%" || (
 
 REM Check prerequisites first
 if not exist ".venv" (
-    echo [ERROR] Virtual environment not found. Run install-windows.bat first.
+    echo [ERROR] Virtual environment not found. Run install-windows.cmd first.
     echo [DEBUG] Current directory: %CD%
     echo [DEBUG] Looking for: %CD%\.venv
     echo.
@@ -282,7 +282,7 @@ goto menu_restart
 echo.
 echo === Installation ^& Setup ===
 echo.
-echo   1. Run Full Installation ^(install-windows.bat^)
+echo   1. Run Full Installation ^(install-windows.cmd^)
 echo   2. Verify Installation Status
 echo   3. Configure Claude Code Integration
 echo   4. Check CUDA/CPU Mode
@@ -318,7 +318,7 @@ echo === Search Configuration ===
 echo.
 echo   1. View Current Configuration       - Show all active settings
 echo   2. Search Mode Configuration        - Mode, weights, parallel search
-echo   3. Select Embedding Model           - Choose model by VRAM ^(BGE-M3/Qwen3^)
+echo   3. Select Embedding Model           - Choose model by VRAM ^(BGE-M3/Gemma/Qwen3/F2LLM^)
 echo   4. Configure Neural Reranker        - Cross-encoder reranking ^(+15-25%% quality^)
 echo   5. Entity Tracking Configuration    - Symbol tracking, import/class context
 echo   6. Configure Chunking Settings      - Chunk merging, AST splitting ^(+4.3 Recall@5^)
@@ -673,8 +673,8 @@ echo regardless of the Project Overrides setting below ^(ADR-0014^).
 echo.
 echo All settings below are index-time - re-index the project to apply changes.
 echo.
-echo   1. Enable LSP Call-Graph Resolver   - Opt-in, +938 resolved edges, slower indexing
-echo   2. Disable LSP Call-Graph Resolver  - Default; AST + pyan3 + LibCST only
+echo   1. Enable LSP Call-Graph Resolver   - Default; highest accuracy (0.98), slower indexing
+echo   2. Disable LSP Call-Graph Resolver  - AST + pyan3 + LibCST only (no LSP edges)
 echo   3. Enable Chunk Embedding Cache     - 43x reindex speedup
 echo   4. Disable Chunk Embedding Cache
 echo   5. Enable Project Overrides         - Per-project auto-tuning ^(ADR-0014^)
@@ -1553,7 +1553,7 @@ REM Installation & Setup Functions
 :run_installer
 echo.
 echo [INFO] Running Windows Installer...
-call install-windows.bat
+call install-windows.cmd
 pause
 goto menu_restart
 
@@ -1561,7 +1561,7 @@ goto menu_restart
 echo.
 echo [INFO] Running installation verification...
 set "VERIFY_PERSISTENT_MODE=1"
-call verify-installation.bat
+call verify-installation.cmd
 set "VERIFY_PERSISTENT_MODE="
 goto menu_restart
 
@@ -2225,8 +2225,8 @@ echo.
 echo Choose by your GPU VRAM:
 echo.
 echo   [8GB VRAM] ^(RTX 3060, RTX 4060 Laptop, GTX 1080^)
-echo   1. BGE-M3 ^(1024d, 1-1.5GB^)
-echo      Production-validated, optimal for hybrid search
+echo   1. BGE-M3 ^(1024d, 1-1.5GB^) [DEFAULT]
+echo      Production-validated, optimal for hybrid search; shipped default in the example config
 echo.
 echo   2. EmbeddingGemma ^(768d, ~1.2GB^)
 echo      Lightweight general-purpose
@@ -2235,8 +2235,8 @@ echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+, RTX 4090^)
 echo   3. Qwen3-Embedding-0.6B ^(1024d, 2.3GB^)
 echo      Qwen3-0.6B-based embedding model
 echo.
-echo   4. F2LLM-v2-0.6B ^(1024d, 2.2GB^) [DEFAULT]
-echo      MRR 0.8603 SSCG canonical baseline
+echo   4. F2LLM-v2-0.6B ^(1024d, 2.2GB^) [RECOMMENDED 12GB+]
+echo      MRR 0.8419 SSCG 63q canon ^(2026-09-01^); +0.026 vs Qwen3-0.6B in A/B
 echo.
 echo   0. Back to Main Menu
 echo.
@@ -2968,10 +2968,10 @@ if exist ".venv\Scripts\python.exe" (
     ".\.venv\Scripts\python.exe" -c "import torch; print(f'  PyTorch: {torch.__version__}'); print(f'  CUDA Available: {torch.cuda.is_available()}')" 2>nul
     ".\.venv\Scripts\python.exe" -c "import torch; [print(f'  GPU Count: {torch.cuda.device_count()}') or [print(f'    GPU {i}: {torch.cuda.get_device_name(i)}') for i in range(torch.cuda.device_count())] if torch.cuda.is_available() else print('  Note: Running in CPU-only mode')]" 2>nul
     ".\.venv\Scripts\python.exe" -c "import psutil; print(f'  System RAM: {psutil.virtual_memory().total // (1024**3)} GB'); print(f'  Available RAM: {psutil.virtual_memory().available // (1024**3)} GB')" 2>nul
-    ".\.venv\Scripts\python.exe" -c "try: import rank_bm25, nltk; print('  Hybrid Search: BM25 + Semantic ✓'); except ImportError: print('  Hybrid Search: Not available ✗')" 2>nul
+    ".\.venv\Scripts\python.exe" -c "import importlib.util; print('  Hybrid Search: BM25 + Semantic [OK]' if all(importlib.util.find_spec(m) for m in ('rank_bm25','nltk')) else '  Hybrid Search: Not available [X]')" 2>nul
 ) else (
     echo   Python: Not installed
-    echo   Status: Run install-windows.bat first
+    echo   Status: Run install-windows.cmd first
 )
 goto :eof
 

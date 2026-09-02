@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from search.graph_view import GraphView
+from search.types import ResultSource
 
 
 if TYPE_CHECKING:
@@ -78,7 +79,7 @@ class SubgraphResult:
         if n.centrality is not None:
             d["centrality"] = round(n.centrality, 4)
         if not n.is_search_result:
-            d["source"] = "ego_graph"
+            d["source"] = ResultSource.EGO_GRAPH
         return d
 
     def _edge_dict(self, e: SubgraphEdge) -> dict[str, Any]:

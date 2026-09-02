@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from search.config import GraphEnhancedConfig
 from search.intent_classifier import IntentDecision, QueryIntent
+from search.types import ResultSource
 
 
 if TYPE_CHECKING:
@@ -154,16 +155,8 @@ class GraphScoringStage:
         If centrality ever becomes query-aware, isolate this via per-request kwargs
         the same way bm25_weight/dense_weight were isolated in v0.11.2.
         """
-        # Local import: mcp_server.tools is the application layer built on top of
-        # search/; importing it at module level here would cycle back through
-        # mcp_server.tools.__init__ -> search_handlers -> search_orchestrator ->
-        # this module (GraphScoringStage).
-        from mcp_server.tools.searcher_view import SearcherView
-
         if (
-            SearcherView(searcher).is_hybrid
-            and hasattr(searcher, "ego_graph_retriever")
-            and searcher.ego_graph_retriever is not None
+            getattr(searcher, "ego_graph_retriever", None) is not None
             and centrality_scores
         ):
             searcher.ego_graph_retriever.set_centrality_scores(centrality_scores)
@@ -292,7 +285,7 @@ class GraphScoringStage:
                 ego_neighbor_ids = [
                     r["chunk_id"]
                     for r in results[k:]
-                    if r.get("source") == "ego_graph" and "chunk_id" in r
+                    if r.get("source") == ResultSource.EGO_GRAPH and "chunk_id" in r
                 ]
                 max_ego_in_subgraph = 10
                 if ego_neighbor_ids and len(ego_neighbor_ids) > max_ego_in_subgraph:

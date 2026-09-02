@@ -3,6 +3,7 @@
 import time
 from unittest.mock import Mock, patch
 
+from search.call_edge_injection import InjectionStats
 from search.index_write_stage import IncrementalIndexResult, IndexWriteStage
 
 
@@ -216,12 +217,12 @@ class TestIndexWriteStageOrdering:
 
 
 # ---------------------------------------------------------------------------
-# Task 14 — min_confidence floor in _inject_call_edges
+# Task 14 — min_confidence floor in inject_call_edges
 # ---------------------------------------------------------------------------
 
 
 class TestInjectCallEdgesMinConfidence:
-    """_inject_call_edges must discard edges below min_confidence before injection."""
+    """inject_call_edges must discard edges below min_confidence before injection."""
 
     @staticmethod
     def _make_resolved_edge(
@@ -241,7 +242,7 @@ class TestInjectCallEdgesMinConfidence:
     @staticmethod
     def _make_stage_for_injection() -> IndexWriteStage:
         """Return an IndexWriteStage whose _indexer has all the attributes
-        _inject_call_edges accesses (graph, dense_index.metadata_store)."""
+        inject_call_edges accesses (graph, dense_index.metadata_store)."""
         import networkx as nx
 
         g = nx.MultiDiGraph()
@@ -303,7 +304,7 @@ class TestInjectCallEdgesMinConfidence:
             ),
             patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         # Only the 0.90 edge (caller_b → callee_b) should have been injected.
         calls = [str(c) for c in storage.add_call_edge.call_args_list]
@@ -337,12 +338,148 @@ class TestInjectCallEdgesMinConfidence:
             ),
             patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         calls = [str(c) for c in storage.add_call_edge.call_args_list]
         assert any("caller_a" in c and "callee_a" in c for c in calls), (
             f"Expected pyan (0.75) edge injected with min_confidence=0.0; calls: {calls}"
         )
+
+    def test_dropped_edges_log_names_resolver_confidence_and_before_total(
+        self, caplog
+    ) -> None:
+        """Workstream C2: the drop-floor log must name `resolver_confidence`
+        explicitly (distinct from the qualitative `confidence` edge tag),
+        include the ladder, and report the `before` total -- not just the
+        dropped count -- and must log at INFO since >=1 edge was dropped."""
+        import logging
+
+        from search.config import CallGraphConfig
+
+        stage, storage = self._make_stage_for_injection()
+
+        pyan_edge = self._make_resolved_edge("caller_a", "callee_a", 0.75)
+        libcst_edge = self._make_resolved_edge(
+            "caller_b", "callee_b", 0.90, source="libcst"
+        )
+        merged_edges = {
+            ("caller_a", "callee_a"): pyan_edge,
+            ("caller_b", "callee_b"): libcst_edge,
+        }
+
+        cg_cfg = CallGraphConfig(min_confidence=0.80)
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.call_edge_injection.run_resolvers", return_value=merged_edges
+            ),
+            patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
+            caplog.at_level(logging.INFO, logger="search.call_edge_injection"),
+        ):
+            stage.inject_call_edges("/fake/project")
+
+        messages = [rec.getMessage() for rec in caplog.records]
+        floor_line = next(
+            (m for m in messages if "resolver_confidence floor=" in m), None
+        )
+        assert floor_line is not None, f"Expected a floor log line; got {messages}"
+        assert "dropped 1/2" in floor_line
+        assert "pyan-wildcard 0.60" in floor_line and "lsp 0.98" in floor_line
+
+    def test_nonzero_floor_with_zero_dropped_logs_at_debug_not_info(
+        self, caplog
+    ) -> None:
+        """A nonzero floor (min_conf > 0.0) that drops nothing must still emit
+        the floor line, but at DEBUG rather than INFO -- distinct from the
+        min_confidence=0.0 case, which skips the block entirely (see
+        test_floor_block_skipped_when_min_confidence_is_zero below)."""
+        import logging
+
+        from search.config import CallGraphConfig
+
+        stage, storage = self._make_stage_for_injection()
+
+        # Both edges clear a 0.50 floor, so dropped == 0 while the block
+        # still runs (min_conf=0.50 > 0.0).
+        pyan_edge = self._make_resolved_edge("caller_a", "callee_a", 0.75)
+        libcst_edge = self._make_resolved_edge(
+            "caller_b", "callee_b", 0.90, source="libcst"
+        )
+        merged_edges = {
+            ("caller_a", "callee_a"): pyan_edge,
+            ("caller_b", "callee_b"): libcst_edge,
+        }
+
+        cg_cfg = CallGraphConfig(min_confidence=0.50)
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.call_edge_injection.run_resolvers", return_value=merged_edges
+            ),
+            patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
+            caplog.at_level(logging.DEBUG, logger="search.call_edge_injection"),
+        ):
+            stage.inject_call_edges("/fake/project")
+
+        records = list(caplog.records)
+        floor_record = next(
+            (r for r in records if "resolver_confidence floor=" in r.getMessage()),
+            None,
+        )
+        assert floor_record is not None, (
+            f"Expected a floor line even with 0 dropped; got "
+            f"{[r.getMessage() for r in records]}"
+        )
+        assert floor_record.levelno == logging.DEBUG, (
+            f"Expected DEBUG level when dropped=0; got "
+            f"{logging.getLevelName(floor_record.levelno)}"
+        )
+        assert "dropped 0/2" in floor_record.getMessage()
+
+    def test_floor_block_skipped_when_min_confidence_is_zero(self, caplog) -> None:
+        """With min_confidence=0.0 (the default), the floor block is skipped
+        entirely -- no log line at all, at any level -- since a 0.0 floor is
+        a structural no-op, not just an empty drop."""
+        import logging
+
+        from search.config import CallGraphConfig
+
+        stage, storage = self._make_stage_for_injection()
+
+        pyan_edge = self._make_resolved_edge("caller_a", "callee_a", 0.75)
+        merged_edges = {("caller_a", "callee_a"): pyan_edge}
+
+        cg_cfg = CallGraphConfig(min_confidence=0.0)
+        mock_cfg = Mock()
+        mock_cfg.call_graph = cg_cfg
+
+        with (
+            patch(
+                "search.call_edge_injection.build_line_to_chunk_map", return_value={}
+            ),
+            patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
+            patch(
+                "search.call_edge_injection.run_resolvers", return_value=merged_edges
+            ),
+            patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
+            caplog.at_level(logging.DEBUG, logger="search.call_edge_injection"),
+        ):
+            stage.inject_call_edges("/fake/project")
+
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert not any("resolver_confidence floor=" in m for m in messages)
 
 
 # ---------------------------------------------------------------------------
@@ -410,7 +547,7 @@ class TestInjectCallEdgesResolverSelection:
             patch("search.index_write_stage.get_search_config", return_value=mock_cfg),
             patch("search.call_edge_injection.run_resolvers") as mock_run_resolvers,
         ):
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         mock_run_resolvers.assert_not_called()
         storage.add_call_edge.assert_not_called()
@@ -434,7 +571,7 @@ class TestInjectCallEdgesResolverSelection:
                 "search.call_edge_injection.run_resolvers", return_value={}
             ) as mock_run_resolvers,
         ):
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         mock_run_resolvers.assert_called_once()
         resolver_instances = mock_run_resolvers.call_args.args[0]
@@ -469,7 +606,7 @@ class TestInjectCallEdgesResolverSelection:
             ) as mock_run_resolvers,
             caplog.at_level(logging.WARNING, logger="search.call_edge_injection"),
         ):
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         mock_run_resolvers.assert_called_once()
         resolver_instances = mock_run_resolvers.call_args.args[0]
@@ -508,7 +645,7 @@ class TestInjectCallEdgesResolverSelection:
             ) as mock_run_resolvers,
             caplog.at_level(logging.WARNING, logger="search.call_edge_injection"),
         ):
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         mock_run_resolvers.assert_called_once()
         resolver_instances = mock_run_resolvers.call_args.args[0]
@@ -521,12 +658,70 @@ class TestInjectCallEdgesResolverSelection:
 
 
 # ---------------------------------------------------------------------------
+# inject_call_edges_if_enabled — the incremental opt-in gate (ADR-0044)
+# ---------------------------------------------------------------------------
+
+
+class TestInjectCallEdgesIfEnabled:
+    """The stage owns the `inject_on_incremental` gate: off (the default) is
+    zero injection work with all-zero stats; on delegates to inject_call_edges.
+    """
+
+    @staticmethod
+    def _make_stage() -> IndexWriteStage:
+        return IndexWriteStage(
+            embedder=Mock(),
+            indexer=Mock(),
+            snapshot_manager=Mock(),
+            build_metadata_fn=Mock(return_value={}),
+            clear_gpu_fn=Mock(),
+        )
+
+    @staticmethod
+    def _patch_config(enabled: bool):
+        mock_cfg = Mock()
+        mock_cfg.call_graph.inject_on_incremental = enabled
+        return patch(
+            "search.index_write_stage.get_search_config", return_value=mock_cfg
+        )
+
+    def test_gate_off_is_zero_work(self) -> None:
+        """Gate off must return all-zero InjectionStats without touching the
+        indexer's graph/metadata collaborators (ADR-0044's zero-work path)."""
+        stage = self._make_stage()
+        with (
+            self._patch_config(enabled=False),
+            patch.object(stage, "inject_call_edges") as mock_inject,
+        ):
+            stats = stage.inject_call_edges_if_enabled("/fake/project")
+
+        mock_inject.assert_not_called()
+        assert stats == InjectionStats()
+        assert stats.injected == 0
+        assert stats.resolvers_run == ()
+
+    def test_gate_on_delegates(self) -> None:
+        stage = self._make_stage()
+        sentinel = InjectionStats(injected=3, resolvers_run=("pyan",))
+        with (
+            self._patch_config(enabled=True),
+            patch.object(
+                stage, "inject_call_edges", return_value=sentinel
+            ) as mock_inject,
+        ):
+            stats = stage.inject_call_edges_if_enabled("/fake/project")
+
+        mock_inject.assert_called_once_with("/fake/project")
+        assert stats is sentinel
+
+
+# ---------------------------------------------------------------------------
 # MultiDiGraph edge-injection correctness (#3 follow-up)
 # ---------------------------------------------------------------------------
 
 
 class TestInjectCallEdgesMultiGraph:
-    """_inject_call_edges must handle MultiDiGraph edge keying correctly.
+    """inject_call_edges must handle MultiDiGraph edge keying correctly.
 
     Regression tests for the two bugs introduced by the DiGraph→MultiDiGraph migration
     that were missed by the original blast-radius sweep:
@@ -621,7 +816,7 @@ class TestInjectCallEdgesMultiGraph:
             patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
             # Must not raise ValueError (was the crash)
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         storage.upgrade_call_edge.assert_called_once()
         storage.add_call_edge.assert_not_called()
@@ -656,7 +851,7 @@ class TestInjectCallEdgesMultiGraph:
             patch("search.call_edge_injection.run_resolvers", return_value=merged),
             patch("search.call_edge_injection.PyanResolver", return_value=Mock()),
         ):
-            stage._inject_call_edges("/fake/project")
+            stage.inject_call_edges("/fake/project")
 
         # The "calls" edge did NOT exist → add_call_edge must be called, not upgrade.
         storage.add_call_edge.assert_called_once()

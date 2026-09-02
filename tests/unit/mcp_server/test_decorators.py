@@ -6,7 +6,11 @@ from unittest.mock import patch
 import pytest
 
 from mcp_server.state import reset_state
-from mcp_server.tools.decorators import error_handler, with_mutation_lock
+from mcp_server.tools.decorators import (
+    error_handler,
+    require_indexed_project,
+    with_mutation_lock,
+)
 
 
 class TestErrorHandlerDecorator:
@@ -371,3 +375,28 @@ class TestWithMutationLockDecorator:
         result = await handler({})
 
         assert result == {"error": "mutation failed"}
+
+    def test_stamps_mcp_guards_with_mutation_lock(self):
+        """ToolSpec.mutation_lock derives its value from this stamp — see
+        mcp_server/tool_specs.py."""
+
+        @with_mutation_lock
+        async def handler(arguments: dict) -> dict:
+            return {}
+
+        assert handler.__mcp_guards__ == frozenset({"mutation_lock"})
+
+    def test_stamp_unions_with_a_pre_existing_guard(self):
+        """functools.wraps copies a wrapped function's __dict__ (including
+        __mcp_guards__) onto the new wrapper before this decorator's own
+        stamp assignment runs, so that assignment must union with whatever
+        stamp it inherits rather than overwrite it — otherwise a handler
+        wearing both guards would silently lose the inner one.
+        """
+
+        @with_mutation_lock
+        @require_indexed_project
+        async def handler(arguments: dict) -> dict:
+            return {}
+
+        assert handler.__mcp_guards__ == frozenset({"mutation_lock", "requires_index"})

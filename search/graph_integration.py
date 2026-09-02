@@ -239,6 +239,16 @@ class GraphIntegration:
         # Per-build caches reset at the start of each populate_from_embeddings /
         # build_graph_from_chunks call.
         self._file_ast_cache: dict[str, tuple[str, ast.Module | None]] = {}
+        # Aggregate counters for add_chunk(), flushed to one summary line by
+        # log_chunk_add_summary() -- see that method's docstring for why.
+        self._chunk_stats: dict[str, int] = {
+            "added": 0,
+            "skipped_non_semantic": 0,
+            "non_semantic_with_relationships": 0,
+            "relationship_edges": 0,
+            "storage_none": 0,
+            "errors": 0,
+        }
         # (file_path, name, func_lineno) → already emitted; dedup across split_block pieces
         self._seen_split_methods: set[tuple[str, str, int]] = set()
 
@@ -267,8 +277,9 @@ class GraphIntegration:
         function_definition node — it never re-parses a (possibly invalid)
         content fragment the way this method's ``ast.parse`` does — so a
         GLSL split_block's ``calls`` is either genuinely non-empty already
-        (handled by ``MultiLanguageChunker._extract_glsl_call_relationships``)
-        or genuinely empty (a fragment with no calls in its body slice), never
+        (handled by ``materialize_call_edges``,
+        chunking/relationships/edge_specs.py) or genuinely empty (a fragment
+        with no calls in its body slice), never
         empty-because-extraction-failed. The language guard below is what
         makes that distinction irrelevant here: any GLSL split_block that
         reaches this method with empty ``calls`` just returns ``[]`` again.
@@ -575,7 +586,11 @@ class GraphIntegration:
 
         Returns:
             Stats dict with keys: ``nodes_added``, ``call_edges``,
-            ``resolved_edges``, ``phantom_edges``, ``rel_edges``.
+            ``resolved_edges``, ``ambiguous_edges``, ``phantom_edges``,
+            ``rel_edges``. ``ambiguous_edges`` counts calls resolved to
+            multiple candidate *real* chunk nodes (no phantom created);
+            ``phantom_edges`` counts calls that created a new bare-symbol
+            phantom node because no candidate chunk could be found at all.
         """
         if self.storage is None:
             return {}
@@ -622,6 +637,7 @@ class GraphIntegration:
         self._seen_split_methods = set()
         call_edges = 0
         resolved_edges = 0
+        ambiguous_edges = 0
         phantom_edges = 0
         rel_edges = 0
 
@@ -657,6 +673,8 @@ class GraphIntegration:
                             callee_qualified=callee_qualified,
                         )
                         if ambiguous:
+                            # Edges land between spec.chunk_id and real candidate
+                            # chunk nodes only — no phantom node is created here.
                             for candidate_id in ambiguous:
                                 self.storage.add_call_edge(
                                     caller_id=spec.chunk_id,
@@ -667,8 +685,10 @@ class GraphIntegration:
                                     confidence="ambiguous",
                                 )
                             call_edges += 1
-                            phantom_edges += 1
+                            ambiguous_edges += 1
                         else:
+                            # callee_name is a bare symbol, not a chunk id — this
+                            # is the only branch that creates a phantom node.
                             self.storage.add_call_edge(
                                 caller_id=spec.chunk_id,
                                 callee_name=callee_name,
@@ -690,6 +710,7 @@ class GraphIntegration:
             "nodes_added": nodes_added,
             "call_edges": call_edges,
             "resolved_edges": resolved_edges,
+            "ambiguous_edges": ambiguous_edges,
             "phantom_edges": phantom_edges,
             "rel_edges": rel_edges,
         }
@@ -697,12 +718,16 @@ class GraphIntegration:
     def add_chunk(self, chunk_id: str, metadata: dict[str, Any]) -> None:
         """Add chunk to call graph storage.
 
+        Per-chunk tracing was replaced with aggregate counters
+        (`self._chunk_stats`), flushed by `log_chunk_add_summary()` -- see
+        that method's docstring for why.
+
         Args:
             chunk_id: Unique chunk identifier
             metadata: Chunk metadata including calls and relationships
         """
         if self.storage is None:
-            self._logger.debug(f"add_chunk: graph storage is None, skipping {chunk_id}")
+            self._chunk_stats["storage_none"] += 1
             return
 
         try:
@@ -710,26 +735,16 @@ class GraphIntegration:
             # - Functions/methods: call relationships
             # - Classes/structs/interfaces/etc: inheritance, type usage
             chunk_type = metadata.get("chunk_type")
-            chunk_name = metadata.get("name")
             relationships = metadata.get("relationships", [])
-
-            self._logger.debug(
-                f"add_chunk called: chunk_id={chunk_id}, type={chunk_type}, name={chunk_name}"
-            )
 
             if chunk_type not in SEMANTIC_TYPES:
                 # Allow through if it has relationships (edge case)
                 if not relationships:
-                    self._logger.debug(
-                        f"Skipping non-semantic chunk: {chunk_id} (type={chunk_type})"
-                    )
+                    self._chunk_stats["skipped_non_semantic"] += 1
                     return
-                else:
-                    self._logger.debug(
-                        f"Processing non-semantic chunk with relationships: {chunk_id} (type={chunk_type}, rels={len(relationships)})"
-                    )
+                self._chunk_stats["non_semantic_with_relationships"] += 1
 
-            self._logger.debug(f"Adding {chunk_type} '{metadata.get('name')}' to graph")
+            self._chunk_stats["added"] += 1
 
             # Add node for this chunk
             self.storage.add_node(
@@ -754,9 +769,7 @@ class GraphIntegration:
             # Add all relationship edges
             relationships = metadata.get("relationships", [])
             if relationships:
-                self._logger.debug(
-                    f"Processing {len(relationships)} relationship edges for {chunk_id}"
-                )
+                self._chunk_stats["relationship_edges"] += len(relationships)
                 for rel_dict in relationships:
                     try:
                         # Reconstruct RelationshipEdge from dict
@@ -780,7 +793,42 @@ class GraphIntegration:
                         )
 
         except (KeyError, TypeError) as e:
+            self._chunk_stats["errors"] += 1
             self._logger.warning(f"Failed to add {chunk_id} to graph: {e}")
+
+    def log_chunk_add_summary(self) -> None:
+        """Emit one aggregate DEBUG line for the counters `add_chunk`
+        accumulates, then reset them to zero.
+
+        Call once after a batch of `add_chunk` calls (see
+        `search/indexer.py`'s `add_embeddings` loop) instead of logging
+        per chunk. Mirrors the existing `[LSP] probes=... items=...` /
+        `[RESOLVERS] ... added=/upgraded=/dropped_*` summary-line style used
+        elsewhere in the codebase for the same reason. A no-op if
+        `add_chunk` was never called since the last flush (all counters
+        still zero) -- keeps this silent on the many code paths (search,
+        `find_connections`, etc.) that never touch the counters at all.
+
+        This replaces three unconditional per-chunk DEBUG records `add_chunk`
+        used to emit -- for a 26k-chunk TouchDesigner index, a major
+        contributor to the file-log-handler rollover that motivated
+        `mcp_server/server.py`'s `_SafeRotatingFileHandler`.
+        """
+        if not any(self._chunk_stats.values()):
+            return
+        self._logger.debug(
+            "[GRAPH_ADD_CHUNK] added=%d skipped_non_semantic=%d "
+            "non_semantic_with_relationships=%d relationship_edges=%d "
+            "storage_none=%d errors=%d",
+            self._chunk_stats["added"],
+            self._chunk_stats["skipped_non_semantic"],
+            self._chunk_stats["non_semantic_with_relationships"],
+            self._chunk_stats["relationship_edges"],
+            self._chunk_stats["storage_none"],
+            self._chunk_stats["errors"],
+        )
+        for key in self._chunk_stats:
+            self._chunk_stats[key] = 0
 
     def populate_from_embeddings(self, embedding_results: list[Any]) -> None:
         """Populate call graph from a list of EmbeddingResult objects.
@@ -807,6 +855,7 @@ class GraphIntegration:
             f"Populated graph from embeddings: {stats.get('nodes_added', 0)} nodes, "
             f"{stats.get('call_edges', 0)} call edges "
             f"({stats.get('resolved_edges', 0)} resolved, "
+            f"{stats.get('ambiguous_edges', 0)} ambiguous, "
             f"{stats.get('phantom_edges', 0)} phantom), "
             f"{stats.get('rel_edges', 0)} relationship edges"
         )
@@ -842,6 +891,7 @@ class GraphIntegration:
             f"Built graph from {stats.get('nodes_added', 0)} chunks: "
             f"{len(self.storage)} nodes, "
             f"{stats.get('resolved_edges', 0)} direct edges, "
+            f"{stats.get('ambiguous_edges', 0)} ambiguous edges, "
             f"{stats.get('phantom_edges', 0)} phantom edges"
         )
 

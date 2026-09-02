@@ -7,6 +7,336 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+*Nothing yet.*
+
+---
+
+## [0.26.0] - 2026-09-02
+
+Three weeks of post-v0.25.0 work in one release (158 commits). Retrieval side: the Track A +
+remaining-levers campaigns (2026-08-14), a merged-pool / ego-graph research log (2026-08-15 to
+2026-09-02) in which every arm was pre-registered, measured on the deterministic harness, and
+rejected, and the 2026-08-16 / 2026-08-19 defect-closure sweeps. The only default that flipped is
+`find_connections.hide_ambiguous` (now on). Architecture side: the ADR-0039 to ADR-0059 deepening
+wave (`BaseSearcher.execute`, `IndexWriteStage`, `ResourceRefresher`, enricher spec rows, derived
+`ToolSpec` guard flags, `TraversalPolicy`, `spec(benchmark_locked=...)`), each behaviour-preserving
+and ratcheted by a test. Plus a real content-based `index_is_current` verdict (ADR-0058), CUDA
+routing (ADR-0054), test-suite hardening Phases 13-14, and three canon re-baselines ending at the
+2026-09-01 pin. Dispositions live under `evaluation/*_2026MMDD.md`; decisions under `docs/adr/`.
+
+### Added
+
+- **`hide_ambiguous` on `find_connections`** — hides `"ambiguous"`-tagged entries from
+  `direct_callers`/`direct_callees`/`indirect_callers`; confidence breakdowns and
+  `total_impacted` intentionally remain pre-filter totals, and `dependency_graph` is unfiltered.
+  Shipped opt-in on 2026-08-14, then **promoted to default-on** on 2026-08-16
+  (`GraphEnhancedConfig.hide_ambiguous_edges_default = True`) after its A/B gate passed:
+  recall byte-identical both directions, precision up both
+  (`evaluation/CONFIDENCE_EGO_AB_20260816.md`). Pass `hide_ambiguous=False` for unfiltered edges.
+- **`include_top_callees` on `search_code`** (opt-in, default `false`, 2026-09-02) — symmetric
+  twin of `include_top_callers`: up to 2 `{name, file}` callee hints per result from raw
+  call-graph out-edges. Resolved chunk targets rank first (resolver confidence descending);
+  unresolved bare-symbol targets follow with `file: ""`. One `EnricherSpec` row + one
+  `ResultEnricher` row (ADR-0049).
+- **`include_signatures` on `search_code`** (opt-in, default `false`, 2026-08-18) — attaches a
+  signature-only `signature: str` view per result. Measured ~687 tokens/query overhead (~36% over
+  the compact payload) in `evaluation/CONTEXT_COST_PROBE_20260818.md`; module chunks are skipped,
+  non-Python chunks degrade to the first 3 raw lines (≤600 chars). Never touches scoring.
+- **Real index-freshness verdict** (ADR-0058) — `get_index_status` now returns
+  `index_is_current` (True/False/null; a content-only Merkle diff against the working tree, so a
+  freshly built index never reads stale just because a timestamp is old) plus `pending_changes`
+  `{added, modified, removed}`, and accepts `job_id`. `list_projects` gained
+  `check_freshness=True` for the same per-model verdict on any project without `switch_project`.
+  Closes the ADR-0004 layering gap (`mcp_server/index_freshness.py`).
+- **`graph_enhanced.drop_ambiguous_traversal_edges`** (default `false`, benchmark-locked) —
+  drops `tag:ambiguous` call edges *during* ego-graph and multi-hop traversal (as opposed to
+  `hide_ambiguous`, which only filters `find_connections` display). Offline replay screen passed
+  at the bar, not above it (`evaluation/AMBIGUOUS_EDGE_REPLAY_20260902.md`); stays off pending a
+  live A/B. Carried by the new `TraversalPolicy` object (see Changed).
+- **`call_graph.inject_on_incremental`** (default `false`, ADR-0044) — opt-in re-injection of
+  resolver-attributed pyan/LibCST/LSP call edges on incremental passes; the default keeps
+  incremental passes AST-only to avoid the measured +1.58 s per-pass cost.
+- **Merged-pool provenance bands** (`MergedPoolBand`, ADR-0039) and
+  **`reranker.graph_hop_window_cap`** (default `0` = off, benchmark-locked) — the merged-pool
+  rerank window now bands graph-hop candidates explicitly rather than by incidental sort order.
+  The cap A/B was then **rejected** at both doses (`evaluation/POOL_ORDER_CAP_AB_20260815.md`)
+  and the evidence-ordered band probe discharged with zero headroom
+  (`evaluation/GRAPH_BAND_EVIDENCE_PROBE_20260815.md`). Both ship default-off.
+- **Execution-witnessed call-graph ground truth** (ADR-0059) — `scripts/benchmark/` gained a
+  witness pipeline that records resolver-tier outputs at execution time plus a split-aware golden
+  guard; the curated caller/callee goldens were repaired against it
+  (`evaluation/RESOLVER_TIER_CALIBRATION_20260902.md`,
+  `evaluation/UNTAGGED_EDGE_WITNESS_20260902.md`).
+- **`evaluation.probe_harness`** (ADR-0040) — one importable seam for offline retrieval probes
+  (hash-seed pin, searcher construction, arm overrides); the pre-existing probe scripts and
+  `run_sscg_benchmark.py` migrated onto it. `evaluation/` is packaged as importable with its data
+  files excluded from wheels.
+- **`include_top_callers` on `search_code`** (opt-in, default `false`) — attaches up to 2
+  `{name, file}` caller hints per result from raw call-graph in-edges (chunk-id and
+  bare-symbol-name node lookups, deduplicated before the top-2 cut).
+- **jina-reranker-v3.5 support** — version-aware length kwargs; model selectable but rejected as
+  the default reranker after A/B showed no recall upside over jina-reranker-v3.
+- **Rejected-but-shipped mechanisms (all default-off, measured, do not enable without re-gating)**:
+  A1 `graph_hop_call_evidence_enabled` (seed displacement fails the recall gate), A2
+  `traversal_confidence_weighting_enabled`/`min_traversal_confidence` (structurally inert at
+  shipped depth/floor), A4 `reranker.doc_representation_mode="signature_head"` (CI-negative recall
+  on both datasets; −19% reranker latency is the only win — priced-in opt-in, settled into
+  `FORBIDDEN_AUTO_TUNE_KEYS`). A3 final-pool graph reserve was NOT built (probe gate failed).
+- **CUDA (`.cu`/`.cuh`) indexing support** — routed to the existing `tree-sitter-cpp` grammar via a
+  `CudaChunker` that blanks CUDA-only execution-space attributes (`__global__`, `__device__`, ...)
+  and `<<<grid, block>>>` kernel-launch syntax ahead of parsing (0 → 18 files / 2,091 lines indexed
+  on the motivating projects, ERROR-line rate 3.0% → 0.0%). No new dependency; `language_name`
+  stays `"cpp"`. See `docs/adr/0054-route-cuda-extensions-to-cpp-grammar.md`.
+- **`chunking.max_file_size_bytes`** (default `5242880` / 5 MB, range 1024–104857600) — caps file
+  size on the chunking path via `configure_chunking`; `chunk_file()` previously had no size guard
+  even though the adaptive-sizing profiler did.
+- **`graph_enhanced.centrality_exclude_phantoms`** (default `False`, file-only —
+  `FORBIDDEN_AUTO_TUNE_KEYS`) — excludes phantom placeholder nodes (unresolved call/symbol targets)
+  from centrality computation across all four centrality methods. Read-only pre-flight found
+  phantoms are 60.7% of graph nodes and 75% of the top-20 raw-PageRank nodes on this repo's own
+  index, with the single highest-PageRank node itself a phantom (`"str"`) — max-normalizing against
+  it suppresses `centrality_bm25_boost` for over 99% of real chunks. Ships default-off pending a
+  pre-registered A/B (re-tuning `centrality_boost_threshold` inside the arm, not just flipping the
+  flag). See `docs/adr/0055-exclude-phantom-nodes-from-centrality.md`.
+- **`CodeGraphStorage.prune_orphan_symbol_nodes()`** — removes phantom placeholder nodes once they
+  drop to degree 0, wired into the incremental-reindex path right after the `remove_file_nodes`
+  loop. Insurance against unbounded phantom accumulation on long-lived incrementally-reindexed
+  projects; provably a no-op on a from-scratch index. Same ADR as above.
+
+### Changed
+
+- **Architecture-deepening wave (ADR-0039 to ADR-0057), all behaviour-preserving** —
+  `BaseSearcher.execute(request)` seam collapses `SearchOrchestrator` dispatch (ADR-0048);
+  `IndexWriteStage` owns index-adds and the injection gate for full and incremental passes
+  (ADR-0052); `ResourceRefresher` protocol lifts MCP process-resource release out of
+  `IncrementalIndexer` (ADR-0053); result enrichment is a registry (`RESULT_ENRICHERS` + one
+  `EnricherSpec` row per opt-in, ADR-0049); MCP parameter defaults are single-sourced in
+  `mcp_server/config_schema.py` (ADR-0046); `SearchResult.source` is a `ResultSource` `StrEnum`
+  (ADR-0047); the embedding-document composer is extracted from `CodeEmbedder` (ADR-0045);
+  `graph_scoring_stage`'s upward `mcp_server` import is deleted (ADR-0051); `rerank_by_query`'s
+  four primitive knobs became `RerankWindowPolicy`; the MCP tool registry/dispatch collapsed into
+  a single `ToolSpec` table whose guard flags derive from the handler decorators (ADR-0057);
+  per-layer confidence-unknown defaults stay per-layer by decision (ADR-0050). Each seam is
+  ratcheted by a test so it cannot silently regress.
+- **`TraversalPolicy` parameter object** (`graph/traversal_policy.py`, 2026-09-02) — the seven
+  traversal knobs (`relation_types`, `max_depth`, `exclude_import_categories`, `edge_weights`,
+  `min_confidence`, `confidence_weighting`, `drop_ambiguous`) travel as one frozen dataclass.
+  `CodeGraphStorage.get_neighbors_ranked(chunk_id, policy)` is the seam; `get_neighbors(...)`
+  keeps its loose-kwarg shape as the convenience. `TraversalPolicy.ego(...)` /
+  `.graph_hop(...)` derive the gates from config at the two production call sites, and
+  `policy.gates_edges` short-circuits the per-edge lookups when no gate is armed. 63q canon
+  replayed with 0 MRR movers.
+- **Benchmark locks declared on `spec()` rows** — `spec(benchmark_locked="<citation>")` on each
+  pinned config field; `SearchConfig._BENCHMARK_LOCK_CITATIONS` derives from those rows and
+  `search/index_probe.py`'s `FORBIDDEN_AUTO_TUNE_KEYS` / `BENCHMARK_LOCK_CITATIONS` are views over
+  it plus the single routing lock `INDEX_ROUTING_LOCKED_KEYS = {"embedding.model_name"}`. The two
+  hand-typed parallel tables are gone (ADR-0022 addendum); `ego_graph.max_neighbors_per_hop` and
+  `ego_graph.drop_nonpositive_output` joined the locked set after their A/Bs were rejected.
+- **CUDA sources route to the `cpp` grammar** (ADR-0054) — `.cu`/`.cuh` are chunked as C++
+  (kernels, `__device__` functions, host launchers) instead of being skipped.
+- **Phantom nodes excluded from centrality** (`graph_enhanced.centrality_exclude_phantoms`,
+  default `false`, benchmark-locked; ADR-0055) — unresolved call targets no longer absorb
+  PageRank mass when enabled; ships off pending the pre-registered A/B.
+- **GLSL's chunker-native call/relationship-edge bridge generalized into a spec-row table** —
+  `chunking/relationships/edge_specs.py`'s `EdgeEmissionSpec`/`EDGE_EMISSION_SPECS`, keyed by
+  language name, replaces `MultiLanguageChunker`'s three `tchunk.language == "glsl"` switches
+  and two bridge methods. Behavior-preserving (all `test_glsl_relationships.py` tests, the
+  `test_chunker_parity.py` snapshot gate, and the 63q/133q/F-via-similar SSCG canons
+  unchanged); clears the way for a C/C++ call-edge tier (ADR-0035) to land as one new row
+  instead of a widened switch. See `docs/adr/0056-spec-row-edge-emission-seam.md`.
+- **`ToolSpec.mutation_lock`/`.requires_index` are now derived properties**, read off each
+  handler's `__mcp_guards__` stamp (set by `@with_mutation_lock`/`@require_indexed_project` via
+  `functools.wraps` propagation) instead of 36 hand-typed kwargs across the 18 spec rows — a row
+  can no longer drift from its handler's actual decorator chain. Replaces the ~130-line
+  bytecode-reflection test (`co_names` grepping) with a stamp-derivation ratchet in
+  `test_tool_specs.py` plus a new behavioural test proving `index_directory`'s internal lock is
+  actually acquired at runtime. Behavior-preserving: derived values are byte-identical to the
+  pre-refactor hand-typed ones on all 18 rows. See
+  `docs/adr/0057-derive-tool-guard-flags-from-decorators.md`.
+- **`DEFAULT_IGNORED_DIRS` grew by 12 vendored/dependency-tree directory names** (`third_party`,
+  `thirdparty`, `third-party`, `3rdparty`, `vendor`, `vendored`, `extern`, `deps`, `_deps`,
+  `subprojects`, `submodules`; mirrored into `DEPENDENCY_TREE_DIRS`). Files under these directory
+  names drop out of the merkle walk on the next reindex and their chunks are removed — an
+  unannounced but correct index shrink for any existing project with a directory matching one of
+  these names. Use additive `include_dirs` (ADR-0036) to bring specific paths back if needed; the
+  effective exclusion list is visible via `get_index_status`'s `default_excluded_dirs`.
+
+- **Benchmark canons re-pinned** (deterministic, PYTHONHASHSEED=0) three times in this window,
+  each a comparability break rather than a trend: 2026-08-14 post-campaign 0.8722/0.6843 →
+  2026-08-22 LSP re-baseline 0.8462/0.6482 (index 2,403→2,611 chunks; `[lsp]` extra dark
+  2026-08-20→08-22 then re-locked) → **2026-09-01 P0 re-baseline: 63q MRR 0.8419, 133q 0.6378,
+  F-via-similar 0.8843** (219 files / 2,642 chunks, LSP confirmed live, one stale Q12 gold
+  repaired first). The 09-01 pin is the published baseline. See `docs/BENCHMARKS.md`,
+  `evaluation/CANON_20260822_LSP_REBASELINE.md`, `evaluation/CANON_20260901_REBASELINE.md`.
+- **Measured and rejected, no default changed** (all pre-registered, paired-CI gated) —
+  merged-pool ordering A/B, neither arm (`evaluation/POOL_ORDER_AB_20260815.md`); leg-depth ×
+  fusion and TM2C2 probes (`evaluation/LEG_DEPTH_FUSION_AB_20260815.md`,
+  `evaluation/TM2C2_FUSION_PROBE_20260814.md`); ego-graph tail cut
+  `ego_graph.drop_nonpositive_output` (`evaluation/CONFIDENCE_EGO_AB_20260816.md`); ego gate-2
+  cap relief `max_neighbors_per_hop` 10→50 (`evaluation/EGO_GATE2_AB_20260901.md`);
+  duplicate-crowding and cross-system probes (`evaluation/DUPLICATE_CROWDING_PROBE_20260817.md`,
+  `evaluation/CROSS_SYSTEM_*_20260817.md`).
+- **`mcp_server/tool_registry.py`'s config-backed bounds/enums now derive from `search/config.py`'s
+  `spec()` metadata** (new `mcp_server/config_schema.py`, pure refactor — every property is
+  byte-identical to the post-fix schema above except the deletions "publish invariants, never
+  values" mandates; see `docs/adr/0042-publish-invariants-not-values.md`). The 18 verbatim
+  `output_format` blocks collapse to one shared `OUTPUT_FORMAT_PROPERTY` definition, and
+  `search_mode`'s enum derives once via `SEARCH_MODE_ENUM` instead of two hand-listed copies. The
+  parity test (`tests/unit/mcp_server/test_tool_registry.py`) widens from a 4-tool parametrized
+  check to a whole-registry ratchet asserting every `minimum`/`maximum`/`enum`-carrying property is
+  classified as either config-backed or explicitly hand-typed with a documented rationale — a
+  hand-typed bound can no longer be added without either classification catching it or the ratchet
+  going red. One field, `search_code.max_context_tokens`, lost its unbacked `minimum`/`maximum`
+  entirely: no `search/config.py` field ever governed it, so under the same rule nothing was
+  derived to replace it. `mcp_server/tool_handlers.py`'s `__all__` now derives from
+  `TOOL_DISPATCH.values()` instead of hand-restating all 18 handler names a third time.
+
+### Fixed
+
+- **PR #62 review** (2026-09-02) — `CodeEmbedder.cleanup()` now calls
+  `EmbeddingDocumentComposer.clear_caches()`: the composer's mtime-keyed file caches were never
+  evicted over a process-lifetime embedder (the `ModelPoolManager` slot), an unbounded-growth
+  path across repeated reindexes of large trees. `CudaChunker._LAUNCH_CFG` no longer stops at the
+  first `>` inside a `<<<grid, block>>>` launch config — a ternary or shift (`n > 0 ? n : 1`,
+  `n >> 2`) previously left the launch unblanked; the body now admits any `>` that does not
+  start the closing `>>>`. Both regression-tested.
+- **`start_mcp_server.cmd` model menu** — embedding menu labels re-aligned with the code
+  defaults (BGE-M3 `[DEFAULT]`, F2LLM-v2-0.6B `[RECOMMENDED 12GB+]` citing the 2026-09-01
+  canon); Jina reranker v3.5 removed from the reranker submenu (measured-and-rejected,
+  `evaluation/JINA_V35_AB_20260814.md`).
+- **Four live-MCP call-graph defects** (2026-08-16, `evaluation/CONFIDENCE_EGO_AB_20260816.md`)
+  — confidence-default inversion, ambiguous-edge fan-out, dead BFS priority / nondeterministic
+  traversal order, and ego-graph tail flooding.
+- **Defect-closure sweep D1–D12** (2026-08-19, `evaluation/DEFECT_CLOSURE_20260819.md`) —
+  `find_connections.indirect_callers` deduplicated and sorted (ADR-0041); `ego_graph_enabled` is
+  a two-way gate (`False` now really disables expansion); parent-expansion's fabricated `0.0`
+  labelled `unscored`; `find_similar_code` zero-result contract and the `NEVER_DROP_EMPTY_KEYS`
+  gap (`similar_chunks`) closed; MCP-layer lock scoping, error propagation, key-set scope and
+  reset contract; probe pass classification and funnel-width test drift; `min_bm25_score` and
+  the embedding-document degraded-path caps now read from config instead of literals; stale
+  `.bat` launcher references in tests.
+- **Force reindex blocked by a live FAISS mmap handle** — the handle is released
+  deterministically before the index directory is purged.
+- **Metadata clear self-heal + C-family macro-wrapped declarations** (ADR-0025 addenda) — stale
+  `.deleting` debris is discarded when a live `metadata.db` exists (no resurrection of
+  old-generation rows on shadowed rename), rows are emptied before reset with a loud post-clear
+  failure if any remain; `repair_macro_wrapped_declarations` in
+  `chunking/languages/_c_family.py` fixes adjacent-declaration boundaries (e.g. `extern "C"`
+  blocks), with regression coverage.
+- **Stale Q12 golden** — the primary expected chunk had drifted from kind
+  `decorated_definition` to `method`; repaired in both datasets and the audit re-run clean
+  before the 2026-09-01 canon.
+- **`ego_graph_k_hops`/`ego_graph_max_neighbors_per_hop` omission fallback** — `search_code`
+  hardcoded literals `2`/`10` as the value used when these args were omitted, shadowing
+  `EgoGraphConfig.k_hops`/`.max_neighbors_per_hop`. On the explicit-enable path
+  (`ego_graph_enabled=True`), a configured non-default value was silently ignored. Byte-identical
+  on an unconfigured install (2 == 2, 10 == 10).
+- **`mcp_server/tool_registry.py` schema/config divergences** (documentation only — `input_schema`
+  is never validated at runtime) — six confirmed defects corrected: `output_format`
+  (×18) hand-typed `default: "compact"` while `OutputConfig.format = "ultra"` and carried no
+  `spec(choices=)` until now; `search_code.k`'s `maximum: 100` had no backing invariant until
+  `SearchModeConfig.max_k` gained `spec(range=(1, 100))`; `ego_graph_k_hops`'s `maximum: 5`
+  disagreed with the real `spec(range=(1, 3))` (now `3`); `ego_graph_max_neighbors_per_hop` had no
+  `spec(range=)` until `EgoGraphConfig.max_neighbors_per_hop` gained `range=(1, 50)`;
+  `max_age_minutes`'s `default: 5` disagreed with `max_index_age_minutes = 30.0`;
+  `find_connections.hide_ambiguous`'s `default: False` disagreed with
+  `hide_ambiguous_edges_default = True`. Per "publish invariants, never values", every stale
+  `default` was deleted rather than corrected — descriptions now end in "Omit to use the server's
+  configured value (`get_search_config_status.<field>`)." `find_path`'s short-form
+  `output_format` description was also reconciled to the long-form text used by the other 17.
+  `get_search_config_status` gained two previously-missing keys, `ego_graph_k_hops` /
+  `ego_graph_max_neighbors_per_hop`, so that pointer is truthful.
+- **BOM-tolerant pyan/import resolvers** — files starting with a UTF-8 byte-order mark previously
+  failed silently in the pyan and import-resolver call-edge tiers; both now strip a leading BOM
+  before parsing.
+- **Ambiguous-resolution edges were miscounted as phantom edges** — an ambiguous call-target
+  resolution creates no phantom node, but was counted in `phantom_edges` as if it had. Split out
+  into a separate `ambiguous_edges` counter in `search/graph_integration.py`.
+
+### Testing
+
+- **Test-suite hardening Phases 13–14** (`tests/TESTING_GUIDE.md`) — coverage re-scoped to the
+  package (`tools/` dropped) with a ratcheted `fail_under`; `pytest-timeout` added and an env
+  leak fixed; the golden-set guard collapsed from ~2,200 parametrized cases to per-file cases,
+  so the unit count drops from 5,8xx to **4,351 collected** with no coverage lost; pure
+  `mcp_server`/`utils` cores covered; weak `assert_called_once` sites upgraded and fixed sleeps
+  removed; a complexity / CRAP gate (radon + crap4py) added; `test_hybrid_search.py` de-mocked
+  and its mutation-testing gaps closed. Current counts: 4,351 unit · 102 fast_integration ·
+  20 integration · 108 slow_integration.
+- New ratchets: `EDGE_EMISSION_SPECS` drift, `ToolSpec` guard-stamp, `IndexWriteStage` seam
+  ownership, resource-refresher seam, split-aware golden guard, `TraversalPolicy` set/ranked
+  equivalence.
+
+### Dependencies
+
+- **Dependency audit 2026-09-02** (`audit_reports/2026-09-02-1253-audit-summary.md`) — 180
+  packages audited, 5 CVEs across 4 packages:
+  - **setuptools 81.0.0 → 84.0.0** — fixes CVE-2026-59890 / GHSA-h35f-9h28-mq5c (high).
+    Installed into the venv ad hoc (`uv pip install setuptools==84.0.0`) — it **cannot be
+    locked**: torch 2.11.0 declares `setuptools<82`, so `uv.lock` stays at 81.0.0 and any
+    `uv sync --locked` reverts the venv to 81.0.0 (re-run the ad-hoc install afterwards).
+    Durable fix waits on torch 2.13.0 or a `[tool.uv] override-dependencies` entry.
+  - **torch 2.11.0+cu128** — CVE-2025-3000 (GHSA-rrmf-rvhw-rf47), fix at 2.13.0; deferred
+    — ML-core, requires tested ecosystem upgrade beyond this release scope.
+  - **nltk 3.10.3** — PYSEC-2026-3740 / CVE-2026-81726, no fix released yet; monitor.
+  - **sqlitedict 2.1.0** — PYSEC-2026-1939 / CVE-2024-35515, no fix released yet; monitor.
+  - 56 packages outdated beyond the above — swept the same day, see next entry.
+- **Safe-update sweep 2026-09-02** (`audit_reports/{before,after}-fixes-2026-09-02.json`) —
+  every package updated one at a time with the full unit suite between steps (4,349 → 4,352
+  passed, 2 skipped, `pytest-randomly` shuffling on), then `fast_integration` (102) and
+  `integration` (20). Post-sweep audit: only the two no-fix CVEs remain (nltk, sqlitedict).
+  - **Retrieval / resolver stack**: `sentence-transformers` 5.7.0 → 6.0.1 (`CrossEncoder.predict`
+    now upcasts logits to float32 before activation — reranker scores can shift, canon re-run
+    below), `transformers` 5.14.1 → 5.16.1, `tokenizers` 0.22.2 → 0.23.1, `pyan3` 2.6.2 → 2.8.1,
+    `mcp` 2.0.0 → 2.1.1 (+ `mcp-types`).
+  - **pyan3 2.8 pipeline**: upstream dropped `cull_inherited` and moved `cull_subsumed` to the
+    end behind a `cull_subsumed_edges` constructor flag; `_TrackedVisitor.postprocess`
+    (`chunking/relationships/external_call_graph.py`) mirrors the new
+    `resolve_imports → contract_nonexistents → expand_unknowns → collapse_inner → cull_subsumed`
+    order (16 tests failed on `ImportError: cull_inherited` before the fix). `docs/CALL_GRAPH_TUNING.md`
+    pipeline listing updated.
+  - **Test plugins**: `pytest-randomly` 4.1.0 → 5.0.0, `syrupy` 5.5.3 → 6.0.0 (27 snapshots pass).
+  - **Tooling / transitive** (43): `ruff` 0.16.5, `pydantic` 2.13.5 / `pydantic-core` 2.46.5 /
+    `pydantic-settings` 2.15.0, `cryptography` 50.0.1, `protobuf` 7.36.1, `opentelemetry-*`
+    1.44.0 (+ `semantic-conventions` 0.65b0), `sqlalchemy` 2.0.52, `coverage` 7.16.0,
+    `virtualenv` 21.7.8, `typer` 0.27.2, `click` 8.5.0, `regex` 2026.9.3, `idna` 3.19,
+    `cosmic-ray` 8.7.0, `cyclonedx-python-lib` 11.12.0, `pipdeptree` 4.2.3, `pygments` 2.21.0,
+    `platformdirs` 4.11.7, `filelock` 3.32.5, `gitpython` 3.1.61, `joblib` 1.6.0, and the
+    remaining patch-level tail (`build`, `charset-normalizer`, `greenlet`, `msgpack`,
+    `narwhals`, `stevedore`, `typing-inspection`, `wcwidth`, `linkify-it-py`, `nab-*`, …).
+  - **Not upgradeable**: `tree-sitter` 0.25.2 → 0.26.0 — no bundled grammar wheel targets the
+    0.26 ABI yet (python 0.25.0, cpp 0.23.4, c 0.24.2, javascript 0.25.0, typescript 0.23.2,
+    go 0.25.0, rust 0.24.2, c-sharp 0.23.5, glsl 0.2.0); `tree-sitter>=0.25.0,<0.26` pin stays.
+    `fsspec` held by the `datasets` `<=2025.10.0` constraint; `torch` untouched (ML-core).
+  - **Post-sweep canon** (`canon_63q_r1_20260902_deps`, force reindex, 232 files / 2,795 chunks
+    vs the pin's 219 / 2,642 — growth is the source committed since 2026-09-01, golden audit
+    clean on both datasets; resolver mix 28,640 edges / lsp 1,443 / pyan 1,295 / libcst 524):
+    63q MRR **0.8345** vs the 0.8419 pin and 0.8425 on the same-day pre-sweep run. The whole
+    delta is Q77, a rank-1/rank-2 swap between the two near-tie `index_documents` methods
+    (`HybridSearcher` over `BM25Index`) — every recall@k, pool_hit (1.0) and the other 62
+    queries are unchanged, consistent with the float32 reranker-logit change. Recorded as
+    drift, pin not re-based.
+- **`evaluation/` slimmed to inputs only** (2026-09-02): 51 regenerable benchmark/probe run dumps
+  (~28 MB) untracked; `.gitignore` now ignores `evaluation/*.json` except the eleven inputs that
+  scripts and tests read (`golden_dataset*.json`, `caller/callee_golden*.json`,
+  `hard_query_candidates.json`, `commit_mined_candidates.json`, the three pinned
+  `raw_mcp_results_{hybrid,bm25,semantic}.json` snapshots).
+  Write-ups (`.md`) and modules stay tracked; local copies of the dumps are untouched and every
+  one is reproducible from its `scripts/benchmark/` producer named in the matching write-up.
+- Dependency audits 2026-08-20 and 2026-09-01 (`audit_reports/`); `setproctitle` repaired;
+  `uv.lock` synced for radon/crap4py; `evaluation/` packaged as importable.
+
+### Migration
+
+- **Existing C/C++ indexes need one `incremental=False` reindex** to pick up the declarator-recovery
+  and preprocessor-conditional-neutralization parsing fixes bundled in this batch — both change how
+  *already-registered* `.c`/`.cpp`/`.h` extensions parse, so an incremental pass alone won't
+  reprocess unchanged files. `.cu`/`.cuh` are exempt: registering them flips their merkle
+  hash-strategy from name/size/mtime to content, so they read as modified and self-migrate on the
+  next incremental pass with no explicit reindex required.
+
 ## [0.25.0] - 2026-08-13
 
 Closes out PR #57 review findings before merge: two real chunking bugs fixed (nested same-named
@@ -423,6 +753,10 @@ plus an MCP SDK major-version migration; see `### Removed` for the breaking chan
 - **Base install trimmed** — fewer transitive packages after the DSPy and ONNX removals below.
 - `tmp/` and `temp/` directories added to default index excludes (`838c24d`) — these were
   previously indexed as ordinary source, polluting search results with scratch files.
+- **`CallGraphConfig` defaults flipped** (`70c8904`): `lsp_enabled` `False` → `True` (LSP is now
+  requested by default; it still no-ops unless the `[lsp]` extra is installed), and
+  `min_confidence` `0.0` → `0.65` (drops pyan-wildcard-tagged 0.60 edges from injection by
+  default). Prior docs describing LSP as "opt-in, default off" predate this flip.
 
 ### Fixed
 

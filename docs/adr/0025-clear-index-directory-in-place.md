@@ -105,3 +105,76 @@ the unit-test harness as well.
 - Re-pinning the benchmark canon. This refactor edits indexed source under `search/`, which shifts
   the corpus via auto-reindex independently of retrieval quality; canon re-pin follows as a
   separate, standard post-landing step per ADR-0024's precedent, not part of this decision.
+
+## Amendment (2026-08-28): `close()` was necessary but not sufficient
+
+Decision item 4 above collapsed `CodeIndexManager.close()` to `self._metadata_store.close()` and
+stated the mmap-backed FAISS handle was out of scope for that commit — correct as written, but it
+left `close()`'s docstring claiming "Does not touch the FAISS index" as a standing fact rather
+than a scope note, and nothing else in the class ever released that handle deterministically.
+
+This surfaced as a real production failure: every force reindex of a project at or above
+`MMAP_THRESHOLD` maps `code_vectors.mmap` twice in one process — a write-only "searcher #1"
+(`get_searcher(..., load_existing=False)`, whose `load_existing` flag does not gate
+`CodeIndexManager.__init__`'s unconditional `self._faiss_index.load()`), then "searcher #2" built
+moments later for the actual reindex. `_cleanup_previous_resources()` calls
+`close()`/`shutdown()` on searcher #1 between the two, which released its metadata connection but
+left its FAISS mmap mapping live — held open only by GC-eligible stack references, not by
+anything `close()` touched. Searcher #2's `clear_index()` then failed unlinking the shared file
+out from under searcher #1's still-live mapping (`PermissionError [WinError 32]` on Windows;
+invisible on POSIX, which unlinks mapped files freely). The self-handle close this ADR added
+(item 1) was necessary — a cleared index no longer serves reconstructed vectors from a deleted
+file — but it was never going to fix this failure, because the blocking handle always belonged
+to a *different* `CodeIndexManager` instance, not the one calling `clear()`.
+
+Fix: `FaissVectorIndex` gained a non-destructive `close()` (release the mmap handle, touch no
+files — distinct from `clear()`, which deletes); `CodeIndexManager.close()` now calls it, and
+`__exit__` delegates to `close()` instead of inlining its own metadata-only teardown (it
+previously would have silently skipped the new mmap release). `__del__` was deliberately left
+inlined rather than routed through `close()` — reaching across to another object during
+interpreter teardown is the failure mode `__del__` is worst at, and
+`MmapVectorStorage.__del__` remains the existing GC-time backstop for this same handle.
+`FaissVectorIndex.clear()` and `save()` were also fixed to close their own mapping before
+unlinking or truncating-and-rewriting the backing file, rather than only on the already-fixed
+`clear()` path from item 1.
+
+The decision itself — object identity stays stable, mutate in place — is unaffected and remains
+correct. What changed is that "release a handle" needed its own explicit method
+(`FaissVectorIndex.close()`) wired into every teardown path, the same discipline item 4 already
+established for the metadata connection; it had just stopped short of the FAISS side once the
+mmap complexity kicked in.
+
+## Amendment (2026-08-31): the two-party emptying contract had no enforcement
+
+The Consequences section above states the contract plainly: `MetadataStore.reset()` releases a
+handle, it does not delete data; true emptying depends on `probe_metadata_deletable()` actually
+unlinking the renamed file afterwards. That contract had a hole neither half of this ADR closed:
+`probe_metadata_deletable()` short-circuited whenever a `metadata.db.deleting` sibling already
+existed, returning that stale path **without renaming the live `metadata.db`**. `clear_index()`
+then unlinked only the stale sibling — the real DB was never touched, and the next
+`_ensure_open()` silently reopened it with its previous generation's rows intact.
+
+This surfaced in production on `voro-engine`'s force-full reindex: a stale `.deleting` sibling
+(stranded by an earlier aborted clear — this repo's recurring `WinError 32` mmap-handle failure,
+same failure class as the amendment above, is one way to strand it) shadowed the live DB, and 148
+rows from a previous index generation (pre-rename `cito_*` symbols, in a project since renamed to
+`voro_*`) survived a reported-successful "full" clear. The rebuilt FAISS/chunk_ids side was
+completely correct; only the leftover metadata rows failed the post-index consistency check,
+minutes after the real work had already succeeded and saved.
+
+Fix, in the same spirit as item 1 (self-handle close) above: a live `metadata.db` now always wins
+over stale `.deleting` debris — the sibling is discarded first if both exist, then the live DB is
+renamed as before. `MetadataStore` gained an actual `clear()` (delegates to `SqliteDict.clear()`),
+called before `reset()` in `preflight_clear()`, so row-emptiness stops depending on the file-unlink
+step succeeding at all. `clear_index()` now asserts the post-condition — zero remaining metadata
+rows — and raises immediately, attributably, if it doesn't, rather than letting a stale generation
+surface as an unexplained mismatch two minutes later. `IncrementalIndexer._full_index` also
+self-heals: if a full index's *only* consistency issue is check 4's metadata surplus (checks 1-3
+having already proven the FAISS/chunk_ids side intact), the orphan rows are pruned and the run
+succeeds — full-index-only, since a full index makes metadata == chunk_ids by construction and any
+surplus is provably stale debris, unlike the incremental path where surplus is a real signal
+recovery already owns.
+
+The decision itself is unaffected. What changed is the same lesson as the amendment above,
+applied to the metadata side instead of the FAISS side: a documented two-party contract needs an
+enforced post-condition, not just a comment describing the intended handoff.

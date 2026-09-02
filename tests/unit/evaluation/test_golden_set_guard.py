@@ -34,7 +34,6 @@ from evaluation.metrics import normalize_chunk_id
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EVALUATION_DIR = REPO_ROOT / "evaluation"
-_CHUNKER = MultiLanguageChunker(str(REPO_ROOT))
 
 
 def _golden_ids(golden_path: Path) -> list[tuple[str, str]]:
@@ -79,6 +78,19 @@ def _golden_dataset_ids(golden_path: Path) -> list[tuple[str, str]]:
 
 
 @cache
+def _get_chunker() -> MultiLanguageChunker:
+    """Lazily construct the shared chunker on first use.
+
+    Previously a module-level `_CHUNKER = MultiLanguageChunker(...)` ran at
+    import time as a side effect of collecting this file (Phase 13.2.b).
+    `@cache` keeps it a true singleton -- one construction, reused by every
+    `_live_normalized_ids` call -- while deferring that construction until a
+    test actually needs it.
+    """
+    return MultiLanguageChunker(str(REPO_ROOT))
+
+
+@cache
 def _live_normalized_ids(file_path: str) -> frozenset[str]:
     """Fresh-chunk *file_path* (repo-relative) and return its normalized chunk_ids.
 
@@ -87,8 +99,60 @@ def _live_normalized_ids(file_path: str) -> frozenset[str]:
     re-chunk the same file hundreds of times across the parametrized sweep.
     """
     abs_path = REPO_ROOT / file_path
-    chunks = _CHUNKER.chunk_file(str(abs_path))
-    return frozenset(normalize_chunk_id(c.chunk_id) for c in chunks if c.chunk_id)
+    chunks = _get_chunker().chunk_file(str(abs_path))
+    ids: set[str] = set()
+    for c in chunks:
+        if not c.chunk_id:
+            continue
+        ids.add(normalize_chunk_id(c.chunk_id))
+        ids.update(_split_aliases(c.chunk_id))
+    return frozenset(ids)
+
+
+# Kinds whose oversized nodes the indexer may split into `split_block`
+# fragments (chunking/languages/base.py, `node.type in ("function_definition",
+# "decorated_definition")`), and the kind those fragments normalize to
+# (search/chunk_id.py:dedup_key collapses `split_block` -> `method`).
+_SPLIT_ELIGIBLE_KINDS = frozenset({"function", "decorated_definition", "method"})
+_SPLIT_NORMALIZED_KIND = "method"
+
+
+@cache
+def _max_chunk_lines() -> int:
+    """The line count above which the indexer considers a node for splitting."""
+    from search.config import get_chunking_config
+
+    config = get_chunking_config()
+    return int(config.max_chunk_lines) if config is not None else 100
+
+
+def _split_aliases(raw_chunk_id: str) -> set[str]:
+    """Return the id form(s) a split-eligible chunk takes once the indexer splits it.
+
+    Under `sizing_mode == "adaptive"` the indexer's split threshold is a
+    repo-wide P75 character baseline that only exists at index time; this
+    guard chunks each file alone and therefore always uses the static
+    `max_split_chars`. A function longer than `max_chunk_lines` can thus
+    come back unsplit here (one `decorated_definition`/`function` chunk)
+    while the live index holds several `split_block` fragments that
+    `normalize_chunk_id` collapses to `<file>:method:<name>` -- which is the
+    form goldens must store to score against the index (Q12
+    `handle_get_index_status`, 2026-09-02). Accept that alias for exactly the
+    chunks the indexer could split: eligible kind AND over the line threshold.
+    """
+    parts = raw_chunk_id.split(":")
+    if len(parts) != 4:
+        return set()
+    file_path, line_range, kind, name = parts
+    if kind not in _SPLIT_ELIGIBLE_KINDS:
+        return set()
+    try:
+        start, end = (int(x) for x in line_range.split("-"))
+    except ValueError:
+        return set()
+    if end - start + 1 <= _max_chunk_lines():
+        return set()
+    return {f"{file_path}:{_SPLIT_NORMALIZED_KIND}:{name}"}
 
 
 GOLDEN_FILES = [
@@ -102,44 +166,84 @@ GOLDEN_DATASET_FILES = [
 ]
 
 
-def _all_golden_id_cases() -> list[tuple[str, str, str]]:
-    """(golden_file_name, source_label, chunk_id) for every referenced ID."""
-    cases = []
-    for golden_path in GOLDEN_FILES:
-        for label, chunk_id in _golden_ids(golden_path):
-            cases.append((golden_path.name, label, chunk_id))
-    for dataset_path in GOLDEN_DATASET_FILES:
-        for label, chunk_id in _golden_dataset_ids(dataset_path):
-            cases.append((dataset_path.name, label, chunk_id))
-    return cases
+ALL_GOLDEN_FILES = GOLDEN_FILES + GOLDEN_DATASET_FILES
+
+# Computed once at collection time (Phase 13.2.b). Previously this same work
+# (re-reading all 4 JSON files from disk) ran twice — once for @parametrize's
+# argvalues, once for its ids= — and expanded to ~2,218 collected cases,
+# ~39% of the entire unit tier, from what is really 2 def test_* functions.
+# Grouping by golden file collapses that to 4 cases with identical protection:
+# every drifted ID is still collected and reported, just as one aggregate
+# assertion per file instead of one case per ID.
+_CASES_BY_FILE: dict[Path, list[tuple[str, str]]] = {
+    golden_path: _golden_ids(golden_path) for golden_path in GOLDEN_FILES
+} | {
+    dataset_path: _golden_dataset_ids(dataset_path)
+    for dataset_path in GOLDEN_DATASET_FILES
+}
 
 
 @pytest.mark.parametrize(
-    "golden_file, source_label, chunk_id",
-    _all_golden_id_cases(),
-    ids=[f"{f}::{label}::{c}" for f, label, c in _all_golden_id_cases()],
+    "golden_path", ALL_GOLDEN_FILES, ids=[p.name for p in ALL_GOLDEN_FILES]
 )
-def test_golden_chunk_id_exists_in_live_index(golden_file, source_label, chunk_id):
-    """Every golden chunk_id must be producible by re-chunking its source file today.
+def test_golden_chunk_ids_exist_in_live_index(golden_path):
+    """Every golden chunk_id in *golden_path* must be producible by re-chunking
+    its source file today.
 
     A failure here means the golden set has drifted (renamed/moved/resplit
     symbol) and needs repair — same failure mode as OB01/OB03/OB06.
     """
-    file_path = chunk_id.split(":", 1)[0]
-    live_ids = _live_normalized_ids(file_path)
-    assert chunk_id in live_ids, (
-        f"{golden_file} [{source_label}] references {chunk_id!r}, which no "
-        f"longer exists among the chunks freshly produced from {file_path}. "
-        "The golden set has drifted -- repair the ID (see Step 1.3)."
+    drifted = []
+    for source_label, chunk_id in _CASES_BY_FILE[golden_path]:
+        file_path = chunk_id.split(":", 1)[0]
+        live_ids = _live_normalized_ids(file_path)
+        if chunk_id not in live_ids:
+            drifted.append((source_label, chunk_id, file_path))
+
+    assert not drifted, (
+        f"{golden_path.name} has {len(drifted)} drifted chunk_id(s) that no "
+        "longer exist among the chunks freshly produced from their source "
+        "file(s). The golden set has drifted -- repair the ID(s) (see Step "
+        "1.3):\n"
+        + "\n".join(
+            f"  [{label}] {chunk_id!r} (from {file_path})"
+            for label, chunk_id, file_path in drifted
+        )
     )
 
 
 def test_guard_detects_corrupted_id():
     """Sanity check: the guard must fail loudly on a deliberately wrong ID.
 
-    Proves test_golden_chunk_id_exists_in_live_index is not vacuously true.
+    Proves test_golden_chunk_ids_exist_in_live_index is not vacuously true.
     """
     corrupted = "chunking/relationships/call_edge_resolver.py:function:this_symbol_does_not_exist"
     file_path = corrupted.split(":", 1)[0]
     live_ids = _live_normalized_ids(file_path)
     assert corrupted not in live_ids
+
+
+@pytest.mark.parametrize(
+    ("raw_chunk_id", "expected"),
+    [
+        # 105-line decorated def: the adaptive indexer may split it -> method alias.
+        (
+            "mcp_server/tools/status_handlers.py:31-135:decorated_definition:handle_get_index_status",
+            {"mcp_server/tools/status_handlers.py:method:handle_get_index_status"},
+        ),
+        # Module-level function over the threshold: same alias.
+        ("pkg/mod.py:1-140:function:big", {"pkg/mod.py:method:big"}),
+        # Exactly at the threshold is NOT split-eligible (indexer uses strict >).
+        ("pkg/mod.py:1-100:function:edge", set()),
+        # Short node: no alias.
+        ("pkg/mod.py:1-20:decorated_definition:small", set()),
+        # Classes are never split by the indexer.
+        ("pkg/mod.py:1-400:class:Big", set()),
+        # Malformed / already-normalized ids produce nothing.
+        ("pkg/mod.py:function:no_range", set()),
+    ],
+)
+def test_split_alias_matches_indexer_eligibility(raw_chunk_id, expected):
+    """`_split_aliases` mirrors base.py's split gate: eligible kind AND > max_chunk_lines."""
+    assert _max_chunk_lines() == 100, "test table assumes the shipped max_chunk_lines"
+    assert _split_aliases(raw_chunk_id) == expected

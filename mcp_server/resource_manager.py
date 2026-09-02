@@ -11,9 +11,14 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import Any
 
 
 logger = logging.getLogger(__name__)
+
+# Minimum GPU memory (MB) considered "still allocated" after cleanup.
+# Below this threshold, residual allocations are expected (PyTorch runtime overhead ~50MB).
+GPU_CLEANUP_THRESHOLD_MB = 100
 
 
 def _cleanup_previous_resources() -> None:
@@ -94,6 +99,172 @@ def _cleanup_previous_resources() -> None:
         force_flush()
     except Exception as e:  # noqa: BLE001 - cleanup: isolated teardown step, must not block sibling cleanup
         logger.warning(f"Error flushing OTel spans: {e}")
+
+
+class McpResourceRefresher:
+    """The MCP-side resource-lifecycle collaborator used by a full reindex.
+
+    Moved out of ``search.incremental_indexer.IncrementalIndexer`` — indexing
+    logic and MCP process-state management were living in the same method.
+    ``search/`` depends on this only through the
+    ``search.resource_refresh.ResourceRefresher`` protocol; this class
+    satisfies it structurally (no base class, no import of that module), so
+    no import arrow crosses from ``search/`` up into ``mcp_server/`` here.
+    """
+
+    def refresh_before_full_index(
+        self, project_path: str, embedder: Any, indexer: Any
+    ) -> tuple[Any, Any]:
+        """Mandatory resource release and verification before full reindex.
+
+        Ensures all previous resources (index managers, searchers, embedders, GPU memory)
+        are properly released before starting a full reindex operation. This prevents
+        VRAM/memory pressure that could cause reindexing to fail.
+
+        Performs:
+        1. Save current model key before cleanup
+        2. Release via ResourceManager.cleanup_previous_resources() (same as UI command)
+        3. Verification of cleanup completeness
+        4. Refresh embedder with fresh instance (preserving model key)
+        5. Refresh indexer/searcher (required since cleanup shut it down)
+
+        Args:
+            project_path: Path to the project being indexed (needed to recreate searcher)
+            embedder: The caller's current embedder — released and superseded here.
+            indexer: The caller's current indexer — refreshed here only if
+                shut down by cleanup; otherwise returned unchanged.
+
+        Returns:
+            Tuple of (embedder, indexer) the caller must rebind onto itself.
+
+        This method is idempotent - safe to call even if cleanup was already performed.
+        """
+        logger.info("[FULL_INDEX] Mandatory pre-reindex resource release starting...")
+
+        # Step 1: Release resources (same operation as UI "Release Resources" command)
+        _cleanup_previous_resources()
+        logger.info("[FULL_INDEX] Resource release completed")
+
+        # Step 2: Verify cleanup completeness
+        from mcp_server.services import get_state
+
+        state = get_state()
+        verification_passed = True
+        warnings = []
+
+        # Check embedder pool cleared
+        if state.embedders:
+            warnings.append(
+                f"Embedder pool not fully cleared: {list(state.embedders.keys())}"
+            )
+            verification_passed = False
+
+        # Check index_manager released
+        if state.index_manager is not None:
+            warnings.append("state.index_manager not None after cleanup")
+            verification_passed = False
+
+        # Check searcher released
+        if state.searcher is not None:
+            warnings.append("state.searcher not None after cleanup")
+            verification_passed = False
+
+        # Check GPU memory (if CUDA available)
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                allocated_mb = torch.cuda.memory_allocated() / (1024**2)
+                if allocated_mb > GPU_CLEANUP_THRESHOLD_MB:
+                    warnings.append(
+                        f"GPU memory still allocated: {allocated_mb:.1f} MB"
+                    )
+                    verification_passed = False
+        except ImportError:
+            pass
+
+        # If verification failed, attempt secondary cleanup and re-verify
+        if not verification_passed:
+            logger.warning(
+                f"[FULL_INDEX] Initial verification failed: {warnings}. "
+                "Attempting secondary cleanup..."
+            )
+            gc.collect()
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
+
+            # Re-verify
+            state = get_state()
+            recheck_warnings = []
+            if state.embedders:
+                recheck_warnings.append(
+                    f"Embedder pool still not cleared: {list(state.embedders.keys())}"
+                )
+            if state.index_manager is not None:
+                recheck_warnings.append("state.index_manager still not None")
+            if state.searcher is not None:
+                recheck_warnings.append("state.searcher still not None")
+
+            if recheck_warnings:
+                logger.warning(
+                    f"[FULL_INDEX] Re-verification still shows issues: {recheck_warnings}. "
+                    "Proceeding with reindex anyway."
+                )
+            else:
+                logger.info(
+                    "[FULL_INDEX] Secondary cleanup successful - verification passed"
+                )
+        else:
+            logger.info(
+                "[FULL_INDEX] Resource verification passed — all resources released"
+            )
+
+        # Step 3: Refresh embedder (required since cleanup cleared it)
+        from mcp_server.model_pool_manager import get_embedder
+
+        embedder = get_embedder()  # Fresh instance with config model
+        logger.info("[FULL_INDEX] Fresh embedder acquired for reindex")
+
+        # Step 4: Refresh indexer/searcher (required since cleanup shut it down)
+        # Only refresh if the indexer was actually shut down (has _is_shutdown flag set to True)
+        if hasattr(indexer, "_is_shutdown") and indexer._is_shutdown:
+            from mcp_server.search_factory import get_searcher
+
+            # load_existing=False (#reindex-log-audit-2026-07-30): this searcher
+            # is a write-only target for the force-full reindex about to run —
+            # _full_index() calls clear_index()/clear_hybrid_indices() on it
+            # moments later, so loading the stale on-disk BM25 index here would
+            # only cost time and log spurious version/tokenizer mismatch
+            # warnings for data that is about to be discarded.
+            indexer = get_searcher(project_path, load_existing=False)
+            logger.info("[FULL_INDEX] Fresh indexer/searcher acquired for reindex")
+        else:
+            logger.debug(
+                "[FULL_INDEX] Indexer not shut down or doesn't need refresh (test mock)"
+            )
+
+        return embedder, indexer
+
+    def invalidate_searcher_cache(self) -> None:
+        """Null out state.searcher — compensating inverse of a failed refresh.
+
+        (#reindex-log-audit-2026-07-30) The searcher acquired by
+        ``refresh_before_full_index`` was built with ``load_existing=False``,
+        so if a full-index failure happened after construction but before
+        ``clear_hybrid_indices()``/rebuild completed, ``state.searcher`` is an
+        empty write-only instance. Null it — same one-line invalidation
+        ``search_factory.get_searcher()`` already does for
+        ``DimensionMismatchError`` — so the next call rebuilds from disk
+        instead of returning an empty cached searcher.
+        """
+        from mcp_server.services import get_state
+
+        get_state().searcher = None
 
 
 def close_project_resources(project_path: str, *, clear_current: bool = True) -> bool:

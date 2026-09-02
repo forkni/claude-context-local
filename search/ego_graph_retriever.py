@@ -12,11 +12,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from graph.traversal_policy import TraversalPolicy
 from search.config import EgoGraphConfig
 from search.graph_integration import is_chunk_id
 from search.graph_view import GraphView, PPRConvergenceError
 from search.reranker import SearchResult
 from search.result_factory import ResultFactory
+from search.types import ResultSource
 
 
 if TYPE_CHECKING:
@@ -65,12 +67,20 @@ class EgoGraphRetriever:
         self,
         anchor_chunk_ids: list[str],
         config: EgoGraphConfig,
+        policy: TraversalPolicy | None = None,
     ) -> dict[str, list[str]]:
         """Retrieve k-hop ego-graph for each anchor.
 
         Args:
             anchor_chunk_ids: Starting nodes (from initial search results)
             config: Ego-graph configuration
+            policy: The walk handed to
+                :meth:`graph.graph_storage.CodeGraphStorage.get_neighbors_ranked`
+                for every anchor. ``None`` = ``TraversalPolicy.ego(config)``
+                (depth/relations/exclusions from ``config``, all three edge
+                gates at their no-op defaults). Production passes
+                ``TraversalPolicy.ego(config, graph_enhanced)`` so the gates
+                come off ``GraphEnhancedConfig``.
 
         Returns:
             Dict mapping anchor_id -> list of neighbor chunk_ids
@@ -78,30 +88,21 @@ class EgoGraphRetriever:
         if not anchor_chunk_ids:
             return {}
 
+        if policy is None:
+            policy = TraversalPolicy.ego(config)
+
         # QW3: route to PPR expansion when requested
         if config.expansion_mode == "ppr":
-            return self._expand_via_ppr(anchor_chunk_ids, config)
+            return self._expand_via_ppr(anchor_chunk_ids, config, policy)
 
         results = {}
         for anchor in anchor_chunk_ids:
             try:
-                # Build exclude_import_categories list from config
-                exclude_categories = []
-                if config.exclude_stdlib_imports:
-                    exclude_categories.extend(["stdlib", "builtin"])
-                if config.exclude_third_party_imports:
-                    exclude_categories.append("third_party")
-
-                # Get neighbors using existing graph traversal
-                neighbors = self.graph.get_neighbors(
-                    anchor,
-                    relation_types=config.relation_types,
-                    max_depth=config.k_hops,
-                    exclude_import_categories=(
-                        exclude_categories if exclude_categories else None
-                    ),
-                    edge_weights=config.edge_weights,
-                )
+                # Get neighbors using existing graph traversal. Ranked (not
+                # set) so the max_total truncation below survives in
+                # priority order instead of Python's set-iteration order
+                # whenever self._centrality_scores is empty.
+                neighbors = self.graph.get_neighbors_ranked(anchor, policy)
 
                 # Filter to keep only valid chunk_ids (format: "file:lines:type:name")
                 # Exclude symbol-only nodes like "get_searcher", "str", etc.
@@ -156,6 +157,7 @@ class EgoGraphRetriever:
         self,
         anchor_chunk_ids: list[str],
         config: EgoGraphConfig,
+        policy: TraversalPolicy | None = None,
     ) -> dict[str, list[str]]:
         """Expand anchors using Personalized PageRank instead of k-hop BFS.
 
@@ -168,6 +170,8 @@ class EgoGraphRetriever:
         Args:
             anchor_chunk_ids: Seed nodes (matched by semantic search).
             config: EgoGraphConfig with ppr_alpha and max_neighbors_per_hop.
+            policy: Forwarded unchanged to :meth:`retrieve_ego_graph` on the
+                BFS fallback path; PPR itself does not walk edges.
 
         Returns:
             Dict mapping each anchor -> list of top-k PPR neighbours.
@@ -193,7 +197,7 @@ class EgoGraphRetriever:
             logger.warning(
                 "[PPR] Power iteration failed to converge — falling back to BFS"
             )
-            return self.retrieve_ego_graph(anchor_chunk_ids, config)
+            return self.retrieve_ego_graph(anchor_chunk_ids, config, policy)
 
         max_total = config.max_neighbors_per_hop * config.k_hops
         anchor_set = set(valid_anchors)
@@ -272,6 +276,7 @@ class EgoGraphRetriever:
         self,
         search_results: list[dict],
         config: EgoGraphConfig,
+        policy: TraversalPolicy | None = None,
     ) -> tuple[list[str], dict[str, list[str]]]:
         """Expand search results using ego-graph retrieval.
 
@@ -281,6 +286,8 @@ class EgoGraphRetriever:
         Args:
             search_results: List of search result dicts with 'chunk_id' field
             config: Ego-graph configuration
+            policy: Forwarded to :meth:`retrieve_ego_graph`; ``None`` =
+                ``TraversalPolicy.ego(config)``.
 
         Returns:
             Tuple of:
@@ -295,7 +302,7 @@ class EgoGraphRetriever:
         anchor_chunk_ids = [r["chunk_id"] for r in search_results]
 
         # Retrieve ego-graphs for each anchor
-        ego_graphs = self.retrieve_ego_graph(anchor_chunk_ids, config)
+        ego_graphs = self.retrieve_ego_graph(anchor_chunk_ids, config, policy)
 
         # Flatten to unique chunk list
         expanded_chunk_ids = self.flatten_for_context(ego_graphs, config)
@@ -441,7 +448,7 @@ class EgoGraphRetriever:
                                 chunk_id,
                                 anchor_score * similarity,
                                 metadata,
-                                "ego_graph",
+                                ResultSource.EGO_GRAPH,
                             )
                         )
                 except (RuntimeError, AttributeError, IndexError) as e:
@@ -459,7 +466,7 @@ class EgoGraphRetriever:
                 anchor_score = anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
                 neighbor_results.append(
                     ResultFactory.from_expansion(
-                        chunk_id, anchor_score * 0.5, metadata, "ego_graph"
+                        chunk_id, anchor_score * 0.5, metadata, ResultSource.EGO_GRAPH
                     )
                 )
         else:
@@ -469,7 +476,7 @@ class EgoGraphRetriever:
                 anchor_score = anchor_scores.get(anchor_id, 0.0) if anchor_id else 0.0
                 neighbor_results.append(
                     ResultFactory.from_expansion(
-                        chunk_id, anchor_score * 0.5, metadata, "ego_graph"
+                        chunk_id, anchor_score * 0.5, metadata, ResultSource.EGO_GRAPH
                     )
                 )
 

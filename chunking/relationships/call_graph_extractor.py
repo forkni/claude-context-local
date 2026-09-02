@@ -4,9 +4,10 @@ Call graph extraction for code analysis.
 Extracts function call relationships from source code using AST parsing.
 Supports Python directly (``PythonCallGraphExtractor`` below). GLSL call-graph
 extraction has also landed, but via a separate tree-sitter-native path
-(``chunking/multi_language_chunker.py``'s ``metadata["calls"]`` conversion,
-not a subclass of ``CallGraphExtractor`` here) — GLSL has no re-parse step to
-piggyback on, unlike Python's ``ast``-based walk. C++ support remains planned.
+(``chunking/relationships/edge_specs.py``'s ``EDGE_EMISSION_SPECS`` spec-row
+table, not a subclass of ``CallGraphExtractor`` here) — GLSL has no re-parse
+step to piggyback on, unlike Python's ``ast``-based walk. A future C/C++ tier
+(ADR-0035) is expected to land through the same spec-row seam, not here.
 """
 
 import ast
@@ -438,8 +439,10 @@ class CallGraphExtractorFactory:
 
     _extractors = {
         "python": PythonCallGraphExtractor,
-        # Future: "cpp": CppCallGraphExtractor,
-        # Future: "glsl": GLSLCallGraphExtractor,
+        # GLSL and any future C/C++ tier register in
+        # chunking/relationships/edge_specs.py's EDGE_EMISSION_SPECS instead —
+        # this factory's extract_calls() contract is a re-parse, which the
+        # metadata["calls"] path exists specifically to avoid (ADR-0056).
     }
 
     @classmethod

@@ -9,10 +9,13 @@ the *output* side (``SearchResult`` -> MCP JSON dicts).
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from graph.schema import get_reverse_relation
 from search.filters import normalize_path
+from search.types import ResultSource
 
 
 if TYPE_CHECKING:
@@ -138,6 +141,12 @@ def _format_search_results(results: list) -> list[dict]:
         # Propagate source field for ego-graph neighbor identification
         if hasattr(result, "source") and result.source:
             item["source"] = result.source
+        # Flag fabricated-score results (D9) so a caller can tell unranked
+        # context (e.g. parent-expansion's fixed 0.0) from an actual ranked
+        # hit. Only added when true -- matches this function's existing
+        # only-add-when-relevant convention for source/reranker_score/etc.
+        if getattr(result, "is_unscored", False):
+            item["is_unscored"] = True
         formatted_results.append(item)
     return formatted_results
 
@@ -210,6 +219,365 @@ def _reorder_by_source_position(results: list[dict]) -> list[dict]:
     return reordered
 
 
+def _extract_signature_estimate(
+    text: str,
+    max_lines: int = 15,
+    no_anchor_lines: int = 3,
+    max_chars: int = 600,
+) -> str:
+    """Extract a signature-only prefix from raw chunk source text.
+
+    Line-scans for a ``def ``/``async def ``/``class `` anchor and stops at the
+    first line ending in ``:`` seen at or after the anchor, capped at
+    ``max_lines``. Originally ported from a probe-only reimplementation in
+    ``scripts/benchmark/probe_context_cost.py``; that copy has since been
+    retired (ADR-0040) in favor of importing this function directly, so this
+    is now the single implementation both the wire field and the offline
+    ``_signature_view_tokens`` estimate use. Two additions beyond the
+    original line-scan:
+
+    1. When no anchor is seen within ``max_lines`` — non-Python chunks, whose
+       grammars don't share Python's ``def``/``class`` keywords, and
+       ``module_preamble``/``module`` chunks with no anchor at all — only the
+       first ``no_anchor_lines`` lines are returned instead of the full
+       15-line body. Without this, an un-anchored chunk would silently
+       degenerate from a signature into an arbitrary body excerpt.
+    2. The result is truncated to ``max_chars``. The line caps bound *line
+       count*, not line *length*: a minified/single-line chunk (e.g. bundled
+       JS) can pack thousands of characters into one "line" and blow past any
+       reasonable token budget despite passing both line caps untouched.
+       Measured on a 9,610-chunk corpus: 0.9% of chunks carry 7.5% of all
+       signature tokens, with one minified-JS chunk alone producing a
+       3,877-token "signature". ``max_chars=600`` sits between the p99 (420)
+       and p99.9 (672) character length of legitimate anchored signatures, so
+       it clips well under 1% of real signatures while bounding the tail.
+
+    Args:
+        text: Raw chunk source (``bm25_text`` from the metadata store).
+        max_lines: Cap on the anchored scan (default: 15).
+        no_anchor_lines: Cap when no anchor is found (default: 3).
+        max_chars: Cap on the final extracted text length (default: 600).
+
+    Returns:
+        The extracted signature text (may be shorter than either cap).
+    """
+    lines = text.split("\n")
+    sig_lines: list[str] = []
+    seen_start = False
+    for line in lines[:max_lines]:
+        sig_lines.append(line)
+        stripped = line.strip()
+        if stripped.startswith(("def ", "async def ", "class ")):
+            seen_start = True
+        if seen_start and stripped.endswith(":"):
+            break
+    if not seen_start:
+        sig_lines = lines[:no_anchor_lines]
+    return "\n".join(sig_lines)[:max_chars]
+
+
+_NON_SIGNATURE_CHUNK_TYPES = frozenset({"module_preamble", "module"})
+"""Chunk kinds with no callable contract to summarize.
+
+Measured over 2,534 corpus chunks (reproduced on a second, 9,610-chunk
+corpus): every ``method``/``function``/``split_block``/``decorated_definition``/
+``class`` chunk is 100% anchored by ``_extract_signature_estimate``, while
+``module_preamble``/``module`` chunks are 0% anchored — their "signature" is
+whatever the first ``no_anchor_lines`` lines happen to be (a docstring line,
+an import, a comment). Skipping these two kinds removes ~20-22% of signature
+tokens and 0% of callable contracts; see ``_enrich_results_with_signatures``.
+"""
+
+
+def _annotate_each(
+    results: list[dict],
+    index_manager: CodeIndexManager | None,
+    *,
+    storage_attr: str,
+    skip_ego: bool,
+    skip_kinds: frozenset[str],
+    annotate: Callable[[dict, str], None],
+) -> list[dict]:
+    """Run *annotate* over each enrichable item, owning guard/skip/resilience.
+
+    Shared scaffolding hand-copied by all three result enrichers before this
+    extraction: the index-manager/storage guard, the per-item falsy-``chunk_id``
+    skip, the optional ego-graph skip, the optional kind skip, and a per-item
+    ``try/except Exception`` -> ``logger.debug`` so one bad chunk cannot abort
+    enrichment for the rest of the batch. ``annotate`` receives the
+    already-guarded ``(item, chunk_id)`` pair and mutates ``item`` in place;
+    its return value is ignored.
+
+    Args:
+        results: List of formatted result dicts.
+        index_manager: Index manager providing the storage named by
+            ``storage_attr``; enrichment is skipped entirely when this is
+            ``None`` or that storage attribute is ``None``.
+        storage_attr: Attribute name on ``index_manager`` whose presence
+            gates enrichment (``"graph_storage"`` or ``"metadata_store"``).
+        skip_ego: Skip results whose ``source`` is ``"ego_graph"``.
+        skip_kinds: Skip results whose ``kind`` is in this set.
+        annotate: Per-item callable ``(item, chunk_id) -> None``.
+
+    Returns:
+        The same ``results`` list, mutated in place.
+    """
+    if not index_manager or getattr(index_manager, storage_attr) is None:
+        return results
+
+    for item in results:
+        chunk_id = item.get("chunk_id")
+        if not chunk_id:
+            continue
+        if skip_ego and item.get("source") == ResultSource.EGO_GRAPH:
+            continue
+        if item.get("kind") in skip_kinds:
+            continue
+        try:
+            annotate(item, chunk_id)
+        except Exception as e:  # noqa: BLE001 - resilience: optional result enrichment, degrade to no field
+            logger.debug(f"Failed to enrich result for {chunk_id}: {e}")
+
+    return results
+
+
+def _enrich_results_with_signatures(
+    results: list[dict],
+    index_manager: CodeIndexManager | None,
+) -> list[dict]:
+    """Attach a ``signature`` field (signature-only view) to each result.
+
+    ``search_code`` returns coordinates only (file/lines/kind/score) — no
+    chunk content. A context agent that finds the right chunk still needs a
+    follow-up ``Read`` to judge it (measured: 0% of results carry any content
+    field, `evaluation/CONTEXT_COST_PROBE_20260818.md`). This attaches a
+    cheap, opt-in counterfactual: the first def/class line(s) of the chunk,
+    extracted from ``bm25_text`` via ``_extract_signature_estimate``.
+
+    Results whose ``kind`` is in ``_NON_SIGNATURE_CHUNK_TYPES`` are skipped
+    entirely (no ``signature`` field attached, matching the existing
+    skip-on-falsy behavior below) — these kinds carry no def/class anchor, so
+    their "signature" would be filler rather than a callable contract.
+
+    ``bm25_text`` — the raw chunk source persisted by the indexer
+    (``hybrid_searcher.py``) — is read via ``index_manager.metadata_store``
+    rather than any field on the formatted result dict: results reach this
+    function post-``_format_search_results``, which carries no ``.metadata``.
+    The same metadata entry already carries ``chunk_type``, so the kind-gate
+    above costs no extra lookup.
+
+    §V-B note: this is unsanitized resource content (paper term) — raw source
+    text from the indexed repo, truncated but not filtered. Accepted residual
+    risk: exposure is metadata-only (never a full code body — capped at 15
+    lines and 600 chars — never executed/eval'd) and the source is the user's
+    own indexed codebase, not an untrusted external fetch. A repo containing a
+    hostile docstring or comment could still relay prompt-injection-like text
+    to the calling LLM as part of a search result; no content filtering is
+    applied here today. Same exposure class already accepted for the
+    ``summary`` field above.
+
+    Args:
+        results: List of formatted result dicts
+        index_manager: Index manager with metadata storage
+
+    Returns:
+        Results with ``signature`` added where ``bm25_text`` is available
+    """
+
+    def _annotate(item: dict, chunk_id: str) -> None:
+        entry = index_manager.metadata_store.get(chunk_id)
+        if not entry:
+            return
+        bm25_text = entry.get("metadata", {}).get("bm25_text")
+        if not bm25_text:
+            return
+        item["signature"] = _extract_signature_estimate(bm25_text)
+
+    return _annotate_each(
+        results,
+        index_manager,
+        storage_attr="metadata_store",
+        skip_ego=False,
+        skip_kinds=_NON_SIGNATURE_CHUNK_TYPES,
+        annotate=_annotate,
+    )
+
+
+def _enrich_results_with_top_callers(
+    results: list[dict],
+    index_manager: CodeIndexManager | None,
+    max_callers: int = 2,
+) -> list[dict]:
+    """Attach a ``top_callers`` hint (up to ``max_callers``) to each result.
+
+    Per result, scans raw incoming ``calls``-type edges on the chunk_id node.
+    Unresolved AST call edges target the bare symbol-name node rather than the
+    chunk_id node (see ``graph_storage.add_call_edge``) — the common case when
+    the ``[callgraph]`` extras are absent — so the bare-symbol node is
+    consulted as a *fallback*, mirroring ``_get_graph_data_for_chunk``'s
+    two-lookup pattern, and only when the chunk node alone yields fewer than
+    ``max_callers`` candidates.
+
+    The symbol-node fallback is unreliable in a way the chunk-node lookup is
+    not: an edge into a bare symbol name like ``get`` or ``add`` conflates
+    every definition of that name across the whole project (100% of these
+    edges carry no confidence tag at all — see the Fix #2 census), so a
+    common method name produces false hints while a unique name produces true
+    ones. There is no per-edge signal to distinguish the two cases, so this
+    function treats the *lookup tier* itself as the confidence signal:
+    chunk-node candidates always sort before symbol-node candidates,
+    regardless of any ``resolver_confidence`` float either carries. Within
+    each tier, ranking is ``resolver_confidence`` descending where the float
+    exists, insertion order otherwise. Skips silently when the graph or node
+    is absent.
+
+    Args:
+        results: List of formatted result dicts
+        index_manager: Index manager with graph storage
+        max_callers: Maximum caller entries per result (default: 2)
+
+    Returns:
+        Results with ``top_callers: [{name, file}]`` added where callers exist
+    """
+    if not index_manager or index_manager.graph_storage is None:
+        return results
+
+    graph = index_manager.graph_storage.graph
+
+    def _collect(node: str, seen: set[str], normalized: str) -> list[tuple[str, dict]]:
+        """In-edge ``calls`` candidates at ``node``, deduped against ``seen``."""
+        found: list[tuple[str, dict]] = []
+        if node not in graph:
+            return found
+        for source, _, edge_data in graph.in_edges(node, data=True):
+            if edge_data.get("type", "calls") != "calls":
+                continue
+            if source in seen or source == normalized:
+                continue
+            seen.add(source)
+            found.append((source, edge_data))
+        return found
+
+    def _annotate(item: dict, chunk_id: str) -> None:
+        normalized = normalize_path(chunk_id)
+        symbol_name = normalized.rsplit(":", 1)[-1] if ":" in normalized else None
+
+        seen: set[str] = set()
+        chunk_candidates = _collect(normalized, seen, normalized)
+
+        symbol_candidates: list[tuple[str, dict]] = []
+        if (
+            len(chunk_candidates) < max_callers
+            and symbol_name
+            and symbol_name != normalized
+        ):
+            symbol_candidates = _collect(symbol_name, seen, normalized)
+
+        hints = _render_call_hints(
+            graph, chunk_candidates, symbol_candidates, max_callers
+        )
+        if hints:
+            item["top_callers"] = hints
+
+    return _annotate_each(
+        results,
+        index_manager,
+        storage_attr="graph_storage",
+        skip_ego=False,
+        skip_kinds=frozenset(),
+        annotate=_annotate,
+    )
+
+
+def _render_call_hints(
+    graph,
+    primary: list[tuple[str, dict]],
+    secondary: list[tuple[str, dict]],
+    limit: int,
+) -> list[dict]:
+    """Rank two tiers of ``(node, edge_data)`` candidates and render ``{name, file}``.
+
+    Shared by the caller and callee enrichers. ``primary`` always sorts
+    before ``secondary``; within a tier, float-confident edges first
+    (``resolver_confidence`` descending), the rest keep discovery order via
+    missing-confidence -> 0.0. Node ids without a ``:`` (bare symbol nodes)
+    render with ``file: ""``.
+    """
+    tiered = [(c, False) for c in primary] + [(c, True) for c in secondary]
+    tiered.sort(key=lambda t: (t[1], -(t[0][1].get("resolver_confidence") or 0.0)))
+    hints = []
+    for (node, _), _is_secondary in tiered[:limit]:
+        node_name = graph.nodes[node].get("name") if node in graph else None
+        hints.append(
+            {
+                "name": node_name or (node.rsplit(":", 1)[-1] if ":" in node else node),
+                "file": node.split(":")[0] if ":" in node else "",
+            }
+        )
+    return hints
+
+
+def _enrich_results_with_top_callees(
+    results: list[dict],
+    index_manager: CodeIndexManager | None,
+    max_callees: int = 2,
+) -> list[dict]:
+    """Attach a ``top_callees`` hint (up to ``max_callees``) to each result.
+
+    Mirror of ``_enrich_results_with_top_callers`` over raw outgoing
+    ``calls``-type edges on the chunk_id node. The callers' bare-symbol-node
+    *lookup* fallback has no callee analogue (bare symbol nodes carry no
+    out-edges); instead, unresolved callees appear as out-edges *to* bare
+    symbol (phantom) nodes. Those are the lower tier: resolved chunk targets
+    rank first (``resolver_confidence`` descending, discovery order
+    otherwise), phantom targets follow and render as ``{name, file: ""}``.
+    Skips silently when the graph or node is absent.
+
+    Args:
+        results: List of formatted result dicts
+        index_manager: Index manager with graph storage
+        max_callees: Maximum callee entries per result (default: 2)
+
+    Returns:
+        Results with ``top_callees: [{name, file}]`` added where callees exist
+    """
+    if not index_manager or index_manager.graph_storage is None:
+        return results
+
+    graph = index_manager.graph_storage.graph
+
+    def _annotate(item: dict, chunk_id: str) -> None:
+        normalized = normalize_path(chunk_id)
+        if normalized not in graph:
+            return
+        seen: set[str] = set()
+        chunk_targets: list[tuple[str, dict]] = []
+        phantom_targets: list[tuple[str, dict]] = []
+        for _, target, edge_data in graph.out_edges(normalized, data=True):
+            if edge_data.get("type", "calls") != "calls":
+                continue
+            if target in seen or target == normalized:
+                continue
+            seen.add(target)
+            if ":" in target:
+                chunk_targets.append((target, edge_data))
+            else:
+                phantom_targets.append((target, edge_data))
+
+        hints = _render_call_hints(graph, chunk_targets, phantom_targets, max_callees)
+        if hints:
+            item["top_callees"] = hints
+
+    return _annotate_each(
+        results,
+        index_manager,
+        storage_attr="graph_storage",
+        skip_ego=False,
+        skip_kinds=frozenset(),
+        annotate=_annotate,
+    )
+
+
 def _enrich_results_with_graph_data(
     results: list[dict], index_manager: CodeIndexManager | None
 ) -> list[dict]:
@@ -222,16 +590,75 @@ def _enrich_results_with_graph_data(
     Returns:
         Results with graph data added where available
     """
-    if not index_manager or index_manager.graph_storage is None:
-        return results
 
-    for item in results:
-        chunk_id = item.get("chunk_id")
-        # Skip per-result graph data for ego-graph neighbors (captured in subgraph_edges instead)
-        # Saves ~400 chars per ego neighbor, ~8K chars total for 20 neighbors
-        if chunk_id and item.get("source") != "ego_graph":
-            graph_data = _get_graph_data_for_chunk(index_manager, chunk_id)
-            if graph_data:
-                item["graph"] = graph_data
+    def _annotate(item: dict, chunk_id: str) -> None:
+        graph_data = _get_graph_data_for_chunk(index_manager, chunk_id)
+        if graph_data:
+            item["graph"] = graph_data
 
+    # Skip per-result graph data for ego-graph neighbors (captured in
+    # subgraph_edges instead) — saves ~400 chars per ego neighbor, ~8K chars
+    # total for 20 neighbors. Unlike the other two enrichers, this one had no
+    # per-item try/except of its own: routing it through the shared one in
+    # _annotate_each is a narrowing of failure surface, not a widening —
+    # _get_graph_data_for_chunk already swallows its own exceptions and
+    # returns None.
+    return _annotate_each(
+        results,
+        index_manager,
+        storage_attr="graph_storage",
+        skip_ego=True,
+        skip_kinds=frozenset(),
+        annotate=_annotate,
+    )
+
+
+@dataclass(frozen=True)
+class ResultEnricher:
+    """One registry row: a gate key, the field it writes, and its apply function."""
+
+    key: str
+    field: str
+    apply: Callable[[list[dict], CodeIndexManager | None], list[dict]]
+
+
+RESULT_ENRICHERS: tuple[ResultEnricher, ...] = (
+    ResultEnricher("graph", "graph", _enrich_results_with_graph_data),
+    ResultEnricher("top_callers", "top_callers", _enrich_results_with_top_callers),
+    ResultEnricher("top_callees", "top_callees", _enrich_results_with_top_callees),
+    ResultEnricher("signatures", "signature", _enrich_results_with_signatures),
+)
+"""Every result enricher, in application order (today's ``_assemble`` order).
+
+Rows join on ``key`` to the wire-interface specs in
+``mcp_server/enricher_specs.py``: a request-scoped enricher's schema property,
+published default, and plan/gate wiring are all derived from its
+``EnricherSpec`` row, so adding one is a spec row plus an apply function and
+its row here — no schema, defaults-table, plan, or gate edits. ``graph`` is
+the one config-scoped row (no spec; gated by
+``OutputConfig.include_result_graph`` in ``_enrichment_gates``). The join is
+drift-tested in ``tests/unit/mcp_server/test_search_orchestrator.py``.
+"""
+
+
+def enrich_results(
+    results: list[dict],
+    index_manager: CodeIndexManager | None,
+    gates: Mapping[str, bool],
+) -> list[dict]:
+    """Apply every gated enricher in ``RESULT_ENRICHERS`` order.
+
+    Args:
+        results: List of formatted result dicts.
+        index_manager: Index manager passed through to each enricher.
+        gates: Per-enricher on/off decision, keyed by ``ResultEnricher.key``.
+            A missing key is treated as off, not an error.
+
+    Returns:
+        The same ``results`` list, mutated in place by whichever enrichers
+        were gated on.
+    """
+    for enricher in RESULT_ENRICHERS:
+        if gates.get(enricher.key):
+            results = enricher.apply(results, index_manager)
     return results

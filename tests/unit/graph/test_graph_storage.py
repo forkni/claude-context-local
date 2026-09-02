@@ -583,6 +583,181 @@ class TestCodeGraphStorage:
         assert "src/auth_utils.py:1-5:function:b" in graph_storage
 
     # ------------------------------------------------------------------
+    # Workstream D: prune_orphan_symbol_nodes
+    # ------------------------------------------------------------------
+
+    def test_prune_orphan_symbol_nodes_removes_degree_zero_phantom(self, graph_storage):
+        """A phantom (symbol_name/is_target_name) node with no incident
+        edges left is removed. remove_file_nodes cannot reach it directly
+        (no path: prefix), so it is only reachable once its last referent
+        is gone and its degree drops to 0."""
+        graph_storage.add_node(
+            "src/main.py:1-5:function:main", "main", "function", "src/main.py"
+        )
+        graph_storage.add_call_edge(
+            "src/main.py:1-5:function:main", "helper_func", line_number=3
+        )
+        assert "helper_func" in graph_storage
+
+        # Removing the only caller drops helper_func's incident edges too,
+        # leaving it at degree 0.
+        graph_storage.remove_file_nodes("src/main.py")
+        assert graph_storage.graph.degree("helper_func") == 0
+
+        pruned = graph_storage.prune_orphan_symbol_nodes()
+
+        assert pruned == 1
+        assert "helper_func" not in graph_storage
+
+    def test_prune_orphan_symbol_nodes_keeps_phantom_at_degree_one(self, graph_storage):
+        """A phantom shared by two files is NOT pruned while it still has
+        one referent (degree 1); it is pruned once both are gone."""
+        graph_storage.add_node("src/a.py:1-5:function:a", "a", "function", "src/a.py")
+        graph_storage.add_node("src/b.py:1-5:function:b", "b", "function", "src/b.py")
+        graph_storage.add_call_edge(
+            "src/a.py:1-5:function:a", "shared_func", line_number=1
+        )
+        graph_storage.add_call_edge(
+            "src/b.py:1-5:function:b", "shared_func", line_number=1
+        )
+
+        graph_storage.remove_file_nodes("src/a.py")
+        assert graph_storage.graph.degree("shared_func") == 1
+
+        pruned = graph_storage.prune_orphan_symbol_nodes()
+        assert pruned == 0
+        assert "shared_func" in graph_storage
+
+        graph_storage.remove_file_nodes("src/b.py")
+        assert graph_storage.graph.degree("shared_func") == 0
+
+        pruned = graph_storage.prune_orphan_symbol_nodes()
+        assert pruned == 1
+        assert "shared_func" not in graph_storage
+
+    def test_prune_orphan_symbol_nodes_never_removes_real_chunk_at_degree_zero(
+        self, graph_storage
+    ):
+        """A real chunk node (no symbol_name type, no is_target_name flag)
+        with degree 0 -- e.g. a leaf function with no callers/callees --
+        must never be pruned; it fails the type/flag half of the predicate."""
+        graph_storage.add_node(
+            "src/leaf.py:1-5:function:leaf", "leaf", "function", "src/leaf.py"
+        )
+        assert graph_storage.graph.degree("src/leaf.py:1-5:function:leaf") == 0
+
+        pruned = graph_storage.prune_orphan_symbol_nodes()
+
+        assert pruned == 0
+        assert "src/leaf.py:1-5:function:leaf" in graph_storage
+
+    def test_prune_orphan_symbol_nodes_leaves_unrelated_name_index_entries_intact(
+        self, graph_storage
+    ):
+        """On the in-memory add path, phantoms created via add_call_edge are
+        never added to _name_index -- only add_node populates it (see
+        get_nodes_by_name's docstring). So the _name_index cleanup in
+        prune_orphan_symbol_nodes is a no-op HERE specifically because this
+        test never persists and reloads the graph.
+
+        That is NOT true in general: CodeGraphStorage.load() rebuilds
+        _name_index from every node carrying a `name` attribute, and phantoms
+        do carry NODE_ATTR_NAME -- so on any persisted-then-reloaded index
+        (every real one) phantoms ARE in _name_index and this cleanup is
+        load-bearing, not defensive. See
+        test_prune_orphan_symbol_nodes_cleans_name_index_after_reload below
+        for that branch.
+        """
+        graph_storage.add_node(
+            "src/main.py:1-5:function:main", "main", "function", "src/main.py"
+        )
+        graph_storage.add_node(
+            "src/other.py:1-5:function:bystander",
+            "bystander",
+            "function",
+            "src/other.py",
+        )
+        graph_storage.add_call_edge(
+            "src/main.py:1-5:function:main", "helper_func", line_number=3
+        )
+        assert "helper_func" not in graph_storage._name_index
+        graph_storage.remove_file_nodes("src/main.py")
+
+        graph_storage.prune_orphan_symbol_nodes()
+
+        assert "bystander" in graph_storage._name_index
+        assert "helper_func" not in graph_storage._name_index
+
+    def test_prune_orphan_symbol_nodes_cleans_name_index_after_reload(
+        self, graph_storage, temp_storage_dir
+    ):
+        """The branch test_..._leaves_unrelated_name_index_entries_intact
+        above doesn't cover: after save()/reload, the phantom genuinely is in
+        _name_index (CodeGraphStorage.load() rebuilds it from every node
+        carrying NODE_ATTR_NAME, which phantoms do), so the cleanup inside
+        prune_orphan_symbol_nodes actually does work here, not just
+        defensively."""
+        graph_storage.add_node(
+            "src/main.py:1-5:function:main", "main", "function", "src/main.py"
+        )
+        graph_storage.add_node(
+            "src/other.py:1-5:function:bystander",
+            "bystander",
+            "function",
+            "src/other.py",
+        )
+        graph_storage.add_call_edge(
+            "src/main.py:1-5:function:main", "helper_func", line_number=3
+        )
+        graph_storage.remove_file_nodes("src/main.py")
+        assert graph_storage.graph.degree("helper_func") == 0
+        graph_storage.save()
+
+        reloaded = CodeGraphStorage(
+            project_id="test_project", storage_dir=temp_storage_dir
+        )
+        # Confirms the premise: after a reload, the phantom really is in
+        # _name_index -- the opposite of the in-memory-only case above.
+        assert "helper_func" in reloaded._name_index
+        assert "bystander" in reloaded._name_index
+
+        pruned = reloaded.prune_orphan_symbol_nodes()
+
+        assert pruned == 1
+        assert "helper_func" not in reloaded._name_index
+        assert "bystander" in reloaded._name_index
+
+    def test_prune_orphan_symbol_nodes_no_match_returns_zero(self, graph_storage):
+        """No orphan candidates → returns 0."""
+        graph_storage.add_node(
+            "src/leaf.py:1-5:function:leaf", "leaf", "function", "src/leaf.py"
+        )
+        assert graph_storage.prune_orphan_symbol_nodes() == 0
+
+    def test_prune_orphan_symbol_nodes_bumps_version_when_removed(self, graph_storage):
+        graph_storage.add_node(
+            "src/main.py:1-5:function:main", "main", "function", "src/main.py"
+        )
+        graph_storage.add_call_edge(
+            "src/main.py:1-5:function:main", "helper_func", line_number=3
+        )
+        graph_storage.remove_file_nodes("src/main.py")
+        before = graph_storage.version
+
+        pruned = graph_storage.prune_orphan_symbol_nodes()
+
+        assert pruned == 1
+        assert graph_storage.version > before
+
+    def test_prune_orphan_symbol_nodes_does_not_bump_version_when_nothing_removed(
+        self, graph_storage
+    ):
+        before = graph_storage.version
+        pruned = graph_storage.prune_orphan_symbol_nodes()
+        assert pruned == 0
+        assert graph_storage.version == before
+
+    # ------------------------------------------------------------------
     # Regression: resolver_source must survive save/load round-trip
     # ------------------------------------------------------------------
 

@@ -13,11 +13,16 @@ deleted.
 """
 
 import os
+import pickle
 from pathlib import Path
 
+import faiss
+import numpy as np
 import pytest
 
+from search.faiss_index import FaissVectorIndex
 from search.indexer import CodeIndexManager, probe_metadata_deletable
+from search.mmap_vectors import MmapVectorStorage
 
 
 class TestClearIndexPreservesChunkCache:
@@ -104,7 +109,15 @@ class TestClearIndexFailsFastOnLockedMetadata:
         stats = storage_dir / "stats.json"
         stats.write_text("{}")
         metadata_db = storage_dir / "metadata.db"
-        metadata_db.write_bytes(b"fake sqlite db")
+        # A real, openable metadata.db (not garbage bytes): preflight_clear()
+        # now clears rows in place before probing deletability, so this must
+        # be a store that can actually be opened -- the failure this test
+        # exercises is the *rename* (os.replace) failing, e.g. a still-open
+        # Windows handle from another process, not an unopenable file.
+        manager.metadata_store.set("a.py:1-2:function:f", 0, {"relative_path": "a.py"})
+        manager.metadata_store.commit()
+        manager.metadata_store.close()
+        assert metadata_db.exists()
 
         def _raise_permission_error(*_args, **_kwargs):
             raise PermissionError("[WinError 32] file in use by another process")
@@ -133,6 +146,17 @@ class TestClearIndexFailsFastOnLockedMetadata:
         )
         assert stats.exists(), "stats.json must survive an aborted clear too"
 
+    # A metadata.db that exists but can't be opened as SQLite at all (as
+    # opposed to a valid-but-locked one) is deliberately not covered by a
+    # test here: MetadataStore.clear() -> _ensure_open() would raise
+    # sqlite3.DatabaseError from SqliteDict's background connection thread,
+    # and that thread's own unhandled-exception report surfaces via pytest's
+    # thread-exception plugin at the *next* test's setup, not this one --
+    # polluting an unrelated test rather than failing cleanly here. The
+    # no-half-clear guarantee still holds in that scenario (clear() raises
+    # before FAISS/reset/probe run), it's just not practical to assert
+    # without destabilizing the suite; see preflight_clear()'s docstring.
+
     def test_probe_metadata_deletable_is_idempotent(self, tmp_path):
         metadata_path = tmp_path / "metadata.db"
         metadata_path.write_bytes(b"fake sqlite db")
@@ -156,3 +180,140 @@ class TestClearIndexFailsFastOnLockedMetadata:
         result = probe_metadata_deletable(metadata_path)
 
         assert result == metadata_path
+
+
+class TestClearIndexDiscardsStaleDeletingDebris:
+    """Regression test for the force-full-reindex metadata-orphan bug.
+
+    A stale ``metadata.db.deleting`` sibling — stranded by a previously
+    aborted clear (e.g. mid-chain WinError 32) — used to shadow the live
+    ``metadata.db``: probe_metadata_deletable() short-circuited on it and
+    returned the stale path without renaming the live DB, so clear_index()
+    unlinked only the stale sibling while the real DB, still holding a
+    previous index generation's rows, was silently reopened untouched. This
+    is exactly what happened on voro-engine's force-full reindex: 148 rows
+    from a pre-rename generation (cito_* symbols in a project since renamed
+    to voro_*) survived a reported-successful "full" clear and failed the
+    post-index consistency check minutes later.
+    """
+
+    def test_stale_deleting_sibling_does_not_shadow_live_metadata(self, tmp_path):
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+
+        manager = CodeIndexManager(storage_dir=str(storage_dir))
+        manager.metadata_store.set("a.py:1-2:function:f", 0, {"relative_path": "a.py"})
+        manager.metadata_store.commit()
+        manager.metadata_store.close()
+
+        # Debris from an aborted clear, planted before this clear runs.
+        (storage_dir / "metadata.db.deleting").write_bytes(b"stale")
+
+        manager.clear_index()
+
+        assert len(manager.metadata_store) == 0, (
+            "a live metadata.db must always be renamed and cleared, even "
+            "when a stale .deleting sibling already exists"
+        )
+
+    def test_probe_metadata_deletable_discards_stale_sibling_and_renames_live_db(
+        self, tmp_path
+    ):
+        metadata_path = tmp_path / "metadata.db"
+        metadata_path.write_bytes(b"live sqlite db")
+        deleting_path = Path(str(metadata_path) + ".deleting")
+        deleting_path.write_bytes(b"stale debris from an aborted clear")
+
+        result = probe_metadata_deletable(metadata_path)
+
+        assert result == deleting_path
+        assert deleting_path.read_bytes() == b"live sqlite db", (
+            "the live DB's bytes must win — the stale sibling is discarded, "
+            "not the other way around"
+        )
+        assert not metadata_path.exists()
+
+        # Second call in the chain (e.g. CodeIndexManager.clear_index()'s
+        # own probe, after IndexSynchronizer.clear_index() already ran it)
+        # must still be a no-op — metadata.db is gone, .deleting stands.
+        second = probe_metadata_deletable(metadata_path)
+        assert second == deleting_path
+        assert second.read_bytes() == b"live sqlite db"
+
+
+class TestCloseReleasesFaissMmapHandle:
+    """Regression test for the WinError 32 force-reindex failure.
+
+    CodeIndexManager.close() previously closed only the metadata store —
+    its docstring said outright "Does not touch the FAISS index" — leaving
+    a mapped code_vectors.mmap live until GC got around to it. A stack-
+    referenced CodeIndexManager (searcher #1, built write-only via
+    get_searcher(..., load_existing=False)) could then block a second
+    instance's clear_index() from unlinking the shared mmap file
+    (PermissionError / WinError 32 on Windows). __exit__ had the same gap:
+    it inlined its own metadata-close instead of calling close(), so it
+    silently skipped the new mmap release too. See
+    tests/unit/search/test_faiss_vector_index.py's
+    test_close_releases_mmap_handle_so_second_instance_can_clear for the
+    FaissVectorIndex-level version of this test.
+    """
+
+    @staticmethod
+    def _plant_index_with_mmap(storage_dir: Path) -> None:
+        """Plant a real on-disk index + mmap file directly (bypassing
+        MMAP_THRESHOLD, which only gates FaissVectorIndex.save() — load()
+        maps whatever mmap file already exists, threshold or not)."""
+        rng = np.random.RandomState(42)
+        embeddings = rng.randn(3, 8).astype(np.float32)
+        chunk_ids = [f"chunk_{i}" for i in range(3)]
+
+        seed = FaissVectorIndex(storage_dir / "code.index")
+        seed.create(8, "flat")
+        seed.add(embeddings, chunk_ids)
+        # pyrefly: ignore [missing-attribute]
+        faiss.write_index(seed.index, str(seed.index_path))
+        with open(seed.chunk_id_path, "wb") as f:
+            pickle.dump(chunk_ids, f)
+        MmapVectorStorage(seed._mmap_path, dimension=8).save(embeddings, chunk_ids)
+
+    def test_close_releases_faiss_mmap_handle(self, tmp_path):
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+        self._plant_index_with_mmap(storage_dir)
+
+        manager = CodeIndexManager(storage_dir=str(storage_dir))
+        assert manager._faiss_index._mmap_storage is not None
+
+        manager.close()
+
+        assert manager._faiss_index._mmap_storage is None
+
+    def test_exit_delegates_to_close_and_releases_faiss_mmap_handle(self, tmp_path):
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+        self._plant_index_with_mmap(storage_dir)
+
+        with CodeIndexManager(storage_dir=str(storage_dir)) as manager:
+            assert manager._faiss_index._mmap_storage is not None
+
+        assert manager._faiss_index._mmap_storage is None
+
+    def test_close_lets_a_second_manager_clear_the_shared_mmap_file(self, tmp_path):
+        """End-to-end version at the CodeIndexManager seam: mirrors the
+        production sequence (searcher #1 loads, gets closed by
+        _cleanup_previous_resources, searcher #2 loads and clears) rather
+        than poking _mmap_storage directly."""
+        storage_dir = tmp_path / "index"
+        storage_dir.mkdir()
+        self._plant_index_with_mmap(storage_dir)
+
+        manager1 = CodeIndexManager(storage_dir=str(storage_dir))
+        manager2 = CodeIndexManager(storage_dir=str(storage_dir))
+        assert manager1._faiss_index._mmap_storage is not None
+        assert manager2._faiss_index._mmap_storage is not None
+
+        manager1.close()
+        manager2.clear_index()
+
+        assert manager2._faiss_index._mmap_storage is None
+        assert not manager2._faiss_index._mmap_path.exists()

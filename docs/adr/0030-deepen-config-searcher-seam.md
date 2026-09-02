@@ -137,7 +137,9 @@ MCP server path, so production behaviour is unchanged. Commit `603b65b`.
 - Six previously-untagged config fields are now correctly marked `construction_baked=True`,
   fixing the silent measurement defect in four benchmark entry points. `ADR-0022`'s liveness
   ratchet (`test_config_field_liveness.py`) pins the corrected 10-field
-  `_CONSTRUCTION_BAKED_FIELDS` set.
+  `_CONSTRUCTION_BAKED_FIELDS` set as of this round — the set has grown since (13 fields live as
+  of ADR-0042's audit); treat `SearchConfig._CONSTRUCTION_BAKED_FIELDS`
+  (`search/config.py`), not this number, as the current source.
 - **Re-pin: `canon_i1`'s intent-on arm becomes the published baseline** (63q mrr 0.8524, 133q mrr
   0.6879), superseding `canon_h1`'s arm figures (0.8418/0.6750). See
   `evaluation/CANON_20260805_CONFIG_SEAM_REPIN.md` for the full capture, delta tables, and the

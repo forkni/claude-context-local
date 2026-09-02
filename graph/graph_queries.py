@@ -5,6 +5,7 @@ Provides high-level query operations on code graphs.
 """
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -19,6 +20,9 @@ from .schema import (
     NODE_ATTR_NAME,
     NODE_ATTR_TYPE,
     edge_relation_type,
+)
+from .schema import (
+    is_phantom_node as _is_phantom_node,
 )
 
 
@@ -451,6 +455,53 @@ class GraphQueryEngine:
             "called_by_count": len(set(self.storage.graph.predecessors(chunk_id))),
         }
 
+    def score_call_evidence(
+        self,
+        chunk_id: str,
+        reference_ids: frozenset[str] | set[str],
+        lambda_weight: float,
+    ) -> float:
+        """
+        Query-conditioned call-evidence score for a candidate chunk.
+
+        Returns ``lambda_weight * log2(1 + shared)`` where ``shared`` is the
+        number of distinct *reference_ids* (typically the hop-1 result set)
+        that *chunk_id* shares a ``calls``-keyed edge with, in either
+        direction. Returns 0.0 when the chunk is not in the graph, the
+        reference set is empty, or no call link to any reference exists.
+
+        Deliberately counts distinct reference links, NOT global fan-in:
+        graph-hop candidates are call-adjacent to their own anchor by
+        construction, so a fan-in term would collapse into a static
+        popularity boost (the measured-and-rejected centrality_alpha
+        failure mode). Breadth of support from what the query already
+        surfaced is what keeps this signal query-conditioned.
+
+        Args:
+            chunk_id: Candidate chunk ID to score
+            reference_ids: Chunk IDs the score is conditioned on
+            lambda_weight: Multiplier per log2 unit of shared call links
+
+        Returns:
+            Call-evidence score >= 0.0
+        """
+        graph = self.storage.graph
+        if lambda_weight <= 0.0 or not reference_ids or chunk_id not in graph:
+            return 0.0
+
+        call_neighbors: set[str] = set()
+        for _, target, key in graph.out_edges(chunk_id, keys=True):
+            if key == "calls":
+                call_neighbors.add(target)
+        for source, _, key in graph.in_edges(chunk_id, keys=True):
+            if key == "calls":
+                call_neighbors.add(source)
+
+        shared = len(call_neighbors.intersection(reference_ids))
+        if shared == 0:
+            return 0.0
+        return lambda_weight * math.log2(1 + shared)
+
     def find_entry_points(self) -> list[str]:
         """
         Find potential entry point functions (not called by anyone).
@@ -481,25 +532,49 @@ class GraphQueryEngine:
 
         return leaf_functions
 
-    def _simple_digraph_view(self) -> "nx.DiGraph":
+    def _phantom_filtered_graph(self, exclude_phantoms: bool):
+        """Return the raw multigraph, or a node-filtered subgraph view with
+        phantom placeholder nodes removed when ``exclude_phantoms`` is True.
+
+        Read-only view (``Graph.subgraph``) -- never mutates
+        ``self.storage.graph``. See ``_is_phantom_node`` for the predicate.
+        """
+        graph = self.storage.graph
+        if not exclude_phantoms:
+            return graph
+        return graph.subgraph(
+            n for n, d in graph.nodes(data=True) if not _is_phantom_node(d)
+        )
+
+    def _simple_digraph_view(self, exclude_phantoms: bool = False) -> "nx.DiGraph":
         """Collapse the MultiDiGraph to a simple DiGraph (one edge per (u,v) pair).
 
         Used to preserve pre-multigraph parity for degree-based and pagerank
         centrality so this correctness batch introduces no score drift.
+
+        Args:
+            exclude_phantoms: When True, phantom placeholder nodes (see
+                ``_is_phantom_node``) are removed before collapsing.
 
         .. note::
             TODO: switch ``degree`` and ``pagerank`` to native MultiDiGraph counts
             (degree = total relationship sites, pagerank weighted by edge multiplicity)
             once dedicated value-shift tests are written.  Deferred from Batch 2A.
         """
-        return nx.DiGraph(self.storage.graph)
+        return nx.DiGraph(self._phantom_filtered_graph(exclude_phantoms))
 
-    def compute_centrality(self, method: str = "degree") -> dict[str, float]:
+    def compute_centrality(
+        self, method: str = "degree", exclude_phantoms: bool = False
+    ) -> dict[str, float]:
         """
         Compute centrality scores for functions.
 
         Args:
             method: Centrality method ("degree", "betweenness", "closeness", "pagerank")
+            exclude_phantoms: When True, phantom placeholder nodes (unresolved
+                call/symbol targets, e.g. "str"/"int"/"__init__") are excluded
+                from the graph before scoring, for all four methods. Default
+                False preserves the pre-existing byte-identical behavior.
 
         Returns:
             Dictionary mapping chunk_id → centrality score (float for all methods)
@@ -507,23 +582,29 @@ class GraphQueryEngine:
         if method == "degree":
             # Route through simple DiGraph view to preserve pre-multigraph parity.
             # TODO: embrace multigraph counts once dedicated value-shift tests exist.
-            simple = self._simple_digraph_view()
+            simple = self._simple_digraph_view(exclude_phantoms=exclude_phantoms)
             return {node: float(deg) for node, deg in simple.degree()}
         elif method == "betweenness":
             # betweenness_centrality is invariant to parallel edges (unweighted
             # shortest paths), so no projection needed.
             # pyrefly: ignore [missing-attribute]
-            return nx.betweenness_centrality(self.storage.graph)
+            return nx.betweenness_centrality(
+                self._phantom_filtered_graph(exclude_phantoms)
+            )
         elif method == "closeness":
             # closeness_centrality is invariant to parallel edges.
             # pyrefly: ignore [missing-attribute]
-            return nx.closeness_centrality(self.storage.graph)
+            return nx.closeness_centrality(
+                self._phantom_filtered_graph(exclude_phantoms)
+            )
         elif method == "pagerank":
             # Route through simple DiGraph view to preserve pre-multigraph parity.
             # TODO: embrace multigraph pagerank (parallel edges → weight sum) once
             # dedicated value-shift tests are written.
             # pyrefly: ignore [missing-attribute]
-            return nx.pagerank(self._simple_digraph_view())
+            return nx.pagerank(
+                self._simple_digraph_view(exclude_phantoms=exclude_phantoms)
+            )
         else:
             raise ValueError(
                 f"Unknown centrality method: {method}. "

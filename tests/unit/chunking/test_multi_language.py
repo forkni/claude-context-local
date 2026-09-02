@@ -551,3 +551,72 @@ class TestMultiLanguageChunker:
                 t in chunk_types
                 for t in ["function", "struct", "trait", "enum", "impl", "macro"]
             )
+
+    def test_chunk_file_skips_files_over_max_size(self, chunker, tmp_path, caplog):
+        """chunk_file() enforces ChunkingConfig.max_file_size_bytes (Workstream
+        B3) -- the chunking path previously had no size cap at all, unlike
+        repo_profiler.py's same-purpose (and, until this fix, independently
+        hand-maintained) MAX_FILE_SIZE_BYTES.
+        """
+        source = tmp_path / "big.py"
+        source.write_text("def f():\n    return 1\n", encoding="utf-8")
+
+        mock_config = MagicMock()
+        mock_config.chunking = ChunkingConfig(max_file_size_bytes=1)
+
+        with (
+            patch("search.config.get_search_config", return_value=mock_config),
+            caplog.at_level("INFO", logger="chunking.multi_language_chunker"),
+        ):
+            chunks = chunker.chunk_file(str(source))
+
+        assert chunks == []
+        assert any(
+            "exceeds" in r.message and "max_file_size_bytes" in r.message
+            for r in caplog.records
+        )
+
+    def test_chunk_file_under_max_size_is_chunked_normally(self, chunker, tmp_path):
+        """A file under the configured cap is unaffected -- the cap check must
+        not become a false-positive skip for ordinary-sized source."""
+        source = tmp_path / "small.py"
+        source.write_text("def f():\n    return 1\n", encoding="utf-8")
+
+        mock_config = MagicMock()
+        mock_config.chunking = ChunkingConfig(max_file_size_bytes=1024)
+
+        with patch("search.config.get_search_config", return_value=mock_config):
+            chunks = chunker.chunk_file(str(source))
+
+        assert len(chunks) > 0
+
+    def test_chunk_file_no_cap_when_config_unavailable(self, chunker, tmp_path):
+        """When get_chunking_config() returns None (search config not yet
+        initialised), chunk_file() must skip the cap entirely rather than
+        crash on `None.max_file_size_bytes`."""
+        source = tmp_path / "example.py"
+        source.write_text("def f():\n    return 1\n", encoding="utf-8")
+
+        with patch("search.config.get_chunking_config", return_value=None):
+            chunks = chunker.chunk_file(str(source))
+
+        assert len(chunks) > 0
+
+    def test_chunk_file_missing_file_skipped_not_raised(self, chunker, tmp_path):
+        """A supported-extension path that doesn't exist on disk raises
+        OSError from os.path.getsize() during the size-cap check -- must
+        degrade to an empty chunk list, not propagate."""
+        missing = tmp_path / "does_not_exist.py"
+
+        chunks = chunker.chunk_file(str(missing))
+
+        assert chunks == []
+
+    def test_max_file_size_bytes_reads_config(self, chunker):
+        """Unit-level check of the config-reading helper itself, isolated
+        from chunk_file()'s broader control flow."""
+        mock_config = MagicMock()
+        mock_config.chunking = ChunkingConfig(max_file_size_bytes=42)
+
+        with patch("search.config.get_search_config", return_value=mock_config):
+            assert chunker._max_file_size_bytes() == 42

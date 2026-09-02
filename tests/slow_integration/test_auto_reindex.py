@@ -10,6 +10,7 @@ import pytest
 
 from chunking.multi_language_chunker import MultiLanguageChunker
 from embeddings.embedder import CodeEmbedder
+from mcp_server.resource_manager import McpResourceRefresher
 from merkle.snapshot_manager import SnapshotManager
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
@@ -95,6 +96,7 @@ def test_auto_reindex(mock_sentence_transformer, tmp_path):
         embedder=embedder,
         chunker=chunker,
         snapshot_manager=snapshot_manager,
+        resource_refresher=McpResourceRefresher(),
     )
 
     # First index

@@ -14,6 +14,25 @@ Key principle: NO data is filtered or limited, only formatting is optimized.
 from typing import Any
 
 
+# Keys whose EMPTY value is itself meaningful negative evidence ("found nothing" must stay
+# machine-readable) rather than ordinary absence-of-data. The three drop sites below skip empty
+# fields to save tokens, but must never drop these — an omitted "results" key is indistinguishable
+# from a key that was never populated, forcing callers to treat a real "no results" answer the
+# same as a missing field. "similar_chunks" (find_similar_code's own results, both direct and via
+# search_code's similarity-intent redirect — search_orchestrator.py's "find_similar" PlanRedirect
+# returns handle_find_similar_code's payload unmodified) is the same contract under a different
+# key name, and is reachable-empty in production (search_handlers.py's handle_find_similar_code
+# returns "similar_chunks" unconditionally) — it was added to this set alongside
+# results/direct_callers/direct_callees for that reason.
+#
+# NOTE: this assumes each of these keys, when present, holds a list. The branch logic in
+# _to_compact_format/_to_toon_format below falls through to a plain assignment for empty lists;
+# an allowlisted key that held an empty *dict* would need the dict branches extended too.
+NEVER_DROP_EMPTY_KEYS = frozenset(
+    {"results", "direct_callers", "direct_callees", "similar_chunks"}
+)
+
+
 def format_response(
     data: dict[str, Any], output_format: str = "compact"
 ) -> dict[str, Any]:
@@ -50,8 +69,9 @@ def _to_compact_format(data: dict[str, Any]) -> dict[str, Any]:
     """
     result = {}
     for key, value in data.items():
-        # Skip empty lists/dicts/None/empty strings
-        if value in ([], {}, None, ""):
+        # Skip empty lists/dicts/None/empty strings, except contract-carrying keys whose empty
+        # value is itself the answer (see NEVER_DROP_EMPTY_KEYS).
+        if key not in NEVER_DROP_EMPTY_KEYS and value in ([], {}, None, ""):
             continue
 
         # Recursively compact nested structures
@@ -76,7 +96,29 @@ def _to_compact_format(data: dict[str, Any]) -> dict[str, Any]:
             # For primitives, keep as-is
             result[key] = value
 
+    _restore_never_drop_empty_keys_compact(data, result)
     return result
+
+
+def _restore_never_drop_empty_keys_compact(
+    data: dict[str, Any], result: dict[str, Any]
+) -> None:
+    """Post-pass safety net for NEVER_DROP_EMPTY_KEYS in compact format (D6).
+
+    The branches above only special-case a key's own top-level empty value
+    (an already-empty ``direct_callers: []`` falls through to the plain
+    ``else: result[key] = value`` assignment and survives). But if the key's
+    value is non-empty and *compaction of its contents* empties it out --
+    every item compacts to ``{}`` (the ``if compacted:`` / ``if
+    compacted_list:`` truthiness guards above) -- those "only add if not
+    empty after compacting" checks drop the key entirely, same as any other
+    now-empty field. Re-assert the contract once, here, instead of teaching
+    each of those sites to special-case NEVER_DROP_EMPTY_KEYS individually.
+    Mutates *result* in place.
+    """
+    for key in NEVER_DROP_EMPTY_KEYS:
+        if key in data and key not in result:
+            result[key] = []
 
 
 def _compact_dict(d: dict[str, Any]) -> dict[str, Any]:
@@ -99,8 +141,8 @@ def _compact_dict(d: dict[str, Any]) -> dict[str, Any]:
         if key in ("file", "lines") and chunk_id:
             continue
 
-        # Skip empty values
-        if value in ([], {}, None, ""):
+        # Skip empty values, except contract-carrying keys (see NEVER_DROP_EMPTY_KEYS).
+        if key not in NEVER_DROP_EMPTY_KEYS and value in ([], {}, None, ""):
             continue
 
         # Keep original key names (no abbreviation for agent understanding)
@@ -132,9 +174,17 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
     result = {}
     sparse_threshold = 0.25  # If <25% of rows have values, move to sparse
 
+    # NOTE (D6): the three ([], {}, None, "") checks below this point (skipping
+    # an all-empty field across all rows, computing per-field fill_ratio, and
+    # collecting non-empty sparse entries) are deliberately left unguarded by
+    # NEVER_DROP_EMPTY_KEYS. They operate on item-level *fields* inside a
+    # NEVER_DROP_EMPTY_KEYS key's rows, not on the top-level response key
+    # itself -- the key-level contract is enforced once, by the
+    # _restore_never_drop_empty_keys_toon post-pass at the end of this
+    # function, regardless of how the per-field checks below shape the table.
     for key, value in data.items():
-        # Skip empty values
-        if value in ([], {}, None, ""):
+        # Skip empty values, except contract-carrying keys (see NEVER_DROP_EMPTY_KEYS).
+        if key not in NEVER_DROP_EMPTY_KEYS and value in ([], {}, None, ""):
             continue
 
         if isinstance(value, list) and value and isinstance(value[0], dict):
@@ -214,4 +264,43 @@ def _to_toon_format(data: dict[str, Any]) -> dict[str, Any]:
     # Format is self-explanatory and documented in MCP_TOOLS_REFERENCE.md
     # Removed _format_note to save 15-30 tokens per response
 
+    _restore_never_drop_empty_keys_toon(data, result)
     return result
+
+
+def _toon_key_present(key: str, result: dict[str, Any]) -> bool:
+    """True if *key* survived toon-formatting.
+
+    A NEVER_DROP_EMPTY_KEYS key that tabulated successfully (dense_fields
+    non-empty) never appears under its own bare name in a toon result -- only
+    under the composite ``"{key}[N]{field1,field2,...}"`` header (and,
+    independently, sparse-only fields land under ``"{key}_sparse"`` with no
+    dense header at all). A naive ``key in result`` check would therefore
+    false-positive a restore for every key that tabulated correctly.
+    """
+    if key in result:
+        return True
+    header_prefix = f"{key}["
+    sparse_key = f"{key}_sparse"
+    return any(
+        existing == sparse_key or existing.startswith(header_prefix)
+        for existing in result
+    )
+
+
+def _restore_never_drop_empty_keys_toon(
+    data: dict[str, Any], result: dict[str, Any]
+) -> None:
+    """Post-pass safety net for NEVER_DROP_EMPTY_KEYS in toon format (D6).
+
+    Mirrors _restore_never_drop_empty_keys_compact's rationale: if a key's
+    value is non-empty but every field is empty across all rows, the ``if
+    fields:`` guard above drops the key (no dense header, no sparse table --
+    nothing is ever written to `result` for it) exactly like any other
+    now-empty field. Re-assert the contract once, here, instead of teaching
+    that guard to special-case NEVER_DROP_EMPTY_KEYS. Mutates *result* in
+    place.
+    """
+    for key in NEVER_DROP_EMPTY_KEYS:
+        if key in data and not _toon_key_present(key, result):
+            result[key] = []

@@ -13,14 +13,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from mcp_server.config_schema import arg
+from mcp_server.enricher_specs import ENRICHER_SPECS
 from mcp_server.search_factory import get_searcher
 from mcp_server.services import get_config, get_state
 from mcp_server.tools import responses, result_view
 from mcp_server.tools.searcher_view import SearcherView
 from search.config import (
+    OutputConfig,
     SearchConfig,
     SearchMode,
     get_config_manager,
@@ -51,7 +55,7 @@ class SearchPlan:
     k: int
     intent_decision: IntentDecision | None
     search_mode: str
-    ego_graph_enabled: bool
+    ego_graph_enabled: bool | None
     ego_graph_k_hops: int
     ego_graph_max_neighbors: int
     include_parent: bool
@@ -63,6 +67,12 @@ class SearchPlan:
     auto_reindex: bool
     max_age_minutes: float
     max_context_tokens: int
+    # One gate per request-scoped enricher, keyed by EnricherSpec.key — the
+    # default factory enumerates every spec row so a bare SearchPlan still
+    # carries a complete gate set (each row's declared default).
+    display_params: Mapping[str, bool] = field(
+        default_factory=lambda: {s.key: bool(s.default) for s in ENRICHER_SPECS}
+    )
     redirect: PlanRedirect | None = None
 
 
@@ -128,11 +138,24 @@ class SearchPlanner:
         k = int(arguments.get("k", search_config.search_mode.default_k))
         k = min(k, search_config.search_mode.max_k)
 
-        # Ego-graph defaults (may be overridden by CONTEXTUAL intent below)
-        ego_graph_enabled = bool(arguments.get("ego_graph_enabled", False))
-        ego_graph_k_hops = int(arguments.get("ego_graph_k_hops", 2))
+        # Ego-graph defaults (may be overridden by CONTEXTUAL intent below).
+        # Tri-state: None means "omitted" and defers to config default; True/False are
+        # explicit per-request overrides. Do not collapse omitted into False here — that
+        # would make an explicit ego_graph_enabled=False indistinguishable from the
+        # default, which is exactly the bug build_effective_config's gate depends on
+        # this field to avoid.
+        _ego_graph_enabled_arg = arguments.get("ego_graph_enabled")
+        ego_graph_enabled = (
+            None if _ego_graph_enabled_arg is None else bool(_ego_graph_enabled_arg)
+        )
+        ego_graph_k_hops = int(
+            arguments.get("ego_graph_k_hops", search_config.ego_graph.k_hops)
+        )
         ego_graph_max_neighbors = int(
-            arguments.get("ego_graph_max_neighbors_per_hop", 10)
+            arguments.get(
+                "ego_graph_max_neighbors_per_hop",
+                search_config.ego_graph.max_neighbors_per_hop,
+            )
         )
 
         # Intent classification
@@ -198,7 +221,7 @@ class SearchPlanner:
                     k = int(suggested_k)
 
         # Search mode: apply intent suggestion when user left 'auto'
-        search_mode = str(arguments.get("search_mode", SearchMode.AUTO))
+        search_mode = str(arg(arguments, "search_code.search_mode"))
         if intent_decision and search_mode == SearchMode.AUTO:
             suggested_mode = intent_decision.suggested_params.get("search_mode")
             if suggested_mode:
@@ -226,12 +249,16 @@ class SearchPlanner:
             ego_graph_enabled=ego_graph_enabled,
             ego_graph_k_hops=ego_graph_k_hops,
             ego_graph_max_neighbors=ego_graph_max_neighbors,
-            include_parent=bool(arguments.get("include_parent", False)),
+            include_parent=bool(arg(arguments, "search_code.include_parent")),
+            display_params={
+                s.key: bool(arg(arguments, f"search_code.{s.param}"))
+                for s in ENRICHER_SPECS
+            },
             file_pattern=arguments.get("file_pattern"),
             include_dirs=arguments.get("include_dirs"),
             exclude_dirs=arguments.get("exclude_dirs"),
             chunk_type=arguments.get("chunk_type"),
-            include_context=bool(arguments.get("include_context", True)),
+            include_context=bool(arg(arguments, "search_code.include_context")),
             auto_reindex=bool(
                 arguments.get("auto_reindex", config.performance.enable_auto_reindex)
             ),
@@ -397,30 +424,21 @@ class SearchOrchestrator:
         )
 
         # ===== Block D: Search execution =====
-        # Genuine polymorphic dispatch (HybridSearcher.search vs
-        # IntelligentSearcher.search take different kwargs) — not folded into
-        # the is_hybrid block above; see Phase 2 scope note.
-        if _view.is_hybrid:
-            results = await asyncio.to_thread(
-                searcher.search,
-                query=plan.query,
-                k=plan.k,
-                search_mode=actual_search_mode,
-                min_bm25_score=effective_config.search_mode.min_bm25_score,
-                use_parallel=get_config().performance.use_parallel_search,
-                filters=filters if filters else None,
-                config=effective_config,
-            )
-        else:
-            context_depth = 1 if plan.include_context else 0
-            results = await asyncio.to_thread(
-                searcher.search,
-                query=plan.query,
-                k=plan.k,
-                search_mode=actual_search_mode,
-                context_depth=context_depth,
-                filters=filters if filters else None,
-            )
+        # HybridSearcher.execute ignores context_depth; IntelligentSearcher.execute
+        # ignores min_bm25_score/use_parallel/config (see ADR-0048) — one call
+        # site works for both adapters via BaseSearcher.search -> execute.
+        context_depth = 1 if plan.include_context else 0
+        results = await asyncio.to_thread(
+            searcher.search,
+            query=plan.query,
+            k=plan.k,
+            search_mode=actual_search_mode,
+            min_bm25_score=effective_config.search_mode.min_bm25_score,
+            use_parallel=get_config().performance.use_parallel_search,
+            filters=filters if filters else None,
+            config=effective_config,
+            context_depth=context_depth,
+        )
 
         index_manager = SearcherView(searcher).index_manager
         return ExecutionOutcome(
@@ -525,17 +543,40 @@ class SearchOrchestrator:
 
         return response
 
+    @staticmethod
+    def _enrichment_gates(
+        plan: SearchPlan, output_cfg: OutputConfig
+    ) -> dict[str, bool]:
+        """Resolve each registered enricher's gate from its own scope.
+
+        ``graph``'s gate is config-scoped (``OutputConfig.include_result_graph``);
+        the request-scoped gates arrive pre-resolved as
+        ``SearchPlan.display_params`` (one entry per ``EnricherSpec`` row, set
+        per call from the ``search_code`` arguments). Keeping the literal
+        ``include_result_graph`` name in this file (rather than passed through
+        or read from a shared helper) matters: ADR-0022's field-liveness
+        ratchet asserts that name appears in the declared reader file
+        (``search/config.py``'s ``spec(reader=...)`` for that field), which is
+        this module.
+        """
+        return {
+            "graph": output_cfg.include_result_graph,
+            **plan.display_params,
+        }
+
     def _assemble(self, plan: SearchPlan, outcome: ExecutionOutcome) -> dict:
         """Blocks E–I: format, enrich, centrality, subgraph, reorder, build response."""
         index_manager = SearcherView(outcome.searcher).index_manager
         output_cfg = outcome.effective_config.output
 
-        # Block E: format + enrich (per-result graph gated by include_result_graph)
+        # Block E: format + enrich (gate map resolved by _enrichment_gates,
+        # one row per RESULT_ENRICHERS entry — see result_view.enrich_results)
         formatted_results = result_view._format_search_results(outcome.results)
-        if output_cfg.include_result_graph:
-            formatted_results = result_view._enrich_results_with_graph_data(
-                formatted_results, index_manager
-            )
+        formatted_results = result_view.enrich_results(
+            formatted_results,
+            index_manager,
+            self._enrichment_gates(plan, output_cfg),
+        )
 
         # Blocks F–G: centrality scoring, cap, SSCG subgraph extraction
         # Block G (subgraph extraction) is itself skipped when include_subgraph

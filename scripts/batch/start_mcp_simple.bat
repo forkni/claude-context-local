@@ -8,7 +8,7 @@ pushd "%~dp0..\.." || (echo ERROR: Failed to change directory & exit /b 1)
 
 REM Check prerequisites silently
 if not exist ".venv\Scripts\python.exe" (
-    echo ERROR: Virtual environment not found. Run install-windows.bat first.
+    echo ERROR: Virtual environment not found. Run install-windows.cmd first.
     pause
     exit /b 1
 )

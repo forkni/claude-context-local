@@ -5,11 +5,18 @@ Tests verify that get_neighbors() supports all 21 relationship types beyond the
 original "calls"/"called_by" limitation.
 """
 
+import heapq
 import tempfile
+from unittest.mock import patch
 
 import pytest
 
-from graph.graph_storage import CodeGraphStorage
+from graph.graph_storage import (
+    CodeGraphStorage,
+    edge_confidence,
+    is_ambiguous_call_edge,
+)
+from graph.traversal_policy import TraversalPolicy
 
 
 @pytest.fixture
@@ -452,3 +459,511 @@ def test_exclude_import_categories_with_weighted_bfs(graph_storage):
         edge_weights=edge_weights,
     )
     assert filtered_imports == {"local.py:1-10:module:local_module"}
+
+
+class TestGetNeighborsRanked:
+    """Tests for fix #3: get_neighbors_ranked(...) -> list[str].
+
+    Shares _traverse_neighbors with get_neighbors, so the two can never
+    disagree on *which* nodes are reachable -- only get_neighbors_ranked
+    additionally guarantees a deterministic *order*, which callers that
+    truncate (e.g. multi_hop_searcher._graph_expand, ego_graph_retriever)
+    need instead of Python's set-iteration order.
+    """
+
+    A = "test.py:1-10:function:A"
+    B = "test.py:20-30:function:B"
+    C = "test.py:40-50:function:C"
+    D = "test.py:60-70:function:D"
+
+    def test_ranked_matches_get_neighbors_as_set_unweighted(
+        self, multi_relationship_graph
+    ):
+        """set(get_neighbors_ranked(...)) == get_neighbors(...) for identical
+        args, unweighted BFS."""
+        ranked = multi_relationship_graph.get_neighbors_ranked(
+            "test.py:1-10:function:A",
+            TraversalPolicy(relation_types=["calls", "decorated_by"], max_depth=2),
+        )
+        unranked = multi_relationship_graph.get_neighbors(
+            "test.py:1-10:function:A",
+            relation_types=["calls", "decorated_by"],
+            max_depth=2,
+        )
+        assert set(ranked) == unranked
+        assert len(ranked) == len(set(ranked))  # each neighbor appears once
+
+    def test_ranked_matches_get_neighbors_as_set_weighted(
+        self, multi_relationship_graph
+    ):
+        """Same equivalence holds for the weighted (priority-queue) path."""
+        edge_weights = {"calls": 1.0, "inherits": 0.6, "imports": 0.3}
+        ranked = multi_relationship_graph.get_neighbors_ranked(
+            "test.py:1-10:function:A",
+            TraversalPolicy(
+                relation_types=["calls", "inherits", "imports"],
+                max_depth=3,
+                edge_weights=edge_weights,
+            ),
+        )
+        unranked = multi_relationship_graph.get_neighbors(
+            "test.py:1-10:function:A",
+            relation_types=["calls", "inherits", "imports"],
+            max_depth=3,
+            edge_weights=edge_weights,
+        )
+        assert set(ranked) == unranked
+
+    def test_ranked_unweighted_bfs_is_level_order(self, graph_storage):
+        """Direct (depth-1) neighbors are yielded in edge-insertion order;
+        depth-2 neighbors -- reached only after every depth-1 neighbor of the
+        root has been discovered -- always come after them (level order)."""
+        for chunk_id, name in [
+            (self.A, "A"),
+            (self.B, "B"),
+            (self.C, "C"),
+            (self.D, "D"),
+        ]:
+            graph_storage.add_node(
+                chunk_id=chunk_id, name=name, chunk_type="function", file_path="test.py"
+            )
+        # A -> C, then A -> B (insertion order deliberately not sorted), B -> D.
+        graph_storage.graph.add_edge(self.A, self.C, relationship_type="calls")
+        graph_storage.graph.add_edge(self.A, self.B, relationship_type="calls")
+        graph_storage.graph.add_edge(self.B, self.D, relationship_type="calls")
+
+        ranked = graph_storage.get_neighbors_ranked(
+            self.A, TraversalPolicy(relation_types=["calls"], max_depth=2)
+        )
+
+        assert ranked == [self.C, self.B, self.D]
+
+    def test_ranked_weighted_priority_expands_higher_weight_child_first(
+        self, graph_storage
+    ):
+        """Direct neighbors of the root are discovered together (edge-insertion
+        order, independent of weight) but the *next* generation is reached in
+        weight-priority order: the higher-weight child's own neighbor is
+        yielded before the lower-weight child's, even though the lower-weight
+        child was discovered (and would sort) first in insertion order."""
+        for chunk_id, name in [
+            (self.A, "A"),
+            (self.B, "X"),
+            (self.C, "Y"),
+            ("test.py:60-70:function:Z", "Z"),
+            ("test.py:80-90:function:W", "W"),
+        ]:
+            graph_storage.add_node(
+                chunk_id=chunk_id, name=name, chunk_type="function", file_path="test.py"
+            )
+        z = "test.py:60-70:function:Z"
+        w = "test.py:80-90:function:W"
+
+        # X (via low-weight "imports") is inserted before Y (via high-weight
+        # "calls") so a naive "insertion order all the way down" traversal
+        # would put X's subtree first -- the weighted BFS must not do that.
+        graph_storage.graph.add_edge(self.A, self.B, relationship_type="imports")
+        graph_storage.graph.add_edge(self.A, self.C, relationship_type="calls")
+        graph_storage.graph.add_edge(self.B, z, relationship_type="imports")
+        graph_storage.graph.add_edge(self.C, w, relationship_type="calls")
+
+        ranked = graph_storage.get_neighbors_ranked(
+            self.A,
+            TraversalPolicy(
+                relation_types=["calls", "imports"],
+                max_depth=2,
+                edge_weights={"calls": 1.0, "imports": 0.3},
+            ),
+        )
+
+        # Depth-1 neighbors keep edge-insertion order (X before Y) ...
+        assert ranked[:2] == [self.B, self.C]
+        # ... but Y's child (W, weight 1.0) is expanded before X's child
+        # (Z, weight 0.3), so W precedes Z despite X being discovered first.
+        assert ranked[2:] == [w, z]
+
+    def test_ranked_deterministic_across_repeated_calls(self, multi_relationship_graph):
+        """Two calls with identical arguments return the identical list --
+        this is the property that regresses under truncation when a caller
+        instead does list(get_neighbors(...))[:n]."""
+        policy = TraversalPolicy(relation_types=["calls", "decorated_by"])
+        first = multi_relationship_graph.get_neighbors_ranked(
+            "test.py:1-10:function:A", policy
+        )
+        second = multi_relationship_graph.get_neighbors_ranked(
+            "test.py:1-10:function:A", policy
+        )
+        assert first == second
+
+    def test_ranked_respects_min_confidence_floor(self, graph_storage):
+        """The floor is applied inside the shared generator, so
+        get_neighbors_ranked drops exactly the same edges as get_neighbors."""
+        for chunk_id, name in [(self.A, "A"), (self.B, "B"), (self.C, "C")]:
+            graph_storage.add_node(
+                chunk_id=chunk_id, name=name, chunk_type="function", file_path="test.py"
+            )
+        graph_storage.graph.add_edge(
+            self.A, self.B, relationship_type="calls", resolver_confidence=0.5
+        )
+        graph_storage.graph.add_edge(
+            self.A, self.C, relationship_type="calls", resolver_confidence=0.98
+        )
+
+        ranked = graph_storage.get_neighbors_ranked(
+            self.A, TraversalPolicy(relation_types=["calls"], min_confidence=0.6)
+        )
+
+        assert ranked == [self.C]
+
+    def test_ranked_nonexistent_node_returns_empty_list(self, graph_storage):
+        """Mirrors get_neighbors' empty-set return for an unknown chunk_id."""
+        assert graph_storage.get_neighbors_ranked("does.py:1-1:function:missing") == []
+
+
+class TestEdgeConfidenceFunction:
+    """Direct tests for the module-level ``edge_confidence()`` resolver
+    (graph/graph_storage.py), independent of any layer's ``None`` policy.
+
+    Resolution order: float ``resolver_confidence`` -> legacy string
+    ``confidence`` tag -> 0.5 for an untagged ``calls`` edge -> ``None``.
+    """
+
+    def test_float_resolver_confidence_wins(self):
+        """A resolver-written float always wins, even over a string tag."""
+        assert edge_confidence({"resolver_confidence": 0.75}) == 0.75
+        assert (
+            edge_confidence({"resolver_confidence": 0.75, "confidence": "ambiguous"})
+            == 0.75
+        )
+
+    def test_string_tag_mapped_when_no_float(self):
+        """Legacy string tags map via AST_CONFIDENCE_BY_TAG."""
+        assert edge_confidence({"confidence": "ambiguous"}) == 0.5
+        assert edge_confidence({"confidence": "recovered"}) == 0.5
+        assert edge_confidence({"confidence": "exact"}) == 0.7
+
+    def test_untagged_calls_edge_defaults_to_half(self):
+        """No float, no tag, but edge_type == 'calls' -> 0.5."""
+        assert edge_confidence({}, edge_type="calls") == 0.5
+
+    def test_non_call_untagged_edge_is_none(self):
+        """No float, no tag, non-`calls` edge_type -> None (truly unknown;
+        each calling layer decides its own default for this case)."""
+        assert edge_confidence({}, edge_type="imports") is None
+        assert edge_confidence({}) is None  # edge_type omitted
+
+    def test_non_numeric_resolver_confidence_is_ignored(self):
+        """A non-numeric resolver_confidence value (e.g. a stray string) is
+        not coerced -- resolution falls through to the next tier."""
+        assert edge_confidence({"resolver_confidence": "0.5"}, edge_type="calls") == 0.5
+        assert edge_confidence({"resolver_confidence": "0.5"}) is None
+
+
+class TestIsAmbiguousCallEdge:
+    """Direct tests for ``is_ambiguous_call_edge()``: only an AST ``calls``
+    edge carrying the ``"ambiguous"`` string tag and no float
+    ``resolver_confidence`` qualifies."""
+
+    def test_tagged_ambiguous_call_edge(self):
+        assert is_ambiguous_call_edge(
+            {"relationship_type": "calls", "confidence": "ambiguous"}
+        )
+
+    def test_float_resolver_confidence_supersedes_tag(self):
+        """A resolver that validated the edge wrote a float; the stale tag
+        no longer counts, matching edge_confidence's precedence."""
+        assert not is_ambiguous_call_edge(
+            {
+                "relationship_type": "calls",
+                "confidence": "ambiguous",
+                "resolver_confidence": 0.9,
+            }
+        )
+
+    def test_exact_and_untagged_and_non_call_are_not_ambiguous(self):
+        assert not is_ambiguous_call_edge(
+            {"relationship_type": "calls", "confidence": "exact"}
+        )
+        assert not is_ambiguous_call_edge({"relationship_type": "calls"})
+        assert not is_ambiguous_call_edge(
+            {"relationship_type": "imports", "confidence": "ambiguous"}
+        )
+
+
+class TestConfidenceTraversal:
+    """Tests for A2: confidence-weighted traversal in get_neighbors.
+
+    ``min_confidence`` drops edges whose resolved confidence (see
+    :func:`graph.graph_storage.edge_confidence`) falls below the floor (both
+    BFS modes). Resolution order: float ``resolver_confidence`` first;
+    otherwise a legacy ``confidence`` string tag ("exact"/"ambiguous"/
+    "recovered") maps to 0.7/0.5/0.5; otherwise an untagged ``calls`` edge
+    defaults to 0.5; only a non-call edge with neither a float nor a tag
+    counts as 1.0 and always survives. ``confidence_weighting`` multiplies
+    the weighted-BFS type-weight by the edge's resolved confidence.
+    """
+
+    A = "test.py:1-10:function:A"
+    B = "test.py:20-30:function:B"
+    C = "test.py:40-50:function:C"
+    D = "test.py:60-70:function:D"
+
+    @pytest.fixture
+    def confidence_graph(self, graph_storage):
+        """A calls B (ambiguous 0.5), C (LSP 0.98), D (legacy string tag only)."""
+        for chunk_id, name in [
+            (self.A, "A"),
+            (self.B, "B"),
+            (self.C, "C"),
+            (self.D, "D"),
+        ]:
+            graph_storage.add_node(
+                chunk_id=chunk_id,
+                name=name,
+                chunk_type="function",
+                file_path="test.py",
+            )
+        graph_storage.graph.add_edge(
+            self.A, self.B, relationship_type="calls", resolver_confidence=0.5
+        )
+        graph_storage.graph.add_edge(
+            self.A, self.C, relationship_type="calls", resolver_confidence=0.98
+        )
+        graph_storage.graph.add_edge(
+            self.A, self.D, relationship_type="calls", confidence="ambiguous"
+        )
+        return graph_storage
+
+    def test_default_floor_is_byte_identical(self, confidence_graph):
+        """min_confidence=0.0 (default) returns every edge, however low its
+        resolver_confidence."""
+        neighbors = confidence_graph.get_neighbors(self.A, relation_types=["calls"])
+        assert neighbors == {self.B, self.C, self.D}
+
+    def test_floor_drops_low_confidence_unweighted(self, confidence_graph):
+        """Unweighted BFS: both the 0.5 float edge and the "ambiguous"-tagged
+        edge (now also resolved to 0.5, not 1.0) are dropped at floor 0.6;
+        only the 0.98 LSP edge survives."""
+        neighbors = confidence_graph.get_neighbors(
+            self.A, relation_types=["calls"], min_confidence=0.6
+        )
+        assert neighbors == {self.C}
+
+    def test_floor_drops_low_confidence_weighted(self, confidence_graph):
+        """Weighted BFS applies the same floor."""
+        neighbors = confidence_graph.get_neighbors(
+            self.A,
+            relation_types=["calls"],
+            min_confidence=0.6,
+            edge_weights={"calls": 1.0},
+        )
+        assert neighbors == {self.C}
+
+    def test_legacy_string_tag_now_parsed(self, confidence_graph):
+        """An edge carrying only the "ambiguous" string tag resolves to
+        exactly 0.5 (via AST_CONFIDENCE_BY_TAG) — it survives a floor of 0.5
+        but is dropped the instant the floor exceeds it, same as a real 0.5
+        float edge. This reverses the old "tags are never parsed" behavior."""
+        assert self.D in confidence_graph.get_neighbors(
+            self.A, relation_types=["calls"], min_confidence=0.5
+        )
+        assert self.D not in confidence_graph.get_neighbors(
+            self.A, relation_types=["calls"], min_confidence=0.51
+        )
+
+    def test_floor_drops_edges_not_nodes(self, confidence_graph):
+        """A neighbor whose low-confidence edge is dropped is still returned
+        when another surviving edge reaches it."""
+        # Forward edge A->B (0.5) is floored out on its own...
+        assert self.B not in confidence_graph.get_neighbors(
+            self.A, relation_types=["calls", "called_by"], min_confidence=0.6
+        )
+        # ...but a reverse call edge B->A with an explicit high-confidence
+        # float (0.9) revives B. (An untagged reverse edge would no longer
+        # demonstrate this: untagged `calls` edges now default to 0.5 too,
+        # same as the forward edge, so the float is made explicit here to
+        # keep the "edges not nodes" behavior decoupled from that default.)
+        confidence_graph.graph.add_edge(
+            self.B, self.A, relationship_type="calls", resolver_confidence=0.9
+        )
+        neighbors = confidence_graph.get_neighbors(
+            self.A, relation_types=["calls", "called_by"], min_confidence=0.6
+        )
+        assert self.B in neighbors
+
+    E = "test.py:80-90:function:E"
+    F = "test.py:100-110:function:F"
+
+    @pytest.fixture
+    def ambiguous_graph(self, confidence_graph):
+        """confidence_graph plus A->E (tag:exact) and A->F (untagged calls)."""
+        for chunk_id, name in [(self.E, "E"), (self.F, "F")]:
+            confidence_graph.add_node(
+                chunk_id=chunk_id,
+                name=name,
+                chunk_type="function",
+                file_path="test.py",
+            )
+        confidence_graph.graph.add_edge(
+            self.A, self.E, relationship_type="calls", confidence="exact"
+        )
+        confidence_graph.graph.add_edge(self.A, self.F, relationship_type="calls")
+        return confidence_graph
+
+    def test_drop_ambiguous_default_off_is_byte_identical(self, ambiguous_graph):
+        """drop_ambiguous defaults to False: every edge is returned."""
+        neighbors = ambiguous_graph.get_neighbors(self.A, relation_types=["calls"])
+        assert neighbors == {self.B, self.C, self.D, self.E, self.F}
+        ranked = ambiguous_graph.get_neighbors_ranked(
+            self.A, TraversalPolicy(relation_types=["calls"])
+        )
+        assert set(ranked) == neighbors
+
+    def test_drop_ambiguous_drops_only_tagged_edge_unweighted(self, ambiguous_graph):
+        """Only the ``confidence="ambiguous"`` edge (D) is dropped. The float
+        0.5 edge (B), the tag:exact edge (E) and the untagged calls edge (F)
+        all resolve to <= 0.7 too, but they are not ambiguous and survive —
+        unlike a min_confidence floor of 0.6, which would also drop B and F.
+        """
+        neighbors = ambiguous_graph.get_neighbors(
+            self.A, relation_types=["calls"], drop_ambiguous=True
+        )
+        assert neighbors == {self.B, self.C, self.E, self.F}
+        floored = ambiguous_graph.get_neighbors(
+            self.A, relation_types=["calls"], min_confidence=0.6
+        )
+        assert floored == {self.C, self.E}
+
+    def test_drop_ambiguous_drops_only_tagged_edge_weighted(self, ambiguous_graph):
+        """Weighted BFS applies the same predicate."""
+        neighbors = ambiguous_graph.get_neighbors(
+            self.A,
+            relation_types=["calls"],
+            edge_weights={"calls": 1.0},
+            drop_ambiguous=True,
+        )
+        assert neighbors == {self.B, self.C, self.E, self.F}
+
+    def test_drop_ambiguous_ranked_matches_unranked(self, ambiguous_graph):
+        ranked = ambiguous_graph.get_neighbors_ranked(
+            self.A, TraversalPolicy(relation_types=["calls"], drop_ambiguous=True)
+        )
+        assert set(ranked) == {self.B, self.C, self.E, self.F}
+        assert self.D not in ranked
+
+    def test_drop_ambiguous_float_supersedes_tag(self, ambiguous_graph):
+        """An edge whose stale tag says "ambiguous" but which a later resolver
+        validated with a float is kept."""
+        ambiguous_graph.graph.remove_edge(self.A, self.D)
+        ambiguous_graph.graph.add_edge(
+            self.A,
+            self.D,
+            relationship_type="calls",
+            confidence="ambiguous",
+            resolver_confidence=0.9,
+        )
+        neighbors = ambiguous_graph.get_neighbors(
+            self.A, relation_types=["calls"], drop_ambiguous=True
+        )
+        assert self.D in neighbors
+
+    def test_drop_ambiguous_drops_edges_not_nodes(self, ambiguous_graph):
+        """D is unreachable through its ambiguous edge but comes back once a
+        surviving reverse call edge D->A exists."""
+        assert self.D not in ambiguous_graph.get_neighbors(
+            self.A, relation_types=["calls", "called_by"], drop_ambiguous=True
+        )
+        ambiguous_graph.graph.add_edge(
+            self.D, self.A, relationship_type="calls", resolver_confidence=0.9
+        )
+        assert self.D in ambiguous_graph.get_neighbors(
+            self.A, relation_types=["calls", "called_by"], drop_ambiguous=True
+        )
+
+    def test_drop_ambiguous_at_depth_two(self, ambiguous_graph):
+        """The predicate applies on every hop: D's onward neighbor G is not
+        reached through the dropped A->D edge."""
+        g = "test.py:120-130:function:G"
+        ambiguous_graph.add_node(
+            chunk_id=g, name="G", chunk_type="function", file_path="test.py"
+        )
+        ambiguous_graph.graph.add_edge(
+            self.D, g, relationship_type="calls", resolver_confidence=0.98
+        )
+        base = ambiguous_graph.get_neighbors(
+            self.A, relation_types=["calls"], max_depth=2
+        )
+        assert g in base
+        dropped = ambiguous_graph.get_neighbors(
+            self.A, relation_types=["calls"], max_depth=2, drop_ambiguous=True
+        )
+        assert g not in dropped
+
+    def _captured_push_weights(self, storage, confidence_weighting):
+        """Run a weighted BFS and capture the priority-queue weight per neighbor."""
+        pushes = []
+        # Bind before patching: graph_storage shares this module object, so
+        # calling heapq.heappush inside the spy would recurse into the patch.
+        original_push = heapq.heappush
+
+        def spy(pq, item):
+            pushes.append(item)
+            original_push(pq, item)
+
+        with patch("graph.graph_storage.heapq.heappush", side_effect=spy):
+            storage.get_neighbors(
+                self.A,
+                relation_types=["calls"],
+                edge_weights={"calls": 1.0},
+                confidence_weighting=confidence_weighting,
+            )
+        return {item[2]: -item[0] for item in pushes}
+
+    def test_confidence_weighting_multiplies_push_weight(self, confidence_graph):
+        """Enabled: expansion priority = type-weight * resolved confidence;
+        the "ambiguous"-tagged edge (D) now resolves to 0.5 too, same as the
+        explicit 0.5 float edge (B) — it no longer keeps the bare type-weight."""
+        weights = self._captured_push_weights(
+            confidence_graph, confidence_weighting=True
+        )
+        assert weights[self.B] == pytest.approx(0.5)  # 1.0 * 0.5 float
+        assert weights[self.C] == pytest.approx(0.98)  # 1.0 * 0.98 LSP
+        assert weights[self.D] == pytest.approx(0.5)  # 1.0 * 0.5 ambiguous tag
+
+    def test_confidence_weighting_disabled_keeps_type_weight(self, confidence_graph):
+        """Disabled (default): every calls edge pushes at the bare type-weight."""
+        weights = self._captured_push_weights(
+            confidence_graph, confidence_weighting=False
+        )
+        assert weights == {self.B: 1.0, self.C: 1.0, self.D: 1.0}
+
+    def test_edge_confidence_reads_only_float(self, graph_storage):
+        """_edge_confidence: floats/ints pass through as-is; a non-numeric
+        resolver_confidence is ignored (falls through to the next tier)."""
+        assert graph_storage._edge_confidence({"resolver_confidence": 0.75}) == 0.75
+        assert graph_storage._edge_confidence({"resolver_confidence": 1}) == 1.0
+        assert (
+            graph_storage._edge_confidence({"resolver_confidence": "0.5"}) == 1.0
+        )  # non-numeric string -> ignored -> no tag, no edge_type -> None -> 1.0
+
+    def test_edge_confidence_legacy_tags_now_mapped(self, graph_storage):
+        """A legacy string ``confidence`` tag with no float resolves via
+        AST_CONFIDENCE_BY_TAG instead of the old blanket 1.0 default."""
+        assert graph_storage._edge_confidence({"confidence": "ambiguous"}) == 0.5
+        assert graph_storage._edge_confidence({"confidence": "recovered"}) == 0.5
+        assert graph_storage._edge_confidence({"confidence": "exact"}) == 0.7
+
+    def test_edge_confidence_untagged_calls_defaults_to_half(self, graph_storage):
+        """An untagged, float-free edge on a `calls` edge_type defaults to
+        0.5 (the common ~80% case: base-AST edges with no resolver signal)."""
+        assert graph_storage._edge_confidence({}, edge_type="calls") == 0.5
+
+    def test_edge_confidence_unknown_non_call_defaults_to_permissive(
+        self, graph_storage
+    ):
+        """An edge with no float, no tag, and a non-`calls` (or unknown)
+        edge_type has no confidence signal at all -> module-level
+        edge_confidence() returns None -> the traversal layer's own
+        permissive policy maps that to 1.0 (never silently pruned)."""
+        assert graph_storage._edge_confidence({}) == 1.0
+        assert graph_storage._edge_confidence({}, edge_type="imports") == 1.0

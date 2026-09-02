@@ -24,6 +24,7 @@ except ImportError:
     torch = None
 
 from graph.graph_storage import CodeGraphStorage
+from graph.traversal_policy import TraversalPolicy
 from search.config import SearchMode, get_search_config
 from search.graph_integration import GraphIntegration
 from utils.observability import traced_block
@@ -49,11 +50,35 @@ from .reranking_engine import RerankingEngine
 from .result_factory import ResultFactory
 from .search_executor import SearchExecutor
 from .tokenization import augment_bm25_document
-from .types import RetrievalRequest
+from .types import ResultSource, RetrievalRequest
+
+
+def drop_nonpositive_ego_results(results: list[SearchResult]) -> list[SearchResult]:
+    """Fix #4: bound ego-graph output to the cross-encoder's own judgment.
+
+    Drops only ``source == "ego_graph"`` results with ``reranker_score <= 0``
+    (metadata key) -- never anchors, never ``multi_hop``/``graph_hop``
+    results. Reads ``reranker_score``, not ``blended_score``:
+    ``CentralityRanker._apply_bm25_boost`` is additive and can flip a
+    negative ``reranker_score`` positive, so ``blended_score`` would let
+    through results the cross-encoder actually rejected. ``<= 0``, not
+    ``< 0``: a result can land at exactly 0.0. Results with no
+    ``reranker_score`` yet (rerank never ran) are left alone -- this is a
+    cut on the cross-encoder's own judgment, not a guess.
+    """
+    return [
+        r
+        for r in results
+        if r.source != ResultSource.EGO_GRAPH
+        or (r.metadata or {}).get("reranker_score") is None
+        or r.metadata["reranker_score"] > 0
+    ]
 
 
 class HybridSearcher(BaseSearcher):
     """Orchestrates BM25 + dense search with GPU awareness and parallel execution."""
+
+    _DEFAULT_SEARCH_MODE = SearchMode.HYBRID
 
     def __init__(
         self,
@@ -603,19 +628,7 @@ class HybridSearcher(BaseSearcher):
             f"Hybrid indexing complete: BM25 {bm25_time:.2f}s, Dense {dense_time:.2f}s"
         )
 
-    # pyrefly: ignore [bad-override]
-    def search(
-        self,
-        query: str,
-        k: int = 4,
-        search_mode: str | SearchMode = SearchMode.HYBRID,
-        use_parallel: bool = True,
-        min_bm25_score: float = 0.0,
-        filters: dict[str, Any] | None = None,
-        config: Optional["SearchConfig"] = None,
-        bm25_weight: float | None = None,
-        dense_weight: float | None = None,
-    ) -> list[SearchResult]:
+    def execute(self, request: RetrievalRequest) -> list[SearchResult]:
         """
         Search using configurable approach (hybrid, semantic-only, or BM25-only).
 
@@ -623,23 +636,18 @@ class HybridSearcher(BaseSearcher):
         interconnected code relationships beyond direct matches.
 
         Args:
-            query: Search query
-            k: Number of results to return
-            search_mode: Search mode - "hybrid", "semantic", or "bm25"
-            use_parallel: Whether to run BM25 and dense search in parallel (hybrid mode only)
-            min_bm25_score: Minimum BM25 score threshold
-            filters: Optional filters for dense search
-            config: Optional SearchConfig override (for ego-graph settings, etc.)
+            request: The resolved request (see RetrievalRequest.build). Its
+                search_mode, weights, and min_bm25_score are already
+                normalized/resolved — this method makes no further fallback
+                decisions.
 
         Returns:
             Search results (reranked for hybrid mode, direct for single modes)
         """
-        # Normalize to the enum once at the boundary. Unknown strings have
-        # always fallen through every dispatch else-branch to hybrid; keep that.
-        try:
-            search_mode = SearchMode(search_mode)
-        except ValueError:
-            search_mode = SearchMode.HYBRID
+        query = request.query
+        k = request.k
+        search_mode = request.search_mode
+        effective_config = request.config
 
         # Reset session-level OOM tracking at start of new search
         if hasattr(self, "reranking_engine") and self.reranking_engine:
@@ -671,40 +679,8 @@ class HybridSearcher(BaseSearcher):
                     span.set_attribute(ATTR_RESULT_COUNT, 0)
                     return []
 
-            # Check if multi-hop search is enabled
-            # Allow config override (for ego-graph settings from MCP)
-            effective_config = config if config is not None else get_search_config()
-
             if effective_config.observability.capture_query_text:
                 span.set_attribute(ATTR_CAPTURE_QUERY, query)
-
-            # Resolve weights once, here: explicit kwarg wins, else the
-            # effective config's defaults. Resolving from config (not an
-            # instance field — HybridSearcher no longer keeps one) means the
-            # two values placed on the request below cannot disagree by
-            # construction. See ADR-0018.
-            eff_bm25_weight = (
-                bm25_weight
-                if bm25_weight is not None
-                else effective_config.search_mode.bm25_weight
-            )
-            eff_dense_weight = (
-                dense_weight
-                if dense_weight is not None
-                else effective_config.search_mode.dense_weight
-            )
-
-            request = RetrievalRequest(
-                query=query,
-                k=k,
-                search_mode=search_mode,
-                bm25_weight=eff_bm25_weight,
-                dense_weight=eff_dense_weight,
-                min_bm25_score=min_bm25_score,
-                use_parallel=use_parallel,
-                filters=filters,
-                config=effective_config,
-            )
 
             # Get initial search results (multi-hop or single-hop)
             if effective_config.multi_hop.enabled:
@@ -730,7 +706,14 @@ class HybridSearcher(BaseSearcher):
                 # breaking golden-dataset chunk IDs that reference this method
                 with timer("ego_expansion"):
                     results = self._apply_ego_graph_expansion(
-                        results, effective_config.ego_graph, k, query
+                        results,
+                        effective_config.ego_graph,
+                        k,
+                        query,
+                        TraversalPolicy.ego(
+                            effective_config.ego_graph,
+                            effective_config.graph_enhanced,
+                        ),
                     )
 
             # Apply parent expansion if enabled (limit to primary k results to prevent bloat)
@@ -755,7 +738,6 @@ class HybridSearcher(BaseSearcher):
                     query=query,
                     results=results,
                     k=k,
-                    search_mode=search_mode,
                     config=effective_config,
                 )
             elif (
@@ -769,9 +751,13 @@ class HybridSearcher(BaseSearcher):
                     query=query,
                     results=results,
                     k=len(results),  # Keep all results, just re-score and re-sort
-                    search_mode=search_mode,
                     config=effective_config,
                 )
+
+            # Fix #4: bound ego-graph output (see drop_nonpositive_ego_results
+            # docstring for why reranker_score, not blended_score, and <= not <)
+            if effective_config.ego_graph.drop_nonpositive_output and results:
+                results = drop_nonpositive_ego_results(results)
 
             # Safety-net dedup for paths that bypass rerank_by_query (e.g.
             # single-hop with no ego growth): split_block fragments of one
@@ -810,6 +796,7 @@ class HybridSearcher(BaseSearcher):
         ego_config: "EgoGraphConfig",
         original_k: int,
         query: str,
+        policy: TraversalPolicy | None = None,
     ) -> list[SearchResult]:
         """Apply ego-graph expansion to search results.
 
@@ -821,6 +808,10 @@ class HybridSearcher(BaseSearcher):
             ego_config: EgoGraphConfig instance
             original_k: Original k parameter for search
             query: Original search query (for similarity scoring of neighbors)
+            policy: Forwarded to ``EgoGraphRetriever.expand_search_results``.
+                ``execute`` passes ``TraversalPolicy.ego(ego_config,
+                graph_enhanced)``; ``None`` = ``TraversalPolicy.ego(ego_config)``
+                with every edge gate at its no-op default.
 
         Returns:
             Expanded search results (anchors + neighbors)
@@ -838,7 +829,7 @@ class HybridSearcher(BaseSearcher):
             expanded_chunk_ids, ego_graphs = (
                 # pyrefly: ignore [missing-attribute]
                 self.ego_graph_retriever.expand_search_results(
-                    search_results_dict, ego_config
+                    search_results_dict, ego_config, policy
                 )
             )
 
@@ -938,7 +929,7 @@ class HybridSearcher(BaseSearcher):
                             }
                         parent_results.append(
                             ResultFactory.from_expansion(
-                                parent_id, 0.0, metadata, "parent_expansion"
+                                parent_id, 0.0, metadata, ResultSource.PARENT_EXPANSION
                             )
                         )
                 except (KeyError, TypeError) as e:

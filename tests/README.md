@@ -171,7 +171,7 @@ pytest tests/ -k "hybrid"
 
 ```bash
 # Start interactive menu
-start_mcp_server.bat
+start_mcp_server.cmd
 
 # Navigate to: Advanced Options (6)
 # - Option 1: Start Server in Debug Mode
@@ -402,8 +402,11 @@ pytest tests/ -m "not slow" --cov=. --cov-report=term-missing
 # Full test suite with coverage (includes slow tests, ~15 min)
 pytest tests/ --cov=. --cov-report=term-missing
 
-# Unit + fast integration with coverage threshold
-pytest tests/unit/ tests/fast_integration/ --cov=. --cov-fail-under=75
+# Unit + fast integration with coverage. Threshold comes from
+# [tool.coverage.report] fail_under in pyproject.toml, not a CLI flag --
+# CI deliberately omits --cov-fail-under so pyproject.toml stays the single
+# source of truth (see tests/TESTING_GUIDE.md "Measuring and gating coverage").
+pytest tests/unit/ tests/fast_integration/ --cov=. --cov-branch
 ```
 
 ### Debugging Failed Tests
@@ -444,21 +447,21 @@ pytest tests/ --cov=. --cov-report=html
 
 ```bash
 # Unit + fast integration only
-pytest tests/unit/ tests/fast_integration/ --cov=. --cov-fail-under=75
+pytest tests/unit/ tests/fast_integration/ --cov=. --cov-branch
 ```
 
 **Comprehensive Pipeline** (runs on PR/nightly, ~15 min):
 
 ```bash
 # All tests including slow integration
-pytest tests/ --cov=. --cov-fail-under=80
+pytest tests/ --cov=. --cov-branch
 ```
 
 **Using Test Markers**:
 
 ```bash
 # Skip slow tests (fast CI pipeline)
-pytest tests/ -m "not slow" --cov=. --cov-fail-under=75
+pytest tests/ -m "not slow" --cov=. --cov-branch
 
 # Run only slow tests (comprehensive validation)
 pytest tests/ -m slow -v

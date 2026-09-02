@@ -83,7 +83,7 @@ def print_help():
     print("3. Get your token: https://huggingface.co/settings/tokens")
     print("4. Create a token with 'Read' permissions")
     print("\nAuthentication methods:")
-    print("• Use the installer: install-windows.bat (includes auth step)")
+    print("• Use the installer: install-windows.cmd (includes auth step)")
     print(
         "• Manual authentication: scripts\\powershell\\hf_auth.ps1 -Token 'your_token'"
     )
@@ -99,14 +99,14 @@ def main():
     if not Path(".venv").exists():
         print("[ERROR] Virtual environment not found")
         print("[HELP] Run this script from the project root directory")
-        print("[HELP] Make sure you've run install-windows.bat first")
+        print("[HELP] Make sure you've run install-windows.cmd first")
         return False
 
     # Check Python environment
     venv_python = Path(".venv/Scripts/python.exe")
     if not venv_python.exists():
         print("[ERROR] Virtual environment Python not found")
-        print("[HELP] Re-run install-windows.bat to fix the environment")
+        print("[HELP] Re-run install-windows.cmd to fix the environment")
         return False
 
     print("[OK] Virtual environment found")

@@ -7,6 +7,8 @@ inside ``_get_reverse_relation_type``; now adding a 22nd ``RelationshipType``
 without adding a corresponding reverse-name entry will fail CI here.
 """
 
+import inspect
+
 import pytest
 
 from graph.schema import (
@@ -26,6 +28,7 @@ from graph.schema import (
     REVERSE_RELATIONS,
     edge_relation_type,
     get_reverse_relation,
+    is_phantom_node,
 )
 
 
@@ -129,6 +132,81 @@ class TestGetReverseRelation:
     @pytest.mark.parametrize("rel_type,expected", list(REVERSE_RELATIONS.items()))
     def test_all_known_types_round_trip(self, rel_type: str, expected: str):
         assert get_reverse_relation(rel_type) == expected
+
+
+# ---------------------------------------------------------------------------
+# is_phantom_node: single owner of the phantom-node predicate (ADR-0055)
+# ---------------------------------------------------------------------------
+
+
+class TestIsPhantomNode:
+    """Behavioral coverage for the predicate itself."""
+
+    def test_symbol_name_type_is_phantom(self):
+        assert is_phantom_node({NODE_ATTR_TYPE: NODE_TYPE_SYMBOL_NAME}) is True
+
+    def test_is_target_name_flag_is_phantom(self):
+        assert is_phantom_node({NODE_ATTR_IS_TARGET_NAME: True}) is True
+
+    def test_both_set_is_phantom(self):
+        node = {
+            NODE_ATTR_TYPE: NODE_TYPE_SYMBOL_NAME,
+            NODE_ATTR_IS_TARGET_NAME: True,
+        }
+        assert is_phantom_node(node) is True
+
+    def test_real_chunk_is_not_phantom(self):
+        node = {NODE_ATTR_TYPE: "function", NODE_ATTR_NAME: "my_func"}
+        assert is_phantom_node(node) is False
+
+    def test_is_target_name_false_is_not_phantom(self):
+        node = {NODE_ATTR_TYPE: "function", NODE_ATTR_IS_TARGET_NAME: False}
+        assert is_phantom_node(node) is False
+
+    def test_empty_node_is_not_phantom(self):
+        assert is_phantom_node({}) is False
+
+    def test_return_type_is_always_bool(self):
+        """node_data.get(...) can return a non-bool truthy value; the predicate
+        must coerce, not just pass it through (downstream callers do identity/
+        equality checks against True/False, e.g. ``is True``)."""
+        assert is_phantom_node({NODE_ATTR_IS_TARGET_NAME: "yes"}) is True
+        assert is_phantom_node({NODE_ATTR_TYPE: None}) is False
+
+
+class TestIsPhantomNodeSingleDefinition:
+    """Ownership gate: every phantom-node check in the codebase must delegate to
+    ``graph.schema.is_phantom_node`` rather than re-implementing the predicate
+    inline. Four call sites existed pre-ADR-0055, each with its own copy that
+    was only "kept in sync deliberately" by convention, no test enforcing it.
+    """
+
+    def test_graph_queries_imports_shared_predicate(self):
+        from graph.graph_queries import _is_phantom_node
+
+        assert _is_phantom_node is is_phantom_node
+
+    def test_graph_storage_imports_shared_predicate(self):
+        from graph.graph_storage import is_phantom_node as storage_predicate
+
+        assert storage_predicate is is_phantom_node
+
+    def test_phantom_preflight_script_imports_shared_predicate(self):
+        from scripts.benchmark.graph_phantom_preflight import is_phantom
+
+        assert is_phantom is is_phantom_node
+
+    def test_analyze_chunking_corpus_delegates_to_shared_predicate(self):
+        """collapse_graph imports graph.schema locally (inside the function
+        body, not at module scope) so it can't be identity-checked the same
+        way as the other three sites -- assert the delegation via source
+        instead of re-deriving a duplicate predicate to compare against."""
+        from scripts.benchmark.analyze_chunking_corpus import collapse_graph
+
+        source = inspect.getsource(collapse_graph)
+        assert "is_phantom_node" in source
+        assert NODE_ATTR_IS_TARGET_NAME not in source
+        assert NODE_TYPE_SYMBOL_NAME not in source
 
 
 # ---------------------------------------------------------------------------

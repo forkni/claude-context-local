@@ -8,8 +8,10 @@ import logging
 from typing import Any
 
 from chunking.multi_language_chunker import MultiLanguageChunker
+from mcp_server.config_schema import arg
 from mcp_server.guidance import add_system_message
 from mcp_server.model_pool_manager import get_embedder
+from mcp_server.resource_manager import McpResourceRefresher
 from mcp_server.search_factory import (
     build_hybrid_searcher,
     get_index_manager,
@@ -19,6 +21,7 @@ from mcp_server.services import get_config, get_state
 from mcp_server.storage_manager import get_project_storage_dir
 from mcp_server.tools import responses
 from mcp_server.tools.decorators import error_handler, require_indexed_project
+from mcp_server.tools.result_view import _format_search_results
 from mcp_server.tools.search_orchestrator import SearchOrchestrator
 from mcp_server.utils.config_helpers import temporary_ram_fallback_off
 from search.config import get_search_config
@@ -26,7 +29,7 @@ from search.exceptions import DimensionMismatchError
 from search.incremental_indexer import IncrementalIndexer
 from search.indexer import CodeIndexManager
 from search.metadata import MetadataStore
-from search.relationship_analyzer import RelationshipAnalyzer
+from search.relationship_analyzer import RelationshipAnalyzer, filter_ambiguous_edges
 
 
 logger = logging.getLogger(__name__)
@@ -45,6 +48,11 @@ def _is_index_stale(project_path: str, max_age_minutes: float) -> bool:
     acquiring the project's reindex write lock (``search_orchestrator._execute``)
     so a steady stream of fresh-index searches never contends for that lock.
 
+    Age-gated: an index older than ``max_age_minutes`` counts as stale even
+    with zero content changes. Callers needing a content-only verdict (does
+    the index match the tree, regardless of age) should use
+    ``mcp_server.index_freshness.compute_index_freshness`` instead.
+
     Args:
         project_path: Path to the project
         max_age_minutes: Maximum age of index before it's considered stale
@@ -52,39 +60,9 @@ def _is_index_stale(project_path: str, max_age_minutes: float) -> bool:
     Returns:
         True if the index needs reindexing, False if confirmed fresh.
     """
-    import json
+    from mcp_server.index_freshness import build_change_detector
 
-    from chunking.tree_sitter import TreeSitterChunker
-    from merkle.change_detector import ChangeDetector
-    from merkle.snapshot_manager import SnapshotManager
-
-    project_storage = get_project_storage_dir(project_path)
-    project_info_file = project_storage / "project_info.json"
-
-    include_dirs = None
-    exclude_dirs = None
-    include_exclusive = False
-    if project_info_file.exists():
-        try:
-            with open(project_info_file) as f:
-                project_info = json.load(f)
-
-            from search.filters import get_effective_filters
-
-            include_dirs, exclude_dirs, include_exclusive = get_effective_filters(
-                project_info
-            )
-        except Exception as e:  # noqa: BLE001 - parse-recovery: project_info.json read, fall back to no filters
-            logger.warning(f"[AUTO_REINDEX] Failed to load filters: {e}")
-
-    snapshot_mgr = SnapshotManager()
-    change_detector = ChangeDetector(
-        snapshot_mgr,
-        include_dirs,
-        exclude_dirs,
-        supported_extensions=set(TreeSitterChunker.get_supported_extensions()),
-        include_exclusive=include_exclusive,
-    )
+    change_detector, snapshot_mgr = build_change_detector(project_path)
 
     if snapshot_mgr.has_snapshot(project_path):
         age = snapshot_mgr.get_snapshot_age(project_path)
@@ -196,6 +174,7 @@ def _check_auto_reindex(project_path: str, max_age_minutes: int) -> tuple[bool, 
         include_dirs=include_dirs,
         exclude_dirs=exclude_dirs,
         include_exclusive=include_exclusive,
+        resource_refresher=McpResourceRefresher(),
     )
 
     # Temporarily disable allow_ram_fallback during auto-reindex for performance
@@ -319,7 +298,7 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
     # handler's old hardcoded fallback (4) silently never picked it up.
     # Explicit per-request k is passed through untouched.
     k = arguments.get("k", get_search_config().search_mode.default_k)
-    exclude_same_file = arguments.get("exclude_same_file", False)
+    exclude_same_file = arg(arguments, "find_similar_code.exclude_same_file")
 
     # Normalize chunk_id path separators
     # Use CodeIndexManager's normalize_chunk_id for proper cross-platform handling
@@ -335,18 +314,7 @@ async def handle_find_similar_code(arguments: dict[str, Any]) -> dict:
 
     results = await asyncio.to_thread(_run_find_similar)
 
-    formatted_results = []
-    for result in results:
-        item = {
-            "chunk_id": result.chunk_id,
-            "file": result.metadata.get("relative_path", ""),
-            "lines": f"{result.metadata.get('start_line', 0)}-{result.metadata.get('end_line', 0)}",
-            "kind": result.metadata.get("chunk_type", "unknown"),
-            "score": round(result.score, 2),
-        }
-        if result.metadata.get("name"):
-            item["name"] = result.metadata["name"]
-        formatted_results.append(item)
+    formatted_results = _format_search_results(results)
 
     return {
         "reference_chunk": chunk_id,
@@ -366,9 +334,13 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
     """Find all code connections to a given symbol."""
     chunk_id = arguments.get("chunk_id")
     symbol_name = arguments.get("symbol_name")
-    max_depth = arguments.get("max_depth", 3)
+    max_depth = arg(arguments, "find_connections.max_depth")
     exclude_dirs = arguments.get("exclude_dirs")
     relationship_types = arguments.get("relationship_types")
+    hide_ambiguous = arguments.get(
+        "hide_ambiguous",
+        get_search_config().graph_enhanced.hide_ambiguous_edges_default,
+    )
 
     # Validate inputs
     if not chunk_id and not symbol_name:
@@ -402,6 +374,9 @@ async def handle_find_connections(arguments: dict[str, Any]) -> dict:
     # Convert to dict
     response = report.to_dict()
 
+    if hide_ambiguous:
+        response = filter_ambiguous_edges(response)
+
     # Add system message
     response = add_system_message(
         response,
@@ -428,7 +403,7 @@ async def handle_find_path(arguments: dict[str, Any]) -> dict:
     target = arguments.get("target")
     source_chunk_id = arguments.get("source_chunk_id")
     target_chunk_id = arguments.get("target_chunk_id")
-    max_hops = min(arguments.get("max_hops", 10), 20)
+    max_hops = min(arg(arguments, "find_path.max_hops"), 20)
     edge_types = arguments.get("edge_types")
 
     # Validate: need at least one source and one target identifier

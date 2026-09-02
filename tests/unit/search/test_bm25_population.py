@@ -5,10 +5,11 @@ This script directly tests the HybridSearcher to see if BM25 indices are being p
 """
 
 import logging
-import os
 import shutil
 import tempfile
 from pathlib import Path
+
+import pytest
 
 
 # Set up debug logging
@@ -16,8 +17,16 @@ logging.basicConfig(
     level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
-# Enable debug mode
-os.environ["MCP_DEBUG"] = "1"
+
+@pytest.fixture(autouse=True)
+def _enable_debug_mode(monkeypatch):
+    """Enable debug mode for this module only.
+
+    Previously `os.environ["MCP_DEBUG"] = "1"` at import time and never
+    restored -- it leaked into every test that ran afterward in the same
+    process (Phase 13.2.c). monkeypatch.setenv auto-reverts after each test.
+    """
+    monkeypatch.setenv("MCP_DEBUG", "1")
 
 
 def test_bm25_population():

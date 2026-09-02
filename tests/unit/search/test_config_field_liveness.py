@@ -4,7 +4,7 @@ Freezes ADR-0020's manually-verified liveness result rather than reproducing
 it - that audit verified each field with three independent methods (semantic
 search, find_connections zero-caller confirmation, exhaustive grep) agreeing
 before pronouncing a field dead. A name-match cannot stand in for that: bare
-field-name matching finds a "hit" for every one of the 124 fields, including
+field-name matching finds a "hit" for every live config field, including
 all 13 fields ADR-0020 proved dead, so it is not an audit.
 
 What this test *does* catch: the declared reader file being deleted or
@@ -13,12 +13,15 @@ exactly the drift that accumulated ADR-0020's 13 dead fields between audits.
 """
 
 import dataclasses
+import re
 from pathlib import Path
 
 from search.config import SearchConfig
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+_DOCSTRING_FIELD_COUNT_RE = re.compile(r"\((\d+)\s+fields?\)")
 
 
 def _iter_fields():
@@ -70,9 +73,38 @@ def test_reader_files_mention_field_name():
     )
 
 
+def test_section_docstring_field_counts_match_dataclasses_fields():
+    """Ratchet for ADR-0022's representation #2, the "(N fields)" prose count
+    in each section dataclass's one-line docstring - never built when the ADR
+    enumerated the other ten representations, so it drifted silently:
+    RerankerConfig's docstring said 14 while dataclasses.fields() returned 15
+    (b5bf508 added a field without bumping the count; 32b086c then bumped a
+    stale 13 to 14, inheriting the miss - see docs/adr/0042-*.md).
+
+    Derived, not pinned: unlike test_construction_baked_fields_are_pinned
+    (a hand-curated set that legitimately changes as fields are re-tagged),
+    a field *count* has one unambiguous source of truth
+    (dataclasses.fields()), so comparing against a fixed snapshot here would
+    just relocate the staleness into this test file instead of eliminating
+    it. Sections that state no count in their docstring are skipped - stating
+    one is optional, but a stated one must be correct.
+    """
+    mismatches = [
+        f"{section_cls.__name__}: docstring says {int(match.group(1))}, "
+        f"dataclasses.fields() returns {len(dataclasses.fields(section_cls))}"
+        for section_cls in SearchConfig._SUBCONFIG_TYPES.values()
+        if (match := _DOCSTRING_FIELD_COUNT_RE.search(section_cls.__doc__ or ""))
+        and int(match.group(1)) != len(dataclasses.fields(section_cls))
+    ]
+    assert not mismatches, (
+        "Section docstring field count(s) out of sync with dataclasses.fields():\n  "
+        + "\n  ".join(mismatches)
+    )
+
+
 def test_construction_baked_fields_are_pinned():
     """Ratchet for spec(construction_baked=True) (Part 2/C1 of the ADR-0018
-    follow-on plan): the twelve fields read once into a collaborator (cached
+    follow-on plan): the thirteen fields read once into a collaborator (cached
     HybridSearcher/reranker) at construction rather than live per search call
     - pin the exact set so a silent addition or removal shows up here instead
     of only as a stale benchmark arm that silently didn't take effect.
@@ -118,6 +150,10 @@ def test_construction_baked_fields_are_pinned():
             ("reranker", "listwise_dtype"),
             ("reranker", "batch_size"),
             ("reranker", "instruction"),
+            # A4 pilot (2026-08-14): read in the same create_reranker(...) call
+            # as the five reranker fields above - captured on the instance at
+            # construction, so an arm override needs a rebuild to take effect.
+            ("reranker", "doc_representation_mode"),
         }
     )
     assert expected == SearchConfig._CONSTRUCTION_BAKED_FIELDS
@@ -141,16 +177,27 @@ def test_construction_baked_fields_declare_a_reader():
 
 def test_no_mcp_settable_field_is_construction_baked():
     """Ratchet: spec(mcp=...) and spec(construction_baked=True) must never be
-    set together for a *settable* mcp tag (see ADR-0027/mcp-field-derivation).
+    set together for a *settable* mcp tag whose section has no
+    requires_rebuild gate (see ADR-0027/mcp-field-derivation).
 
     A field tagged mcp="<section>" is patched live onto the cached SearchConfig
     by an MCP handler (see apply_config_patch); a field tagged
     construction_baked=True is read once into a collaborator (cached
     HybridSearcher/reranker) at construction, so mutating it on the config
     singleton is a no-op until that collaborator is rebuilt. A field carrying
-    both tags would silently accept an MCP-set value that never takes effect -
-    the handler must call state.reset_searcher() (dropping construction_baked),
-    or the field must not be MCP-settable (dropping mcp=).
+    both tags would silently accept an MCP-set value that never takes effect.
+
+    D7: handle_configure_search_mode and handle_configure_reranking now gate
+    state.reset_searcher() behind SearchConfig.requires_rebuild() (config.py),
+    so a newly-baked field in RerankerConfig/SearchModeConfig/PerformanceConfig
+    is handled automatically as long as it stays in one of _RERANKER_FIELDS/
+    _SEARCH_MODE_FIELDS/_PERFORMANCE_SEARCH_FIELDS (config_handlers.py) - this
+    ratchet does not need to fire for those. It still guards every other
+    settable section (e.g. chunking, whose handler intentionally has no
+    searcher-reset path at all - changes there need a re-index, not a rebuilt
+    collaborator): a settable+baked field there would still silently no-op,
+    and needs a handler-side requires_rebuild gate of its own or must drop the
+    mcp= tag.
 
     mcp="<section>_echo" is a different tag: it marks a field that is
     read-only-echoed back after a patch (see config_handlers.py's
@@ -167,6 +214,9 @@ def test_no_mcp_settable_field_is_construction_baked():
         and f.metadata.get("construction_baked")
     ]
     assert not exposed, (
-        "MCP-settable field(s) baked at construction - the handler must call "
-        "state.reset_searcher(), or drop the mcp= tag:\n  " + "\n  ".join(exposed)
+        "MCP-settable field(s) baked at construction - add a "
+        "SearchConfig.requires_rebuild()-gated state.reset_searcher() call to "
+        "that field's handler (see handle_configure_reranking/"
+        "handle_configure_search_mode in config_handlers.py for the pattern), "
+        "or drop the mcp= tag:\n  " + "\n  ".join(exposed)
     )

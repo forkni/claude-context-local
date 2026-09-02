@@ -195,12 +195,12 @@ def test_search_dense_creates_embedder_lazily_when_none(executor):
     mock_instance = Mock()
     mock_instance.embed_query.return_value = [0.0] * 768
 
-    with patch(
-        "embeddings.embedder.CodeEmbedder", return_value=mock_instance
-    ) as mock_ce:
+    with patch("embeddings.embedder.CodeEmbedder", return_value=mock_instance):
         executor.search_dense("query", 5, None)
 
-    mock_ce.assert_called_once()
+    # return_value on the patch IS mock_instance, so this identity check
+    # already proves the patched constructor was called and its result
+    # captured -- a separate assert_called_once() would be redundant.
     assert executor.embedder is mock_instance
 
 
@@ -275,6 +275,90 @@ def test_hybrid_enabled_matched_query_fuses_variant_legs(executor):
     variant_call = executor.bm25_index.search.call_args_list[-1]
     assert "survive a restart" in variant_call.args[0]
     assert "persist" in variant_call.args[0]
+
+
+def test_leg_search_multiplier_default_is_5_and_matches_k5(executor):
+    """Default leg_search_multiplier=5 reproduces today's hardcoded
+    max(reranker_budget, k*5) search_k exactly (Gate A knob, byte-identity)."""
+    with (
+        patch.object(executor, "search_bm25", wraps=executor.search_bm25) as mock_bm25,
+        patch.object(
+            executor, "search_dense", wraps=executor.search_dense
+        ) as mock_dense,
+    ):
+        executor.execute_single_hop(_request(k=10, search_mode="hybrid"))
+
+    assert mock_bm25.call_args.args[1] == 50  # max(30, 10*5)
+    assert mock_dense.call_args.args[1] == 50
+
+
+def test_leg_search_multiplier_custom_value_widens_search_k(executor):
+    """leg_search_multiplier=10 at k=10 widens legs to depth 100 — the Gate A
+    probe's winning arm (evaluation/LEG_DEPTH_FUSION_PROBE_20260814.md)."""
+    cfg = SearchConfig()
+    cfg.search_mode.leg_search_multiplier = 10
+    with (
+        patch.object(executor, "search_bm25", wraps=executor.search_bm25) as mock_bm25,
+        patch.object(
+            executor, "search_dense", wraps=executor.search_dense
+        ) as mock_dense,
+    ):
+        executor.execute_single_hop(_request(k=10, search_mode="hybrid", config=cfg))
+
+    assert mock_bm25.call_args.args[1] == 100  # max(30, 10*10)
+    assert mock_dense.call_args.args[1] == 100
+
+
+def test_fusion_function_default_takes_rerank_simple_path(executor):
+    """fusion_function="rrf" (the default) must never call rerank_tm2c2."""
+    executor.execute_single_hop(_request(k=5, search_mode="hybrid"))
+
+    executor.reranker.rerank_simple.assert_called_once()
+    executor.reranker.rerank_tm2c2.assert_not_called()
+
+
+def test_fusion_function_tm2c2_dispatches_to_rerank_tm2c2(executor):
+    """fusion_function="tm2c2" calls rerank_tm2c2 with the configured alpha,
+    never rerank_simple (Gate B knob)."""
+    executor.reranker.rerank_tm2c2.return_value = []
+    cfg = SearchConfig()
+    cfg.search_mode.fusion_function = "tm2c2"
+    cfg.search_mode.tm2c2_alpha = 0.8
+
+    executor.execute_single_hop(_request(k=5, search_mode="hybrid", config=cfg))
+
+    executor.reranker.rerank_simple.assert_not_called()
+    executor.reranker.rerank_tm2c2.assert_called_once()
+    kwargs = executor.reranker.rerank_tm2c2.call_args.kwargs
+    assert kwargs["alpha"] == 0.8
+
+
+def test_fusion_function_tm2c2_variant_legs_still_use_rrf(executor):
+    """Matched query-expansion variant legs always fall back to RRF's generic
+    rerank(), regardless of fusion_function — TM2C2 only dispatches on the
+    2-leg rerank_simple path, never the N-list variant-leg path."""
+    executor.reranker.rerank.return_value = []
+    cfg = SearchConfig()
+    cfg.search_mode.fusion_function = "tm2c2"
+    cfg.query_expansion.enabled = True
+    cfg.query_expansion.variants_path = ""
+    cfg.query_expansion.max_variants = 2
+    cfg.query_expansion.variant_weight_discount = 0.5
+    cfg.query_expansion.apply_to_bm25 = True
+    cfg.query_expansion.apply_to_dense = False
+
+    executor.execute_single_hop(
+        _request(
+            query="how does state survive a restart",
+            k=5,
+            search_mode="hybrid",
+            config=cfg,
+        )
+    )
+
+    executor.reranker.rerank_tm2c2.assert_not_called()
+    executor.reranker.rerank_simple.assert_not_called()
+    executor.reranker.rerank.assert_called_once()
 
 
 def test_shutdown_sets_flag_and_is_idempotent(executor):

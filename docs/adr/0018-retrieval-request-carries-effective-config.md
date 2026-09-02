@@ -61,7 +61,7 @@ reranker takes no request today; threading one in is a follow-on candidate (C1),
 The freeze is shallow: `RetrievalRequest` is `frozen=True, slots=True`, but `config` is a mutable
 `SearchConfig` reachable through it. Nothing below `HybridSearcher.search` may mutate it — the
 orchestrator's only config mutation (intent-driven edge weights,
-`search_orchestrator.py:498-501`) happens *before* the request is built (`:511`), so no caller
+`search_orchestrator.py:414-416`) happens *before* the request is built (`:424`), so no caller
 observes a request whose config changes mid-flight. This is a documented invariant on the
 dataclass, not an enforced one.
 

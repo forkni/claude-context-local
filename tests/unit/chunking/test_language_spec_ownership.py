@@ -31,6 +31,7 @@ from chunking.languages import (
     RustChunker,
     TypeScriptChunker,
 )
+from chunking.relationships.edge_specs import EDGE_EMISSION_SPECS
 
 
 # ---------------------------------------------------------------------------
@@ -274,4 +275,83 @@ class TestExtractMetadataOwnership:
         """_NAME_ID_TYPES class attribute must be defined in LanguageChunker."""
         assert "_NAME_ID_TYPES" in LanguageChunker.__dict__, (
             "LanguageChunker must define _NAME_ID_TYPES"
+        )
+
+
+class TestEdgeEmissionSpecTable:
+    """Drift ratchet for EDGE_EMISSION_SPECS (ADR-0056).
+
+    Catches the class of regression this table was built to prevent: a future
+    tree-sitter language that emits metadata["calls"] / metadata["relationships"]
+    getting bolted onto MultiLanguageChunker as a new
+    `tchunk.language == "..."` switch instead of a row here.
+    """
+
+    def test_every_key_is_a_known_language(self):
+        """Every EDGE_EMISSION_SPECS key must also be a LANGUAGE_SPECS key."""
+        unknown = set(EDGE_EMISSION_SPECS) - set(LANGUAGE_SPECS)
+        assert not unknown, (
+            f"EDGE_EMISSION_SPECS has entries for unknown languages: {unknown}"
+        )
+
+    def test_python_has_no_row(self):
+        """Python's call edges come from PythonCallGraphExtractor at a different
+        seam (a re-parse of dedented chunk content) — a row here would
+        double-extract or misattribute provenance. See edge_specs.py's module
+        docstring.
+        """
+        assert "python" not in EDGE_EMISSION_SPECS
+
+    def test_call_confidence_in_valid_range(self):
+        for lang, spec in EDGE_EMISSION_SPECS.items():
+            assert 0.0 < spec.call_confidence <= 1.0, (
+                f"EDGE_EMISSION_SPECS[{lang!r}].call_confidence="
+                f"{spec.call_confidence} is out of (0.0, 1.0]"
+            )
+
+    def test_call_chunk_types_nonempty(self):
+        for lang, spec in EDGE_EMISSION_SPECS.items():
+            assert spec.call_chunk_types, (
+                f"EDGE_EMISSION_SPECS[{lang!r}].call_chunk_types is empty"
+            )
+
+    def test_no_stray_language_literal_switch(self):
+        """AST ban: MultiLanguageChunker must not grow a new
+        `tchunk.language == "<lang>"` switch.
+
+        Comparisons against "python" are the one exception (the
+        Python / tree-sitter dispatch fork) — every other tree-sitter
+        language must go through EDGE_EMISSION_SPECS.get(tchunk.language)
+        instead of a new hand-written literal.
+        """
+        source_path = (
+            Path(__file__).parent.parent.parent.parent
+            / "chunking"
+            / "multi_language_chunker.py"
+        )
+        source = source_path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(source_path))
+        violations = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare):
+                continue
+            operands = [node.left, *node.comparators]
+            if not any(
+                isinstance(o, ast.Attribute) and o.attr == "language" for o in operands
+            ):
+                continue
+            for operand in operands:
+                if (
+                    isinstance(operand, ast.Constant)
+                    and isinstance(operand.value, str)
+                    and operand.value != "python"
+                ):
+                    violations.append(
+                        f"line {node.lineno}: comparison to {operand.value!r}"
+                    )
+        assert not violations, (
+            "multi_language_chunker.py compares .language against a string "
+            "literal other than 'python' — route through "
+            "EDGE_EMISSION_SPECS.get(tchunk.language) instead:\n"
+            + "\n".join(violations)
         )

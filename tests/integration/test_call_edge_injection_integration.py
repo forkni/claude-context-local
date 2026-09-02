@@ -22,7 +22,9 @@ import pytest
 from chunking.multi_language_chunker import MultiLanguageChunker
 from chunking.relationships.external_call_graph import pyan_available
 from embeddings.embedder import CodeEmbedder
+from mcp_server.resource_manager import McpResourceRefresher
 from merkle import SnapshotManager
+from search.config import get_search_config
 from search.hybrid_searcher import HybridSearcher
 from search.incremental_indexer import IncrementalIndexer
 
@@ -81,7 +83,7 @@ def test_full_index_injects_real_call_edges(mini_repo_project, tmp_path):
     against a Mock and the result being discarded is exactly how a project
     can end up with ``success=True`` and zero edges, silently.
     """
-    # _inject_call_edges reads self._indexer.dense_index.metadata_store and
+    # inject_call_edges reads self._indexer.dense_index.metadata_store and
     # self._indexer._graph — attributes CodeIndexManager alone does not
     # expose. Production wires a HybridSearcher as IncrementalIndexer's
     # "indexer" (mcp_server/tools/index_handlers.py:142, docstring: "indexer:
@@ -108,6 +110,7 @@ def test_full_index_injects_real_call_edges(mini_repo_project, tmp_path):
         embedder=embedder,
         chunker=chunker,
         snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots"),
+        resource_refresher=McpResourceRefresher(),
     )
 
     result = incremental_indexer.incremental_index(
@@ -125,6 +128,65 @@ def test_full_index_injects_real_call_edges(mini_repo_project, tmp_path):
     # the in-memory InjectionStats — with resolver provenance attached.
     graph_path = hybrid_searcher.dense_index.graph_storage.graph_path
     assert graph_path.exists()
+    data = json.loads(graph_path.read_text())
+    resolved_edges = [edge for edge in data["edges"] if edge.get("resolver_source")]
+    assert resolved_edges, "expected at least one edge with resolver_source set"
+
+
+@requires_pyan
+def test_incremental_index_recovers_edges_when_enabled(mini_repo_project, tmp_path):
+    """An incremental pass over a touched file must recover the resolver edges
+    ``_remove_old_chunks``/``_add_new_chunks`` destroy for that file, but only
+    when ``CallGraphConfig.inject_on_incremental`` is opted in.
+
+    Regression coverage for the monotonic call-edge decay bug: without this
+    flag, a file touched by any incremental pass permanently loses its
+    resolver-attributed (pyan/LibCST/LSP) edges until a forced full reindex.
+    """
+    embedder = CodeEmbedder()
+    hybrid_searcher = HybridSearcher(
+        storage_dir=str(tmp_path / "index"),
+        embedder=embedder,
+        project_id="mini_repo_test",
+    )
+    chunker = MultiLanguageChunker.for_project(str(mini_repo_project))
+    incremental_indexer = IncrementalIndexer(
+        indexer=hybrid_searcher,
+        embedder=embedder,
+        chunker=chunker,
+        snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots"),
+        resource_refresher=McpResourceRefresher(),
+    )
+
+    full_result = incremental_indexer.incremental_index(
+        str(mini_repo_project), "mini_repo_test"
+    )
+    assert full_result.success
+    assert full_result.call_edges_injected > 0
+
+    # Touch service.py (calls repository.get_widget, a cross-module edge only
+    # pyan/LibCST resolve) so the next pass takes the incremental-modify path,
+    # which prunes and re-adds its graph nodes via remove_file_nodes/
+    # add_embeddings -- restoring only the always-on AST-level edges.
+    service_file = mini_repo_project / "service.py"
+    service_file.write_text(service_file.read_text() + "\n# touched\n")
+
+    config = get_search_config()
+    original_flag = config.call_graph.inject_on_incremental
+    config.call_graph.inject_on_incremental = True
+    try:
+        incremental_result = incremental_indexer.incremental_index(
+            str(mini_repo_project), "mini_repo_test"
+        )
+    finally:
+        config.call_graph.inject_on_incremental = original_flag
+
+    assert incremental_result.success
+    assert incremental_result.files_modified == 1
+    assert incremental_result.call_edges_injected > 0
+    assert "pyan" in incremental_result.call_edge_resolvers
+
+    graph_path = hybrid_searcher.dense_index.graph_storage.graph_path
     data = json.loads(graph_path.read_text())
     resolved_edges = [edge for edge in data["edges"] if edge.get("resolver_source")]
     assert resolved_edges, "expected at least one edge with resolver_source set"

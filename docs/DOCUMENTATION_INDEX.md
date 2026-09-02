@@ -214,10 +214,11 @@ Detailed technical documentation.
 
 | Document | Description |
 |----------|-------------|
-| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.25.0 |
+| **[VERSION_HISTORY.md](VERSION_HISTORY.md)** | Complete version history from v0.1.x to v0.26.0 |
 
 ### Key Versions
 
+- **v0.26.0** (2026-09-02): Retrieval campaigns closed (Track A, remaining levers, merged-pool ordering, ego gate-2 — all measured-and-rejected; `hide_ambiguous` default-on), `include_top_callees`/`include_signatures` opt-ins, real `index_is_current` freshness verdict (ADR-0058), ADR-0039→0059 architecture-deepening wave (`TraversalPolicy`, `ToolSpec` table, `spec(benchmark_locked=…)`), CUDA→cpp routing (ADR-0054), execution-witnessed call-graph ground truth (ADR-0059), test hardening Phases 13–14, 2026-09-01 canon re-baseline (63q MRR 0.8419)
 - **v0.25.0** (2026-08-13): C++ chunking parity (20 → 27 file extensions, headers now indexed), nested same-named container `parent_chunk_id` linkage fix, templated header-only prototype/alias naming fix, container-node traversal seam (ADR-0038), `INDEX_VERSION` bump declined (ADR-0037)
 - **v0.24.0** (2026-08-12): Retro-tagged v0.23.0, documentation/skill sync against `development` (test counts, benchmark re-pin to `canon_l1`, ADR-0036 `include_dirs` semantics), call-graph resolver hardening, pyan GPL-2.0-or-later quarantine (ADR-0034), C++ call-edge tier scope (ADR-0035), additive/narrowing `include_dirs` for dependency trees (ADR-0036)
 - **v0.23.0** (2026-08-02): MCP Python SDK v1→v2 migration, community-detection + DSPy-eval + ONNX subsystems removed, per-project config overrides (ADR-0014), `exclude_same_file`, richer evaluation metrics, config field liveness audit (ADR-0020); three models dropped from the registries (breaking)
@@ -309,4 +310,4 @@ Detailed technical documentation.
 
 ---
 
-**Last Updated**: 2026-08-13 (v0.25.0 — C++ chunking parity, headers now indexed, PR #57 review fixes; 5,823 unit tests)
+**Last Updated**: 2026-09-02 (v0.26.0 — retrieval campaigns closed, ADR-0039–0059 architecture wave, index-freshness verdict, test-suite hardening Phases 13–14; 4,351 unit tests)

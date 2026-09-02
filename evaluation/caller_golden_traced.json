@@ -1,0 +1,81 @@
+{
+  "_meta": {
+    "description": "Execution-witnessed direct callers",
+    "semantics": "positive-only; missing != absent",
+    "categories": {
+      "T": "traced under tests/unit with the callgraph plugin"
+    },
+    "normalization": "evaluation/metrics.py:normalize_chunk_id; method:C.__init__ callees appear as class:C",
+    "total_queries": 5,
+    "skipped": [
+      {
+        "id": "C004",
+        "reason": "no traced direct edges"
+      },
+      {
+        "id": "C005",
+        "reason": "target not executed"
+      }
+    ]
+  },
+  "queries": [
+    {
+      "id": "TC001",
+      "category": "T",
+      "description": "traced callers of evaluation/metrics.py:function:normalize_chunk_id",
+      "target_chunk_id": "evaluation/metrics.py:function:normalize_chunk_id",
+      "expected_callers": [
+        "evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
+        "evaluation/metrics.py:function:build_chunk_line_lookup",
+        "evaluation/metrics.py:function:expand_retrieved_with_community_credit",
+        "evaluation/metrics.py:function:expand_retrieved_with_containment",
+        "evaluation/metrics.py:function:normalize_chunk_ids",
+        "evaluation/metrics.py:function:resolve_chunk_ids_to_ranges",
+        "evaluation/probe_harness.py:decorated_definition:ProbeSession.instrument",
+        "evaluation/probe_harness.py:function:load_golden_queries",
+        "evaluation/probe_harness.py:method:ProbeSession.replay_legs",
+        "evaluation/tracer/scoring.py:function:emit_traced_golden",
+        "evaluation/tracer/scoring.py:function:extract_static_edges",
+        "evaluation/tracer/scoring.py:function:make_source_lookup"
+      ]
+    },
+    {
+      "id": "TC002",
+      "category": "T",
+      "description": "traced callers of search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callers",
+      "target_chunk_id": "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callers",
+      "expected_callers": [
+        "search/relationship_analyzer.py:method:RelationshipAnalyzer.analyze_impact"
+      ]
+    },
+    {
+      "id": "TC003",
+      "category": "T",
+      "description": "traced callers of evaluation/metrics.py:function:calculate_recall_at_k",
+      "target_chunk_id": "evaluation/metrics.py:function:calculate_recall_at_k",
+      "expected_callers": [
+        "evaluation/metrics.py:function:calculate_metrics_from_results"
+      ]
+    },
+    {
+      "id": "TC006",
+      "category": "T",
+      "description": "traced callers of evaluation/chunk_mapping.py:function:find_enclosing_chunk",
+      "target_chunk_id": "evaluation/chunk_mapping.py:function:find_enclosing_chunk",
+      "expected_callers": [
+        "chunking/relationships/external_call_graph.py:function:_node_to_raw_chunk_id",
+        "evaluation/tracer/build.py:function:map_endpoints"
+      ]
+    },
+    {
+      "id": "TC007",
+      "category": "T",
+      "description": "traced callers of evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
+      "target_chunk_id": "evaluation/chunk_mapping.py:function:build_line_to_chunk_map",
+      "expected_callers": [
+        "evaluation/tracer/build.py:function:build_line_map",
+        "search/call_edge_injection.py:method:inject_call_edges"
+      ]
+    }
+  ]
+}

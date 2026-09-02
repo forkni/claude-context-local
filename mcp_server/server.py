@@ -7,7 +7,7 @@ Built directly on the official MCP SDK's low-level `Server` (not FastMCP) for:
 
 Handlers are registered via SDK v2's constructor-kwarg pattern
 (`Server(..., on_call_tool=handle_call_tool, ...)`) rather than v1's
-`@server.call_tool()` decorators — see ADR-0017.
+`@server.call_tool()` decorators - see ADR-0017.
 """
 
 import argparse
@@ -25,7 +25,7 @@ import time
 from collections.abc import AsyncGenerator
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import anyio
 
@@ -67,7 +67,7 @@ from mcp_server.output_formatter import format_response  # noqa: E402
 from mcp_server.tools import responses  # noqa: E402
 
 
-# Configure logging — dual-handler: console (colored) + rotating file (plain)
+# Configure logging - dual-handler: console (colored) + rotating file (plain)
 debug_mode = os.getenv("MCP_DEBUG", "").lower() in ("1", "true", "yes")
 log_level = logging.DEBUG if debug_mode else logging.INFO
 console_format = (
@@ -87,10 +87,11 @@ _ANSI_YELLOW = "\033[93m"
 _ANSI_BLUE = "\033[94m"
 _ANSI_RESET = "\033[0m"
 
-# Stage-completion keywords → blue in console output
+# Stage-completion keywords -> blue in console output
 _STAGE_KEYWORDS: frozenset[str] = frozenset(
     [
-        "✓",
+        "\u2713",  # checkmark (escaped to keep this file ASCII-only; still
+        # matches the literal glyph some log messages emit, e.g. embeddings/model_loader.py)
         "ready",
         "complete",
         "loaded",
@@ -134,7 +135,7 @@ def _enable_windows_ansi() -> None:
 
 
 class _ColorFormatter(logging.Formatter):
-    """Console formatter: ERROR/CRITICAL→red, WARNING→yellow, stage INFO→blue."""
+    """Console formatter: ERROR/CRITICAL->red, WARNING->yellow, stage INFO->blue."""
 
     def format(self, record: logging.LogRecord) -> str:
         text = super().format(record)
@@ -152,26 +153,93 @@ class _ColorFormatter(logging.Formatter):
 class _SafeRotatingFileHandler(logging.handlers.RotatingFileHandler):
     """RotatingFileHandler that tolerates Windows file locks during rollover.
 
-    Swallows WinError 32 (another process holds the file open) so rotation skips
-    gracefully rather than spamming stderr with logging-error tracebacks.
+    Windows keeps an exclusive lock on an open file, so both halves of
+    rollover -- the rename in ``rotate()`` and the reopen in ``doRollover()``
+    -- can raise ``OSError`` while another process (or this one, mid-
+    ``emit``) still holds the handle. A prior version only guarded the
+    rename: on a failed rename it left ``self.stream = None`` forever (the
+    reopen was gated on ``if not self.delay``, which is never true here), so
+    the very next ``emit()`` raised the same error again -- every record for
+    the rest of the process, printing a full traceback to stderr on each one
+    (load-bearing output under ``--transport stdio``).
 
-    Backup files are named ``mcp_server_<mmddyyhhmmss>.log`` where the timestamp
-    is fixed at session start — unique per server run, no numeric suffix needed.
+    The ``_rollover_failed`` latch is deliberately permanent for the process
+    lifetime, not cleared on the next successful ``emit()``: a transient lock
+    (e.g. an antivirus scan) disables rotation for the rest of the run and
+    the base file grows past ``maxBytes``. That is the accepted trade against
+    printing a traceback to stderr on every subsequent record.
+
+    ``utils/progress.py``'s ``configure_child_logging`` documents the same
+    Windows file-lock hazard from the other side and answers it differently:
+    avoidance (child processes log to stderr and never touch the shared
+    file) rather than tolerance. This handler only covers the single-process
+    case -- another process, or thread, holding the file open (an editor, a
+    `tail`, an antivirus scan) -- not multiple processes rotating it.
+
+    Backup files are named ``mcp_server_<mmddyyhhmmss>_<n>.log``: the
+    timestamp is fixed at session start, ``<n>`` is a per-instance rollover
+    counter. A fixed, counter-less name (the prior scheme) collided with
+    itself on a second rollover in one session -- ``os.rename`` raised
+    ``FileExistsError``, suppressed, so the base file could never rotate
+    again for the rest of that session.
     """
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._rollover_failed = False
+        self._rollover_count = 0
+
     def rotate(self, source: str, dest: str) -> None:
-        with contextlib.suppress(PermissionError, OSError):
+        try:
             super().rotate(source, dest)
+        except OSError:
+            self._rollover_failed = True
+
+    def shouldRollover(self, record: logging.LogRecord) -> bool:  # noqa: N802
+        if self._rollover_failed:
+            return False
+        return bool(super().shouldRollover(record))
 
     def doRollover(self) -> None:  # noqa: N802
         if self.stream:
             self.stream.close()
             self.stream = None  # pyrefly: ignore [bad-assignment]  # stdlib sets stream=None during rollover; typeshed stub is non-optional
+        self._rollover_count += 1
         stem = Path(self.baseFilename).stem  # "mcp_server"
-        dfn = str(Path(self.baseFilename).parent / f"{stem}_{_SESSION_START}.log")
-        self.rotate(self.baseFilename, dfn)  # suppresses PermissionError/OSError
-        if not self.delay:
+        dfn = str(
+            Path(self.baseFilename).parent
+            / f"{stem}_{_SESSION_START}_{self._rollover_count}.log"
+        )
+        self.rotate(self.baseFilename, dfn)  # sets _rollover_failed on failure
+        with contextlib.suppress(OSError):
             self.stream = self._open()
+        if not self._rollover_failed:
+            self._prune_backups()
+
+    def _prune_backups(self) -> None:
+        """Honor backupCount by deleting the oldest backups beyond the
+        configured count. The stdlib's own pruning
+        (BaseRotatingHandler.getFilesToDelete) is keyed to its numeric-suffix
+        naming convention and never runs here, since doRollover is fully
+        overridden with a different naming scheme above."""
+        if self.backupCount <= 0:
+            return
+        stem = Path(self.baseFilename).stem
+        parent = Path(self.baseFilename).parent
+        backups = sorted(
+            (p for p in parent.glob(f"{stem}_*.log") if p != Path(self.baseFilename)),
+            key=lambda p: p.stat().st_mtime,
+        )
+        excess = len(backups) - self.backupCount
+        for old in backups[:excess]:
+            with contextlib.suppress(OSError):
+                old.unlink()
+
+    def handleError(self, record: logging.LogRecord) -> None:  # noqa: N802
+        exc_type = sys.exc_info()[0]
+        if exc_type is not None and issubclass(exc_type, OSError):
+            return
+        super().handleError(record)
 
 
 def _configure_logging() -> None:
@@ -222,7 +290,7 @@ else:
 _BENIGN_UVICORN_ERROR_SUBSTRINGS = (
     "Unexpected ASGI message",  # secondary error after a client BrokenResourceError
     "ASGI callable returned without completing response",  # standalone SSE stream
-    # cancelled mid-flight when uvicorn shuts down (Ctrl+C) — cosmetic, not a bug.
+    # cancelled mid-flight when uvicorn shuts down (Ctrl+C) - cosmetic, not a bug.
 )
 
 
@@ -341,11 +409,11 @@ def _get_server_version() -> str:
     try:
         return _pkg_version("claude-context-local")
     except PackageNotFoundError:
-        return "0.25.0"
+        return "0.26.0"
 
 
-# Import tool registry
-from mcp_server.tool_registry import build_tool_list  # noqa: E402
+# Import tool specs
+from mcp_server.tool_specs import build_tool_list  # noqa: E402
 
 
 # ============================================================================
@@ -354,9 +422,9 @@ from mcp_server.tool_registry import build_tool_list  # noqa: E402
 #
 # SDK v2 handlers take a uniform (ctx, params) signature and are wired into
 # the server via constructor kwargs below (v1 used @server.*() decorators).
-# `ctx: ServerRequestContext` is unused by every handler here — none of them
+# `ctx: ServerRequestContext` is unused by every handler here - none of them
 # need session/lifespan state beyond the module-level globals already
-# managed by resource_manager.py / search_factory.py — but the SDK dispatches
+# managed by resource_manager.py / search_factory.py - but the SDK dispatches
 # positionally, so it must still be accepted.
 
 
@@ -373,7 +441,7 @@ def _hash_arguments(arguments: dict[str, Any] | None) -> str:
     """Stable one-way digest of a tool call's arguments, for log correlation.
 
     Hashes key+value pairs (not just keys) so repeated/identical calls can be
-    matched across log lines — but the digest is one-way, so raw argument
+    matched across log lines - but the digest is one-way, so raw argument
     values are never written to logs or error responses (see the keys-only
     echo in the `except Exception` branch of handle_call_tool, #62).
     """
@@ -382,6 +450,33 @@ def _hash_arguments(arguments: dict[str, Any] | None) -> str:
     except (TypeError, ValueError):
         canonical = str(arguments)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
+
+
+def _is_carved_out_error_shape(result: dict[str, Any]) -> bool:
+    """True if *result* carries a top-level ``"error"`` key that must NOT
+    translate to ``CallToolResult(is_error=True)`` (D5).
+
+    Two carve-outs, both cases where the *tool call itself* succeeded even
+    though its payload happens to include an ``"error"`` key -- discriminated
+    by the sibling ``"status"`` key, which no genuine error envelope sets
+    (``responses.error()`` never adds a ``status=`` context field today):
+
+    - Async-job status polls (``get_index_status(job_id=...)`` ->
+      ``Job.to_status_dict()``, job_registry.py:52-53): when the polled job
+      failed, the status dict carries ``"status": "error"`` alongside
+      ``"error": <message>`` -- but polling succeeded; it's reporting that
+      the *job* failed, not that this call did.
+    - ``responses.client_disconnected()`` (responses.py:67-69), shaped
+      ``{"error": "Client disconnected", "status": "cancelled"}`` -- mirrors
+      the ``asyncio.CancelledError`` branch below, which logs
+      ``status=cancelled`` rather than ``status=error`` and never reaches
+      this function at all (it re-raises). Treating a client-initiated
+      disconnect as a server-side tool failure would misclassify it.
+    """
+    from mcp_server.tools.job_registry import JobStatus
+
+    status = result.get("status")
+    return status is not None and status in (*get_args(JobStatus), "cancelled")
 
 
 async def handle_call_tool(
@@ -395,7 +490,7 @@ async def handle_call_tool(
     _input_hash = _hash_arguments(arguments)
 
     try:
-        from mcp_server.tool_handlers import TOOL_DISPATCH
+        from mcp_server.tool_specs import TOOL_DISPATCH
 
         handler = TOOL_DISPATCH.get(name)
         if handler is None:
@@ -416,6 +511,11 @@ async def handle_call_tool(
 
         # Call handler (arguments dict no longer contains output_format)
         result = await handler(arguments)
+        is_error = (
+            isinstance(result, dict)
+            and "error" in result
+            and not _is_carved_out_error_shape(result)
+        )
         formatted_result = (
             format_response(result, output_format)
             if isinstance(result, dict)
@@ -441,14 +541,14 @@ async def handle_call_tool(
                 else str(formatted_result)
             )
 
-        # Per-call observability (§VII-D): one structured line per dispatch with
-        # name, input hash, latency, and output size — independent of whether
+        # Per-call observability (Section VII-D): one structured line per dispatch with
+        # name, input hash, latency, and output size - independent of whether
         # OTel tracing (utils/observability.py) is enabled.
         _elapsed_ms = round((time.monotonic() - _start) * 1000, 1)
         _out_bytes = len(result_text.encode("utf-8"))
         logger.info(
             f"[TOOL_DONE] name={name} input_hash={_input_hash} ms={_elapsed_ms} "
-            f"out_bytes={_out_bytes} status=ok"
+            f"out_bytes={_out_bytes} status={'error' if is_error else 'ok'}"
         )
 
         # Return both content (backward compat) and structured_content (native JSON, no double encoding)
@@ -456,6 +556,7 @@ async def handle_call_tool(
         # pretty-print the dict regardless, making the response appear as full/indented output and
         # defeating the token-reduction goal. For compact/ultra the content text is canonical.
         return CallToolResult(
+            is_error=is_error,
             content=[TextContent(type="text", text=result_text)],
             structured_content=(
                 formatted_result
@@ -477,7 +578,7 @@ async def handle_call_tool(
         _elapsed_ms = round((time.monotonic() - _start) * 1000, 1)
         logger.error(f"[TOOL_ERROR] {name}: {e}", exc_info=True)
         # Echo only argument keys (not values) to keep error payloads compact and avoid
-        # doubling log noise — exc_info=True above already captures full context (#62).
+        # doubling log noise - exc_info=True above already captures full context (#62).
         error_response = responses.error(
             str(e),
             tool=name,
@@ -616,7 +717,7 @@ For more information, see the project documentation.
 # CREATE SERVER INSTANCE
 # ============================================================================
 # SDK v2 wires handlers in via constructor kwargs (v1 used @server.*()
-# decorators after the fact) — must come after every handle_* def above.
+# decorators after the fact) - must come after every handle_* def above.
 
 server = Server(
     "Code Search",
@@ -732,7 +833,7 @@ if __name__ == "__main__":
                 stateless=True,
             )
 
-            # ASGI adapter — session_manager.handle_request requires run() task group
+            # ASGI adapter - session_manager.handle_request requires run() task group
             async def handle_mcp(scope: Any, receive: Any, send: Any) -> None:
                 await session_manager.handle_request(scope, receive, send)
 
@@ -747,7 +848,7 @@ if __name__ == "__main__":
                     logger.info(
                         "[HTTP CLEANUP] Resource cleanup requested via /cleanup endpoint"
                     )
-                    # _cleanup_previous_resources() blocks (gc, CUDA ops, sleep) —
+                    # _cleanup_previous_resources() blocks (gc, CUDA ops, sleep) -
                     # offload so the uvicorn event loop stays responsive.
                     await asyncio.to_thread(_cleanup_previous_resources)
                     logger.info("[HTTP CLEANUP] Resources cleaned up successfully")
@@ -820,9 +921,14 @@ if __name__ == "__main__":
                         f"[HTTP SWITCH] Project switch requested: {project_path}"
                     )
 
-                    from mcp_server.tools.config_handlers import handle_switch_project
+                    from mcp_server.tool_specs import TOOL_DISPATCH
 
-                    result = await handle_switch_project({"project_path": project_path})
+                    result = await TOOL_DISPATCH["switch_project"](
+                        {"project_path": project_path}
+                    )
+                    assert isinstance(result, dict), (
+                        "handle_switch_project always returns dict"
+                    )
 
                     logger.info(
                         f"[HTTP SWITCH] Switch complete: {result.get('project')}"
@@ -874,7 +980,7 @@ if __name__ == "__main__":
                     # succeeded.
 
                     # Suppress noisy-but-benign uvicorn.error messages (disconnected
-                    # clients, SSE streams cancelled at shutdown) — see
+                    # clients, SSE streams cancelled at shutdown) - see
                     # _drop_benign_uvicorn_errors for the full rationale.
                     logging.getLogger("uvicorn.error").addFilter(
                         _drop_benign_uvicorn_errors

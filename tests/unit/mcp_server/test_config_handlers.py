@@ -13,6 +13,7 @@ import pytest
 
 from mcp_server.tools.config_handlers import (
     handle_configure_chunking,
+    handle_configure_reranking,
     handle_configure_search_mode,
 )
 from search.config import ChunkingConfig, SearchConfig, SearchModeConfig
@@ -72,7 +73,9 @@ async def test_configure_search_mode_valid_saves_config(
 
     assert "error" not in result
     assert result.get("success") is True
-    mock_config_manager.save_config.assert_called_once()
+    mock_config_manager.save_config.assert_called_once_with(
+        mock_config_manager.load_config.return_value
+    )
 
 
 @pytest.mark.asyncio
@@ -109,6 +112,144 @@ async def test_configure_search_mode_partial_call_retains_persisted_weights(
     assert result["config"]["bm25_weight"] == 0.7
     assert result["config"]["dense_weight"] == 0.3
     assert result["config"]["enable_parallel"] is False
+
+
+# ============================================================================
+# D7 — reset_searcher gated behind SearchConfig.requires_rebuild
+#
+# Before D7, handle_configure_search_mode called state.reset_searcher()
+# unconditionally and handle_configure_reranking never called it at all.
+# Neither behavior was ever pinned by a reset_searcher call-count assertion —
+# the tests above only check "error" not in result / save_config called.
+# These fill that gap on both handlers, and on both directions (no baked
+# field touched -> no reset; a baked field touched -> reset), using fields
+# that are already construction_baked=True in production
+# (test_construction_baked_fields_are_pinned) but not MCP-settable today, so
+# the "touched" half needs a field-map monkeypatch to simulate a future
+# settable+baked field without waiting for one to exist.
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_configure_search_mode_does_not_reset_searcher_for_live_fields(
+    mock_state,
+):
+    """None of default_mode/enable_hybrid/bm25_weight/dense_weight/
+    use_parallel_search is construction_baked, so the reset the old
+    unconditional call performed on every invocation was pure pessimisation."""
+    config = SearchConfig()
+    mgr = Mock()
+    mgr.load_config.return_value = config
+
+    with (
+        patch("mcp_server.tools.config_handlers.get_config_manager", return_value=mgr),
+        patch("mcp_server.tools.config_handlers.get_state", return_value=mock_state),
+    ):
+        result = await handle_configure_search_mode(
+            {
+                "search_mode": "bm25",
+                "bm25_weight": 0.5,
+                "dense_weight": 0.5,
+                "enable_parallel": False,
+            }
+        )
+
+    assert "error" not in result
+    mock_state.reset_searcher.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_configure_search_mode_resets_searcher_when_baked_field_touched(
+    mock_state,
+):
+    """Simulates a future construction_baked+settable search_mode field via
+    _SEARCH_MODE_FIELDS, using bm25_k1 (already construction_baked=True)."""
+    config = SearchConfig()
+    mgr = Mock()
+    mgr.load_config.return_value = config
+
+    with (
+        patch("mcp_server.tools.config_handlers.get_config_manager", return_value=mgr),
+        patch("mcp_server.tools.config_handlers.get_state", return_value=mock_state),
+        patch(
+            "mcp_server.tools.config_handlers._SEARCH_MODE_FIELDS",
+            (("bm25_k1", "bm25_k1"),),
+        ),
+    ):
+        result = await handle_configure_search_mode(
+            {"search_mode": "hybrid", "bm25_k1": 2.0}
+        )
+
+    assert "error" not in result
+    mock_state.reset_searcher.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_configure_reranking_saves_config(mock_config_manager):
+    """Baseline: a valid call succeeds and persists via save_config — no
+    existing test in this file exercised handle_configure_reranking at all
+    before D7."""
+    with (
+        patch(
+            "mcp_server.tools.config_handlers.get_config_manager",
+            return_value=mock_config_manager,
+        ),
+        patch("mcp_server.tools.config_handlers.get_state", return_value=Mock()),
+    ):
+        result = await handle_configure_reranking({"top_k_candidates": 40})
+
+    assert "error" not in result
+    assert result.get("success") is True
+    mock_config_manager.save_config.assert_called_once_with(
+        mock_config_manager.load_config.return_value
+    )
+
+
+@pytest.mark.asyncio
+async def test_configure_reranking_does_not_reset_searcher_for_live_fields(
+    mock_state,
+):
+    """None of enabled/model_name/top_k_candidates — this handler's three
+    MCP-settable fields — is construction_baked, so the "Changes take effect
+    on next search" promise in its response is true without a reset."""
+    config = SearchConfig()
+    mgr = Mock()
+    mgr.load_config.return_value = config
+
+    with (
+        patch("mcp_server.tools.config_handlers.get_config_manager", return_value=mgr),
+        patch("mcp_server.tools.config_handlers.get_state", return_value=mock_state),
+    ):
+        result = await handle_configure_reranking(
+            {"enabled": False, "model_name": "some/model", "top_k_candidates": 40}
+        )
+
+    assert "error" not in result
+    mock_state.reset_searcher.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_configure_reranking_resets_searcher_when_baked_field_touched(
+    mock_state,
+):
+    """Simulates a future construction_baked+settable reranker field via
+    _RERANKER_FIELDS, using doc_max_chars (already construction_baked=True)."""
+    config = SearchConfig()
+    mgr = Mock()
+    mgr.load_config.return_value = config
+
+    with (
+        patch("mcp_server.tools.config_handlers.get_config_manager", return_value=mgr),
+        patch("mcp_server.tools.config_handlers.get_state", return_value=mock_state),
+        patch(
+            "mcp_server.tools.config_handlers._RERANKER_FIELDS",
+            (("doc_max_chars", "doc_max_chars"),),
+        ),
+    ):
+        result = await handle_configure_reranking({"doc_max_chars": 6000})
+
+    assert "error" not in result
+    mock_state.reset_searcher.assert_called_once()
 
 
 # ============================================================================
@@ -214,7 +355,9 @@ async def test_chunking_all_valid_saves_config(mock_config_manager):
 
     assert "error" not in result
     assert result.get("success") is True
-    mock_config_manager.save_config.assert_called_once()
+    mock_config_manager.save_config.assert_called_once_with(
+        mock_config_manager.load_config.return_value
+    )
 
 
 # ============================================================================

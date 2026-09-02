@@ -114,12 +114,11 @@ this project behaving differently" is answerable from the MCP surface.
   `stats.json` (community resolution, split share, ego density).
   Retrieval-quality knobs are never auto-applied — no golden dataset
   exists on arbitrary projects — and a static unit test pins the
-  forbidden set (`FORBIDDEN_AUTO_TUNE_KEYS`: fusion weights, `rrf_k`,
-  `centrality_alpha`, `single_pass`, `hop1_reserved_slots`,
-  `bm25_reserved_slots`, `query_expansion.enabled`,
-  `enable_community_merge`, `bm25_tokenizer`, `multi_hop.*`,
-  `embedding.model_name`) so no future rule can quietly cross the line.
-  Probe failures are isolated: they warn and never break indexing.
+  forbidden set. See `search/index_probe.py`'s `FORBIDDEN_AUTO_TUNE_KEYS`
+  frozenset for the current, live membership — this list has grown since
+  and previously named `enable_community_merge`, deleted by ADR-0020; do
+  not hand-copy it here again (see ADR-0042 for why). Probe failures are
+  isolated: they warn and never break indexing.
   Incremental reindexes never re-probe; the existing file keeps
   applying untouched.
 - A full reindex overwrites hand-edits to the `overrides` section

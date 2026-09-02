@@ -107,6 +107,26 @@ class TestEmbedderConcurrencyRace:
         with pytest.raises(RuntimeError, match="cleaned up"):
             emb.embed_query("some query")
 
+    def test_cleanup_clears_document_composer_caches(self):
+        """cleanup() must drop the composer's mtime-keyed caches, which are
+        otherwise never evicted over a process-lifetime embedder."""
+        emb, _ = _make_embedder_with_mock_loader()
+        composer = emb._document_composer
+        composer._class_file_cache["a.py"] = (1.0, "x")
+        composer._import_ctx_cache["a.py"] = (1.0, "ctx")
+        composer._class_sig_cache[("a.py", "C")] = (1.0, 3, "class C:")
+        _ = emb.model
+        emb.cleanup()
+        assert composer._class_file_cache == {}
+        assert composer._import_ctx_cache == {}
+        assert composer._class_sig_cache == {}
+
+    def test_cleanup_without_loaded_model_still_clears_composer_caches(self):
+        emb, _ = _make_embedder_with_mock_loader()
+        emb._document_composer._import_ctx_cache["a.py"] = (1.0, "ctx")
+        emb.cleanup()
+        assert emb._document_composer._import_ctx_cache == {}
+
     def test_double_cleanup_is_idempotent(self):
         """Calling cleanup() twice must not raise."""
         emb, _ = _make_embedder_with_mock_loader()

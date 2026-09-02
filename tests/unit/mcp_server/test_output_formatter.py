@@ -5,6 +5,7 @@ reducing token overhead through different output formats.
 """
 
 from mcp_server.output_formatter import (
+    NEVER_DROP_EMPTY_KEYS,
     _compact_dict,
     _to_compact_format,
     _to_toon_format,
@@ -783,8 +784,10 @@ class TestSubgraphFormatting:
 
         result = format_response(data, "compact")
 
-        # Verify empty results array is omitted
-        assert "results" not in result
+        # Empty results survives (L5 zero-result contract: "found nothing" must stay
+        # machine-readable rather than being indistinguishable from an omitted field).
+        assert "results" in result
+        assert result["results"] == []
 
         # Verify subgraph_nodes has empty fields omitted
         node = result["subgraph_nodes"][0]
@@ -824,3 +827,102 @@ class TestSubgraphFormatting:
 
         # Verbose should return exact same data
         assert result == data
+
+
+class TestZeroResultContract:
+    """Tests for the explicit zero-result contract (L5).
+
+    Empty "results"/"direct_callers"/"direct_callees"/"similar_chunks" must survive formatting
+    so a caller can tell "search/traversal found nothing" apart from "field omitted" — the
+    generic empty-value guard (skip [], {}, None, "") would otherwise drop them, and under
+    ultra (the live default) there is no separate count field to fall back on. "similar_chunks"
+    (find_similar_code's payload key, including via search_code's "find_similar" intent
+    redirect) was added after a corpus probe caught it missing from the original three-key
+    allowlist live on the wire — same defect, different key name.
+    """
+
+    def test_never_drop_empty_keys_are_the_expected_set(self):
+        """The allowlist should name exactly the negative-evidence carriers."""
+        assert (
+            frozenset({"results", "direct_callers", "direct_callees", "similar_chunks"})
+            == NEVER_DROP_EMPTY_KEYS
+        )
+
+    def test_empty_results_survives_all_formats(self):
+        """An empty results list must appear in verbose, compact, and ultra output."""
+        data = {"query": "no matches", "results": []}
+
+        for fmt in ("verbose", "compact", "ultra"):
+            result = format_response(data, fmt)
+            assert "results" in result
+            assert result["results"] == []
+
+    def test_empty_direct_callers_and_callees_survive_all_formats(self):
+        """find_connections' empty caller/callee lists must survive formatting too."""
+        data = {
+            "chunk_id": "a.py:1:func:f",
+            "direct_callers": [],
+            "direct_callees": [],
+        }
+
+        for fmt in ("verbose", "compact", "ultra"):
+            result = format_response(data, fmt)
+            assert result["direct_callers"] == []
+            assert result["direct_callees"] == []
+
+    def test_empty_similar_chunks_survives_all_formats(self):
+        """find_similar_code's empty similar_chunks list must survive formatting too."""
+        data = {"reference_chunk": "a.py:1:func:f", "similar_chunks": []}
+
+        for fmt in ("verbose", "compact", "ultra"):
+            result = format_response(data, fmt)
+            assert "similar_chunks" in result
+            assert result["similar_chunks"] == []
+
+    def test_non_allowlisted_empty_keys_still_dropped(self):
+        """Keys outside NEVER_DROP_EMPTY_KEYS keep the original drop-when-empty behavior."""
+        data = {
+            "results": [],
+            "direct_callers": [],
+            "other_empty_list": [],
+            "other_empty_dict": {},
+        }
+
+        for fmt in ("compact", "ultra"):
+            result = format_response(data, fmt)
+            assert "results" in result
+            assert "direct_callers" in result
+            assert "other_empty_list" not in result
+            assert "other_empty_dict" not in result
+
+    def test_direct_callers_that_compacts_to_nothing_still_present(self):
+        """A NEVER_DROP_EMPTY_KEYS list that is non-empty at the top level
+        but whose only item compacts down to {} (every field empty) must
+        still survive compact formatting as [] (D6). This is a distinct
+        code path from an already-empty top-level value: _to_compact_format's
+        `if compacted_list:` guard drops the key exactly like any other
+        now-empty field unless the post-pass safety net restores it."""
+        data = {
+            "chunk_id": "a.py:1:func:f",
+            "direct_callers": [{"resolver_confidence": None}],
+        }
+
+        result = _to_compact_format(data)
+
+        assert "direct_callers" in result
+        assert result["direct_callers"] == []
+
+    def test_direct_callees_that_tabulates_to_nothing_still_present(self):
+        """Same gap as above, for toon format's tabular path: if every field
+        of every row is empty, `fields` ends up [], so no dense header and no
+        sparse table are ever written for the key -- the post-pass restore
+        must still add it back as []."""
+        data = {
+            "chunk_id": "a.py:1:func:f",
+            "direct_callees": [{"resolver_confidence": None}],
+        }
+
+        result = _to_toon_format(data)
+
+        assert "direct_callees" in result
+        assert result["direct_callees"] == []

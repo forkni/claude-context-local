@@ -31,6 +31,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from mcp_server.resource_manager import (
+    McpResourceRefresher,
     _cleanup_previous_resources,
     bind_active_project_overrides,
     initialize_server_state,
@@ -265,3 +266,212 @@ class TestInitializeServerStateSwallowsBindFailure:
             initialize_server_state()  # must not raise
 
         mock_bind.assert_called_once_with(str(project_path))
+
+
+class _StubIndexer:
+    """No `_is_shutdown` attribute -- exercises the 'no refresh needed'
+    branch the way a never-shutdown production indexer would (hasattr is
+    False, not just falsy)."""
+
+
+class _ShutdownIndexer:
+    """Marks itself shut down -- exercises the get_searcher refresh branch."""
+
+    _is_shutdown = True
+
+
+class _NotShutdownIndexer:
+    """Explicit False -- distinct from the absent-attribute case."""
+
+    _is_shutdown = False
+
+
+class TestMcpResourceRefresherRefreshBeforeFullIndex:
+    """Unit coverage for the ~111 lines moved from
+    IncrementalIndexer._release_and_verify_resources (ADR-0053). These lines
+    were always patched away in search/ tests via
+    patch.object(IncrementalIndexer, "_release_and_verify_resources") and so
+    had never run under any unit test before the move.
+    """
+
+    def test_happy_path_returns_fresh_embedder_and_unchanged_indexer(self):
+        fake_state = MagicMock()
+        fake_state.embedders = {}
+        fake_state.index_manager = None
+        fake_state.searcher = None
+        fresh_embedder = MagicMock()
+        indexer = _StubIndexer()
+
+        with (
+            patch(
+                "mcp_server.resource_manager._cleanup_previous_resources"
+            ) as mock_cleanup,
+            patch("mcp_server.services.get_state", return_value=fake_state),
+            patch(
+                "mcp_server.model_pool_manager.get_embedder",
+                return_value=fresh_embedder,
+            ) as mock_get_embedder,
+            patch("mcp_server.search_factory.get_searcher") as mock_get_searcher,
+            patch("torch.cuda.is_available", return_value=False),
+        ):
+            refresher = McpResourceRefresher()
+            result_embedder, result_indexer = refresher.refresh_before_full_index(
+                "/some/project", MagicMock(), indexer
+            )
+
+        mock_cleanup.assert_called_once()
+        mock_get_embedder.assert_called_once()
+        mock_get_searcher.assert_not_called()
+        assert result_embedder is fresh_embedder
+        assert result_indexer is indexer  # unchanged -- not shut down
+
+    def test_verification_failure_does_not_abort_refresh(self, caplog):
+        """Persistently non-empty state after cleanup logs a warning on both
+        checks but the refresh still proceeds -- this is advisory, not a
+        gate (see the '...anyway' log in refresh_before_full_index)."""
+        fake_state = MagicMock()
+        fake_state.embedders = {"default": MagicMock()}
+        fake_state.index_manager = MagicMock()
+        fake_state.searcher = MagicMock()
+        fresh_embedder = MagicMock()
+        indexer = _StubIndexer()
+
+        with (
+            patch("mcp_server.resource_manager._cleanup_previous_resources"),
+            patch("mcp_server.services.get_state", return_value=fake_state),
+            patch(
+                "mcp_server.model_pool_manager.get_embedder",
+                return_value=fresh_embedder,
+            ) as mock_get_embedder,
+            patch("mcp_server.search_factory.get_searcher") as mock_get_searcher,
+            patch("torch.cuda.is_available", return_value=False),
+            caplog.at_level("WARNING", logger="mcp_server.resource_manager"),
+        ):
+            refresher = McpResourceRefresher()
+            result_embedder, _ = refresher.refresh_before_full_index(
+                "/some/project", MagicMock(), indexer
+            )
+
+        assert result_embedder is fresh_embedder
+        mock_get_embedder.assert_called_once()
+        mock_get_searcher.assert_not_called()
+        assert any("still shows issues" in r.message for r in caplog.records)
+
+    def test_is_shutdown_true_acquires_fresh_searcher(self):
+        fake_state = MagicMock()
+        fake_state.embedders = {}
+        fake_state.index_manager = None
+        fake_state.searcher = None
+        fresh_searcher = MagicMock()
+        indexer = _ShutdownIndexer()
+
+        with (
+            patch("mcp_server.resource_manager._cleanup_previous_resources"),
+            patch("mcp_server.services.get_state", return_value=fake_state),
+            patch(
+                "mcp_server.model_pool_manager.get_embedder", return_value=MagicMock()
+            ),
+            patch(
+                "mcp_server.search_factory.get_searcher", return_value=fresh_searcher
+            ) as mock_get_searcher,
+            patch("torch.cuda.is_available", return_value=False),
+        ):
+            refresher = McpResourceRefresher()
+            _, result_indexer = refresher.refresh_before_full_index(
+                "/some/project", MagicMock(), indexer
+            )
+
+        mock_get_searcher.assert_called_once_with("/some/project", load_existing=False)
+        assert result_indexer is fresh_searcher
+
+    def test_is_shutdown_absent_returns_indexer_unchanged(self):
+        fake_state = MagicMock()
+        fake_state.embedders = {}
+        fake_state.index_manager = None
+        fake_state.searcher = None
+        indexer = _StubIndexer()
+
+        with (
+            patch("mcp_server.resource_manager._cleanup_previous_resources"),
+            patch("mcp_server.services.get_state", return_value=fake_state),
+            patch(
+                "mcp_server.model_pool_manager.get_embedder", return_value=MagicMock()
+            ),
+            patch("mcp_server.search_factory.get_searcher") as mock_get_searcher,
+            patch("torch.cuda.is_available", return_value=False),
+        ):
+            refresher = McpResourceRefresher()
+            _, result_indexer = refresher.refresh_before_full_index(
+                "/some/project", MagicMock(), indexer
+            )
+
+        mock_get_searcher.assert_not_called()
+        assert result_indexer is indexer
+
+    def test_is_shutdown_false_returns_indexer_unchanged(self):
+        fake_state = MagicMock()
+        fake_state.embedders = {}
+        fake_state.index_manager = None
+        fake_state.searcher = None
+        indexer = _NotShutdownIndexer()
+
+        with (
+            patch("mcp_server.resource_manager._cleanup_previous_resources"),
+            patch("mcp_server.services.get_state", return_value=fake_state),
+            patch(
+                "mcp_server.model_pool_manager.get_embedder", return_value=MagicMock()
+            ),
+            patch("mcp_server.search_factory.get_searcher") as mock_get_searcher,
+            patch("torch.cuda.is_available", return_value=False),
+        ):
+            refresher = McpResourceRefresher()
+            _, result_indexer = refresher.refresh_before_full_index(
+                "/some/project", MagicMock(), indexer
+            )
+
+        mock_get_searcher.assert_not_called()
+        assert result_indexer is indexer
+
+    def test_get_searcher_raising_propagates(self):
+        indexer = _ShutdownIndexer()
+        fake_state = MagicMock()
+        fake_state.embedders = {}
+        fake_state.index_manager = None
+        fake_state.searcher = None
+
+        with (
+            patch("mcp_server.resource_manager._cleanup_previous_resources"),
+            patch("mcp_server.services.get_state", return_value=fake_state),
+            patch(
+                "mcp_server.model_pool_manager.get_embedder", return_value=MagicMock()
+            ),
+            patch(
+                "mcp_server.search_factory.get_searcher",
+                side_effect=RuntimeError("boom"),
+            ),
+            patch("torch.cuda.is_available", return_value=False),
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            McpResourceRefresher().refresh_before_full_index(
+                "/some/project", MagicMock(), indexer
+            )
+
+
+class TestMcpResourceRefresherInvalidateSearcherCache:
+    """Compensating inverse of refresh_before_full_index (#reindex-log-audit-2026-07-30)."""
+
+    def test_nulls_state_searcher(self):
+        fake_state = MagicMock()
+        fake_state.searcher = MagicMock()
+
+        with patch("mcp_server.services.get_state", return_value=fake_state):
+            McpResourceRefresher().invalidate_searcher_cache()
+
+        assert fake_state.searcher is None
+
+
+class TestMcpResourceRefresherSatisfiesProtocol:
+    def test_isinstance_check_against_resource_refresher_protocol(self):
+        from search.resource_refresh import ResourceRefresher
+
+        assert isinstance(McpResourceRefresher(), ResourceRefresher)

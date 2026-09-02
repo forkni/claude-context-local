@@ -19,18 +19,18 @@ set. This keeps the advertised tool count small without removing the capability.
 
 | Tool | Priority | Purpose | Parameters |
 | ------ | ---------- | --------- | ------------ |
-| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k=4 (schema default; `search_config.json.example` sets the effective default to 7), search_mode="hybrid", file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes=5, ego_graph_enabled=False, ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0 |
-| **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types |
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k (no schema default at all — falls back to `get_search_config_status.search_mode.default_k`; `search_config.json.example` sets that to 7), search_mode="auto" (routes by query intent; pass a mode explicitly to force it), file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes (no schema default — see `get_search_config_status.max_index_age_minutes`), ego_graph_enabled (tri-state: omit to defer to `get_search_config_status.ego_graph_enabled`; pass True/False to override for this call only), ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0, include_top_callers=False, include_top_callees=False, include_signatures=False |
+| **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types, hide_ambiguous=True |
 | **find_path** | 🟡 **IMPACT** | Trace shortest path between code entities in relationship graph | source OR source_chunk_id, target OR target_chunk_id, edge_types, max_hops=10 |
-| **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), project_name, incremental=True, wait=True, include_dirs, exclude_dirs |
+| **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), incremental=True, wait=True, include_dirs, exclude_dirs |
 | **find_similar_code** | 🟡 **IMPACT** | Find alternative implementations | chunk_id (required), k=4, exclude_same_file=False (set true for cross-file analogues — sibling implementations in other files; leave false for neighbors within the reference chunk's own file, e.g. other methods of the same class) |
 | configure_search_mode | Config | Set search mode & weights | search_mode="hybrid", bm25_weight=0.35, dense_weight=0.65, enable_parallel=True |
 | configure_reranking | Config | Configure neural reranker settings (BGE OR Jina v3, runtime configurable) | enabled, model_name, top_k_candidates=30 |
 | configure_chunking | Config | Configure code chunking settings | enable_large_node_splitting, max_chunk_lines, split_size_method, max_split_chars, enable_file_summaries, sizing_mode |
 | get_search_config_status | Config | View current configuration | *(no parameters)* |
-| get_index_status | Status | Check index health & model info | *(no parameters)* |
+| get_index_status | Status | Check index health & model info; returns `index_is_current` (True/False/null — content-only Merkle diff vs the working tree, ADR-0058) and `pending_changes` `{added, modified, removed}` | job_id (optional — status of a background index job) |
 | get_memory_status | Monitor | Check RAM/VRAM usage | *(no parameters)* |
-| list_projects | Management | Show indexed projects grouped by path | *(no parameters)* |
+| list_projects | Management | Show indexed projects grouped by path | check_freshness=False (True adds the per-model `index_is_current` verdict for every project without switching) |
 | switch_project | Management | Change active project | project_path (required) |
 | clear_index | Reset | Delete current index (all dimensions) | *(no parameters)* |
 | delete_project | Management | Safely delete indexed project | project_path (required), force=False |
@@ -197,8 +197,8 @@ either filter until reindexed.
 
 | Parameter | Type | Default | Range | Description |
 | ----------- | ------ | --------- | ------- | ------------- |
-| `ego_graph_enabled` | boolean | false | - | Enable k-hop neighbor expansion from call graph |
-| `ego_graph_k_hops` | integer | 2 | 1-5 | Graph traversal depth (1=direct neighbors, 2=neighbors of neighbors) |
+| `ego_graph_enabled` | boolean | *(no schema default — tri-state)* | - | Enable k-hop neighbor expansion from call graph. Omit to defer to the server's configured value (`get_search_config_status.ego_graph_enabled`); pass `true`/`false` explicitly to override for this call only |
+| `ego_graph_k_hops` | integer | 2 | 1-3 | Graph traversal depth (1=direct neighbors, 2=neighbors of neighbors) |
 | `ego_graph_max_neighbors_per_hop` | integer | 10 | 1-50 | Limit neighbors per hop to prevent explosion |
 
 **⭐ NEW (v0.8.3): Automatic Import Filtering**
@@ -310,6 +310,58 @@ Parent chunks are marked in results with:
 
 ---
 
+## Top-Caller Hints (opt-in, 2026-08-14)
+
+**Feature**: `include_top_callers=True` on `search_code` attaches up to 2 caller hints to each result.
+
+**Purpose**: Callers are the highest-utility context an agent cannot derive from the result itself. This surfaces "who calls this?" inline instead of requiring a follow-up `find_connections` call.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `include_top_callers` | boolean | false | Attach `top_callers` (≤2 entries) to each search result |
+| `include_top_callees` | boolean | false | Attach `top_callees` (≤2 entries) to each search result (added 2026-09-02) |
+| `include_signatures` | boolean | false | Attach a signature-only `signature` string to each result (~687 tokens/query overhead, ~36% over the compact payload; module chunks skipped; non-Python degrades to the first 3 raw lines, ≤600 chars). Never touches scoring or ordering |
+
+### Behavior
+
+- Each entry is `{"name": <caller symbol>, "file": <caller file>}`, ranked by resolver confidence when available (insertion order otherwise — most in-file AST edges carry no float confidence, so ordering is a hint, not a guarantee).
+- Looks up both the chunk-id graph node and the bare symbol-name node (unresolved AST call edges target the latter), deduplicated before the top-2 cut.
+- Silently absent when the graph is unavailable or the result has no incoming call edges. Default off is byte-identical to prior output.
+
+```python
+search_code("rerank candidates", include_top_callers=True)
+# result gains: "top_callers": [{"name": "search", "file": "search/hybrid_searcher.py"}, ...]
+
+search_code("rerank candidates", include_top_callees=True)
+# result gains: "top_callees": [{"name": "rerank", "file": "search/reranker.py"}, {"name": "len", "file": ""}]
+```
+
+### Callee variant (`include_top_callees`, 2026-09-02)
+
+- Same shape over outgoing `calls` edges. Resolved chunk targets rank first (resolver
+  confidence descending, discovery order otherwise); unresolved bare-symbol targets follow
+  and render with `"file": ""`, since the graph has no file for them.
+- No symbol-node lookup fallback: bare symbol nodes carry no outgoing edges, so unresolved
+  callees only ever appear as targets.
+
+---
+
+## Ambiguous-Edge Filtering for find_connections (default-on since 2026-08-16)
+
+**Feature**: `hide_ambiguous` on `find_connections` drops call-edge entries whose confidence tag is `"ambiguous"`. Default `true` (promoted 2026-08-16 — `run_caller_recall` gate: recall byte-identical, precision up both directions, see `evaluation/CONFIDENCE_EGO_AB_20260816.md`). Pass `hide_ambiguous=False` explicitly to see the raw, unfiltered edge list.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `hide_ambiguous` | boolean | true | Hide `"ambiguous"`-tagged entries from `direct_callers`, `direct_callees`, and `indirect_callers` |
+
+### Behavior
+
+- Display-layer filter scoped to the three call-edge lists only. `"exact"` and `"recovered"` entries are always kept; non-call relationship buckets (which carry float confidences) are untouched.
+- **`caller_confidence`/`callee_confidence` breakdowns and `total_impacted` intentionally remain pre-filter totals** — the counters tell you how many entries existed before filtering (e.g. `ambiguous: 5` with an empty list means 5 were hidden).
+- `dependency_graph` output is not filtered — hidden entries can still appear there.
+
+---
+
 ## Search Result Fields
 
 The `search_code` tool returns results with the following fields:
@@ -326,6 +378,9 @@ The `search_code` tool returns results with the following fields:
 | `complexity_score` | integer | ⚠️ Optional | Cyclomatic complexity (functions/methods only) |
 | `reranker_score` | float | ⚠️ Optional | Neural reranker score (when reranking enabled, rounded to 4 decimals) |
 | `graph` | object | ⚠️ Optional | Call relationships (`calls`, `called_by` arrays) |
+| `top_callers` | array | ⚠️ Optional | Up to 2 `{name, file}` caller hints (only with `include_top_callers=True`) |
+| `top_callees` | array | ⚠️ Optional | Up to 2 `{name, file}` callee hints; `file` is `""` for unresolved bare-symbol targets (only with `include_top_callees=True`) |
+| `signature` | string | ⚠️ Optional | Signature-only view of the chunk (only with `include_signatures=True`) |
 
 ### Field Details
 
@@ -512,9 +567,9 @@ Notice:
 
 **Recommendation**:
 
-- Use **compact** as default (good balance of readability and efficiency)
-- Use **toon** for large result sets (k > 10) or bandwidth-constrained environments
-- Use **json** only for debugging or when you need maximum readability
+- The server defaults to **ultra** (the "TOON" row above; `OutputConfig.format`) — best token efficiency for large result sets (k > 10) or bandwidth-constrained environments; omit `output_format` to use it
+- Use **compact** for a middle ground when tabular ultra output is harder to read than plain JSON
+- Use **verbose** (the "JSON" row above) only for debugging or when you need maximum readability
 
 ---
 
@@ -572,6 +627,8 @@ search_code(chunk_id="file.py:10-20:function:name")  # O(1) unambiguous lookup
 - `adaptive_multiplier_max` (float): T_max multiplier for low-complexity functions (1.0-2.0, default: 1.3)
 - `adaptive_multiplier_min` (float): T_min multiplier for high-complexity functions (0.1-1.0, default: 0.5)
 - `max_complexity_cap` (int): Cyclomatic complexity ceiling for normalization (5-100, default: 30)
+- `glsl_filter_td_prefix` (bool): Filter TouchDesigner `TD*`-prefixed builtins from GLSL call-graph edges (default: True)
+- `max_file_size_bytes` (int): Files larger than this are skipped by the chunker (1024-104857600, default: 5242880 / 5 MB). Does not affect the adaptive-sizing profiler, which reads its own import-time-seeded 5 MB default independently of this setting.
 
 **Note**: Re-index project to apply changes.
 
@@ -607,6 +664,7 @@ High-centrality chunks (base classes, utility functions, heavily-imported module
 | `centrality_boost_threshold` | `0.02` | Centrality score minimum to trigger boost |
 | `centrality_boost_factor` | `5.0` | Multiplier: `boost = centrality × factor` |
 | `centrality_boost_cap` | `0.15` | Maximum additive boost to blended_score |
+| `centrality_exclude_phantoms` | `False` | Exclude phantom placeholder nodes (unresolved call/symbol targets, e.g. `str`/`int`/`__init__`) from centrality computation. **File-only** — not settable via `configure_*` MCP tools; it's a `FORBIDDEN_AUTO_TUNE_KEYS` entry pending a pre-registered A/B (ADR-0055), so it must be hand-edited in `search_config.json` and is intentionally not exposed for MCP-driven tuning. |
 
 ### File-Role Tagging (`role:src/test/doc/config`)
 
@@ -823,7 +881,7 @@ Server startup:              0 MB VRAM (lazy loading)
 - AST resolver: 0.5 (intra-file) / 0.7 (cross-file) — always-on, in-house
 - pyan3 resolver: 0.75 — cross-module, requires `pip install -e ".[callgraph]"`
 - LibCST FQN resolver: 0.90 — `FullyQualifiedNameProvider`, requires `[callgraph]` extra
-- LSP/basedpyright resolver: 0.98 — highest accuracy, opt-in (`lsp_enabled=true` in `search_config.json` + `pip install -e ".[lsp]"`)
+- LSP/basedpyright resolver: 0.98 — highest accuracy, `lsp_enabled=true` by default in `search_config.json`; requires `pip install -e ".[lsp]"` to activate (no-ops otherwise)
 
 **Examples**:
 
@@ -1171,7 +1229,7 @@ def process_order(order: Order, payment: PaymentGateway):
 
 ## Supported Features
 
-- **Languages**: Python, JavaScript, TypeScript, Go, Rust, C, C++, C#, GLSL (9 languages, 27 extensions)
+- **Languages**: Python, JavaScript, TypeScript, Go, Rust, C, C++ (incl. CUDA), C#, GLSL (9 languages, 29 extensions)
 - **Parsing**: AST (Python) + Tree-sitter (all others)
 - **Search Modes**: Semantic, BM25, Hybrid
 - **Chunking**: Functions, classes, methods, interfaces, enums, modules, etc.

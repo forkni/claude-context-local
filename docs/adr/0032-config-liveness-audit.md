@@ -3,6 +3,14 @@
 Status: accepted
 Date: 2026-08-06
 
+> The 124/124 count is this round's point-in-time measurement, not a live invariant — the field
+> count has grown since (config fields are added over time). Do not treat this title as the
+> current count; the always-current figure is `dataclasses.fields()` walked over
+> `SearchConfig._SUBCONFIG_TYPES`, ratcheted by
+> `test_section_docstring_field_counts_match_dataclasses_fields`
+> (`tests/unit/search/test_config_field_liveness.py`). See ADR-0042 for why this repo publishes
+> pointers to derived counts rather than pinning raw numbers in prose.
+
 ## Context
 
 Two questions were asked: (1) are `search_config.json` and `search_config.json.example` in

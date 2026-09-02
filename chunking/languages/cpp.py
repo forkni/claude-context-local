@@ -1,11 +1,16 @@
 """C++-specific chunker using tree-sitter."""
 
+import re
 from typing import Any
 
 from tree_sitter import Language
 
-from ._c_family import declarator_is_function_shaped, unwrap_declarator_name
-from .base import LanguageChunker
+from ._c_family import (
+    _CFamilyChunker,
+    blank_preserving_layout,
+    declarator_is_function_shaped,
+    unwrap_declarator_name,
+)
 
 
 def _anonymous_typedef_name(node: Any) -> Any | None:
@@ -27,8 +32,15 @@ def _anonymous_typedef_name(node: Any) -> Any | None:
     return None
 
 
-class CppChunker(LanguageChunker):
-    """C++-specific chunker using tree-sitter."""
+class CppChunker(_CFamilyChunker):
+    """C++-specific chunker using tree-sitter.
+
+    Inherits `_CFamilyChunker`'s `_neutralize`/`preprocess_source_for_parse`
+    composition (_c_family.py) unchanged. `CudaChunker` below overrides
+    `_neutralize` to layer its own, also-textual CUDA rewrites in ahead of
+    the base's preprocessor-conditional blanking, while still inheriting
+    the parse-dependent macro repair unchanged.
+    """
 
     def __init__(self, language: Language | None = None) -> None:
         super().__init__("cpp", language)
@@ -219,3 +231,101 @@ class CppChunker(LanguageChunker):
                     break
 
         return metadata
+
+
+# -----------------------------------------------------------------------------
+# CUDA (.cu / .cuh) -- routed to the cpp grammar, no new tree-sitter dependency
+# -----------------------------------------------------------------------------
+
+#: CUDA execution-space/memory-space specifiers. Neither is standard C++, so
+#: tree-sitter-cpp doesn't recognize them as declaration specifiers -- e.g.
+#: `__global__ void kernel(float* out) { ... }` desyncs the parser the same
+#: way an unrecognized export macro does (see `_c_family.py`'s A1 docstring).
+#: Blanking them before parsing is the same trade already made for
+#: preprocessor conditionals: the token itself carries no chunk-name or
+#: metadata information tree-sitter needs, and the original text survives in
+#: chunk content (sliced from the un-rewritten source, per
+#: `LanguageChunker.preprocess_source_for_parse`'s contract).
+_CUDA_ATTRS = re.compile(
+    rb"\b(?:__global__|__device__|__host__|__forceinline__"
+    rb"|__restrict__|__constant__|__shared__|__managed__)\b"
+)
+
+#: CUDA kernel-launch triple-chevron syntax, e.g. `kernel<<<grid, block>>>(args);`.
+#: Not valid C++ token syntax at all -- tree-sitter-cpp has no grammar rule
+#: for `<<<`/`>>>` as a unit (each `<`/`>` lexes as a comparison/shift
+#: operator instead), so an unblanked launch expression reliably desyncs the
+#: parser. `[^>]*` can span multiple lines for a multi-argument launch config
+#: split across lines, so this match is fed through the same
+#: `blank_preserving_layout` byte-for-byte blanker the preprocessor-
+#: conditional blanker uses -- a naive `b" " * len(match)` would silently
+#: corrupt newline positions for every line after a wrapped launch config.
+#: A `>` that does not open the closing `>>>` is legal inside the config
+#: (`n > 0 ? n : 1`, `x >> 2`), so the body admits any byte except a `>`
+#: that starts `>>>`. Nested templates deeper than two levels inside a
+#: launch config (`f<g<h<int>>>`) still terminate early -- accepted.
+_LAUNCH_CFG = re.compile(rb"<<<(?:[^>]|>(?!>>))*>>>")
+
+
+class CudaChunker(CppChunker):
+    """CUDA (.cu/.cuh) chunker -- the cpp grammar plus CUDA-specific blanking.
+
+    No new tree-sitter grammar: `.cu`/`.cuh` route to the existing
+    `tree_sitter_cpp` parser (`chunking/language_registry.py`'s
+    `EXT_TO_LANGUAGE`), which parses ordinary CUDA C++ cleanly. Only two CUDA
+    extensions to plain C++ syntax break it -- execution-space attributes and
+    the `<<<...>>>` launch configuration -- both handled here.
+
+    Deliberately keeps `language_name == "cpp"` (inherited, unchanged) rather
+    than registering a `"cuda"` language: see
+    `docs/adr/0054-route-cuda-extensions-to-cpp-grammar.md` for the full
+    rationale (no `LANGUAGE_SPECS` entry needed, `EXPECTED_LANGUAGES` in
+    `tests/unit/chunking/test_language_spec_ownership.py` stays untouched).
+
+    Measured: CUDA source parsed as plain cpp (no CUDA-specific blanking) has
+    62 ERROR lines (3.0%); with both `_CUDA_ATTRS` and `_LAUNCH_CFG` blanked
+    ahead of the inherited preprocessor-conditional neutralization, 0 ERROR
+    lines (0.0%).
+
+    Accepted limitation, distinct from the preprocessor-conditional case in
+    `_c_family.py`: a blanked execution-space attribute (`__global__`,
+    `__device__`, `__constant__`, ...) sits *before* the declaration node it
+    modifies, not nested inside a larger enclosing chunk, so tree-sitter's
+    node span for that declaration starts after the blanked bytes -- the
+    attribute keyword itself is not part of any emitted chunk's `content`.
+    The declaration's real name, body, and line numbers are unaffected; only
+    the leading annotation keyword's literal text is invisible in the index.
+    This mirrors `GLSLChunker`'s own qualifier-neutralization precedent
+    (`glsl.py`'s `_neutralize_anon_layout_qualifiers`, which comments out
+    rather than preserves the original qualifier arguments) and is within
+    the workstream's scope: the success criteria are ERROR-line elimination
+    and correct definition names/line numbers, not attribute-token recall.
+    """
+
+    def _neutralize(self, source_bytes: bytes) -> bytes:
+        """Blank CUDA-specific syntax, then preprocessor conditionals.
+
+        Overrides `CppChunker._neutralize`, not `preprocess_source_for_parse`
+        -- both rewrites here are purely textual (no reparse), so this stays
+        in the textual half of the pipeline and the inherited
+        `preprocess_source_for_parse` still runs the parse-dependent macro
+        repair last, after this. Order between the two rewrites here only
+        matters in that both are independently length- and newline-
+        position-preserving, so composing them in either order produces the
+        same result -- `super()` first keeps the CUDA-specific rules scoped
+        to bytes that have already had `#if`/`#ifdef`/... directive lines
+        blanked, avoiding any chance of a CUDA regex matching text that
+        lives inside a blanked directive line.
+
+        Args:
+            source_bytes: UTF-8-encoded original source.
+
+        Returns:
+            Source bytes with CUDA attributes, launch configs, and
+            preprocessor conditionals all blanked. Identical in total length
+            and newline positions to `source_bytes`.
+        """
+        rewritten = super()._neutralize(source_bytes)
+        rewritten = _CUDA_ATTRS.sub(blank_preserving_layout, rewritten)
+        rewritten = _LAUNCH_CFG.sub(blank_preserving_layout, rewritten)
+        return rewritten

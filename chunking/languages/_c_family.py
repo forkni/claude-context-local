@@ -1,27 +1,50 @@
-"""Shared declarator-unwrapping helper for the C-family chunkers (C, C++).
+"""Shared parse-recovery helpers for the C-family chunkers (C, C++).
 
-Both grammars wrap a declaration's name inside nested declarator nodes --
-`pointer_declarator`, `reference_declarator`, `function_declarator` -- so a
-bare scan of a node's direct children for an `identifier` (the pre-v0.24
-approach in both `c.py` and `cpp.py`) misses the name on anything but the
-simplest declarations: pointer-returning functions, reference-returning
-methods (`T& operator=`), and out-of-class qualified definitions
-(`int* Foo::getPtr()`) all silently returned ``name=None``.
+Two independent concerns live here, both scoped to the C family only:
 
-Modeled on `GLSLChunker._unwrap_declarator_name` (chunking/languages/glsl.py)
-but generalized for the C-family's wider declarator vocabulary -- GLSL's
-narrower copy is intentionally left untouched since its own snapshot must
-stay byte-identical. Verified against tree-sitter-cpp's and tree-sitter-c's
-actual grammar output (not just their published grammar.js) -- see
-`docs/adr/0037-decline-index-version-bump-for-cpp-parity.md` and
-`docs/adr/0038-cpp-only-container-traversal-seam.md` for the chunking
-capability this unlocked.
+1. Declarator-name unwrapping. Both grammars wrap a declaration's name
+   inside nested declarator nodes -- `pointer_declarator`,
+   `reference_declarator`, `function_declarator` -- so a bare scan of a
+   node's direct children for an `identifier` (the pre-v0.24 approach in
+   both `c.py` and `cpp.py`) misses the name on anything but the simplest
+   declarations: pointer-returning functions, reference-returning methods
+   (`T& operator=`), and out-of-class qualified definitions
+   (`int* Foo::getPtr()`) all silently returned ``name=None``.
+
+   Modeled on `GLSLChunker._unwrap_declarator_name`
+   (chunking/languages/glsl.py) but generalized for the C-family's wider
+   declarator vocabulary -- GLSL's narrower copy is intentionally left
+   untouched since its own snapshot must stay byte-identical. Verified
+   against tree-sitter-cpp's and tree-sitter-c's actual grammar output
+   (not just their published grammar.js) -- see
+   `docs/adr/0037-decline-index-version-bump-for-cpp-parity.md` and
+   `docs/adr/0038-cpp-only-container-traversal-seam.md` for the chunking
+   capability this unlocked.
+
+2. Preprocessor-conditional neutralization. Neither grammar implements the
+   preprocessor -- `#if`/`#ifdef`/.../`#endif` are parsed as literal
+   tokens, and an unbalanced or macro-heavy conditional routinely desyncs
+   the parser into an ERROR node that swallows every definition until the
+   next recovery point. `neutralize_preprocessor_conditionals` blanks
+   those directive lines before parsing, via the
+   `LanguageChunker.preprocess_source_for_parse` seam GLSL already uses
+   for its own, unrelated parse-error case.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Iterator
 from typing import Any
+
+from .base import LanguageChunker
+
+
+#: A tree-sitter `Parser.parse`-shaped callable: bytes in, a parsed tree out.
+#: `repair_macro_wrapped_declarations` only needs `.root_node`, so any
+#: `tree_sitter.Parser.parse` bound method satisfies this without importing
+#: the `tree_sitter` package here.
+_ParseFn = Callable[[bytes], Any]
 
 
 #: Terminal node types that carry a declarator's name directly.
@@ -44,14 +67,41 @@ _TERMINAL_DECLARATOR_TYPES = frozenset(
 #: field_identifier "cb"`. Like `reference_declarator`, it has no
 #: `declarator` *field* -- the existing None-field fallback to the first
 #: named child already peels it correctly, so no fallback logic changed.
+#: pointer_type_declarator: only ever seen inside the MISSING-`::`
+#: error-recovery shape handled by `_scope_is_missing` below -- an
+#: unrecognized macro (e.g. an unknown export attribute) is absorbed as the
+#: return type, and tree-sitter recovers by synthesizing a bogus
+#: `qualified_identifier` whose tail is `pointer_type_declarator ->
+#: function_declarator -> type_identifier`.
 _WRAPPER_DECLARATOR_TYPES = frozenset(
     {
         "pointer_declarator",
         "reference_declarator",
         "function_declarator",
         "parenthesized_declarator",
+        "pointer_type_declarator",
     }
 )
+
+
+def _scope_is_missing(node: Any) -> bool:
+    """True if `node` (a `qualified_identifier`) has a MISSING `::` child.
+
+    tree-sitter-cpp synthesizes this shape as error recovery when an
+    unrecognized macro (e.g. an unknown export/visibility attribute like
+    `CITO_PLUGIN_EXPORT`) is absorbed as the declaration's return type: the
+    parser then treats what follows as a bogus namespace-qualified name,
+    e.g. `AudioEnginePluginListV1*\\ncito_plugin_list_v1(void)` instead of
+    the real name `cito_plugin_list_v1`. A real qualified name (`Foo::bar`)
+    always has a present `::` token, so this check never fires for one.
+
+    Args:
+        node: A `qualified_identifier` node.
+
+    Returns:
+        True if `node` has a `::` child flagged `is_missing`.
+    """
+    return any(child.type == "::" and child.is_missing for child in node.children)
 
 
 def _next_declarator(node: Any) -> Any | None:
@@ -121,6 +171,24 @@ def unwrap_declarator_name(
         if node.type not in _WRAPPER_DECLARATOR_TYPES:
             return None
         node = _next_declarator(node)
+    if (
+        node is not None
+        and node.type == "qualified_identifier"
+        and _scope_is_missing(node)
+    ):
+        # Error-recovery artifact (see `_scope_is_missing`), not a real
+        # qualified name -- descend into its last named child and keep
+        # unwrapping, accepting `type_identifier` as a terminal on this
+        # branch only. Widening `type_identifier` globally would mistake a
+        # declaration's *type* for its name (see the `extra_terminals`
+        # docstring above); it's safe here because this branch only runs
+        # once a MISSING `::` has already proven the parse is a recovery
+        # artifact, not a genuine declaration.
+        candidates = [child for child in node.children if child.is_named]
+        inner = candidates[-1] if candidates else None
+        return unwrap_declarator_name(
+            inner, get_text, extra_terminals=extra_terminals | {"type_identifier"}
+        )
     if node is not None and not node.is_missing:
         return get_text(node)
     return None
@@ -149,3 +217,295 @@ def declarator_is_function_shaped(node: Any | None) -> bool:
             return False
         node = _next_declarator(node)
     return False
+
+
+# ---------------------------------------------------------------------------
+# Preprocessor-conditional neutralization
+# ---------------------------------------------------------------------------
+
+#: Matches a preprocessor conditional directive line, including any
+#: backslash-continued continuation lines (`(?:[^\n]*\\\n)*` consumes zero
+#: or more `...\` + newline lines before the final, non-continued line).
+#: `#include`/`#define`/`#pragma` are deliberately excluded -- they parse
+#: fine as `preproc_include`/`preproc_def` nodes that
+#: `chunking/language_registry.py`'s `NODE_TYPE_MAP` maps to real chunk
+#: kinds, so blanking them would silently delete indexed content.
+_PP_COND = re.compile(
+    rb"^[ \t]*#[ \t]*(?:if|ifdef|ifndef|elif|elifdef|elifndef|else|endif)\b"
+    rb"(?:[^\n]*\\\n)*[^\n]*",
+    re.M,
+)
+
+
+def blank_preserving_layout(match: re.Match[bytes]) -> bytes:
+    """Replace every non-newline byte in a match with a space.
+
+    Must be exactly this form, not `b" " * len(match.group(0))` -- on a
+    match spanning multiple lines (a backslash-continued directive, or CUDA's
+    `<<<grid, block>>>` launch syntax), the naive multiply preserves total
+    length but collapses every embedded newline into spaces, silently
+    shifting every downstream start_line/end_line for the rest of the file.
+    `re.sub` here only touches non-newline bytes, so the line count and every
+    remaining newline's byte offset are unchanged.
+
+    Public (no leading underscore) because it's a shared `re.sub` callback,
+    reused by `CudaChunker.preprocess_source_for_parse` (cpp.py) for its own,
+    differently-shaped matches (`_CUDA_ATTRS`, `_LAUNCH_CFG`) -- not just
+    `_PP_COND` here.
+
+    Args:
+        match: Any regex match to blank byte-for-byte.
+
+    Returns:
+        `match.group(0)` with every non-newline byte replaced by a space.
+    """
+    return re.sub(rb"[^\n]", b" ", match.group(0))
+
+
+def neutralize_preprocessor_conditionals(source_bytes: bytes) -> bytes:
+    """Blank preprocessor conditional directive lines before parsing.
+
+    Measured over 294 real C/C++ files: ERROR lines 45,786 (23.3%) -> 3,803
+    (1.9%), a 91.7% reduction, with zero definitions lost (10,217 -> 10,217).
+    Both branches of a conditional keep their bodies in place -- only the
+    directive lines themselves (`#if COND`, `#ifdef X`, ...) are blanked --
+    so tree-sitter parses the surrounding code normally instead of
+    desyncing on tokens it doesn't understand.
+
+    Length- and newline-position-preserving per `blank_preserving_layout`,
+    satisfying the contract `LanguageChunker.preprocess_source_for_parse`
+    documents: the caller feeds this only to `self.parser.parse(...)` and
+    keeps the original bytes for chunk text and name slicing, so byte
+    offsets computed against the rewritten buffer must line up exactly with
+    the original.
+
+    Args:
+        source_bytes: UTF-8-encoded original source.
+
+    Returns:
+        Source bytes with preprocessor conditional directive lines blanked.
+        Identical in total length and newline positions to `source_bytes`.
+    """
+    return _PP_COND.sub(blank_preserving_layout, source_bytes)
+
+
+# ---------------------------------------------------------------------------
+# Macro-wrapped return-type repair
+# ---------------------------------------------------------------------------
+
+#: Matches `MACRO_NAME(TYPE) declarator(...)` -- the macro-wrapped-return-type
+#: idiom (`PyAPI_FUNC(PyObject *) f(PyObject *);`, `CVAPI(void) g(int);`) that
+#: pervades C-compatible headers; neither grammar recognizes an arbitrary
+#: identifier immediately followed by `(...)` in return-type position, so
+#: this desyncs the parser into an ERROR node.
+#:
+#: Group 2 (the macro name) requires two uppercase letters in a mixed-case
+#: identifier, which also matches camelCase method names like
+#: `getParDouble2` -- ERROR-scoping (not this regex) is what makes rewriting
+#: safe; see `repair_macro_wrapped_declarations`'s docstring.
+#: Group 3 (the gap before `(`) is captured, not consumed silently: omitting
+#: its length from the blank-out broke the byte-length invariant on
+#: `dtype_api.h` during measurement.
+_MACRO_WRAPPED_RETURN = re.compile(
+    rb"(^|[\s;{}])((?=[A-Za-z_]*[A-Z][A-Za-z_]*[A-Z])[A-Za-z_][A-Za-z0-9_]*)"
+    rb"([ \t]*)\(((?:[^()\n]|\([^()\n]*\))*)\)(?=[ \t]*[\*&A-Za-z_])"
+)
+
+
+def _blank_macro_wrapper(match: re.Match[bytes]) -> bytes:
+    """Blank a macro-wrapper's name/gap/parens; keep the wrapped type.
+
+    `MACRO_NAME(T)` -> `           T ` -- length-preserving per match, like
+    `blank_preserving_layout`, but can't reuse it directly: only the
+    name/gap (groups 2/3) and both parens are blanked, while the wrapped
+    type (group 4) must survive verbatim.
+    """
+    prefix, name, gap, inner = match.groups()
+    return prefix + b" " * (len(name) + len(gap) + 1) + inner + b" "
+
+
+def _error_nodes(root_node: Any) -> Iterator[Any]:
+    """Yield every genuine ERROR node in a parsed tree (nested included).
+
+    Iterative (explicit stack), not recursive, for the same deep-tree
+    recursion-limit reason as `unwrap_declarator_name`. Not shared with
+    `chunking/tree_sitter.py`'s `_collect_error_line_ranges` -- that module
+    imports the language chunkers (this module's callers), so importing
+    back would be circular.
+
+    Args:
+        root_node: Root node of a parsed tree_sitter.Tree.
+
+    Yields:
+        Every node where `node.type == "ERROR"`.
+    """
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "ERROR":
+            yield node
+        stack.extend(node.children)
+
+
+def repair_macro_wrapped_declarations(
+    source_bytes: bytes,
+    parse: _ParseFn,
+) -> bytes:
+    """Unwrap macro-wrapped return types, scoped strictly to ERROR spans.
+
+    Measured over 948 C++-extension files (302,095 lines) from a real
+    TouchDesigner installation tree: ERROR lines 30,320 (10.04%) -> 28,030
+    (9.28%), a 7.6% reduction, with definitions gained (65,277 -> 66,500,
+    +1,223) and zero files regressed (107 improved / 0 regressed).
+
+    A global (non-ERROR-scoped) version of this same rewrite was measured
+    and rejected first: it regressed 82 files, because camelCase C++ method
+    names (`getParDouble2`, `getParFilePath`) satisfy
+    `_MACRO_WRAPPED_RETURN`'s two-uppercase-letter test just as well as a
+    real macro does, and deleting a real method name to "unwrap" it breaks
+    the declaration it belonged to. Scoping every rewrite to inside an
+    ERROR node's byte span, and only keeping a round if the ERROR line count
+    *strictly* decreases, makes this zero-regression-by-construction: a
+    method name that already parses cleanly is never inside an ERROR span
+    in the first place, so it is never a rewrite candidate.
+
+    ERROR-scoping is enforced by *containment*, not by slicing the buffer to
+    each span and matching within the slice: a tree-sitter ERROR node's byte
+    span is an implementation detail of its error-recovery heuristics and
+    can end anywhere, including mid-declaration -- e.g. right at a macro
+    call's closing paren, before the wrapped function name that
+    `_MACRO_WRAPPED_RETURN`'s trailing lookahead needs to see
+    (`PyAPI_FUNC(PyObject *)|` with the ERROR span ending at `|`, one token
+    before ` PyCell_New(...)`). Matching against a `[start:end]` slice of
+    that span would put the lookahead past the end of the slice, so the
+    match silently fails for that declaration while an adjacent one, whose
+    ERROR span happens to run further, repairs fine -- non-deterministic
+    from a caller's point of view since it depends on where the parser's
+    error recovery drew the boundary. Matching against the *whole* buffer
+    and then filtering matches to only those whose macro-name group starts
+    inside an ERROR span gets the lookahead context right in every case
+    while keeping the exact same safety property: a name that already
+    parses cleanly is never inside an ERROR span, so it is still never a
+    rewrite candidate.
+
+    Bounded to two reparse-and-retry passes, since one repaired macro can
+    occasionally unmask a second, previously-nested ERROR region.
+
+    Known residual limitations, deliberately out of scope -- both share the
+    same shape: the source parses *without* an ERROR node, so there is no
+    span for this function to scope a rewrite to, and widening the scope
+    beyond confirmed ERROR spans is exactly what caused the 82-file
+    regression above.
+
+    - Macro-wrapped *data* declarations (`PyAPI_DATA(PyTypeObject)
+      PyCell_Type;`) and "stacked" macros (`Py_DEPRECATED(3.3)
+      PyAPI_FUNC(PyObject *) PyCell_New(...)`) both parse without a real
+      `ERROR` node -- the latter instead sets `has_error` via a synthesized
+      MISSING `;` token, a different defect class this function doesn't
+      target.
+
+    Args:
+        source_bytes: Source bytes, already passed through any prior,
+            purely textual preprocessing (e.g.
+            `neutralize_preprocessor_conditionals`) -- this function is
+            parse-dependent and must run last in a chunker's
+            `preprocess_source_for_parse` pipeline, after every rewrite
+            that only needs the raw text.
+        parse: A `tree_sitter.Parser.parse`-shaped callable used to
+            (re)parse candidates and locate ERROR spans. Callers pass
+            `self.parser.parse`.
+
+    Returns:
+        Source bytes with as many macro-wrapped declarations repaired as
+        could be, without ever increasing the ERROR line count. Identical
+        in total length and newline positions to `source_bytes`.
+    """
+    current = source_bytes
+    tree = parse(current)
+    if not tree.root_node.has_error:
+        return current
+    error_lines = sum(
+        n.end_point[0] - n.start_point[0] + 1 for n in _error_nodes(tree.root_node)
+    )
+
+    for _ in range(2):
+        spans = [(n.start_byte, n.end_byte) for n in _error_nodes(tree.root_node)]
+        if not spans:
+            break
+
+        # Match against the whole buffer (not a per-span slice -- see this
+        # function's docstring for why slicing can starve the trailing
+        # lookahead of context) and keep only matches whose macro-name
+        # group (2) starts inside one of the ERROR spans.
+        matches = [
+            m
+            for m in _MACRO_WRAPPED_RETURN.finditer(current)
+            if any(start <= m.start(2) < end for start, end in spans)
+        ]
+        if not matches:
+            break
+
+        # finditer matches are non-overlapping, so writing each
+        # replacement at its own [start(0):end(0)] offset is safe.
+        candidate = bytearray(current)
+        for m in matches:
+            candidate[m.start(0) : m.end(0)] = _blank_macro_wrapper(m)
+        candidate_bytes = bytes(candidate)
+
+        # Guard: length and newline-position invariant -- protects against
+        # composing this with a future non-length-preserving rewrite
+        # upstream.
+        if len(candidate_bytes) != len(current) or candidate_bytes.count(
+            b"\n"
+        ) != current.count(b"\n"):
+            break
+
+        candidate_tree = parse(candidate_bytes)
+        candidate_error_lines = (
+            sum(
+                n.end_point[0] - n.start_point[0] + 1
+                for n in _error_nodes(candidate_tree.root_node)
+            )
+            if candidate_tree.root_node.has_error
+            else 0
+        )
+        # Guard: only keep a round that strictly improves. Without this, a
+        # global rewrite regresses real C++ method names that happen to
+        # match the same shape -- see this function's docstring.
+        if candidate_error_lines >= error_lines:
+            break
+
+        current, tree, error_lines = (
+            candidate_bytes,
+            candidate_tree,
+            candidate_error_lines,
+        )
+
+    return current
+
+
+# ---------------------------------------------------------------------------
+# Shared preprocess/parse composition seam
+# ---------------------------------------------------------------------------
+
+
+class _CFamilyChunker(LanguageChunker):
+    """Shared `preprocess_source_for_parse` composition for `CChunker` and
+    `CppChunker`: purely textual preprocessor-conditional neutralization,
+    then the parse-dependent macro-wrapped-declaration repair, in that
+    order -- the repair locates ERROR spans by parsing, so it must run
+    last, after every rewrite that only needs the raw text. `_neutralize`
+    is the documented override point: `CudaChunker` layers its own,
+    also-textual CUDA blanking in ahead of the base's preprocessor-
+    conditional rewrite by overriding this method, not
+    `preprocess_source_for_parse` itself, so it still inherits the repair
+    below unchanged.
+    """
+
+    def _neutralize(self, source_bytes: bytes) -> bytes:
+        return neutralize_preprocessor_conditionals(source_bytes)
+
+    def preprocess_source_for_parse(self, source_bytes: bytes) -> bytes:
+        return repair_macro_wrapped_declarations(
+            self._neutralize(source_bytes), self.parser.parse
+        )

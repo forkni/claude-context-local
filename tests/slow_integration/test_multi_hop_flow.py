@@ -218,6 +218,9 @@ class TestMultiHopSearchFlow:
             "Multi-hop should deduplicate results"
         )
 
+    @pytest.mark.timeout(
+        5400
+    )  # ~61min real model download/load work, not a hang (Phase 13.2.a)
     def test_multi_hop_reranking(self, indexed_hybrid_searcher):
         """Test that multi-hop properly re-ranks results by query relevance."""
         # Use shared indexed data

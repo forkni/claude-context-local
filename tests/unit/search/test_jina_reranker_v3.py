@@ -6,11 +6,63 @@ import pytest
 import torch
 
 from search.neural_reranker import (
-    JINA_V3_RERANKERS,
+    JINA_LISTWISE_RERANKERS,
     JinaRerankerV3,
     create_reranker,
 )
 from search.reranker import SearchResult
+
+
+class _FakeV3Model:
+    """Real method (not a MagicMock) with v3's actual rerank() signature.
+
+    A MagicMock can't catch the kwargs-TypeError bug this file guards against
+    (it accepts any kwargs), so the length-kwargs resolver needs an object
+    with a real, introspectable signature to test against.
+    """
+
+    def __init__(self):
+        self.last_kwargs = None
+
+    def rerank(
+        self,
+        query,
+        documents,
+        top_n=None,
+        return_embeddings=False,
+        max_doc_length=2048,
+        max_query_length=512,
+    ):
+        self.last_kwargs = {
+            "top_n": top_n,
+            "return_embeddings": return_embeddings,
+            "max_doc_length": max_doc_length,
+            "max_query_length": max_query_length,
+        }
+        return [
+            {"index": i, "relevance_score": 1.0 - i * 0.1, "document": doc}
+            for i, doc in enumerate(documents)
+        ]
+
+
+class _FakeV35Model:
+    """v3.5's actual rerank() signature — no max_doc_length/max_query_length
+    params (both are hardcoded internally to 8192/1024). Passing either kwarg
+    must raise TypeError; see test_v35_fake_rejects_length_kwargs.
+    """
+
+    def __init__(self):
+        self.last_kwargs = None
+
+    def rerank(self, query, documents, top_n=None, return_embeddings=False):
+        self.last_kwargs = {
+            "top_n": top_n,
+            "return_embeddings": return_embeddings,
+        }
+        return [
+            {"index": i, "relevance_score": 1.0 - i * 0.1, "document": doc}
+            for i, doc in enumerate(documents)
+        ]
 
 
 class TestJinaRerankerV3:
@@ -349,16 +401,13 @@ class TestJinaRerankerV3:
         call_kwargs = mock_model.rerank.call_args.kwargs
         assert call_kwargs["top_n"] is None
 
-    def test_rerank_passes_explicit_length_limits_to_model(self):
-        """max_doc_length/max_query_length must be explicit, not left to jina's
-        internal defaults — our doc_max_chars (chars) is the intended binding
+    def test_pins_length_limits_when_model_declares_them(self):
+        """max_doc_length/max_query_length must be explicit on checkpoints that
+        declare them (v3) — our doc_max_chars (chars) is the intended binding
         truncation and must be reconciled with jina's token-level truncation."""
-        mock_model = MagicMock()
-        mock_model.rerank.return_value = [
-            {"index": 0, "relevance_score": 0.9, "document": "code a"}
-        ]
+        fake_model = _FakeV3Model()
         reranker = JinaRerankerV3()
-        reranker._model = mock_model
+        reranker._model = fake_model
 
         candidates = [
             SearchResult(
@@ -367,9 +416,70 @@ class TestJinaRerankerV3:
         ]
         reranker.rerank("test query", candidates, top_k=1)
 
-        call_kwargs = mock_model.rerank.call_args.kwargs
-        assert call_kwargs["max_doc_length"] == 2048
-        assert call_kwargs["max_query_length"] == 512
+        assert fake_model.last_kwargs["max_doc_length"] == 2048
+        assert fake_model.last_kwargs["max_query_length"] == 512
+
+    def test_omits_length_limits_when_model_does_not_declare_them(self):
+        """v3.5's rerank() has no max_doc_length/max_query_length params —
+        passing them raises TypeError (test_v35_fake_rejects_length_kwargs).
+        Regression test for the actual v3.5 adoption blocker."""
+        fake_model = _FakeV35Model()
+        reranker = JinaRerankerV3()
+        reranker._model = fake_model
+
+        candidates = [
+            SearchResult(
+                chunk_id="a", score=1.0, metadata={"content_preview": "code a"}
+            )
+        ]
+        # Must not raise TypeError.
+        results = reranker.rerank("test query", candidates, top_k=1)
+
+        assert len(results) == 1
+        assert "max_doc_length" not in fake_model.last_kwargs
+        assert "max_query_length" not in fake_model.last_kwargs
+
+    def test_v35_fake_rejects_length_kwargs(self):
+        """Guard for the fixture itself: if _FakeV35Model were ever
+        "simplified" back into a MagicMock,
+        test_omits_length_limits_when_model_does_not_declare_them would pass
+        for the wrong reason (a MagicMock accepts any kwargs). Locks in that
+        the fake actually reproduces v3.5's TypeError."""
+        fake_model = _FakeV35Model()
+        with pytest.raises(TypeError):
+            fake_model.rerank("q", ["d"], max_doc_length=2048)
+
+    def test_resolve_length_kwargs_is_memoized_and_resets_on_cleanup(self):
+        """Signature introspection should run once per load, not per rerank
+        call, and must re-introspect after a cleanup()/reload cycle (e.g. a
+        config swap from v3 to v3.5)."""
+        fake_v3 = _FakeV3Model()
+        reranker = JinaRerankerV3()
+
+        first = reranker._resolve_length_kwargs(fake_v3)
+        second = reranker._resolve_length_kwargs(fake_v3)
+        assert first == {"max_doc_length": 2048, "max_query_length": 512}
+        assert second is first  # memoized, same dict object
+
+        reranker._cleanup_extra()
+        fake_v35 = _FakeV35Model()
+        third = reranker._resolve_length_kwargs(fake_v35)
+        assert third == {}
+        assert third is not first
+
+    def test_resolve_length_kwargs_handles_unintrospectable_callable(self):
+        """A model whose rerank() can't be introspected must degrade to
+        omitting the length pins, not crash."""
+        fake_model = _FakeV3Model()
+        reranker = JinaRerankerV3()
+
+        with patch(
+            "search.neural_reranker.inspect.signature",
+            side_effect=ValueError("no signature found"),
+        ):
+            result = reranker._resolve_length_kwargs(fake_model)
+
+        assert result == {}
 
     def test_never_hand_builds_the_sandwich_prompt(self):
         """Lock-in for the paper's sandwich template (arXiv 2509.25085v4 sec 3.2):
@@ -413,8 +523,8 @@ class TestCreateRerankerFactoryJina:
         assert reranker.device == "cpu"
 
     def test_all_jina_models_in_registry(self):
-        """All models in JINA_V3_RERANKERS should create JinaRerankerV3."""
-        for model_name in JINA_V3_RERANKERS:
+        """All models in JINA_LISTWISE_RERANKERS should create JinaRerankerV3."""
+        for model_name in JINA_LISTWISE_RERANKERS:
             reranker = create_reranker(model_name)
             assert isinstance(reranker, JinaRerankerV3)
             assert reranker.model_name == model_name

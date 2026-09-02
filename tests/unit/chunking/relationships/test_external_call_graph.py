@@ -695,6 +695,212 @@ class TestLambdaInAnonymousScope:
 
 
 # ---------------------------------------------------------------------------
+# Part 2b — BOM-prefixed files are fully analyzed, not merely tolerated
+#
+# Real-world repro: voro-td's td_shell/audio/engine_plugin_chop_ext.py and
+# td_shell/tensor/tensor_host_ext.py both open with a UTF-8 BOM.
+# call_edge_resolver.py's prepare_scoped_files() reads with utf-8-sig
+# (BOM-tolerant) and lets both files through -- correctly, per its own
+# docstring -- but pyan3's own internal _prescan_one()/process_one()
+# (analyzer.py:308, :346) read with plain "utf-8" and hand the raw string
+# (BOM still attached) to BOTH symtable.symtable() and ast.parse(), which
+# raise SyntaxError: invalid non-printable character U+FEFF. Originally this
+# aborted _TrackedVisitor.__init__() entirely (fixed by the _prescan_one
+# try/except above), then merely dropped the BOM files individually
+# ("[PYAN] N of 29 files skipped" in production). _bom_tolerant_pyan_reader
+# (external_call_graph.py) widens pyan's own reads to utf-8-sig for the
+# duration of visitor construction, so BOM files now analyze cleanly and
+# contribute edges like any other file.
+# ---------------------------------------------------------------------------
+
+
+class TestPrescanFileIsolation:
+    """BOM files must fully analyze; a *genuine* prescan failure must still
+    isolate to just that file, exactly like process_one does."""
+
+    @requires_pyan
+    def test_bom_file_is_fully_analyzed(self, tmp_path: Path, caplog) -> None:
+        """A BOM-prefixed file must produce its own call edges and must not
+        be skipped -- _bom_tolerant_pyan_reader fixes the root cause rather
+        than merely containing it."""
+        import logging
+
+        import chunking.relationships.external_call_graph as ecg
+
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+
+        (pkg / "a.py").write_text(
+            dedent("""\
+            def helper():
+                pass
+            """)
+        )
+        (pkg / "b.py").write_text(
+            dedent("""\
+            from pkg.a import helper
+
+            def caller():
+                helper()
+            """)
+        )
+        # utf-8-sig emits a real leading BOM byte sequence, matching the
+        # production files' actual encoding rather than simulating it.
+        (pkg / "bom.py").write_text(
+            dedent("""\
+            \"\"\"docstring with bom\"\"\"
+            from pkg.a import helper
+
+            def poisoned():
+                helper()
+            """),
+            encoding="utf-8-sig",
+        )
+
+        raw_line_map = {
+            "pkg/a.py": [(1, 2, "pkg/a.py:1-2:function:helper")],
+            "pkg/b.py": [(3, 4, "pkg/b.py:3-4:function:caller")],
+            "pkg/bom.py": [(3, 4, "pkg/bom.py:3-4:function:poisoned")],
+        }
+        log = logging.getLogger("test_ecg_prescan_bom")
+
+        with caplog.at_level(logging.WARNING, logger="pyan"):
+            edges = ecg.build_call_edges(tmp_path, raw_line_map, log)
+
+        assert isinstance(edges, list)
+        callers = {edge[0] for edge in edges}
+        assert "pkg/b.py:3-4:function:caller" in callers, (
+            "Expected pkg/b.py's call to helper() to still be recorded"
+        )
+        assert "pkg/bom.py:3-4:function:poisoned" in callers, (
+            "The BOM file itself must now be analyzed and contribute an edge, "
+            "not just avoid aborting the other files' edges"
+        )
+        skip_lines = [
+            r.message for r in caplog.records if "[PYAN] skipping" in r.message
+        ]
+        assert not skip_lines, (
+            f"bom.py must not be skipped now that pyan's reader is BOM-tolerant, "
+            f"got: {skip_lines}"
+        )
+
+    @requires_pyan
+    def test_prescan_failure_does_not_abort_construction(
+        self, tmp_path: Path, caplog, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A *genuine* (non-BOM) prescan failure must still isolate to just
+        that file -- this is the coverage test_bom_file_does_not_abort_the_
+        prescan_phase used to provide via a BOM fixture; now exercised
+        directly, mirroring test_one_bad_file_does_not_abort_the_pass's
+        process_one monkeypatch but for _prescan_one."""
+        import logging
+
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+
+        (pkg / "a.py").write_text(
+            dedent("""\
+            def helper():
+                pass
+            """)
+        )
+        (pkg / "b.py").write_text(
+            dedent("""\
+            from pkg.a import helper
+
+            def caller():
+                helper()
+            """)
+        )
+
+        raw_line_map = {
+            "pkg/a.py": [(1, 2, "pkg/a.py:1-2:function:helper")],
+            "pkg/b.py": [(3, 4, "pkg/b.py:3-4:function:caller")],
+        }
+        log = logging.getLogger("test_ecg_prescan_isolation")
+
+        import chunking.relationships.external_call_graph as ecg
+
+        original_prescan_one = ecg._CallGraphVisitor._prescan_one
+
+        def _raising_prescan_one(self, filename):
+            if filename.endswith("b.py"):
+                raise ValueError("simulated pyan prescan failure")
+            return original_prescan_one(self, filename)
+
+        monkeypatch.setattr(ecg._CallGraphVisitor, "_prescan_one", _raising_prescan_one)
+        with caplog.at_level(logging.WARNING, logger="pyan"):
+            edges = ecg.build_call_edges(tmp_path, raw_line_map, log)
+
+        assert isinstance(edges, list)
+        skip_lines = [
+            r.message for r in caplog.records if "[PYAN] skipping" in r.message
+        ]
+        assert skip_lines, "Expected a '[PYAN] skipping ...' warning for b.py"
+        assert any("b.py" in line for line in skip_lines)
+
+
+class TestBomTolerantPyanReader:
+    """Direct tests of the _bom_tolerant_pyan_reader context manager, isolated
+    from the rest of the pyan pipeline."""
+
+    @requires_pyan
+    def test_no_open_attribute_before_or_after(self) -> None:
+        """pyan.analyzer must not define a module-level `open` outside the
+        context manager's scope -- entering/exiting must be a clean round
+        trip, not a permanent patch."""
+        import pyan.analyzer as pyan_analyzer
+
+        import chunking.relationships.external_call_graph as ecg
+
+        assert not hasattr(pyan_analyzer, "open")
+        with ecg._bom_tolerant_pyan_reader():
+            assert hasattr(pyan_analyzer, "open")
+            assert callable(pyan_analyzer.open)
+        assert not hasattr(pyan_analyzer, "open")
+
+    @requires_pyan
+    def test_utf8_reads_resolve_bom_prefixed_content(self, tmp_path: Path) -> None:
+        """Inside the context, an encoding="utf-8" read on a BOM-prefixed
+        file must succeed and strip the BOM -- the exact widening pyan's
+        _prescan_one/process_one need."""
+        import pyan.analyzer as pyan_analyzer
+
+        import chunking.relationships.external_call_graph as ecg
+
+        bom_file = tmp_path / "bom.py"
+        bom_file.write_text("x = 1\n", encoding="utf-8-sig")
+
+        with (
+            ecg._bom_tolerant_pyan_reader(),
+            pyan_analyzer.open(bom_file, encoding="utf-8") as f,
+        ):
+            content = f.read()
+        assert "﻿" not in content
+        assert content == "x = 1\n"
+
+    @requires_pyan
+    def test_non_utf8_encoding_passes_through_untouched(self, tmp_path: Path) -> None:
+        """A non-"utf-8" encoding argument must not be swapped -- the shim
+        only widens the exact encoding pyan's readers request."""
+        import pyan.analyzer as pyan_analyzer
+
+        import chunking.relationships.external_call_graph as ecg
+
+        latin1_file = tmp_path / "latin1.py"
+        latin1_file.write_bytes("# \xe9\n".encode("latin-1"))
+
+        with (
+            ecg._bom_tolerant_pyan_reader(),
+            pyan_analyzer.open(latin1_file, encoding="latin-1") as f,
+        ):
+            content = f.read()
+        assert content == "# \xe9\n"
+
+
+# ---------------------------------------------------------------------------
 # Part 3 — pyan cooperative deadline (runaway-runtime budget)
 # ---------------------------------------------------------------------------
 

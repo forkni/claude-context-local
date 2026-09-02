@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from mcp_server import tool_handlers
+from mcp_server import tool_specs
 from mcp_server.state import reset_state
 
 
@@ -84,7 +84,7 @@ async def test_delete_project_full_workflow(mock_embedder):
 
         # Step 1: Index the project
         print("\n[STEP 1] Indexing project...")
-        index_result = await tool_handlers.handle_index_directory(
+        index_result = await tool_specs.handle_index_directory(
             {"directory_path": str(project_dir), "incremental": False}
         )
 
@@ -101,7 +101,7 @@ async def test_delete_project_full_workflow(mock_embedder):
 
         # Step 2: Verify project is indexed
         print("\n[STEP 2] Verifying project is indexed...")
-        status = await tool_handlers.handle_get_index_status({})
+        status = await tool_specs.handle_get_index_status({})
         assert status["current_project"] is not None
         chunk_count = status["index_statistics"].get("total_chunks", 0)
         assert chunk_count > 0
@@ -109,7 +109,7 @@ async def test_delete_project_full_workflow(mock_embedder):
 
         # Step 3: Delete the project via MCP tool
         print("\n[STEP 3] Deleting project via MCP tool...")
-        delete_result = await tool_handlers.handle_delete_project(
+        delete_result = await tool_specs.handle_delete_project(
             {"project_path": str(project_dir), "force": True}
         )
 
@@ -120,7 +120,7 @@ async def test_delete_project_full_workflow(mock_embedder):
 
         # Step 4: Verify project is no longer indexed
         print("\n[STEP 4] Verifying project is deleted...")
-        status_after = await tool_handlers.handle_get_index_status({})
+        status_after = await tool_specs.handle_get_index_status({})
         # After deletion, current_project should not be the test project
         # (it may be None or fall back to another project)
         current = status_after.get("current_project")
@@ -137,7 +137,7 @@ async def test_delete_project_blocks_current_without_force(mock_embedder):
 
         # Step 1: Index the project (makes it current)
         print("\n[STEP 1] Indexing project (becomes current)...")
-        index_result = await tool_handlers.handle_index_directory(
+        index_result = await tool_specs.handle_index_directory(
             {"directory_path": str(project_dir)}
         )
         if "error" in index_result:
@@ -146,7 +146,7 @@ async def test_delete_project_blocks_current_without_force(mock_embedder):
 
         # Step 2: Attempt to delete without force
         print("\n[STEP 2] Attempting delete without force=True...")
-        delete_result = await tool_handlers.handle_delete_project(
+        delete_result = await tool_specs.handle_delete_project(
             {"project_path": str(project_dir)}
         )
 
@@ -157,7 +157,7 @@ async def test_delete_project_blocks_current_without_force(mock_embedder):
 
         # Step 3: Delete with force=True
         print("\n[STEP 3] Deleting with force=True...")
-        delete_result = await tool_handlers.handle_delete_project(
+        delete_result = await tool_specs.handle_delete_project(
             {"project_path": str(project_dir), "force": True}
         )
 
@@ -169,7 +169,7 @@ async def test_delete_project_blocks_current_without_force(mock_embedder):
 async def test_delete_project_nonexistent():
     """Test deleting a non-existent project."""
     print("\n[TEST] Deleting non-existent project...")
-    delete_result = await tool_handlers.handle_delete_project(
+    delete_result = await tool_specs.handle_delete_project(
         {"project_path": "/nonexistent/path/to/project"}
     )
 
@@ -182,7 +182,7 @@ async def test_delete_project_nonexistent():
 async def test_delete_project_missing_path():
     """Test delete_project with missing project_path parameter."""
     print("\n[TEST] Calling delete_project without project_path...")
-    delete_result = await tool_handlers.handle_delete_project({})
+    delete_result = await tool_specs.handle_delete_project({})
 
     assert "error" in delete_result
     assert "project_path is required" in delete_result["error"]
@@ -198,7 +198,7 @@ async def test_delete_project_clears_all_model_dirs(mock_embedder):
 
         # Step 1: Index with default model
         print("\n[STEP 1] Indexing project...")
-        index_result = await tool_handlers.handle_index_directory(
+        index_result = await tool_specs.handle_index_directory(
             {"directory_path": str(project_dir)}
         )
         if "error" in index_result:
@@ -207,12 +207,12 @@ async def test_delete_project_clears_all_model_dirs(mock_embedder):
 
         # Step 2: List projects to see model directories
         print("\n[STEP 2] Listing projects...")
-        projects = await tool_handlers.handle_list_projects({})
+        projects = await tool_specs.handle_list_projects({})
         print(f"  [OK] Found {len(projects.get('projects', []))} project(s)")
 
         # Step 3: Delete project (should remove all model dirs)
         print("\n[STEP 3] Deleting project...")
-        delete_result = await tool_handlers.handle_delete_project(
+        delete_result = await tool_specs.handle_delete_project(
             {"project_path": str(project_dir), "force": True}
         )
 
@@ -233,7 +233,7 @@ async def test_delete_project_cleanup_queue_integration(mock_embedder):
 
         # Step 1: Index the project
         print("\n[STEP 1] Indexing project...")
-        index_result = await tool_handlers.handle_index_directory(
+        index_result = await tool_specs.handle_index_directory(
             {"directory_path": str(project_dir)}
         )
         if "error" in index_result:
@@ -252,7 +252,7 @@ async def test_delete_project_cleanup_queue_integration(mock_embedder):
             return original_rmtree(path, *args, **kwargs)
 
         with patch("shutil.rmtree", side_effect=mock_rmtree):
-            delete_result = await tool_handlers.handle_delete_project(
+            delete_result = await tool_specs.handle_delete_project(
                 {"project_path": str(project_dir), "force": True}
             )
 

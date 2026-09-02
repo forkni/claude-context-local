@@ -4,6 +4,7 @@ Tests the FAISS vector storage layer extracted from CodeIndexManager
 as part of Phase 4 refactoring.
 """
 
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -435,6 +436,119 @@ class TestFaissVectorIndexClear:
 
             assert index._mmap_storage is None
             assert not index._mmap_path.exists()
+
+    def test_close_releases_mmap_handle_so_second_instance_can_clear(self):
+        """Regression test for the WinError 32 force-reindex failure.
+
+        Mirrors the production bug: two ``FaissVectorIndex`` instances map
+        the same ``code_vectors.mmap`` file in one process, because
+        ``CodeIndexManager.__init__`` loads the FAISS index unconditionally
+        (``search/indexer.py:117-118``) -- a write-only "searcher #1" built
+        via ``get_searcher(..., load_existing=False)`` maps the file during
+        construction, and a fresh "searcher #2" built moments later for the
+        actual reindex maps it again. Before this fix, nothing released
+        searcher #1's mmap handle deterministically: ``CodeIndexManager.close()``
+        only closed the metadata store, so ``clear()`` on searcher #2's index
+        failed unlinking the shared file out from under searcher #1's still-live
+        mapping (``PermissionError`` / WinError 32 on Windows).
+
+        The fix is ``close()`` -- closing instance1's own handle, unrelated to
+        any call on instance2, is what frees the OS-level lock. This assertion
+        holds on every platform (POSIX already tolerated the stale mapping;
+        this closes the resource properly instead of relying on that).
+        """
+        import pickle
+
+        import faiss
+
+        from search.mmap_vectors import MmapVectorStorage
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index_path = Path(tmpdir) / "test.index"
+
+            rng = np.random.RandomState(42)
+            embeddings = rng.randn(3, 8).astype(np.float32)
+            chunk_ids = [f"chunk_{i}" for i in range(3)]
+
+            # Plant a real on-disk index + mmap file -- the same shape
+            # save() writes above MMAP_THRESHOLD -- built directly so the
+            # test doesn't need 10,000 real vectors.
+            seed = FaissVectorIndex(index_path)
+            seed.create(8, "flat")
+            seed.add(embeddings, chunk_ids)
+            # pyrefly: ignore [missing-attribute]
+            faiss.write_index(seed.index, str(seed.index_path))
+            with open(seed.chunk_id_path, "wb") as f:
+                pickle.dump(chunk_ids, f)
+            MmapVectorStorage(seed._mmap_path, dimension=8).save(embeddings, chunk_ids)
+
+            # Two independent instances load the same on-disk index, each
+            # mapping code_vectors.mmap with its own mmap.mmap/file handle.
+            instance1 = FaissVectorIndex(index_path)
+            assert instance1.load()
+            assert instance1._mmap_storage is not None
+            assert instance1._mmap_storage.is_loaded
+
+            instance2 = FaissVectorIndex(index_path)
+            assert instance2.load()
+            assert instance2._mmap_storage is not None
+
+            instance1.close()
+            assert instance1._mmap_storage is None
+
+            instance2.clear()
+
+            assert instance2._mmap_storage is None
+            assert not instance2._mmap_path.exists()
+            assert not instance2.index_path.exists()
+            assert not instance2.chunk_id_path.exists()
+
+    @pytest.mark.skipif(
+        sys.platform != "win32", reason="POSIX unlinks mapped files freely"
+    )
+    def test_clear_still_blocked_by_live_foreign_mapping(self):
+        """A second instance's clear() must still fail if nobody closes the
+        foreign live mapping -- ``close()`` releases handles, it must not
+        make ``clear()`` silently tolerate a mapping it does not own.
+
+        Companion to ``test_close_releases_mmap_handle_so_second_instance_can_clear``:
+        guards against a fix that hides the real error instead of closing
+        the actual blocking handle.
+        """
+        import pickle
+
+        import faiss
+
+        from search.mmap_vectors import MmapVectorStorage
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            index_path = Path(tmpdir) / "test.index"
+
+            rng = np.random.RandomState(42)
+            embeddings = rng.randn(3, 8).astype(np.float32)
+            chunk_ids = [f"chunk_{i}" for i in range(3)]
+
+            seed = FaissVectorIndex(index_path)
+            seed.create(8, "flat")
+            seed.add(embeddings, chunk_ids)
+            # pyrefly: ignore [missing-attribute]
+            faiss.write_index(seed.index, str(seed.index_path))
+            with open(seed.chunk_id_path, "wb") as f:
+                pickle.dump(chunk_ids, f)
+            MmapVectorStorage(seed._mmap_path, dimension=8).save(embeddings, chunk_ids)
+
+            instance1 = FaissVectorIndex(index_path)
+            assert instance1.load()
+
+            instance2 = FaissVectorIndex(index_path)
+            assert instance2.load()
+
+            # instance1 is never closed here -- its live handle must still
+            # block instance2's unlink.
+            with pytest.raises(PermissionError):
+                instance2.clear()
+
+            instance1.close()
 
 
 class TestFaissVectorIndexBatchOperations:

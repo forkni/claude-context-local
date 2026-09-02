@@ -9,11 +9,12 @@ Tests:
 import gc
 import json
 import logging
-import time
+import os
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from mcp_server.resource_manager import McpResourceRefresher
 from mcp_server.services import get_state
 from merkle import SnapshotManager
 from search.config import get_search_config
@@ -71,6 +72,21 @@ class ExampleClass:
     return project_dir
 
 
+def _backdate_snapshot(
+    indexer: IncrementalIndexer, project_path: str, seconds: float
+) -> None:
+    """Push a snapshot's on-disk mtime back so it reads as ``seconds`` old.
+
+    ``SnapshotManager.get_snapshot_age`` computes age from the snapshot file's
+    real ``st_mtime`` (merkle/snapshot_manager.py) -- there is no injectable
+    clock. Backdating the mtime simulates elapsed time instantly instead of
+    blocking the test on a real ``time.sleep``.
+    """
+    snapshot_path = indexer.snapshot_manager.get_snapshot_path(project_path)
+    backdated = snapshot_path.stat().st_mtime - seconds
+    os.utime(snapshot_path, (backdated, backdated))
+
+
 @pytest.fixture
 def cleanup_state():
     """Cleanup state before and after tests."""
@@ -113,14 +129,16 @@ class TestMaxAgeMinutesConfigRespect:
 
         # Create indexer with isolated storage so no writes reach ~/.claude_code_search
         indexer = IncrementalIndexer(
-            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots")
+            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots"),
+            resource_refresher=McpResourceRefresher(),
         )
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success
 
-        # Wait 6 seconds (longer than old 5-minute default would trigger)
-        # but shorter than 60-minute config default
-        time.sleep(6)
+        # Simulate 6 seconds of age (longer than old 5-minute-default bug would
+        # have triggered) but far shorter than the 60-minute config default --
+        # backdating the snapshot mtime avoids a real 6-second sleep.
+        _backdate_snapshot(indexer, str(temp_project), seconds=6)
 
         # Auto-reindex with config default should NOT trigger
         # (we're only 6 seconds old, not 60 minutes)
@@ -140,13 +158,15 @@ class TestMaxAgeMinutesConfigRespect:
         """Verify explicit max_age_minutes parameter overrides config."""
         # Create indexer with isolated storage so no writes reach ~/.claude_code_search
         indexer = IncrementalIndexer(
-            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots")
+            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots"),
+            resource_refresher=McpResourceRefresher(),
         )
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success
 
-        # Wait 2 seconds
-        time.sleep(2)
+        # Simulate 2 seconds of age via mtime backdating (see
+        # ``_backdate_snapshot``) instead of a real sleep.
+        _backdate_snapshot(indexer, str(temp_project), seconds=2)
 
         # Auto-reindex with explicit 1 second max age SHOULD trigger
         result = indexer.auto_reindex_if_needed(
@@ -177,7 +197,8 @@ class TestReindexReusesLiveEmbedder:
     ):
         """auto_reindex_if_needed must not call get_state() / reset_pool_manager()."""
         indexer = IncrementalIndexer(
-            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots")
+            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots"),
+            resource_refresher=McpResourceRefresher(),
         )
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success
@@ -201,7 +222,8 @@ class TestReindexReusesLiveEmbedder:
     ):
         """The live embedder's cleanup() must not run mid-reindex."""
         indexer = IncrementalIndexer(
-            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots")
+            snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots"),
+            resource_refresher=McpResourceRefresher(),
         )
         result = indexer.incremental_index(str(temp_project), "test_project")
         assert result.success

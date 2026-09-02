@@ -172,12 +172,14 @@ def requires_rebuild(flat: dict[str, Any]) -> bool:
     Such a field is read once into a collaborator (a cached ``HybridSearcher``/
     reranker) at construction rather than live per search call, so mutating
     it on a config object already in use is a no-op until that collaborator
-    is rebuilt. Derived from ``SearchConfig._CONSTRUCTION_BAKED_FIELDS``
-    instead of the original ``_maybe_reset_for_construction_overrides``'s
-    hand-written six-argument ``None``-check — see ADR-0022.
+    is rebuilt. Thin delegator to ``SearchConfig.requires_rebuild`` (D7) —
+    kept here as this module's public re-export (every caller in this file
+    already imports ``requires_rebuild`` from here) instead of reaching
+    across the layer to read ``SearchConfig._CONSTRUCTION_BAKED_FIELDS``
+    directly, as the original ``_maybe_reset_for_construction_overrides``'s
+    hand-written six-argument ``None``-check effectively did — see ADR-0022.
     """
-    touched = {_split_dotted_key(key) for key in flat}
-    return bool(touched & SearchConfig._CONSTRUCTION_BAKED_FIELDS)
+    return SearchConfig.requires_rebuild(flat)
 
 
 def apply_overrides(cfg: SearchConfig, *sources: dict[str, Any]) -> bool:

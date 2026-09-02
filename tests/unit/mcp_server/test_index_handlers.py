@@ -1,5 +1,6 @@
 """Unit tests for index_handlers — file accessibility + pre-clear path guard."""
 
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -327,8 +328,14 @@ class TestPurgeIndexDirFailureReporting:
         # _purge_index_dir now asserts index_dir is under the storage root
         # (a guard migrated in from the dead _clear_index_files_before_create),
         # so build under the session-redirected storage dir rather than a raw
-        # tmp_path sibling of it.
+        # tmp_path sibling of it. That dir is session-scoped (get_storage_dir()
+        # returns the same path every call), so re-running this exact test
+        # in the same session -- e.g. under pytest-repeat's --count, which
+        # found this -- must not assume a pristine directory: clear any
+        # leftovers before mkdir instead of letting a bare mkdir(parents=True)
+        # raise FileExistsError on the second invocation.
         index_dir = get_storage_dir() / "projects" / "proj_test" / "index"
+        shutil.rmtree(index_dir, ignore_errors=True)
         index_dir.mkdir(parents=True)
         (index_dir / "code.index").write_text("data")
         (index_dir / "chunk_ids.pkl").write_text("data")
@@ -352,6 +359,7 @@ class TestPurgeIndexDirFailureReporting:
         from mcp_server.tools.index_handlers import _purge_index_dir
 
         index_dir = get_storage_dir() / "projects" / "proj_test2" / "index"
+        shutil.rmtree(index_dir, ignore_errors=True)
         index_dir.mkdir(parents=True)
         (index_dir / "code.index").write_text("data")
 
@@ -525,6 +533,139 @@ class TestHandlerChunkerOwnership:
         mock_chunker_cls.assert_not_called()
 
 
+class TestIncludeExclusiveOmissionIsTriState:
+    """include_exclusive must stay tri-state end to end: omitting it defers to
+    the stored project value, while an explicit value can override a stored
+    one and trip the filter-change path.
+
+    Before tool_registry.py stopped publishing "default": False for this
+    parameter, a conformant MCP client materializing schema defaults would
+    send an explicit False on every call — indistinguishable here from a
+    deliberate override, forcing a full reindex on every dependency-only
+    index. This characterizes the handler-side resolution the schema fix
+    depends on: update_project_filters must NOT fire when include_exclusive
+    is omitted and the stored value is unchanged, and MUST fire when an
+    explicit value disagrees with the stored one.
+    """
+
+    def _write_stored_project_info(self, tmp_path: Path) -> Path:
+        import json
+
+        from mcp_server.storage_manager import FILTER_SEMANTICS_VERSION
+
+        info_file = tmp_path / "project_info.json"
+        info_file.write_text(
+            json.dumps(
+                {
+                    "user_included_dirs": None,
+                    "user_excluded_dirs": None,
+                    "include_exclusive": True,
+                    "filter_semantics_version": FILTER_SEMANTICS_VERSION,
+                }
+            )
+        )
+        return info_file
+
+    def _run(self, tmp_path: Path, arguments: dict) -> tuple[MagicMock, dict]:
+        """Run handle_index_directory against a stored include_exclusive=True
+        project and return (update_project_filters mock, result dict).
+        """
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        project_dir = tmp_path / "myproject"
+        project_dir.mkdir()
+        info_file = self._write_stored_project_info(tmp_path)
+
+        proj_dir = tmp_path / "storage" / "proj"
+        (proj_dir / "index").mkdir(parents=True)
+
+        async def fake_to_thread(func, *a, **kw):
+            # _setup_and_run is the real indexing work (embeds/writes the
+            # index) — short-circuit only that one. Everything else
+            # (_cleanup_previous_resources, _run_accessibility_precheck,
+            # the local _read_project_info closure) runs for real so the
+            # stored include_exclusive value actually flows through.
+            if getattr(func, "__name__", "") == "_setup_and_run":
+                return {
+                    "files_added": 0,
+                    "files_modified": 0,
+                    "files_removed": 0,
+                    "chunks_added": 0,
+                    "time_taken": 0.0,
+                }
+            return func(*a, **kw)
+
+        with (
+            patch(
+                "mcp_server.tools.index_handlers.MultiLanguageChunker"
+            ) as mock_chunker_cls,
+            patch("mcp_server.resource_manager._cleanup_previous_resources"),
+            patch("mcp_server.tools.index_handlers.get_state") as mock_state,
+            patch("mcp_server.tools.index_handlers.get_config") as mock_cfg,
+            patch(
+                "mcp_server.tools.index_handlers.get_canonical_project_info",
+                return_value=info_file,
+            ),
+            patch(
+                "mcp_server.tools.index_handlers.get_project_storage_dir"
+            ) as mock_psd,
+            patch("mcp_server.tools.index_handlers.set_current_project"),
+            patch("mcp_server.tools.index_handlers.temporary_ram_fallback_off"),
+            patch(
+                "mcp_server.tools.index_handlers._build_index_response", return_value={}
+            ),
+            patch(
+                "mcp_server.tools.index_handlers.update_project_filters"
+            ) as mock_update_filters,
+            patch("asyncio.to_thread", AsyncMock(side_effect=fake_to_thread)),
+            patch(
+                "chunking.tree_sitter.TreeSitterChunker.get_supported_extensions",
+                return_value=[],
+            ),
+        ):
+            mock_cfg.return_value.performance.enable_entity_tracking = False
+            mock_cfg.return_value.search_mode.enable_hybrid = False
+            lock_mock = AsyncMock()
+            lock_mock.__aenter__ = AsyncMock(return_value=None)
+            lock_mock.__aexit__ = AsyncMock(return_value=None)
+            mock_state.return_value.get_reindex_rwlock.return_value.write.return_value = lock_mock
+            mock_psd.return_value = proj_dir
+            mock_chunker_cls.for_project.return_value = MagicMock()
+
+            from mcp_server.tools.index_handlers import handle_index_directory
+
+            result = asyncio.run(handle_index_directory(arguments))
+
+        return mock_update_filters, result
+
+    def test_omitting_include_exclusive_leaves_stored_value_untouched(
+        self, tmp_path: Path
+    ) -> None:
+        mock_update_filters, result = self._run(
+            tmp_path, {"directory_path": str(tmp_path / "myproject")}
+        )
+
+        assert "error" not in result
+        mock_update_filters.assert_not_called()
+
+    def test_explicit_false_overrides_stored_true_and_updates_filters(
+        self, tmp_path: Path
+    ) -> None:
+        mock_update_filters, result = self._run(
+            tmp_path,
+            {
+                "directory_path": str(tmp_path / "myproject"),
+                "include_exclusive": False,
+            },
+        )
+
+        assert "error" not in result
+        mock_update_filters.assert_called_once()
+        _, kwargs = mock_update_filters.call_args
+        assert kwargs["include_exclusive"] is False
+
+
 class TestIndexDirectoryAsyncJob:
     """P2-A: index_directory(wait=False) launches a background job and returns
     a job_id immediately instead of blocking for the full indexing run.
@@ -544,6 +685,111 @@ class TestIndexDirectoryAsyncJob:
 
         assert result == {"success": True, "files_added": 1}
         assert "job_id" not in result
+
+    async def test_wait_true_acquires_the_real_mutation_lock(self, tmp_path):
+        """Behavioural companion to the ``__mcp_guards__`` stamp
+        (mcp_server/tools/decorators.py, docs/adr/0057): the stamp only
+        proves handle_index_directory is *marked* as an internal locker, not
+        that _run_index_directory's prologue actually acquires
+        get_state().get_mutation_lock() at runtime. Drives the real handler
+        end to end -- only the heavy post-lock indexing work
+        (_setup_and_run, offloaded via asyncio.to_thread) is patched out --
+        and spies on the mutation lock's __aenter__/__aexit__ to prove
+        acquisition really happens, and that it releases before the reindex
+        rwlock body begins (the lock-order contract documented on
+        with_mutation_lock).
+        """
+        from unittest.mock import AsyncMock, Mock
+
+        from mcp_server.tools import index_handlers
+
+        project_dir = tmp_path / "myproject"
+        project_dir.mkdir()
+
+        proj_dir = tmp_path / "storage" / "proj"
+        (proj_dir / "index").mkdir(parents=True)
+
+        events: list[str] = []
+
+        class _RecordingLockCM:
+            async def __aenter__(self):
+                events.append("mutation_lock_enter")
+
+            async def __aexit__(self, *exc):
+                events.append("mutation_lock_exit")
+                return False
+
+        async def fake_to_thread(func, *a, **kw):
+            # _setup_and_run is the real embed/index work -- the only thing
+            # this test must not run for real. Everything else in the
+            # prologue (_cleanup_previous_resources, the accessibility
+            # precheck, the local _read_project_info closure) runs for real
+            # so the lock's own __aenter__ call site actually executes.
+            if getattr(func, "__name__", "") == "_setup_and_run":
+                events.append("heavy_indexing_work")
+                return {
+                    "files_added": 0,
+                    "files_modified": 0,
+                    "files_removed": 0,
+                    "chunks_added": 0,
+                    "time_taken": 0.0,
+                }
+            return func(*a, **kw)
+
+        with (
+            patch.object(index_handlers, "MultiLanguageChunker") as mock_chunker_cls,
+            patch("mcp_server.resource_manager._cleanup_previous_resources"),
+            patch("mcp_server.resource_manager.bind_active_project_overrides"),
+            patch.object(index_handlers, "get_state") as mock_state,
+            patch.object(index_handlers, "get_config") as mock_cfg,
+            patch.object(
+                index_handlers, "get_canonical_project_info", return_value=None
+            ),
+            patch.object(
+                index_handlers, "get_project_storage_dir", return_value=proj_dir
+            ),
+            patch.object(index_handlers, "set_current_project"),
+            patch.object(index_handlers, "update_project_filters"),
+            patch.object(index_handlers, "temporary_ram_fallback_off"),
+            patch.object(index_handlers, "_build_index_response", return_value={}),
+            patch("asyncio.to_thread", AsyncMock(side_effect=fake_to_thread)),
+            patch(
+                "chunking.tree_sitter.TreeSitterChunker.get_supported_extensions",
+                return_value=[],
+            ),
+        ):
+            mock_cfg.return_value.performance.enable_entity_tracking = False
+            mock_cfg.return_value.search_mode.enable_hybrid = False
+            mock_state.return_value.get_mutation_lock = Mock(
+                return_value=_RecordingLockCM()
+            )
+
+            rwlock_cm = AsyncMock()
+            rwlock_cm.__aenter__ = AsyncMock(
+                side_effect=lambda: events.append("reindex_rwlock_enter")
+            )
+            rwlock_cm.__aexit__ = AsyncMock(
+                side_effect=lambda *exc: events.append("reindex_rwlock_exit") or False
+            )
+            mock_state.return_value.get_reindex_rwlock.return_value.write.return_value = rwlock_cm
+            mock_chunker_cls.for_project.return_value = MagicMock()
+
+            result = await index_handlers.handle_index_directory(
+                {"directory_path": str(project_dir)}
+            )
+
+        assert "error" not in result
+        mock_state.return_value.get_mutation_lock.assert_called_once()
+        # The lock releases before the reindex rwlock body starts (the
+        # lock-order contract documented on with_mutation_lock), and the
+        # heavy indexing work runs inside that rwlock, not the mutation lock.
+        assert events == [
+            "mutation_lock_enter",
+            "mutation_lock_exit",
+            "reindex_rwlock_enter",
+            "heavy_indexing_work",
+            "reindex_rwlock_exit",
+        ]
 
     async def test_wait_false_returns_job_id_immediately_then_completes(self, tmp_path):
         from mcp_server.tools import index_handlers

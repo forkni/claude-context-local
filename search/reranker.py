@@ -5,6 +5,14 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+from search.types import UNSCORED_SOURCES, ResultSource
+
+
+# TM2C2 (Bruch, Gai & Ingber, ACM TOIS 2023, arXiv 2210.11934) theoretical
+# per-leg score bounds used by RRFReranker.fuse_tm2c2's normalization.
+BM25_THEORETICAL_MIN = 0.0
+DENSE_THEORETICAL_MIN = -1.0
+
 
 @dataclass
 class SearchResult:
@@ -13,8 +21,18 @@ class SearchResult:
     chunk_id: str
     score: float
     metadata: dict[str, Any]
-    source: str = "unknown"  # "bm25", "dense", "hybrid"
+    source: ResultSource = ResultSource.UNKNOWN
     rank: int = 0  # Original rank in source list
+
+    @property
+    def is_unscored(self) -> bool:
+        """Whether ``score`` is a fabricated placeholder (D9), not a rank signal.
+
+        See ``search.types.UNSCORED_SOURCES`` for which sources qualify and why
+        ``graph_hop`` -- despite also stamping 0.0 in some configurations -- is
+        deliberately not a static member of that set.
+        """
+        return self.source in UNSCORED_SOURCES
 
 
 class RRFReranker:
@@ -113,7 +131,7 @@ class RRFReranker:
                         chunk_id=result.chunk_id,
                         score=result.score,  # Keep original score
                         metadata=result.metadata,
-                        source="hybrid",
+                        source=ResultSource.HYBRID,
                         rank=rank,
                     )
                     doc_results[chunk_id] = combined_result
@@ -227,14 +245,20 @@ class RRFReranker:
         # Convert tuples to SearchResult objects
         bm25_search_results = [
             SearchResult(
-                chunk_id=chunk_id, score=score, metadata=metadata, source="bm25"
+                chunk_id=chunk_id,
+                score=score,
+                metadata=metadata,
+                source=ResultSource.BM25,
             )
             for chunk_id, score, metadata in bm25_results
         ]
 
         dense_search_results = [
             SearchResult(
-                chunk_id=chunk_id, score=score, metadata=metadata, source="dense"
+                chunk_id=chunk_id,
+                score=score,
+                metadata=metadata,
+                source=ResultSource.DENSE,
             )
             for chunk_id, score, metadata in dense_results
         ]
@@ -247,6 +271,144 @@ class RRFReranker:
             reserved_slots=reserved_slots,
             reserve_list_idx=0,
         )
+
+    @staticmethod
+    def _theoretical_min_max_normalize(
+        scored: list[tuple[str, float]], theoretical_min: float
+    ) -> dict[str, float]:
+        """Per-leg TM2C2 normalization: ``(score - theoretical_min) / (max - theoretical_min)``.
+
+        ``max`` is the empirical per-query max on this leg. A non-positive
+        denominator (degenerate query) yields all-zero norms rather than a
+        division error. Lifted verbatim from
+        scripts/benchmark/probe_tm2c2_fusion.py's reference implementation —
+        keep both in sync if either changes.
+        """
+        if not scored:
+            return {}
+        empirical_max = max(score for _, score in scored)
+        denom = empirical_max - theoretical_min
+        if denom <= 0:
+            return {chunk_id: 0.0 for chunk_id, _ in scored}
+        return {
+            chunk_id: (score - theoretical_min) / denom for chunk_id, score in scored
+        }
+
+    def fuse_tm2c2(
+        self,
+        bm25_results: list[tuple[str, float, dict]],
+        dense_results: list[tuple[str, float, dict]],
+        alpha: float,
+    ) -> list[tuple[str, float]]:
+        """Convex combination of theoretical-min-max-normalized leg scores.
+
+        ``alpha`` is the dense-side weight (TM2C2, Bruch/Gai/Ingber, ACM TOIS
+        2023, arXiv 2210.11934). Lifted verbatim from
+        scripts/benchmark/probe_tm2c2_fusion.py's reference implementation —
+        keep both in sync if either changes. Returns ``(chunk_id,
+        fused_score)`` sorted descending, the same shape
+        ``_select_with_reserve`` consumes.
+        """
+        bm25_norm = self._theoretical_min_max_normalize(
+            [(c, s) for c, s, _ in bm25_results], BM25_THEORETICAL_MIN
+        )
+        dense_norm = self._theoretical_min_max_normalize(
+            [(c, s) for c, s, _ in dense_results], DENSE_THEORETICAL_MIN
+        )
+        fused: dict[str, float] = {}
+        for chunk_id, norm in bm25_norm.items():
+            fused[chunk_id] = fused.get(chunk_id, 0.0) + (1 - alpha) * norm
+        for chunk_id, norm in dense_norm.items():
+            fused[chunk_id] = fused.get(chunk_id, 0.0) + alpha * norm
+        return sorted(fused.items(), key=lambda kv: kv[1], reverse=True)
+
+    def rerank_tm2c2(
+        self,
+        bm25_results: list[tuple[str, float, dict]],
+        dense_results: list[tuple[str, float, dict]],
+        max_results: int = 10,  # pragma: no mutate
+        alpha: float = 0.8,  # pragma: no mutate
+        reserved_slots: int = 0,  # pragma: no mutate
+    ) -> list[SearchResult]:
+        """TM2C2 counterpart to rerank_simple — same shape, different fusion arithmetic.
+
+        Reuses ``_select_with_reserve`` unchanged for the reserved-slots
+        mechanism (fuse_tm2c2's output is the same ``(chunk_id, score)``
+        shape as RRF's sorted_docs). ``.score`` keeps the leg's original
+        score, mirroring ``rerank``'s convention; the fused value lives in
+        ``metadata["fusion_score"]``.
+
+        Args:
+            bm25_results: BM25 results as (chunk_id, score, metadata)
+            dense_results: Dense results as (chunk_id, score, metadata)
+            max_results: Maximum results to return
+            alpha: TM2C2 dense-side weight (1 - alpha on BM25)
+            reserved_slots: Pool slots reserved for BM25-unique candidates
+                (see rerank / _select_with_reserve)
+
+        Returns:
+            Combined and reranked results
+        """
+        bm25_search_results = [
+            SearchResult(
+                chunk_id=chunk_id,
+                score=score,
+                metadata=metadata,
+                source=ResultSource.BM25,
+            )
+            for chunk_id, score, metadata in bm25_results
+        ]
+        dense_search_results = [
+            SearchResult(
+                chunk_id=chunk_id,
+                score=score,
+                metadata=metadata,
+                source=ResultSource.DENSE,
+            )
+            for chunk_id, score, metadata in dense_results
+        ]
+
+        doc_results: dict[str, SearchResult] = {}
+        for results in (bm25_search_results, dense_search_results):
+            for rank, result in enumerate(results, 1):  # pragma: no mutate
+                chunk_id = result.chunk_id
+                if (
+                    chunk_id not in doc_results
+                    or result.score > doc_results[chunk_id].score  # pragma: no mutate
+                ):
+                    doc_results[chunk_id] = SearchResult(
+                        chunk_id=result.chunk_id,
+                        score=result.score,
+                        metadata=result.metadata,
+                        source=ResultSource.HYBRID,
+                        rank=rank,
+                    )
+
+        fused = self.fuse_tm2c2(bm25_results, dense_results, alpha)
+        fused_scores = dict(fused)
+
+        selected_ids = self._select_with_reserve(
+            fused,
+            [bm25_search_results, dense_search_results],
+            max_results,
+            reserved_slots,
+            0,
+        )
+
+        final_results = []
+        for rank, chunk_id in enumerate(selected_ids, 1):  # pragma: no mutate
+            result = doc_results[chunk_id]
+            result.metadata["fusion_score"] = fused_scores[chunk_id]
+            result.metadata["fusion_function"] = "tm2c2"
+            result.metadata["final_rank"] = rank
+            final_results.append(result)
+
+        self._logger.debug(
+            f"TM2C2 reranked {len(final_results)} results from 2 lists with "
+            f"alpha={alpha}"
+        )
+
+        return final_results
 
     def analyze_fusion_quality(
         self,

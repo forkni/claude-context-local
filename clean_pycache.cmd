@@ -12,7 +12,7 @@ set "count=0"
 set "tempcount=0"
 set "clcount=0"
 
-REM Remove __pycache__ folders (skip .git only — .venv caches are safe to clean)
+REM Remove __pycache__ folders (skip .git only - .venv caches are safe to clean)
 echo Searching for __pycache__ folders...
 for /f "delims=" %%d in ('dir /s /b /ad __pycache__ 2^>nul ^| findstr /v /i "\\.git\\"') do (
     echo Removing: %%d

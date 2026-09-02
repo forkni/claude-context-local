@@ -7,10 +7,13 @@ import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Optional
 
+from .types import RetrievalRequest
+
 
 if TYPE_CHECKING:
     from embeddings.embedder import CodeEmbedder
     from graph.graph_storage import CodeGraphStorage
+    from search.config import SearchConfig, SearchMode
 
     from .reranker import SearchResult
 
@@ -23,7 +26,18 @@ class BaseSearcher(ABC):
     - Dimension validation (safety check for model routing)
     - Cache statistics tracking
     - Interface contract for all searchers
+
+    ``execute`` is the seam concrete searchers implement: one signature, a
+    fully-resolved ``RetrievalRequest`` in, ``SearchResult``s out. ``search``
+    is the concrete convenience wrapper every existing call site (benchmark
+    harnesses, probes, MCP orchestration) already uses — it resolves a
+    request from ``config``/``**overrides`` via ``RetrievalRequest.build``
+    and calls ``execute`` (ADR-0048).
     """
+
+    #: Search mode assumed when a caller doesn't pass one explicitly.
+    #: Set by each concrete subclass (HYBRID / SEMANTIC).
+    _DEFAULT_SEARCH_MODE: "SearchMode"
 
     def __init__(self):
         """Initialize common searcher components.
@@ -40,18 +54,46 @@ class BaseSearcher(ABC):
         self._logger = logging.getLogger(__name__)
 
     @abstractmethod
-    def search(self, query: str, k: int = 5, **kwargs) -> list["SearchResult"]:
-        """Execute a search query.
+    def execute(self, request: RetrievalRequest) -> list["SearchResult"]:
+        """Execute a fully-resolved retrieval request.
 
         Args:
-            query: Natural language or code query
-            k: Number of results to return
-            **kwargs: Additional searcher-specific arguments
+            request: The resolved request (see RetrievalRequest.build).
 
         Returns:
-            List of SearchResult objects ranked by relevance
+            List of SearchResult objects ranked by relevance.
         """
         pass
+
+    def search(
+        self,
+        query: str,
+        k: int = 4,
+        *,
+        config: Optional["SearchConfig"] = None,
+        **overrides: Any,
+    ) -> list["SearchResult"]:
+        """Resolve a RetrievalRequest from config + overrides, then execute it.
+
+        Args:
+            query: Natural language or code query.
+            k: Number of results to return.
+            config: Optional SearchConfig override; defaults to the process
+                singleton (``get_search_config()``) when omitted.
+            **overrides: Any RetrievalRequest.build keyword (search_mode,
+                bm25_weight, dense_weight, min_bm25_score, use_parallel,
+                filters, context_depth). Unset overrides resolve from
+                ``config`` or this subclass's ``_DEFAULT_SEARCH_MODE``.
+
+        Returns:
+            List of SearchResult objects ranked by relevance.
+        """
+        from search.config import get_search_config
+
+        effective_config = config if config is not None else get_search_config()
+        overrides.setdefault("search_mode", self._DEFAULT_SEARCH_MODE)
+        request = RetrievalRequest.build(query, k, effective_config, **overrides)
+        return self.execute(request)
 
     @property
     @abstractmethod

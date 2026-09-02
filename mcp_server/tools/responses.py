@@ -7,8 +7,8 @@ helpers so that the envelope contract lives in exactly one place.
 Invariants
 ----------
 - Key names are frozen (snapshot tests + MCP client contracts depend on them).
-- ``ok()`` drops only fields that are ``None``, ``""`` (empty string), ``[]`` (empty
-  list), or ``{}`` (empty dict).  It keeps ``False``, ``0``, and non-empty values.
+- ``ok()`` drops only fields that are ``None`` or ``""`` (empty string).  It keeps
+  ``False``, ``0``, ``[]``, ``{}``, and any other value.
 - ``error()`` never drops context fields — clients may rely on them.
 - ``mcp_server.output_formatter`` owns token-reduction *formatting*; this module is
   not merged into it and does not call it.

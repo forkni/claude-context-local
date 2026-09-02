@@ -25,10 +25,12 @@ def _make_app_config(intent_enabled=True, semantic_enabled=False):
     return cfg
 
 
-def _make_search_config(default_k=4, max_k=20):
+def _make_search_config(default_k=4, max_k=20, ego_k_hops=2, ego_max_neighbors=10):
     sc = MagicMock()
     sc.search_mode.default_k = default_k
     sc.search_mode.max_k = max_k
+    sc.ego_graph.k_hops = ego_k_hops
+    sc.ego_graph.max_neighbors_per_hop = ego_max_neighbors
     return sc
 
 
@@ -150,12 +152,77 @@ class TestSearchPlannerFieldExtraction:
             plan = SearchPlanner().plan({"query": "test"})
         assert plan.include_parent is False
 
-    def test_ego_graph_defaults_false(self):
+    def test_include_top_callers_defaults_false(self):
         with _patch_planner_deps():
             plan = SearchPlanner().plan({"query": "test"})
-        assert plan.ego_graph_enabled is False
+        assert plan.display_params["top_callers"] is False
+
+    def test_include_top_callers_passthrough(self):
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test", "include_top_callers": True})
+        assert plan.display_params["top_callers"] is True
+
+    def test_include_top_callees_defaults_false(self):
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test"})
+        assert plan.display_params["top_callees"] is False
+
+    def test_include_top_callees_passthrough(self):
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test", "include_top_callees": True})
+        assert plan.display_params["top_callees"] is True
+
+    def test_include_signatures_defaults_false(self):
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test"})
+        assert plan.display_params["signatures"] is False
+
+    def test_include_signatures_passthrough(self):
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test", "include_signatures": True})
+        assert plan.display_params["signatures"] is True
+
+    def test_display_params_cover_every_enricher_spec(self):
+        """The planner must resolve a gate for every EnricherSpec row —
+        catches 'added a spec row, planner loop drifted' (it can't today,
+        the loop enumerates ENRICHER_SPECS, but this pins that property)."""
+        from mcp_server.enricher_specs import ENRICHER_SPECS
+
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test"})
+        assert set(plan.display_params) == {s.key for s in ENRICHER_SPECS}
+
+    def test_ego_graph_omitted_is_none(self):
+        """Omitting ego_graph_enabled must produce None, not False -- collapsing the
+        two loses the two-way gate build_effective_config depends on this field for.
+        """
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test"})
+        assert plan.ego_graph_enabled is None
         assert plan.ego_graph_k_hops == 2
         assert plan.ego_graph_max_neighbors == 10
+
+    def test_ego_graph_explicit_false_stays_false(self):
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test", "ego_graph_enabled": False})
+        assert plan.ego_graph_enabled is False
+
+    def test_ego_graph_explicit_true_stays_true(self):
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test", "ego_graph_enabled": True})
+        assert plan.ego_graph_enabled is True
+
+    def test_ego_graph_hops_and_neighbors_default_to_config_not_literals(self):
+        """Regression guard: the omission fallback for ego_graph_k_hops /
+        ego_graph_max_neighbors_per_hop must read search_config.ego_graph, not
+        hardcoded literals -- previously a configured EgoGraphConfig.k_hops=3
+        was silently shadowed by a literal 2 whenever the caller omitted the arg.
+        """
+        sc = _make_search_config(ego_k_hops=3, ego_max_neighbors=7)
+        with _patch_planner_deps(sc=sc):
+            plan = SearchPlanner().plan({"query": "test"})
+        assert plan.ego_graph_k_hops == 3
+        assert plan.ego_graph_max_neighbors == 7
 
 
 # ---------------------------------------------------------------------------

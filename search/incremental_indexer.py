@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import gc
 import logging
 import os
@@ -15,9 +16,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from chunking.repo_profiler import RepoProfile
 
+    from .resource_refresh import ResourceRefresher
+
 from chunking.multi_language_chunker import MultiLanguageChunker
 from chunking.python_ast_chunker import CodeChunk
-from embeddings.chunk_cache import resolve_chunk_cache
 from embeddings.embedder import CodeEmbedder
 from merkle.change_detector import ChangeDetector, FileChanges
 from merkle.merkle_dag import MerkleDAG
@@ -33,14 +35,16 @@ from .config import get_active_project_storage_dir, get_search_config
 from .index_write_stage import IncrementalIndexResult, IndexWriteStage
 from .indexer import CodeIndexManager as Indexer
 from .parallel_chunker import ParallelChunker
+from .resource_refresh import NullResourceRefresher
 from .summary_stage import SummaryStage
 
 
 logger = logging.getLogger(__name__)
 
-# Minimum GPU memory (MB) considered "still allocated" after cleanup.
-# Below this threshold, residual allocations are expected (PyTorch runtime overhead ~50MB).
-GPU_CLEANUP_THRESHOLD_MB = 100
+# Workstream B2: byte floor for the duplicate-content report — below this,
+# the report is dominated by empty/near-empty __init__.py-style files that
+# aren't worth flagging.
+_DUP_CONTENT_MIN_BYTES = 512
 
 
 class IncrementalIndexer:
@@ -56,6 +60,7 @@ class IncrementalIndexer:
         exclude_dirs: list | None = None,
         *,
         include_exclusive: bool = False,
+        resource_refresher: ResourceRefresher | None = None,
     ):
         """Initialize incremental indexer.
 
@@ -72,8 +77,16 @@ class IncrementalIndexer:
                 escape hatch back to the pre-additive behaviour. Forwarded to
                 the chunker, the change detector, and every MerkleDAG built
                 during a full or incremental pass.
+            resource_refresher: MCP resource-lifecycle collaborator used by a
+                full reindex (see search.resource_refresh.ResourceRefresher).
+                Defaults to NullResourceRefresher() — callers inside the MCP
+                process must pass McpResourceRefresher() explicitly to get
+                the real release/verify/reacquire behaviour.
         """
         self.include_exclusive = include_exclusive
+        self._resource_refresher: ResourceRefresher = (
+            resource_refresher or NullResourceRefresher()
+        )
         if indexer is None:
             # Create indexer with temporary storage directory for testing
             temp_dir = tempfile.mkdtemp(prefix="incremental_index_")
@@ -139,9 +152,9 @@ class IncrementalIndexer:
     def _build_write_pipeline(self) -> None:
         """(Re)build the resource-bound write pipeline.
 
-        Call from __init__ and again immediately after _release_and_verify_resources()
-        so IndexWriteStage is always bound to the current self.embedder /
-        self.indexer — never to released objects.
+        Call from __init__ and again immediately after the resource refresher
+        runs in _full_index() so IndexWriteStage is always bound to the
+        current self.embedder / self.indexer — never to released objects.
         """
         self._index_write_stage = IndexWriteStage(
             embedder=self.embedder,
@@ -323,47 +336,41 @@ class IncrementalIndexer:
                         start_time,
                     )
 
-            # Update snapshot
-            # After processing changes, calculate cumulative stats
+            # Re-inject resolver call edges (pyan/LibCST/LSP). Opt-in only —
+            # the write stage owns the inject_on_incremental gate and
+            # returns all-zero stats when it is off (ADR-0044).
+            injection_stats = self._index_write_stage.inject_call_edges_if_enabled(
+                project_path
+            )
+
+            # Update snapshot, index, BM25 sync, and GPU cache; build the result.
+            # After processing changes, calculate cumulative stats.
             all_files = list(current_dag.get_all_files())
             supported_files = self._get_supported_files(project_path, all_files)
             total_chunks = self._get_total_chunks()
 
-            metadata = self._build_snapshot_metadata(
+            return self._index_write_stage.finalize(
+                dag=current_dag,
                 project_name=project_name,
                 all_files=all_files,
                 supported_files=supported_files,
                 total_chunks=total_chunks,
                 is_full=False,
-                files_added=len(changes.added),
-                files_removed=len(changes.removed),
-                files_modified=len(changes.modified),
-            )
-            self.snapshot_manager.save_snapshot(current_dag, metadata)
-
-            # Update index
-            logger.info("[INCREMENTAL] Saving index...")
-            self.indexer.save_indices()
-            logger.info("[INCREMENTAL] Index saved")
-
-            # Auto-sync BM25 if significant desync detected (>10% difference)
-            bm25_resynced, bm25_resync_count = self.indexer.resync_if_desynced(
-                "INCREMENTAL"
-            )
-
-            # Clear GPU cache to free intermediate tensors from embedding batches
-            self._clear_gpu_cache("INCREMENTAL")
-
-            return IncrementalIndexResult(
+                repo_profile=None,
+                start_time=start_time,
+                log_prefix="INCREMENTAL",
                 files_added=len(changes.added),
                 files_removed=len(changes.removed),
                 files_modified=len(changes.modified),
                 chunks_added=chunks_added,
                 chunks_removed=chunks_removed,
-                time_taken=time.time() - start_time,
-                success=True,
-                bm25_resynced=bm25_resynced,
-                bm25_resync_count=bm25_resync_count,
+                call_edges_injected=injection_stats.injected,
+                call_edge_resolvers=injection_stats.resolvers_run,
+                metadata_changes={
+                    "files_added": len(changes.added),
+                    "files_removed": len(changes.removed),
+                    "files_modified": len(changes.modified),
+                },
             )
 
         except Exception as e:  # noqa: BLE001 - api-boundary: top-level indexing op converts failure to structured result
@@ -448,11 +455,52 @@ class IncrementalIndexer:
         tests; only CodeIndexManager defines validate_index_consistency, so
         calling it unconditionally is dead code on the real path. Reuses the
         dense_index accessor idiom already used for the same purpose in
-        index_write_stage.py's _inject_call_edges.
+        index_write_stage.py's inject_call_edges.
         """
         if hasattr(self.indexer, "validate_index_consistency"):
             return self.indexer
         return getattr(self.indexer, "dense_index", None)
+
+    @staticmethod
+    def _is_sole_orphan_surplus_issue(issues: list[str]) -> bool:
+        """True iff *issues* is exactly check 4's metadata-surplus message.
+
+        Checks 1-3 (FAISS/chunk_ids size, missing metadata, invalid
+        index_id) each append their own, independently-worded issue when
+        triggered. Check 4 only appends the "orphaned row(s)" surplus form
+        when ``metadata_size > chunk_ids_size``. So a single issue matching
+        that exact form proves checks 1-3 are clean by construction — the
+        FAISS/chunk_ids side of the index is provably intact, which is the
+        only condition under which pruning surplus metadata rows is safe.
+        Full-index only: a full index makes metadata == chunk_ids by
+        construction, so any surplus here is provably stale debris rather
+        than a real signal (unlike the incremental path, where recovery
+        already owns this case).
+        """
+        return (
+            len(issues) == 1
+            and issues[0].startswith("Metadata database size (")
+            and "orphaned row(s)" in issues[0]
+        )
+
+    def _prune_orphaned_metadata_and_revalidate(
+        self, consistency_target: Any
+    ) -> tuple[bool, list[str]]:
+        """Delete surplus metadata rows left by a stale ``.deleting`` sibling
+        surviving a prior clear, then re-run consistency validation.
+
+        Only called when :meth:`_is_sole_orphan_surplus_issue` has already
+        confirmed checks 1-3 passed — see that method's docstring for why
+        that guard makes pruning safe here.
+        """
+        orphaned_keys = consistency_target.find_orphaned_metadata_keys()
+        pruned = consistency_target.metadata_store.delete_batch(orphaned_keys)
+        consistency_target.metadata_store.commit()
+        logger.warning(
+            f"[FULL_INDEX] Pruned {pruned} orphaned metadata row(s) left by a "
+            f"stale prior generation, e.g. {orphaned_keys[:3]}"
+        )
+        return consistency_target.validate_index_consistency()
 
     _RECOVERY_MARKER_NAME = "index_recovery_failed.marker"
 
@@ -549,137 +597,6 @@ class IncrementalIndexer:
                     )
             return result
 
-    def _release_and_verify_resources(self, project_path: str) -> None:
-        """Mandatory resource release and verification before full reindex.
-
-        Ensures all previous resources (index managers, searchers, embedders, GPU memory)
-        are properly released before starting a full reindex operation. This prevents
-        VRAM/memory pressure that could cause reindexing to fail.
-
-        Performs:
-        1. Save current model key before cleanup
-        2. Release via ResourceManager.cleanup_previous_resources() (same as UI command)
-        3. Verification of cleanup completeness
-        4. Refresh embedder with fresh instance (preserving model key)
-        5. Refresh indexer/searcher (required since cleanup shut it down)
-
-        Args:
-            project_path: Path to the project being indexed (needed to recreate searcher)
-
-        This method is idempotent - safe to call even if cleanup was already performed.
-        """
-        logger.info("[FULL_INDEX] Mandatory pre-reindex resource release starting...")
-
-        # Step 1: Release resources (same operation as UI "Release Resources" command)
-        from mcp_server.resource_manager import _cleanup_previous_resources
-
-        _cleanup_previous_resources()
-        logger.info("[FULL_INDEX] Resource release completed")
-
-        # Step 2: Verify cleanup completeness
-        from mcp_server.services import get_state
-
-        state = get_state()
-        verification_passed = True
-        warnings = []
-
-        # Check embedder pool cleared
-        if state.embedders:
-            warnings.append(
-                f"Embedder pool not fully cleared: {list(state.embedders.keys())}"
-            )
-            verification_passed = False
-
-        # Check index_manager released
-        if state.index_manager is not None:
-            warnings.append("state.index_manager not None after cleanup")
-            verification_passed = False
-
-        # Check searcher released
-        if state.searcher is not None:
-            warnings.append("state.searcher not None after cleanup")
-            verification_passed = False
-
-        # Check GPU memory (if CUDA available)
-        try:
-            import torch
-
-            if torch.cuda.is_available():
-                allocated_mb = torch.cuda.memory_allocated() / (1024**2)
-                if allocated_mb > GPU_CLEANUP_THRESHOLD_MB:
-                    warnings.append(
-                        f"GPU memory still allocated: {allocated_mb:.1f} MB"
-                    )
-                    verification_passed = False
-        except ImportError:
-            pass
-
-        # If verification failed, attempt secondary cleanup and re-verify
-        if not verification_passed:
-            logger.warning(
-                f"[FULL_INDEX] Initial verification failed: {warnings}. "
-                "Attempting secondary cleanup..."
-            )
-            gc.collect()
-            try:
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except ImportError:
-                pass
-
-            # Re-verify
-            state = get_state()
-            recheck_warnings = []
-            if state.embedders:
-                recheck_warnings.append(
-                    f"Embedder pool still not cleared: {list(state.embedders.keys())}"
-                )
-            if state.index_manager is not None:
-                recheck_warnings.append("state.index_manager still not None")
-            if state.searcher is not None:
-                recheck_warnings.append("state.searcher still not None")
-
-            if recheck_warnings:
-                logger.warning(
-                    f"[FULL_INDEX] Re-verification still shows issues: {recheck_warnings}. "
-                    "Proceeding with reindex anyway."
-                )
-            else:
-                logger.info(
-                    "[FULL_INDEX] Secondary cleanup successful - verification passed"
-                )
-        else:
-            logger.info(
-                "[FULL_INDEX] Resource verification passed — all resources released"
-            )
-
-        # Step 3: Refresh embedder (required since cleanup cleared it)
-        from mcp_server.model_pool_manager import get_embedder
-
-        self.embedder = get_embedder()  # Fresh instance with config model
-        logger.info("[FULL_INDEX] Fresh embedder acquired for reindex")
-
-        # Step 4: Refresh indexer/searcher (required since cleanup shut it down)
-        # Only refresh if the indexer was actually shut down (has _is_shutdown flag set to True)
-        if hasattr(self.indexer, "_is_shutdown") and self.indexer._is_shutdown:
-            from mcp_server.search_factory import get_searcher
-
-            # load_existing=False (#reindex-log-audit-2026-07-30): this searcher
-            # is a write-only target for the force-full reindex about to run —
-            # _full_index() calls clear_index()/clear_hybrid_indices() on it
-            # moments later, so loading the stale on-disk BM25 index here would
-            # only cost time and log spurious version/tokenizer mismatch
-            # warnings for data that is about to be discarded.
-            # pyrefly: ignore [bad-assignment]
-            self.indexer = get_searcher(project_path, load_existing=False)
-            logger.info("[FULL_INDEX] Fresh indexer/searcher acquired for reindex")
-        else:
-            logger.debug(
-                "[FULL_INDEX] Indexer not shut down or doesn't need refresh (test mock)"
-            )
-
     def _full_index(
         self, project_path: str, project_name: str, start_time: float
     ) -> IncrementalIndexResult:
@@ -695,7 +612,11 @@ class IncrementalIndexer:
         """
         try:
             # === MANDATORY: Release resources before full reindex ===
-            self._release_and_verify_resources(project_path)
+            self.embedder, self.indexer = (
+                self._resource_refresher.refresh_before_full_index(
+                    project_path, self.embedder, self.indexer
+                )
+            )
             # Rebind write pipeline to freshly acquired embedder/indexer so the
             # stage never runs against the released (stale) objects.
             self._build_write_pipeline()
@@ -753,6 +674,8 @@ class IncrementalIndexer:
             logger.info(
                 f"Found {len(supported_files)} supported files out of {len(all_files)} total files"
             )
+            self._report_duplicate_content(dag, supported_files)
+            self._report_extension_skip_histogram(all_files, supported_files)
 
             # Per-pattern diagnostics: a pattern that matched nothing is the
             # exact silent-failure class this whole filtering system exists to
@@ -874,17 +797,12 @@ class IncrementalIndexer:
             # ParallelChunker._log_chunking_summary.
             logger.info(f"Total chunks collected: {len(all_chunks)}")
 
-            # Stage 1: file-level module summaries
-            config = get_search_config()
-            if config.chunking.enable_file_summaries and all_chunks:
-                module_summaries = self._summary_stage.generate_module_summaries(
-                    all_chunks
-                )
-                if module_summaries:
-                    all_chunks.extend(module_summaries)
-                    logger.info(
-                        f"[FILE_SUMMARIES] Appended {len(module_summaries)} module summaries"
-                    )
+            # Stage 1: file-level module summaries (config-gated inside the stage)
+            self._summary_stage.generate_and_extend(
+                all_chunks,
+                log_prefix="[FILE_SUMMARIES]",
+                appended_noun="module summaries",
+            )
 
             # Stage 2: embed, index, call-edge injection, snapshot, BM25, GPU
             result = self._index_write_stage.run(
@@ -902,6 +820,10 @@ class IncrementalIndexer:
             _consistency_target = self._consistency_target()
             if _consistency_target is not None:
                 is_valid, issues = _consistency_target.validate_index_consistency()
+                if not is_valid and self._is_sole_orphan_surplus_issue(issues):
+                    is_valid, issues = self._prune_orphaned_metadata_and_revalidate(
+                        _consistency_target
+                    )
                 if not is_valid:
                     logger.error(
                         f"[FULL_INDEX] Index inconsistent after full index: {issues}"
@@ -916,19 +838,15 @@ class IncrementalIndexer:
         except Exception as e:
             logger.error(f"Full indexing failed: {e}", exc_info=True)
             # (#reindex-log-audit-2026-07-30) The searcher acquired above (see
-            # _release_and_verify_resources) was built with load_existing=False,
-            # so if this failure happened after construction but before
-            # clear_hybrid_indices()/rebuild completed, state.searcher is an
-            # empty write-only instance. Null it — same one-line invalidation
-            # search_factory.get_searcher() already does for
-            # DimensionMismatchError — so the next call rebuilds from disk
-            # instead of returning an empty cached searcher.
-            try:
-                from mcp_server.services import get_state
-
-                get_state().searcher = None
-            except Exception:  # noqa: BLE001 - best-effort cache invalidation, never mask the original failure
-                pass
+            # the resource refresher's refresh_before_full_index) was built
+            # with load_existing=False, so if this failure happened after
+            # construction but before clear_hybrid_indices()/rebuild
+            # completed, state.searcher is an empty write-only instance.
+            # Invalidate it — the compensating inverse of
+            # refresh_before_full_index — so the next call rebuilds from
+            # disk instead of returning an empty cached searcher.
+            with contextlib.suppress(Exception):  # noqa: BLE001 - best-effort cache invalidation, never mask the original failure
+                self._resource_refresher.invalidate_searcher_cache()
             return self._zero_result(start_time, success=False, error=str(e))
 
     def _get_total_chunks(self) -> int:
@@ -957,6 +875,102 @@ class IncrementalIndexer:
             List of supported file paths
         """
         return [f for f in all_files if self._is_supported_file(project_path, f)]
+
+    def _report_duplicate_content(
+        self, dag: MerkleDAG, supported_files: list[str]
+    ) -> None:
+        """Log byte-identical supported-file groups — report only, no skip.
+
+        Reuses the content hash MerkleDAG.build_node already computed via
+        hash_file() for every supported-extension file — zero additional
+        I/O. Only supported_files are considered: non-code files hash by
+        `name:size:mtime` (merkle_dag.py's fast-path sentinel for files
+        outside supported_extensions), which is not a content hash and
+        would produce meaningless "duplicate" groups.
+
+        Reporting only, on purpose — actual dedup-skip is deferred until
+        this report is read after B1 (vendoring ignore-defaults) lands, and
+        chunk aliasing is out of scope: chunk_ids embed relative_path, and
+        graph_storage.remove_file_nodes prunes by path prefix, so an alias
+        would orphan every alias when the canonical file is deleted.
+
+        Args:
+            dag: The just-built MerkleDAG for this project (nodes carry the
+                content hash and size computed during dag.build()).
+            supported_files: Paths already filtered to supported extensions.
+        """
+        groups: dict[str, list[str]] = {}
+        for path in supported_files:
+            node = dag.nodes.get(path)
+            if node is None or not node.is_file:
+                continue
+            groups.setdefault(node.hash, []).append(path)
+
+        sized_groups: list[tuple[int, int, list[str]]] = []
+        for paths in groups.values():
+            if len(paths) < 2:
+                continue
+            node = dag.nodes[paths[0]]
+            if node.size < _DUP_CONTENT_MIN_BYTES:
+                continue
+            group_wasted = node.size * (len(paths) - 1)
+            sized_groups.append((group_wasted, node.size, paths))
+
+        if not sized_groups:
+            return
+
+        sized_groups.sort(key=lambda g: g[0], reverse=True)
+        total_wasted = sum(wasted for wasted, _, _ in sized_groups)
+        logger.info(
+            f"[DUP_CONTENT] {len(sized_groups)} duplicate-content group(s), "
+            f"{total_wasted:,} redundant bytes "
+            f"(>={_DUP_CONTENT_MIN_BYTES}B floor)"
+        )
+        for group_wasted, size, paths in sized_groups[:5]:
+            logger.info(
+                f"[DUP_CONTENT]   {len(paths)} copies x {size:,}B "
+                f"({group_wasted:,}B wasted): {paths[0]} + {len(paths) - 1} more "
+                f"({', '.join(paths[1:4])}{', ...' if len(paths) > 4 else ''})"
+            )
+
+    def _report_extension_skip_histogram(
+        self, all_files: list[str], supported_files: list[str]
+    ) -> None:
+        """Log a per-extension histogram of files found but not indexed.
+
+        Workstream C3: this is the single log line that would have made the
+        `.cu`/`.cuh` registration gap (Workstream A3) self-evident without
+        manual investigation — "found but unsupported" was previously
+        inferrable only by diffing `Found N supported files out of M total`
+        against a manual file listing.
+
+        Reuses index_probe.language_histogram's exact lowercased-suffix
+        bucketing shape rather than a new helper. Unlike that helper (which
+        silently drops extensionless files — a `.py` vs. no-extension
+        distinction that doesn't matter for its use), extensionless files
+        are counted here explicitly, since silently folding them out would
+        make the skip total not add up to `len(all_files) - len(supported_files)`.
+
+        Args:
+            all_files: Every file the DAG walk found, relative to project root.
+            supported_files: The subset of all_files that passed
+                _is_supported_file — already computed by the caller.
+        """
+        from .index_probe import language_histogram
+
+        skipped = list(set(all_files) - set(supported_files))
+        if not skipped:
+            return
+
+        extensionless = sum(1 for f in skipped if not Path(f).suffix)
+        histogram = language_histogram(skipped)
+        logger.info(
+            f"[SKIP_HISTOGRAM] {len(skipped)} file(s) found but not indexed "
+            f"(unsupported extension), {extensionless} extensionless"
+        )
+        top = sorted(histogram.items(), key=lambda kv: kv[1], reverse=True)[:15]
+        for ext, count in top:
+            logger.info(f"[SKIP_HISTOGRAM]   {ext}: {count}")
 
     def _build_snapshot_metadata(
         self,
@@ -1051,6 +1065,18 @@ class IncrementalIndexer:
                     f"across {len(files_to_remove)} files"
                 )
 
+            # Workstream D: phantom placeholder nodes (unresolved call/symbol
+            # targets) have no path: prefix, so remove_file_nodes above never
+            # reaches them. Run right after it in the same pass — incident
+            # edges from the just-deleted files are already gone, so a
+            # phantom whose only referents were deleted drops to degree 0
+            # here and is pruned instead of accumulating indefinitely.
+            orphans_removed = graph_storage.prune_orphan_symbol_nodes()
+            if orphans_removed:
+                logger.info(
+                    f"[GRAPH_PRUNE] Pruned {orphans_removed} orphan symbol node(s)"
+                )
+
         return chunks_removed
 
     @timed("index.incremental")
@@ -1093,23 +1119,13 @@ class IncrementalIndexer:
         )
         chunks_to_embed = self._chunk_files_parallel(project_path, supported_files)
 
-        # ========== File-Level Module Summaries (A2) ==========
-        config = get_search_config()
-        if config.chunking.enable_file_summaries and chunks_to_embed:
-            try:
-                from chunking.file_summarizer import generate_file_summaries
-
-                file_summaries = generate_file_summaries(chunks_to_embed)
-                if file_summaries:
-                    chunks_to_embed.extend(file_summaries)
-                    logger.info(
-                        f"[INCREMENTAL] Generated {len(file_summaries)} module summary chunks"
-                    )
-            except Exception as e:  # noqa: BLE001 - resilience: optional module summary generation, indexing continues
-                logger.warning(
-                    f"[INCREMENTAL] File summary generation failed: {e}", exc_info=True
-                )
-        # ========== END File-Level Module Summaries ==========
+        # File-level module summaries — shared with the full-index path via
+        # SummaryStage.generate_and_extend (config-gated inside the stage).
+        self._summary_stage.generate_and_extend(
+            chunks_to_embed,
+            log_prefix="[INCREMENTAL]",
+            appended_noun="module summary chunks",
+        )
 
         all_embedding_results = []
         if chunks_to_embed:
@@ -1120,29 +1136,19 @@ class IncrementalIndexer:
             # handful of chunks that changed, never the whole project — see
             # ChunkEmbeddingCache._evict for why a full-pass cap here would
             # wrongly collapse a cache built by prior full indexes.
-            all_embedding_results = self.embedder.embed_chunks(
-                chunks_to_embed,
-                cache=resolve_chunk_cache(self.indexer.storage_dir, self.embedder),
-                cache_full_pass=False,
+            all_embedding_results = self._index_write_stage.embed_and_attach_metadata(
+                chunks_to_embed, project_name, cache_full_pass=False
             )
-            # Update metadata
-            for chunk, embedding_result in zip(
-                chunks_to_embed, all_embedding_results, strict=True
-            ):
-                embedding_result.metadata["project_name"] = project_name
-                embedding_result.metadata["content"] = chunk.content
 
-        # Add all embeddings to index at once
+        # Add all embeddings to index at once, through the shared write seam.
+        # Guarded here rather than inside add_to_index: an incremental pass
+        # with only removals legitimately adds nothing, so the empty-input
+        # warning would be noise on this path.
         if all_embedding_results:
-            logger.info(
-                f"[INCREMENTAL] Adding {len(all_embedding_results)} embeddings to index"
-            )
             logger.info(f"[INCREMENTAL] Indexer type: {type(self.indexer).__name__}")
-
-            # Add embeddings
-            self.indexer.add_embeddings(all_embedding_results)
-
-            logger.info("[INCREMENTAL] Successfully added embeddings")
+            self._index_write_stage.add_to_index(
+                all_embedding_results, log_prefix="[INCREMENTAL] "
+            )
 
         return len(all_embedding_results)
 

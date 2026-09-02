@@ -8,6 +8,7 @@ benchmark-validated keys never appear as override rules.
 
 import json
 from dataclasses import replace
+from typing import Literal
 
 import pytest
 
@@ -62,11 +63,15 @@ def make_profile(**kwargs) -> RepoProfile:
     return RepoProfile(**defaults)
 
 
-def overrides_for(m: ProbeMeasurements, stage: str = "pre_chunking") -> dict:
+def overrides_for(
+    m: ProbeMeasurements, stage: Literal["pre_chunking", "post_build"] = "pre_chunking"
+) -> dict:
     return run_rules(m, stage).overrides
 
 
-def dotted_overrides(m: ProbeMeasurements, stage: str = "pre_chunking") -> set:
+def dotted_overrides(
+    m: ProbeMeasurements, stage: Literal["pre_chunking", "post_build"] = "pre_chunking"
+) -> set:
     return set(_dotted_keys(overrides_for(m, stage)))
 
 
@@ -88,11 +93,18 @@ class TestGuardrails:
             "search_mode.bm25_tokenizer",
             "search_mode.bm25_reserved_slots",
             "graph_enhanced.centrality_alpha",
+            "graph_enhanced.centrality_exclude_phantoms",
+            "graph_enhanced.drop_ambiguous_traversal_edges",
             "reranker.single_pass",
             "reranker.hop1_reserved_slots",
+            "reranker.doc_representation_mode",
+            "reranker.merged_pool_policy",
+            "reranker.graph_hop_window_cap",
             "query_expansion.enabled",
             "multi_hop.expansion",
             "multi_hop.multi_hop_mode",
+            "ego_graph.drop_nonpositive_output",
+            "ego_graph.max_neighbors_per_hop",
             "embedding.model_name",
         } == FORBIDDEN_AUTO_TUNE_KEYS
 
@@ -100,10 +112,24 @@ class TestGuardrails:
         """BENCHMARK_LOCK_CITATIONS (start_mcp_server.cmd's ADR-0022 display
         source) must cover every forbidden key except embedding.model_name,
         which is locked for index-routing safety, not a benchmark result, and
-        is displayed separately."""
+        is displayed separately. True by construction since both derive from
+        spec(benchmark_locked=...); kept as a cheap invariant guard."""
         assert set(BENCHMARK_LOCK_CITATIONS) == FORBIDDEN_AUTO_TUNE_KEYS - {
             "embedding.model_name"
         }
+
+    def test_benchmark_lock_citations_are_nonempty_strings(self):
+        """Every spec(benchmark_locked=...) row must carry a real citation —
+        an empty string would render a blank reason in the ':tuned_parameters'
+        Benchmark-Locked panel."""
+        for key, citation in BENCHMARK_LOCK_CITATIONS.items():
+            assert isinstance(citation, str) and citation.strip(), key
+
+    def test_index_routing_lock_is_not_a_benchmark_lock(self):
+        """embedding.model_name is locked for index-routing safety and must
+        never acquire a benchmark citation (it is displayed separately)."""
+        assert "embedding.model_name" in FORBIDDEN_AUTO_TUNE_KEYS
+        assert "embedding.model_name" not in BENCHMARK_LOCK_CITATIONS
 
     def test_no_override_rule_touches_forbidden_keys(self):
         for rule in RULES:
@@ -629,6 +655,28 @@ class TestEntryPoints:
         assert summary is None
         assert (tmp_path / PROJECT_OVERRIDES_FILENAME).read_text() == before
 
+    def test_post_build_quiet_corpus_logs_explicit_no_op(self, tmp_path, caplog):
+        """Workstream C2: a quiet-corpus no-op (rules evaluated, none
+        triggered) must log an explicit INFO line -- otherwise it is
+        indistinguishable from pass 2 silently failing to run at all."""
+        import logging
+
+        probe_pre_chunking(
+            tmp_path,
+            supported_files=["a.py"],
+            repo_profile=None,
+            measurements=make_measurements(),
+        )
+        with caplog.at_level(logging.INFO, logger="search.index_probe"):
+            summary = probe_post_build(
+                tmp_path, stats={"total_chunks": 100, "files_indexed": 50}
+            )
+        assert summary is None
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert any("Pass 2: no new observations" in m for m in messages), (
+            f"Expected an explicit no-op log line; got {messages}"
+        )
+
     def test_env_escape_hatch_skips_both_passes(self, tmp_path, monkeypatch):
         monkeypatch.setenv("CLAUDE_DISABLE_PROJECT_OVERRIDES", "1")
         assert (
@@ -659,6 +707,7 @@ class TestMergedSummary:
             "post_build",
         ).summary("post_build")
         merged = merged_probe_summary(pass1, pass2)
+        assert merged is not None
         assert merged["probe_version"] == PROBE_VERSION
         assert "performance.max_chunking_workers" in merged["override_keys"]
         assert "ego_graph.max_neighbors_per_hop" in merged["observation_keys"]
@@ -666,5 +715,6 @@ class TestMergedSummary:
     def test_pass1_only(self):
         pass1 = run_rules(make_measurements(), "pre_chunking").summary("pre_chunking")
         merged = merged_probe_summary(pass1, None)
+        assert merged is not None
         assert merged["override_keys"] == pass1["override_keys"]
         assert merged["observation_keys"] == pass1["observation_keys"]

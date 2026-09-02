@@ -4,12 +4,23 @@ from typing import Any
 
 from tree_sitter import Language
 
-from ._c_family import unwrap_declarator_name
-from .base import LanguageChunker
+from ._c_family import _CFamilyChunker, unwrap_declarator_name
 
 
-class CChunker(LanguageChunker):
-    """C-specific chunker using tree-sitter."""
+class CChunker(_CFamilyChunker):
+    """C-specific chunker using tree-sitter.
+
+    Inherits `_CFamilyChunker`'s `preprocess_source_for_parse` composition
+    (_c_family.py) unchanged: preprocessor-conditional neutralization, then
+    macro-wrapped-declaration repair. Measured over 69 real `.c` files
+    (154,346 lines) from a TouchDesigner installation tree: ERROR lines
+    6,055 (3.92%) -> 5,733 (3.71%), with definitions gained (17,240 ->
+    17,254) and zero files regressed (7 improved / 0 regressed) -- smaller
+    than the C++-extension case (fewer macro-wrapped-prototype headers
+    reach the `c` grammar at all, since most C-compatible headers route to
+    `cpp` -- see `chunking/language_registry.py`'s `EXT_TO_LANGUAGE`), but
+    real and zero-regression by the same construction.
+    """
 
     def __init__(self, language: Language | None = None) -> None:
         super().__init__("c", language)

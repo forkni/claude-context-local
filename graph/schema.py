@@ -88,6 +88,28 @@ REVERSE_RELATIONS: dict[str, str] = {
 }
 
 
+def is_phantom_node(node_data: dict) -> bool:
+    """True for placeholder symbol nodes (unresolved call/symbol targets).
+
+    Single source of truth for the phantom-node predicate. Previously
+    duplicated across ``graph/graph_queries.py``, ``graph/graph_storage.py``,
+    and ``scripts/benchmark/graph_phantom_preflight.py`` with a "kept in sync
+    deliberately" comment and no test enforcing agreement -- see ADR-0055.
+    All four call sites should import this instead of reimplementing it.
+
+    Args:
+        node_data: Node attribute dictionary from the NetworkX graph.
+
+    Returns:
+        True if the node is a placeholder created at ``add_call_edge`` or
+        ``add_relationship_edge`` for an unresolved target, not a real chunk.
+    """
+    return bool(
+        node_data.get(NODE_ATTR_TYPE) == NODE_TYPE_SYMBOL_NAME
+        or node_data.get(NODE_ATTR_IS_TARGET_NAME)
+    )
+
+
 def edge_relation_type(edge_data: dict) -> "str | None":
     """Single reader of an edge's relation type, tolerating both key spellings.
 

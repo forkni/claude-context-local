@@ -56,7 +56,7 @@
         "changes": [
           "Full stale-gold audit via new scripts/benchmark/audit_golden_dataset.py against the freshly reindexed live index (2,316 chunks / 2,063 normalized IDs): 19 unresolvable golds in 16 queries, all traced to a dedup_key normalization asymmetry — evaluation/metrics normalization (search/chunk_id.py dedup_key) rewrites split_block -> parent kind (method/function) only for 4-part IDs carrying a line range; live index IDs always carry line ranges while golden IDs never do, so a 3-part golden split_block:X can never match even when the live index still chunks that symbol as a split_block. All split_block golds rewritten to parent-kind form (grades preserved) across Q19, Q32, Q45, Q46, Q50, Q54, Q58, Q60, Q62, Q64, Q65, Q69, Q83, Q88, Q90, Q94: incremental_index, _apply_ego_graph_expansion, RRFReranker.rerank, handle_find_path, CommunityRefreshStage.run, IndexWriteStage.run, _check_auto_reindex, GraphQueryEngine.find_path, get_edge_data, _full_index, build_graph_from_chunks, get_searcher",
           "Q19/Q32: embeddings/embedder.py:split_block:CodeEmbedder.embed_chunks entries deleted — the method-form ID was already present at the same grade 3, making the split_block entry a permanent-miss duplicate that capped any-match recall",
-          "Q12 (zero-MRR pool miss; per-leg probes showed BM25 gold rank 3 but dense-leg miss and fusion cut): added the most literal answer mcp_server/tools/status_handlers.py:decorated_definition:handle_get_index_status at grade 3 (expected + expected_primary); existing golds kept (has_snapshot 3, needs_reindex 3, MetadataStore.exists 2, handle_index_directory 1)",
+          "Q12 (zero-MRR pool miss; per-leg probes showed BM25 gold rank 3 but dense-leg miss and fusion cut): added the most literal answer mcp_server/tools/status_handlers.py:method:handle_get_index_status at grade 3 (expected + expected_primary); existing golds kept (has_snapshot 3, needs_reindex 3, MetadataStore.exists 2, handle_index_directory 1)",
           "Q99 (zero-MRR ranking miss): entry violated the category-F rule it was labeled under (grade-3 'cross-file similar' tier held only same-class siblings). Added four cross-file persistence implementations at grade 3 (new expected_primary): graph/graph_storage.py:method:CodeGraphStorage.save, search/indexer.py:method:CodeIndexManager.save_index, search/hybrid_searcher.py:method:HybridSearcher.save_indices, search/faiss_index.py:method:FaissVectorIndex.save; GraphIntegration.from_storage demoted 3 -> 2 (same-class sibling)",
           "Weak-query review (10 persistently sub-0.40-MRR queries, fix-only-provable-mislabels rule): Q96 added SearchExecutor.search_dense + SearchExecutor._parallel_search grade 2 (query asks for methods wrapping 'BM25 or dense retrieval'; sibling _sequential_search already gold at 2); Q97 added FaissVectorIndex.clear grade 2 ('other vector index lifecycle methods'); Q98 added ChunkEmbeddingCache.get/put grade 3 into expected_primary (cross-file caching get/put implementations, category-F rule); Q56 added search/indexer.py:decorated_definition:CodeIndexManager.index grade 3 (the orchestration method the query asks about); Q33 added IncrementalIndexer.detect_changes grade 3 (the method named for the query subject); Q04 added search/chunk_id.py:function:is_chunk_id grade 3 (canonical validator; dataset predates the chunk_id.py centralization). Q70, Q95, Q55, Q01 reviewed and left unchanged as hard-but-fair",
           "COMPARABILITY BREAK: aggregate MRR/recall from runs on this dataset version are not comparable to pre-2026-07-28 reports; re-baselined via qfix_rebaseline runs (see evaluation/GOLDEN_DATASET_AUDIT_20260728.md)"
@@ -177,6 +177,12 @@
       {
         "date": "2026-08-04",
         "change": "Re-graded H035/H060/H061/H068 under the ADR-0021 PYTHONHASHSEED=0 determinism pin (scripts/benchmark/grade_candidate_queries.py --candidates benchmark_results/h_candidates_paraphrased.json --only H035,H060,H061,H068), superseding the 2026-08-02 bf16-non-determinism exclusion rationale for these four IDs (ADR-0021 showed the actual cause was PYTHONHASHSEED set-iteration order). Promoted H035 as a stable, reproducible pool_miss with a clean query and a verified gold -- a genuine hard case, not noise. Promoted H068 with its intended gold corrected from CodeIndexManager.get_similar_chunks to CodeIndexManager.get_similar_chunks_batched (the method commit 06501b66 actually added, and the one multi_hop_searcher.py calls; same stale-intended-ID pattern as H012/H067). Rejected H060 (commit-narrative query text describing test-fix symptoms, not any behavior of its gold) and H061 (gold does not perform the GPU-memory-tier-management the query describes; that logic lives in search/vram_manager.py:VRAMTierManager instead). Splits: both new queries assigned test."
+      },
+      {
+        "date": "2026-09-02",
+        "changes": [
+          "Q12: mcp_server/tools/status_handlers.py:method:handle_get_index_status kept as-is. It is the normalize_chunk_id form of the three split_block fragments the adaptive-sizing indexer (repo P75 threshold) stores for this 105-line decorated_definition; the static-threshold fresh chunker never splits it. tests/unit/evaluation/test_golden_set_guard.py now accepts the method: alias for split-eligible nodes (kind function/decorated_definition, longer than chunking.max_chunk_lines) instead of the gold being rewritten to a form the index does not hold."
+        ]
       }
     ]
   },
@@ -288,18 +294,18 @@
       "category": "A",
       "split": "val",
       "expected": [
-        "mcp_server/tools/status_handlers.py:decorated_definition:handle_get_index_status",
+        "mcp_server/tools/status_handlers.py:method:handle_get_index_status",
         "merkle/snapshot_manager.py:method:SnapshotManager.has_snapshot",
         "search/incremental_indexer.py:method:IncrementalIndexer.needs_reindex",
         "search/metadata.py:method:MetadataStore.exists"
       ],
       "expected_primary": [
-        "mcp_server/tools/status_handlers.py:decorated_definition:handle_get_index_status",
+        "mcp_server/tools/status_handlers.py:method:handle_get_index_status",
         "merkle/snapshot_manager.py:method:SnapshotManager.has_snapshot",
         "search/incremental_indexer.py:method:IncrementalIndexer.needs_reindex"
       ],
       "relevance_grades": {
-        "mcp_server/tools/status_handlers.py:decorated_definition:handle_get_index_status": 3,
+        "mcp_server/tools/status_handlers.py:method:handle_get_index_status": 3,
         "merkle/snapshot_manager.py:method:SnapshotManager.has_snapshot": 3,
         "search/incremental_indexer.py:method:IncrementalIndexer.needs_reindex": 3,
         "search/metadata.py:method:MetadataStore.exists": 2,
@@ -2567,7 +2573,7 @@
       "split": "train",
       "expected": [
         "chunking/relationships/call_edge_resolver.py:function:validate_py_files",
-        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges",
+        "search/index_write_stage.py:method:IndexWriteStage.inject_call_edges",
         "chunking/relationships/call_edge_resolver.py:function:prepare_scoped_files"
       ],
       "expected_primary": [
@@ -2575,7 +2581,7 @@
       ],
       "relevance_grades": {
         "chunking/relationships/call_edge_resolver.py:function:validate_py_files": 3,
-        "search/index_write_stage.py:method:IndexWriteStage._inject_call_edges": 2,
+        "search/index_write_stage.py:method:IndexWriteStage.inject_call_edges": 2,
         "chunking/relationships/call_edge_resolver.py:function:prepare_scoped_files": 2,
         "chunking/relationships/call_edge_resolver.py:function:scope_to_indexed_files": 1
       }

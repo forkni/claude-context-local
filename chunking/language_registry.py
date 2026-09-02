@@ -38,6 +38,8 @@ EXT_TO_LANGUAGE: dict[str, str] = {
     ".inl": "cpp",
     ".ipp": "cpp",
     ".tpp": "cpp",
+    ".cu": "cpp",
+    ".cuh": "cpp",
     ".cs": "csharp",
     ".glsl": "glsl",
     ".frag": "glsl",
@@ -107,6 +109,20 @@ DEFAULT_IGNORED_DIRS: set[str] = {
     "tmp",
     "temp",
     ".uv-cache",  # repo-local uv package cache (see install-windows.cmd)
+    # Vendored/third-party C/C++ dependency trees (Workstream B1). "external"
+    # deliberately excluded — plausible first-party directory name; a project
+    # that vendors under external/ can still exclude it explicitly.
+    "third_party",
+    "thirdparty",
+    "third-party",
+    "3rdparty",
+    "vendor",
+    "vendored",
+    "extern",
+    "deps",
+    "_deps",  # CMake FetchContent default download/build dir
+    "subprojects",  # Meson
+    "submodules",
 }
 
 
@@ -133,6 +149,20 @@ DEPENDENCY_TREE_DIRS: set[str] = {
     ".mvn",
     ".tox",
     ".uv-cache",
+    # Vendored/third-party C/C++ dependency trees (Workstream B1) — same
+    # names as DEFAULT_IGNORED_DIRS above, so include_dirs=["third_party/foo"]
+    # is additive (ADR-0036) rather than narrowing.
+    "third_party",
+    "thirdparty",
+    "third-party",
+    "3rdparty",
+    "vendor",
+    "vendored",
+    "extern",
+    "deps",
+    "_deps",
+    "subprojects",
+    "submodules",
 }
 assert DEPENDENCY_TREE_DIRS <= DEFAULT_IGNORED_DIRS, (
     "DEPENDENCY_TREE_DIRS must stay a strict subset of DEFAULT_IGNORED_DIRS"
