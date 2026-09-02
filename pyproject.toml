@@ -156,6 +156,44 @@ evaluation = ["*.json", "*.md"]
 # Security: Minimum versions for CVE fixes
 # Direct dependencies: Updated in dependencies list above
 # Transitive dependencies: Installed automatically, documented here for tracking
+# Last audit: 2026-09-01 (`/deps-audit` — 180 packages. CVE set unchanged from 2026-08-20: same
+#             4 CVEs / 3 packages (setuptools, sqlitedict, torch). Both live reopening conditions
+#             re-tested and still NOT met: (1) setuptools 81.0.0/CVE-2026-59890 needs torch to
+#             relax `setuptools<82` — confirmed torch 2.12.0 *also* declares `<82`, only 2.13.0
+#             relaxes it; (2) torch 2.11.0+cu128/CVE-2025-3000 needs the cu128 wheel index to
+#             publish >=2.13.0 — confirmed live at download.pytorch.org/whl/cu128/torch/, index
+#             still tops out at 2.11.0. sqlitedict CVE-2024-35515: still no upstream fix,
+#             mitigation re-verified intact (search/metadata.py JSON encode/decode, never
+#             pickle). NEW non-CVE finding: setproctitle 1.3.7 was partially uninstalled in
+#             .venv (dist-info missing METADATA/RECORD, package dir missing __init__.py) —
+#             `import setproctitle` silently succeeded as an empty namespace package,
+#             `from setproctitle import setproctitle` raised ImportError, and `pip check`
+#             reported clean because it can't evaluate a constraint it can't parse; only
+#             `pipdeptree` surfaced it (mutmut's `setproctitle [installed: ?]`). Broke mutmut's
+#             safe_setproctitle wrapper on Windows (use_setproctitle defaults True off-Darwin).
+#             Likely same event as the 2026-08-20-recorded `uv sync` pruning that dropped the
+#             `[lsp]` extra; full dist-info scan of the venv found no other package in this
+#             state. Fixed via `pip install --ignore-installed --no-deps setproctitle==1.3.7`
+#             (plain --force-reinstall failed: no RECORD file to drive the uninstall); verified
+#             import succeeds, pipdeptree clean, pip check clean, CUDA intact
+#             (2.11.0+cu128, RTX 4090). No version updates applied this cycle — all 57 outdated
+#             packages (up from 49) deliberately deferred, decision made explicitly rather than
+#             derived from a scan gap: no retrieval-substrate package moved, so no A/B gate was
+#             owed against the pinned canons (63q MRR 0.8462 / 133q 0.6482 / F-via-similar 0.9034,
+#             evaluation/CANON_20260822_LSP_REBASELINE.md). Held back, same as 2026-08-20 unless
+#             noted: the 4-package otel 1.43->1.44 sibling cluster, sentence-transformers 6.0.1
+#             (major, retrieval path), pytest-randomly 5.0.0 and syrupy 6.0.0 (majors), plus the
+#             dev-only tail. Caveat for next cycle: the audit helper's "[BLOCKED]" bucket
+#             over-counts — it flags a package whenever *any* other package constrains it, not
+#             whether that constraint actually excludes the new version. At least 9 of this
+#             cycle's 27 nominally-blocked entries are in fact installable as-is: mcp 2.1.1
+#             (satisfies claude-context-local's >=2,<3), transformers 5.16.1 (>=5.14.1,<6),
+#             huggingface_hub 1.29.0 (>=1.26.1), idna 3.19 (>=3.18), Pygments 2.21.0
+#             (>=2.20.0, rich <3.0.0), click 8.5.0 (<9), charset-normalizer 3.5.1 (<4),
+#             cyclonedx-python-lib 11.12.0 (<12), msgpack 1.2.2. Verify the constraint
+#             arithmetic per package before deferring, don't trust the label. Regenerated
+#             audit_reports/LICENSE_AUDIT.md (was stale + UTF-16, silently ungreppable — a
+#             grep -i GPL over it returned 0 hits despite pyan3 being installed).
 # Last audit: 2026-08-20 (`/deps-audit` — 177 packages, pip check clean throughout. First scan
 #             printed "[WARN] OSV fallback pass failed" and silently left torch 2.11.0+cu128
 #             unaudited (2 vulnerable packages / 3 CVEs, CVE-2025-3000 dropped with no
