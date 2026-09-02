@@ -260,7 +260,11 @@ _CUDA_ATTRS = re.compile(
 #: `blank_preserving_layout` byte-for-byte blanker the preprocessor-
 #: conditional blanker uses -- a naive `b" " * len(match)` would silently
 #: corrupt newline positions for every line after a wrapped launch config.
-_LAUNCH_CFG = re.compile(rb"<<<[^>]*>>>")
+#: A `>` that does not open the closing `>>>` is legal inside the config
+#: (`n > 0 ? n : 1`, `x >> 2`), so the body admits any byte except a `>`
+#: that starts `>>>`. Nested templates deeper than two levels inside a
+#: launch config (`f<g<h<int>>>`) still terminate early -- accepted.
+_LAUNCH_CFG = re.compile(rb"<<<(?:[^>]|>(?!>>))*>>>")
 
 
 class CudaChunker(CppChunker):

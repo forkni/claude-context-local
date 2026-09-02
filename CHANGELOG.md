@@ -195,6 +195,17 @@ routing (ADR-0054), test-suite hardening Phases 13-14, and three canon re-baseli
 
 ### Fixed
 
+- **PR #62 review** (2026-09-02) — `CodeEmbedder.cleanup()` now calls
+  `EmbeddingDocumentComposer.clear_caches()`: the composer's mtime-keyed file caches were never
+  evicted over a process-lifetime embedder (the `ModelPoolManager` slot), an unbounded-growth
+  path across repeated reindexes of large trees. `CudaChunker._LAUNCH_CFG` no longer stops at the
+  first `>` inside a `<<<grid, block>>>` launch config — a ternary or shift (`n > 0 ? n : 1`,
+  `n >> 2`) previously left the launch unblanked; the body now admits any `>` that does not
+  start the closing `>>>`. Both regression-tested.
+- **`start_mcp_server.cmd` model menu** — embedding menu labels re-aligned with the code
+  defaults (BGE-M3 `[DEFAULT]`, F2LLM-v2-0.6B `[RECOMMENDED 12GB+]` citing the 2026-09-01
+  canon); Jina reranker v3.5 removed from the reranker submenu (measured-and-rejected,
+  `evaluation/JINA_V35_AB_20260814.md`).
 - **Four live-MCP call-graph defects** (2026-08-16, `evaluation/CONFIDENCE_EGO_AB_20260816.md`)
   — confidence-default inversion, ambiguous-edge fan-out, dead BFS priority / nondeterministic
   traversal order, and ego-graph tail flooding.
@@ -262,15 +273,51 @@ routing (ADR-0054), test-suite hardening Phases 13-14, and three canon re-baseli
 
 - **Dependency audit 2026-09-02** (`audit_reports/2026-09-02-1253-audit-summary.md`) — 180
   packages audited, 5 CVEs across 4 packages:
-  - **setuptools 81.0.0 → 84.0.0** — fixes CVE-2026-59890 / GHSA-h35f-9h28-mq5c (high);
-    applied and `uv.lock` re-synced in this release.
+  - **setuptools 81.0.0 → 84.0.0** — fixes CVE-2026-59890 / GHSA-h35f-9h28-mq5c (high).
+    Installed into the venv ad hoc (`uv pip install setuptools==84.0.0`) — it **cannot be
+    locked**: torch 2.11.0 declares `setuptools<82`, so `uv.lock` stays at 81.0.0 and any
+    `uv sync --locked` reverts the venv to 81.0.0 (re-run the ad-hoc install afterwards).
+    Durable fix waits on torch 2.13.0 or a `[tool.uv] override-dependencies` entry.
   - **torch 2.11.0+cu128** — CVE-2025-3000 (GHSA-rrmf-rvhw-rf47), fix at 2.13.0; deferred
     — ML-core, requires tested ecosystem upgrade beyond this release scope.
   - **nltk 3.10.3** — PYSEC-2026-3740 / CVE-2026-81726, no fix released yet; monitor.
   - **sqlitedict 2.1.0** — PYSEC-2026-1939 / CVE-2024-35515, no fix released yet; monitor.
-  - 56 packages outdated beyond the above (priority items: `pyan3` 2.6.2→2.8.1,
-    `sentence-transformers` 5.7.0→6.0.1, `tree-sitter` 0.25.2→0.26.0); no regressions
-    expected on this release, deferred to a follow-up sweep.
+  - 56 packages outdated beyond the above — swept the same day, see next entry.
+- **Safe-update sweep 2026-09-02** (`audit_reports/{before,after}-fixes-2026-09-02.json`) —
+  every package updated one at a time with the full unit suite between steps (4,349 → 4,352
+  passed, 2 skipped, `pytest-randomly` shuffling on), then `fast_integration` (102) and
+  `integration` (20). Post-sweep audit: only the two no-fix CVEs remain (nltk, sqlitedict).
+  - **Retrieval / resolver stack**: `sentence-transformers` 5.7.0 → 6.0.1 (`CrossEncoder.predict`
+    now upcasts logits to float32 before activation — reranker scores can shift, canon re-run
+    below), `transformers` 5.14.1 → 5.16.1, `tokenizers` 0.22.2 → 0.23.1, `pyan3` 2.6.2 → 2.8.1,
+    `mcp` 2.0.0 → 2.1.1 (+ `mcp-types`).
+  - **pyan3 2.8 pipeline**: upstream dropped `cull_inherited` and moved `cull_subsumed` to the
+    end behind a `cull_subsumed_edges` constructor flag; `_TrackedVisitor.postprocess`
+    (`chunking/relationships/external_call_graph.py`) mirrors the new
+    `resolve_imports → contract_nonexistents → expand_unknowns → collapse_inner → cull_subsumed`
+    order (16 tests failed on `ImportError: cull_inherited` before the fix). `docs/CALL_GRAPH_TUNING.md`
+    pipeline listing updated.
+  - **Test plugins**: `pytest-randomly` 4.1.0 → 5.0.0, `syrupy` 5.5.3 → 6.0.0 (27 snapshots pass).
+  - **Tooling / transitive** (43): `ruff` 0.16.5, `pydantic` 2.13.5 / `pydantic-core` 2.46.5 /
+    `pydantic-settings` 2.15.0, `cryptography` 50.0.1, `protobuf` 7.36.1, `opentelemetry-*`
+    1.44.0 (+ `semantic-conventions` 0.65b0), `sqlalchemy` 2.0.52, `coverage` 7.16.0,
+    `virtualenv` 21.7.8, `typer` 0.27.2, `click` 8.5.0, `regex` 2026.9.3, `idna` 3.19,
+    `cosmic-ray` 8.7.0, `cyclonedx-python-lib` 11.12.0, `pipdeptree` 4.2.3, `pygments` 2.21.0,
+    `platformdirs` 4.11.7, `filelock` 3.32.5, `gitpython` 3.1.61, `joblib` 1.6.0, and the
+    remaining patch-level tail (`build`, `charset-normalizer`, `greenlet`, `msgpack`,
+    `narwhals`, `stevedore`, `typing-inspection`, `wcwidth`, `linkify-it-py`, `nab-*`, …).
+  - **Not upgradeable**: `tree-sitter` 0.25.2 → 0.26.0 — no bundled grammar wheel targets the
+    0.26 ABI yet (python 0.25.0, cpp 0.23.4, c 0.24.2, javascript 0.25.0, typescript 0.23.2,
+    go 0.25.0, rust 0.24.2, c-sharp 0.23.5, glsl 0.2.0); `tree-sitter>=0.25.0,<0.26` pin stays.
+    `fsspec` held by the `datasets` `<=2025.10.0` constraint; `torch` untouched (ML-core).
+  - **Post-sweep canon** (`canon_63q_r1_20260902_deps`, force reindex, 232 files / 2,795 chunks
+    vs the pin's 219 / 2,642 — growth is the source committed since 2026-09-01, golden audit
+    clean on both datasets; resolver mix 28,640 edges / lsp 1,443 / pyan 1,295 / libcst 524):
+    63q MRR **0.8345** vs the 0.8419 pin and 0.8425 on the same-day pre-sweep run. The whole
+    delta is Q77, a rank-1/rank-2 swap between the two near-tie `index_documents` methods
+    (`HybridSearcher` over `BM25Index`) — every recall@k, pool_hit (1.0) and the other 62
+    queries are unchanged, consistent with the float32 reranker-logit change. Recorded as
+    drift, pin not re-based.
 - Dependency audits 2026-08-20 and 2026-09-01 (`audit_reports/`); `setproctitle` repaired;
   `uv.lock` synced for radon/crap4py; `evaluation/` packaged as importable.
 

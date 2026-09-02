@@ -1570,7 +1570,14 @@ class CodeEmbedder:
         return None
 
     def cleanup(self) -> None:
-        """Clean up model from memory to free GPU/CPU resources."""
+        """Clean up model from memory to free GPU/CPU resources.
+
+        Also drops the document composer's mtime-keyed file caches
+        (`EmbeddingDocumentComposer.clear_caches`). Those dicts are keyed by
+        file path and never evicted, so a process-lifetime embedder (the
+        `ModelPoolManager` slot) grows them across every index run; eviction
+        between runs is deferred to this call rather than a per-run LRU.
+        """
         import sys
 
         if sys.meta_path is None:
@@ -1579,6 +1586,11 @@ class CodeEmbedder:
             return
         # pyrefly: ignore [missing-attribute]
         with self._lifecycle_lock:
+            # Composer caches are independent of model state: drop them even
+            # when the model was never loaded or was already released.
+            composer = getattr(self, "_document_composer", None)
+            if composer is not None:
+                composer.clear_caches()
             if self._model is not None:
                 try:
                     # Step 1: Free GPU memory.

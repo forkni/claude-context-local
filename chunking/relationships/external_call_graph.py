@@ -89,8 +89,8 @@ try:
         individually, capturing a snapshot of ``uses_edges`` before
         ``expand_unknowns`` fires and diffing afterwards.  The resulting
         ``expanded_edges`` set contains only the edges that (a) were added by
-        wildcard fan-out AND (b) survived the subsequent ``cull_inherited`` /
-        ``collapse_inner`` passes.
+        wildcard fan-out AND (b) survived the subsequent ``collapse_inner`` /
+        ``cull_subsumed`` passes (pyan3 >= 2.8 pipeline order).
         """
 
         expanded_edges: set[tuple[object, object]]
@@ -208,10 +208,14 @@ try:
             )
 
         def postprocess(self) -> None:  # type: ignore[override]
+            # Mirrors pyan.postprocessor.postprocess() (pyan3 >= 2.8:
+            # cull_inherited was dropped, cull_subsumed runs last behind
+            # the ``cull_subsumed_edges`` constructor flag) so each stage
+            # can be timed and the pre-expansion snapshot taken.
             from pyan.postprocessor import (  # type: ignore[import-untyped]
                 collapse_inner,
                 contract_nonexistents,
-                cull_inherited,
+                cull_subsumed,
                 expand_unknowns,
                 resolve_imports,
             )
@@ -220,13 +224,14 @@ try:
                 return
 
             pre: dict[object, frozenset[object]] = {}
-            steps = (
+            steps: list[tuple[str, Callable[[object], None]]] = [
                 ("resolve_imports", resolve_imports),
                 ("contract_nonexistents", contract_nonexistents),
                 ("expand_unknowns", expand_unknowns),
-                ("cull_inherited", cull_inherited),
                 ("collapse_inner", collapse_inner),
-            )
+            ]
+            if getattr(self, "cull_subsumed_edges", True):
+                steps.append(("cull_subsumed", cull_subsumed))
             for step_name, step in steps:
                 if step_name == "expand_unknowns":
                     # Snapshot *before* wildcard fan-out.

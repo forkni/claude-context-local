@@ -318,7 +318,7 @@ echo === Search Configuration ===
 echo.
 echo   1. View Current Configuration       - Show all active settings
 echo   2. Search Mode Configuration        - Mode, weights, parallel search
-echo   3. Select Embedding Model           - Choose model by VRAM ^(BGE-M3/Qwen3^)
+echo   3. Select Embedding Model           - Choose model by VRAM ^(BGE-M3/Gemma/Qwen3/F2LLM^)
 echo   4. Configure Neural Reranker        - Cross-encoder reranking ^(+15-25%% quality^)
 echo   5. Entity Tracking Configuration    - Symbol tracking, import/class context
 echo   6. Configure Chunking Settings      - Chunk merging, AST splitting ^(+4.3 Recall@5^)
@@ -1888,15 +1888,10 @@ if "!reranker_choice!"=="4" (
     echo      ~1.5GB base VRAM ^(grows with candidate count, up to ~10GB^), ~750ms/search, MRR 0.85
     echo      License: CC-BY-NC-4.0 ^(non-commercial^)
     echo.
-    echo   4. Jina Reranker v3.5 ^(jinaai/jina-reranker-v3.5^)
-    echo      Best for: 12GB+ VRAM, v3 successor - latency/quality: TBD ^(pending SSCG A/B^)
-    echo      ~1.5GB base VRAM ^(grows with candidate count^)
-    echo      License: CC-BY-NC-4.0 ^(non-commercial^), requires transformers ^>= 5.x
-    echo.
     echo   0. Cancel
     echo.
     set "model_sel="
-    set /p model_sel="Select model (0-4): "
+    set /p model_sel="Select model (0-3): "
 
     if "!model_sel!"=="1" (
         echo.
@@ -1924,17 +1919,6 @@ if "!reranker_choice!"=="4" (
         echo.
         echo [INFO] Setting reranker to Jina v3...
         ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.model_name = 'jinaai/jina-reranker-v3'; mgr.save_config(cfg); print('[OK] Reranker set to Jina v3 (jina-reranker-v3)')" 2>nul
-        if errorlevel 1 (
-            echo [ERROR] Failed to save configuration
-        ) else (
-            REM Notify running MCP server to reload config
-            ".\.venv\Scripts\python.exe" tools\notify_server.py reload_config >nul 2>&1
-        )
-    )
-    if "!model_sel!"=="4" (
-        echo.
-        echo [INFO] Setting reranker to Jina v3.5...
-        ".\.venv\Scripts\python.exe" -c "from search.config import get_config_manager; mgr = get_config_manager(); cfg = mgr.load_config(); cfg.reranker.model_name = 'jinaai/jina-reranker-v3.5'; mgr.save_config(cfg); print('[OK] Reranker set to Jina v3.5 (jina-reranker-v3.5)')" 2>nul
         if errorlevel 1 (
             echo [ERROR] Failed to save configuration
         ) else (
@@ -2241,8 +2225,8 @@ echo.
 echo Choose by your GPU VRAM:
 echo.
 echo   [8GB VRAM] ^(RTX 3060, RTX 4060 Laptop, GTX 1080^)
-echo   1. BGE-M3 ^(1024d, 1-1.5GB^)
-echo      Production-validated, optimal for hybrid search
+echo   1. BGE-M3 ^(1024d, 1-1.5GB^) [DEFAULT]
+echo      Production-validated, optimal for hybrid search; shipped default in the example config
 echo.
 echo   2. EmbeddingGemma ^(768d, ~1.2GB^)
 echo      Lightweight general-purpose
@@ -2251,8 +2235,8 @@ echo   [12GB+ VRAM] ^(RTX 3080+, RTX 4070+, RTX 4090^)
 echo   3. Qwen3-Embedding-0.6B ^(1024d, 2.3GB^)
 echo      Qwen3-0.6B-based embedding model
 echo.
-echo   4. F2LLM-v2-0.6B ^(1024d, 2.2GB^) [DEFAULT]
-echo      MRR 0.8603 SSCG canonical baseline
+echo   4. F2LLM-v2-0.6B ^(1024d, 2.2GB^) [RECOMMENDED 12GB+]
+echo      MRR 0.8419 SSCG 63q canon ^(2026-09-01^); +0.026 vs Qwen3-0.6B in A/B
 echo.
 echo   0. Back to Main Menu
 echo.

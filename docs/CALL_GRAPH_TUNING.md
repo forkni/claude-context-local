@@ -102,11 +102,13 @@ __init__
   → _analyze()              # AST walk, fills uses_edges
   → contract_nonexistents() # collapses undefined → wildcard nodes
   → expand_unknowns()       # fans out wildcard calls to all matching names
-  → cull_inherited()        # removes edges redundant due to inheritance
   → collapse_inner()        # collapses nested-scope nodes into parents
+  → cull_subsumed()         # drops module-level edges a finer edge already conveys
 ```
 
-**None of these passes can be disabled via constructor arguments.**  The
+(pyan3 ≥ 2.8 order; 2.6 ran `cull_inherited()` before `collapse_inner()` instead.)
+**Only `cull_subsumed` can be disabled via a constructor argument
+(`cull_subsumed_edges=False`); the rest always run.**  The
 correct precision lever is **read-time filtering** of `uses_edges` (described
 in §2.5).
 
