@@ -54,7 +54,7 @@ no new import direction.
 
 ```python
 {
-    "index_is_current": bool,          # content-only: no snapshot age involved
+    "index_is_current": bool,  # content-only: no snapshot age involved
     "pending_changes": {"added": int, "modified": int, "removed": int},
 }
 ```
