@@ -27,7 +27,10 @@ The five class-level patches below fire regardless of which `HybridSearcher`
 instance the orchestrator uses internally, since `get_searcher()` caches one
 instance per project path -- see `Instrumentation`'s docstring.
 
-No config writes, no production edits. Read-only.
+No config-file writes, no production edits. The one in-memory mutation is
+`get_search_config().intent.enabled = False`, re-asserted before every query to
+mirror the canon's `pin_intent_off=True` methodology (see `_run_queries`); it
+lives in this process only and is never saved.
 """
 
 from __future__ import annotations

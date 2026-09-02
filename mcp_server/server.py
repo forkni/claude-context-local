@@ -534,7 +534,7 @@ async def handle_call_tool(
                 if isinstance(formatted_result, dict)
                 else str(formatted_result)
             )
-        else:  # json format (backward compatible)
+        else:  # "verbose" (the default): pretty-printed JSON
             result_text = (
                 json.dumps(formatted_result, indent=2)
                 if isinstance(formatted_result, dict)

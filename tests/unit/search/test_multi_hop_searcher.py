@@ -570,6 +570,46 @@ class TestMultiHopSearcher:
         assert scores == sorted(scores, reverse=True)
         assert results[0].chunk_id == "chunk1"
 
+    def test_search_multi_hop_single_pass_ignores_window_shaping(self):
+        """Q3 single_pass skips the merged-pool window shaping: a non-default
+        ``merged_pool_policy`` / ``graph_hop_window_cap`` / ``hop1_reserved_slots``
+        is a documented no-op because the pool is ordered by plain ``"score"``
+        and truncated to k, never handed to ``rerank_by_query`` (where those
+        knobs live). Pins the behaviour named in ``RerankerConfig.single_pass``."""
+        config = MagicMock()
+        config.multi_hop.initial_k_multiplier = 2.0
+        config.reranker.single_pass = True
+        config.reranker.merged_pool_policy = "channel_priority"
+        config.reranker.graph_hop_window_cap = 3
+        config.reranker.hop1_reserved_slots = 2
+
+        self.mock_embedder.embed_query.return_value = np.array([1.0, 0.0, 0.0])
+        self.mock_single_hop_callback.return_value = [
+            SearchResult(chunk_id="chunk1", score=0.9, metadata={}),
+            SearchResult(chunk_id="chunk2", score=0.8, metadata={}),
+        ]
+        self.mock_dense_index.get_similar_chunks_batched.return_value = {
+            "chunk1": [("chunk3", 0.7, {"file": "test.py"})],
+        }
+
+        from search.reranking_engine import RerankingEngine
+
+        with patch.object(
+            RerankingEngine,
+            "_order_merged_pool",
+            wraps=RerankingEngine._order_merged_pool,
+        ) as order_spy:
+            results = self.searcher.search(
+                _request(query="test query", k=2, search_mode="hybrid", config=config),
+                hops=2,
+                expansion_factor=0.3,
+            )
+
+        self.mock_reranking_engine.rerank_by_query.assert_not_called()
+        order_spy.assert_called_once()
+        assert order_spy.call_args.args[1] == "score"
+        assert [r.chunk_id for r in results] == ["chunk1", "chunk2"]
+
     def test_search_no_initial_results(self):
         """Test multi-hop search when no initial results found."""
         config = MagicMock()
