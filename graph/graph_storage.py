@@ -31,6 +31,7 @@ from graph.schema import (
     get_reverse_relation,
     is_phantom_node,
 )
+from graph.traversal_policy import TraversalPolicy
 from utils.atomic_io import write_json_atomic
 from utils.path_utils import normalize_path
 
@@ -527,35 +528,36 @@ class CodeGraphStorage:
         return list(self.graph.successors(normalized_chunk_id))
 
     def _traverse_neighbors(
-        self,
-        normalized_chunk_id: str,
-        relation_types: list[str],
-        max_depth: int,
-        exclude_import_categories: list[str] | None,
-        edge_weights: dict[str, float] | None,
-        min_confidence: float,
-        confidence_weighting: bool,
-        drop_ambiguous: bool = False,
+        self, normalized_chunk_id: str, policy: TraversalPolicy
     ) -> Iterator[str]:
         """Shared BFS/priority traversal, yielding each neighbor exactly once
         at first discovery.
 
-        ``drop_ambiguous`` skips every ``tag:ambiguous`` call edge (see
-        :func:`is_ambiguous_call_edge`) in both modes, independently of
-        ``min_confidence``; a node stays reachable via any surviving edge.
+        ``policy`` (see :class:`~graph.traversal_policy.TraversalPolicy`)
+        carries everything about the walk: relation filter, depth, import
+        exclusions, weights, and the edge gates. Each edge passes through
+        :meth:`TraversalPolicy.admits` with its resolved ambiguity flag and
+        confidence; dropped edges drop only themselves, so a node stays
+        reachable via any surviving edge.
 
         This is the single generator behind both ``get_neighbors`` (collects
         the yielded IDs into a ``set``) and ``get_neighbors_ranked`` (keeps
         them as an ordered ``list``) — the two callers can never drift apart
         on *which* nodes are reachable because they share this one walk.
 
-        Unweighted mode (``edge_weights is None``) yields in BFS level order
-        (queue pop order). Weighted mode yields in priority-queue pop order
-        (higher edge-type weight, optionally scaled by ``confidence_weighting``,
-        expands first). Both orders are deterministic given a fixed graph and
-        fixed edge-iteration order (see ``_iter_matching_neighbors``) — no
-        ``set`` iteration is involved in either path.
+        Unweighted mode (``policy.edge_weights is None``) yields in BFS level
+        order (queue pop order). Weighted mode yields in priority-queue pop
+        order (higher edge-type weight, optionally scaled by
+        ``policy.confidence_weighting``, expands first). Both orders are
+        deterministic given a fixed graph and fixed edge-iteration order (see
+        ``_iter_matching_neighbors``) — no ``set`` iteration is involved in
+        either path.
         """
+        relation_types = policy.effective_relation_types
+        exclude_import_categories = policy.exclude_import_categories
+        max_depth = policy.max_depth
+        edge_weights = policy.edge_weights
+
         if edge_weights is None:
             # Unweighted BFS (original behavior, backward compatible)
             queue = deque([(normalized_chunk_id, 0)])
@@ -568,11 +570,9 @@ class CodeGraphStorage:
                 for neighbor, edge_type, edge_data in self._iter_matching_neighbors(
                     current_id, relation_types, exclude_import_categories
                 ):
-                    if drop_ambiguous and is_ambiguous_call_edge(edge_data):
-                        continue  # Drop this edge; neighbor may arrive via another
-                    if (
-                        min_confidence > 0.0
-                        and self._edge_confidence(edge_data, edge_type) < min_confidence
+                    if not policy.admits(
+                        ambiguous=is_ambiguous_call_edge(edge_data),
+                        confidence=self._edge_confidence(edge_data, edge_type),
                     ):
                         continue  # Drop this edge; neighbor may arrive via another
                     if neighbor not in visited:
@@ -595,17 +595,18 @@ class CodeGraphStorage:
                 for neighbor, edge_type, edge_data in self._iter_matching_neighbors(
                     current_id, relation_types, exclude_import_categories
                 ):
-                    if drop_ambiguous and is_ambiguous_call_edge(edge_data):
-                        continue  # Drop this edge; neighbor may arrive via another
                     confidence = self._edge_confidence(edge_data, edge_type)
-                    if min_confidence > 0.0 and confidence < min_confidence:
+                    if not policy.admits(
+                        ambiguous=is_ambiguous_call_edge(edge_data),
+                        confidence=confidence,
+                    ):
                         continue  # Drop this edge; neighbor may arrive via another
                     if neighbor not in visited:
                         visited.add(neighbor)
                         yield neighbor
                         # Get weight for the forward edge type (not reverse)
                         weight = edge_weights.get(edge_type, 0.5)
-                        if confidence_weighting:
+                        if policy.confidence_weighting:
                             weight *= confidence
                         counter += 1
                         heapq.heappush(pq, (-weight, counter, neighbor, depth + 1))
@@ -623,6 +624,11 @@ class CodeGraphStorage:
     ) -> set[str]:
         """
         Get all related chunks within max_depth hops.
+
+        Convenience form of :meth:`get_neighbors_ranked`: the loose keyword
+        arguments below are bundled into a
+        :class:`~graph.traversal_policy.TraversalPolicy` and the ordered
+        result is collapsed to a ``set``.
 
         Args:
             chunk_id: Starting chunk ID
@@ -642,16 +648,17 @@ class CodeGraphStorage:
                 ("exact"/"ambiguous"/"recovered") and untagged ``calls`` edges
                 resolve to 0.7/0.5 via :data:`AST_CONFIDENCE_BY_TAG`; edges
                 with no confidence signal at all (non-call relationship
-                types) default to 1.0 and always survive. Default 0.0 = no-op
-                (confidence is never read, so this is a true no-op regardless
-                of edge_confidence's mapping). Drops edges, not nodes — a
-                neighbor also reachable through a surviving edge is still
-                returned.
+                types) default to 1.0 and always survive. Default 0.0 = no-op.
+                Drops edges, not nodes — a neighbor also reachable through a
+                surviving edge is still returned.
             confidence_weighting: Weighted BFS only — multiply each edge's
                 type-weight by its resolved confidence (see
                 :func:`edge_confidence`) so unvalidated (ambiguous-AST) edges
                 stop competing equally with resolver-validated ones for
                 expansion priority. Default False = no-op.
+            drop_ambiguous: Skip every ``tag:ambiguous`` call edge (see
+                :func:`is_ambiguous_call_edge`) in both modes, independently
+                of ``min_confidence``. Default False = no-op.
 
         Returns:
             Set of related chunk IDs. Order is not preserved — callers that
@@ -661,33 +668,22 @@ class CodeGraphStorage:
             :meth:`get_neighbors_ranked` when truncation needs to be
             deterministic and priority-ordered instead.
         """
-        # Normalize path separators to forward slashes for consistent lookup
-        # Query path normalization mismatch
-        normalized_chunk_id = normalize_path(chunk_id)
-
-        if normalized_chunk_id not in self.graph:
-            return set()
-
-        # Default to both directions of call relationships for backward compatibility
-        if relation_types is None:
-            relation_types = ["calls", "called_by"]
-
-        return set(
-            self._traverse_neighbors(
-                normalized_chunk_id,
-                relation_types,
-                max_depth,
-                exclude_import_categories,
-                edge_weights,
-                min_confidence,
-                confidence_weighting,
-                drop_ambiguous,
-            )
+        policy = TraversalPolicy(
+            relation_types=relation_types,
+            max_depth=max_depth,
+            exclude_import_categories=exclude_import_categories,
+            edge_weights=edge_weights,
+            min_confidence=min_confidence,
+            confidence_weighting=confidence_weighting,
+            drop_ambiguous=drop_ambiguous,
         )
+        return set(self.get_neighbors_ranked(chunk_id, policy))
 
     def get_neighbors_ranked(
         self,
         chunk_id: str,
+        policy: TraversalPolicy | None = None,
+        *,
         relation_types: list[str] | None = None,
         max_depth: int = 1,
         exclude_import_categories: list[str] | None = None,
@@ -696,23 +692,26 @@ class CodeGraphStorage:
         confidence_weighting: bool = False,
         drop_ambiguous: bool = False,
     ) -> list[str]:
-        """Like :meth:`get_neighbors`, but returns neighbors in discovery/
-        priority order instead of an unordered ``set``.
+        """Neighbors of ``chunk_id`` in discovery/priority order.
 
-        Shares the exact same traversal (:meth:`_traverse_neighbors`) as
-        ``get_neighbors``, so ``set(get_neighbors_ranked(...)) ==
-        get_neighbors(...)`` always holds for identical arguments — only the
+        This is the traversal seam: one anchor, one
+        :class:`~graph.traversal_policy.TraversalPolicy` (``None`` = the
+        all-defaults policy — both call directions, depth 1, unweighted BFS,
+        no gates). The loose keyword arguments are a transitional spelling of
+        the same policy (kept while callers migrate); passing both is a
+        ``TypeError``. :meth:`get_neighbors` is the loose-keyword convenience
+        wrapper over this method, so ``set(get_neighbors_ranked(id, policy))
+        == get_neighbors(id, **policy fields)`` always holds — only the
         return type differs. Use this when a caller truncates the result
         (``result[:n]``): unweighted BFS order is level order (closer nodes
         first); weighted order is edge-type-weight priority (optionally
-        scaled by ``confidence_weighting``). Both are deterministic given a
-        fixed graph, unlike truncating ``list(get_neighbors(...))[:n]``,
+        scaled by ``policy.confidence_weighting``). Both are deterministic
+        given a fixed graph, unlike truncating ``list(get_neighbors(...))[:n]``,
         which depends on Python's set-iteration order.
 
-        Args: see :meth:`get_neighbors`.
-
         Returns:
-            List of related chunk IDs in traversal order, each appearing once.
+            List of related chunk IDs in traversal order, each appearing once;
+            ``[]`` when ``chunk_id`` is not in the graph.
         """
         # Normalize path separators to forward slashes for consistent lookup
         normalized_chunk_id = normalize_path(chunk_id)
@@ -720,22 +719,24 @@ class CodeGraphStorage:
         if normalized_chunk_id not in self.graph:
             return []
 
-        # Default to both directions of call relationships for backward compatibility
-        if relation_types is None:
-            relation_types = ["calls", "called_by"]
-
-        return list(
-            self._traverse_neighbors(
-                normalized_chunk_id,
-                relation_types,
-                max_depth,
-                exclude_import_categories,
-                edge_weights,
-                min_confidence,
-                confidence_weighting,
-                drop_ambiguous,
-            )
+        loose = TraversalPolicy(
+            relation_types=relation_types,
+            max_depth=max_depth,
+            exclude_import_categories=exclude_import_categories,
+            edge_weights=edge_weights,
+            min_confidence=min_confidence,
+            confidence_weighting=confidence_weighting,
+            drop_ambiguous=drop_ambiguous,
         )
+        if policy is None:
+            policy = loose
+        elif loose != TraversalPolicy():
+            raise TypeError(
+                "get_neighbors_ranked: pass either a TraversalPolicy or loose "
+                "keyword arguments, not both"
+            )
+
+        return list(self._traverse_neighbors(normalized_chunk_id, policy))
 
     @staticmethod
     def _edge_confidence(edge_data: dict, edge_type: "str | None" = None) -> float:
