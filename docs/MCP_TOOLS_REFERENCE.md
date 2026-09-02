@@ -19,7 +19,7 @@ set. This keeps the advertised tool count small without removing the capability.
 
 | Tool | Priority | Purpose | Parameters |
 | ------ | ---------- | --------- | ------------ |
-| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k (no schema default at all — falls back to `get_search_config_status.search_mode.default_k`; `search_config.json.example` sets that to 7), search_mode="auto" (routes by query intent; pass a mode explicitly to force it), file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes (no schema default — see `get_search_config_status.max_index_age_minutes`), ego_graph_enabled (tri-state: omit to defer to `get_search_config_status.ego_graph_enabled`; pass True/False to override for this call only), ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0, include_top_callers=False, include_top_callees=False |
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k (no schema default at all — falls back to `get_search_config_status.search_mode.default_k`; `search_config.json.example` sets that to 7), search_mode="auto" (routes by query intent; pass a mode explicitly to force it), file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes (no schema default — see `get_search_config_status.max_index_age_minutes`), ego_graph_enabled (tri-state: omit to defer to `get_search_config_status.ego_graph_enabled`; pass True/False to override for this call only), ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0, include_top_callers=False, include_top_callees=False, include_signatures=False |
 | **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types, hide_ambiguous=True |
 | **find_path** | 🟡 **IMPACT** | Trace shortest path between code entities in relationship graph | source OR source_chunk_id, target OR target_chunk_id, edge_types, max_hops=10 |
 | **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), incremental=True, wait=True, include_dirs, exclude_dirs |
@@ -28,9 +28,9 @@ set. This keeps the advertised tool count small without removing the capability.
 | configure_reranking | Config | Configure neural reranker settings (BGE OR Jina v3, runtime configurable) | enabled, model_name, top_k_candidates=30 |
 | configure_chunking | Config | Configure code chunking settings | enable_large_node_splitting, max_chunk_lines, split_size_method, max_split_chars, enable_file_summaries, sizing_mode |
 | get_search_config_status | Config | View current configuration | *(no parameters)* |
-| get_index_status | Status | Check index health & model info | *(no parameters)* |
+| get_index_status | Status | Check index health & model info; returns `index_is_current` (True/False/null — content-only Merkle diff vs the working tree, ADR-0058) and `pending_changes` `{added, modified, removed}` | job_id (optional — status of a background index job) |
 | get_memory_status | Monitor | Check RAM/VRAM usage | *(no parameters)* |
-| list_projects | Management | Show indexed projects grouped by path | *(no parameters)* |
+| list_projects | Management | Show indexed projects grouped by path | check_freshness=False (True adds the per-model `index_is_current` verdict for every project without switching) |
 | switch_project | Management | Change active project | project_path (required) |
 | clear_index | Reset | Delete current index (all dimensions) | *(no parameters)* |
 | delete_project | Management | Safely delete indexed project | project_path (required), force=False |
@@ -320,6 +320,7 @@ Parent chunks are marked in results with:
 |-----------|------|---------|-------------|
 | `include_top_callers` | boolean | false | Attach `top_callers` (≤2 entries) to each search result |
 | `include_top_callees` | boolean | false | Attach `top_callees` (≤2 entries) to each search result (added 2026-09-02) |
+| `include_signatures` | boolean | false | Attach a signature-only `signature` string to each result (~687 tokens/query overhead, ~36% over the compact payload; module chunks skipped; non-Python degrades to the first 3 raw lines, ≤600 chars). Never touches scoring or ordering |
 
 ### Behavior
 
@@ -379,6 +380,7 @@ The `search_code` tool returns results with the following fields:
 | `graph` | object | ⚠️ Optional | Call relationships (`calls`, `called_by` arrays) |
 | `top_callers` | array | ⚠️ Optional | Up to 2 `{name, file}` caller hints (only with `include_top_callers=True`) |
 | `top_callees` | array | ⚠️ Optional | Up to 2 `{name, file}` callee hints; `file` is `""` for unresolved bare-symbol targets (only with `include_top_callees=True`) |
+| `signature` | string | ⚠️ Optional | Signature-only view of the chunk (only with `include_signatures=True`) |
 
 ### Field Details
 

@@ -9,17 +9,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Track A + remaining-levers retrieval campaigns (2026-08-14), closing out the RAG-improvement
-roadmap's A-side levers with pre-registered, paired-CI-gated A/B runs on the deterministic
-harness. Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
-`evaluation/GRAPH_RESERVE_PROBE_20260814.md`, `evaluation/JINA_V35_AB_20260814.md`.
+*Nothing yet.*
+
+---
+
+## [0.26.0] - 2026-09-02
+
+Three weeks of post-v0.25.0 work in one release (158 commits). Retrieval side: the Track A +
+remaining-levers campaigns (2026-08-14), a merged-pool / ego-graph research log (2026-08-15 to
+2026-09-02) in which every arm was pre-registered, measured on the deterministic harness, and
+rejected, and the 2026-08-16 / 2026-08-19 defect-closure sweeps. The only default that flipped is
+`find_connections.hide_ambiguous` (now on). Architecture side: the ADR-0039 to ADR-0059 deepening
+wave (`BaseSearcher.execute`, `IndexWriteStage`, `ResourceRefresher`, enricher spec rows, derived
+`ToolSpec` guard flags, `TraversalPolicy`, `spec(benchmark_locked=...)`), each behaviour-preserving
+and ratcheted by a test. Plus a real content-based `index_is_current` verdict (ADR-0058), CUDA
+routing (ADR-0054), test-suite hardening Phases 13-14, and three canon re-baselines ending at the
+2026-09-01 pin. Dispositions live under `evaluation/*_2026MMDD.md`; decisions under `docs/adr/`.
 
 ### Added
 
-- **`hide_ambiguous` on `find_connections`** (opt-in, default `false`) — hides
-  `"ambiguous"`-tagged entries from `direct_callers`/`direct_callees`/`indirect_callers`;
-  confidence breakdowns and `total_impacted` intentionally remain pre-filter totals, and
-  `dependency_graph` is unfiltered. Display-layer only, byte-identical when off.
+- **`hide_ambiguous` on `find_connections`** — hides `"ambiguous"`-tagged entries from
+  `direct_callers`/`direct_callees`/`indirect_callers`; confidence breakdowns and
+  `total_impacted` intentionally remain pre-filter totals, and `dependency_graph` is unfiltered.
+  Shipped opt-in on 2026-08-14, then **promoted to default-on** on 2026-08-16
+  (`GraphEnhancedConfig.hide_ambiguous_edges_default = True`) after its A/B gate passed:
+  recall byte-identical both directions, precision up both
+  (`evaluation/CONFIDENCE_EGO_AB_20260816.md`). Pass `hide_ambiguous=False` for unfiltered edges.
+- **`include_top_callees` on `search_code`** (opt-in, default `false`, 2026-09-02) — symmetric
+  twin of `include_top_callers`: up to 2 `{name, file}` callee hints per result from raw
+  call-graph out-edges. Resolved chunk targets rank first (resolver confidence descending);
+  unresolved bare-symbol targets follow with `file: ""`. One `EnricherSpec` row + one
+  `ResultEnricher` row (ADR-0049).
+- **`include_signatures` on `search_code`** (opt-in, default `false`, 2026-08-18) — attaches a
+  signature-only `signature: str` view per result. Measured ~687 tokens/query overhead (~36% over
+  the compact payload) in `evaluation/CONTEXT_COST_PROBE_20260818.md`; module chunks are skipped,
+  non-Python chunks degrade to the first 3 raw lines (≤600 chars). Never touches scoring.
+- **Real index-freshness verdict** (ADR-0058) — `get_index_status` now returns
+  `index_is_current` (True/False/null; a content-only Merkle diff against the working tree, so a
+  freshly built index never reads stale just because a timestamp is old) plus `pending_changes`
+  `{added, modified, removed}`, and accepts `job_id`. `list_projects` gained
+  `check_freshness=True` for the same per-model verdict on any project without `switch_project`.
+  Closes the ADR-0004 layering gap (`mcp_server/index_freshness.py`).
+- **`graph_enhanced.drop_ambiguous_traversal_edges`** (default `false`, benchmark-locked) —
+  drops `tag:ambiguous` call edges *during* ego-graph and multi-hop traversal (as opposed to
+  `hide_ambiguous`, which only filters `find_connections` display). Offline replay screen passed
+  at the bar, not above it (`evaluation/AMBIGUOUS_EDGE_REPLAY_20260902.md`); stays off pending a
+  live A/B. Carried by the new `TraversalPolicy` object (see Changed).
+- **`call_graph.inject_on_incremental`** (default `false`, ADR-0044) — opt-in re-injection of
+  resolver-attributed pyan/LibCST/LSP call edges on incremental passes; the default keeps
+  incremental passes AST-only to avoid the measured +1.58 s per-pass cost.
+- **Merged-pool provenance bands** (`MergedPoolBand`, ADR-0039) and
+  **`reranker.graph_hop_window_cap`** (default `0` = off, benchmark-locked) — the merged-pool
+  rerank window now bands graph-hop candidates explicitly rather than by incidental sort order.
+  The cap A/B was then **rejected** at both doses (`evaluation/POOL_ORDER_CAP_AB_20260815.md`)
+  and the evidence-ordered band probe discharged with zero headroom
+  (`evaluation/GRAPH_BAND_EVIDENCE_PROBE_20260815.md`). Both ship default-off.
+- **Execution-witnessed call-graph ground truth** (ADR-0059) — `scripts/benchmark/` gained a
+  witness pipeline that records resolver-tier outputs at execution time plus a split-aware golden
+  guard; the curated caller/callee goldens were repaired against it
+  (`evaluation/RESOLVER_TIER_CALIBRATION_20260902.md`,
+  `evaluation/UNTAGGED_EDGE_WITNESS_20260902.md`).
+- **`evaluation.probe_harness`** (ADR-0040) — one importable seam for offline retrieval probes
+  (hash-seed pin, searcher construction, arm overrides); the pre-existing probe scripts and
+  `run_sscg_benchmark.py` migrated onto it. `evaluation/` is packaged as importable with its data
+  files excluded from wheels.
 - **`include_top_callers` on `search_code`** (opt-in, default `false`) — attaches up to 2
   `{name, file}` caller hints per result from raw call-graph in-edges (chunk-id and
   bare-symbol-name node lookups, deduplicated before the top-2 cut).
@@ -54,6 +107,38 @@ harness. Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
 
 ### Changed
 
+- **Architecture-deepening wave (ADR-0039 to ADR-0057), all behaviour-preserving** —
+  `BaseSearcher.execute(request)` seam collapses `SearchOrchestrator` dispatch (ADR-0048);
+  `IndexWriteStage` owns index-adds and the injection gate for full and incremental passes
+  (ADR-0052); `ResourceRefresher` protocol lifts MCP process-resource release out of
+  `IncrementalIndexer` (ADR-0053); result enrichment is a registry (`RESULT_ENRICHERS` + one
+  `EnricherSpec` row per opt-in, ADR-0049); MCP parameter defaults are single-sourced in
+  `mcp_server/config_schema.py` (ADR-0046); `SearchResult.source` is a `ResultSource` `StrEnum`
+  (ADR-0047); the embedding-document composer is extracted from `CodeEmbedder` (ADR-0045);
+  `graph_scoring_stage`'s upward `mcp_server` import is deleted (ADR-0051); `rerank_by_query`'s
+  four primitive knobs became `RerankWindowPolicy`; the MCP tool registry/dispatch collapsed into
+  a single `ToolSpec` table whose guard flags derive from the handler decorators (ADR-0057);
+  per-layer confidence-unknown defaults stay per-layer by decision (ADR-0050). Each seam is
+  ratcheted by a test so it cannot silently regress.
+- **`TraversalPolicy` parameter object** (`graph/traversal_policy.py`, 2026-09-02) — the seven
+  traversal knobs (`relation_types`, `max_depth`, `exclude_import_categories`, `edge_weights`,
+  `min_confidence`, `confidence_weighting`, `drop_ambiguous`) travel as one frozen dataclass.
+  `CodeGraphStorage.get_neighbors_ranked(chunk_id, policy)` is the seam; `get_neighbors(...)`
+  keeps its loose-kwarg shape as the convenience. `TraversalPolicy.ego(...)` /
+  `.graph_hop(...)` derive the gates from config at the two production call sites, and
+  `policy.gates_edges` short-circuits the per-edge lookups when no gate is armed. 63q canon
+  replayed with 0 MRR movers.
+- **Benchmark locks declared on `spec()` rows** — `spec(benchmark_locked="<citation>")` on each
+  pinned config field; `SearchConfig._BENCHMARK_LOCK_CITATIONS` derives from those rows and
+  `search/index_probe.py`'s `FORBIDDEN_AUTO_TUNE_KEYS` / `BENCHMARK_LOCK_CITATIONS` are views over
+  it plus the single routing lock `INDEX_ROUTING_LOCKED_KEYS = {"embedding.model_name"}`. The two
+  hand-typed parallel tables are gone (ADR-0022 addendum); `ego_graph.max_neighbors_per_hop` and
+  `ego_graph.drop_nonpositive_output` joined the locked set after their A/Bs were rejected.
+- **CUDA sources route to the `cpp` grammar** (ADR-0054) — `.cu`/`.cuh` are chunked as C++
+  (kernels, `__device__` functions, host launchers) instead of being skipped.
+- **Phantom nodes excluded from centrality** (`graph_enhanced.centrality_exclude_phantoms`,
+  default `false`, benchmark-locked; ADR-0055) — unresolved call targets no longer absorb
+  PageRank mass when enabled; ships off pending the pre-registered A/B.
 - **GLSL's chunker-native call/relationship-edge bridge generalized into a spec-row table** —
   `chunking/relationships/edge_specs.py`'s `EdgeEmissionSpec`/`EDGE_EMISSION_SPECS`, keyed by
   language name, replaces `MultiLanguageChunker`'s three `tchunk.language == "glsl"` switches
@@ -78,11 +163,21 @@ harness. Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
   these names. Use additive `include_dirs` (ADR-0036) to bring specific paths back if needed; the
   effective exclusion list is visible via `get_index_status`'s `default_excluded_dirs`.
 
-- **Benchmark canons re-pinned** (deterministic, PYTHONHASHSEED=0): 63q MRR **0.8462** (r1==r2
-  bit-identical), 133q MRR **0.6482** — 2026-08-22 close-out §4 LSP re-baseline, superseding this
-  same entry's own 0.8722/0.6843 pin (comparability break: index grew 2,403→2,611 chunks and the
-  `[lsp]` extra went dark 2026-08-20→2026-08-22 before being re-locked; no default behavior
-  changed). See `docs/BENCHMARKS.md` and `evaluation/CANON_20260822_LSP_REBASELINE.md`.
+- **Benchmark canons re-pinned** (deterministic, PYTHONHASHSEED=0) three times in this window,
+  each a comparability break rather than a trend: 2026-08-14 post-campaign 0.8722/0.6843 →
+  2026-08-22 LSP re-baseline 0.8462/0.6482 (index 2,403→2,611 chunks; `[lsp]` extra dark
+  2026-08-20→08-22 then re-locked) → **2026-09-01 P0 re-baseline: 63q MRR 0.8419, 133q 0.6378,
+  F-via-similar 0.8843** (219 files / 2,642 chunks, LSP confirmed live, one stale Q12 gold
+  repaired first). The 09-01 pin is the published baseline. See `docs/BENCHMARKS.md`,
+  `evaluation/CANON_20260822_LSP_REBASELINE.md`, `evaluation/CANON_20260901_REBASELINE.md`.
+- **Measured and rejected, no default changed** (all pre-registered, paired-CI gated) —
+  merged-pool ordering A/B, neither arm (`evaluation/POOL_ORDER_AB_20260815.md`); leg-depth ×
+  fusion and TM2C2 probes (`evaluation/LEG_DEPTH_FUSION_AB_20260815.md`,
+  `evaluation/TM2C2_FUSION_PROBE_20260814.md`); ego-graph tail cut
+  `ego_graph.drop_nonpositive_output` (`evaluation/CONFIDENCE_EGO_AB_20260816.md`); ego gate-2
+  cap relief `max_neighbors_per_hop` 10→50 (`evaluation/EGO_GATE2_AB_20260901.md`);
+  duplicate-crowding and cross-system probes (`evaluation/DUPLICATE_CROWDING_PROBE_20260817.md`,
+  `evaluation/CROSS_SYSTEM_*_20260817.md`).
 - **`mcp_server/tool_registry.py`'s config-backed bounds/enums now derive from `search/config.py`'s
   `spec()` metadata** (new `mcp_server/config_schema.py`, pure refactor — every property is
   byte-identical to the post-fix schema above except the deletions "publish invariants, never
@@ -100,6 +195,28 @@ harness. Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
 
 ### Fixed
 
+- **Four live-MCP call-graph defects** (2026-08-16, `evaluation/CONFIDENCE_EGO_AB_20260816.md`)
+  — confidence-default inversion, ambiguous-edge fan-out, dead BFS priority / nondeterministic
+  traversal order, and ego-graph tail flooding.
+- **Defect-closure sweep D1–D12** (2026-08-19, `evaluation/DEFECT_CLOSURE_20260819.md`) —
+  `find_connections.indirect_callers` deduplicated and sorted (ADR-0041); `ego_graph_enabled` is
+  a two-way gate (`False` now really disables expansion); parent-expansion's fabricated `0.0`
+  labelled `unscored`; `find_similar_code` zero-result contract and the `NEVER_DROP_EMPTY_KEYS`
+  gap (`similar_chunks`) closed; MCP-layer lock scoping, error propagation, key-set scope and
+  reset contract; probe pass classification and funnel-width test drift; `min_bm25_score` and
+  the embedding-document degraded-path caps now read from config instead of literals; stale
+  `.bat` launcher references in tests.
+- **Force reindex blocked by a live FAISS mmap handle** — the handle is released
+  deterministically before the index directory is purged.
+- **Metadata clear self-heal + C-family macro-wrapped declarations** (ADR-0025 addenda) — stale
+  `.deleting` debris is discarded when a live `metadata.db` exists (no resurrection of
+  old-generation rows on shadowed rename), rows are emptied before reset with a loud post-clear
+  failure if any remain; `repair_macro_wrapped_declarations` in
+  `chunking/languages/_c_family.py` fixes adjacent-declaration boundaries (e.g. `extern "C"`
+  blocks), with regression coverage.
+- **Stale Q12 golden** — the primary expected chunk had drifted from kind
+  `decorated_definition` to `method`; repaired in both datasets and the audit re-run clean
+  before the 2026-09-01 canon.
 - **`ego_graph_k_hops`/`ego_graph_max_neighbors_per_hop` omission fallback** — `search_code`
   hardcoded literals `2`/`10` as the value used when these args were omitted, shadowing
   `EgoGraphConfig.k_hops`/`.max_neighbors_per_hop`. On the explicit-enable path
@@ -126,6 +243,25 @@ harness. Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
 - **Ambiguous-resolution edges were miscounted as phantom edges** — an ambiguous call-target
   resolution creates no phantom node, but was counted in `phantom_edges` as if it had. Split out
   into a separate `ambiguous_edges` counter in `search/graph_integration.py`.
+
+### Testing
+
+- **Test-suite hardening Phases 13–14** (`tests/TESTING_GUIDE.md`) — coverage re-scoped to the
+  package (`tools/` dropped) with a ratcheted `fail_under`; `pytest-timeout` added and an env
+  leak fixed; the golden-set guard collapsed from ~2,200 parametrized cases to per-file cases,
+  so the unit count drops from 5,8xx to **4,351 collected** with no coverage lost; pure
+  `mcp_server`/`utils` cores covered; weak `assert_called_once` sites upgraded and fixed sleeps
+  removed; a complexity / CRAP gate (radon + crap4py) added; `test_hybrid_search.py` de-mocked
+  and its mutation-testing gaps closed. Current counts: 4,351 unit · 102 fast_integration ·
+  20 integration · 108 slow_integration.
+- New ratchets: `EDGE_EMISSION_SPECS` drift, `ToolSpec` guard-stamp, `IndexWriteStage` seam
+  ownership, resource-refresher seam, split-aware golden guard, `TraversalPolicy` set/ranked
+  equivalence.
+
+### Dependencies
+
+- Dependency audits 2026-08-20 and 2026-09-01 (`audit_reports/`); `setproctitle` repaired;
+  `uv.lock` synced for radon/crap4py; `evaluation/` packaged as importable.
 
 ### Migration
 

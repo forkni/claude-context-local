@@ -2,86 +2,67 @@
 
 Complete version history and feature timeline for claude-context-local MCP server.
 
-## Current Status: All Features Operational (2026-08-14)
+## Current Status: All Features Operational (2026-09-02)
 
-- **Version**: 0.25.0 (+ unreleased 2026-08-14 retrieval-campaign commits, see below)
+- **Version**: 0.26.0
 - **Status**: Production-ready, concurrency-safe
-- **Test Coverage**: 5,892 unit tests · 102 fast_integration · 19 integration · 108 slow_integration (2026-08-14)
+- **Test Coverage**: 4,351 unit tests · 102 fast_integration · 20 integration · 108 slow_integration (2026-09-02; unit count dropped from 5,8xx when Phase 13.2b collapsed the parametrized golden-set guard — no coverage lost)
 - **Dependencies**: 36 direct (`pyproject.toml`) + optional `[callgraph]` / `[lsp]` / `[test]` / `[dev]` / `[gpu]` / `[otel]` extras
-- **SSCG Benchmark**: MRR 0.8462 (canonical, 63q, k=10, deterministic, r1==r2 bit-identical) / 0.6482 (expanded, 133 non-D, k=10) — 2026-08-22 close-out §4 LSP re-baseline, superseding the 2026-08-14 remaining-levers pin's 0.8722/0.6843 (comparability break: index growth + LSP outage/restore); see `docs/BENCHMARKS.md` and `evaluation/CANON_20260822_LSP_REBASELINE.md`
+- **SSCG Benchmark**: MRR 0.8419 (canonical, 63q, k=10, deterministic) / 0.6378 (expanded, 133 non-D, k=10) / 0.8843 (F-via-similar) — 2026-09-01 P0 re-baseline on 219 files / 2,642 chunks, superseding the 2026-08-22 LSP re-baseline's 0.8462/0.6482/0.9034 (comparability break: index growth after the architecture wave, not a regression); see `docs/BENCHMARKS.md` and `evaluation/CANON_20260901_REBASELINE.md`
 - **Token Reduction**: 63% (validated benchmark, Mixed approach vs traditional)
-- **Recent**: Unreleased (2026-08-14) — Track A + remaining-levers retrieval campaigns closed: B1
-  `hide_ambiguous` (find_connections) and B4 `include_top_callers` (search_code) shipped as opt-in
-  display-layer params; A1/A2/A4 knobs shipped default-off and measured-rejected; jina-reranker-v3.5
-  supported but rejected as default; new deterministic benchmark canons; v0.25.0 — C++ chunking
-  parity (20 → 27 file extensions, headers now indexed for the
-  first time), nested same-named container `parent_chunk_id` linkage fix, templated header-only
-  prototype/alias naming fix; v0.24.0 — retro-tagged v0.23.0, documentation/skill sync against
-  `development` (test counts, benchmark re-pin, ADR-0036 `include_dirs` semantics), call-graph
-  resolver hardening, pyan GPL-2.0-or-later quarantine (ADR-0034), C++ call-edge tier scope
-  (ADR-0035), additive/narrowing `include_dirs` for dependency trees (ADR-0036); v0.23.0 — MCP
-  Python SDK v1→v2 migration, community/DSPy/ONNX subsystems removed (86 commits since v0.22.0,
-  three models dropped from the registries), per-project config overrides (ADR-0014), config field
-  liveness audit (ADR-0020); v0.22.0 — GLSL indexing parity, persistent chunk embedding cache (43×
-  reindex speedup), BM25 path/symbol augmentation (MRR +0.113), `HybridSearcher.clear_index()`
-  truthiness fix (was discarding 100% of resolver-derived call edges)
+- **Recent**: v0.26.0 — retrieval campaigns closed (Track A, remaining levers, merged-pool
+  ordering, ego gate-2; every arm measured-and-rejected, `hide_ambiguous` promoted to default-on),
+  ADR-0039→0059 architecture-deepening wave (`BaseSearcher.execute`, `IndexWriteStage`,
+  `ResourceRefresher`, enricher spec rows, `ToolSpec` table, `TraversalPolicy`,
+  `spec(benchmark_locked=…)`), real `index_is_current` freshness verdict (ADR-0058), CUDA→cpp
+  routing (ADR-0054), execution-witnessed call-graph ground truth (ADR-0059), test-suite
+  hardening Phases 13–14, three canon re-baselines; v0.25.0 — C++ chunking parity (20 → 27 file
+  extensions, headers indexed for the first time), container-node traversal seam (ADR-0038);
+  v0.24.0 — retro-tagged v0.23.0, pyan GPL quarantine (ADR-0034), C++ call-edge tier scope
+  (ADR-0035), additive/narrowing `include_dirs` (ADR-0036); v0.23.0 — MCP Python SDK v1→v2
+  migration, community/DSPy/ONNX subsystems removed, per-project config overrides (ADR-0014),
+  config field liveness audit (ADR-0020); v0.22.0 — GLSL indexing parity, persistent chunk
+  embedding cache (43× reindex speedup), BM25 path/symbol augmentation (MRR +0.113)
 
 ---
 
-## Unreleased - `include_top_callees` on `search_code` (2026-09-02)
+## v0.26.0 - Retrieval Campaigns Closed, Architecture Wave, Index-Freshness Verdict (2026-09-02)
 
-### Added (opt-in, default-off, byte-identical)
-
-- **A5 `include_top_callees` on `search_code`** — symmetric twin of `include_top_callers`:
-  attaches up to 2 `{name, file}` callee hints per result from raw call-graph out-edges.
-  Resolved chunk targets rank first (resolver confidence descending), unresolved bare-symbol
-  targets follow with `file: ""`. One `EnricherSpec` row + one `ResultEnricher` row
-  (ADR-0049); the shared tier-sort/render helper is now used by both hint enrichers.
-
----
-
-## Unreleased - Retrieval Campaigns: Track A + Remaining Levers (2026-08-14)
-
-Two pre-registered A/B campaigns after v0.25.0, closing out the RAG-improvement roadmap's A-side
-levers. Every quality claim is paired-CI gated on the deterministic (PYTHONHASHSEED=0) harness.
-Dispositions: `evaluation/REMAINING_LEVERS_AB_20260814.md`,
-`evaluation/GRAPH_RESERVE_PROBE_20260814.md`, `evaluation/JINA_V35_AB_20260814.md`.
-
-### Added (shipped, opt-in, default-off, byte-identical)
-
-- **B1 `hide_ambiguous` on `find_connections`** (`63c1840`) — display-layer filter dropping
-  `"ambiguous"`-tagged entries from `direct_callers`/`direct_callees`/`indirect_callers`.
-  Confidence breakdowns and `total_impacted` intentionally remain pre-filter totals;
-  `dependency_graph` is not filtered. Live MCP end-to-end verified 2026-08-14.
-- **B4 `include_top_callers` on `search_code`** (`a20c805`) — attaches up to 2 `{name, file}`
-  caller hints per result via raw call-graph in-edges (chunk-id + bare-symbol-name node lookup,
-  deduplicated). Live MCP end-to-end verified 2026-08-14.
-- **jina-reranker-v3.5 support** (`a245c79`) — version-aware length kwargs; the model is
-  selectable but **rejected as default** (A/B: no recall upside vs jina-reranker-v3, see
-  `evaluation/JINA_V35_AB_20260814.md`).
-
-### Measured and rejected (mechanisms remain in the codebase, default-off)
-
-- **A1 call-evidence scoring for graph-hop candidates** (`2ca05f9`) — NOT adopted: fails the
-  recall CI gate via seed displacement (scored graph candidates compete with hop-1 seeds).
-- **A2 confidence-weighted graph traversal** (`3b04c3b`) — NOT adopted: structurally inert at
-  depth-1 with floor ≤0.65; first-bite threshold 0.8 is neutral.
-- **A4 `reranker.doc_representation_mode="signature_head"`** (`9b2b917` mechanism, rejected
-  2026-08-14) — 133q recall@10 −0.0789 / recall@20 −0.0736, both paired 95% CIs excluding zero on
-  the loss side; 11 pool_hit losses vs 2 gains; 63q guard-rail also violated. Compressed documents
-  reshape pool *membership*, not just ordering. Only win: −19% reranker latency — documented as a
-  priced-in opt-in (same disposition shape as PPR), never default. Knob settled into
-  `FORBIDDEN_AUTO_TUNE_KEYS`.
-- **A3 final-pool graph reserve** (`6cc7caf`) — NOT BUILT: read-only probe gate failed (build
-  scope empty by construction; unscored graph channel evicts 5 in-window golds to buy 2 rescues).
-
-### Benchmarks
-
-- **New deterministic canons** (post-campaign substrate): 63q MRR **0.8722** (r1==r2
-  bit-identical, 0 movers), 133q MRR **0.6843** / recall@10 0.7898 / pool_hit 0.9248 — supersede
-  `canon_l1`'s 0.8603/0.6789. The 63q run-pair identity doubles as proof the implementation
-  commits were quality-neutral at their defaults. Hard-miss cohort is substrate-dependent
-  (H034/H066 exited the miss set without intervention) — re-derive before targeting.
+158 commits since v0.25.0, three threads. **Retrieval**: the Track A + remaining-levers campaigns
+(2026-08-14) shipped `hide_ambiguous` (find_connections) and `include_top_callers` (search_code)
+as opt-in display params and measured-and-rejected A1 call-evidence scoring, A2
+confidence-weighted traversal, A4 `signature_head` documents, and jina-reranker-v3.5 as default;
+A3 final-pool graph reserve was not built (probe gate failed). The merged-pool / ego-graph log
+that followed (2026-08-15 → 2026-09-02) repaired the rerank-window ordering into explicit
+provenance bands (ADR-0039) and then rejected every arm on top of it — `graph_hop_window_cap`
+at both doses, the evidence-ordered band probe (zero headroom), leg-depth × fusion / TM2C2, the
+ego tail cut `drop_nonpositive_output`, and ego gate-2 cap relief `max_neighbors_per_hop` 10→50
+(`evaluation/EGO_GATE2_AB_20260901.md`); all now benchmark-locked. Four live-MCP call-graph
+defects (2026-08-16) and the D1–D12 defect-closure sweep (2026-08-19) were fixed, and
+`hide_ambiguous` was promoted to default-on after its A/B passed (recall byte-identical,
+precision up both directions). New opt-ins: `include_top_callees` and `include_signatures` on
+`search_code`, `graph_enhanced.drop_ambiguous_traversal_edges` (replay-screened, off pending live
+A/B), `call_graph.inject_on_incremental` (ADR-0044). **Architecture**: the ADR-0039 → ADR-0059
+deepening wave, each step behaviour-preserving and ratcheted by a test — `BaseSearcher.execute`
+(ADR-0048), `IndexWriteStage` (ADR-0052), `ResourceRefresher` (ADR-0053), enricher spec rows
+(ADR-0049), single-sourced MCP defaults (ADR-0046), `ResultSource` StrEnum (ADR-0047),
+embedding-document composer (ADR-0045), `ToolSpec` table with decorator-derived guard flags
+(ADR-0057), `TraversalPolicy` parameter object (`graph/traversal_policy.py`; seven traversal
+knobs as one frozen dataclass, `get_neighbors_ranked(chunk_id, policy)` seam, 63q canon 0 MRR
+movers), and benchmark locks declared on `spec(benchmark_locked=…)` rows so
+`FORBIDDEN_AUTO_TUNE_KEYS` / `BENCHMARK_LOCK_CITATIONS` are derived views (ADR-0022 addendum).
+**Substrate**: a real content-based `index_is_current` verdict + `pending_changes` on
+`get_index_status` and `list_projects(check_freshness=True)` (ADR-0058); CUDA `.cu`/`.cuh` route
+to the `cpp` grammar (ADR-0054); phantom-node centrality exclusion knob (ADR-0055);
+execution-witnessed call-graph ground truth with a split-aware golden guard (ADR-0059);
+`evaluation.probe_harness` seam (ADR-0040); FAISS mmap handle released before force reindex;
+metadata-clear self-heal and C-family macro-wrapped declaration repair (ADR-0025 addenda).
+**Testing**: hardening Phases 13–14 — package-scoped ratcheted coverage, `pytest-timeout`,
+golden-set guard collapsed (5,8xx → 4,351 unit tests, no coverage lost), radon/crap4py complexity
+gate, `test_hybrid_search.py` de-mocked. **Benchmarks**: three canon re-baselines, each a
+comparability break — 0.8722/0.6843 (08-14) → 0.8462/0.6482 (08-22, LSP dark/restore) →
+**0.8419 / 0.6378 / 0.8843** (2026-09-01 P0, published). Full CHANGELOG entry: `CHANGELOG.md`
+`[0.26.0]`.
 
 ## v0.25.0 - C++ Chunking Parity, Headers Indexed (2026-08-13)
 

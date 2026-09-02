@@ -3,7 +3,7 @@
 ## Overview
 
 This comprehensive guide covers the testing infrastructure for the Claude Context MCP semantic
-search system. The project maintains a professional test suite with 5,800+ passing tests
+search system. The project maintains a professional test suite with 4,300+ passing unit tests (5,800+ before Phase 13.2b collapsed the parametrized golden-set guard)
 organized into clear categories for effective quality assurance.
 
 ### Current Test Status
@@ -240,20 +240,20 @@ below; supersedes the 2026-08-05 numbers this block previously carried):
 **Note**: Run `uv run pytest tests/ --ignore=tests/slow_integration -q` for the fast CI subset
 (excludes GPU-dependent slow tests, ~2 min).
 
-### Reproducible baseline (Phase 12.3, re-measured 2026-08-05)
+### Reproducible baseline (Phase 12.3, re-measured 2026-08-05; unit/integration rows re-measured 2026-09-02)
 
 Every count and percentage quoted above and in the root `CLAUDE.md` Quick Reference is
 reproducible from one of these commands, re-run 2026-08-05 after the nightly CI fix above:
 
 | Metric | Value | Command |
 | ------ | ----- | ------- |
-| Unit collected cases | 5,801 (5,800 passed, 1 skipped) | `bash scripts/test/run_tests.sh tests/unit/ -q` |
+| Unit collected cases | 4,351 (4,349 passed, 2 skipped) as of 2026-09-02 — was 5,801 before Phase 13.2b collapsed the golden-set guard | `bash scripts/test/run_tests.sh tests/unit/ -q` |
 | Fast integration | 102 passed | `bash scripts/test/run_tests.sh tests/fast_integration/ -q` |
-| Integration | 19 collected, 19 passed, 0 failed | `bash scripts/test/run_tests.sh tests/integration/ -q` |
+| Integration | 20 collected, 20 passed, 0 failed (2026-09-02) | `bash scripts/test/run_tests.sh tests/integration/ -q` |
 | Slow integration | 108 collected (107 passed, 1 skipped) | `bash scripts/test/run_tests.sh tests/slow_integration/ -v --tb=short --no-cov` (~2h39m wall clock) |
 | Full CI-shaped subset | 5,921 passed, 1 skipped, 0 failed (unit + fast_integration + integration; duration not re-measured at this count) | `bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration -q` |
 | CI-shaped coverage | 76.24% vs. `fail_under = 73` (up from 75.03% on 2026-08-04) | `bash scripts/test/run_tests.sh tests/ --ignore=tests/slow_integration/ --cov --cov-branch --cov-report=term-missing` |
-| Golden-set guard share | 2,218 of 5,801 unit cases (~38%) from one parametrized function | `.venv/Scripts/python.exe -m pytest tests/unit/evaluation/test_golden_set_guard.py --collect-only -q` |
+| Golden-set guard share | 2,218 of 5,801 unit cases (~38%) from one parametrized function — collapsed to per-file cases in Phase 13.2b, hence the 2026-09-02 unit count | `.venv/Scripts/python.exe -m pytest tests/unit/evaluation/test_golden_set_guard.py --collect-only -q` |
 
 ## Recommended Testing Approach
 
@@ -421,7 +421,7 @@ tests/
 │   ├── glsl_project/         # GLSL shader samples
 │   ├── multi_language/       # Multi-language test files
 │   └── python_project/       # Python project samples
-├── unit/                     # Unit tests (5,644 passed, 1 skipped as of 2026-08-04; see CI for current count)
+├── unit/                     # Unit tests (4,349 passed, 2 skipped as of 2026-09-02; see CI for current count)
 │   ├── test_bm25_index.py    # BM25 index functionality
 │   ├── test_bm25_population.py # BM25 document population
 │   ├── test_embedder.py      # Embedding generation

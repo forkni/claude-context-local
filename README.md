@@ -29,31 +29,31 @@
 
 ## Highlights
 
-- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-08-22, 63 queries, hybrid k=10, deterministic): **MRR 0.8462, Recall@5 0.6562, Recall@10 0.7618** - [benchmarks](docs/BENCHMARKS.md)
+- **Hybrid Search**: BM25 + semantic fusion — on the [SSCG benchmark](#benchmark-results) (2026-09-01, 63 queries, hybrid k=10, deterministic): **MRR 0.8419, Recall@5 0.6432, Recall@10 0.7553** - [benchmarks](docs/BENCHMARKS.md)
 - **Neural Reranking**: Cross-encoder models (default: `Alibaba-NLP/gte-reranker-modernbert-base`; alternatives: jinaai/jina-reranker-v3, Qwen3-Reranker-0.6B) improve ranking quality by 15-25% - [advanced features](docs/ADVANCED_FEATURES_GUIDE.md#neural-reranking-configuration)
 - **SSCG Integration**: Structural-Semantic Code Graph — 21 relationship types, PageRank centrality reranking; see [benchmarks](docs/BENCHMARKS.md) for mode-comparison history
 - **63% Token Reduction**: Real-world benchmarked mixed approach - [benchmarks](docs/BENCHMARKS.md)
 - **Layered Call-Graph Resolver Pipeline**: `find_connections` returns callers **and** callees with per-entry provenance (`resolver_source`, `resolver_confidence`). Confidence ladder: AST 0.5/0.7 → pyan 0.75 → LibCST 0.90 → LSP 0.98 (`lsp_enabled` defaults to `true`, no-ops without the extra). Install `pip install -e ".[callgraph]"` for pyan3 + LibCST, and `pip install -e ".[lsp]"` for basedpyright LSP resolution; core is Apache-2.0-clean — [caller recall benchmark](docs/BENCHMARKS.md#caller-recall-benchmark)
 - **OTel Tracing** (opt-in): Zero-overhead `traced_block` / `@timed` spans across the search and index pipeline — export to Jaeger, Tempo, or any OTLP collector. See [Observability](docs/OBSERVABILITY.md).
 - **Persistent Chunk Embedding Cache**: content-hash-keyed cache of chunk embedding vectors cuts a full reindex's embedding phase from ~34s to well under 1s once the codebase is unchanged; invalidates automatically on model or precision/backend changes - [configuration](docs/HYBRID_SEARCH_CONFIGURATION_GUIDE.md#chunk-embedding-cache-configuration)
-- **27 File Extensions**: Python, JS, TS, Go, Rust, C/C++, C#, GLSL with AST/tree-sitter chunking
+- **29 File Extensions**: Python, JS, TS, Go, Rust, C/C++ (incl. CUDA `.cu`/`.cuh`), C#, GLSL with AST/tree-sitter chunking
 - **18 MCP Tools** (10 core + 8 advanced, gated behind `MCP_EXPOSE_ADVANCED_TOOLS`): Complete Claude Code integration - [tool reference](docs/MCP_TOOLS_REFERENCE.md)
 - **Source-Position Reranking** (opt-in, `source_order_output=true`): Groups results by file, sorted by line number instead of relevance — LLMs read code in logical order (+5.3% accuracy, DOS RAG); relevance order is the default since v0.18.0
 - **Centrality-Adaptive BM25 Boost**: High-centrality nodes (base classes, utilities) get BM25 score boost — compensates for single-vector ceiling (DeepMind LIMIT, ICLR 2026)
 - **File-Role Tagging**: Chunks tagged `role:src/test/doc/config` at index time — enables role-aware ranking and precision boosts
 
-**Status**: ✅ Production-ready | 5,823 unit tests passing (+102 fast_integration, +19 integration, +108 slow_integration) | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
+**Status**: ✅ Production-ready | 4,351 unit tests passing (+102 fast_integration, +20 integration, +108 slow_integration) | All 18 MCP tools operational | Concurrency-safe | Windows 10/11
 
-*Last reviewed: 2026-08-02*
+*Last reviewed: 2026-09-02*
 
-## What's New in v0.23.0
+## What's New in v0.26.0
 
-- **MCP Python SDK v1 → v2 migration**: six JSON-RPC handlers converted to the v2 constructor-kwarg pattern; wire format unchanged, verified end-to-end
-- **Three subsystems removed**: community-detection/summarization (ADR-0015), DSPy evaluation (ADR-0016, 4,849 lines), and the ONNX inference path
-- **Per-project config overrides + auto-tune probe** (ADR-0014) and `exclude_same_file` on `find_similar_code`
-- **Richer evaluation**: `recall@20`/`recall@50`/`pool_hit_rate`/`file_acc@k` metrics, a CI regression gate, and the golden dataset expanded 108 → 145 queries
-- **Config field liveness audit** (ADR-0020): 7 previously-hardcoded settings wired to real config control (byte-identical default behavior), 6 dead fields removed
-- ⚠️ **Breaking**: `nomic-ai/CodeRankEmbed`, `Alibaba-NLP/gte-modernbert-base`, and `Qwen/Qwen3-Reranker-4B` removed from the model registries — a deployed config pinned to one of these will fail to load until repointed. See [CHANGELOG.md](CHANGELOG.md)
+- **Retrieval campaigns closed**: Track A, remaining levers, merged-pool ordering, and ego gate-2 all measured on the deterministic harness and rejected; the one default that flipped is `find_connections(hide_ambiguous=True)` after its A/B passed (recall byte-identical, precision up). New opt-in display params on `search_code`: `include_top_callers`, `include_top_callees`, `include_signatures`
+- **Real index-freshness verdict** (ADR-0058): `get_index_status` returns `index_is_current` + `pending_changes` from a content-only Merkle diff; `list_projects(check_freshness=True)` gives the same verdict per project
+- **Architecture-deepening wave** (ADR-0039 → ADR-0059): `BaseSearcher.execute`, `IndexWriteStage`, `ResourceRefresher`, enricher spec rows, a single `ToolSpec` table, `TraversalPolicy`, and benchmark locks declared on `spec()` rows — all behaviour-preserving, each ratcheted by a test
+- **Call-graph fixes**: four live-MCP defects (confidence-default inversion, ambiguous fan-out, nondeterministic BFS, ego tail flooding) and the D1–D12 defect-closure sweep; execution-witnessed call-graph ground truth (ADR-0059); CUDA `.cu`/`.cuh` now chunked via the `cpp` grammar (ADR-0054)
+- **Test-suite hardening Phases 13–14**: package-scoped ratcheted coverage, `pytest-timeout`, complexity/CRAP gate; golden-set guard collapsed so the unit count reads 4,351 (was 5,8xx) with no coverage lost
+- **Benchmarks re-baselined** 2026-09-01: 63q MRR 0.8419 / 133q 0.6378 / F-via-similar 0.8843 — a comparability break from index growth, not a regression. See [CHANGELOG.md](CHANGELOG.md)
 
 Previous release notes: [CHANGELOG.md](CHANGELOG.md)
 
@@ -428,7 +428,7 @@ claude-context-local/
 ├── tools/             # Interactive indexing & search utilities
 ├── scripts/           # Installation & configuration
 ├── docs/              # Complete documentation
-└── tests/             # 5,823 unit tests (+102 fast_integration, 19 integration, 108 slow_integration)
+└── tests/             # 4,351 unit tests (+102 fast_integration, 20 integration, 108 slow_integration)
 ```
 
 **Storage** (~/.claude_code_search):
@@ -441,17 +441,17 @@ claude-context-local/
 
 ## Benchmark Results
 
-### Latest Validation (2026-08-22, hybrid-only, k=10, deterministic, LSP re-baseline)
+### Latest Validation (2026-09-01, hybrid-only, k=10, deterministic, P0 re-baseline)
 
-Provenance: `evaluation/CANON_20260822_LSP_REBASELINE.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`, `--set intent.enabled=true` matching the shipped default), PYTHONHASHSEED=0 deterministic harness (ADR-0021). Measured after the `[lsp]` extra — pruned by a bare `uv sync` 2026-08-20, re-locked 2026-08-22 — was confirmed live via a full reindex (217 files/2,611 chunks; resolver mix `lsp 1355 / pyan 1136 / libcst 475`); the 63q run was repeated twice and came back **bit-identical (0 per-query movers)**. Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
+Provenance: `evaluation/CANON_20260901_REBASELINE.md`, `scripts/benchmark/run_sscg_benchmark.py --project-path .`, default config (`bm25_weight=0.35`, `dense_weight=0.65`, `query_expansion.enabled=False`, `--set intent.enabled=true` matching the shipped default), PYTHONHASHSEED=0 deterministic harness (ADR-0021). P0 re-baseline after the ADR-0039→0059 architecture wave: full non-incremental reindex (219 files / 2,642 chunks; 26,606 edges; resolver mix `lsp 1356 / pyan 1143 / libcst 474` confirms LSP live), one stale Q12 golden repaired and `audit_golden_dataset.py` clean on both datasets before capture. Single-round captures — determinism was reconfirmed bit-identical on the 2026-08-22 substrate and the same seed pin applies. Only **hybrid** (the default mode) has been measured at this generation — no per-mode A/B has been rerun since 2026-06-08 (historical table below).
 
 | Dataset | Queries | MRR | Recall@5 | Recall@10 | NDCG@5 | pool_hit_rate |
 |---|---|---|---|---|---|---|
-| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8462** | 0.6562 | 0.7618 | 0.6854 | 1.0000 |
-| Expanded (`golden_dataset_expanded.json`, non-D, 133 queries) | 133 | **0.6482** | 0.6233 | 0.7403 | 0.6066 | — |
-| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.9034** (re-measured 2026-08-22, supersedes `canon_l1`'s 0.9021) | 0.6630 | 0.7775 | 0.7021 | — |
+| Canonical (`golden_dataset.json`, A–F excl. D) | 63 | **0.8419** | 0.6432 | 0.7553 | 0.6763 | 1.0000 |
+| Expanded (`golden_dataset_expanded.json`, non-D, 133 queries) | 133 | **0.6378** | 0.6216 | 0.7435 | 0.6022 | — |
+| F-via-similar (anchor-chunk view, whole-63q aggregate) | 63 | **0.8843** | 0.6425 | 0.7558 | 0.6860 | — |
 
-Deltas vs the prior pin (0.8722/0.6843, 2026-08-14) are a comparability break: index growth (2,403→2,611 vectors) compounded with the 08-20→08-22 `[lsp]` dark/restore cycle — the 63q run-pair identity doubles as proof the measurement itself is stable on this substrate. See `docs/BENCHMARKS.md` for the full comparability-break log.
+Deltas vs the prior pin (0.8462/0.6482/0.9034, 2026-08-22) are −0.0043 / −0.0104 / −0.0191 — recorded as substrate drift (+2 files / +31 chunks / +184 edges after the ADR-0039→0059 architecture wave), not investigated, per the project's drift convention. See `docs/BENCHMARKS.md` for the full comparability-break log.
 
 **Comparability breaks** — do not read the numbers above as a trend against older figures in this repo's history:
 
@@ -467,6 +467,7 @@ Deltas vs the prior pin (0.8722/0.6843, 2026-08-14) are a comparability break: i
 - The 2026-08-14 remaining-levers campaign (`evaluation/REMAINING_LEVERS_AB_20260814.md`) re-pinned both canons on the post-Track-A/B1/B4/A4/A3-probe substrate: 63q 0.8722, 133q 0.6843 — superseding `canon_l1`. No defaults flipped: the campaign shipped only the opt-in `hide_ambiguous` (find_connections) and `include_top_callers` (search_code) display params; A1/A2/A4 mechanisms and jina-reranker-v3.5 were measured and rejected as defaults.
 - The 2026-08-16 (`evaluation/CONFIDENCE_EGO_AB_20260816.md`, 63q 0.8357/133q 0.6647) and 2026-08-19 (`evaluation/DEFECT_CLOSURE_20260819.md`, 63q 0.8323/133q 0.6526, unpublished) pins were both measured mid-way through index growth and a subsequent LSP outage.
 - The 2026-08-22 close-out §4 re-baseline (`evaluation/CANON_20260822_LSP_REBASELINE.md`) supersedes all of the above with a single authoritative pin — 63q **0.8462**, 133q **0.6482** — measured with `[lsp]` confirmed live on 217 files / 2,611 chunks. This is the published baseline above.
+- The 2026-09-01 P0 re-baseline (`evaluation/CANON_20260901_REBASELINE.md`) supersedes the 2026-08-22 pin after the ADR-0039→0059 architecture wave: 63q **0.8419**, 133q **0.6378**, F-via-similar **0.8843** on 219 files / 2,642 chunks (resolver mix `lsp 1356 / pyan 1143 / libcst 474`), one stale Q12 golden repaired first. This is the published baseline above.
 - The 2026-07-28 golden-dataset repair (`6df36db`) changed scoring for 3-part `split_block` chunks; nothing measured before that commit is comparable to what's measured after.
 - The 2026-08-02 H-category promotion grew the expanded set 108→145 queries (94→131 non-D); the 2026-08-04 top-up grew it further to 147 (133 non-D). H queries are harder by construction (single-file, ≤2 golds), so treat each generation's figure as a separate measurement, not a before/after comparison.
 - `0.797` in the historical table below (2026-06-08, 13 queries) predates the golden-dataset repair, the H-promotion, the SDK v2 migration, and every re-pin since; kept only for continuity.
@@ -562,7 +563,7 @@ The [CLAUDE.md Template](docs/CLAUDE_MD_TEMPLATE.md) helps you set up semantic s
 
 ### Development
 
-- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (5,823 unit tests, 100% pass rate)
+- [Testing Guide](tests/TESTING_GUIDE.md) - Running tests (4,351 unit tests, 100% pass rate)
 - [Git Workflow](docs/GIT_WORKFLOW.md) - Contributing guidelines
 - [Version History](docs/VERSION_HISTORY.md) - Changelog
 

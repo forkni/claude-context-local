@@ -512,6 +512,37 @@ when the `[lsp]` extra is installed (`pip install -e ".[lsp]"`); otherwise the r
 `available()` probe fails and it silently no-ops, so the "Balanced (default)" row above behaves
 identically to the pre-LSP pipeline on a machine that never installed the extra.
 
+### 6.7 `inject_on_incremental` — Resolver Edges on Incremental Passes (ADR-0044)
+
+```json
+"call_graph": {
+  "inject_on_incremental": false
+}
+```
+
+Incremental passes prune and re-add graph nodes for changed files, which restores only the
+always-on AST edges — resolver-injected pyan/LibCST/LSP edges for touched files are lost until
+the next full pass. `true` re-runs the injection pipeline on every incremental pass (measured
++1.58 s per pass on this repo); the default keeps incremental passes cheap. Gated in
+`IndexWriteStage.inject_call_edges_if_enabled` (ADR-0052).
+
+### 6.8 Traversal Gates — `TraversalPolicy`
+
+The gates that decide which *stored* edges ego-graph and multi-hop expansion may walk live on
+`GraphEnhancedConfig`, not `CallGraphConfig`, and travel through the graph layer as one frozen
+`TraversalPolicy` object (`graph/traversal_policy.py`; seam
+`CodeGraphStorage.get_neighbors_ranked(chunk_id, policy)`):
+
+| Key | Default | Effect |
+|-----|---------|--------|
+| `graph_enhanced.min_traversal_confidence` | `0.0` | Skip edges whose resolver confidence is below the floor (A2 arm; structurally inert at depth 1 with floor ≤ 0.65) |
+| `graph_enhanced.traversal_confidence_weighting_enabled` | `false` | Weight BFS priority by edge confidence (A2 arm, measured neutral) |
+| `graph_enhanced.drop_ambiguous_traversal_edges` | `false` | Drop `tag:ambiguous` call edges during traversal — the traversal-time counterpart of `find_connections(hide_ambiguous=True)`, which only filters display. Replay-screened 2026-09-02 (`evaluation/AMBIGUOUS_EDGE_REPLAY_20260902.md`), benchmark-locked, off pending a live A/B |
+
+`TraversalPolicy.ego(...)` and `.graph_hop(...)` derive these from config at the two production
+call sites; `policy.gates_edges` short-circuits the per-edge lookups when no gate is armed, so
+the defaults cost nothing.
+
 ---
 
 ## 7. Out-of-Scope Items

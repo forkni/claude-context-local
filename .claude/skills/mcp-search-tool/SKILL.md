@@ -10,7 +10,7 @@ argument-hint: "search query or 'status' for index health"
 # requires MCP_EXPOSE_ADVANCED_TOOLS=1 on the server process + reconnect. See "Tool Tiers" below.
 allowed-tools: "Bash, Read, Grep, code-search:search_code, code-search:find_connections, code-search:find_path, code-search:find_similar_code, code-search:index_directory, code-search:list_projects, code-search:switch_project, code-search:get_index_status, code-search:clear_index, code-search:delete_project, code-search:configure_search_mode, code-search:get_search_config_status, code-search:configure_reranking, code-search:configure_chunking, code-search:list_embedding_models, code-search:switch_embedding_model, code-search:get_memory_status, code-search:cleanup_resources"
 metadata:
-  version: 0.25.0
+  version: 0.26.0
   mcp-server: code-search
 ---
 
@@ -40,9 +40,9 @@ candidates, not definitive answers — always scan all returned results.**
 duplicate figures elsewhere — every other reference file in this skill points back to `docs/BENCHMARKS.md` instead of restating numbers that will
 drift out of date on the next benchmark run.
 
-**Current headline (2026-08-22 close-out §4 LSP re-baseline, canonical 63-query set, hybrid, k=10, intent-on, deterministic PYTHONHASHSEED=0):** MRR
-**0.8462**, Recall@5 0.6562, Recall@10 0.7618, NDCG@5 0.6854, pool_hit_rate 1.0000 (r1==r2 bit-identical — zero run-to-run flap on the deterministic
-harness). Expanded 133-query set: MRR 0.6482. Provenance: `evaluation/CANON_20260822_LSP_REBASELINE.md`.
+**Current headline (2026-09-01 P0 re-baseline, canonical 63-query set, hybrid, k=10, intent-on, deterministic PYTHONHASHSEED=0):** MRR
+**0.8419**, Recall@5 0.6432, Recall@10 0.7553, NDCG@5 0.6763, pool_hit_rate 1.0000 (single-round capture on the seed-pinned harness, which was
+shown bit-identical r1==r2 on the previous substrate). Expanded 133-query set: MRR 0.6378. Provenance: `evaluation/CANON_20260901_REBASELINE.md`.
 The dataset has been repaired and expanded multiple times since earlier benchmark runs (comparability breaks are
 logged in `docs/BENCHMARKS.md`) — do not compare an older cached number here against a fresh run without checking both the dataset size/date and the
 config it ran under. Engine default is `k=7`; pass it explicitly when correctness matters. Use `k=10` for architectural/global queries.

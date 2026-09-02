@@ -409,7 +409,7 @@ def _get_server_version() -> str:
     try:
         return _pkg_version("claude-context-local")
     except PackageNotFoundError:
-        return "0.25.0"
+        return "0.26.0"
 
 
 # Import tool specs
