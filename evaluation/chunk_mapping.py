@@ -14,6 +14,7 @@ chunk_id_from_fqn         Best-effort FQN → chunk_id via module-path split.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -70,7 +71,7 @@ def build_line_to_chunk_map(
 
 
 def find_enclosing_chunk(
-    line_map: dict[str, list[tuple[int, int, str]]],
+    line_map: Mapping[str, list[tuple[int, int, str]]],
     rel_path: str,
     line_num: int,
 ) -> str | None:
