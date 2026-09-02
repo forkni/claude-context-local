@@ -72,9 +72,10 @@ jobs:
           ALLOWED_DOCS="ADVANCED_FEATURES_GUIDE.md|BENCHMARKS.md|CALL_GRAPH_TUNING.md|CLAUDE_DESKTOP_SETUP.md|CLAUDE_MD_TEMPLATE.md|claude_code_config.md|CODE_REVIEW_IMPROVEMENT_PLAN.md|DOCUMENTATION_INDEX.md|GIT_WORKFLOW.md|HYBRID_SEARCH_CONFIGURATION_GUIDE.md|INSTALLATION_GUIDE.md|MCP_TOOLS_REFERENCE.md|MODEL_MIGRATION_GUIDE.md|OBSERVABILITY.md|PYTORCH_COMPATIBILITY.md|VERSION_HISTORY.md"
 
           # Find unauthorized docs (only check on main branch)
-          # docs/adr/ subtree is always permitted (architecture decision records)
+          # docs/adr/ (architecture decision records) and docs/plans/ (implementation
+          # plans, cited by ADRs and un-ignored in .gitignore) are always permitted
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            UNAUTHORIZED=$(git ls-files docs/ | grep -v -E "docs/($ALLOWED_DOCS)$" | grep -v "^docs/adr/" || true)
+            UNAUTHORIZED=$(git ls-files docs/ | grep -v -E "docs/($ALLOWED_DOCS)$" | grep -v -E "^docs/(adr|plans)/" || true)
 
             if [ -n "$UNAUTHORIZED" ]; then
               echo "❌ ERROR: Unauthorized documentation files found on main branch:"
@@ -82,7 +83,7 @@ jobs:
               echo ""
               echo "Allowed top-level docs:"
               echo "$ALLOWED_DOCS" | tr '|' '\n'
-              echo "(docs/adr/ subtree is always permitted)"
+              echo "(docs/adr/ and docs/plans/ subtrees are always permitted)"
               exit 1
             fi
           fi
