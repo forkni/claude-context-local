@@ -293,7 +293,7 @@ These tools are available to Claude Code as `mcp__code-search__*` functions. You
 | Go | `.go` | Tree-sitter |
 | Rust | `.rs` | Tree-sitter |
 | C | `.c` | Tree-sitter |
-| C++ | `.cpp`, `.cc`, `.cxx`, `.c++`, `.h`, `.hpp`, `.hh`, `.hxx`, `.inl`, `.ipp`, `.tpp` | Tree-sitter |
+| C++ / CUDA | `.cpp`, `.cc`, `.cxx`, `.c++`, `.h`, `.hpp`, `.hh`, `.hxx`, `.inl`, `.ipp`, `.tpp`, `.cu`, `.cuh` | Tree-sitter (C++ grammar) |
 | CUDA | `.cu`, `.cuh` | Tree-sitter (routed to the C++ grammar, ADR-0054) |
 | C# | `.cs` | Tree-sitter |
 | GLSL | `.glsl`, `.frag`, `.vert`, `.comp`, `.geom`, `.tesc`, `.tese`, `.glslinc` | Tree-sitter |
