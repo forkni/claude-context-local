@@ -100,7 +100,59 @@ def _live_normalized_ids(file_path: str) -> frozenset[str]:
     """
     abs_path = REPO_ROOT / file_path
     chunks = _get_chunker().chunk_file(str(abs_path))
-    return frozenset(normalize_chunk_id(c.chunk_id) for c in chunks if c.chunk_id)
+    ids: set[str] = set()
+    for c in chunks:
+        if not c.chunk_id:
+            continue
+        ids.add(normalize_chunk_id(c.chunk_id))
+        ids.update(_split_aliases(c.chunk_id))
+    return frozenset(ids)
+
+
+# Kinds whose oversized nodes the indexer may split into `split_block`
+# fragments (chunking/languages/base.py, `node.type in ("function_definition",
+# "decorated_definition")`), and the kind those fragments normalize to
+# (search/chunk_id.py:dedup_key collapses `split_block` -> `method`).
+_SPLIT_ELIGIBLE_KINDS = frozenset({"function", "decorated_definition", "method"})
+_SPLIT_NORMALIZED_KIND = "method"
+
+
+@cache
+def _max_chunk_lines() -> int:
+    """The line count above which the indexer considers a node for splitting."""
+    from search.config import get_chunking_config
+
+    config = get_chunking_config()
+    return int(config.max_chunk_lines) if config is not None else 100
+
+
+def _split_aliases(raw_chunk_id: str) -> set[str]:
+    """Return the id form(s) a split-eligible chunk takes once the indexer splits it.
+
+    Under `sizing_mode == "adaptive"` the indexer's split threshold is a
+    repo-wide P75 character baseline that only exists at index time; this
+    guard chunks each file alone and therefore always uses the static
+    `max_split_chars`. A function longer than `max_chunk_lines` can thus
+    come back unsplit here (one `decorated_definition`/`function` chunk)
+    while the live index holds several `split_block` fragments that
+    `normalize_chunk_id` collapses to `<file>:method:<name>` -- which is the
+    form goldens must store to score against the index (Q12
+    `handle_get_index_status`, 2026-09-02). Accept that alias for exactly the
+    chunks the indexer could split: eligible kind AND over the line threshold.
+    """
+    parts = raw_chunk_id.split(":")
+    if len(parts) != 4:
+        return set()
+    file_path, line_range, kind, name = parts
+    if kind not in _SPLIT_ELIGIBLE_KINDS:
+        return set()
+    try:
+        start, end = (int(x) for x in line_range.split("-"))
+    except ValueError:
+        return set()
+    if end - start + 1 <= _max_chunk_lines():
+        return set()
+    return {f"{file_path}:{_SPLIT_NORMALIZED_KIND}:{name}"}
 
 
 GOLDEN_FILES = [
@@ -169,3 +221,29 @@ def test_guard_detects_corrupted_id():
     file_path = corrupted.split(":", 1)[0]
     live_ids = _live_normalized_ids(file_path)
     assert corrupted not in live_ids
+
+
+@pytest.mark.parametrize(
+    ("raw_chunk_id", "expected"),
+    [
+        # 105-line decorated def: the adaptive indexer may split it -> method alias.
+        (
+            "mcp_server/tools/status_handlers.py:31-135:decorated_definition:handle_get_index_status",
+            {"mcp_server/tools/status_handlers.py:method:handle_get_index_status"},
+        ),
+        # Module-level function over the threshold: same alias.
+        ("pkg/mod.py:1-140:function:big", {"pkg/mod.py:method:big"}),
+        # Exactly at the threshold is NOT split-eligible (indexer uses strict >).
+        ("pkg/mod.py:1-100:function:edge", set()),
+        # Short node: no alias.
+        ("pkg/mod.py:1-20:decorated_definition:small", set()),
+        # Classes are never split by the indexer.
+        ("pkg/mod.py:1-400:class:Big", set()),
+        # Malformed / already-normalized ids produce nothing.
+        ("pkg/mod.py:function:no_range", set()),
+    ],
+)
+def test_split_alias_matches_indexer_eligibility(raw_chunk_id, expected):
+    """`_split_aliases` mirrors base.py's split gate: eligible kind AND > max_chunk_lines."""
+    assert _max_chunk_lines() == 100, "test table assumes the shipped max_chunk_lines"
+    assert _split_aliases(raw_chunk_id) == expected

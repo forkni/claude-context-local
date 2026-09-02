@@ -177,6 +177,12 @@
       {
         "date": "2026-08-04",
         "change": "Re-graded H035/H060/H061/H068 under the ADR-0021 PYTHONHASHSEED=0 determinism pin (scripts/benchmark/grade_candidate_queries.py --candidates benchmark_results/h_candidates_paraphrased.json --only H035,H060,H061,H068), superseding the 2026-08-02 bf16-non-determinism exclusion rationale for these four IDs (ADR-0021 showed the actual cause was PYTHONHASHSEED set-iteration order). Promoted H035 as a stable, reproducible pool_miss with a clean query and a verified gold -- a genuine hard case, not noise. Promoted H068 with its intended gold corrected from CodeIndexManager.get_similar_chunks to CodeIndexManager.get_similar_chunks_batched (the method commit 06501b66 actually added, and the one multi_hop_searcher.py calls; same stale-intended-ID pattern as H012/H067). Rejected H060 (commit-narrative query text describing test-fix symptoms, not any behavior of its gold) and H061 (gold does not perform the GPU-memory-tier-management the query describes; that logic lives in search/vram_manager.py:VRAMTierManager instead). Splits: both new queries assigned test."
+      },
+      {
+        "date": "2026-09-02",
+        "changes": [
+          "Q12: mcp_server/tools/status_handlers.py:method:handle_get_index_status kept as-is. It is the normalize_chunk_id form of the three split_block fragments the adaptive-sizing indexer (repo P75 threshold) stores for this 105-line decorated_definition; the static-threshold fresh chunker never splits it. tests/unit/evaluation/test_golden_set_guard.py now accepts the method: alias for split-eligible nodes (kind function/decorated_definition, longer than chunking.max_chunk_lines) instead of the gold being rewritten to a form the index does not hold."
+        ]
       }
     ]
   },

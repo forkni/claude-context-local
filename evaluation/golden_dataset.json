@@ -39,6 +39,12 @@
     "recommended_k": 7,
     "changelog": [
       {
+        "date": "2026-09-02",
+        "changes": [
+          "Q12: mcp_server/tools/status_handlers.py:method:handle_get_index_status kept as-is. It is the normalize_chunk_id form of the three split_block fragments the adaptive-sizing indexer (repo P75 threshold) stores for this 105-line decorated_definition; the static-threshold fresh chunker never splits it. tests/unit/evaluation/test_golden_set_guard.py now accepts the method: alias for split-eligible nodes (kind function/decorated_definition, longer than chunking.max_chunk_lines) instead of the gold being rewritten to a form the index does not hold."
+        ]
+      },
+      {
         "date": "2026-07-31",
         "changes": [
           "Q19: removed embeddings/onnx_wrapper.py:method:ONNXEmbeddingModel.encode from expected and relevance_grades (grade 2) — the ONNX embedding backend was deleted wholesale in the ONNX dormant-code removal; no functional equivalent exists to retarget to."
