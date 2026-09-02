@@ -1,0 +1,1633 @@
+{
+  "schema": "resolver-tier-scores/1",
+  "definitions": {
+    "D": "traced edges that are direct (external_depth 0) with both endpoints resolved to non-phantom graph nodes; one shared denominator for all tiers",
+    "I": "traced edges with external_depth > 0, both endpoints resolved; scored in a separate column and never added to D",
+    "E_t": "static call edges whose resolver_source is t (ast when absent), both endpoints non-phantom, ids normalized; a tier's stored edges are its marginal contribution over the tiers above it",
+    "recall_marginal(t)": "|E_t \u2229 D| / |D|",
+    "recall_cumulative(\u2265t)": "|(\u222a_{t' \u2265 t} E_t') \u2229 D| / |D| down the ladder lsp > libcst > pyan > ast",
+    "recall_ladder_total": "|E_all \u2229 D| / |D|",
+    "recall_indirect(t)": "|E_t \u2229 I| / |I|",
+    "prec_lb(t)": "|E_t \u2229 E_traced| / |E_t| where E_traced is every traced edge (direct and indirect)",
+    "EXEC": "every chunk that owns at least one traced endpoint",
+    "E_t_cov": "{e \u2208 E_t : caller(e) \u2208 EXEC}; caller-only restriction, since requiring the callee in EXEC would push the bound to 1 by construction",
+    "prec_lb_cov(t)": "|E_t_cov \u2229 E_traced| / |E_t_cov|",
+    "unwitnessable(t)": "|E_t| \u2212 |E_t_cov|",
+    "prec_est(t)": "(|E_t_cov \u2229 E_traced| + p\u0302\u00b7|E_t_cov \\ E_traced|) / |E_t_cov| where p\u0302 is the hand-labeled true-positive rate of the unwitnessed sample",
+    "init_equivalence": "a traced callee p.py:method:C.__init__ matches a static callee p.py:class:C and vice versa (both sides canonicalized to class:C); hits obtained this way are counted in hits_via_init_equivalence",
+    "ast_name_only": "lenient column: a missed D edge counts as a name-only hit iff the graph has caller \u2192 phantom whose key equals the callee's bare name or Class.method; never added to any recall"
+  },
+  "ladder": [
+    "lsp",
+    "libcst",
+    "pyan",
+    "ast"
+  ],
+  "traced_integrity": {
+    "runs": 3,
+    "deterministic": true,
+    "dropped_nondeterministic": 0,
+    "cross_function_edges": 1894,
+    "direct_cross_function_edges": 1675,
+    "unresolved_endpoints": 42,
+    "unresolved_edge_endpoints": 69,
+    "density_ok": true,
+    "schema_ok": true
+  },
+  "denominators": {
+    "D": 1675,
+    "I": 222,
+    "E_traced": 1894,
+    "EXEC": 1318,
+    "traced_unresolved": 0
+  },
+  "tiers": {
+    "lsp": {
+      "edges": 1421,
+      "hits_D": 816,
+      "recall_marginal": 0.4872,
+      "recall_cumulative": 0.4872,
+      "hits_I": 3,
+      "recall_indirect": 0.0135,
+      "hits_traced": 819,
+      "prec_lb": 0.5764,
+      "edges_cov": 1026,
+      "hits_cov": 819,
+      "prec_lb_cov": 0.7982,
+      "unwitnessable": 395,
+      "unlabeled_cov": 207,
+      "example_hits": [
+        [
+          "chunking/file_summarizer.py:function:_build_file_summary",
+          "chunking/file_summarizer.py:function:collect_symbol_summary"
+        ],
+        [
+          "chunking/file_summarizer.py:function:generate_file_summaries",
+          "chunking/file_summarizer.py:function:_build_file_summary"
+        ],
+        [
+          "chunking/languages/_c_family.py:function:declarator_is_function_shaped",
+          "chunking/languages/_c_family.py:function:_next_declarator"
+        ],
+        [
+          "chunking/languages/_c_family.py:function:unwrap_declarator_name",
+          "chunking/languages/_c_family.py:function:_next_declarator"
+        ],
+        [
+          "chunking/languages/_c_family.py:function:unwrap_declarator_name",
+          "chunking/languages/_c_family.py:function:_scope_is_missing"
+        ]
+      ]
+    },
+    "libcst": {
+      "edges": 498,
+      "hits_D": 235,
+      "recall_marginal": 0.1403,
+      "recall_cumulative": 0.6275,
+      "hits_I": 4,
+      "recall_indirect": 0.018,
+      "hits_traced": 239,
+      "prec_lb": 0.4799,
+      "edges_cov": 318,
+      "hits_cov": 239,
+      "prec_lb_cov": 0.7516,
+      "unwitnessable": 180,
+      "unlabeled_cov": 79,
+      "example_hits": [
+        [
+          "chunking/file_summarizer.py:function:_build_file_summary",
+          "utils/path_utils.py:function:normalize_path"
+        ],
+        [
+          "chunking/languages/base.py:method:LanguageChunker._get_chunking_config",
+          "search/config.py:function:get_chunking_config"
+        ],
+        [
+          "chunking/multi_language_chunker.py:decorated_definition:MultiLanguageChunker.for_project",
+          "chunking/relationships/relation_filter.py:class:RepositoryRelationFilter"
+        ],
+        [
+          "chunking/multi_language_chunker.py:method:MultiLanguageChunker.__init__",
+          "search/filters.py:class:DirectoryFilter"
+        ],
+        [
+          "chunking/multi_language_chunker.py:method:MultiLanguageChunker._create_chunk_id",
+          "search/chunk_id.py:function:build"
+        ]
+      ]
+    },
+    "pyan": {
+      "edges": 1183,
+      "hits_D": 183,
+      "recall_marginal": 0.1093,
+      "recall_cumulative": 0.7063,
+      "hits_I": 3,
+      "recall_indirect": 0.0135,
+      "hits_traced": 186,
+      "prec_lb": 0.1572,
+      "edges_cov": 723,
+      "hits_cov": 186,
+      "prec_lb_cov": 0.2573,
+      "unwitnessable": 460,
+      "unlabeled_cov": 537,
+      "example_hits": [
+        [
+          "chunking/languages/_c_family.py:function:neutralize_preprocessor_conditionals",
+          "chunking/languages/_c_family.py:function:blank_preserving_layout"
+        ],
+        [
+          "chunking/languages/cpp.py:method:CudaChunker._neutralize",
+          "chunking/languages/_c_family.py:function:blank_preserving_layout"
+        ],
+        [
+          "chunking/multi_language_chunker.py:decorated_definition:MultiLanguageChunker.for_project",
+          "chunking/multi_language_chunker.py:class:MultiLanguageChunker"
+        ],
+        [
+          "chunking/multi_language_chunker.py:decorated_definition:MultiLanguageChunker.for_project",
+          "chunking/relationships/relation_filter.py:class:RepositoryRelationFilter"
+        ],
+        [
+          "chunking/multi_language_chunker.py:method:MultiLanguageChunker.__init__",
+          "chunking/tree_sitter.py:class:TreeSitterChunker"
+        ]
+      ]
+    },
+    "ast": {
+      "edges": 3891,
+      "hits_D": 301,
+      "recall_marginal": 0.1797,
+      "recall_cumulative": 0.886,
+      "hits_I": 13,
+      "recall_indirect": 0.0586,
+      "hits_traced": 312,
+      "prec_lb": 0.0802,
+      "edges_cov": 2437,
+      "hits_cov": 312,
+      "prec_lb_cov": 0.128,
+      "unwitnessable": 1454,
+      "unlabeled_cov": 2125,
+      "example_hits": [
+        [
+          "chunking/dedent_utils.py:method:smart_dedent",
+          "chunking/dedent_utils.py:function:_basic_dedent_only"
+        ],
+        [
+          "chunking/dedent_utils.py:method:smart_dedent",
+          "chunking/dedent_utils.py:function:wrap_with_if_true"
+        ],
+        [
+          "chunking/languages/_c_family.py:method:_CFamilyChunker.preprocess_source_for_parse",
+          "chunking/languages/_c_family.py:method:repair_macro_wrapped_declarations"
+        ],
+        [
+          "chunking/languages/_c_family.py:method:repair_macro_wrapped_declarations",
+          "chunking/languages/_c_family.py:function:_blank_macro_wrapper"
+        ],
+        [
+          "chunking/languages/_c_family.py:method:repair_macro_wrapped_declarations",
+          "chunking/languages/_c_family.py:function:_error_nodes"
+        ]
+      ]
+    }
+  },
+  "ladder_total": {
+    "edges": 6876,
+    "hits_D": 1484,
+    "recall_ladder_total": 0.886,
+    "prec_lb": 0.2189
+  },
+  "hits_via_init_equivalence": 98,
+  "ast_name_only": {
+    "hits": 4,
+    "of_misses": 191
+  },
+  "misses": {
+    "count": 191,
+    "taxonomy": {
+      "wrapper_routed": 20,
+      "class_body_eval": 9,
+      "via_external": 28,
+      "name_only_unresolved": 4,
+      "dynamic_dispatch": 51,
+      "no_syntactic_call": 56,
+      "unclassified": 23
+    },
+    "wrapper_collapsed_credits": 12,
+    "examples": {
+      "wrapper_routed": [
+        "chunking/languages/base.py:method:LanguageChunker._child_is_chunked -> chunking/languages/cpp.py:method:CppChunker.should_chunk_node",
+        "chunking/languages/base.py:method:LanguageChunker._child_is_chunked -> chunking/languages/glsl.py:method:GLSLChunker.should_chunk_node",
+        "chunking/languages/base.py:method:LanguageChunker.chunk_parsed -> chunking/languages/c.py:method:CChunker.extract_metadata",
+        "chunking/languages/base.py:method:LanguageChunker.chunk_parsed -> chunking/languages/cpp.py:method:CppChunker.extract_metadata",
+        "chunking/languages/base.py:method:LanguageChunker.chunk_parsed -> chunking/languages/cpp.py:method:CppChunker.should_chunk_node",
+        "chunking/languages/base.py:method:LanguageChunker.chunk_parsed -> chunking/languages/glsl.py:method:GLSLChunker.should_chunk_node",
+        "chunking/languages/base.py:method:LanguageChunker.chunk_parsed -> chunking/languages/python.py:method:PythonChunker.extract_metadata",
+        "chunking/relationships/lsp_call_graph.py:method:LSPResolver._session -> chunking/relationships/lsp_call_graph.py:decorated_definition:_LspClient.deadline_exceeded",
+        "mcp_server/tools/decorators.py:function:error_handler -> mcp_server/tools/status_handlers.py:method:handle_get_index_status",
+        "mcp_server/tools/decorators.py:function:with_mutation_lock -> mcp_server/tools/index_handlers.py:decorated_definition:handle_clear_index"
+      ],
+      "class_body_eval": [
+        "chunking/tree_sitter.py:class:TreeSitterChunker -> chunking/languages/c.py:class:CChunker",
+        "chunking/tree_sitter.py:class:TreeSitterChunker -> chunking/languages/cpp.py:class:CppChunker",
+        "chunking/tree_sitter.py:class:TreeSitterChunker -> chunking/languages/csharp.py:class:CSharpChunker",
+        "chunking/tree_sitter.py:class:TreeSitterChunker -> chunking/languages/glsl.py:class:GLSLChunker",
+        "chunking/tree_sitter.py:class:TreeSitterChunker -> chunking/languages/go.py:class:GoChunker",
+        "chunking/tree_sitter.py:class:TreeSitterChunker -> chunking/languages/javascript.py:class:JavaScriptChunker",
+        "chunking/tree_sitter.py:class:TreeSitterChunker -> chunking/languages/python.py:class:PythonChunker",
+        "chunking/tree_sitter.py:class:TreeSitterChunker -> chunking/languages/rust.py:class:RustChunker",
+        "chunking/tree_sitter.py:class:TreeSitterChunker -> chunking/languages/typescript.py:class:TypeScriptChunker"
+      ],
+      "via_external": [
+        "chunking/languages/base.py:method:LanguageChunker._load_language -> chunking/language_registry.py:decorated_definition:LanguageSpec",
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker._extract_phase3_relationships -> chunking/dedent_utils.py:method:smart_dedent",
+        "chunking/repo_profiler.py:function:profile_parsed -> chunking/languages/base.py:decorated_definition:LanguageChunker.function_node_types",
+        "chunking/repo_profiler.py:function:profile_parsed -> chunking/languages/glsl.py:decorated_definition:GLSLChunker.function_node_types",
+        "embeddings/embedder.py:method:CodeEmbedder.embed_chunks -> embeddings/embedder.py:decorated_definition:CodeEmbedder.model",
+        "mcp_server/tools/decorators.py:function:with_mutation_lock -> mcp_server/state.py:decorated_definition:ApplicationState",
+        "mcp_server/tools/decorators.py:function:with_mutation_lock -> mcp_server/tools/index_handlers.py:method:handle_delete_project",
+        "mcp_server/tools/result_view.py:function:_format_search_results -> search/reranker.py:decorated_definition:SearchResult",
+        "mcp_server/tools/search_handlers.py:function:_resolve_symbol_to_chunk_id -> mcp_server/tools/searcher_view.py:decorated_definition:SearcherView.graph_storage",
+        "mcp_server/tools/search_handlers.py:method:handle_find_path -> mcp_server/tools/searcher_view.py:decorated_definition:SearcherView.graph_storage"
+      ],
+      "name_only_unresolved": [
+        "chunking/tree_sitter.py:method:TreeSitterChunker.chunk_parsed -> chunking/languages/base.py:method:LanguageChunker.chunk_parsed",
+        "search/faiss_index.py:method:FaissVectorIndex.close -> search/mmap_vectors.py:method:MmapVectorStorage.close",
+        "search/hybrid_searcher.py:method:HybridSearcher.index_documents -> search/indexer.py:method:CodeIndexManager.add_embeddings",
+        "search/index_write_stage.py:method:IndexWriteStage.inject_call_edges -> search/call_edge_injection.py:method:inject_call_edges"
+      ],
+      "dynamic_dispatch": [
+        "chunking/languages/_c_family.py:method:_CFamilyChunker.preprocess_source_for_parse -> chunking/languages/cpp.py:method:CudaChunker._neutralize",
+        "chunking/languages/base.py:method:LanguageChunker._apply_complexity_score -> chunking/languages/glsl.py:method:GLSLChunker.get_node_complexity",
+        "chunking/languages/base.py:method:LanguageChunker._apply_complexity_score -> chunking/languages/python.py:method:PythonChunker.get_node_complexity",
+        "chunking/languages/base.py:method:LanguageChunker._create_split_chunk -> chunking/languages/python.py:method:PythonChunker.extract_metadata",
+        "chunking/languages/base.py:method:LanguageChunker._split_large_node -> chunking/languages/python.py:method:PythonChunker._extract_signature",
+        "chunking/languages/base.py:method:LanguageChunker._split_large_node -> chunking/languages/python.py:method:PythonChunker._get_block_boundary_types",
+        "chunking/languages/base.py:method:LanguageChunker.chunk_code -> chunking/languages/_c_family.py:method:_CFamilyChunker.preprocess_source_for_parse",
+        "chunking/languages/base.py:method:LanguageChunker.chunk_parsed -> chunking/languages/glsl.py:method:GLSLChunker.extract_metadata",
+        "chunking/languages/base.py:method:LanguageChunker.extract_metadata -> chunking/languages/csharp.py:method:CSharpChunker._extra_metadata",
+        "chunking/languages/base.py:method:LanguageChunker.extract_metadata -> chunking/languages/go.py:method:GoChunker._extra_metadata"
+      ],
+      "no_syntactic_call": [
+        "chunking/language_registry.py:decorated_definition:LanguageSpec -> chunking/language_registry.py:function:_ts_loader",
+        "chunking/language_registry.py:decorated_definition:LanguageSpec -> chunking/language_registry.py:function:_tsx_loader",
+        "chunking/languages/_c_family.py:function:unwrap_declarator_name -> chunking/languages/c.py:method:CChunker.extract_metadata",
+        "chunking/languages/_c_family.py:function:unwrap_declarator_name -> chunking/languages/cpp.py:method:CppChunker.extract_metadata",
+        "chunking/multi_language_chunker.py:method:MultiLanguageChunker._convert_tree_chunks -> chunking/dedent_utils.py:method:smart_dedent",
+        "chunking/relationships/call_graph_extractor.py:decorated_definition:CallGraphExtractorFactory.create -> chunking/relationships/call_graph_extractor.py:class:PythonCallGraphExtractor",
+        "chunking/relationships/external_call_graph.py:method:_TrackedVisitor._prescan_one -> utils/progress.py:decorated_definition:heartbeat",
+        "chunking/relationships/external_call_graph.py:method:_TrackedVisitor.process_one -> utils/progress.py:decorated_definition:heartbeat",
+        "chunking/tree_sitter.py:method:TreeSitterChunker.get_chunker -> chunking/tree_sitter.py:class:TreeSitterChunker",
+        "embeddings/embedder.py:method:CodeEmbedder.cleanup -> embeddings/embedder.py:method:CodeEmbedder.__del__"
+      ],
+      "unclassified": [
+        "chunking/tree_sitter.py:method:TreeSitterChunker.parse_file -> chunking/languages/_c_family.py:method:_CFamilyChunker.preprocess_source_for_parse",
+        "chunking/tree_sitter.py:method:TreeSitterChunker.parse_file -> chunking/languages/base.py:method:LanguageChunker.preprocess_source_for_parse",
+        "chunking/tree_sitter.py:method:TreeSitterChunker.parse_file -> chunking/languages/glsl.py:method:GLSLChunker.preprocess_source_for_parse",
+        "embeddings/embedder.py:method:CodeEmbedder._log_chunk_cache_stats -> embeddings/chunk_cache.py:method:ChunkEmbeddingCache.get_stats",
+        "embeddings/model_cache.py:method:ModelCacheManager.ensure_split_cache_symlink -> embeddings/embedder.py:method:CodeEmbedder._get_model_config",
+        "embeddings/model_cache.py:method:ModelCacheManager.find_local_model_dir -> embeddings/embedder.py:method:CodeEmbedder._get_model_config",
+        "embeddings/model_cache.py:method:ModelCacheManager.validate_cache -> embeddings/embedder.py:method:CodeEmbedder._get_model_config",
+        "embeddings/model_loader.py:method:ModelLoader._build_constructor_kwargs -> embeddings/embedder.py:method:CodeEmbedder._get_model_config",
+        "mcp_server/resource_manager.py:function:initialize_server_state -> search/config.py:method:SearchConfigManager.load_config",
+        "mcp_server/tools/decorators.py:function:require_indexed_project -> mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code"
+      ]
+    },
+    "items": [
+      {
+        "caller": "chunking/language_registry.py:decorated_definition:LanguageSpec",
+        "callee": "chunking/language_registry.py:function:_ts_loader",
+        "class": "no_syntactic_call",
+        "name": "_ts_loader",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "chunking/language_registry.py:decorated_definition:LanguageSpec",
+        "callee": "chunking/language_registry.py:function:_tsx_loader",
+        "class": "no_syntactic_call",
+        "name": "_tsx_loader",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "chunking/languages/_c_family.py:function:unwrap_declarator_name",
+        "callee": "chunking/languages/c.py:method:CChunker.extract_metadata",
+        "class": "no_syntactic_call",
+        "name": "extract_metadata",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "chunking/languages/_c_family.py:function:unwrap_declarator_name",
+        "callee": "chunking/languages/cpp.py:method:CppChunker.extract_metadata",
+        "class": "no_syntactic_call",
+        "name": "extract_metadata",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "chunking/languages/_c_family.py:method:_CFamilyChunker.preprocess_source_for_parse",
+        "callee": "chunking/languages/cpp.py:method:CudaChunker._neutralize",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/languages/_c_family.py:method:_CFamilyChunker._neutralize"
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker._apply_complexity_score",
+        "callee": "chunking/languages/glsl.py:method:GLSLChunker.get_node_complexity",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/languages/base.py:method:LanguageChunker.get_node_complexity"
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker._apply_complexity_score",
+        "callee": "chunking/languages/python.py:method:PythonChunker.get_node_complexity",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/languages/base.py:method:LanguageChunker.get_node_complexity"
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker._child_is_chunked",
+        "callee": "chunking/languages/cpp.py:method:CppChunker.should_chunk_node",
+        "class": "wrapper_routed",
+        "wrapper": "chunking/languages/cpp.py:method:CppChunker.should_chunk_node",
+        "collapsed": [
+          "chunking/languages/base.py:method:LanguageChunker._child_is_chunked",
+          "chunking/languages/base.py:method:LanguageChunker.should_chunk_node"
+        ]
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker._child_is_chunked",
+        "callee": "chunking/languages/glsl.py:method:GLSLChunker.should_chunk_node",
+        "class": "wrapper_routed",
+        "wrapper": "chunking/languages/glsl.py:method:GLSLChunker.should_chunk_node",
+        "collapsed": [
+          "chunking/languages/base.py:method:LanguageChunker._child_is_chunked",
+          "chunking/languages/base.py:method:LanguageChunker.should_chunk_node"
+        ]
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker._create_split_chunk",
+        "callee": "chunking/languages/python.py:method:PythonChunker.extract_metadata",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/languages/base.py:method:LanguageChunker.extract_metadata"
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker._load_language",
+        "callee": "chunking/language_registry.py:decorated_definition:LanguageSpec",
+        "class": "via_external",
+        "name": "LanguageSpec",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker._split_large_node",
+        "callee": "chunking/languages/python.py:method:PythonChunker._extract_signature",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/languages/base.py:method:LanguageChunker._extract_signature"
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker._split_large_node",
+        "callee": "chunking/languages/python.py:method:PythonChunker._get_block_boundary_types",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/languages/base.py:method:LanguageChunker._get_block_boundary_types"
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker.chunk_code",
+        "callee": "chunking/languages/_c_family.py:method:_CFamilyChunker.preprocess_source_for_parse",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/languages/base.py:method:LanguageChunker.preprocess_source_for_parse"
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker.chunk_parsed",
+        "callee": "chunking/languages/c.py:method:CChunker.extract_metadata",
+        "class": "wrapper_routed",
+        "wrapper": "chunking/languages/c.py:method:CChunker.extract_metadata",
+        "collapsed": [
+          "chunking/languages/base.py:method:LanguageChunker.chunk_parsed",
+          "chunking/languages/base.py:method:LanguageChunker.get_node_text"
+        ]
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker.chunk_parsed",
+        "callee": "chunking/languages/cpp.py:method:CppChunker.extract_metadata",
+        "class": "wrapper_routed",
+        "wrapper": "chunking/languages/cpp.py:method:CppChunker.extract_metadata",
+        "collapsed": [
+          "chunking/languages/base.py:method:LanguageChunker.chunk_parsed",
+          "chunking/languages/base.py:method:LanguageChunker.get_node_text"
+        ]
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker.chunk_parsed",
+        "callee": "chunking/languages/cpp.py:method:CppChunker.should_chunk_node",
+        "class": "wrapper_routed",
+        "wrapper": "chunking/languages/cpp.py:method:CppChunker.should_chunk_node",
+        "collapsed": [
+          "chunking/languages/base.py:method:LanguageChunker.chunk_parsed",
+          "chunking/languages/base.py:method:LanguageChunker.should_chunk_node"
+        ]
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker.chunk_parsed",
+        "callee": "chunking/languages/glsl.py:method:GLSLChunker.extract_metadata",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/languages/base.py:method:LanguageChunker.extract_metadata"
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker.chunk_parsed",
+        "callee": "chunking/languages/glsl.py:method:GLSLChunker.should_chunk_node",
+        "class": "wrapper_routed",
+        "wrapper": "chunking/languages/glsl.py:method:GLSLChunker.should_chunk_node",
+        "collapsed": [
+          "chunking/languages/base.py:method:LanguageChunker.chunk_parsed",
+          "chunking/languages/base.py:method:LanguageChunker.should_chunk_node"
+        ]
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker.chunk_parsed",
+        "callee": "chunking/languages/python.py:method:PythonChunker.extract_metadata",
+        "class": "wrapper_routed",
+        "wrapper": "chunking/languages/python.py:method:PythonChunker.extract_metadata",
+        "collapsed": [
+          "chunking/languages/base.py:method:LanguageChunker.chunk_parsed",
+          "chunking/languages/base.py:method:LanguageChunker.get_node_text"
+        ]
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker.extract_metadata",
+        "callee": "chunking/languages/csharp.py:method:CSharpChunker._extra_metadata",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/languages/base.py:method:LanguageChunker._extra_metadata"
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker.extract_metadata",
+        "callee": "chunking/languages/go.py:method:GoChunker._extra_metadata",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/languages/base.py:method:LanguageChunker._extra_metadata"
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker.extract_metadata",
+        "callee": "chunking/languages/javascript.py:method:JavaScriptChunker._extra_metadata",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/languages/base.py:method:LanguageChunker._extra_metadata"
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker.extract_metadata",
+        "callee": "chunking/languages/rust.py:method:RustChunker._extra_metadata",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/languages/base.py:method:LanguageChunker._extra_metadata"
+      },
+      {
+        "caller": "chunking/languages/base.py:method:LanguageChunker.extract_metadata",
+        "callee": "chunking/languages/typescript.py:method:TypeScriptChunker._extra_metadata",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/languages/base.py:method:LanguageChunker._extra_metadata"
+      },
+      {
+        "caller": "chunking/multi_language_chunker.py:method:MultiLanguageChunker._convert_tree_chunks",
+        "callee": "chunking/dedent_utils.py:method:smart_dedent",
+        "class": "no_syntactic_call",
+        "name": "smart_dedent",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "chunking/multi_language_chunker.py:method:MultiLanguageChunker._extract_phase3_relationships",
+        "callee": "chunking/dedent_utils.py:method:smart_dedent",
+        "class": "via_external",
+        "name": "smart_dedent",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "chunking/relationships/call_graph_extractor.py:decorated_definition:CallGraphExtractorFactory.create",
+        "callee": "chunking/relationships/call_graph_extractor.py:class:PythonCallGraphExtractor",
+        "class": "no_syntactic_call",
+        "name": "PythonCallGraphExtractor",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "chunking/relationships/external_call_graph.py:method:_TrackedVisitor._prescan_one",
+        "callee": "utils/progress.py:decorated_definition:heartbeat",
+        "class": "no_syntactic_call",
+        "name": "heartbeat",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "chunking/relationships/external_call_graph.py:method:_TrackedVisitor.process_one",
+        "callee": "utils/progress.py:decorated_definition:heartbeat",
+        "class": "no_syntactic_call",
+        "name": "heartbeat",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "chunking/relationships/lsp_call_graph.py:method:LSPResolver._session",
+        "callee": "chunking/relationships/lsp_call_graph.py:decorated_definition:_LspClient.deadline_exceeded",
+        "class": "wrapper_routed",
+        "wrapper": "chunking/relationships/lsp_call_graph.py:method:LSPResolver._session",
+        "collapsed": [
+          "chunking/relationships/lsp_call_graph.py:method:LSPResolver._run_lsp",
+          "chunking/relationships/lsp_call_graph.py:decorated_definition:_LspClient.deadline_exceeded"
+        ]
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/class_attr_extractor.py:method:ClassAttributeExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/constant_extractor.py:method:ConstantExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/constant_extractor.py:method:ConstantExtractor._reset_state",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor._reset_state"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/context_manager_extractor.py:method:ContextManagerExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/dataclass_field_extractor.py:method:DataclassFieldExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/decorator_extractor.py:method:DecoratorExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/default_param_extractor.py:method:DefaultParameterExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/enum_extractor.py:method:EnumMemberExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/exception_extractor.py:method:ExceptionExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/global_extractor.py:method:GlobalUsageExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/implements_extractor.py:method:ImplementsExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/import_extractor.py:method:ImportExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/inheritance_extractor.py:method:InheritanceExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/instantiation_extractor.py:method:InstantiationExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/override_extractor.py:method:OverrideExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/type_assertion_extractor.py:method:TypeAssertionExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract",
+        "callee": "chunking/relationships/relationship_extractors/type_extractor.py:method:TypeAnnotationExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/class_attr_extractor.py:method:ClassAttributeExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/constant_extractor.py:method:ConstantExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/constant_extractor.py:method:ConstantExtractor._reset_state",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor._reset_state"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/context_manager_extractor.py:method:ContextManagerExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/dataclass_field_extractor.py:method:DataclassFieldExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/decorator_extractor.py:method:DecoratorExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/default_param_extractor.py:method:DefaultParameterExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/enum_extractor.py:method:EnumMemberExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/exception_extractor.py:method:ExceptionExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/global_extractor.py:method:GlobalUsageExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/implements_extractor.py:method:ImplementsExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/import_extractor.py:method:ImportExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/inheritance_extractor.py:method:InheritanceExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/instantiation_extractor.py:method:InstantiationExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/override_extractor.py:method:OverrideExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/type_assertion_extractor.py:method:TypeAssertionExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/relationships/relationship_extractors/base_extractor.py:method:BaseRelationshipExtractor.extract_from_tree",
+        "callee": "chunking/relationships/relationship_extractors/type_extractor.py:method:TypeAnnotationExtractor._extract_from_tree",
+        "class": "dynamic_dispatch",
+        "static_target": "chunking/relationships/relationship_extractors/base_extractor.py:decorated_definition:BaseRelationshipExtractor._extract_from_tree"
+      },
+      {
+        "caller": "chunking/repo_profiler.py:function:profile_parsed",
+        "callee": "chunking/languages/base.py:decorated_definition:LanguageChunker.function_node_types",
+        "class": "via_external",
+        "name": "function_node_types",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "chunking/repo_profiler.py:function:profile_parsed",
+        "callee": "chunking/languages/glsl.py:decorated_definition:GLSLChunker.function_node_types",
+        "class": "via_external",
+        "name": "function_node_types",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "chunking/tree_sitter.py:class:TreeSitterChunker",
+        "callee": "chunking/languages/c.py:class:CChunker",
+        "class": "class_body_eval",
+        "callee_kind": "class"
+      },
+      {
+        "caller": "chunking/tree_sitter.py:class:TreeSitterChunker",
+        "callee": "chunking/languages/cpp.py:class:CppChunker",
+        "class": "class_body_eval",
+        "callee_kind": "class"
+      },
+      {
+        "caller": "chunking/tree_sitter.py:class:TreeSitterChunker",
+        "callee": "chunking/languages/csharp.py:class:CSharpChunker",
+        "class": "class_body_eval",
+        "callee_kind": "class"
+      },
+      {
+        "caller": "chunking/tree_sitter.py:class:TreeSitterChunker",
+        "callee": "chunking/languages/glsl.py:class:GLSLChunker",
+        "class": "class_body_eval",
+        "callee_kind": "class"
+      },
+      {
+        "caller": "chunking/tree_sitter.py:class:TreeSitterChunker",
+        "callee": "chunking/languages/go.py:class:GoChunker",
+        "class": "class_body_eval",
+        "callee_kind": "class"
+      },
+      {
+        "caller": "chunking/tree_sitter.py:class:TreeSitterChunker",
+        "callee": "chunking/languages/javascript.py:class:JavaScriptChunker",
+        "class": "class_body_eval",
+        "callee_kind": "class"
+      },
+      {
+        "caller": "chunking/tree_sitter.py:class:TreeSitterChunker",
+        "callee": "chunking/languages/python.py:class:PythonChunker",
+        "class": "class_body_eval",
+        "callee_kind": "class"
+      },
+      {
+        "caller": "chunking/tree_sitter.py:class:TreeSitterChunker",
+        "callee": "chunking/languages/rust.py:class:RustChunker",
+        "class": "class_body_eval",
+        "callee_kind": "class"
+      },
+      {
+        "caller": "chunking/tree_sitter.py:class:TreeSitterChunker",
+        "callee": "chunking/languages/typescript.py:class:TypeScriptChunker",
+        "class": "class_body_eval",
+        "callee_kind": "class"
+      },
+      {
+        "caller": "chunking/tree_sitter.py:method:TreeSitterChunker.chunk_parsed",
+        "callee": "chunking/languages/base.py:method:LanguageChunker.chunk_parsed",
+        "class": "name_only_unresolved",
+        "phantom": [
+          "LanguageChunker.chunk_parsed",
+          "chunk_parsed"
+        ]
+      },
+      {
+        "caller": "chunking/tree_sitter.py:method:TreeSitterChunker.get_chunker",
+        "callee": "chunking/tree_sitter.py:class:TreeSitterChunker",
+        "class": "no_syntactic_call",
+        "name": "TreeSitterChunker",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "chunking/tree_sitter.py:method:TreeSitterChunker.parse_file",
+        "callee": "chunking/languages/_c_family.py:method:_CFamilyChunker.preprocess_source_for_parse",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "chunking/tree_sitter.py:method:TreeSitterChunker.parse_file",
+        "callee": "chunking/languages/base.py:method:LanguageChunker.preprocess_source_for_parse",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "chunking/tree_sitter.py:method:TreeSitterChunker.parse_file",
+        "callee": "chunking/languages/glsl.py:method:GLSLChunker.preprocess_source_for_parse",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "embeddings/embedder.py:method:CodeEmbedder._log_chunk_cache_stats",
+        "callee": "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.get_stats",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "embeddings/embedder.py:method:CodeEmbedder.cleanup",
+        "callee": "embeddings/embedder.py:method:CodeEmbedder.__del__",
+        "class": "no_syntactic_call",
+        "name": "__del__",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "embeddings/embedder.py:method:CodeEmbedder.embed_chunks",
+        "callee": "embeddings/embedder.py:decorated_definition:CodeEmbedder.model",
+        "class": "via_external",
+        "name": "model",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "embeddings/embedder.py:method:CodeEmbedder.embed_chunks",
+        "callee": "embeddings/embedder.py:method:CodeEmbedder.__del__",
+        "class": "no_syntactic_call",
+        "name": "__del__",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "embeddings/model_cache.py:method:ModelCacheManager.ensure_split_cache_symlink",
+        "callee": "embeddings/embedder.py:method:CodeEmbedder._get_model_config",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "embeddings/model_cache.py:method:ModelCacheManager.find_local_model_dir",
+        "callee": "embeddings/embedder.py:method:CodeEmbedder._get_model_config",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "embeddings/model_cache.py:method:ModelCacheManager.validate_cache",
+        "callee": "embeddings/embedder.py:method:CodeEmbedder._get_model_config",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "embeddings/model_loader.py:method:ModelLoader._build_constructor_kwargs",
+        "callee": "embeddings/embedder.py:method:CodeEmbedder._get_model_config",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "evaluation/tracer/build.py:method:build_traced_callgraph",
+        "callee": "evaluation/tracer/build.py:decorated_definition:Intersection",
+        "class": "no_syntactic_call",
+        "name": "Intersection",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/index_freshness.py:function:compute_index_freshness",
+        "callee": "merkle/change_detector.py:decorated_definition:FileChanges",
+        "class": "no_syntactic_call",
+        "name": "FileChanges",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/resource_manager.py:function:initialize_server_state",
+        "callee": "search/config.py:method:SearchConfigManager.load_config",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:error_handler",
+        "callee": "mcp_server/tools/decorators.py:function:require_indexed_project",
+        "class": "no_syntactic_call",
+        "name": "require_indexed_project",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:error_handler",
+        "callee": "mcp_server/tools/decorators.py:function:with_mutation_lock",
+        "class": "no_syntactic_call",
+        "name": "with_mutation_lock",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:error_handler",
+        "callee": "mcp_server/tools/index_handlers.py:decorated_definition:handle_index_directory",
+        "class": "no_syntactic_call",
+        "name": "handle_index_directory",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:error_handler",
+        "callee": "mcp_server/tools/status_handlers.py:decorated_definition:handle_cleanup_resources",
+        "class": "no_syntactic_call",
+        "name": "handle_cleanup_resources",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:error_handler",
+        "callee": "mcp_server/tools/status_handlers.py:decorated_definition:handle_get_search_config_status",
+        "class": "no_syntactic_call",
+        "name": "handle_get_search_config_status",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:error_handler",
+        "callee": "mcp_server/tools/status_handlers.py:decorated_definition:handle_list_embedding_models",
+        "class": "no_syntactic_call",
+        "name": "handle_list_embedding_models",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:error_handler",
+        "callee": "mcp_server/tools/status_handlers.py:method:handle_get_index_status",
+        "class": "wrapper_routed",
+        "wrapper": "mcp_server/tools/status_handlers.py:method:handle_get_index_status",
+        "collapsed": [
+          "mcp_server/tools/decorators.py:function:error_handler",
+          "mcp_server/tools/responses.py:function:error"
+        ]
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:error_handler",
+        "callee": "mcp_server/tools/status_handlers.py:method:handle_get_memory_status",
+        "class": "no_syntactic_call",
+        "name": "handle_get_memory_status",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:error_handler",
+        "callee": "mcp_server/tools/status_handlers.py:method:handle_list_projects",
+        "class": "no_syntactic_call",
+        "name": "handle_list_projects",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:require_indexed_project",
+        "callee": "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections",
+        "class": "no_syntactic_call",
+        "name": "handle_find_connections",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:require_indexed_project",
+        "callee": "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code",
+        "class": "no_syntactic_call",
+        "name": "handle_find_similar_code",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:require_indexed_project",
+        "callee": "mcp_server/tools/search_handlers.py:decorated_definition:handle_search_code",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:require_indexed_project",
+        "callee": "mcp_server/tools/search_handlers.py:method:handle_find_path",
+        "class": "no_syntactic_call",
+        "name": "handle_find_path",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:with_mutation_lock",
+        "callee": "mcp_server/state.py:decorated_definition:ApplicationState",
+        "class": "via_external",
+        "name": "ApplicationState",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:with_mutation_lock",
+        "callee": "mcp_server/tools/config_handlers.py:decorated_definition:handle_configure_chunking",
+        "class": "no_syntactic_call",
+        "name": "handle_configure_chunking",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:with_mutation_lock",
+        "callee": "mcp_server/tools/config_handlers.py:decorated_definition:handle_configure_reranking",
+        "class": "no_syntactic_call",
+        "name": "handle_configure_reranking",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:with_mutation_lock",
+        "callee": "mcp_server/tools/config_handlers.py:decorated_definition:handle_configure_search_mode",
+        "class": "no_syntactic_call",
+        "name": "handle_configure_search_mode",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:with_mutation_lock",
+        "callee": "mcp_server/tools/config_handlers.py:decorated_definition:handle_switch_embedding_model",
+        "class": "no_syntactic_call",
+        "name": "handle_switch_embedding_model",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:with_mutation_lock",
+        "callee": "mcp_server/tools/config_handlers.py:decorated_definition:handle_switch_project",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:with_mutation_lock",
+        "callee": "mcp_server/tools/index_handlers.py:decorated_definition:handle_clear_index",
+        "class": "wrapper_routed",
+        "wrapper": "mcp_server/tools/index_handlers.py:decorated_definition:handle_clear_index",
+        "collapsed": [
+          "mcp_server/tools/decorators.py:function:with_mutation_lock",
+          "mcp_server/state.py:function:get_state"
+        ]
+      },
+      {
+        "caller": "mcp_server/tools/decorators.py:function:with_mutation_lock",
+        "callee": "mcp_server/tools/index_handlers.py:method:handle_delete_project",
+        "class": "via_external",
+        "name": "handle_delete_project",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "mcp_server/tools/index_handlers.py:function:_start_index_directory_job",
+        "callee": "mcp_server/tools/job_registry.py:method:JobRegistry.create",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "mcp_server/tools/index_handlers.py:function:_start_index_directory_job",
+        "callee": "mcp_server/tools/job_registry.py:method:JobRegistry.mark_done",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "mcp_server/tools/index_handlers.py:function:_start_index_directory_job",
+        "callee": "mcp_server/tools/job_registry.py:method:JobRegistry.mark_error",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "mcp_server/tools/index_handlers.py:method:_run_index_directory",
+        "callee": "mcp_server/state.py:decorated_definition:ApplicationState",
+        "class": "no_syntactic_call",
+        "name": "ApplicationState",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/result_view.py:function:_annotate_each",
+        "callee": "mcp_server/tools/result_view.py:function:_enrich_results_with_signatures",
+        "class": "no_syntactic_call",
+        "name": "_enrich_results_with_signatures",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/result_view.py:function:_annotate_each",
+        "callee": "mcp_server/tools/result_view.py:function:_enrich_results_with_top_callers",
+        "class": "no_syntactic_call",
+        "name": "_enrich_results_with_top_callers",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/result_view.py:function:_format_search_results",
+        "callee": "search/reranker.py:decorated_definition:SearchResult",
+        "class": "via_external",
+        "name": "SearchResult",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections",
+        "callee": "search/types.py:decorated_definition:ImpactReport",
+        "class": "no_syntactic_call",
+        "name": "ImpactReport",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/search_handlers.py:function:_resolve_symbol_to_chunk_id",
+        "callee": "mcp_server/tools/searcher_view.py:decorated_definition:SearcherView.graph_storage",
+        "class": "via_external",
+        "name": "graph_storage",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "mcp_server/tools/search_handlers.py:method:handle_find_path",
+        "callee": "mcp_server/tools/searcher_view.py:decorated_definition:SearcherView.graph_storage",
+        "class": "via_external",
+        "name": "graph_storage",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator._assemble",
+        "callee": "mcp_server/tools/searcher_view.py:decorated_definition:SearcherView.index_manager",
+        "class": "via_external",
+        "name": "index_manager",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator._maybe_reindex",
+        "callee": "mcp_server/state.py:decorated_definition:ApplicationState",
+        "class": "no_syntactic_call",
+        "name": "ApplicationState",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator._search",
+        "callee": "mcp_server/tools/searcher_view.py:decorated_definition:SearcherView.index_manager",
+        "class": "via_external",
+        "name": "index_manager",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run",
+        "callee": "mcp_server/state.py:decorated_definition:ApplicationState",
+        "class": "no_syntactic_call",
+        "name": "ApplicationState",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/status_handlers.py:method:handle_get_index_status",
+        "callee": "mcp_server/tools/job_registry.py:decorated_definition:Job",
+        "class": "no_syntactic_call",
+        "name": "Job",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "mcp_server/tools/status_handlers.py:method:handle_get_index_status",
+        "callee": "mcp_server/tools/searcher_view.py:decorated_definition:SearcherView.is_hybrid",
+        "class": "via_external",
+        "name": "is_hybrid",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "mcp_server/tools/status_handlers.py:method:handle_get_index_status",
+        "callee": "search/config.py:function:get_search_config",
+        "class": "no_syntactic_call",
+        "name": "get_search_config",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/base_searcher.py:method:BaseSearcher.search",
+        "callee": "search/hybrid_searcher.py:method:HybridSearcher.execute",
+        "class": "dynamic_dispatch",
+        "static_target": "search/base_searcher.py:decorated_definition:BaseSearcher.execute"
+      },
+      {
+        "caller": "search/base_searcher.py:method:BaseSearcher.search",
+        "callee": "search/searcher.py:method:IntelligentSearcher.execute",
+        "class": "dynamic_dispatch",
+        "static_target": "search/base_searcher.py:decorated_definition:BaseSearcher.execute"
+      },
+      {
+        "caller": "search/bm25_index.py:method:BM25Index.load",
+        "callee": "search/bm25_index.py:decorated_definition:BM25Index.size",
+        "class": "via_external",
+        "name": "size",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "search/centrality_ranker.py:method:CentralityRanker.get_centrality_scores",
+        "callee": "graph/graph_storage.py:decorated_definition:CodeGraphStorage.version",
+        "class": "via_external",
+        "name": "version",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "search/config.py:decorated_definition:SearchConfig.from_dict",
+        "callee": "embeddings/embedder.py:method:CodeEmbedder.__del__",
+        "class": "no_syntactic_call",
+        "name": "__del__",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/faiss_index.py:method:FaissVectorIndex.close",
+        "callee": "search/mmap_vectors.py:method:MmapVectorStorage.__del__",
+        "class": "no_syntactic_call",
+        "name": "__del__",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/faiss_index.py:method:FaissVectorIndex.close",
+        "callee": "search/mmap_vectors.py:method:MmapVectorStorage.close",
+        "class": "name_only_unresolved",
+        "phantom": [
+          "MmapVectorStorage.close",
+          "close"
+        ]
+      },
+      {
+        "caller": "search/faiss_index.py:method:FaissVectorIndex.load",
+        "callee": "search/mmap_vectors.py:decorated_definition:MmapVectorStorage.count",
+        "class": "via_external",
+        "name": "count",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "search/graph_scoring_stage.py:method:GraphScoringStage._apply_centrality",
+        "callee": "graph/graph_storage.py:method:CodeGraphStorage.__len__",
+        "class": "no_syntactic_call",
+        "name": "__len__",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/hybrid_searcher.py:method:HybridSearcher.__init__",
+        "callee": "search/base_searcher.py:class:BaseSearcher",
+        "class": "via_external",
+        "name": "BaseSearcher",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "search/hybrid_searcher.py:method:HybridSearcher.__init__",
+        "callee": "search/base_searcher.py:method:BaseSearcher._validate_dimensions",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "search/hybrid_searcher.py:method:HybridSearcher.__init__",
+        "callee": "search/bm25_index.py:decorated_definition:BM25Index.is_empty",
+        "class": "via_external",
+        "name": "is_empty",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "search/hybrid_searcher.py:method:HybridSearcher.__init__",
+        "callee": "search/bm25_index.py:decorated_definition:BM25Index.size",
+        "class": "via_external",
+        "name": "size",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "search/hybrid_searcher.py:method:HybridSearcher.__init__",
+        "callee": "search/hybrid_searcher.py:decorated_definition:HybridSearcher.is_ready",
+        "class": "via_external",
+        "name": "is_ready",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "search/hybrid_searcher.py:method:HybridSearcher.__init__",
+        "callee": "search/indexer.py:decorated_definition:CodeIndexManager.index",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "search/hybrid_searcher.py:method:HybridSearcher.execute",
+        "callee": "search/bm25_index.py:decorated_definition:BM25Index.is_empty",
+        "class": "via_external",
+        "name": "is_empty",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "search/hybrid_searcher.py:method:HybridSearcher.execute",
+        "callee": "search/hybrid_searcher.py:decorated_definition:HybridSearcher.is_ready",
+        "class": "via_external",
+        "name": "is_ready",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "search/hybrid_searcher.py:method:HybridSearcher.execute",
+        "callee": "utils/observability.py:method:_NoopSpan.set_attribute",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "search/hybrid_searcher.py:method:HybridSearcher.execute",
+        "callee": "utils/timing.py:function:timed",
+        "class": "wrapper_routed",
+        "wrapper": "utils/timing.py:function:timed",
+        "collapsed": [
+          "search/hybrid_searcher.py:method:HybridSearcher.execute",
+          "search/multi_hop_searcher.py:method:MultiHopSearcher.search"
+        ]
+      },
+      {
+        "caller": "search/hybrid_searcher.py:method:HybridSearcher.index_documents",
+        "callee": "search/indexer.py:method:CodeIndexManager.add_embeddings",
+        "class": "name_only_unresolved",
+        "phantom": [
+          "CodeIndexManager.add_embeddings",
+          "add_embeddings"
+        ]
+      },
+      {
+        "caller": "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
+        "callee": "search/filters.py:method:PathFilter.should_index_file",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
+        "callee": "search/filters.py:method:PathFilter.unmatched_patterns",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "search/incremental_indexer.py:method:IncrementalIndexer._prune_orphaned_metadata_and_revalidate",
+        "callee": "search/indexer.py:decorated_definition:CodeIndexManager.metadata_store",
+        "class": "via_external",
+        "name": "metadata_store",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "search/incremental_indexer.py:method:IncrementalIndexer._prune_orphaned_metadata_and_revalidate",
+        "callee": "search/indexer.py:method:CodeIndexManager.find_orphaned_metadata_keys",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "search/incremental_indexer.py:method:IncrementalIndexer._prune_orphaned_metadata_and_revalidate",
+        "callee": "search/indexer.py:method:CodeIndexManager.validate_index_consistency",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "search/incremental_indexer.py:method:IncrementalIndexer.incremental_index",
+        "callee": "utils/timing.py:function:timed",
+        "class": "wrapper_routed",
+        "wrapper": "utils/timing.py:function:timed",
+        "collapsed": [
+          "search/incremental_indexer.py:method:IncrementalIndexer.incremental_index",
+          "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks"
+        ]
+      },
+      {
+        "caller": "search/index_probe.py:function:run_rules",
+        "callee": "search/index_probe.py:function:_chunking_workers",
+        "class": "no_syntactic_call",
+        "name": "_chunking_workers",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/index_probe.py:function:run_rules",
+        "callee": "search/index_probe.py:function:_dynamic_batch_max",
+        "class": "no_syntactic_call",
+        "name": "_dynamic_batch_max",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/index_probe.py:function:run_rules",
+        "callee": "search/index_probe.py:function:_embedding_batch_size",
+        "class": "no_syntactic_call",
+        "name": "_embedding_batch_size",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/index_probe.py:function:run_rules",
+        "callee": "search/index_probe.py:function:_embedding_model_mismatch",
+        "class": "no_syntactic_call",
+        "name": "_embedding_model_mismatch",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/index_probe.py:function:run_rules",
+        "callee": "search/index_probe.py:function:_embedding_model_reason",
+        "class": "no_syntactic_call",
+        "name": "_embedding_model_reason",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/index_probe.py:function:run_rules",
+        "callee": "search/index_probe.py:function:_glsl_present",
+        "class": "no_syntactic_call",
+        "name": "_glsl_present",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/index_probe.py:function:run_rules",
+        "callee": "search/index_probe.py:function:_has_gpu",
+        "class": "no_syntactic_call",
+        "name": "_has_gpu",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/index_probe.py:function:run_rules",
+        "callee": "search/index_probe.py:function:_max_split_chars_reason",
+        "class": "no_syntactic_call",
+        "name": "_max_split_chars_reason",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/index_probe.py:function:run_rules",
+        "callee": "search/index_probe.py:function:_reranker_below_floor",
+        "class": "no_syntactic_call",
+        "name": "_reranker_below_floor",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/index_probe.py:function:run_rules",
+        "callee": "search/index_probe.py:function:_reranker_below_floor_reason",
+        "class": "no_syntactic_call",
+        "name": "_reranker_below_floor_reason",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/index_write_stage.py:method:IndexWriteStage.finalize",
+        "callee": "search/incremental_indexer.py:method:IncrementalIndexer._build_snapshot_metadata",
+        "class": "no_syntactic_call",
+        "name": "_build_snapshot_metadata",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/index_write_stage.py:method:IndexWriteStage.finalize",
+        "callee": "search/incremental_indexer.py:method:IncrementalIndexer._clear_gpu_cache",
+        "class": "no_syntactic_call",
+        "name": "_clear_gpu_cache",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/index_write_stage.py:method:IndexWriteStage.inject_call_edges",
+        "callee": "search/call_edge_injection.py:method:inject_call_edges",
+        "class": "name_only_unresolved",
+        "phantom": [
+          "inject_call_edges"
+        ]
+      },
+      {
+        "caller": "search/index_write_stage.py:method:IndexWriteStage.run",
+        "callee": "search/incremental_indexer.py:method:IncrementalIndexer._clear_gpu_cache",
+        "class": "no_syntactic_call",
+        "name": "_clear_gpu_cache",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/indexer.py:method:CodeIndexManager.add_embeddings",
+        "callee": "search/faiss_index.py:decorated_definition:FaissVectorIndex.ntotal",
+        "class": "via_external",
+        "name": "ntotal",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "search/indexer.py:method:CodeIndexManager.add_embeddings",
+        "callee": "search/graph_integration.py:decorated_definition:GraphIntegration.is_available",
+        "class": "via_external",
+        "name": "is_available",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "search/indexer.py:method:CodeIndexManager.add_embeddings",
+        "callee": "search/indexer.py:decorated_definition:CodeIndexManager.index",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "search/indexer.py:method:CodeIndexManager.add_embeddings",
+        "callee": "search/indexer.py:decorated_definition:CodeIndexManager.metadata_store",
+        "class": "via_external",
+        "name": "metadata_store",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "search/indexer.py:method:CodeIndexManager.validate_index_consistency",
+        "callee": "search/metadata.py:method:MetadataStore.__len__",
+        "class": "no_syntactic_call",
+        "name": "__len__",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/multi_hop_searcher.py:method:MultiHopSearcher.search",
+        "callee": "search/hybrid_searcher.py:method:HybridSearcher._single_hop_search",
+        "class": "unclassified",
+        "source_available": true
+      },
+      {
+        "caller": "search/multi_hop_searcher.py:method:MultiHopSearcher.search",
+        "callee": "search/rerank_window_policy.py:decorated_definition:RerankWindowPolicy",
+        "class": "via_external",
+        "name": "RerankWindowPolicy",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "search/neural_reranker.py:method:BaseReranker.cleanup",
+        "callee": "search/neural_reranker.py:method:GenerativeReranker._cleanup_extra",
+        "class": "dynamic_dispatch",
+        "static_target": "search/neural_reranker.py:method:BaseReranker._cleanup_extra"
+      },
+      {
+        "caller": "search/neural_reranker.py:method:BaseReranker.cleanup",
+        "callee": "search/neural_reranker.py:method:JinaRerankerV3._cleanup_extra",
+        "class": "dynamic_dispatch",
+        "static_target": "search/neural_reranker.py:method:BaseReranker._cleanup_extra"
+      },
+      {
+        "caller": "search/neural_reranker.py:method:JinaRerankerV3.rerank",
+        "callee": "search/neural_reranker.py:decorated_definition:JinaRerankerV3.model",
+        "class": "via_external",
+        "name": "model",
+        "heuristic": "referenced-not-called"
+      },
+      {
+        "caller": "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_forward",
+        "callee": "search/relationship_analyzer.py:method:RelationshipAnalyzer._build_graph_relationships",
+        "class": "no_syntactic_call",
+        "name": "_build_graph_relationships",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_reverse",
+        "callee": "search/relationship_analyzer.py:method:RelationshipAnalyzer._build_graph_relationships",
+        "class": "no_syntactic_call",
+        "name": "_build_graph_relationships",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "search/search_executor.py:method:SearchExecutor._build_variant_legs",
+        "callee": "utils/timing.py:function:timed",
+        "class": "wrapper_routed",
+        "wrapper": "utils/timing.py:function:timed",
+        "collapsed": [
+          "search/search_executor.py:method:SearchExecutor._build_variant_legs",
+          "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25"
+        ]
+      },
+      {
+        "caller": "search/search_executor.py:method:SearchExecutor._sequential_search",
+        "callee": "utils/timing.py:function:timed",
+        "class": "wrapper_routed",
+        "wrapper": "utils/timing.py:function:timed",
+        "collapsed": [
+          "search/search_executor.py:method:SearchExecutor._sequential_search",
+          "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25"
+        ]
+      },
+      {
+        "caller": "search/search_executor.py:method:SearchExecutor.execute_single_hop",
+        "callee": "utils/timing.py:function:timed",
+        "class": "wrapper_routed",
+        "wrapper": "utils/timing.py:function:timed",
+        "collapsed": [
+          "search/search_executor.py:method:SearchExecutor.execute_single_hop",
+          "search/reranking_engine.py:decorated_definition:RerankingEngine.apply_neural_reranking"
+        ]
+      },
+      {
+        "caller": "utils/timing.py:function:timed",
+        "callee": "embeddings/embedder.py:decorated_definition:CodeEmbedder.embed_query",
+        "class": "no_syntactic_call",
+        "name": "embed_query",
+        "heuristic": "name-absent"
+      },
+      {
+        "caller": "utils/timing.py:function:timed",
+        "callee": "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks",
+        "class": "wrapper_routed",
+        "wrapper": "utils/timing.py:function:timed",
+        "collapsed": [
+          "search/incremental_indexer.py:method:IncrementalIndexer.incremental_index",
+          "search/incremental_indexer.py:decorated_definition:IncrementalIndexer._add_new_chunks"
+        ]
+      },
+      {
+        "caller": "utils/timing.py:function:timed",
+        "callee": "search/multi_hop_searcher.py:method:MultiHopSearcher.search",
+        "class": "wrapper_routed",
+        "wrapper": "utils/timing.py:function:timed",
+        "collapsed": [
+          "search/hybrid_searcher.py:method:HybridSearcher.execute",
+          "search/multi_hop_searcher.py:method:MultiHopSearcher.search"
+        ]
+      },
+      {
+        "caller": "utils/timing.py:function:timed",
+        "callee": "search/reranking_engine.py:decorated_definition:RerankingEngine.apply_neural_reranking",
+        "class": "wrapper_routed",
+        "wrapper": "utils/timing.py:function:timed",
+        "collapsed": [
+          "search/search_executor.py:method:SearchExecutor.execute_single_hop",
+          "search/reranking_engine.py:decorated_definition:RerankingEngine.apply_neural_reranking"
+        ]
+      },
+      {
+        "caller": "utils/timing.py:function:timed",
+        "callee": "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25",
+        "class": "wrapper_routed",
+        "wrapper": "utils/timing.py:function:timed",
+        "collapsed": [
+          "search/search_executor.py:method:SearchExecutor._build_variant_legs",
+          "search/search_executor.py:decorated_definition:SearchExecutor.search_bm25"
+        ]
+      },
+      {
+        "caller": "utils/timing.py:function:timed",
+        "callee": "search/search_executor.py:decorated_definition:SearchExecutor.search_dense",
+        "class": "wrapper_routed",
+        "wrapper": "utils/timing.py:function:timed",
+        "collapsed": [
+          "search/search_executor.py:method:SearchExecutor._build_variant_legs",
+          "search/search_executor.py:decorated_definition:SearchExecutor.search_dense"
+        ]
+      }
+    ]
+  },
+  "blind_spots": [
+    "tests/ is not indexed: test-to-project calls are recorded only in test_edges and never scored",
+    "dataclass-generated __init__ has co_filename '<string>' and is external: instantiation of such classes is unwitnessed",
+    "threads started before the profiler installed are untraceable on Python 3.11",
+    "C-implemented callables create no Python frame: a callback passed to sorted()/map() shows as a direct edge from the caller"
+  ],
+  "index": {
+    "project_dir": "C:\\Users\\Inter\\.claude_code_search\\projects\\claude-context-local_9e7f0a98_f2llm-v2-0.6b_1024d",
+    "metadata_db": "C:\\Users\\Inter\\.claude_code_search\\projects\\claude-context-local_9e7f0a98_f2llm-v2-0.6b_1024d\\index\\metadata.db",
+    "call_graph": "C:\\Users\\Inter\\.claude_code_search\\projects\\claude-context-local_9e7f0a98_f2llm-v2-0.6b_1024d\\claude-context-local_9e7f0a98_f2llm-v2-0.6b_call_graph.json",
+    "chunks": 2760
+  },
+  "traced_file": "evaluation/traced_callgraph.json"
+}

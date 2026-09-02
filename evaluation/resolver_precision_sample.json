@@ -1,0 +1,246 @@
+{
+  "schema": "resolver-precision-sample/1",
+  "instructions": "label each row true (the caller really can call the callee) or false; p\u0302 per tier feeds prec_est(t)",
+  "rows": [
+    {
+      "tier": "lsp",
+      "caller": "chunking/file_summarizer.py:function:collect_symbol_summary",
+      "callee": "chunking/file_summarizer.py:class:SymbolSummary",
+      "label": null
+    },
+    {
+      "tier": "lsp",
+      "caller": "chunking/relationships/lsp_call_graph.py:method:_LspClient.close",
+      "callee": "chunking/relationships/lsp_call_graph.py:function:_kill_process_tree",
+      "label": null
+    },
+    {
+      "tier": "lsp",
+      "caller": "evaluation/index_locator.py:function:paths_for",
+      "callee": "evaluation/index_locator.py:decorated_definition:IndexPaths",
+      "label": null
+    },
+    {
+      "tier": "lsp",
+      "caller": "mcp_server/search_factory.py:function:get_searcher",
+      "callee": "mcp_server/search_factory.py:function:build_hybrid_searcher",
+      "label": null
+    },
+    {
+      "tier": "lsp",
+      "caller": "search/config.py:method:SearchConfig.__init__",
+      "callee": "search/config.py:decorated_definition:MultiHopConfig",
+      "label": null
+    },
+    {
+      "tier": "lsp",
+      "caller": "search/graph_view.py:method:GraphView.in_edges",
+      "callee": "search/graph_view.py:decorated_definition:EdgeRecord",
+      "label": null
+    },
+    {
+      "tier": "lsp",
+      "caller": "search/hybrid_searcher.py:method:HybridSearcher.index_documents",
+      "callee": "search/indexer.py:class:CodeIndexManager",
+      "label": null
+    },
+    {
+      "tier": "lsp",
+      "caller": "search/index_sync.py:method:IndexSynchronizer.clear_index",
+      "callee": "search/indexer.py:method:CodeIndexManager.preflight_clear",
+      "label": null
+    },
+    {
+      "tier": "lsp",
+      "caller": "search/indexer.py:method:CodeIndexManager.get_similar_chunks",
+      "callee": "search/indexer.py:method:CodeIndexManager.search",
+      "label": null
+    },
+    {
+      "tier": "lsp",
+      "caller": "search/reranking_engine.py:method:RerankingEngine._run_rerank",
+      "callee": "search/neural_reranker.py:class:GenerativeReranker",
+      "label": null
+    },
+    {
+      "tier": "libcst",
+      "caller": "chunking/multi_language_chunker.py:method:MultiLanguageChunker._init_thread_extractors",
+      "callee": "chunking/relationships/relationship_extractors/registry.py:decorated_definition:ExtractorContext",
+      "label": null
+    },
+    {
+      "tier": "libcst",
+      "caller": "mcp_server/resource_manager.py:function:_cleanup_previous_resources",
+      "callee": "utils/observability.py:method:_NoopExporter.force_flush",
+      "label": null
+    },
+    {
+      "tier": "libcst",
+      "caller": "mcp_server/search_factory.py:function:get_searcher",
+      "callee": "search/dimension_validator.py:function:validate_embedder_index_compatibility",
+      "label": null
+    },
+    {
+      "tier": "libcst",
+      "caller": "mcp_server/tools/config_handlers.py:decorated_definition:handle_configure_reranking",
+      "callee": "search/config.py:function:get_config_manager",
+      "label": null
+    },
+    {
+      "tier": "libcst",
+      "caller": "mcp_server/tools/index_handlers.py:decorated_definition:handle_clear_index",
+      "callee": "mcp_server/tools/decorators.py:function:error_handler",
+      "label": null
+    },
+    {
+      "tier": "libcst",
+      "caller": "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_connections",
+      "callee": "mcp_server/tools/responses.py:function:error",
+      "label": null
+    },
+    {
+      "tier": "libcst",
+      "caller": "mcp_server/tools/search_orchestrator.py:method:SearchOrchestrator.run",
+      "callee": "mcp_server/tools/search_handlers.py:decorated_definition:handle_find_similar_code",
+      "label": null
+    },
+    {
+      "tier": "libcst",
+      "caller": "search/faiss_index.py:method:FaissVectorIndex.create",
+      "callee": "search/exceptions.py:class:IndexError",
+      "label": null
+    },
+    {
+      "tier": "libcst",
+      "caller": "search/graph_integration.py:method:GraphIntegration.add_chunk",
+      "callee": "chunking/relationships/relationship_types.py:decorated_definition:RelationshipEdge",
+      "label": null
+    },
+    {
+      "tier": "libcst",
+      "caller": "search/incremental_indexer.py:method:IncrementalIndexer.__init__",
+      "callee": "embeddings/embedder.py:class:CodeEmbedder",
+      "label": null
+    },
+    {
+      "tier": "pyan",
+      "caller": "chunking/file_summarizer.py:function:generate_file_summaries",
+      "callee": "chunking/python_ast_chunker.py:decorated_definition:CodeChunk",
+      "label": null
+    },
+    {
+      "tier": "pyan",
+      "caller": "chunking/relationships/relationship_extractors/context_manager_extractor.py:method:ContextManagerExtractor.__init__",
+      "callee": "chunking/relationships/relationship_types.py:class:RelationshipType",
+      "label": null
+    },
+    {
+      "tier": "pyan",
+      "caller": "embeddings/embedder.py:method:CodeEmbedder.cleanup",
+      "callee": "embeddings/model_loader.py:class:ModelLoader",
+      "label": null
+    },
+    {
+      "tier": "pyan",
+      "caller": "graph/graph_storage.py:method:CodeGraphStorage.clear",
+      "callee": "graph/graph_storage.py:class:CodeGraphStorage",
+      "label": null
+    },
+    {
+      "tier": "pyan",
+      "caller": "mcp_server/tools/result_view.py:function:enrich_results",
+      "callee": "mcp_server/tools/result_view.py:decorated_definition:ResultEnricher",
+      "label": null
+    },
+    {
+      "tier": "pyan",
+      "caller": "scripts/benchmark/run_sscg_benchmark.py:function:_overrides_from_args",
+      "callee": "scripts/benchmark/run_sscg_benchmark.py:decorated_definition:_Knob",
+      "label": null
+    },
+    {
+      "tier": "pyan",
+      "caller": "search/filters.py:method:PathFilter._classify",
+      "callee": "search/filters.py:class:MatchKind",
+      "label": null
+    },
+    {
+      "tier": "pyan",
+      "caller": "search/incremental_indexer.py:method:IncrementalIndexer.__init__",
+      "callee": "search/resource_refresh.py:decorated_definition:ResourceRefresher",
+      "label": null
+    },
+    {
+      "tier": "pyan",
+      "caller": "search/index_write_stage.py:method:IndexWriteStage._resolve_chunk_cache",
+      "callee": "search/index_write_stage.py:class:IndexWriteStage",
+      "label": null
+    },
+    {
+      "tier": "pyan",
+      "caller": "search/reranker.py:method:RRFReranker.rerank_tm2c2",
+      "callee": "search/types.py:class:ResultSource",
+      "label": null
+    },
+    {
+      "tier": "ast",
+      "caller": "chunking/file_summarizer.py:function:_build_file_summary",
+      "callee": "search/metadata.py:method:MetadataStore.set",
+      "label": null
+    },
+    {
+      "tier": "ast",
+      "caller": "chunking/relationships/relationship_extractors/decorator_extractor.py:method:DecoratorExtractor._extract_from_tree",
+      "callee": "search/metadata.py:method:MetadataStore.get",
+      "label": null
+    },
+    {
+      "tier": "ast",
+      "caller": "evaluation/metrics.py:function:build_community_membership",
+      "callee": "search/metadata.py:method:MetadataStore.items",
+      "label": null
+    },
+    {
+      "tier": "ast",
+      "caller": "graph/graph_queries.py:method:GraphQueryEngine._traverse_outbound",
+      "callee": "search/metadata.py:method:MetadataStore.set",
+      "label": null
+    },
+    {
+      "tier": "ast",
+      "caller": "mcp_server/tools/config_handlers.py:function:_touched_flat_keys",
+      "callee": "search/symbol_cache.py:method:SymbolHashCache.get",
+      "label": null
+    },
+    {
+      "tier": "ast",
+      "caller": "mcp_server/tools/status_handlers.py:method:handle_get_index_status",
+      "callee": "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.get_stats",
+      "label": null
+    },
+    {
+      "tier": "ast",
+      "caller": "search/config.py:decorated_definition:SearchConfig._apply_model_registry_dimension",
+      "callee": "embeddings/chunk_cache.py:method:ChunkEmbeddingCache.get",
+      "label": null
+    },
+    {
+      "tier": "ast",
+      "caller": "search/hybrid_searcher.py:method:HybridSearcher._load_bm25_index",
+      "callee": "search/faiss_index.py:method:FaissVectorIndex.load",
+      "label": null
+    },
+    {
+      "tier": "ast",
+      "caller": "search/index_write_stage.py:method:IndexWriteStage.add_to_index",
+      "callee": "search/hybrid_searcher.py:method:HybridSearcher.add_embeddings",
+      "label": null
+    },
+    {
+      "tier": "ast",
+      "caller": "search/relationship_analyzer.py:method:RelationshipAnalyzer._enrich_callees",
+      "callee": "search/symbol_cache.py:method:SymbolHashCache.get",
+      "label": null
+    }
+  ]
+}

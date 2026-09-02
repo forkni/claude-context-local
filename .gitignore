@@ -422,3 +422,6 @@ CONTEXT.md
 # Local-only agent/skill state
 .agents/
 skills-lock.json
+
+# WS-B raw tracer runs (regenerable, large)
+evaluation/traced_runs/

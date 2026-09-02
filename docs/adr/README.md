@@ -64,6 +64,7 @@ for avoiding re-litigating settled questions.
 | [0056](0056-spec-row-edge-emission-seam.md) | Spec-row seam (`EDGE_EMISSION_SPECS`) for tree-sitter chunker-native call/relationship edges | accepted | 2026-08-23 |
 | [0057](0057-derive-tool-guard-flags-from-decorators.md) | Derive `ToolSpec.mutation_lock` / `.requires_index` from decorator stamps | accepted | 2026-08-23 |
 | [0058](0058-index-freshness-verdict.md) | Add a content-only `index_is_current` freshness verdict | accepted | 2026-08-30 |
+| [0059](0059-execution-witnessed-callgraph-ground-truth.md) | Execution-witnessed call-graph ground truth for resolver-tier calibration | accepted | 2026-09-02 |
 
 ## Adding a new ADR
 
