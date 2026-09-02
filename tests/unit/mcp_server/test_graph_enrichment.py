@@ -11,6 +11,7 @@ import pytest
 
 from graph.schema import REVERSE_RELATIONS
 from mcp_server.tools.result_view import (
+    _enrich_results_with_top_callees,
     _enrich_results_with_top_callers,
     _get_graph_data_for_chunk,
     _get_reverse_relation_name,
@@ -452,3 +453,132 @@ def test_top_callers_symbol_fallback_fills_remaining_slots_only(
     names = [c["name"] for c in results[0]["top_callers"]]
     assert names[0] == "handle_request"  # chunk tier always first
     assert len(names) == 2
+
+
+# ---------------------------------------------------------------------------
+# _enrich_results_with_top_callees (A5 top-callee hints)
+# ---------------------------------------------------------------------------
+
+_CALLER = "svc.py:1-40:function:run"
+
+
+@pytest.fixture
+def callee_index_manager():
+    """MultiDiGraph with one caller chunk, three callee chunks, one phantom."""
+    manager = MagicMock()
+    storage = MagicMock()
+    g = nx.MultiDiGraph()
+    g.add_node(_CALLER, name="run", type="function", file="svc.py")
+    for cid, name in [
+        ("auth.py:10-50:function:login", "login"),
+        ("db.py:5-15:function:connect", "connect"),
+        ("log.py:1-9:function:emit", "emit"),
+    ]:
+        g.add_node(cid, name=name, type="function")
+    g.add_node("fmt", name="fmt", type="symbol_name", is_target_name=True)
+    storage.graph = g
+    manager.graph_storage = storage
+    return manager
+
+
+def test_top_callees_basic_attach(callee_index_manager):
+    g = callee_index_manager.graph_storage.graph
+    g.add_edge(_CALLER, "auth.py:10-50:function:login", key="calls", type="calls")
+    results = _enrich_results_with_top_callees([_result(_CALLER)], callee_index_manager)
+    assert results[0]["top_callees"] == [{"name": "login", "file": "auth.py"}]
+
+
+def test_top_callees_cap_at_max(callee_index_manager):
+    g = callee_index_manager.graph_storage.graph
+    for cid in (
+        "auth.py:10-50:function:login",
+        "db.py:5-15:function:connect",
+        "log.py:1-9:function:emit",
+    ):
+        g.add_edge(_CALLER, cid, key="calls", type="calls")
+    results = _enrich_results_with_top_callees([_result(_CALLER)], callee_index_manager)
+    assert len(results[0]["top_callees"]) == 2
+
+
+def test_top_callees_confidence_ordering(callee_index_manager):
+    """Float-confident edges rank first within the chunk tier."""
+    g = callee_index_manager.graph_storage.graph
+    g.add_edge(
+        _CALLER,
+        "auth.py:10-50:function:login",
+        key="calls",
+        type="calls",
+        resolver_confidence=0.7,
+    )
+    g.add_edge(
+        _CALLER,
+        "db.py:5-15:function:connect",
+        key="calls",
+        type="calls",
+        resolver_confidence=0.98,
+    )
+    results = _enrich_results_with_top_callees([_result(_CALLER)], callee_index_manager)
+    assert [c["name"] for c in results[0]["top_callees"]] == ["connect", "login"]
+
+
+def test_top_callees_phantom_targets_rank_below_chunks(callee_index_manager):
+    """A phantom (bare symbol) target is the lower tier even when the chunk
+    edge has no confidence, and renders with an empty file."""
+    g = callee_index_manager.graph_storage.graph
+    g.add_edge(_CALLER, "fmt", key="calls", type="calls", resolver_confidence=0.9)
+    g.add_edge(_CALLER, "auth.py:10-50:function:login", key="calls", type="calls")
+    results = _enrich_results_with_top_callees([_result(_CALLER)], callee_index_manager)
+    assert results[0]["top_callees"] == [
+        {"name": "login", "file": "auth.py"},
+        {"name": "fmt", "file": ""},
+    ]
+
+
+def test_top_callees_phantom_only(callee_index_manager):
+    g = callee_index_manager.graph_storage.graph
+    g.add_edge(_CALLER, "fmt", key="calls", type="calls")
+    results = _enrich_results_with_top_callees([_result(_CALLER)], callee_index_manager)
+    assert results[0]["top_callees"] == [{"name": "fmt", "file": ""}]
+
+
+def test_top_callees_non_calls_edges_filtered(callee_index_manager):
+    g = callee_index_manager.graph_storage.graph
+    g.add_edge(_CALLER, "auth.py:10-50:function:login", key="imports", type="imports")
+    results = _enrich_results_with_top_callees([_result(_CALLER)], callee_index_manager)
+    assert "top_callees" not in results[0]
+
+
+def test_top_callees_self_edge_excluded(callee_index_manager):
+    g = callee_index_manager.graph_storage.graph
+    g.add_edge(_CALLER, _CALLER, key="calls", type="calls")
+    results = _enrich_results_with_top_callees([_result(_CALLER)], callee_index_manager)
+    assert "top_callees" not in results[0]
+
+
+def test_top_callees_dedup_parallel_edges(callee_index_manager):
+    """Two parallel calls edges to the same target yield one hint."""
+    g = callee_index_manager.graph_storage.graph
+    g.add_edge(_CALLER, "auth.py:10-50:function:login", key="calls", type="calls")
+    g.add_edge(_CALLER, "auth.py:10-50:function:login", key="calls2", type="calls")
+    results = _enrich_results_with_top_callees([_result(_CALLER)], callee_index_manager)
+    assert results[0]["top_callees"] == [{"name": "login", "file": "auth.py"}]
+
+
+def test_top_callees_missing_node_no_op(callee_index_manager):
+    results = _enrich_results_with_top_callees(
+        [_result("nope.py:1-2:function:absent")], callee_index_manager
+    )
+    assert "top_callees" not in results[0]
+
+
+def test_top_callees_no_index_manager_no_op():
+    results = _enrich_results_with_top_callees([_result(_CALLER)], None)
+    assert "top_callees" not in results[0]
+
+
+def test_top_callees_does_not_touch_callers(callee_index_manager):
+    """Out-edges only: an in-edge into the result never appears as a callee."""
+    g = callee_index_manager.graph_storage.graph
+    g.add_edge("auth.py:10-50:function:login", _CALLER, key="calls", type="calls")
+    results = _enrich_results_with_top_callees([_result(_CALLER)], callee_index_manager)
+    assert "top_callees" not in results[0]

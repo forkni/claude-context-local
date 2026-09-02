@@ -65,6 +65,22 @@ ENRICHER_SPECS: tuple[EnricherSpec, ...] = (
         ),
     ),
     EnricherSpec(
+        key="top_callees",
+        param="include_top_callees",
+        default=False,
+        description=(
+            "Attach up to 2 top callees per result as top_callees: "
+            "[{name, file}] (default: False). Callees come from the code "
+            "graph's outgoing call edges. Resolved chunk targets rank first "
+            "(resolver-confident edges before discovery order); unresolved "
+            "bare-symbol targets follow with file '' (hint, not a guarantee)."
+        ),
+        rationale=(
+            "request-scoped display opt-in — no config field; the planner "
+            "falls back to this row's default via arg()"
+        ),
+    ),
+    EnricherSpec(
         key="signatures",
         param="include_signatures",
         default=False,

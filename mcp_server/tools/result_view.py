@@ -473,28 +473,100 @@ def _enrich_results_with_top_callers(
         ):
             symbol_candidates = _collect(symbol_name, seen, normalized)
 
-        if not chunk_candidates and not symbol_candidates:
+        hints = _render_call_hints(
+            graph, chunk_candidates, symbol_candidates, max_callers
+        )
+        if hints:
+            item["top_callers"] = hints
+
+    return _annotate_each(
+        results,
+        index_manager,
+        storage_attr="graph_storage",
+        skip_ego=False,
+        skip_kinds=frozenset(),
+        annotate=_annotate,
+    )
+
+
+def _render_call_hints(
+    graph,
+    primary: list[tuple[str, dict]],
+    secondary: list[tuple[str, dict]],
+    limit: int,
+) -> list[dict]:
+    """Rank two tiers of ``(node, edge_data)`` candidates and render ``{name, file}``.
+
+    Shared by the caller and callee enrichers. ``primary`` always sorts
+    before ``secondary``; within a tier, float-confident edges first
+    (``resolver_confidence`` descending), the rest keep discovery order via
+    missing-confidence -> 0.0. Node ids without a ``:`` (bare symbol nodes)
+    render with ``file: ""``.
+    """
+    tiered = [(c, False) for c in primary] + [(c, True) for c in secondary]
+    tiered.sort(key=lambda t: (t[1], -(t[0][1].get("resolver_confidence") or 0.0)))
+    hints = []
+    for (node, _), _is_secondary in tiered[:limit]:
+        node_name = graph.nodes[node].get("name") if node in graph else None
+        hints.append(
+            {
+                "name": node_name or (node.rsplit(":", 1)[-1] if ":" in node else node),
+                "file": node.split(":")[0] if ":" in node else "",
+            }
+        )
+    return hints
+
+
+def _enrich_results_with_top_callees(
+    results: list[dict],
+    index_manager: CodeIndexManager | None,
+    max_callees: int = 2,
+) -> list[dict]:
+    """Attach a ``top_callees`` hint (up to ``max_callees``) to each result.
+
+    Mirror of ``_enrich_results_with_top_callers`` over raw outgoing
+    ``calls``-type edges on the chunk_id node. The callers' bare-symbol-node
+    *lookup* fallback has no callee analogue (bare symbol nodes carry no
+    out-edges); instead, unresolved callees appear as out-edges *to* bare
+    symbol (phantom) nodes. Those are the lower tier: resolved chunk targets
+    rank first (``resolver_confidence`` descending, discovery order
+    otherwise), phantom targets follow and render as ``{name, file: ""}``.
+    Skips silently when the graph or node is absent.
+
+    Args:
+        results: List of formatted result dicts
+        index_manager: Index manager with graph storage
+        max_callees: Maximum callee entries per result (default: 2)
+
+    Returns:
+        Results with ``top_callees: [{name, file}]`` added where callees exist
+    """
+    if not index_manager or index_manager.graph_storage is None:
+        return results
+
+    graph = index_manager.graph_storage.graph
+
+    def _annotate(item: dict, chunk_id: str) -> None:
+        normalized = normalize_path(chunk_id)
+        if normalized not in graph:
             return
+        seen: set[str] = set()
+        chunk_targets: list[tuple[str, dict]] = []
+        phantom_targets: list[tuple[str, dict]] = []
+        for _, target, edge_data in graph.out_edges(normalized, data=True):
+            if edge_data.get("type", "calls") != "calls":
+                continue
+            if target in seen or target == normalized:
+                continue
+            seen.add(target)
+            if ":" in target:
+                chunk_targets.append((target, edge_data))
+            else:
+                phantom_targets.append((target, edge_data))
 
-        # Chunk-node tier always sorts before symbol-node tier; within a
-        # tier, float-confident edges first (desc), the rest keep
-        # discovery order via missing-confidence -> 0.0.
-        tiered = [(c, False) for c in chunk_candidates] + [
-            (c, True) for c in symbol_candidates
-        ]
-        tiered.sort(key=lambda t: (t[1], -(t[0][1].get("resolver_confidence") or 0.0)))
-
-        top_callers = []
-        for (source, _), _is_symbol_tier in tiered[:max_callers]:
-            node_name = graph.nodes[source].get("name") if source in graph else None
-            top_callers.append(
-                {
-                    "name": node_name
-                    or (source.rsplit(":", 1)[-1] if ":" in source else source),
-                    "file": source.split(":")[0] if ":" in source else "",
-                }
-            )
-        item["top_callers"] = top_callers
+        hints = _render_call_hints(graph, chunk_targets, phantom_targets, max_callees)
+        if hints:
+            item["top_callees"] = hints
 
     return _annotate_each(
         results,
@@ -553,6 +625,7 @@ class ResultEnricher:
 RESULT_ENRICHERS: tuple[ResultEnricher, ...] = (
     ResultEnricher("graph", "graph", _enrich_results_with_graph_data),
     ResultEnricher("top_callers", "top_callers", _enrich_results_with_top_callers),
+    ResultEnricher("top_callees", "top_callees", _enrich_results_with_top_callees),
     ResultEnricher("signatures", "signature", _enrich_results_with_signatures),
 )
 """Every result enricher, in application order (today's ``_assemble`` order).

@@ -640,7 +640,12 @@ class TestAssembleEnrichmentGates:
         """No plan opt-ins, no config opt-in: every gate is False — byte
         identity with pre-4b behavior."""
         gates = self._run_assemble(_make_plan())
-        assert gates == {"graph": False, "top_callers": False, "signatures": False}
+        assert gates == {
+            "graph": False,
+            "top_callers": False,
+            "top_callees": False,
+            "signatures": False,
+        }
 
     def test_top_callers_opt_in_sets_only_its_gate(self):
         gates = self._run_assemble(
@@ -697,13 +702,29 @@ class TestEnrichmentGatesRegistry:
         refactor."""
         output_cfg = OutputConfig()
         output_cfg.include_result_graph = True
-        plan = _make_plan(display_params={"top_callers": True, "signatures": True})
+        plan = _make_plan(
+            display_params={
+                "top_callers": True,
+                "top_callees": True,
+                "signatures": True,
+            }
+        )
         gates = SearchOrchestrator._enrichment_gates(plan, output_cfg)
-        assert gates == {"graph": True, "top_callers": True, "signatures": True}
+        assert gates == {
+            "graph": True,
+            "top_callers": True,
+            "top_callees": True,
+            "signatures": True,
+        }
 
     def test_enrichment_gates_all_off_by_default(self):
         gates = SearchOrchestrator._enrichment_gates(_make_plan(), OutputConfig())
-        assert gates == {"graph": False, "top_callers": False, "signatures": False}
+        assert gates == {
+            "graph": False,
+            "top_callers": False,
+            "top_callees": False,
+            "signatures": False,
+        }
 
 
 class TestAssembleEnrichmentOwnership:
@@ -716,6 +737,7 @@ class TestAssembleEnrichmentOwnership:
         source = inspect.getsource(SearchOrchestrator._assemble)
         for gate_key in (
             "include_top_callers",
+            "include_top_callees",
             "include_signatures",
             "include_result_graph",
         ):

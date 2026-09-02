@@ -162,6 +162,16 @@ class TestSearchPlannerFieldExtraction:
             plan = SearchPlanner().plan({"query": "test", "include_top_callers": True})
         assert plan.display_params["top_callers"] is True
 
+    def test_include_top_callees_defaults_false(self):
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test"})
+        assert plan.display_params["top_callees"] is False
+
+    def test_include_top_callees_passthrough(self):
+        with _patch_planner_deps():
+            plan = SearchPlanner().plan({"query": "test", "include_top_callees": True})
+        assert plan.display_params["top_callees"] is True
+
     def test_include_signatures_defaults_false(self):
         with _patch_planner_deps():
             plan = SearchPlanner().plan({"query": "test"})

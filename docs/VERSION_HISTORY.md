@@ -28,6 +28,18 @@ Complete version history and feature timeline for claude-context-local MCP serve
 
 ---
 
+## Unreleased - `include_top_callees` on `search_code` (2026-09-02)
+
+### Added (opt-in, default-off, byte-identical)
+
+- **A5 `include_top_callees` on `search_code`** — symmetric twin of `include_top_callers`:
+  attaches up to 2 `{name, file}` callee hints per result from raw call-graph out-edges.
+  Resolved chunk targets rank first (resolver confidence descending), unresolved bare-symbol
+  targets follow with `file: ""`. One `EnricherSpec` row + one `ResultEnricher` row
+  (ADR-0049); the shared tier-sort/render helper is now used by both hint enrichers.
+
+---
+
 ## Unreleased - Retrieval Campaigns: Track A + Remaining Levers (2026-08-14)
 
 Two pre-registered A/B campaigns after v0.25.0, closing out the RAG-improvement roadmap's A-side

@@ -19,7 +19,7 @@ set. This keeps the advertised tool count small without removing the capability.
 
 | Tool | Priority | Purpose | Parameters |
 | ------ | ---------- | --------- | ------------ |
-| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k (no schema default at all — falls back to `get_search_config_status.search_mode.default_k`; `search_config.json.example` sets that to 7), search_mode="auto" (routes by query intent; pass a mode explicitly to force it), file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes (no schema default — see `get_search_config_status.max_index_age_minutes`), ego_graph_enabled (tri-state: omit to defer to `get_search_config_status.ego_graph_enabled`; pass True/False to override for this call only), ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0, include_top_callers=False |
+| **search_code** | 🔴 **ESSENTIAL** | Find code with natural language OR lookup by symbol ID | query OR chunk_id, k (no schema default at all — falls back to `get_search_config_status.search_mode.default_k`; `search_config.json.example` sets that to 7), search_mode="auto" (routes by query intent; pass a mode explicitly to force it), file_pattern, include_dirs, exclude_dirs, chunk_type, include_context=True, auto_reindex=True, max_age_minutes (no schema default — see `get_search_config_status.max_index_age_minutes`), ego_graph_enabled (tri-state: omit to defer to `get_search_config_status.ego_graph_enabled`; pass True/False to override for this call only), ego_graph_k_hops=2, ego_graph_max_neighbors_per_hop=10, include_parent=False, max_context_tokens=0, include_top_callers=False, include_top_callees=False |
 | **find_connections** | 🟡 **IMPACT** | Analyze dependencies & impact (v0.14.0: layered resolver pipeline AST→pyan→LibCST→LSP; bidirectional `direct_callees`; per-entry `resolver_source`/`resolver_confidence` provenance; `caller_confidence`/`callee_confidence` breakdowns) | chunk_id (preferred) OR symbol_name, max_depth=3, exclude_dirs, relationship_types, hide_ambiguous=True |
 | **find_path** | 🟡 **IMPACT** | Trace shortest path between code entities in relationship graph | source OR source_chunk_id, target OR target_chunk_id, edge_types, max_hops=10 |
 | **index_directory** | 🔴 **SETUP** | Index project | directory_path (required), incremental=True, wait=True, include_dirs, exclude_dirs |
@@ -319,6 +319,7 @@ Parent chunks are marked in results with:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `include_top_callers` | boolean | false | Attach `top_callers` (≤2 entries) to each search result |
+| `include_top_callees` | boolean | false | Attach `top_callees` (≤2 entries) to each search result (added 2026-09-02) |
 
 ### Behavior
 
@@ -329,7 +330,18 @@ Parent chunks are marked in results with:
 ```python
 search_code("rerank candidates", include_top_callers=True)
 # result gains: "top_callers": [{"name": "search", "file": "search/hybrid_searcher.py"}, ...]
+
+search_code("rerank candidates", include_top_callees=True)
+# result gains: "top_callees": [{"name": "rerank", "file": "search/reranker.py"}, {"name": "len", "file": ""}]
 ```
+
+### Callee variant (`include_top_callees`, 2026-09-02)
+
+- Same shape over outgoing `calls` edges. Resolved chunk targets rank first (resolver
+  confidence descending, discovery order otherwise); unresolved bare-symbol targets follow
+  and render with `"file": ""`, since the graph has no file for them.
+- No symbol-node lookup fallback: bare symbol nodes carry no outgoing edges, so unresolved
+  callees only ever appear as targets.
 
 ---
 
@@ -366,6 +378,7 @@ The `search_code` tool returns results with the following fields:
 | `reranker_score` | float | ⚠️ Optional | Neural reranker score (when reranking enabled, rounded to 4 decimals) |
 | `graph` | object | ⚠️ Optional | Call relationships (`calls`, `called_by` arrays) |
 | `top_callers` | array | ⚠️ Optional | Up to 2 `{name, file}` caller hints (only with `include_top_callers=True`) |
+| `top_callees` | array | ⚠️ Optional | Up to 2 `{name, file}` callee hints; `file` is `""` for unresolved bare-symbol targets (only with `include_top_callees=True`) |
 
 ### Field Details
 
