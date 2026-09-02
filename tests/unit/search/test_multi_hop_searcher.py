@@ -946,8 +946,8 @@ class TestIntentAdaptiveWeights:
         )
 
         # Verify get_neighbors_ranked was called with custom weights
-        call_args = self.mock_graph_storage.get_neighbors_ranked.call_args
-        assert call_args.kwargs["edge_weights"] == custom_weights
+        policy = self.mock_graph_storage.get_neighbors_ranked.call_args.args[1]
+        assert policy.edge_weights == custom_weights
 
     def test_graph_expand_default_weights_when_none(self):
         """_graph_expand() should use DEFAULT_EDGE_WEIGHTS when edge_weights=None."""
@@ -970,8 +970,8 @@ class TestIntentAdaptiveWeights:
         )
 
         # Verify get_neighbors_ranked was called with DEFAULT_EDGE_WEIGHTS
-        call_args = self.mock_graph_storage.get_neighbors_ranked.call_args
-        assert call_args.kwargs["edge_weights"] == DEFAULT_EDGE_WEIGHTS
+        policy = self.mock_graph_storage.get_neighbors_ranked.call_args.args[1]
+        assert policy.edge_weights == DEFAULT_EDGE_WEIGHTS
 
     def test_search_threads_edge_weights(self):
         """search() should thread edge_weights to _graph_expand()."""
@@ -1169,18 +1169,18 @@ class TestCallEvidenceScoring:
         """A2 byte-identity: a default config threads floor 0.0 and weighting
         False into get_neighbors_ranked."""
         self._expand(config=SearchConfig())
-        kwargs = self.mock_graph_storage.get_neighbors_ranked.call_args.kwargs
-        assert kwargs["min_confidence"] == 0.0
-        assert kwargs["confidence_weighting"] is False
-        assert kwargs["drop_ambiguous"] is False
+        policy = self.mock_graph_storage.get_neighbors_ranked.call_args.args[1]
+        assert policy.min_confidence == 0.0
+        assert policy.confidence_weighting is False
+        assert policy.drop_ambiguous is False
 
     def test_no_config_traversal_defaults(self):
         """Legacy callers threading no config get the same no-op traversal."""
         self._expand(config=None)
-        kwargs = self.mock_graph_storage.get_neighbors_ranked.call_args.kwargs
-        assert kwargs["min_confidence"] == 0.0
-        assert kwargs["confidence_weighting"] is False
-        assert kwargs["drop_ambiguous"] is False
+        policy = self.mock_graph_storage.get_neighbors_ranked.call_args.args[1]
+        assert policy.min_confidence == 0.0
+        assert policy.confidence_weighting is False
+        assert policy.drop_ambiguous is False
 
     def test_traversal_confidence_threaded_from_config(self):
         """A2: config values reach get_neighbors_ranked on every anchor expansion."""
@@ -1190,9 +1190,9 @@ class TestCallEvidenceScoring:
 
         self._expand(config=config)
 
-        kwargs = self.mock_graph_storage.get_neighbors_ranked.call_args.kwargs
-        assert kwargs["min_confidence"] == 0.7
-        assert kwargs["confidence_weighting"] is True
+        policy = self.mock_graph_storage.get_neighbors_ranked.call_args.args[1]
+        assert policy.min_confidence == 0.7
+        assert policy.confidence_weighting is True
 
     def test_drop_ambiguous_threaded_from_config(self):
         """drop_ambiguous_traversal_edges reaches get_neighbors_ranked."""
@@ -1201,8 +1201,8 @@ class TestCallEvidenceScoring:
 
         self._expand(config=config)
 
-        kwargs = self.mock_graph_storage.get_neighbors_ranked.call_args.kwargs
-        assert kwargs["drop_ambiguous"] is True
+        policy = self.mock_graph_storage.get_neighbors_ranked.call_args.args[1]
+        assert policy.drop_ambiguous is True
 
     def test_search_threads_query_embedding_and_config(self):
         """search() threads the pre-computed query embedding and config into

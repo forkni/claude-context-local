@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 
 from evaluation import probe_harness
 from evaluation.metrics import normalize_chunk_id
+from graph.traversal_policy import TraversalPolicy
 
 
 CONFIDENCE_FLOOR = 0.65
@@ -513,8 +514,10 @@ async def _run_queries(
                     widened = (
                         session.searcher.ego_graph_retriever.graph.get_neighbors_ranked(
                             anchor,
-                            relation_types=list(default_edge_weights.keys()),
-                            max_depth=session.config.ego_graph.k_hops,
+                            TraversalPolicy(
+                                relation_types=list(default_edge_weights.keys()),
+                                max_depth=session.config.ego_graph.k_hops,
+                            ),
                         )
                     )
                     if gold in {normalize_chunk_id(w) for w in widened}:

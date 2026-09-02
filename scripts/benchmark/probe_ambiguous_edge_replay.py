@@ -62,6 +62,7 @@ from evaluation.metrics import normalize_chunk_id
 from evaluation.probe_harness import ensure_pinned_hash_seed, write_probe_json
 from graph.graph_storage import DEFAULT_EDGE_WEIGHTS, CodeGraphStorage
 from graph.schema import edge_relation_type, is_phantom_node
+from graph.traversal_policy import TraversalPolicy
 from search.graph_integration import is_chunk_id
 
 
@@ -99,17 +100,18 @@ def strip_ambiguous_edges(storage: CodeGraphStorage) -> tuple[CodeGraphStorage, 
     return filtered, len(doomed)
 
 
+EGO_POLICY = TraversalPolicy(
+    relation_types=None,
+    max_depth=EGO_K_HOPS,
+    exclude_import_categories=EGO_EXCLUDE_CATEGORIES,
+    edge_weights=DEFAULT_EDGE_WEIGHTS,
+)
+MULTI_HOP_POLICY = TraversalPolicy.graph_hop(None, DEFAULT_EDGE_WEIGHTS)
+
+
 def ego_admitted(storage: CodeGraphStorage, anchor: str) -> list[str]:
     """Production ego gate sequence for one anchor (centrality empty)."""
-    neighbors = storage.get_neighbors_ranked(
-        anchor,
-        relation_types=None,
-        max_depth=EGO_K_HOPS,
-        exclude_import_categories=EGO_EXCLUDE_CATEGORIES,
-        edge_weights=DEFAULT_EDGE_WEIGHTS,
-        min_confidence=0.0,
-        confidence_weighting=False,
-    )
+    neighbors = storage.get_neighbors_ranked(anchor, EGO_POLICY)
     valid = [n for n in neighbors if is_chunk_id(n)]
     return valid[:EGO_MAX_TOTAL]
 
@@ -118,13 +120,7 @@ def multi_hop_admitted(
     storage: CodeGraphStorage, seed: str, pool: set[str]
 ) -> list[str]:
     """Multi-hop graph-hop admission for one seed (proxy: pool = anchors)."""
-    neighbors = storage.get_neighbors_ranked(
-        seed,
-        max_depth=1,
-        edge_weights=DEFAULT_EDGE_WEIGHTS,
-        min_confidence=0.0,
-        confidence_weighting=False,
-    )
+    neighbors = storage.get_neighbors_ranked(seed, MULTI_HOP_POLICY)
     admitted: list[str] = []
     for neighbor in neighbors:
         if not is_chunk_id(neighbor) or neighbor in pool:
@@ -151,15 +147,7 @@ def build_reverse_map(storage: CodeGraphStorage) -> dict[str, list[str]]:
 
 def ego_reachable(storage: CodeGraphStorage, anchor: str) -> set[str]:
     """Depth-2 reachable chunk set before gate 2 (normalized ids)."""
-    neighbors = storage.get_neighbors_ranked(
-        anchor,
-        relation_types=None,
-        max_depth=EGO_K_HOPS,
-        exclude_import_categories=EGO_EXCLUDE_CATEGORIES,
-        edge_weights=DEFAULT_EDGE_WEIGHTS,
-        min_confidence=0.0,
-        confidence_weighting=False,
-    )
+    neighbors = storage.get_neighbors_ranked(anchor, EGO_POLICY)
     return {normalize_chunk_id(n) for n in neighbors if is_chunk_id(n)}
 
 

@@ -1097,7 +1097,7 @@ class EgoGraphConfig:
         default=None,  # Filter to specific relations (None = all)
         metadata=spec(
             flat_alias="ego_graph_relation_types",
-            reader="search/ego_graph_retriever.py",
+            reader="graph/traversal_policy.py",
         ),
     )
     include_anchor: bool = field(
@@ -1116,16 +1116,16 @@ class EgoGraphConfig:
     # RepoGraph relation filtering (Feature #5)
     exclude_stdlib_imports: bool = field(
         default=True,  # Filter stdlib from graph traversal
-        metadata=spec(reader="search/ego_graph_retriever.py"),
+        metadata=spec(reader="graph/traversal_policy.py"),
     )
     exclude_third_party_imports: bool = field(
         default=True,  # Filter third-party from traversal
-        metadata=spec(reader="search/ego_graph_retriever.py"),
+        metadata=spec(reader="graph/traversal_policy.py"),
     )
     # Weighted graph traversal
     edge_weights: dict[str, float] | None = field(
         default_factory=lambda: DEFAULT_EDGE_WEIGHTS.copy(),
-        metadata=spec(reader="search/ego_graph_retriever.py"),
+        metadata=spec(reader="graph/traversal_policy.py"),
     )  # Use weighted BFS by default (calls > imports priority)
     # QW3: expansion mode — "bfs" (default) or "ppr" (Personalized PageRank)
     expansion_mode: str = field(
@@ -1304,7 +1304,7 @@ class GraphEnhancedConfig:
         default=0.0,
         metadata=spec(
             flat_alias="min_traversal_confidence",
-            reader="search/multi_hop_searcher.py",
+            reader="graph/traversal_policy.py",
         ),
     )
     # Weighted BFS only: multiply each edge's type-weight by its resolved
@@ -1314,7 +1314,7 @@ class GraphEnhancedConfig:
         default=False,
         metadata=spec(
             flat_alias="traversal_confidence_weighting_enabled",
-            reader="search/multi_hop_searcher.py",
+            reader="graph/traversal_policy.py",
         ),
     )
     # Drop `tag:ambiguous` call edges (AST same-name fan-out, no float
@@ -1329,7 +1329,7 @@ class GraphEnhancedConfig:
         default=False,
         metadata=spec(
             flat_alias="drop_ambiguous_traversal_edges",
-            reader="search/multi_hop_searcher.py",
+            reader="graph/traversal_policy.py",
         ),
     )
     # Fix #2 (partial mitigation): default for find_connections' `hide_ambiguous`

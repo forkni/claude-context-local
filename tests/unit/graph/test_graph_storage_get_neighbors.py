@@ -16,6 +16,7 @@ from graph.graph_storage import (
     edge_confidence,
     is_ambiguous_call_edge,
 )
+from graph.traversal_policy import TraversalPolicy
 
 
 @pytest.fixture
@@ -482,8 +483,7 @@ class TestGetNeighborsRanked:
         args, unweighted BFS."""
         ranked = multi_relationship_graph.get_neighbors_ranked(
             "test.py:1-10:function:A",
-            relation_types=["calls", "decorated_by"],
-            max_depth=2,
+            TraversalPolicy(relation_types=["calls", "decorated_by"], max_depth=2),
         )
         unranked = multi_relationship_graph.get_neighbors(
             "test.py:1-10:function:A",
@@ -500,9 +500,11 @@ class TestGetNeighborsRanked:
         edge_weights = {"calls": 1.0, "inherits": 0.6, "imports": 0.3}
         ranked = multi_relationship_graph.get_neighbors_ranked(
             "test.py:1-10:function:A",
-            relation_types=["calls", "inherits", "imports"],
-            max_depth=3,
-            edge_weights=edge_weights,
+            TraversalPolicy(
+                relation_types=["calls", "inherits", "imports"],
+                max_depth=3,
+                edge_weights=edge_weights,
+            ),
         )
         unranked = multi_relationship_graph.get_neighbors(
             "test.py:1-10:function:A",
@@ -531,7 +533,7 @@ class TestGetNeighborsRanked:
         graph_storage.graph.add_edge(self.B, self.D, relationship_type="calls")
 
         ranked = graph_storage.get_neighbors_ranked(
-            self.A, relation_types=["calls"], max_depth=2
+            self.A, TraversalPolicy(relation_types=["calls"], max_depth=2)
         )
 
         assert ranked == [self.C, self.B, self.D]
@@ -567,9 +569,11 @@ class TestGetNeighborsRanked:
 
         ranked = graph_storage.get_neighbors_ranked(
             self.A,
-            relation_types=["calls", "imports"],
-            max_depth=2,
-            edge_weights={"calls": 1.0, "imports": 0.3},
+            TraversalPolicy(
+                relation_types=["calls", "imports"],
+                max_depth=2,
+                edge_weights={"calls": 1.0, "imports": 0.3},
+            ),
         )
 
         # Depth-1 neighbors keep edge-insertion order (X before Y) ...
@@ -582,11 +586,12 @@ class TestGetNeighborsRanked:
         """Two calls with identical arguments return the identical list --
         this is the property that regresses under truncation when a caller
         instead does list(get_neighbors(...))[:n]."""
+        policy = TraversalPolicy(relation_types=["calls", "decorated_by"])
         first = multi_relationship_graph.get_neighbors_ranked(
-            "test.py:1-10:function:A", relation_types=["calls", "decorated_by"]
+            "test.py:1-10:function:A", policy
         )
         second = multi_relationship_graph.get_neighbors_ranked(
-            "test.py:1-10:function:A", relation_types=["calls", "decorated_by"]
+            "test.py:1-10:function:A", policy
         )
         assert first == second
 
@@ -605,7 +610,7 @@ class TestGetNeighborsRanked:
         )
 
         ranked = graph_storage.get_neighbors_ranked(
-            self.A, relation_types=["calls"], min_confidence=0.6
+            self.A, TraversalPolicy(relation_types=["calls"], min_confidence=0.6)
         )
 
         assert ranked == [self.C]
@@ -809,7 +814,9 @@ class TestConfidenceTraversal:
         """drop_ambiguous defaults to False: every edge is returned."""
         neighbors = ambiguous_graph.get_neighbors(self.A, relation_types=["calls"])
         assert neighbors == {self.B, self.C, self.D, self.E, self.F}
-        ranked = ambiguous_graph.get_neighbors_ranked(self.A, relation_types=["calls"])
+        ranked = ambiguous_graph.get_neighbors_ranked(
+            self.A, TraversalPolicy(relation_types=["calls"])
+        )
         assert set(ranked) == neighbors
 
     def test_drop_ambiguous_drops_only_tagged_edge_unweighted(self, ambiguous_graph):
@@ -839,7 +846,7 @@ class TestConfidenceTraversal:
 
     def test_drop_ambiguous_ranked_matches_unranked(self, ambiguous_graph):
         ranked = ambiguous_graph.get_neighbors_ranked(
-            self.A, relation_types=["calls"], drop_ambiguous=True
+            self.A, TraversalPolicy(relation_types=["calls"], drop_ambiguous=True)
         )
         assert set(ranked) == {self.B, self.C, self.E, self.F}
         assert self.D not in ranked

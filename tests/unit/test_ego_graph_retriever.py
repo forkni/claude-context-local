@@ -4,6 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from graph.traversal_policy import TraversalPolicy
 from search.config import EgoGraphConfig
 from search.ego_graph_retriever import EgoGraphRetriever
 
@@ -46,13 +47,15 @@ class TestEgoGraphRetriever:
         ]
         mock_graph_storage.get_neighbors_ranked.assert_called_once_with(
             "anchor1",
-            relation_types=None,
-            max_depth=2,
-            exclude_import_categories=["stdlib", "builtin", "third_party"],
-            edge_weights=None,
-            min_confidence=0.0,
-            confidence_weighting=False,
-            drop_ambiguous=False,
+            TraversalPolicy(
+                relation_types=None,
+                max_depth=2,
+                exclude_import_categories=["stdlib", "builtin", "third_party"],
+                edge_weights=None,
+                min_confidence=0.0,
+                confidence_weighting=False,
+                drop_ambiguous=False,
+            ),
         )
 
     def test_retrieve_ego_graph_threads_drop_ambiguous(
@@ -64,8 +67,8 @@ class TestEgoGraphRetriever:
 
         retriever.retrieve_ego_graph(["anchor1"], config, drop_ambiguous=True)
 
-        kwargs = mock_graph_storage.get_neighbors_ranked.call_args.kwargs
-        assert kwargs["drop_ambiguous"] is True
+        policy = mock_graph_storage.get_neighbors_ranked.call_args.args[1]
+        assert policy.drop_ambiguous is True
 
     def test_retrieve_ego_graph_multiple_anchors(self, retriever, mock_graph_storage):
         """Test retrieval for multiple anchors."""
@@ -125,8 +128,8 @@ class TestEgoGraphRetriever:
         retriever.retrieve_ego_graph(["anchor1"], config)
 
         # Verify relation types were passed
-        call_args = mock_graph_storage.get_neighbors_ranked.call_args
-        assert call_args[1]["relation_types"] == ["CALLS", "INHERITS"]
+        policy = mock_graph_storage.get_neighbors_ranked.call_args.args[1]
+        assert policy.relation_types == ["CALLS", "INHERITS"]
 
     def test_flatten_for_context_basic(self, retriever):
         """Test flattening ego-graphs to chunk list."""

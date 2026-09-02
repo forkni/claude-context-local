@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
+from graph.traversal_policy import TraversalPolicy
 from search.config import SearchMode
 from search.graph_integration import is_chunk_id
 from utils.timing import timed
@@ -214,27 +214,18 @@ class MultiHopSearcher:
         pending: list[tuple[str, dict, float]] = []
 
         ge_cfg = getattr(config, "graph_enhanced", None) if config is not None else None
-        min_confidence = 0.0
-        confidence_weighting = False
-        drop_ambiguous = False
-        if ge_cfg is not None:
-            min_confidence = ge_cfg.min_traversal_confidence
-            confidence_weighting = ge_cfg.traversal_confidence_weighting_enabled
-            drop_ambiguous = ge_cfg.drop_ambiguous_traversal_edges
+        # Weighted one-hop walk: prioritizes calls (1.0) over imports (0.3);
+        # the three traversal gates come off GraphEnhancedConfig (no-ops
+        # when config is None).
+        policy = TraversalPolicy.graph_hop(ge_cfg, edge_weights)
 
         for result in source_results:
-            # Weighted BFS -- prioritizes calls (1.0) over imports (0.3).
             # get_neighbors_ranked (not get_neighbors) so the `break` below
             # truncates by priority order, not Python's set-iteration order —
             # the latter made `added_for_source >= expansion_k` pick a
             # different neighbor subset across process restarts.
             neighbors: list[str] = self.graph_storage.get_neighbors_ranked(
-                chunk_id=result.chunk_id,
-                max_depth=1,
-                edge_weights=edge_weights or DEFAULT_EDGE_WEIGHTS,
-                min_confidence=min_confidence,
-                confidence_weighting=confidence_weighting,
-                drop_ambiguous=drop_ambiguous,
+                result.chunk_id, policy
             )
 
             added_for_source = 0

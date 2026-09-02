@@ -683,23 +683,13 @@ class CodeGraphStorage:
         self,
         chunk_id: str,
         policy: TraversalPolicy | None = None,
-        *,
-        relation_types: list[str] | None = None,
-        max_depth: int = 1,
-        exclude_import_categories: list[str] | None = None,
-        edge_weights: dict[str, float] | None = None,
-        min_confidence: float = 0.0,
-        confidence_weighting: bool = False,
-        drop_ambiguous: bool = False,
     ) -> list[str]:
         """Neighbors of ``chunk_id`` in discovery/priority order.
 
         This is the traversal seam: one anchor, one
         :class:`~graph.traversal_policy.TraversalPolicy` (``None`` = the
         all-defaults policy — both call directions, depth 1, unweighted BFS,
-        no gates). The loose keyword arguments are a transitional spelling of
-        the same policy (kept while callers migrate); passing both is a
-        ``TypeError``. :meth:`get_neighbors` is the loose-keyword convenience
+        no gates). :meth:`get_neighbors` is the loose-keyword convenience
         wrapper over this method, so ``set(get_neighbors_ranked(id, policy))
         == get_neighbors(id, **policy fields)`` always holds — only the
         return type differs. Use this when a caller truncates the result
@@ -719,22 +709,8 @@ class CodeGraphStorage:
         if normalized_chunk_id not in self.graph:
             return []
 
-        loose = TraversalPolicy(
-            relation_types=relation_types,
-            max_depth=max_depth,
-            exclude_import_categories=exclude_import_categories,
-            edge_weights=edge_weights,
-            min_confidence=min_confidence,
-            confidence_weighting=confidence_weighting,
-            drop_ambiguous=drop_ambiguous,
-        )
         if policy is None:
-            policy = loose
-        elif loose != TraversalPolicy():
-            raise TypeError(
-                "get_neighbors_ranked: pass either a TraversalPolicy or loose "
-                "keyword arguments, not both"
-            )
+            policy = TraversalPolicy()
 
         return list(self._traverse_neighbors(normalized_chunk_id, policy))
 

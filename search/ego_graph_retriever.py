@@ -7,11 +7,13 @@ Key Insight: Functions are often best understood with their callers, callees,
 and related code (ICLR 2025 RepoGraph paper shows 32.8% improvement).
 """
 
+import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from graph.traversal_policy import TraversalPolicy
 from search.config import EgoGraphConfig
 from search.graph_integration import is_chunk_id
 from search.graph_view import GraphView, PPRConvergenceError
@@ -99,32 +101,21 @@ class EgoGraphRetriever:
                 drop_ambiguous,
             )
 
+        policy = dataclasses.replace(
+            TraversalPolicy.ego(config),
+            min_confidence=min_confidence,
+            confidence_weighting=confidence_weighting,
+            drop_ambiguous=drop_ambiguous,
+        )
+
         results = {}
         for anchor in anchor_chunk_ids:
             try:
-                # Build exclude_import_categories list from config
-                exclude_categories = []
-                if config.exclude_stdlib_imports:
-                    exclude_categories.extend(["stdlib", "builtin"])
-                if config.exclude_third_party_imports:
-                    exclude_categories.append("third_party")
-
                 # Get neighbors using existing graph traversal. Ranked (not
                 # set) so the max_total truncation below survives in
                 # priority order instead of Python's set-iteration order
                 # whenever self._centrality_scores is empty.
-                neighbors = self.graph.get_neighbors_ranked(
-                    anchor,
-                    relation_types=config.relation_types,
-                    max_depth=config.k_hops,
-                    exclude_import_categories=(
-                        exclude_categories if exclude_categories else None
-                    ),
-                    edge_weights=config.edge_weights,
-                    min_confidence=min_confidence,
-                    confidence_weighting=confidence_weighting,
-                    drop_ambiguous=drop_ambiguous,
-                )
+                neighbors = self.graph.get_neighbors_ranked(anchor, policy)
 
                 # Filter to keep only valid chunk_ids (format: "file:lines:type:name")
                 # Exclude symbol-only nodes like "get_searcher", "str", etc.
