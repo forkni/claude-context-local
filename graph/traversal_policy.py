@@ -75,6 +75,13 @@ class TraversalPolicy:
             return list(DEFAULT_RELATION_TYPES)
         return self.relation_types
 
+    @property
+    def gates_edges(self) -> bool:
+        """True when :meth:`admits` can ever reject an edge (either gate is
+        armed). The traversal uses this to skip resolving an edge's ambiguity
+        flag and confidence when neither gate would look at them."""
+        return self.drop_ambiguous or self.min_confidence > 0.0
+
     def admits(self, *, ambiguous: bool, confidence: float) -> bool:
         """The one edge filter both traversal modes apply.
 

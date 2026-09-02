@@ -570,7 +570,7 @@ class CodeGraphStorage:
                 for neighbor, edge_type, edge_data in self._iter_matching_neighbors(
                     current_id, relation_types, exclude_import_categories
                 ):
-                    if not policy.admits(
+                    if policy.gates_edges and not policy.admits(
                         ambiguous=is_ambiguous_call_edge(edge_data),
                         confidence=self._edge_confidence(edge_data, edge_type),
                     ):
@@ -596,7 +596,7 @@ class CodeGraphStorage:
                     current_id, relation_types, exclude_import_categories
                 ):
                     confidence = self._edge_confidence(edge_data, edge_type)
-                    if not policy.admits(
+                    if policy.gates_edges and not policy.admits(
                         ambiguous=is_ambiguous_call_edge(edge_data),
                         confidence=confidence,
                     ):

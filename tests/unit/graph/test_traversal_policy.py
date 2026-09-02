@@ -20,6 +20,7 @@ class TestDefaults:
         assert policy.min_confidence == 0.0
         assert policy.confidence_weighting is False
         assert policy.drop_ambiguous is False
+        assert policy.gates_edges is False
 
     def test_effective_relation_types_defaults_to_calls_both_ways(self):
         assert TraversalPolicy().effective_relation_types == list(
@@ -82,6 +83,21 @@ class TestAdmits:
     )
     def test_admits_truth_table(self, policy, ambiguous, confidence, expected):
         assert policy.admits(ambiguous=ambiguous, confidence=confidence) is expected
+
+    @pytest.mark.parametrize(
+        ("policy", "expected"),
+        [
+            (TraversalPolicy(), False),
+            (TraversalPolicy(min_confidence=0.0, drop_ambiguous=False), False),
+            (TraversalPolicy(min_confidence=0.65), True),
+            (TraversalPolicy(drop_ambiguous=True), True),
+            (TraversalPolicy(min_confidence=0.65, drop_ambiguous=True), True),
+        ],
+    )
+    def test_gates_edges_is_true_iff_a_gate_is_armed(self, policy, expected):
+        """The traversal skips the per-edge ambiguity/confidence lookups when
+        this is False, so it must be False exactly when admits() is a no-op."""
+        assert policy.gates_edges is expected
 
     def test_zero_floor_admits_zero_confidence(self):
         """min_confidence=0.0 is a true no-op (0.0 < 0.0 is False)."""
