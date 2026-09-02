@@ -4,8 +4,6 @@
 
 This guide covers the complete installation process for the Claude Context MCP system, a **Windows-optimized general-purpose semantic code search tool** for software development. The system provides streamlined installation with automated CUDA detection and comprehensive verification.
 
-> **📁 Archived Content**: Development tools, test scripts, and TouchDesigner-specific features have been preserved in `_archive/` directory. See `_archive/README.md` for details.
-
 ## Table of Contents
 
 1. [Prerequisites](#prerequisites)
@@ -578,7 +576,7 @@ verify-installation.cmd
 # Test CUDA functionality
 .venv\Scripts\python.exe -c "import torch; print('CUDA available:', torch.cuda.is_available())"
 
-# Start MCP server (interactive menu with 8 functional options)
+# Start MCP server (interactive menu)
 start_mcp_server.cmd
 
 # Alternative launcher options
@@ -677,14 +675,10 @@ The project includes 37 test files organized into professional categories.
 
 #### Development Debug Tools
 
-```powershell
-# Development and debug tools available in archive
-_archive/test_scripts/test-cpu-mode.bat     # CPU-only mode testing
-_archive/debug_tools/debug_*.py            # Component-specific debugging
+The tracked installation tools are available from the repository root:
 
-# Full test documentation
-tests/README.md                            # Comprehensive test guide (285 lines)
-```
+- `verify-installation.cmd` runs the installation checks.
+- `scripts/batch/repair_installation.bat` provides the repair menu.
 
 📚 **Complete testing guide**: [tests/README.md](../tests/README.md)
 
@@ -695,7 +689,7 @@ The system provides multiple launcher options for different use cases:
 #### Main Launcher (start_mcp_server.cmd)
 
 ```powershell
-# Interactive menu with 8 functional options
+# Interactive menu
 start_mcp_server.cmd
 ```
 
@@ -813,10 +807,10 @@ If incremental indexing fails to detect changes:
 ```powershell
 # Option 1: Via interactive menu
 start_mcp_server.cmd
-# Select: Option 2 - Force Reindex Project
+# Select: Option 3 - Force Re-index Existing Project
 
 # Option 2: Via command line
-.venv\Scripts\python.exe tools\batch_index.py --mode force
+.venv\Scripts\python.exe tools\batch_index.py --path "C:\Projects\MyProject" --mode force
 
 # Option 3: Via repair tool
 scripts\batch\repair_installation.bat
@@ -894,14 +888,11 @@ pip install "numpy<2.0"
 **Solution**:
 
 ```bash
-# Install transformers preview with EmbeddingGemma support
-pip install git+https://github.com/huggingface/transformers@v4.56.0-Embedding-Gemma-preview
-
-# Or use UV for automatic resolution
-uv sync  # This will install correct transformers version
+# Re-sync the project's supported dependencies
+uv sync
 ```
 
-**Root Cause**: Standard transformers 4.51.3 doesn't include gemma3_text architecture. The v4.56.0-Embedding-Gemma-preview branch includes the required support.
+**Root Cause**: The project requires Transformers 5.14.1 or newer (below 6), which includes the `gemma3_text` architecture used by EmbeddingGemma. The old Transformers 4.x preview command is no longer part of the supported installation path.
 
 #### 5. MCP stdio Transport Issues
 
@@ -1299,13 +1290,13 @@ For issues not covered in this guide:
 .\scripts\batch\install_pytorch_cuda.bat
 
 # Test installation
-python test_cuda_indexing.py
+verify-installation.cmd
 
 # Start MCP server
 start_mcp_server.cmd
 
 # Index a project
-python -m mcp_server.tools index_directory "path/to/project"
+.venv\Scripts\python.exe tools\batch_index.py --path "path\to\project" --mode new
 ```
 
 ### File Locations
