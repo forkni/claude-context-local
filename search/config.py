@@ -776,7 +776,11 @@ class RerankerConfig:
         default=False,  # Q3: skip hop-1 and multi-hop-merge neural rerank
         # passes; run ONE listwise pass over the final merged pool (hop-1 + multi-hop
         # + ego expansion) at the tail of HybridSearcher.search(). Trade-off: multi-hop
-        # expansion seeds degrade from neural-reranked to RRF-fusion order.
+        # expansion seeds degrade from neural-reranked to RRF-fusion order, and the
+        # merged-pool window shaping (`merged_pool_policy`, `graph_hop_window_cap`,
+        # `hop1_reserved_slots`) is skipped: the pool is ordered by plain score and
+        # truncated to k (MultiHopSearcher.search, pinned by
+        # test_search_multi_hop_single_pass_ignores_window_shaping).
         metadata=spec(
             flat_alias="reranker_single_pass",
             env="CLAUDE_RERANKER_SINGLE_PASS",
