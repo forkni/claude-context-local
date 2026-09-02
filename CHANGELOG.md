@@ -318,6 +318,12 @@ routing (ADR-0054), test-suite hardening Phases 13-14, and three canon re-baseli
     (`HybridSearcher` over `BM25Index`) — every recall@k, pool_hit (1.0) and the other 62
     queries are unchanged, consistent with the float32 reranker-logit change. Recorded as
     drift, pin not re-based.
+- **`evaluation/` slimmed to inputs only** (2026-09-02): 51 regenerable benchmark/probe run dumps
+  (~28 MB) untracked; `.gitignore` now ignores `evaluation/*.json` except the nine inputs that
+  scripts and tests read (`golden_dataset*.json`, `caller/callee_golden*.json`,
+  `hard_query_candidates.json`, `commit_mined_candidates.json`, `raw_mcp_results_hybrid.json`).
+  Write-ups (`.md`) and modules stay tracked; local copies of the dumps are untouched and every
+  one is reproducible from its `scripts/benchmark/` producer named in the matching write-up.
 - Dependency audits 2026-08-20 and 2026-09-01 (`audit_reports/`); `setproctitle` repaired;
   `uv.lock` synced for radon/crap4py; `evaluation/` packaged as importable.
 
