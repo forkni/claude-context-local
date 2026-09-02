@@ -287,11 +287,10 @@ class SearchModeConfig:
     # construction (BM25Index build/load/rebuild), not at query time: mutating
     # a live SearchConfig singleton is inert until the index reloads or the
     # searcher is rebuilt (construction_baked=True below drives
-    # arm_overrides.requires_rebuild() accordingly). Both are also in
-    # index_probe.py's FORBIDDEN_AUTO_TUNE_KEYS — fusion sweep saturated, do
-    # not re-sweep; that frozenset governs whether the ADR-0014 auto-tuning
-    # probe may write a key, a different question from whether a benchmark
-    # arm must rebuild the cached searcher. (Replaces the dead
+    # arm_overrides.requires_rebuild() accordingly). Both are benchmark_locked
+    # (see their spec() rows); that lock governs whether the ADR-0014
+    # auto-tuning probe may write a key, a different question from whether a
+    # benchmark arm must rebuild the cached searcher. (Replaces the dead
     # ``bm25_k_parameter`` field, which was never read by any scoring path.)
     bm25_k1: float = field(
         default=1.5,
@@ -311,8 +310,7 @@ class SearchModeConfig:
             benchmark_locked="fusion sweep saturated",
         ),
     )
-    # Also in FORBIDDEN_AUTO_TUNE_KEYS (A/B 2026-08-01: removing regresses
-    # recall@5/MRR) — read once at construction, same rebuild caveat as k1/b.
+    # Read once at construction, same rebuild caveat as k1/b.
     bm25_use_stopwords: bool = field(
         default=True,
         metadata=spec(
@@ -337,9 +335,7 @@ class SearchModeConfig:
     # split + stemming; "whole" = identifiers kept intact, no stemming;
     # "additive" = whole identifiers + camel/snake sub-tokens. Changing this
     # requires a re-index (index/query tokenization must match) — also read
-    # once at construction (construction_baked=True) and in
-    # FORBIDDEN_AUTO_TUNE_KEYS (INDEX_VERSION 4, identifier-preserving
-    # "whole" tokenizer).
+    # once at construction (construction_baked=True).
     # Default "whole": +0.05/+0.07 Recall@5, +0.09/+0.10 MRR vs legacy on the
     # 96q/63q golden sets (BM25-standalone, bm25_tokenizer_ab.py 2026-07-26).
     bm25_tokenizer: str = field(
@@ -946,7 +942,7 @@ class RerankerConfig:
         # compares scores across channels, unlike merged_pool_policy's
         # "channel_priority" (rejected, evaluation/POOL_ORDER_AB_20260815.md).
         # Standalone knob, not a merged_pool_policy choice, since that key is
-        # locked in index_probe.py's FORBIDDEN_AUTO_TUNE_KEYS. Offline replay
+        # benchmark_locked. Offline replay
         # probe (evaluation/POOL_ORDER_CAP_PROBE_20260815.md) gated cap=2/3 for
         # the Phase 3 A/B before this field existed. Only MultiHopSearcher's
         # Pass-2 rerank call reads this; hybrid_searcher.py's tail rerank calls
@@ -1301,8 +1297,8 @@ class GraphEnhancedConfig:
     # repo's own index (scripts/benchmark/graph_phantom_preflight.py) found
     # phantoms are 75% of the top-20 raw-PageRank nodes and the #1 node
     # ("str") is a phantom -- max-normalizing against it pushes ~99% of real
-    # chunks below centrality_boost_threshold. FORBIDDEN_AUTO_TUNE_KEYS
-    # pending pre-registered A/B (ADR-0055); default False keeps every path
+    # chunks below centrality_boost_threshold. Benchmark-locked pending the
+    # pre-registered A/B (ADR-0055); default False keeps every path
     # byte-identical until that A/B lands.
     centrality_exclude_phantoms: bool = field(
         default=False,
@@ -1377,7 +1373,7 @@ class GraphEnhancedConfig:
     # every resolver-validated edge survive. Offline replay 2026-09-02
     # (evaluation/AMBIGUOUS_EDGE_REPLAY_20260902.md) passed the >=2 net-rescue
     # bar on both 63q and 133q; ships default-off pending the live A/B and is
-    # benchmark-locked (search/index_probe.py FORBIDDEN_AUTO_TUNE_KEYS).
+    # benchmark_locked (see its spec() row).
     drop_ambiguous_traversal_edges: bool = field(
         default=False,
         metadata=spec(

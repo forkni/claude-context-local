@@ -107,18 +107,24 @@ class TestGuardrails:
         """BENCHMARK_LOCK_CITATIONS (start_mcp_server.cmd's ADR-0022 display
         source) must cover every forbidden key except embedding.model_name,
         which is locked for index-routing safety, not a benchmark result, and
-        is displayed separately."""
+        is displayed separately. True by construction since both derive from
+        spec(benchmark_locked=...); kept as a cheap invariant guard."""
         assert set(BENCHMARK_LOCK_CITATIONS) == FORBIDDEN_AUTO_TUNE_KEYS - {
             "embedding.model_name"
         }
 
-    def test_spec_rows_agree_with_index_probe_literals(self):
-        """TEMPORARY (C2 step 1): spec(benchmark_locked=...) rows and the
-        hand-typed index_probe literals coexist and must agree byte-for-byte.
-        Deleted in C2 step 2 when the literals become derivations."""
-        from search.config import SearchConfig
+    def test_benchmark_lock_citations_are_nonempty_strings(self):
+        """Every spec(benchmark_locked=...) row must carry a real citation —
+        an empty string would render a blank reason in the ':tuned_parameters'
+        Benchmark-Locked panel."""
+        for key, citation in BENCHMARK_LOCK_CITATIONS.items():
+            assert isinstance(citation, str) and citation.strip(), key
 
-        assert SearchConfig._BENCHMARK_LOCK_CITATIONS == BENCHMARK_LOCK_CITATIONS
+    def test_index_routing_lock_is_not_a_benchmark_lock(self):
+        """embedding.model_name is locked for index-routing safety and must
+        never acquire a benchmark citation (it is displayed separately)."""
+        assert "embedding.model_name" in FORBIDDEN_AUTO_TUNE_KEYS
+        assert "embedding.model_name" not in BENCHMARK_LOCK_CITATIONS
 
     def test_no_override_rule_touches_forbidden_keys(self):
         for rule in RULES:

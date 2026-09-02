@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from .config import (
     PROJECT_OVERRIDES_FILENAME,
+    SearchConfig,
     get_search_config,
 )
 from .vram_manager import VRAM_TIERS, VRAMTier
@@ -61,100 +62,28 @@ GLSL_EXTENSIONS = frozenset(
     {".glsl", ".frag", ".vert", ".comp", ".geom", ".tesc", ".tese", ".glslinc"}
 )
 
-# Benchmark-validated keys the probe must NEVER auto-tune (see the guardrail
-# static test).  Each was pinned by an A/B on this repo's golden set — a probe
-# has no golden set on arbitrary projects, so these stay human decisions:
-# fusion weights/rrf_k/bm25_k1/bm25_b saturated; bm25_use_stopwords A/B'd;
-# centrality_alpha 0.0 replicated; single_pass kills recall; hop1_reserved_slots
-# ADR-0013; bm25_reserved_slots rejected; query_expansion ADR-0012 closed FAIL;
-# bm25_tokenizer is INDEX_VERSION 4; multi_hop tuned; doc_representation_mode
-# rejected 2026-08-14; merged_pool_policy rejected 2026-08-15;
-# graph_hop_window_cap rejected 2026-08-15; centrality_exclude_phantoms
-# pending pre-registered A/B (ADR-0055). See BENCHMARK_LOCK_CITATIONS
-# below for the per-key citation (ADR-0022) shown in start_mcp_server.cmd's
-# ":tuned_parameters" menu.
-FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
-    {
-        "search_mode.bm25_weight",
-        "search_mode.dense_weight",
-        "search_mode.rrf_k_parameter",
-        "search_mode.bm25_k1",
-        "search_mode.bm25_b",
-        "search_mode.bm25_use_stopwords",
-        "search_mode.bm25_tokenizer",
-        "search_mode.bm25_reserved_slots",
-        "graph_enhanced.centrality_alpha",
-        "graph_enhanced.centrality_exclude_phantoms",
-        "graph_enhanced.drop_ambiguous_traversal_edges",
-        "reranker.single_pass",
-        "reranker.hop1_reserved_slots",
-        "reranker.doc_representation_mode",
-        "reranker.merged_pool_policy",
-        "reranker.graph_hop_window_cap",
-        "query_expansion.enabled",
-        "multi_hop.expansion",
-        "multi_hop.multi_hop_mode",
-        "ego_graph.drop_nonpositive_output",
-        "ego_graph.max_neighbors_per_hop",
-        "embedding.model_name",  # routes to a different per-model index dir
-    }
-)
+# Keys the probe must NEVER auto-tune (see the guardrail static test).
+#
+# Every benchmark-pinned key is declared on its own config field via
+# ``spec(benchmark_locked=<citation>)`` in search/config.py (ADR-0022): the
+# citation lives next to the value it protects, and both names below are
+# views over ``SearchConfig._BENCHMARK_LOCK_CITATIONS``. A probe has no golden
+# set on arbitrary projects, so these stay human decisions.
+#
+# ``embedding.model_name`` is the one non-benchmark lock: it routes to a
+# different per-model index directory, so auto-tuning it would silently point
+# searches at a different index. It is displayed separately under
+# start_mcp_server.cmd's ":tuned_parameters" "Observation only" section, not
+# in the Benchmark-Locked panel, hence not in BENCHMARK_LOCK_CITATIONS.
+INDEX_ROUTING_LOCKED_KEYS = frozenset({"embedding.model_name"})
 
-# Human-readable "why this is locked" citation for each FORBIDDEN_AUTO_TUNE_KEYS
-# entry, keyed identically — consumed by start_mcp_server.cmd's ":tuned_parameters"
-# menu (ADR-0022) so the Benchmark-Locked panel has no second hand-typed list to
-# drift out of sync with the frozenset above. "embedding.model_name" is
-# deliberately excluded: it is locked for index-routing safety (see the comment
-# on the frozenset), not a benchmark result, and is displayed separately under
-# that menu's "Observation only" section.
-BENCHMARK_LOCK_CITATIONS: dict[str, str] = {
-    "search_mode.bm25_weight": "ADR-0019 (intent-adaptive fusion rejected, static weights kept)",
-    "search_mode.dense_weight": "ADR-0019 (intent-adaptive fusion rejected, static weights kept)",
-    "search_mode.rrf_k_parameter": "fusion sweep saturated, do not re-sweep",
-    "search_mode.bm25_k1": "fusion sweep saturated",
-    "search_mode.bm25_b": "fusion sweep saturated",
-    "search_mode.bm25_use_stopwords": "A/B 2026-08-01: removing regresses recall@5/MRR",
-    "search_mode.bm25_tokenizer": "INDEX_VERSION 4 (identifier-preserving 'whole' tokenizer)",
-    "search_mode.bm25_reserved_slots": "rejected 2026-07-28 (9/9 sweep runs, no Q12 pool_hit)",
-    "graph_enhanced.centrality_alpha": "higher alphas cost recall (replicated)",
-    "reranker.single_pass": "kills recall; latency knob only, not quality",
-    "reranker.hop1_reserved_slots": "ADR-0013",
-    "reranker.doc_representation_mode": (
-        "signature_head rejected 2026-08-14 (REMAINING_LEVERS_AB: recall@10/20 "
-        "CI-negative on 133q, 11 pool_hit losses vs 2 gains)"
-    ),
-    "query_expansion.enabled": "ADR-0012 re-eval closed 2026-08-02, stays disabled",
-    "multi_hop.expansion": "expansion_factor stays 0.5 (0.25 arm rejected 2026-08-02)",
-    "multi_hop.multi_hop_mode": "tuned; do not re-tune without a new A/B",
-    "reranker.merged_pool_policy": (
-        "POOL_ORDER_AB_20260815: channel_priority breaches 63q MRR/recall@5 "
-        "guard-rail; score_reserve_fix never clears the recall CI upside bar"
-    ),
-    "reranker.graph_hop_window_cap": (
-        "POOL_ORDER_CAP_AB_20260815: neither cap=2 nor cap=3 clears the "
-        "133q recall@10/recall@20 upside CI (both include zero, both point "
-        "estimates negative)"
-    ),
-    "ego_graph.drop_nonpositive_output": (
-        "CONFIDENCE_EGO_AB_20260816: recall@20 CI excludes zero on the loss "
-        "side on both 63q and 133q; recall@10 upside CI includes zero both "
-        "sets — fails the Phase 5 gate, stays default-off"
-    ),
-    "ego_graph.max_neighbors_per_hop": (
-        "EGO_GATE2_AB_20260901: w50-vs-w15 recall@10/recall@20 upside CI "
-        "includes zero on both 63q and 133q; 133q latency +311ms/query "
-        "flagged — gate-2 cap-relief seam rejected, stays at canon default 10"
-    ),
-    "graph_enhanced.drop_ambiguous_traversal_edges": (
-        "AMBIGUOUS_EDGE_AB_20260902: live 63q/133q A/B gated on recall@10/"
-        "recall@20 paired bootstrap; retrieval-quality knob, human decision"
-    ),
-    "graph_enhanced.centrality_exclude_phantoms": (
-        "ADR-0055 pending: pre-flight found phantoms are 75% of the top-20 "
-        "raw-PageRank nodes on this repo's own index and the #1 node is a "
-        "phantom; pre-registered A/B result not yet recorded, stays default-off"
-    ),
-}
+# "section.field" -> human-readable "why this is locked" citation, consumed by
+# start_mcp_server.cmd's ":tuned_parameters" Benchmark-Locked panel.
+BENCHMARK_LOCK_CITATIONS: dict[str, str] = dict(SearchConfig._BENCHMARK_LOCK_CITATIONS)
+
+FORBIDDEN_AUTO_TUNE_KEYS = (
+    frozenset(BENCHMARK_LOCK_CITATIONS) | INDEX_ROUTING_LOCKED_KEYS
+)
 
 
 @dataclass(frozen=True)
@@ -747,8 +676,10 @@ def merged_probe_summary(
 
 
 __all__ = [
+    "BENCHMARK_LOCK_CITATIONS",
     "FORBIDDEN_AUTO_TUNE_KEYS",
     "GLSL_EXTENSIONS",
+    "INDEX_ROUTING_LOCKED_KEYS",
     "PROBE_VERSION",
     "RULES",
     "ProbeMeasurements",

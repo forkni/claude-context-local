@@ -160,6 +160,16 @@ manual bump.
 
 ### `:tuned_parameters`'s Benchmark-Locked list now derives from `FORBIDDEN_AUTO_TUNE_KEYS`
 
+> **Superseded (2026-09-02).** The two hand-typed tables described below no longer
+> exist. Each benchmark-pinned field now declares its own citation on its `spec()` row
+> via `spec(benchmark_locked="...")`; `SearchConfig._BENCHMARK_LOCK_CITATIONS` is
+> derived from those rows (`_derive_benchmark_locks`), and `search/index_probe.py`'s
+> `BENCHMARK_LOCK_CITATIONS` / `FORBIDDEN_AUTO_TUNE_KEYS` are views over it plus the
+> single routing lock `INDEX_ROUTING_LOCKED_KEYS = {"embedding.model_name"}`. The
+> public names, the `start_mcp_server.cmd` one-liner, and the guardrail tests are
+> unchanged; the pinning test now pins the derived set. Treat the `spec()` rows in
+> `search/config.py` as the source of truth for what is locked and why.
+
 `start_mcp_server.cmd`'s `:tuned_parameters` menu hand-typed eight `print()` calls citing
 ADRs and sweep results for "do not re-tune" fields, and `search/index_probe.py`'s
 `FORBIDDEN_AUTO_TUNE_KEYS` separately pinned 12 dotted keys the auto-tune probe must never
