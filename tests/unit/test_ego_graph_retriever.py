@@ -58,17 +58,33 @@ class TestEgoGraphRetriever:
             ),
         )
 
-    def test_retrieve_ego_graph_threads_drop_ambiguous(
+    def test_retrieve_ego_graph_forwards_policy_unchanged(
         self, retriever, mock_graph_storage
     ):
-        """drop_ambiguous is forwarded to get_neighbors_ranked unchanged."""
+        """An explicit policy reaches get_neighbors_ranked as-is, config
+        untouched."""
         mock_graph_storage.get_neighbors_ranked = Mock(return_value=[])
         config = EgoGraphConfig(k_hops=2, max_neighbors_per_hop=10, edge_weights=None)
+        policy = TraversalPolicy(max_depth=1, drop_ambiguous=True, min_confidence=0.7)
 
-        retriever.retrieve_ego_graph(["anchor1"], config, drop_ambiguous=True)
+        retriever.retrieve_ego_graph(["anchor1"], config, policy)
 
-        policy = mock_graph_storage.get_neighbors_ranked.call_args.args[1]
-        assert policy.drop_ambiguous is True
+        mock_graph_storage.get_neighbors_ranked.assert_called_once_with(
+            "anchor1", policy
+        )
+
+    def test_expand_search_results_forwards_policy(self, retriever, mock_graph_storage):
+        """expand_search_results -> retrieve_ego_graph -> get_neighbors_ranked
+        carries one policy the whole way down."""
+        mock_graph_storage.get_neighbors_ranked = Mock(return_value=[])
+        config = EgoGraphConfig(enabled=True)
+        policy = TraversalPolicy(drop_ambiguous=True)
+
+        retriever.expand_search_results(
+            [{"chunk_id": "c1", "score": 1.0}], config, policy
+        )
+
+        mock_graph_storage.get_neighbors_ranked.assert_called_once_with("c1", policy)
 
     def test_retrieve_ego_graph_multiple_anchors(self, retriever, mock_graph_storage):
         """Test retrieval for multiple anchors."""

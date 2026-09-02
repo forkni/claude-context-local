@@ -24,6 +24,7 @@ except ImportError:
     torch = None
 
 from graph.graph_storage import CodeGraphStorage
+from graph.traversal_policy import TraversalPolicy
 from search.config import SearchMode, get_search_config
 from search.graph_integration import GraphIntegration
 from utils.observability import traced_block
@@ -704,15 +705,15 @@ class HybridSearcher(BaseSearcher):
                 # decorator changes the chunk kind to decorated_definition,
                 # breaking golden-dataset chunk IDs that reference this method
                 with timer("ego_expansion"):
-                    ge_cfg = effective_config.graph_enhanced
                     results = self._apply_ego_graph_expansion(
                         results,
                         effective_config.ego_graph,
                         k,
                         query,
-                        min_confidence=ge_cfg.min_traversal_confidence,
-                        confidence_weighting=ge_cfg.traversal_confidence_weighting_enabled,
-                        drop_ambiguous=ge_cfg.drop_ambiguous_traversal_edges,
+                        TraversalPolicy.ego(
+                            effective_config.ego_graph,
+                            effective_config.graph_enhanced,
+                        ),
                     )
 
             # Apply parent expansion if enabled (limit to primary k results to prevent bloat)
@@ -795,9 +796,7 @@ class HybridSearcher(BaseSearcher):
         ego_config: "EgoGraphConfig",
         original_k: int,
         query: str,
-        min_confidence: float = 0.0,
-        confidence_weighting: bool = False,
-        drop_ambiguous: bool = False,
+        policy: TraversalPolicy | None = None,
     ) -> list[SearchResult]:
         """Apply ego-graph expansion to search results.
 
@@ -809,14 +808,10 @@ class HybridSearcher(BaseSearcher):
             ego_config: EgoGraphConfig instance
             original_k: Original k parameter for search
             query: Original search query (for similarity scoring of neighbors)
-            min_confidence: Forwarded to
-                ``EgoGraphRetriever.expand_search_results`` (graph_enhanced's
-                ``min_traversal_confidence``). Default 0.0 = no-op.
-            confidence_weighting: Forwarded likewise
-                (``traversal_confidence_weighting_enabled``). Default
-                False = no-op.
-            drop_ambiguous: Forwarded likewise
-                (``drop_ambiguous_traversal_edges``). Default False = no-op.
+            policy: Forwarded to ``EgoGraphRetriever.expand_search_results``.
+                ``execute`` passes ``TraversalPolicy.ego(ego_config,
+                graph_enhanced)``; ``None`` = ``TraversalPolicy.ego(ego_config)``
+                with every edge gate at its no-op default.
 
         Returns:
             Expanded search results (anchors + neighbors)
@@ -834,11 +829,7 @@ class HybridSearcher(BaseSearcher):
             expanded_chunk_ids, ego_graphs = (
                 # pyrefly: ignore [missing-attribute]
                 self.ego_graph_retriever.expand_search_results(
-                    search_results_dict,
-                    ego_config,
-                    min_confidence,
-                    confidence_weighting,
-                    drop_ambiguous,
+                    search_results_dict, ego_config, policy
                 )
             )
 

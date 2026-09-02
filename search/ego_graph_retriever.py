@@ -7,7 +7,6 @@ Key Insight: Functions are often best understood with their callers, callees,
 and related code (ICLR 2025 RepoGraph paper shows 32.8% improvement).
 """
 
-import dataclasses
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -68,22 +67,20 @@ class EgoGraphRetriever:
         self,
         anchor_chunk_ids: list[str],
         config: EgoGraphConfig,
-        min_confidence: float = 0.0,
-        confidence_weighting: bool = False,
-        drop_ambiguous: bool = False,
+        policy: TraversalPolicy | None = None,
     ) -> dict[str, list[str]]:
         """Retrieve k-hop ego-graph for each anchor.
 
         Args:
             anchor_chunk_ids: Starting nodes (from initial search results)
             config: Ego-graph configuration
-            min_confidence: Forwarded to
+            policy: The walk handed to
                 :meth:`graph.graph_storage.CodeGraphStorage.get_neighbors_ranked`
-                — drop edges below this confidence floor. Default 0.0 = no-op.
-            confidence_weighting: Forwarded likewise — scale weighted-BFS
-                priority by edge confidence. Default False = no-op.
-            drop_ambiguous: Forwarded likewise — skip ``tag:ambiguous`` call
-                edges during traversal. Default False = no-op.
+                for every anchor. ``None`` = ``TraversalPolicy.ego(config)``
+                (depth/relations/exclusions from ``config``, all three edge
+                gates at their no-op defaults). Production passes
+                ``TraversalPolicy.ego(config, graph_enhanced)`` so the gates
+                come off ``GraphEnhancedConfig``.
 
         Returns:
             Dict mapping anchor_id -> list of neighbor chunk_ids
@@ -91,22 +88,12 @@ class EgoGraphRetriever:
         if not anchor_chunk_ids:
             return {}
 
+        if policy is None:
+            policy = TraversalPolicy.ego(config)
+
         # QW3: route to PPR expansion when requested
         if config.expansion_mode == "ppr":
-            return self._expand_via_ppr(
-                anchor_chunk_ids,
-                config,
-                min_confidence,
-                confidence_weighting,
-                drop_ambiguous,
-            )
-
-        policy = dataclasses.replace(
-            TraversalPolicy.ego(config),
-            min_confidence=min_confidence,
-            confidence_weighting=confidence_weighting,
-            drop_ambiguous=drop_ambiguous,
-        )
+            return self._expand_via_ppr(anchor_chunk_ids, config, policy)
 
         results = {}
         for anchor in anchor_chunk_ids:
@@ -170,9 +157,7 @@ class EgoGraphRetriever:
         self,
         anchor_chunk_ids: list[str],
         config: EgoGraphConfig,
-        min_confidence: float = 0.0,
-        confidence_weighting: bool = False,
-        drop_ambiguous: bool = False,
+        policy: TraversalPolicy | None = None,
     ) -> dict[str, list[str]]:
         """Expand anchors using Personalized PageRank instead of k-hop BFS.
 
@@ -185,6 +170,8 @@ class EgoGraphRetriever:
         Args:
             anchor_chunk_ids: Seed nodes (matched by semantic search).
             config: EgoGraphConfig with ppr_alpha and max_neighbors_per_hop.
+            policy: Forwarded unchanged to :meth:`retrieve_ego_graph` on the
+                BFS fallback path; PPR itself does not walk edges.
 
         Returns:
             Dict mapping each anchor -> list of top-k PPR neighbours.
@@ -210,13 +197,7 @@ class EgoGraphRetriever:
             logger.warning(
                 "[PPR] Power iteration failed to converge — falling back to BFS"
             )
-            return self.retrieve_ego_graph(
-                anchor_chunk_ids,
-                config,
-                min_confidence,
-                confidence_weighting,
-                drop_ambiguous,
-            )
+            return self.retrieve_ego_graph(anchor_chunk_ids, config, policy)
 
         max_total = config.max_neighbors_per_hop * config.k_hops
         anchor_set = set(valid_anchors)
@@ -295,9 +276,7 @@ class EgoGraphRetriever:
         self,
         search_results: list[dict],
         config: EgoGraphConfig,
-        min_confidence: float = 0.0,
-        confidence_weighting: bool = False,
-        drop_ambiguous: bool = False,
+        policy: TraversalPolicy | None = None,
     ) -> tuple[list[str], dict[str, list[str]]]:
         """Expand search results using ego-graph retrieval.
 
@@ -307,10 +286,8 @@ class EgoGraphRetriever:
         Args:
             search_results: List of search result dicts with 'chunk_id' field
             config: Ego-graph configuration
-            min_confidence: Forwarded to :meth:`retrieve_ego_graph`. Default
-                0.0 = no-op.
-            confidence_weighting: Forwarded to :meth:`retrieve_ego_graph`.
-                Default False = no-op.
+            policy: Forwarded to :meth:`retrieve_ego_graph`; ``None`` =
+                ``TraversalPolicy.ego(config)``.
 
         Returns:
             Tuple of:
@@ -325,13 +302,7 @@ class EgoGraphRetriever:
         anchor_chunk_ids = [r["chunk_id"] for r in search_results]
 
         # Retrieve ego-graphs for each anchor
-        ego_graphs = self.retrieve_ego_graph(
-            anchor_chunk_ids,
-            config,
-            min_confidence,
-            confidence_weighting,
-            drop_ambiguous,
-        )
+        ego_graphs = self.retrieve_ego_graph(anchor_chunk_ids, config, policy)
 
         # Flatten to unique chunk list
         expanded_chunk_ids = self.flatten_for_context(ego_graphs, config)

@@ -1333,6 +1333,28 @@ class TestEgoGraphExpansion:
 
         assert [r.chunk_id for r in combined] == [anchor.chunk_id, neighbor.chunk_id]
 
+    def test_forwards_policy_to_retriever(self):
+        """The TraversalPolicy handed in reaches expand_search_results
+        untouched; None resolves inside the retriever, not here."""
+        from graph.traversal_policy import TraversalPolicy
+        from search.config import EgoGraphConfig
+        from search.reranker import SearchResult
+
+        searcher = HybridSearcher(tempfile.mkdtemp())
+        anchor = SearchResult(chunk_id="a.py:1-5:function:f", score=0.9, metadata={})
+        searcher.ego_graph_retriever = Mock()
+        searcher.ego_graph_retriever.expand_search_results.return_value = ([], {})
+        ego_config = EgoGraphConfig(enabled=True)
+        policy = TraversalPolicy(drop_ambiguous=True, min_confidence=0.65)
+
+        searcher._apply_ego_graph_expansion(
+            [anchor], ego_config, original_k=5, query="test", policy=policy
+        )
+
+        searcher.ego_graph_retriever.expand_search_results.assert_called_once_with(
+            [{"chunk_id": anchor.chunk_id, "score": anchor.score}], ego_config, policy
+        )
+
     def test_caps_neighbors_to_min_of_hop_budget_and_k_multiple(self):
         from search.config import EgoGraphConfig
         from search.reranker import SearchResult
