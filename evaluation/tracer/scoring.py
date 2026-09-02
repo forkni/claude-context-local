@@ -522,3 +522,196 @@ def score_traced(
             emit_traced_golden(golden, traced, direction)
         )
     return out
+
+
+# ---------------------------------------------------------------------------
+# A1': confidence-bucket witness (are untagged ``calls`` edges real?)
+# ---------------------------------------------------------------------------
+
+BUCKET_SCHEMA = "confidence-bucket-witness/1"
+UNTAGGED = "untagged"
+BUCKET_DEFINITIONS: dict[str, str] = {
+    "bucket": (
+        "how graph.graph_storage.edge_confidence would resolve the edge: "
+        "resolver:<source> when a float resolver_confidence is present; "
+        "tag:<exact|ambiguous|recovered> when only the legacy string tag is; "
+        "untagged when neither (the 0.5 fallback under test)"
+    ),
+    "phantom": (
+        "edges whose callee is a bare symbol node (graph.schema.is_phantom_node); "
+        "counted per bucket but never in any denominator"
+    ),
+    "same_file": "caller and callee share the file-path prefix of their chunk ids",
+    "is_resolved": "the EDGE_ATTR_IS_RESOLVED flag written by add_call_edge",
+    "callee_kind": "chunk kind of the callee after canonical_callee (class for __init__)",
+    "metrics": (
+        "edges/edges_cov/hits_traced/prec_lb/prec_lb_cov/hits_D/recall_marginal/"
+        "unwitnessable exactly as in score_tiers; edge_share = edges / all "
+        "non-phantom calls edges"
+    ),
+    "verdict": (
+        "vacuous when the untagged bucket has no coverable non-phantom edge; "
+        "otherwise untagged is as_reliable_as_ast iff prec_lb_cov(untagged) >= 0.8 * "
+        "prec_lb_cov(tag:exact) and no secondary sub-bucket with edges_cov >= 100 "
+        "has prec_lb_cov below half of prec_lb_cov(untagged); otherwise the worst "
+        "such sub-bucket is the tagging target"
+    ),
+}
+VERDICT_RATIO = 0.8
+SUBBUCKET_MIN_COV = 100
+SUBBUCKET_HALF = 0.5
+
+
+def confidence_bucket(edge_data: Mapping[str, Any]) -> str:
+    """Name the path :func:`graph.graph_storage.edge_confidence` would take.
+
+    Same resolution order as that function and as
+    ``scripts/benchmark/probe_ego_membership.py:_classify_confidence_source``
+    (A0's D1 histogram), so the two records name the same buckets.
+    """
+    from graph.graph_storage import AST_CONFIDENCE_BY_TAG
+
+    rc = edge_data.get("resolver_confidence")
+    if isinstance(rc, (int, float)) and not isinstance(rc, bool):
+        return f"resolver:{edge_data.get('resolver_source') or 'unknown'}"
+    tag = edge_data.get("confidence")
+    if isinstance(tag, str) and tag in AST_CONFIDENCE_BY_TAG:
+        return f"tag:{tag}"
+    return UNTAGGED
+
+
+@dataclass
+class BucketedEdges:
+    """Static ``calls`` edges keyed by confidence bucket, with per-edge facets."""
+
+    by_bucket: dict[str, dict[Edge, dict[str, Any]]] = field(default_factory=dict)
+    phantom_by_bucket: Counter = field(default_factory=Counter)
+
+
+def _file_of(chunk_id: str) -> str:
+    return chunk_id.split(":", 1)[0]
+
+
+def extract_bucketed_edges(graph: Any) -> BucketedEdges:
+    """Like :func:`extract_static_edges` but grouped by confidence bucket.
+
+    An edge pair reached through several raw edges (split fragments, parallel
+    MultiDiGraph edges) is one entry per bucket; ``is_resolved`` is OR-merged.
+    """
+    out = BucketedEdges()
+    phantom_nodes = {n for n, d in graph.nodes(data=True) if is_phantom_node(d)}
+    for u, v, data in graph.edges(data=True):
+        if edge_relation_type(data) != "calls" or u in phantom_nodes:
+            continue
+        bucket = confidence_bucket(data)
+        if v in phantom_nodes:
+            out.phantom_by_bucket[bucket] += 1
+            continue
+        caller = normalize_chunk_id(u)
+        callee, _ = canonical_callee(normalize_chunk_id(v))
+        if caller == callee:
+            continue
+        facets = out.by_bucket.setdefault(bucket, {}).setdefault(
+            (caller, callee),
+            {
+                "same_file": _file_of(caller) == _file_of(callee),
+                "is_resolved": False,
+                "callee_kind": _kind(callee) or "unknown",
+            },
+        )
+        facets["is_resolved"] = facets["is_resolved"] or bool(
+            data.get("is_resolved", False)
+        )
+    return out
+
+
+def _bucket_row(edges: set[Edge], traced: TracedEdges) -> dict[str, Any]:
+    witnessed = traced.all_traced
+    cov = {e for e in edges if e[0] in traced.executed}
+    hits_d = edges & traced.direct
+    return {
+        "edges": len(edges),
+        "hits_D": len(hits_d),
+        "recall_marginal": _ratio(len(hits_d), len(traced.direct)),
+        "hits_traced": len(edges & witnessed),
+        "prec_lb": _ratio(len(edges & witnessed), len(edges)),
+        "edges_cov": len(cov),
+        "hits_cov": len(cov & witnessed),
+        "prec_lb_cov": _ratio(len(cov & witnessed), len(cov)),
+        "unwitnessable": len(edges) - len(cov),
+        "example_hits": sorted(hits_d)[:5],
+    }
+
+
+def _facet_split(
+    edges: Mapping[Edge, Mapping[str, Any]], facet: str, traced: TracedEdges
+) -> dict[str, dict[str, Any]]:
+    groups: dict[str, set[Edge]] = {}
+    for edge, facets in edges.items():
+        groups.setdefault(str(facets[facet]), set()).add(edge)
+    return {key: _bucket_row(groups[key], traced) for key in sorted(groups)}
+
+
+def score_confidence_buckets(
+    bucketed: BucketedEdges, traced: TracedEdges
+) -> dict[str, Any]:
+    """Per-bucket witness table, untagged secondary splits, pre-registered verdict."""
+    buckets = {
+        name: _bucket_row(set(edges), traced)
+        for name, edges in sorted(bucketed.by_bucket.items())
+    }
+    total_edges = sum(row["edges"] for row in buckets.values())
+    for row in buckets.values():
+        row["edge_share"] = _ratio(row["edges"], total_edges)
+    untagged_edges = bucketed.by_bucket.get(UNTAGGED, {})
+    splits = {
+        facet: _facet_split(untagged_edges, facet, traced)
+        for facet in ("same_file", "is_resolved", "callee_kind")
+    }
+
+    untagged = buckets.get(UNTAGGED) or _bucket_row(set(), traced)
+    exact = buckets.get("tag:exact") or _bucket_row(set(), traced)
+    threshold = round(VERDICT_RATIO * exact["prec_lb_cov"], 4)
+    weak: list[dict[str, Any]] = []
+    for facet, rows in splits.items():
+        for key, row in rows.items():
+            if (
+                row["edges_cov"] >= SUBBUCKET_MIN_COV
+                and row["prec_lb_cov"] < SUBBUCKET_HALF * untagged["prec_lb_cov"]
+            ):
+                weak.append(
+                    {
+                        "facet": facet,
+                        "value": key,
+                        "edges_cov": row["edges_cov"],
+                        "prec_lb_cov": row["prec_lb_cov"],
+                    }
+                )
+    weak.sort(key=lambda w: (w["prec_lb_cov"], -w["edges_cov"], w["facet"]))
+    vacuous = untagged["edges_cov"] == 0
+    as_reliable = (not vacuous) and untagged["prec_lb_cov"] >= threshold and not weak
+    return {
+        "schema": BUCKET_SCHEMA,
+        "definitions": BUCKET_DEFINITIONS,
+        "denominators": {
+            "D": len(traced.direct),
+            "E_traced": len(traced.all_traced),
+            "EXEC": len(traced.executed),
+            "edges_non_phantom": total_edges,
+            "edges_phantom": sum(bucketed.phantom_by_bucket.values()),
+        },
+        "buckets": buckets,
+        "phantom_by_bucket": dict(sorted(bucketed.phantom_by_bucket.items())),
+        "untagged_splits": splits,
+        "verdict": {
+            "as_reliable_as_ast": as_reliable,
+            "vacuous": vacuous,
+            "untagged_edges": untagged["edges"],
+            "untagged_edges_cov": untagged["edges_cov"],
+            "untagged_prec_lb_cov": untagged["prec_lb_cov"],
+            "tag_exact_prec_lb_cov": exact["prec_lb_cov"],
+            "threshold": threshold,
+            "weak_subbuckets": weak,
+            "tagging_target": weak[0] if weak else None,
+        },
+    }

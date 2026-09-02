@@ -54,10 +54,12 @@ def make_graph() -> nx.MultiDiGraph:
     g.add_edge(C, E, type="calls", confidence="exact")  # ast
     g.add_edge(E, F, type="calls", confidence="ambiguous")  # ast, never traced
     g.add_edge(A, PHANTOM, type="calls")  # phantom target "d"
-    g.add_edge(A, M_OTHER, type="calls", resolver_source="pyan")  # dispatch decoy
+    g.add_edge(
+        A, M_OTHER, type="calls", resolver_source="pyan", resolver_confidence=0.75
+    )  # dispatch decoy
     g.add_edge(SPLIT1, SPLIT2, type="calls")  # split fragments: dropped
     g.add_edge(A, G, type="imports")  # non-call relation: ignored
-    g.add_edge(W, G, type="calls", resolver_source="lsp")
+    g.add_edge(W, G, type="calls", resolver_source="lsp", resolver_confidence=0.98)
     return g
 
 
@@ -315,3 +317,110 @@ def test_make_source_lookup_concatenates_split_fragments(tmp_path: Path) -> None
     assert lookup("pkg/m.py:method:big") == "l1\nl2\nl3\nl4"
     assert lookup("pkg/m.py:function:gone") is None
     assert lookup("nope") is None
+
+
+def test_confidence_buckets_exact_fractions() -> None:
+    from evaluation.tracer.scoring import (
+        UNTAGGED,
+        confidence_bucket,
+        extract_bucketed_edges,
+        score_confidence_buckets,
+    )
+
+    g = make_graph()
+    # one genuinely untagged chunk->chunk edge, cross-file, unresolved flag,
+    # callee a method; plus a same-file untagged one to a function
+    g.add_edge(D, E, type="calls")
+    g.add_edge(E, F, type="calls", is_resolved=True)  # parallel to the ambiguous edge
+    g.add_edge(F, F, type="calls")  # self-loop: dropped
+    g.add_edge(C, D, type="calls", confidence="recovered")
+
+    assert (
+        confidence_bucket({"resolver_confidence": 0.9, "resolver_source": "lsp"})
+        == "resolver:lsp"
+    )
+    assert confidence_bucket({"resolver_confidence": 0.9}) == "resolver:unknown"
+    assert confidence_bucket({"confidence": "exact"}) == "tag:exact"
+    assert confidence_bucket({"confidence": "bogus"}) == UNTAGGED
+    assert confidence_bucket({}) == UNTAGGED
+
+    bucketed = extract_bucketed_edges(g)
+    assert set(bucketed.by_bucket) == {
+        "resolver:lsp",
+        "resolver:libcst",
+        "resolver:pyan",
+        "tag:exact",
+        "tag:ambiguous",
+        "tag:recovered",
+        UNTAGGED,
+    }
+    assert bucketed.phantom_by_bucket == {UNTAGGED: 1}
+    untagged = bucketed.by_bucket[UNTAGGED]
+    assert set(untagged) == {(norm(D), norm(E)), (norm(E), norm(F))}
+    assert untagged[(norm(D), norm(E))] == {
+        "same_file": False,
+        "is_resolved": False,
+        "callee_kind": "function",
+    }
+    assert untagged[(norm(E), norm(F))]["same_file"] is True
+    assert untagged[(norm(E), norm(F))]["is_resolved"] is True
+    # the parallel ambiguous E->F edge stays in its own bucket too
+    assert (norm(E), norm(F)) in bucketed.by_bucket["tag:ambiguous"]
+
+    static = extract_static_edges(g)
+    traced = load_traced_edges(traced_payload(), static)
+    report = score_confidence_buckets(bucketed, traced)
+    b = report["buckets"]
+    # D = 6 direct-resolved traced edges (see traced_payload); EXEC excludes F's caller role
+    assert report["denominators"]["D"] == len(traced.direct)
+    assert report["denominators"]["edges_phantom"] == 1
+    assert report["denominators"]["edges_non_phantom"] == sum(
+        r["edges"] for r in b.values()
+    )
+    assert b["resolver:lsp"] == {
+        **b["resolver:lsp"],
+        "edges": 2,
+        "hits_traced": 1,
+        "prec_lb": 0.5,
+    }
+    assert b["tag:exact"]["edges"] == 1 and b["tag:exact"]["prec_lb"] == 1.0
+    assert b["tag:exact"]["prec_lb_cov"] == 1.0
+    # untagged: D->E (D executed, unwitnessed) and E->F (E executed, unwitnessed)
+    assert b[UNTAGGED]["edges"] == 2
+    assert b[UNTAGGED]["edges_cov"] == 2
+    assert b[UNTAGGED]["prec_lb_cov"] == 0.0
+    assert b[UNTAGGED]["unwitnessable"] == 0
+    assert abs(sum(r["edge_share"] for r in b.values()) - 1.0) < 1e-6
+    # secondary splits partition the untagged bucket
+    for facet, rows in report["untagged_splits"].items():
+        assert sum(r["edges"] for r in rows.values()) == 2, facet
+    assert set(report["untagged_splits"]["same_file"]) == {"False", "True"}
+    assert set(report["untagged_splits"]["callee_kind"]) == {"function"}
+    v = report["verdict"]
+    assert v["vacuous"] is False
+    assert v["as_reliable_as_ast"] is False
+    assert v["threshold"] == 0.8
+    assert v["weak_subbuckets"] == []  # every sub-bucket is under the 100-edge floor
+    assert json.dumps(report, sort_keys=True) == json.dumps(
+        score_confidence_buckets(extract_bucketed_edges(g), traced), sort_keys=True
+    )
+
+
+def test_confidence_buckets_vacuous_without_untagged_edges() -> None:
+    from evaluation.tracer.scoring import (
+        UNTAGGED,
+        extract_bucketed_edges,
+        score_confidence_buckets,
+    )
+
+    g = make_graph()  # its only untagged calls edges are the phantom and the split pair
+    static = extract_static_edges(g)
+    traced = load_traced_edges(traced_payload(), static)
+    report = score_confidence_buckets(extract_bucketed_edges(g), traced)
+    assert UNTAGGED not in report["buckets"]
+    assert report["phantom_by_bucket"] == {UNTAGGED: 1}
+    v = report["verdict"]
+    assert v["vacuous"] is True
+    assert v["as_reliable_as_ast"] is False
+    assert v["untagged_edges"] == 0 and v["untagged_edges_cov"] == 0
+    assert v["tagging_target"] is None
