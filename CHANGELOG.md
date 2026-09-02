@@ -319,9 +319,10 @@ routing (ADR-0054), test-suite hardening Phases 13-14, and three canon re-baseli
     queries are unchanged, consistent with the float32 reranker-logit change. Recorded as
     drift, pin not re-based.
 - **`evaluation/` slimmed to inputs only** (2026-09-02): 51 regenerable benchmark/probe run dumps
-  (~28 MB) untracked; `.gitignore` now ignores `evaluation/*.json` except the nine inputs that
+  (~28 MB) untracked; `.gitignore` now ignores `evaluation/*.json` except the eleven inputs that
   scripts and tests read (`golden_dataset*.json`, `caller/callee_golden*.json`,
-  `hard_query_candidates.json`, `commit_mined_candidates.json`, `raw_mcp_results_hybrid.json`).
+  `hard_query_candidates.json`, `commit_mined_candidates.json`, the three pinned
+  `raw_mcp_results_{hybrid,bm25,semantic}.json` snapshots).
   Write-ups (`.md`) and modules stay tracked; local copies of the dumps are untouched and every
   one is reproducible from its `scripts/benchmark/` producer named in the matching write-up.
 - Dependency audits 2026-08-20 and 2026-09-01 (`audit_reports/`); `setproctitle` repaired;
