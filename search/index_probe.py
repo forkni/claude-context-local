@@ -85,6 +85,7 @@ FORBIDDEN_AUTO_TUNE_KEYS = frozenset(
         "search_mode.bm25_reserved_slots",
         "graph_enhanced.centrality_alpha",
         "graph_enhanced.centrality_exclude_phantoms",
+        "graph_enhanced.drop_ambiguous_traversal_edges",
         "reranker.single_pass",
         "reranker.hop1_reserved_slots",
         "reranker.doc_representation_mode",
@@ -143,6 +144,10 @@ BENCHMARK_LOCK_CITATIONS: dict[str, str] = {
         "EGO_GATE2_AB_20260901: w50-vs-w15 recall@10/recall@20 upside CI "
         "includes zero on both 63q and 133q; 133q latency +311ms/query "
         "flagged — gate-2 cap-relief seam rejected, stays at canon default 10"
+    ),
+    "graph_enhanced.drop_ambiguous_traversal_edges": (
+        "AMBIGUOUS_EDGE_AB_20260902: live 63q/133q A/B gated on recall@10/"
+        "recall@20 paired bootstrap; retrieval-quality knob, human decision"
     ),
     "graph_enhanced.centrality_exclude_phantoms": (
         "ADR-0055 pending: pre-flight found phantoms are 75% of the top-20 "

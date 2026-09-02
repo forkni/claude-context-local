@@ -876,6 +876,7 @@ class TestMultiHopSearcher:
         config.graph_enhanced.graph_hop_call_evidence_enabled = False
         config.graph_enhanced.min_traversal_confidence = 0.0
         config.graph_enhanced.traversal_confidence_weighting_enabled = False
+        config.graph_enhanced.drop_ambiguous_traversal_edges = False
 
         # Provide initial results from hop 1
         self.mock_single_hop_callback.return_value = [
@@ -1171,6 +1172,7 @@ class TestCallEvidenceScoring:
         kwargs = self.mock_graph_storage.get_neighbors_ranked.call_args.kwargs
         assert kwargs["min_confidence"] == 0.0
         assert kwargs["confidence_weighting"] is False
+        assert kwargs["drop_ambiguous"] is False
 
     def test_no_config_traversal_defaults(self):
         """Legacy callers threading no config get the same no-op traversal."""
@@ -1178,6 +1180,7 @@ class TestCallEvidenceScoring:
         kwargs = self.mock_graph_storage.get_neighbors_ranked.call_args.kwargs
         assert kwargs["min_confidence"] == 0.0
         assert kwargs["confidence_weighting"] is False
+        assert kwargs["drop_ambiguous"] is False
 
     def test_traversal_confidence_threaded_from_config(self):
         """A2: config values reach get_neighbors_ranked on every anchor expansion."""
@@ -1190,6 +1193,16 @@ class TestCallEvidenceScoring:
         kwargs = self.mock_graph_storage.get_neighbors_ranked.call_args.kwargs
         assert kwargs["min_confidence"] == 0.7
         assert kwargs["confidence_weighting"] is True
+
+    def test_drop_ambiguous_threaded_from_config(self):
+        """drop_ambiguous_traversal_edges reaches get_neighbors_ranked."""
+        config = SearchConfig()
+        config.graph_enhanced.drop_ambiguous_traversal_edges = True
+
+        self._expand(config=config)
+
+        kwargs = self.mock_graph_storage.get_neighbors_ranked.call_args.kwargs
+        assert kwargs["drop_ambiguous"] is True
 
     def test_search_threads_query_embedding_and_config(self):
         """search() threads the pre-computed query embedding and config into

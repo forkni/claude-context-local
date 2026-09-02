@@ -11,7 +11,11 @@ from unittest.mock import patch
 
 import pytest
 
-from graph.graph_storage import CodeGraphStorage, edge_confidence
+from graph.graph_storage import (
+    CodeGraphStorage,
+    edge_confidence,
+    is_ambiguous_call_edge,
+)
 
 
 @pytest.fixture
@@ -650,6 +654,37 @@ class TestEdgeConfidenceFunction:
         assert edge_confidence({"resolver_confidence": "0.5"}) is None
 
 
+class TestIsAmbiguousCallEdge:
+    """Direct tests for ``is_ambiguous_call_edge()``: only an AST ``calls``
+    edge carrying the ``"ambiguous"`` string tag and no float
+    ``resolver_confidence`` qualifies."""
+
+    def test_tagged_ambiguous_call_edge(self):
+        assert is_ambiguous_call_edge(
+            {"relationship_type": "calls", "confidence": "ambiguous"}
+        )
+
+    def test_float_resolver_confidence_supersedes_tag(self):
+        """A resolver that validated the edge wrote a float; the stale tag
+        no longer counts, matching edge_confidence's precedence."""
+        assert not is_ambiguous_call_edge(
+            {
+                "relationship_type": "calls",
+                "confidence": "ambiguous",
+                "resolver_confidence": 0.9,
+            }
+        )
+
+    def test_exact_and_untagged_and_non_call_are_not_ambiguous(self):
+        assert not is_ambiguous_call_edge(
+            {"relationship_type": "calls", "confidence": "exact"}
+        )
+        assert not is_ambiguous_call_edge({"relationship_type": "calls"})
+        assert not is_ambiguous_call_edge(
+            {"relationship_type": "imports", "confidence": "ambiguous"}
+        )
+
+
 class TestConfidenceTraversal:
     """Tests for A2: confidence-weighted traversal in get_neighbors.
 
@@ -750,6 +785,112 @@ class TestConfidenceTraversal:
             self.A, relation_types=["calls", "called_by"], min_confidence=0.6
         )
         assert self.B in neighbors
+
+    E = "test.py:80-90:function:E"
+    F = "test.py:100-110:function:F"
+
+    @pytest.fixture
+    def ambiguous_graph(self, confidence_graph):
+        """confidence_graph plus A->E (tag:exact) and A->F (untagged calls)."""
+        for chunk_id, name in [(self.E, "E"), (self.F, "F")]:
+            confidence_graph.add_node(
+                chunk_id=chunk_id,
+                name=name,
+                chunk_type="function",
+                file_path="test.py",
+            )
+        confidence_graph.graph.add_edge(
+            self.A, self.E, relationship_type="calls", confidence="exact"
+        )
+        confidence_graph.graph.add_edge(self.A, self.F, relationship_type="calls")
+        return confidence_graph
+
+    def test_drop_ambiguous_default_off_is_byte_identical(self, ambiguous_graph):
+        """drop_ambiguous defaults to False: every edge is returned."""
+        neighbors = ambiguous_graph.get_neighbors(self.A, relation_types=["calls"])
+        assert neighbors == {self.B, self.C, self.D, self.E, self.F}
+        ranked = ambiguous_graph.get_neighbors_ranked(self.A, relation_types=["calls"])
+        assert set(ranked) == neighbors
+
+    def test_drop_ambiguous_drops_only_tagged_edge_unweighted(self, ambiguous_graph):
+        """Only the ``confidence="ambiguous"`` edge (D) is dropped. The float
+        0.5 edge (B), the tag:exact edge (E) and the untagged calls edge (F)
+        all resolve to <= 0.7 too, but they are not ambiguous and survive —
+        unlike a min_confidence floor of 0.6, which would also drop B and F.
+        """
+        neighbors = ambiguous_graph.get_neighbors(
+            self.A, relation_types=["calls"], drop_ambiguous=True
+        )
+        assert neighbors == {self.B, self.C, self.E, self.F}
+        floored = ambiguous_graph.get_neighbors(
+            self.A, relation_types=["calls"], min_confidence=0.6
+        )
+        assert floored == {self.C, self.E}
+
+    def test_drop_ambiguous_drops_only_tagged_edge_weighted(self, ambiguous_graph):
+        """Weighted BFS applies the same predicate."""
+        neighbors = ambiguous_graph.get_neighbors(
+            self.A,
+            relation_types=["calls"],
+            edge_weights={"calls": 1.0},
+            drop_ambiguous=True,
+        )
+        assert neighbors == {self.B, self.C, self.E, self.F}
+
+    def test_drop_ambiguous_ranked_matches_unranked(self, ambiguous_graph):
+        ranked = ambiguous_graph.get_neighbors_ranked(
+            self.A, relation_types=["calls"], drop_ambiguous=True
+        )
+        assert set(ranked) == {self.B, self.C, self.E, self.F}
+        assert self.D not in ranked
+
+    def test_drop_ambiguous_float_supersedes_tag(self, ambiguous_graph):
+        """An edge whose stale tag says "ambiguous" but which a later resolver
+        validated with a float is kept."""
+        ambiguous_graph.graph.remove_edge(self.A, self.D)
+        ambiguous_graph.graph.add_edge(
+            self.A,
+            self.D,
+            relationship_type="calls",
+            confidence="ambiguous",
+            resolver_confidence=0.9,
+        )
+        neighbors = ambiguous_graph.get_neighbors(
+            self.A, relation_types=["calls"], drop_ambiguous=True
+        )
+        assert self.D in neighbors
+
+    def test_drop_ambiguous_drops_edges_not_nodes(self, ambiguous_graph):
+        """D is unreachable through its ambiguous edge but comes back once a
+        surviving reverse call edge D->A exists."""
+        assert self.D not in ambiguous_graph.get_neighbors(
+            self.A, relation_types=["calls", "called_by"], drop_ambiguous=True
+        )
+        ambiguous_graph.graph.add_edge(
+            self.D, self.A, relationship_type="calls", resolver_confidence=0.9
+        )
+        assert self.D in ambiguous_graph.get_neighbors(
+            self.A, relation_types=["calls", "called_by"], drop_ambiguous=True
+        )
+
+    def test_drop_ambiguous_at_depth_two(self, ambiguous_graph):
+        """The predicate applies on every hop: D's onward neighbor G is not
+        reached through the dropped A->D edge."""
+        g = "test.py:120-130:function:G"
+        ambiguous_graph.add_node(
+            chunk_id=g, name="G", chunk_type="function", file_path="test.py"
+        )
+        ambiguous_graph.graph.add_edge(
+            self.D, g, relationship_type="calls", resolver_confidence=0.98
+        )
+        base = ambiguous_graph.get_neighbors(
+            self.A, relation_types=["calls"], max_depth=2
+        )
+        assert g in base
+        dropped = ambiguous_graph.get_neighbors(
+            self.A, relation_types=["calls"], max_depth=2, drop_ambiguous=True
+        )
+        assert g not in dropped
 
     def _captured_push_weights(self, storage, confidence_weighting):
         """Run a weighted BFS and capture the priority-queue weight per neighbor."""

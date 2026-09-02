@@ -110,6 +110,25 @@ def edge_confidence(edge_data: dict, edge_type: "str | None" = None) -> "float |
     return None
 
 
+def is_ambiguous_call_edge(edge_data: dict) -> bool:
+    """True for a ``tag:ambiguous`` call edge: an AST-resolver edge carrying
+    the legacy ``confidence == "ambiguous"`` string tag and no float
+    ``resolver_confidence`` (a resolver that later validated the edge writes a
+    float, which supersedes the tag exactly as in :func:`edge_confidence`).
+
+    These are the AST resolver's same-name fan-out edges (one call site to
+    every same-named definition). ``find_connections`` already hides them by
+    default (``hide_ambiguous_edges_default``); this predicate lets traversal
+    drop them too (``GraphEnhancedConfig.drop_ambiguous_traversal_edges``).
+    """
+    if isinstance(edge_data.get("resolver_confidence"), (int, float)):
+        return False
+    return (
+        edge_relation_type(edge_data) == "calls"
+        and edge_data.get("confidence") == "ambiguous"
+    )
+
+
 # Edge-type weights for weighted BFS (SOG paper: data flow > control flow > effect flow)
 # Higher weight = higher priority in graph traversal
 DEFAULT_EDGE_WEIGHTS: dict[str, float] = {
@@ -516,9 +535,14 @@ class CodeGraphStorage:
         edge_weights: dict[str, float] | None,
         min_confidence: float,
         confidence_weighting: bool,
+        drop_ambiguous: bool = False,
     ) -> Iterator[str]:
         """Shared BFS/priority traversal, yielding each neighbor exactly once
         at first discovery.
+
+        ``drop_ambiguous`` skips every ``tag:ambiguous`` call edge (see
+        :func:`is_ambiguous_call_edge`) in both modes, independently of
+        ``min_confidence``; a node stays reachable via any surviving edge.
 
         This is the single generator behind both ``get_neighbors`` (collects
         the yielded IDs into a ``set``) and ``get_neighbors_ranked`` (keeps
@@ -544,6 +568,8 @@ class CodeGraphStorage:
                 for neighbor, edge_type, edge_data in self._iter_matching_neighbors(
                     current_id, relation_types, exclude_import_categories
                 ):
+                    if drop_ambiguous and is_ambiguous_call_edge(edge_data):
+                        continue  # Drop this edge; neighbor may arrive via another
                     if (
                         min_confidence > 0.0
                         and self._edge_confidence(edge_data, edge_type) < min_confidence
@@ -569,6 +595,8 @@ class CodeGraphStorage:
                 for neighbor, edge_type, edge_data in self._iter_matching_neighbors(
                     current_id, relation_types, exclude_import_categories
                 ):
+                    if drop_ambiguous and is_ambiguous_call_edge(edge_data):
+                        continue  # Drop this edge; neighbor may arrive via another
                     confidence = self._edge_confidence(edge_data, edge_type)
                     if min_confidence > 0.0 and confidence < min_confidence:
                         continue  # Drop this edge; neighbor may arrive via another
@@ -591,6 +619,7 @@ class CodeGraphStorage:
         edge_weights: dict[str, float] | None = None,
         min_confidence: float = 0.0,
         confidence_weighting: bool = False,
+        drop_ambiguous: bool = False,
     ) -> set[str]:
         """
         Get all related chunks within max_depth hops.
@@ -652,6 +681,7 @@ class CodeGraphStorage:
                 edge_weights,
                 min_confidence,
                 confidence_weighting,
+                drop_ambiguous,
             )
         )
 
@@ -664,6 +694,7 @@ class CodeGraphStorage:
         edge_weights: dict[str, float] | None = None,
         min_confidence: float = 0.0,
         confidence_weighting: bool = False,
+        drop_ambiguous: bool = False,
     ) -> list[str]:
         """Like :meth:`get_neighbors`, but returns neighbors in discovery/
         priority order instead of an unordered ``set``.
@@ -702,6 +733,7 @@ class CodeGraphStorage:
                 edge_weights,
                 min_confidence,
                 confidence_weighting,
+                drop_ambiguous,
             )
         )
 

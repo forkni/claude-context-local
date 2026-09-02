@@ -712,6 +712,7 @@ class HybridSearcher(BaseSearcher):
                         query,
                         min_confidence=ge_cfg.min_traversal_confidence,
                         confidence_weighting=ge_cfg.traversal_confidence_weighting_enabled,
+                        drop_ambiguous=ge_cfg.drop_ambiguous_traversal_edges,
                     )
 
             # Apply parent expansion if enabled (limit to primary k results to prevent bloat)
@@ -796,6 +797,7 @@ class HybridSearcher(BaseSearcher):
         query: str,
         min_confidence: float = 0.0,
         confidence_weighting: bool = False,
+        drop_ambiguous: bool = False,
     ) -> list[SearchResult]:
         """Apply ego-graph expansion to search results.
 
@@ -813,6 +815,8 @@ class HybridSearcher(BaseSearcher):
             confidence_weighting: Forwarded likewise
                 (``traversal_confidence_weighting_enabled``). Default
                 False = no-op.
+            drop_ambiguous: Forwarded likewise
+                (``drop_ambiguous_traversal_edges``). Default False = no-op.
 
         Returns:
             Expanded search results (anchors + neighbors)
@@ -834,6 +838,7 @@ class HybridSearcher(BaseSearcher):
                     ego_config,
                     min_confidence,
                     confidence_weighting,
+                    drop_ambiguous,
                 )
             )
 

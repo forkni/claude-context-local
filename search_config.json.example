@@ -169,6 +169,7 @@
     "graph_hop_call_evidence_lambda": 0.05,
     "min_traversal_confidence": 0.0,
     "traversal_confidence_weighting_enabled": false,
+    "drop_ambiguous_traversal_edges": false,
     "hide_ambiguous_edges_default": true
   },
   "observability": {

@@ -1317,6 +1317,21 @@ class GraphEnhancedConfig:
             reader="search/multi_hop_searcher.py",
         ),
     )
+    # Drop `tag:ambiguous` call edges (AST same-name fan-out, no float
+    # resolver_confidence; graph.graph_storage.is_ambiguous_call_edge) from
+    # ego-graph and multi-hop traversal. Unlike min_traversal_confidence this
+    # touches nothing else: tag:exact (0.7), phantom-callee edges (0.5) and
+    # every resolver-validated edge survive. Offline replay 2026-09-02
+    # (evaluation/AMBIGUOUS_EDGE_REPLAY_20260902.md) passed the >=2 net-rescue
+    # bar on both 63q and 133q; ships default-off pending the live A/B and is
+    # benchmark-locked (search/index_probe.py FORBIDDEN_AUTO_TUNE_KEYS).
+    drop_ambiguous_traversal_edges: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="drop_ambiguous_traversal_edges",
+            reader="search/multi_hop_searcher.py",
+        ),
+    )
     # Fix #2 (partial mitigation): default for find_connections' `hide_ambiguous`
     # arg when the caller omits it. When true, callees/callers tagged
     # confidence == "ambiguous" are dropped from the returned list (but not

@@ -68,6 +68,7 @@ class EgoGraphRetriever:
         config: EgoGraphConfig,
         min_confidence: float = 0.0,
         confidence_weighting: bool = False,
+        drop_ambiguous: bool = False,
     ) -> dict[str, list[str]]:
         """Retrieve k-hop ego-graph for each anchor.
 
@@ -79,6 +80,8 @@ class EgoGraphRetriever:
                 — drop edges below this confidence floor. Default 0.0 = no-op.
             confidence_weighting: Forwarded likewise — scale weighted-BFS
                 priority by edge confidence. Default False = no-op.
+            drop_ambiguous: Forwarded likewise — skip ``tag:ambiguous`` call
+                edges during traversal. Default False = no-op.
 
         Returns:
             Dict mapping anchor_id -> list of neighbor chunk_ids
@@ -89,7 +92,11 @@ class EgoGraphRetriever:
         # QW3: route to PPR expansion when requested
         if config.expansion_mode == "ppr":
             return self._expand_via_ppr(
-                anchor_chunk_ids, config, min_confidence, confidence_weighting
+                anchor_chunk_ids,
+                config,
+                min_confidence,
+                confidence_weighting,
+                drop_ambiguous,
             )
 
         results = {}
@@ -116,6 +123,7 @@ class EgoGraphRetriever:
                     edge_weights=config.edge_weights,
                     min_confidence=min_confidence,
                     confidence_weighting=confidence_weighting,
+                    drop_ambiguous=drop_ambiguous,
                 )
 
                 # Filter to keep only valid chunk_ids (format: "file:lines:type:name")
@@ -173,6 +181,7 @@ class EgoGraphRetriever:
         config: EgoGraphConfig,
         min_confidence: float = 0.0,
         confidence_weighting: bool = False,
+        drop_ambiguous: bool = False,
     ) -> dict[str, list[str]]:
         """Expand anchors using Personalized PageRank instead of k-hop BFS.
 
@@ -211,7 +220,11 @@ class EgoGraphRetriever:
                 "[PPR] Power iteration failed to converge — falling back to BFS"
             )
             return self.retrieve_ego_graph(
-                anchor_chunk_ids, config, min_confidence, confidence_weighting
+                anchor_chunk_ids,
+                config,
+                min_confidence,
+                confidence_weighting,
+                drop_ambiguous,
             )
 
         max_total = config.max_neighbors_per_hop * config.k_hops
@@ -293,6 +306,7 @@ class EgoGraphRetriever:
         config: EgoGraphConfig,
         min_confidence: float = 0.0,
         confidence_weighting: bool = False,
+        drop_ambiguous: bool = False,
     ) -> tuple[list[str], dict[str, list[str]]]:
         """Expand search results using ego-graph retrieval.
 
@@ -321,7 +335,11 @@ class EgoGraphRetriever:
 
         # Retrieve ego-graphs for each anchor
         ego_graphs = self.retrieve_ego_graph(
-            anchor_chunk_ids, config, min_confidence, confidence_weighting
+            anchor_chunk_ids,
+            config,
+            min_confidence,
+            confidence_weighting,
+            drop_ambiguous,
         )
 
         # Flatten to unique chunk list

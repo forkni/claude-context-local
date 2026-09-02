@@ -216,9 +216,11 @@ class MultiHopSearcher:
         ge_cfg = getattr(config, "graph_enhanced", None) if config is not None else None
         min_confidence = 0.0
         confidence_weighting = False
+        drop_ambiguous = False
         if ge_cfg is not None:
             min_confidence = ge_cfg.min_traversal_confidence
             confidence_weighting = ge_cfg.traversal_confidence_weighting_enabled
+            drop_ambiguous = ge_cfg.drop_ambiguous_traversal_edges
 
         for result in source_results:
             # Weighted BFS -- prioritizes calls (1.0) over imports (0.3).
@@ -232,6 +234,7 @@ class MultiHopSearcher:
                 edge_weights=edge_weights or DEFAULT_EDGE_WEIGHTS,
                 min_confidence=min_confidence,
                 confidence_weighting=confidence_weighting,
+                drop_ambiguous=drop_ambiguous,
             )
 
             added_for_source = 0

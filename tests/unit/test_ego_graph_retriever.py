@@ -52,7 +52,20 @@ class TestEgoGraphRetriever:
             edge_weights=None,
             min_confidence=0.0,
             confidence_weighting=False,
+            drop_ambiguous=False,
         )
+
+    def test_retrieve_ego_graph_threads_drop_ambiguous(
+        self, retriever, mock_graph_storage
+    ):
+        """drop_ambiguous is forwarded to get_neighbors_ranked unchanged."""
+        mock_graph_storage.get_neighbors_ranked = Mock(return_value=[])
+        config = EgoGraphConfig(k_hops=2, max_neighbors_per_hop=10, edge_weights=None)
+
+        retriever.retrieve_ego_graph(["anchor1"], config, drop_ambiguous=True)
+
+        kwargs = mock_graph_storage.get_neighbors_ranked.call_args.kwargs
+        assert kwargs["drop_ambiguous"] is True
 
     def test_retrieve_ego_graph_multiple_anchors(self, retriever, mock_graph_storage):
         """Test retrieval for multiple anchors."""
