@@ -421,3 +421,131 @@ direct hits), far outside the run-to-run noise on this substrate, so the plan's 
 condition ("marginal recall inside noise") is not met. pyan stays, at 51% of its former edge
 count, with lower-bound precision 0.6032 and a labeled `prec_est` of 0.6826 (ω 0.70) whose
 range contains the declared 0.75. Declared confidences remain a separate decision.
+
+## 13. Composed-HEAD verification (2026-09-03) — the two fixes measured together, first time
+
+§5a (ADR-0061 split-callee fold) and §12 (pyan CLASS call-position gate) were each measured in
+isolation, on substrates that did not carry both fixes at once (§12's worktree baseline
+0.8857/0.8991 predates ADR-0061). This section re-runs the full execution-witnessed protocol on
+`development` HEAD with both fixes composed, after a clean Phase 0 force reindex
+(233 files / 2,832 chunks, `user_excluded_dirs` unchanged) and a fresh 3-run trace capture
+(`evaluation/traced_runs/r{1,2,3}.json`, all `4437 passed, 3 skipped`). Integrity block:
+`deterministic=False dropped_nondeterministic=6` (all six drops are `CodeEmbedder.__del__`
+GC-finalizer timing noise, unrelated to call-graph resolution) `schema_ok=True density_ok=True`.
+
+```
+denominators: D=1732 I=225 E_traced=1953 EXEC=1352 traced_unresolved=0
+lsp     recall_marginal=0.6109 recall_cumulative=0.6109 prec_lb=0.5681 prec_lb_cov=0.8267 |E_t|=1873
+libcst  recall_marginal=0.1663 recall_cumulative=0.7771 prec_lb=0.4111 prec_lb_cov=0.6948 |E_t|=720
+pyan    recall_marginal=0.1282 recall_cumulative=0.8695 prec_lb=0.4106 prec_lb_cov=0.5799 |E_t|=548
+ast     recall_marginal=0.0306 recall_cumulative=0.8984 prec_lb=0.0170 prec_lb_cov=0.0265 |E_t|=3347
+ladder  recall_ladder_total=0.8984 prec_lb=0.2492 |E_all|=6329
+```
+
+| metric | pre-fix (worktree) | §12 post-fix (isolated) | composed HEAD (this section) | verdict |
+|---|---|---|---|---|
+| pyan edges | 1,267 | 648 | 552 (live graph) | large drop confirmed |
+| pyan `prec_lb_cov` | 0.2510 | 0.6032 | 0.5799 | clears the ≥0.50 bar |
+| pyan `recall_marginal` | 0.1113 | 0.1101 | 0.1282 | rose, not dropped — no interference |
+| `recall_ladder_total` | 0.8857 | 0.8991 | 0.8984 | 0.0006 under target, noise-level |
+| lsp `recall_marginal` | 0.4818 | 0.6048 | 0.6109 | exceeds ADR-0061's own headline claim |
+
+**Verdict: pyan call-graph fidelity is confirmed improved on the composed HEAD, measured
+independently rather than taken from the docs.** `prec_lb_cov` more than doubling while
+`recall_marginal` simultaneously *rises* rules out the failure mode the plan was checking for
+(a precision gain bought by dropping recall via the CLASS gate over-triggering). `lsp` benefits
+too, past its own §5a-isolated number — the split-block span fold and the pyan gate compose
+without interference. This closes the verification question the burst of `adf4efb`/`dfbf48b`/
+`050f684`/`4d8fbdc`/`748b6f1`/`e48736d`/`09c4a34`/`cc6419e` commits made a claim about; nothing
+here changes the B4 retention decision or the declared `ResolverConfidence` values, per §12's
+own scope note (this measures the precision floor, not the point estimate).
+
+## §14 — Policy S+ (`pyan_strict_callable_gate`) A/B: REJECTED, recall floor breached
+
+Follow-up to §12's residual-leak finding (8/10 false rows: attribute flow + dunder
+misresolution, both callable-flavor, unreachable by the existing CLASS-only gate). Design
+**S+**: a second per-caller *spelled*-name witness set `S` (from `node.func.attr`/`node.func.id`,
+recorded unconditionally in `visit_Call`) alongside the existing dotted set `D`
+(`call_position_names`), gating all five callee flavors instead of just CLASS/`__init__`:
+CLASS → `callee.name ∈ S` only (no `D` fallback — closes §12 row 26's `ast.Name`-shaped hole);
+`__init__` → `"__init__" ∈ S` or owning class's bare name `∈ S`; FUNCTION/METHOD/STATICMETHOD/
+CLASSMETHOD → `callee.name ∈ S` **or** `callee.get_name() ∈ D`. Shipped behind a temporary
+`CallGraphConfig.pyan_strict_callable_gate` flag (default `False`, no `benchmark_locked`
+citation — investigation knob only) so both arms share one HEAD and one trace capture. Full
+implementation + a `TestCallableGate` regression suite (6 tests against a real-pyan fixture
+covering attribute-read, `with`-dunder, and decorator-application false-edge mechanisms, plus
+three survives-the-gate controls) passed the whole unit suite unchanged with the flag off
+(4,450 passed / 2 skipped, byte-identical to today's-HEAD baseline).
+
+**Protocol**: `git rev-parse HEAD` pinned at `2256b21`. Re-captured 3 fresh traces on the
+Item-1-edited substrate (§13's traces are invalidated by any edit to
+`external_call_graph.py` — it is itself traced, and `EndpointKey` is line-number-keyed) —
+`PYTHONHASHSEED=0`, all three runs `4449 passed, 3 skipped`, `traced_callgraph.py build`
+integrity `deterministic=True dropped_nondeterministic=0`. Built `traced_callgraph.json`
+**once**; scored **both arms against the identical file** (`search_config.json` surgically
+single-key-edited, byte-exact backup + SHA-256 verified each direction, never `save_config()`)
+so the A/B denominators are exactly equal — this is the controlled comparison, not a comparison
+against §13's numbers (which used a different trace capture and are not bit-comparable; see the
+"re-derive, don't inherit" rule already established for Item 2).
+
+```
+denominators (both arms, identical): D=1712 I=220 E_traced=1928 EXEC=1330 traced_unresolved=0
+
+OFF (flag=false, today's default)         ON (flag=true, S+)
+pyan  recall_marginal   = 0.1262          pyan  recall_marginal   = 0.1157   (-0.0105)
+pyan  prec_lb_cov       = 0.5733          pyan  prec_lb_cov       = 0.7363   (+0.1630)
+pyan  |E_t|             = 548             pyan  |E_t|             = 394     (-154, -28.1%)
+ladder recall_ladder_total = 0.8616       ladder recall_ladder_total = 0.8511 (-0.0105)
+```
+
+**Acceptance gate (pre-registered, "precision up, recall not down"): FAILED.** `prec_lb_cov`
+clears the bar by a wide margin (+0.163, both above the §13-derived 0.5799 threshold and the
+same-substrate 0.5733 floor). Both recall metrics drop below **every** applicable floor —
+same-substrate (`recall_marginal` 0.1262, `recall_ladder_total` 0.8616) and the stricter §13
+number (0.1282 / 0.8984) alike. This is a small (~1 point absolute, ~8% relative on pyan's own
+marginal recall) but fully deterministic, reproducible-on-this-substrate loss — not measurement
+noise: both arms were scored against one identical `traced_callgraph.json`, and the only
+variable between the two force-reindex passes was the config flag.
+
+**Root cause, diagnosed via a diff of the two arms' `via_external`-classified misses** (13 D
+edges lost under S+ that were present under legacy; `via_external` = the caller's source
+references the callee's bare name but never spells it as a direct call — see
+`evaluation/tracer/scoring.py:317-318`):
+
+| Mechanism | Count | Example |
+|---|---|---|
+| `@property`/`@cached_property` getter read via plain attribute access (`obj.total_chunks`) | 7/13 | `SearchOrchestrator._search` → `SearcherView.total_chunks`/`.is_ready`/`.is_hybrid`; `CodeIndexManager.add_embeddings` → `FaissVectorIndex.ntotal`; `FaissVectorIndex.load` → `MmapVectorStorage.count` |
+| `cls(...)` construction inside a `@classmethod` factory (literal spelling is `cls`, never the class's own name) | 3/13 | `FilterEngine.from_dict` → `class:FilterEngine`; `MerkleDAG.from_dict` → `class:MerkleDAG`; `MultiLanguageChunker.for_project` → `class:MultiLanguageChunker` |
+| Unclassified FUNCTION-flavor (not investigated further — 2/13, below the threshold that would change the verdict) | 2/13 | `_c_family.py:neutralize_preprocessor_conditionals`/`CudaChunker._neutralize` → `blank_preserving_layout` |
+| Ambiguous CLASS target (not investigated further) | 1/13 | `TraceCollector.to_payload` → `Endpoint` |
+
+Both diagnosed mechanisms are **structural**, not tunable: a property access has no `ast.Call`
+node at all (nothing to record into either `S` or `D`), and `cls` is never the callee's own
+name, so it can never populate `S`, and CLASS callees deliberately have no `D` fallback under
+S+ (that is precisely the design choice that closes §12 row 26). Under legacy/OFF, these edges
+survived because the pre-existing gate only ever screened CLASS/`__init__` — S+'s extension of
+the gate to METHOD/FUNCTION/STATICMETHOD/CLASSMETHOD is what newly exposes the property-getter
+gap, and property getters account for the majority (7/13, 54%) of the measured loss.
+
+**Disposition: reverted wholesale**, per the plan's pre-registered failure path. `search_config.json`
+restored from its byte-exact backup (SHA-256 verified), `git checkout --` on all five changed
+files (`chunking/relationships/external_call_graph.py`, `search/call_edge_injection.py`,
+`search/config.py`, `search_config.json.example`,
+`tests/unit/chunking/relationships/test_external_call_graph.py`), force reindex to restore the
+on-disk graph, whole-suite bookend green (4,438 passed / 2 skipped, matching the pre-Item-1
+baseline). The full diff is archived locally at
+`tmp/item1_pyan_strict_callable_gate_REJECTED_20260903.patch` (not tracked — `tmp/` is
+gitignored) for anyone who wants to resume this design rather than restart it.
+
+**Recommendation for a future attempt ("S++")**: both diagnosed mechanisms look independently
+fixable without touching the CLASS-gate fix that motivated S+ in the first place — (a) exempt
+`@property`/`@cached_property`-decorated (chunk-kind `decorated_definition` with a property
+decorator) callees from the call-position screen entirely, since no syntactic witness can ever
+exist for them; (b) when the literal call spelling is `cls` inside a `@classmethod`, treat it as
+if it spelled the owning class's bare name (mirroring the existing `__init__`
+owning-class-name special case). The two mechanisms account for 10/13 (77%) of the measured
+loss; whether closing them recovers enough of `recall_marginal`/`recall_ladder_total` to clear
+the gate is unmeasured and would need its own A/B, not assumed from this diagnosis. The
+remaining 3/13 (unclassified FUNCTION-flavor, ambiguous CLASS) were not investigated further —
+below the threshold that would change this verdict.
+own scope note (this measures the precision floor, not the point estimate).
