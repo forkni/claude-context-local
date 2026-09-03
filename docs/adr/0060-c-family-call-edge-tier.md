@@ -174,8 +174,20 @@ tree-sitter tier).
   inherits.
 - 63q/133q golden-set canon: see `evaluation/CANON_GATE_FANOUT_CAP_20260903.md` for the full
   disposition — flat aggregates, no systematic mover concentration, corpus-drift explained.
-- Not yet run (tracked separately): the Phase-0 probe re-run against the shipped pipeline
-  (acceptance thresholds: ≥8,000 resolved C/C++ edges on voro-engine, ≤25% phantom rate, ≤+100%
-  graph-link growth, max fan-out ≤ cap), the ~150–200-edge hand-labeled precision sample, and the
-  `incremental=False` reindex of all three target projects with the before/after
-  `find_connections`/`find_path` MCP-tool A/B named in the approved implementation plan.
+- *(Update 2026-09-03: the Phase-0 probe re-run against the shipped pipeline is done — see
+  `evaluation/CPP_CALLGRAPH_PROBE_20260903.md`. Full root-cause breakdown of all 12,968 phantom
+  edges on voro-engine's real reindex found one genuine, fixable Wall-1 gap — unfiltered
+  `static_cast`/`dynamic_cast`/`const_cast`/`reinterpret_cast` "calls" (6.6% of phantom mass,
+  same class as the existing `std::`-prefix drop, now fixed in `_c_family.py` via
+  `_is_cast_keyword`) — plus two non-defects: 22.8% is the "unless the project defines it"
+  blocklist deliberately phantoming (Python-parity by design, per `_resolve_call_target`'s own
+  docstring contract), and 70.7% is genuine external-library calls (CUDA runtime, Win32, a
+  vendored JSON library) a tier-1 resolver cannot and should not resolve. Net: 3 of 4 Phase-0
+  quantitative gates (resolved ≥8,000, phantom ≤25%, growth ≤+100%) still fail against real
+  numbers even after the fix, root-caused to the gates having been probe-estimated on a
+  simulation whose methodology and sample didn't match the shipped design or a real
+  externally-integrated codebase — see the linked doc's Recommendation section, which proposes
+  demoting those three to informational trend metrics and keeping only the fan-out cap (passes:
+  3, 0 violations) and hand-labeled precision as hard gates. The ~150–200-edge hand-labeled
+  precision sample and the `incremental=False` reindex of voro-td and cuda-link (voro-engine's is
+  already current as of this update) remain open, tracked as plan tasks #13/#14.)*

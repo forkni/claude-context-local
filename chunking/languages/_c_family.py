@@ -531,6 +531,26 @@ def _is_std_qualified(qualified: str | None) -> bool:
     )
 
 
+_CAST_KEYWORDS: frozenset[str] = frozenset(
+    {"static_cast", "dynamic_cast", "const_cast", "reinterpret_cast"}
+)
+
+
+def _is_cast_keyword(name: str) -> bool:
+    """True if `name` is a C++ cast-operator keyword, not a real call.
+
+    `static_cast<T>(x)` / `dynamic_cast<T>(x)` / `const_cast<T>(x)` /
+    `reinterpret_cast<T>(x)` parse identically to an ordinary templated
+    function call (`template_function` shape) in tree-sitter-cpp, so
+    without this check they're indistinguishable from a real call to a
+    project-defined `clamp<T>()`-style template. Measured on voro-engine's
+    real `--mode force` reindex (2026-09-03): 850 of 12,968 phantom
+    C-family call edges (6.6%) were exactly these four keywords --
+    unconditional noise, same class as `_is_std_qualified`.
+    """
+    return name in _CAST_KEYWORDS
+
+
 def extract_call_sites(
     node: Any,
     get_text: Callable[[Any], str],
@@ -560,11 +580,13 @@ def extract_call_sites(
       (`clamp<int>(...)`) -- name from the `name` field.
     - anything else (function-pointer calls, etc.): skipped.
 
-    `std::`/`::std::`-qualified calls are dropped (`_is_std_qualified`) --
-    the only noise filter that belongs at chunk time; a static STL
-    member-name blocklist would need "unless the project defines it"
-    project-wide context this per-file walk doesn't have, so that lives at
-    index time instead (Wall 2, `_C_FAMILY_COMMON_MEMBERS`).
+    `std::`/`::std::`-qualified calls are dropped (`_is_std_qualified`), and
+    bare `static_cast`/`dynamic_cast`/`const_cast`/`reinterpret_cast`
+    "calls" are dropped (`_is_cast_keyword`) -- both are unconditional,
+    file-local noise that belongs at chunk time. A static STL member-name
+    blocklist would need "unless the project defines it" project-wide
+    context this per-file walk doesn't have, so that lives at index time
+    instead (Wall 2, `_C_FAMILY_COMMON_MEMBERS`).
 
     tree-sitter-c produces only the `identifier` shape (verified against
     the Phase 0 probe -- C's grammar has no `qualified_identifier` or
@@ -619,7 +641,7 @@ def extract_call_sites(
                     name = _leaf_call_name(
                         func_node.child_by_field_name("name"), get_text
                     )
-                    if name is not None:
+                    if name is not None and not _is_cast_keyword(name):
                         entry = (name, line, False, None)
             if entry is not None:
                 calls.append(entry)
