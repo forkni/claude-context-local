@@ -229,6 +229,41 @@ class TestCallGraphConfig:
         assert sc2.call_graph.pyan_seconds_per_file == pytest.approx(1.0)
         assert sc2.call_graph.pyan_total_timeout_cap_seconds == pytest.approx(900.0)
 
+    # -----------------------------------------------------------------
+    # New field: ambiguous_fanout_cap (C/C++ call-graph parity, Wall-2
+    # item 5 -- build-time cap on GraphIntegration._get_ambiguous_candidates,
+    # C-family only)
+    # -----------------------------------------------------------------
+
+    def test_ambiguous_fanout_cap_default(self) -> None:
+        from search.config import CallGraphConfig
+
+        assert CallGraphConfig().ambiguous_fanout_cap == 3
+
+    def test_ambiguous_fanout_cap_custom(self) -> None:
+        from search.config import CallGraphConfig
+
+        cfg = CallGraphConfig(ambiguous_fanout_cap=5)
+        assert cfg.ambiguous_fanout_cap == 5
+
+    def test_ambiguous_fanout_cap_survives_to_dict_roundtrip(self) -> None:
+        from search.config import CallGraphConfig, SearchConfig
+
+        sc = SearchConfig(call_graph=CallGraphConfig(ambiguous_fanout_cap=5))
+        d = sc.to_dict()
+        assert d["call_graph"]["ambiguous_fanout_cap"] == 5
+
+        sc2 = SearchConfig.from_dict(d)
+        assert sc2.call_graph.ambiguous_fanout_cap == 5
+
+    def test_ambiguous_fanout_cap_range_validation(self) -> None:
+        from search.config import CallGraphConfig, validate_field_value
+
+        assert validate_field_value(CallGraphConfig, "ambiguous_fanout_cap", 3) is None
+        error = validate_field_value(CallGraphConfig, "ambiguous_fanout_cap", 0)
+        assert error is not None
+        assert "ambiguous_fanout_cap" in error
+
 
 class TestImpactReportCalleeFields:
     def _make_report(self, **kwargs):

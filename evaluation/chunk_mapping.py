@@ -226,6 +226,31 @@ def find_enclosing_chunk(
     return best
 
 
+# Chunk kinds whose *shape* is unambiguous: a bare ``function``/``class``
+# name has one part after the module path; a ``method`` name has two
+# (``Class.method``).  ``decorated_definition`` and ``split_block`` wrap
+# either shape, so for those the chunk name's own part count is used.
+_ONE_PART_KINDS = frozenset({"function", "class"})
+_TWO_PART_KINDS = frozenset({"method", "classmethod", "staticmethod"})
+
+
+def _kind_and_name(cid: str) -> tuple[str, str]:
+    """Split ``path:[start-end:]kind:name`` into ``(kind, name)``."""
+    parts = cid.split(":")
+    if len(parts) < 3:
+        return "", parts[-1]
+    return parts[-2], parts[-1]
+
+
+def _shape_matches(kind: str, cid_name: str, n_parts: int) -> bool:
+    """True when the chunk's shape agrees with an *n_parts*-long FQN tail."""
+    if kind in _ONE_PART_KINDS:
+        return n_parts == 1
+    if kind in _TWO_PART_KINDS:
+        return n_parts == 2
+    return cid_name.count(".") + 1 == n_parts
+
+
 def chunk_id_from_fqn(
     fqn: str,
     line_map: dict[str, list[tuple[int, int, str]]],
@@ -233,13 +258,30 @@ def chunk_id_from_fqn(
 ) -> str | None:
     """Best-effort mapping from a fully-qualified name to a chunk_id.
 
-    Works for both PyCG-style FQNs and pyan-style FQNs, e.g.::
+    Works for both PyCG-style, pyan-style and LibCST-style FQNs, e.g.::
 
         search.relationship_analyzer.RelationshipAnalyzer._enrich_callers
 
     The algorithm progressively tries longer module paths paired with shorter
     name suffixes until it finds a file present in *line_map*, then picks the
     chunk whose normalized name matches the suffix.
+
+    Match priority within a file (first non-empty tier wins):
+
+    1. **Exact qualified match** — the chunk name equals the FQN tail
+       (``module.func`` → ``function:func``; ``module.Class.method`` →
+       ``method:Class.method``).
+    2. **Suffix match** — the chunk name ends with ``"." + tail`` (e.g. a
+       pyan FQN that omits an enclosing class).
+
+    When several candidates remain in the winning tier, the one whose kind
+    matches the FQN shape is preferred (a two-part tail is a method, a
+    one-part tail is a function/class); ties fall back to file order.
+
+    This tiering is what stops a same-file ``_NoopExporter.force_flush``
+    method from shadowing the module-level ``force_flush`` function when
+    the FQN is ``utils.observability.force_flush`` (resolver precision row
+    11, 2026-09-02).
 
     Args:
         fqn: Dotted fully-qualified name.
@@ -258,9 +300,23 @@ def chunk_id_from_fqn(
     for split_at in range(len(parts) - 1, 0, -1):
         module_path = "/".join(parts[:split_at]) + ".py"
         name = ".".join(parts[split_at:])
-        if module_path in line_map:
-            for _, _, cid in line_map[module_path]:
-                cid_name = cid.split(":")[-1]
-                if cid_name == name or cid_name.endswith("." + name):
-                    return cid
+        chunks = line_map.get(module_path)
+        if not chunks:
+            continue
+        exact: list[tuple[str, str, str]] = []
+        suffix: list[tuple[str, str, str]] = []
+        for _, _, cid in chunks:
+            kind, cid_name = _kind_and_name(cid)
+            if cid_name == name:
+                exact.append((kind, cid_name, cid))
+            elif cid_name.endswith("." + name):
+                suffix.append((kind, cid_name, cid))
+        candidates = exact or suffix
+        if not candidates:
+            continue
+        n_parts = len(parts) - split_at
+        for kind, cid_name, cid in candidates:
+            if _shape_matches(kind, cid_name, n_parts):
+                return cid
+        return candidates[0][2]
     return None

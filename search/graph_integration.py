@@ -18,6 +18,7 @@ except ImportError:
 
 from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
 from search.chunk_id import is_chunk_id as _is_chunk_id
+from search.config import get_search_config
 from utils.path_utils import normalize_path
 
 
@@ -158,6 +159,60 @@ _COMMON_METHODS: frozenset[str] = frozenset(
         "upper",
     }
 )
+
+# Languages that get the C-family Wall-2 treatment (separator-agnostic
+# indexing, prefer-definition disambiguation, the STL/idiom blocklist
+# below). `.cu`/`.cuh` route to the "cpp" grammar (language_registry.py's
+# EXT_TO_LANGUAGE), so there is no separate "cu" key to add here.
+_C_FAMILY_LANGUAGES: frozenset[str] = frozenset({"c", "cpp"})
+
+# C-family sibling of `_COMMON_METHODS`: STL container/smart-pointer/idiom
+# member names that are almost certainly library targets (std::vector,
+# std::string, std::unique_ptr, std::atomic, std::map, ...) when the
+# project itself defines no symbol of that name. Same "unless the project
+# defines it" rule as `_COMMON_METHODS` -- see `_resolve_call_target`.
+_C_FAMILY_COMMON_MEMBERS: frozenset[str] = frozenset(
+    {
+        "size",
+        "data",
+        "empty",
+        "push_back",
+        "pop_back",
+        "begin",
+        "end",
+        "c_str",
+        "load",
+        "store",
+        "clear",
+        "find",
+        "contains",
+        "assign",
+        "insert",
+        "erase",
+        "reset",
+        "get",
+        "at",
+        "count",
+        "length",
+    }
+)
+
+# File extensions that hold a C/C++ definition rather than a declaration --
+# used by prefer-definition disambiguation (Wall-2 item 4).
+_C_FAMILY_SOURCE_EXTENSIONS: frozenset[str] = frozenset({".cpp", ".cc", ".cxx", ".cu"})
+
+
+def _is_c_family_source_file(chunk_id: str) -> bool:
+    """True when a chunk_id's file portion has a C/C++ *source* (not header)
+    extension -- ``.cpp``/``.cc``/``.cxx``/``.cu`` vs. ``.h``/``.hpp``/etc.
+
+    Used by prefer-definition disambiguation: a symbol declared in a header
+    and defined in its matching source file should resolve to the
+    definition, which carries the body and thus the outbound call edges.
+    """
+    file_portion = chunk_id.split(":", 1)[0]
+    suffix = Path(file_portion).suffix.lower()
+    return suffix in _C_FAMILY_SOURCE_EXTENSIONS
 
 
 class _BuildSpec(NamedTuple):
@@ -627,12 +682,45 @@ class GraphIntegration:
                         name_to_chunk_ids[f"{spec.parent_name}.{spec.name}"].append(
                             spec.chunk_id
                         )
+
+                    # Separator-agnostic indexing (Wall-2 item 3, C-family
+                    # only -- Python identifiers never contain "::", so this
+                    # branch never fires for them). C/C++ chunk names arrive
+                    # under BOTH separators for the same logical symbol: a
+                    # synthesized "Parent.method" (via parent_name, above)
+                    # for in-class declarations, and a verbatim
+                    # "Parent::method" for out-of-class definitions.
+                    # Cross-indexing both spellings -- full name, last
+                    # segment, and canonical parent+sep+leaf under both
+                    # separators -- lands a decl/def pair in the same
+                    # bucket, which is the prerequisite for prefer-
+                    # definition disambiguation (item 4). Do NOT switch to
+                    # indexing "::" only: that would split the two halves
+                    # of the same symbol into different buckets instead of
+                    # unifying them.
+                    if spec.language in _C_FAMILY_LANGUAGES and ("::" in spec.name):
+                        name_to_chunk_ids[spec.name.split("::")[-1]].append(
+                            spec.chunk_id
+                        )
+                        name_to_chunk_ids[spec.name.replace("::", ".")].append(
+                            spec.chunk_id
+                        )
+                    if spec.language in _C_FAMILY_LANGUAGES and spec.parent_name:
+                        name_to_chunk_ids[f"{spec.parent_name}::{spec.name}"].append(
+                            spec.chunk_id
+                        )
             except (AttributeError, KeyError, TypeError) as e:
                 self._logger.warning(
                     f"Failed to add node {spec.chunk_id} to graph: {e}"
                 )
 
         # === PASS 2: add call + relationship edges ===
+        # Build-time ambiguous fan-out cap (Wall-2 item 5, C-family only).
+        # Read once per build, not per ambiguous call-site -- get_search_config()
+        # does a cheap stat() each call (documented as intentional in
+        # SearchConfigManager.load_config), but there is no reason to pay it
+        # per-callsite when one value covers the whole pass.
+        fanout_cap = get_search_config().call_graph.ambiguous_fanout_cap
         self._file_ast_cache = {}
         self._seen_split_methods = set()
         call_edges = 0
@@ -653,6 +741,7 @@ class GraphIntegration:
                         name_to_chunk_ids,
                         caller_file=spec.file_path,
                         callee_qualified=callee_qualified,
+                        language=spec.language,
                     )
                     if resolved:
                         self.storage.add_call_edge(
@@ -671,6 +760,8 @@ class GraphIntegration:
                             name_to_chunk_ids,
                             caller_file=spec.file_path,
                             callee_qualified=callee_qualified,
+                            language=spec.language,
+                            fanout_cap=fanout_cap,
                         )
                         if ambiguous:
                             # Edges land between spec.chunk_id and real candidate
@@ -901,16 +992,17 @@ class GraphIntegration:
         name_to_chunk_ids: dict[str, list[str]],
         caller_file: str | None = None,
         callee_qualified: str | None = None,
+        language: str = "python",
     ) -> str | None:
         """Resolve a call target name to its chunk_id.
 
         Returns a chunk_id when exactly one project match exists (or after
-        scope-aware / same-file / split_block disambiguation).  Returns
-        ``None`` when the call should become a phantom node (true builtin,
-        common stdlib name with no project definition, or still-ambiguous
-        multi-candidate).  For the still-ambiguous case, call
-        ``_get_ambiguous_candidates`` to obtain all candidates and create
-        ``confidence="ambiguous"`` edges instead.
+        prefer-definition / scope-aware / same-file / split_block
+        disambiguation).  Returns ``None`` when the call should become a
+        phantom node (true builtin, common stdlib/STL name with no project
+        definition, or still-ambiguous multi-candidate).  For the
+        still-ambiguous case, call ``_get_ambiguous_candidates`` to obtain
+        all candidates and create ``confidence="ambiguous"`` edges instead.
 
         Args:
             callee_name: Symbol name from the call (e.g., "foo", "ClassName.method")
@@ -920,27 +1012,56 @@ class GraphIntegration:
                 (``CallEdge.callee_qualified``). When it derives a file suffix
                 that uniquely narrows the candidates, that wins before the
                 same-file fallback.
+            language: The calling chunk's language (``_BuildSpec.language``).
+                Gates the Python-builtins check and the C-family
+                blocklist/prefer-definition rules below so C/C++ resolution
+                additions are byte-identical no-ops for Python callers.
+                Defaults to "python" to preserve existing callers/tests that
+                don't pass it.
 
         Returns:
             chunk_id if exactly one match, None otherwise
         """
-        # Skip builtins (len, print, etc.) -- they never resolve to project code
-        import builtins
+        # Skip builtins (len, print, etc.) -- they never resolve to project
+        # code. Python-only: gating on language stops this from
+        # phantom-suppressing C++ project functions that happen to share a
+        # name with a Python builtin (min, max, abs, hash, format, next,
+        # filter, set, type, id, open, sum, all, any, iter, round, print...).
+        if language == "python":
+            import builtins
 
-        if hasattr(builtins, callee_name):
-            return None  # Create phantom node (will be filtered in traversals)
+            if hasattr(builtins, callee_name):
+                return None  # Create phantom node (will be filtered in traversals)
 
         # Refined common-method blocklist: drop the name ONLY when the project has
         # no definition for it.  If the project defines its own `get`, `format`,
         # etc., we keep the edge (resolved below via same-file / unique-match).
         base_name = callee_name.split(".")[-1] if "." in callee_name else callee_name
-        if base_name in _COMMON_METHODS and callee_name not in name_to_chunk_ids:
+        if language in _C_FAMILY_LANGUAGES:
+            if (
+                base_name in _C_FAMILY_COMMON_MEMBERS
+                and callee_name not in name_to_chunk_ids
+            ):
+                return None
+        elif base_name in _COMMON_METHODS and callee_name not in name_to_chunk_ids:
             return None
 
         candidates = name_to_chunk_ids.get(callee_name, [])
 
         if len(candidates) == 1:
             return candidates[0]
+
+        # Prefer-definition disambiguation (Wall-2 item 4, C-family only):
+        # once separator-agnostic Pass-1 indexing lands a decl/def pair in
+        # the same bucket, a name like "execute" can resolve to a header
+        # declaration and its out-of-class source definition. The
+        # definition carries the body (and thus the outbound edges), so
+        # prefer it whenever exactly one candidate is a source file and the
+        # rest are headers. Independent of caller_file/same-file below.
+        if len(candidates) > 1 and language in _C_FAMILY_LANGUAGES:
+            definitions = [c for c in candidates if _is_c_family_source_file(c)]
+            if len(definitions) == 1:
+                return definitions[0]
 
         # Context-aware disambiguation: prefer same-file match for ambiguous calls
         if len(candidates) > 1 and caller_file:
@@ -993,8 +1114,10 @@ class GraphIntegration:
         name_to_chunk_ids: dict[str, list[str]],
         caller_file: str | None = None,
         callee_qualified: str | None = None,
+        language: str = "python",
+        fanout_cap: int | None = None,
     ) -> list[str]:
-        """Return all candidate chunk_ids for a callee name that has multiple matches.
+        """Return candidate chunk_ids for a callee name that has multiple matches.
 
         Used by the call-site in ``_build_graph_from_chunks`` when
         ``_resolve_call_target`` returns ``None`` but the name *does* appear in
@@ -1013,11 +1136,32 @@ class GraphIntegration:
                 here, reserved for future use — by the time this is called,
                 ``_resolve_call_target`` has already tried and failed to
                 narrow candidates with it).
+            language: Chunk source language (e.g. ``"python"``, ``"cpp"``,
+                ``"c"``). Gates the build-time ambiguous fan-out cap
+                (Wall-2 item 5) to C-family languages only — with the
+                default ``"python"``, `fanout_cap` is never applied, so
+                Python callers keep every candidate exactly as before this
+                parameter existed.
+            fanout_cap: Maximum number of candidates to return for a
+                C-family ambiguous name (``CallGraphConfig.ambiguous_fanout_cap``,
+                default 3 in production). Ignored unless `language` is
+                C-family. ``None`` (the default here) disables capping
+                entirely — the value existing direct callers (e.g. unit
+                tests that construct this call without it) get.
 
         Returns:
-            List of candidate chunk_ids (possibly empty).
+            List of candidate chunk_ids (possibly empty), truncated to
+            `fanout_cap` entries when `language` is C-family and a cap is
+            given.
         """
-        return list(name_to_chunk_ids.get(callee_name, []))
+        candidates = list(name_to_chunk_ids.get(callee_name, []))
+        if (
+            language in _C_FAMILY_LANGUAGES
+            and fanout_cap is not None
+            and fanout_cap > 0
+        ):
+            candidates = candidates[:fanout_cap]
+        return candidates
 
     def save(self) -> None:
         """Save call graph to disk."""

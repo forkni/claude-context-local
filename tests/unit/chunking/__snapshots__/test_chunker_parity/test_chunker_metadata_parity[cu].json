@@ -4,9 +4,11 @@
     "end_line": 5,
     "language": "cpp",
     "metadata": {
+      "calls": [],
       "complexity_score": 1,
       "name": "square",
-      "node_type": "function_definition"
+      "node_type": "function_definition",
+      "relationships": []
     },
     "start_line": 3,
     "type": "function_definition"
@@ -16,9 +18,18 @@
     "end_line": 12,
     "language": "cpp",
     "metadata": {
+      "calls": [
+        [
+          "square",
+          10,
+          false,
+          null
+        ]
+      ],
       "complexity_score": 1,
       "name": "computeSquares",
-      "node_type": "function_definition"
+      "node_type": "function_definition",
+      "relationships": []
     },
     "start_line": 7,
     "type": "function_definition"
@@ -28,9 +39,18 @@
     "end_line": 22,
     "language": "cpp",
     "metadata": {
+      "calls": [
+        [
+          "computeSquares",
+          21,
+          false,
+          null
+        ]
+      ],
       "complexity_score": 1,
       "name": "launchComputeSquares",
-      "node_type": "function_definition"
+      "node_type": "function_definition",
+      "relationships": []
     },
     "start_line": 18,
     "type": "function_definition"
