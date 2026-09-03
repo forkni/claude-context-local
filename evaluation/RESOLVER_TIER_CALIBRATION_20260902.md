@@ -3,8 +3,9 @@
 **Workstream**: WS-B (B1 tracer, B2 integrity, B3 per-tier scoring, B5 miss taxonomy) of
 `docs/plans/IMPLEMENTATION_PLAN_CALLGRAPH_RECALL_20260901.md`.
 **Decision record**: `docs/adr/0059-execution-witnessed-callgraph-ground-truth.md`.
-**Status**: measurement complete; hand-labeling of the precision sample NOT done (user task);
-B4 (pyan retention) NOT decided here.
+**Status**: measurement complete; hand-labeling of the precision sample done 2026-09-02
+(`RESOLVER_PRECISION_LABELS_20260902.md`); pyan call-position gate landed 2026-09-03 and
+re-scored in section 12; B4 (pyan retention) decided there: pyan stays.
 
 Every number below was read from the artifacts named in section 1 during this session. Nothing
 in the search path, the resolvers, or their defaults was changed. No commit was made.
@@ -145,6 +146,8 @@ Reading guide:
 - pyan's `prec_lb_cov` (0.2573) is the only tier bound that sits far below its declared
   confidence (0.75). Whether the 537 unlabeled pyan edges are untaken-branch true positives or
   false positives is exactly what the sample decides; nothing about B4 is concluded here.
+  **Update 2026-09-03:** the sample came back 0/10 true for pyan (every row was a non-call
+  CLASS reference admitted as a `calls` edge); the fix and post-gate numbers are in section 12.
 - The `ast` fallback is 57% of all stored edges and has the lowest bound (0.1280). The sample
   rows for this tier include several `MetadataStore.set` edges attached to callers that only use
   a builtin `set`; that is the name-only mechanism TraceEval calls class-name-as-callee.
@@ -321,3 +324,66 @@ for WS-B.
 - Not licensed: changing any declared confidence, removing pyan (B4), or treating any
   `prec_lb` as a precision estimate before the sample in
   `evaluation/resolver_precision_sample.json` is labeled.
+
+## 12. Post-gate re-score: pyan CLASS callees gated on call position (2026-09-03)
+
+**Change**: commit `27262f2` (`fix(callgraph): gate pyan CLASS callees on call position`),
+`chunking/relationships/external_call_graph.py` and its unit tests only. pyan records every
+*use* of a class in `uses_edges`, so admitting the CLASS flavor leaked type annotations,
+enum-member access, `self.<attr>` reads (resolved to the binding `__init__`) and instance
+references as 0.75-confidence `calls` edges. `_TrackedVisitor.visit_Call` now records, per
+caller namespace, the resolved callee names that sit in call position (plus `Class.__init__`
+for a class call); `PyanResolver` skips CLASS callees and `__init__` METHOD callees absent from
+that record. `super()` is excluded from the record. Attribute calls count only when the
+resolved node's name equals the syntactic attribute, because pyan's attribute fallback returns
+the *class* node for `self._index.clear()` (labeled rows 23 to 25). Names recorded inside
+lambda/comprehension scopes are folded onto the parent alongside pyan's `collapse_inner`.
+CLASS admission is kept rather than replaced by the `__init__` METHOD edge because pyan
+contracts the undefined `__init__` node of classes without an own initializer (dataclasses).
+Declared confidences are unchanged.
+
+**Substrate**: the change was measured in the linked worktree
+`.claude/worktrees/heuristic-dijkstra-6e3607` (branch `claude/heuristic-dijkstra-6e3607`), force
+reindexed with the same excludes and `PYTHONHASHSEED=0`, scored against the unchanged
+`evaluation/traced_callgraph.json`. Denominators on that index: |D| = 1,671, |I| = 222,
+|E_traced| = 1,894, |EXEC| = 1,318, `traced_unresolved` 4. The worktree index differs from the
+section 2 main index by the intervening `evaluation/tracer` commits, which is why the
+baseline row below (worktree, pre-change HEAD) is not identical to section 5; compare the two
+worktree rows with each other, not with section 5.
+
+| arm | pyan edges | hits_D | recall_marginal | recall_cumulative | prec_lb | edges_cov | hits_cov | prec_lb_cov | unwitnessable | unlabeled_cov |
+|---|---|---|---|---|---|---|---|---|---|---|
+| main index, section 5 | 1,183 | 183 | 0.1093 | 0.7063 | 0.1572 | 723 | 186 | 0.2573 | 460 | 537 |
+| worktree, pre-change | 1,267 | 186 | 0.1113 | 0.7062 | 0.1492 | 753 | 189 | 0.2510 | 514 | 564 |
+| worktree, post-gate | 648 | 184 | 0.1101 | 0.7050 | 0.2886 | 310 | 187 | 0.6032 | 338 | 123 |
+
+Other tiers on the post-gate worktree index (for the ladder line): lsp 1,405 edges /
+0.4853 / 0.7957; libcst 524 / 0.1400 / 0.7461; ast 3,809 / 0.1795 / 0.1291. Ladder total
+6,273 edges, `recall_ladder_total` 0.8845 (pre-change 0.8857), `hits_via_init_equivalence`
+96, misses 193 (pre-change 191).
+
+**The two lost hits** are both traced edges from `_TrackedVisitor._prescan_one` and
+`_TrackedVisitor.process_one` to `class:_TrackedVisitor` in the file being edited, classified
+`no_syntactic_call` / name-absent. They were accidental hits of the leak mechanism, not
+instantiations; losing them is the intended behaviour, and they are a self-index artifact of
+the substrate.
+
+**Hand-labeled rows**: 9 of the 10 pyan rows in `resolver_precision_labels.json` (rows 20 to
+29) are gone from the post-gate index. Row 22 (`CodeEmbedder.cleanup → class:ModelLoader`)
+survives because it is a different mechanism: a METHOD callee (`ModelLoader.load`) reached by
+attribute flow whose `split_block` chunks collapse to the class chunk. That is outside the
+CLASS gate and remains open.
+
+**`precision_estimate.py` reading**: with the existing labels, pyan `prec_est` moves
+0.2510 → 0.6032 (ω 0.25 → 0.60), now "above tag:exact 0.4228, CI clear". The p̂ term is
+biased low: the 0/10 sample was drawn from the pre-gate population and consisted entirely of
+the leak class that no longer exists. A fresh post-gate sample was emitted to
+`tmp/after2_precision_sample.json` in the worktree and is not yet labeled; do not publish an
+ω for pyan until it is.
+
+**B4 decision**: pyan's marginal recall over libcst is unchanged (0.1113 → 0.1101, 186 → 184
+direct hits), far outside the run-to-run noise on this substrate, so the plan's removal
+condition ("marginal recall inside noise") is not met. pyan stays, at 51% of its former edge
+count and with its lower-bound precision (0.6032) now above the declared confidence of the
+`ast` tier and inside the [0.6032, 0.7133] range the estimator gives it against the declared
+0.75. Declared confidences remain a separate decision.
