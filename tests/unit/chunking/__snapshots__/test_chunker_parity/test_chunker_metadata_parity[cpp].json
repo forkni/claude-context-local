@@ -7,7 +7,8 @@
       "calls": [],
       "is_template": true,
       "name": "add",
-      "node_type": "template_declaration"
+      "node_type": "template_declaration",
+      "relationships": []
     },
     "start_line": 3,
     "type": "template_declaration"
@@ -18,7 +19,8 @@
     "language": "cpp",
     "metadata": {
       "name": "Vector",
-      "node_type": "class_specifier"
+      "node_type": "class_specifier",
+      "relationships": []
     },
     "start_line": 8,
     "type": "class_specifier"
@@ -33,7 +35,8 @@
       "name": "Vector",
       "node_type": "function_definition",
       "parent_name": "Vector",
-      "parent_type": "class"
+      "parent_type": "class",
+      "relationships": []
     },
     "start_line": 11,
     "type": "function_definition"
@@ -48,7 +51,8 @@
       "name": "operator=",
       "node_type": "function_definition",
       "parent_name": "Vector",
-      "parent_type": "class"
+      "parent_type": "class",
+      "relationships": []
     },
     "start_line": 12,
     "type": "function_definition"
@@ -59,7 +63,8 @@
     "language": "cpp",
     "metadata": {
       "name": "math",
-      "node_type": "namespace_definition"
+      "node_type": "namespace_definition",
+      "relationships": []
     },
     "start_line": 19,
     "type": "namespace_definition"
@@ -74,7 +79,8 @@
       "name": "square",
       "node_type": "function_definition",
       "parent_name": "math",
-      "parent_type": "namespace"
+      "parent_type": "namespace",
+      "relationships": []
     },
     "start_line": 20,
     "type": "function_definition"
@@ -85,7 +91,8 @@
     "language": "cpp",
     "metadata": {
       "name": "Shape",
-      "node_type": "class_specifier"
+      "node_type": "class_specifier",
+      "relationships": []
     },
     "start_line": 27,
     "type": "class_specifier"
@@ -98,7 +105,8 @@
       "name": "draw",
       "node_type": "field_declaration",
       "parent_name": "Shape",
-      "parent_type": "class"
+      "parent_type": "class",
+      "relationships": []
     },
     "start_line": 29,
     "type": "field_declaration"
@@ -111,7 +119,8 @@
       "name": "~Shape",
       "node_type": "declaration",
       "parent_name": "Shape",
-      "parent_type": "class"
+      "parent_type": "class",
+      "relationships": []
     },
     "start_line": 30,
     "type": "declaration"
@@ -122,7 +131,8 @@
     "language": "cpp",
     "metadata": {
       "name": "Foo",
-      "node_type": "class_specifier"
+      "node_type": "class_specifier",
+      "relationships": []
     },
     "start_line": 34,
     "type": "class_specifier"
@@ -135,7 +145,8 @@
       "name": "getPtr",
       "node_type": "field_declaration",
       "parent_name": "Foo",
-      "parent_type": "class"
+      "parent_type": "class",
+      "relationships": []
     },
     "start_line": 36,
     "type": "field_declaration"
@@ -148,7 +159,8 @@
       "calls": [],
       "complexity_score": 1,
       "name": "Foo::getPtr",
-      "node_type": "function_definition"
+      "node_type": "function_definition",
+      "relationships": []
     },
     "start_line": 39,
     "type": "function_definition"
@@ -159,7 +171,8 @@
     "language": "cpp",
     "metadata": {
       "name": "Color",
-      "node_type": "enum_specifier"
+      "node_type": "enum_specifier",
+      "relationships": []
     },
     "start_line": 43,
     "type": "enum_specifier"
@@ -170,7 +183,8 @@
     "language": "cpp",
     "metadata": {
       "name": "Number",
-      "node_type": "alias_declaration"
+      "node_type": "alias_declaration",
+      "relationships": []
     },
     "start_line": 45,
     "type": "alias_declaration"
@@ -181,7 +195,8 @@
     "language": "cpp",
     "metadata": {
       "name": "Table",
-      "node_type": "struct_specifier"
+      "node_type": "struct_specifier",
+      "relationships": []
     },
     "start_line": 50,
     "type": "struct_specifier"
@@ -194,7 +209,8 @@
       "name": "cb",
       "node_type": "field_declaration",
       "parent_name": "Table",
-      "parent_type": "class"
+      "parent_type": "class",
+      "relationships": []
     },
     "start_line": 51,
     "type": "field_declaration"
@@ -205,7 +221,8 @@
     "language": "cpp",
     "metadata": {
       "name": "Vec3",
-      "node_type": "struct_specifier"
+      "node_type": "struct_specifier",
+      "relationships": []
     },
     "start_line": 57,
     "type": "struct_specifier"

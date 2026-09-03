@@ -631,6 +631,216 @@ def extract_call_sites(
 
 
 # ---------------------------------------------------------------------------
+# Relationship extraction (Wall 1, step 5): imports / inherits / instantiates
+# ---------------------------------------------------------------------------
+
+
+def _add_relationship(
+    metadata: dict[str, Any],
+    rel_type: str,
+    target_name: str,
+    line_number: int,
+    **extra: Any,
+) -> None:
+    """Append a plain-dict relationship edge to metadata["relationships"].
+
+    A direct copy of `GLSLChunker`'s module-level `_add_relationship`
+    (glsl.py) -- both are trivial, dependency-free dict builders with no
+    `chunking/relationships/` import, so duplicating the ~10 lines here
+    keeps this language chunker independent of glsl.py rather than
+    introducing a cross-language-chunker import for a helper this small.
+    Mirrors the `metadata["calls"]` convention (Phase 2b): this emits plain
+    data only, converted into `RelationshipEdge` objects downstream by
+    `materialize_relationship_edges` (chunking/relationships/edge_specs.py).
+
+    Args:
+        metadata: Metadata dict being populated; must already have a
+            "relationships" list key (set at the top of extract_metadata).
+        rel_type: RelationshipType enum value string, e.g. "imports".
+        target_name: Name of the related symbol.
+        line_number: 1-indexed source line the relationship was found on.
+        **extra: Extra key/value pairs folded into the edge's metadata dict.
+    """
+    metadata["relationships"].append(
+        {
+            "relationship_type": rel_type,
+            "target_name": target_name,
+            "line_number": line_number,
+            "metadata": extra,
+        }
+    )
+
+
+def _type_leaf_name(node: Any | None, get_text: Callable[[Any], str]) -> str | None:
+    """Resolve a base-class or `new`-expression type node to its leaf name.
+
+    Peels `qualified_identifier` (`ns::Base`) down to its `name` field and
+    `template_type` (`Vector<int>`) down to its own `name` field, one level
+    each, recursing to unwind combinations of both (`ns::Vector<int>` ->
+    `qualified_identifier.name` = `template_type` -> `template_type.name` =
+    `type_identifier "Vector"`). Mirrors `_leaf_call_name`'s template-peeling,
+    but over the *type*-node vocabulary `base_class_clause`/`new_expression`
+    actually produce (`qualified_identifier`/`template_type`) rather than the
+    call-expression vocabulary (`template_function`/`template_method`)
+    `_leaf_call_name` targets -- verified against the real grammar output,
+    not just grammar.js (tmp/probe_cpp_grammar.py).
+
+    Args:
+        node: The candidate type node -- a `base_class_clause` entry, or a
+            `new_expression`'s `type` field.
+        get_text: Callable that slices node text from source.
+
+    Returns:
+        The leaf identifier text, or None if `node` is None or MISSING.
+    """
+    if node is None or node.is_missing:
+        return None
+    if node.type in ("qualified_identifier", "template_type"):
+        return _type_leaf_name(node.child_by_field_name("name"), get_text)
+    return get_text(node)
+
+
+def extract_include_metadata(
+    node: Any,
+    get_text: Callable[[Any], str],
+    metadata: dict[str, Any],
+) -> None:
+    """Populate `metadata` for a `preproc_include` chunk with an IMPORTS edge.
+
+    A direct port of `GLSLChunker._extract_include_metadata` (glsl.py):
+    tree-sitter-cpp and tree-sitter-c produce the identical
+    `string_literal`/`system_lib_string` shape for `#include` that GLSL's
+    (C-preprocessor-derived) grammar does -- verified empirically
+    (tmp/probe_cpp_include.py), not assumed from the two grammars sharing a
+    common preprocessor lineage. Shared here (unlike `extract_call_sites`,
+    which has C++-only dispatch rows) since `#include` parses identically in
+    both languages. Sets a self-referential relationship -- the include
+    chunk's own edge describes itself as an import, same as GLSL's -- plus
+    `name`/`include_path`/(for system includes) `is_system_include` on
+    `metadata` directly, matching `CppChunker`/`CChunker`'s other name-
+    extraction branches.
+
+    Args:
+        node: A `preproc_include` node.
+        get_text: Callable that slices node text from source.
+        metadata: Metadata dict being populated; must already have a
+            "relationships" list key (set at the top of extract_metadata).
+    """
+    line = node.start_point[0] + 1
+    for child in node.children:
+        if child.type == "string_literal":
+            for sub in child.children:
+                if sub.type == "string_content":
+                    path = get_text(sub)
+                    metadata["name"] = path
+                    metadata["include_path"] = path
+                    _add_relationship(
+                        metadata, "imports", path, line, is_system_include=False
+                    )
+                    return
+        elif child.type == "system_lib_string":
+            path = get_text(child).strip("<>")
+            metadata["name"] = path
+            metadata["include_path"] = path
+            metadata["is_system_include"] = True
+            _add_relationship(metadata, "imports", path, line, is_system_include=True)
+            return
+
+
+def extract_inheritance_relationships(
+    node: Any,
+    get_text: Callable[[Any], str],
+    metadata: dict[str, Any],
+) -> None:
+    """Walk a `class_specifier`/`struct_specifier`'s `base_class_clause`.
+
+    Emits one INHERITS relationship per base, in declaration order, e.g.
+    `class Derived : public Base, private ns::Mixin<int>` emits two edges,
+    target `"Base"` then target `"Mixin"` (both peeled to their leaf name via
+    `_type_leaf_name`, dropping `ns::`/`<int>` the same way the call-site
+    walk peels a call's leaf name into `callee_name` while keeping the full
+    text elsewhere) -- each tagged with its `access` specifier
+    (`"public"`/`"private"`/`"protected"`) when the grammar carries one as an
+    explicit `access_specifier` child; a base with none (rare -- every
+    example in practice specifies one) is tagged `access=None`.
+    `union_specifier` never has a `base_class_clause` (unions cannot inherit
+    in C++), so callers only invoke this for `class_specifier`/
+    `struct_specifier`. C has no `base_class_clause` at all, so `CChunker`
+    never calls this.
+
+    Args:
+        node: A `class_specifier` or `struct_specifier` node.
+        get_text: Callable that slices node text from source.
+        metadata: Metadata dict being populated; must already have a
+            "relationships" list key (set at the top of extract_metadata).
+    """
+    base_clause = next(
+        (child for child in node.children if child.type == "base_class_clause"), None
+    )
+    if base_clause is None:
+        return
+    access = None
+    for child in base_clause.children:
+        if child.type == "access_specifier":
+            access = get_text(child)
+        elif child.type in ("type_identifier", "qualified_identifier", "template_type"):
+            name = _type_leaf_name(child, get_text)
+            if name is not None:
+                _add_relationship(
+                    metadata,
+                    "inherits",
+                    name,
+                    child.start_point[0] + 1,
+                    access=access,
+                )
+            access = None
+
+
+def extract_instantiation_relationships(
+    node: Any,
+    get_text: Callable[[Any], str],
+    metadata: dict[str, Any],
+) -> None:
+    """Walk `new_expression` nodes inside `node`, emitting INSTANTIATES edges.
+
+    `new_expression`'s `type` field is `type_identifier` (`new Base()`),
+    `qualified_identifier` (`new ns::Base()`), or `template_type`
+    (`new Vector<int>()`) -- verified against the real grammar output
+    (tmp/probe_cpp_grammar.py) -- peeled to a leaf name via `_type_leaf_name`,
+    same as `extract_inheritance_relationships`'s bases.
+
+    `new_expression` is a C++-only keyword (C has no `new`), so this is only
+    ever called from `CppChunker`, not `CChunker` -- mirroring the plan's
+    explicit inherits/instantiates-are-C++-only scoping.
+
+    Iterative (explicit stack) -- same rationale as `extract_call_sites`.
+
+    Args:
+        node: A `function_definition` node (the chunk, or the inner function
+            of a `template_declaration` chunk) being processed.
+        get_text: Callable that slices node text from source.
+        metadata: Metadata dict being populated; must already have a
+            "relationships" list key (set at the top of extract_metadata).
+    """
+    sites: list[tuple[str, int]] = []
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == "new_expression":
+            type_node = current.child_by_field_name("type")
+            name = _type_leaf_name(type_node, get_text)
+            if name is not None:
+                sites.append((name, type_node.start_point[0] + 1))
+        stack.extend(current.children)
+    # Stack-based traversal visits children in reverse order; sort by source
+    # line so metadata["relationships"] reads in document order (mirrors
+    # extract_call_sites).
+    sites.sort(key=lambda s: s[1])
+    for name, line in sites:
+        _add_relationship(metadata, "instantiates", name, line)
+
+
+# ---------------------------------------------------------------------------
 # Shared preprocess/parse composition seam
 # ---------------------------------------------------------------------------
 

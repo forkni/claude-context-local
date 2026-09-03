@@ -7,7 +7,8 @@
       "calls": [],
       "complexity_score": 1,
       "name": "square",
-      "node_type": "function_definition"
+      "node_type": "function_definition",
+      "relationships": []
     },
     "start_line": 3,
     "type": "function_definition"
@@ -27,7 +28,8 @@
       ],
       "complexity_score": 1,
       "name": "computeSquares",
-      "node_type": "function_definition"
+      "node_type": "function_definition",
+      "relationships": []
     },
     "start_line": 7,
     "type": "function_definition"
@@ -47,7 +49,8 @@
       ],
       "complexity_score": 1,
       "name": "launchComputeSquares",
-      "node_type": "function_definition"
+      "node_type": "function_definition",
+      "relationships": []
     },
     "start_line": 18,
     "type": "function_definition"

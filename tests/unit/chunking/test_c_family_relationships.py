@@ -15,21 +15,26 @@ project define its own?" context this per-file walk doesn't have, so that's Wall
 scope (`search/graph_integration.py`'s future `_C_FAMILY_COMMON_MEMBERS`), not here --
 which is why `Derived::greet`'s `items.begin()`/`items.end()` (STL container method
 calls, syntactically identical to a project-defined method) still appear below.
-`metadata["relationships"]` is still never populated (no INHERITS/INSTANTIATES/IMPORTS
-edges yet -- a later step), so `chunk.relationships` stays `None` throughout this file.
+`metadata["relationships"]` now carries IMPORTS (`#include`), INHERITS (`base_class_clause`),
+and INSTANTIATES (`new_expression`) edges (`extract_include_metadata`,
+`extract_inheritance_relationships`, `extract_instantiation_relationships` in
+`chunking/languages/_c_family.py`), materialized via the same `EDGE_EMISSION_SPECS`/
+`materialize_relationship_edges` seam GLSL's relationships flow through (see
+`test_glsl_relationships.py`, whose `_rels` helper and per-edge assertion style this file
+mirrors) -- so `chunk.relationships` is non-`None` for any C-family chunk carrying at least
+one such edge. Chunks with no relationship of any kind (e.g. `helper_fn`, free functions with
+no `new`) still have `chunk.relationships is None`, per
+`materialize_relationship_edges`'s "empty list stays unassigned" contract.
 
-This file pins that in-between state with real C++/C source containing every
-call/relationship shape the full Wall-1 walk targets -- plain calls, method calls
+`preproc_include` was also added to `LANGUAGE_SPECS["c"]`/`["cpp"]`'s `splittable_node_types`
+(chunking/language_registry.py), matching GLSL's existing entry -- so `#include` lines now get
+their own dedicated `chunk_type == "include"` chunk, the same as GLSL, instead of producing no
+chunk at all.
+
+This file pins the full Wall-1 walk's target shapes -- plain calls, method calls
 (`->`/`this->`), `std::`-qualified calls, qualified non-`std::` calls, template calls,
-inheritance, and `new` -- so each subsequent commit in this build shows a concrete
-before/after diff in this same file. As relationship edges (`imports`/`instantiates`/
-`inherits`) land, the remaining assertions below are expected to flip from "no
-relationships" to real edge assertions.
-
-Also pins a pre-existing, Wall-1-adjacent gap: unlike GLSL, `preproc_include` is not in either
-`LANGUAGE_SPECS["c"]`/`["cpp"]`'s `splittable_node_types` (chunking/language_registry.py), so
-`#include` lines produce no dedicated chunk at all for C-family today -- there is nothing an
-"imports" relationship edge could attach to yet without also touching the registry.
+inheritance, `new`, and `#include` -- with real C++/C source, so each commit in this build
+showed a concrete before/after diff in this same file.
 """
 
 from pathlib import Path
@@ -37,6 +42,7 @@ from pathlib import Path
 import pytest
 
 from chunking.multi_language_chunker import MultiLanguageChunker
+from chunking.relationships.relationship_types import RelationshipType
 
 
 # Fixture exercising every call/relationship shape the future Wall-1 walk targets:
@@ -133,6 +139,11 @@ def _chunk(chunks, name: str, parent_name: str | None = None):
     raise AssertionError(f"no chunk named {name!r} (parent_name={parent_name!r})")
 
 
+def _rels(chunk, rel_type: RelationshipType):
+    """Filter `chunk.relationships` to one edge type. Mirrors `test_glsl_relationships.py`."""
+    return [r for r in (chunk.relationships or []) if r.relationship_type == rel_type]
+
+
 # ===== C++ baseline =====
 
 
@@ -154,8 +165,8 @@ def test_cpp_method_with_mixed_call_shapes_emits_calls_and_filters_std(cpp_chunk
     `std::`-prefix noise filter -- but its own arguments, `items.begin()`/`items.end()`,
     are themselves separate `field_expression` call sites on `items` and are recognized
     as (unfiltered) method calls, per this file's module docstring. `new Base()` is a
-    `new_expression`, not a `call_expression`, so it never reaches this walk at all --
-    it becomes an INSTANTIATES relationship in a later step, not `chunk.calls`.
+    `new_expression`, not a `call_expression`, so it never reaches `chunk.calls` at all --
+    it becomes the method's one INSTANTIATES relationship instead, asserted below.
     """
     chunk = _chunk(cpp_chunks, "greet", parent_name="Derived")
     assert chunk.chunk_type == "method"
@@ -167,7 +178,12 @@ def test_cpp_method_with_mixed_call_shapes_emits_calls_and_filters_std(cpp_chunk
         ("end", True, None),
         ("begin", True, None),
     ]
-    assert not chunk.relationships
+    edges = _rels(chunk, RelationshipType.INSTANTIATES)
+    assert len(edges) == 1
+    edge = edges[0]
+    assert edge.target_name == "Base"
+    assert edge.line_number == 16
+    assert edge.metadata == {}
 
 
 def test_cpp_templated_function_emits_calls(cpp_chunks):
@@ -202,16 +218,45 @@ def test_cpp_function_with_qualified_and_template_calls_emits_calls(cpp_chunks):
     assert not chunk.relationships
 
 
-def test_cpp_class_with_inheritance_emits_no_relationships(cpp_chunks):
-    """`class Derived : public Base` -- no INHERITS edge yet."""
+def test_cpp_class_with_inheritance_emits_inherits_relationship(cpp_chunks):
+    """`class Derived : public Base` -> one INHERITS edge, tagged with its access specifier."""
     chunk = _chunk(cpp_chunks, "Derived")
-    assert not chunk.relationships
+    edges = _rels(chunk, RelationshipType.INHERITS)
+    assert len(edges) == 1
+    edge = edges[0]
+    assert edge.target_name == "Base"
+    assert edge.line_number == 10
+    assert edge.metadata == {"access": "public"}
 
 
-def test_cpp_include_produces_no_dedicated_chunk(cpp_chunks):
-    """`#include "helper.hpp"` produces no chunk at all (registry gap, see module docstring)."""
-    assert all(c.name != "helper.hpp" for c in cpp_chunks)
-    assert all(c.chunk_type != "include" for c in cpp_chunks)
+def test_cpp_quoted_include_emits_include_chunk_and_imports_edge(cpp_chunks):
+    """`#include "helper.hpp"` -> its own "include"-typed chunk with a self-referential
+    IMPORTS edge, mirroring `test_glsl_relationships.py`'s
+    `test_include_produces_imports_edge`."""
+    chunk = _chunk(cpp_chunks, "helper.hpp")
+    assert chunk.chunk_type == "include"
+    edges = _rels(chunk, RelationshipType.IMPORTS)
+    assert len(edges) == 1
+    edge = edges[0]
+    assert edge.target_name == "helper.hpp"
+    assert edge.line_number == 1
+    assert edge.metadata == {"is_system_include": False}
+    assert edge.source_id == chunk.chunk_id
+
+
+def test_cpp_system_includes_emit_include_chunks_and_imports_edges(cpp_chunks):
+    """`#include <vector>` / `#include <algorithm>` -> "include" chunks tagged
+    `is_system_include=True`, distinguishing `<...>` from `"..."` includes."""
+    vector_chunk = _chunk(cpp_chunks, "vector")
+    algorithm_chunk = _chunk(cpp_chunks, "algorithm")
+    for chunk, expected_line in ((vector_chunk, 2), (algorithm_chunk, 3)):
+        assert chunk.chunk_type == "include"
+        edges = _rels(chunk, RelationshipType.IMPORTS)
+        assert len(edges) == 1
+        edge = edges[0]
+        assert edge.target_name == chunk.name
+        assert edge.line_number == expected_line
+        assert edge.metadata == {"is_system_include": True}
 
 
 # ===== C baseline =====
@@ -230,7 +275,15 @@ def test_c_function_with_call_emits_calls(c_chunks):
     assert not chunk.relationships
 
 
-def test_c_include_produces_no_dedicated_chunk(c_chunks):
-    """`#include "helper.h"` produces no chunk at all (registry gap, see module docstring)."""
-    assert all(c.name != "helper.h" for c in c_chunks)
-    assert all(c.chunk_type != "include" for c in c_chunks)
+def test_c_include_emits_include_chunk_and_imports_edge(c_chunks):
+    """`#include "helper.h"` -> its own "include"-typed chunk with a self-referential
+    IMPORTS edge, same as the C++ case."""
+    chunk = _chunk(c_chunks, "helper.h")
+    assert chunk.chunk_type == "include"
+    edges = _rels(chunk, RelationshipType.IMPORTS)
+    assert len(edges) == 1
+    edge = edges[0]
+    assert edge.target_name == "helper.h"
+    assert edge.line_number == 1
+    assert edge.metadata == {"is_system_include": False}
+    assert edge.source_id == chunk.chunk_id

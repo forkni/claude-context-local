@@ -7,7 +7,8 @@
       "calls": [],
       "complexity_score": 1,
       "name": "add",
-      "node_type": "function_definition"
+      "node_type": "function_definition",
+      "relationships": []
     },
     "start_line": 3,
     "type": "function_definition"
@@ -18,7 +19,8 @@
     "language": "c",
     "metadata": {
       "name": "Point",
-      "node_type": "struct_specifier"
+      "node_type": "struct_specifier",
+      "relationships": []
     },
     "start_line": 7,
     "type": "struct_specifier"
@@ -29,7 +31,8 @@
     "language": "c",
     "metadata": {
       "name": "Color",
-      "node_type": "type_definition"
+      "node_type": "type_definition",
+      "relationships": []
     },
     "start_line": 12,
     "type": "type_definition"
