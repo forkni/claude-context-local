@@ -4,24 +4,27 @@
 c.py) now walk `call_expression` nodes via `extract_call_sites`
 (chunking/languages/_c_family.py) and `EDGE_EMISSION_SPECS` (chunking/relationships/
 edge_specs.py) carries `"cpp"`/`"c"` rows, so `chunk.calls` is populated for `cpp`/`c`
-function/method chunks -- but the walk's *dispatch table* is still narrow: only a
-`call_expression` whose `function` field is a plain `identifier` is recognized (a call
-like `helper_fn(1, 2)`). `field_expression` (method calls, `obj.m()`/`this->m()`),
-`qualified_identifier` (`std::sort(...)`), and `template_function` (`clamp<int>(...)`)
-are not dispatched yet, so calls of those shapes are silently absent from `chunk.calls`
--- e.g. `Derived::greet`'s `this->log("hi")` and `std::sort(...)` calls do not appear
-below, only its plain `helper_fn(1, 2)` call does. `metadata["relationships"]` is still
-never populated (no INHERITS/INSTANTIATES/IMPORTS edges yet -- a later step), so
-`chunk.relationships` stays `None` throughout this file.
+function/method chunks. The walk's dispatch table now covers all four `function`-field
+shapes the plan's dispatch table names: plain `identifier`, `field_expression` (method
+calls, `obj.m()`/`this->m()` -- `is_method_call=True`), `qualified_identifier`
+(`Foo::bar(...)`, `callee_qualified` set to the full text), and `template_function`
+(`clamp<int>(...)`). `std::`-/`::std::`-qualified calls (`std::sort(...)`) are filtered
+at chunk time (`_is_std_qualified`) -- the only project-context-free noise rule; a
+static STL member-name blocklist for bare method calls like `.size()` needs "does the
+project define its own?" context this per-file walk doesn't have, so that's Wall-2
+scope (`search/graph_integration.py`'s future `_C_FAMILY_COMMON_MEMBERS`), not here --
+which is why `Derived::greet`'s `items.begin()`/`items.end()` (STL container method
+calls, syntactically identical to a project-defined method) still appear below.
+`metadata["relationships"]` is still never populated (no INHERITS/INSTANTIATES/IMPORTS
+edges yet -- a later step), so `chunk.relationships` stays `None` throughout this file.
 
 This file pins that in-between state with real C++/C source containing every
 call/relationship shape the full Wall-1 walk targets -- plain calls, method calls
-(`->`/`this->`), `std::`-qualified calls, inheritance, and `new` -- so each subsequent
-commit in this build shows a concrete before/after diff in this same file. As the
-dispatch table widens (`field_expression`/`qualified_identifier`/`template_function`)
-and relationship edges (`imports`/`instantiates`/`inherits`) land, the remaining
-assertions below are expected to flip from "absent"/"no relationships" to real edge
-assertions.
+(`->`/`this->`), `std::`-qualified calls, qualified non-`std::` calls, template calls,
+inheritance, and `new` -- so each subsequent commit in this build shows a concrete
+before/after diff in this same file. As relationship edges (`imports`/`instantiates`/
+`inherits`) land, the remaining assertions below are expected to flip from "no
+relationships" to real edge assertions.
 
 Also pins a pre-existing, Wall-1-adjacent gap: unlike GLSL, `preproc_include` is not in either
 `LANGUAGE_SPECS["c"]`/`["cpp"]`'s `splittable_node_types` (chunking/language_registry.py), so
@@ -71,6 +74,15 @@ template <typename T>
 T identity(T value) {
     helper_fn(1, 2);
     return value;
+}
+
+namespace ns {
+void helper2(int x);
+}
+
+void mixed_dispatch_calls() {
+    ns::helper2(5);
+    identity<int>(5);
 }
 """
 
@@ -134,18 +146,27 @@ def test_cpp_function_with_plain_call_emits_calls(cpp_chunks):
     assert not chunk.relationships
 
 
-def test_cpp_method_with_mixed_call_shapes_emits_only_identifier_call(cpp_chunks):
+def test_cpp_method_with_mixed_call_shapes_emits_calls_and_filters_std(cpp_chunks):
     """`Derived::greet` exercises plain/`this->`/`std::`-qualified calls + `new`.
 
-    Only the plain-identifier `helper_fn(1, 2)` call is recognized yet -- `this->log("hi")`
-    (`field_expression`) and `std::sort(...)` (`qualified_identifier`) are a later dispatch
-    widening, see this file's module docstring.
+    `helper_fn(1, 2)` (plain) and `this->log("hi")` (`field_expression`, method call)
+    are both recognized. `std::sort(...)` (`qualified_identifier`) is dropped by the
+    `std::`-prefix noise filter -- but its own arguments, `items.begin()`/`items.end()`,
+    are themselves separate `field_expression` call sites on `items` and are recognized
+    as (unfiltered) method calls, per this file's module docstring. `new Base()` is a
+    `new_expression`, not a `call_expression`, so it never reaches this walk at all --
+    it becomes an INSTANTIATES relationship in a later step, not `chunk.calls`.
     """
     chunk = _chunk(cpp_chunks, "greet", parent_name="Derived")
     assert chunk.chunk_type == "method"
     assert [
         (c.callee_name, c.is_method_call, c.callee_qualified) for c in chunk.calls
-    ] == [("helper_fn", False, None)]
+    ] == [
+        ("helper_fn", False, None),
+        ("log", True, None),
+        ("end", True, None),
+        ("begin", True, None),
+    ]
     assert not chunk.relationships
 
 
@@ -159,6 +180,26 @@ def test_cpp_templated_function_emits_calls(cpp_chunks):
     assert [
         (c.callee_name, c.is_method_call, c.callee_qualified) for c in chunk.calls
     ] == [("helper_fn", False, None)]
+
+
+def test_cpp_function_with_qualified_and_template_calls_emits_calls(cpp_chunks):
+    """`mixed_dispatch_calls` exercises non-`std::`-qualified and bare template calls.
+
+    `ns::helper2(5)` (`qualified_identifier`, not `std::`-prefixed) is recognized with
+    `callee_qualified` set to the full `"ns::helper2"` text. `identity<int>(5)` (a bare
+    `template_function`, not qualified) is recognized via the same name-peeling
+    `_leaf_call_name` helper the `qualified_identifier` row uses for
+    `std::max<int>(...)`-shaped nesting.
+    """
+    chunk = _chunk(cpp_chunks, "mixed_dispatch_calls")
+    assert chunk.chunk_type == "function"
+    assert [
+        (c.callee_name, c.is_method_call, c.callee_qualified) for c in chunk.calls
+    ] == [
+        ("helper2", False, "ns::helper2"),
+        ("identity", False, None),
+    ]
+    assert not chunk.relationships
 
 
 def test_cpp_class_with_inheritance_emits_no_relationships(cpp_chunks):

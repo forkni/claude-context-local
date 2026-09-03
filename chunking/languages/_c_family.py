@@ -489,6 +489,48 @@ def repair_macro_wrapped_declarations(
 # ---------------------------------------------------------------------------
 
 
+def _leaf_call_name(node: Any | None, get_text: Callable[[Any], str]) -> str | None:
+    """Resolve a call-site name node to its leaf identifier text.
+
+    Peels one level of `template_function`/`template_method` (e.g. the
+    `max` in `max<int>(...)`, or the `sort` in `obj.sort<Cmp>(...)`) down to
+    its own `name` field before slicing text -- tree-sitter-cpp nests the
+    identifier one field deeper than a plain, non-templated call. Recursion
+    is bounded to one real level (a template can't itself be templated), so
+    no explicit-stack rewrite is needed here unlike the tree walks above.
+
+    Args:
+        node: The candidate name node -- a `call_expression`'s `function`
+            field, a `field_expression`'s `field` field, or a
+            `qualified_identifier`'s `name` field.
+        get_text: Callable that slices node text from source.
+
+    Returns:
+        The leaf identifier text, or None if `node` is None, MISSING, or
+        (after peeling) still not a plain name node.
+    """
+    if node is None or node.is_missing:
+        return None
+    if node.type in ("template_function", "template_method"):
+        return _leaf_call_name(node.child_by_field_name("name"), get_text)
+    return get_text(node)
+
+
+def _is_std_qualified(qualified: str | None) -> bool:
+    """True if a call's full qualified text is `std::`- or `::std::`-prefixed.
+
+    The single biggest, cheapest noise win measured by the Phase 0 probe
+    (5,679 of 33,996 call sites): nobody's project defines `std::sort`, so
+    every `std::`-qualified call is unconditionally noise -- unlike a bare
+    method name (`.size()`), which needs project context to judge (deferred
+    to `search/graph_integration.py`'s Wall-2 "unless the project defines
+    it" pattern, `_C_FAMILY_COMMON_MEMBERS` -- not duplicated here).
+    """
+    return qualified is not None and (
+        qualified.startswith("std::") or qualified.startswith("::std::")
+    )
+
+
 def extract_call_sites(
     node: Any,
     get_text: Callable[[Any], str],
@@ -503,26 +545,33 @@ def extract_call_sites(
     `chunking.relationships.edge_specs._as_call_site` normalizes this shape
     (and GLSL's narrower 2-tuple) into a real `CallSite` downstream.
 
-    Step-3 scope: only the `function` field's `identifier` shape is
-    recognized here -- a plain call like `helper_fn(1, 2)`.
-    `field_expression` (method calls, `obj.m()`/`ptr->m()`),
-    `qualified_identifier` (`std::sort(...)`), and `template_function`
-    (`clamp<int>(...)`) are a later dispatch widening (see
-    `docs/plans/IMPLEMENTATION_PLAN_CALLGRAPH_RECALL_20260901.md`'s step 4)
-    and are silently skipped here, same as any other unrecognized `function`
-    field shape (e.g. a function-pointer call). tree-sitter-c never produces
-    those three shapes at all (verified against the Phase 0 probe -- C's
-    grammar has no `qualified_identifier`/`template_function`, and its own
-    `field_expression` calls, e.g. through a struct's function-pointer
-    member, are rare and share the same "recognized in step 4" deferral), so
-    this identifier-only dispatch already covers C's call sites fully; C++
-    call sites of those shapes are simply absent from `metadata["calls"]`
-    until step 4 lands.
+    Dispatches on the `function` field's node type, per the plan's table
+    (`docs/plans/IMPLEMENTATION_PLAN_CALLGRAPH_RECALL_20260901.md`):
 
-    No noise filtering here yet either (builtins/STL/`std::` -- see the
-    plan's "Noise model" section) -- every recognized identifier call
-    survives, same as `metadata["calls"]` being unfiltered before GLSL's
-    `_is_call_noise` existed.
+    - `identifier`: plain call, e.g. `helper_fn(1, 2)`.
+    - `field_expression`: method call (`obj.m()` / `ptr->m()`) --
+      `is_method_call=True`, name from the `field` field (itself peeled via
+      `_leaf_call_name` if it's a `template_method`, e.g. `obj.sort<Cmp>()`).
+    - `qualified_identifier` (C++ only): `std::sort(...)` / `Foo::bar(...)`
+      -- name from the `name` field (peeled the same way for
+      `std::max<int>(...)`'s `template_function` nesting), `qualified` set
+      to the full text.
+    - `template_function` (C++ only): a bare, unqualified templated call
+      (`clamp<int>(...)`) -- name from the `name` field.
+    - anything else (function-pointer calls, etc.): skipped.
+
+    `std::`/`::std::`-qualified calls are dropped (`_is_std_qualified`) --
+    the only noise filter that belongs at chunk time; a static STL
+    member-name blocklist would need "unless the project defines it"
+    project-wide context this per-file walk doesn't have, so that lives at
+    index time instead (Wall 2, `_C_FAMILY_COMMON_MEMBERS`).
+
+    tree-sitter-c produces only the `identifier` shape (verified against
+    the Phase 0 probe -- C's grammar has no `qualified_identifier` or
+    `template_function`, and C's rare struct-function-pointer
+    `field_expression` calls are covered by the same dispatch row as C++
+    method calls), so this same function already covered C's call sites
+    fully before this widening; only C++ gains new dispatch rows here.
 
     Iterative (explicit stack), not recursive -- same rationale as
     `_error_nodes` and `unwrap_declarator_name`: deep real-world trees can
@@ -547,14 +596,33 @@ def extract_call_sites(
         current = stack.pop()
         if current.type == "call_expression":
             func_node = current.child_by_field_name("function")
-            if (
-                func_node is not None
-                and func_node.type == "identifier"
-                and not func_node.is_missing
-            ):
-                calls.append(
-                    (get_text(func_node), func_node.start_point[0] + 1, False, None)
-                )
+            entry: tuple[str, int, bool, str | None] | None = None
+            if func_node is not None and not func_node.is_missing:
+                line = func_node.start_point[0] + 1
+                if func_node.type == "identifier":
+                    entry = (get_text(func_node), line, False, None)
+                elif func_node.type == "field_expression":
+                    name = _leaf_call_name(
+                        func_node.child_by_field_name("field"), get_text
+                    )
+                    if name is not None:
+                        entry = (name, line, True, None)
+                elif func_node.type == "qualified_identifier":
+                    name = _leaf_call_name(
+                        func_node.child_by_field_name("name"), get_text
+                    )
+                    if name is not None:
+                        qualified = get_text(func_node)
+                        if not _is_std_qualified(qualified):
+                            entry = (name, line, False, qualified)
+                elif func_node.type == "template_function":
+                    name = _leaf_call_name(
+                        func_node.child_by_field_name("name"), get_text
+                    )
+                    if name is not None:
+                        entry = (name, line, False, None)
+            if entry is not None:
+                calls.append(entry)
         stack.extend(current.children)
     # Stack-based traversal visits children in reverse order; sort by source
     # line so metadata["calls"] reads in document order (mirrors GLSL).
