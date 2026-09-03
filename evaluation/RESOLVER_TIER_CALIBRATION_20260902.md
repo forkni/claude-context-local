@@ -12,15 +12,23 @@ in the search path, the resolvers, or their defaults was changed. No commit was 
 ## 1. Artifacts
 
 | Artifact | Path | Tracked |
-|---|---|---|
+| --- | --- | --- |
 | Raw traced runs (3) | `evaluation/traced_runs/r1.json`, `r2.json`, `r3.json` | no (`.gitignore`) |
 | Run log (pass/fail counts, timings) | `evaluation/traced_runs/full_runs.log` | no |
 | Intersected, chunk-mapped ground truth | `evaluation/traced_callgraph.json` (`traced-callgraph/1`) | uncommitted |
 | Per-tier score report | `evaluation/resolver_tier_scores.json` | uncommitted |
 | Precision hand-label sample (40 rows, 10 per tier) | `evaluation/resolver_precision_sample.json` (`resolver-precision-sample/1`) | uncommitted |
-| Traced goldens for `run_caller_recall.py` | `evaluation/caller_golden_traced.json`, `evaluation/callee_golden_traced.json` | uncommitted |
+| Traced goldens for `run_caller_recall.py` | `evaluation/caller_golden_traced.json`, `evaluation/callee_golden_traced.json` | yes (`d070066`) |
 | Harness results | `evaluation/traced_runs/callers_recall_traced.json`, `callees_recall_traced.json`, `callers_recall_curated.json`, `callees_recall_curated.json` | no |
-| Code | `evaluation/tracer/{collector,pytest_callgraph,build,scoring}.py`, `evaluation/index_locator.py`, `scripts/benchmark/traced_callgraph.py`, `tests/unit/evaluation/tracer/`, `tests/fixtures/tracer_pkg/` | uncommitted |
+| Code | `evaluation/tracer/{collector,pytest_callgraph,build,scoring}.py`, `evaluation/index_locator.py`, `scripts/benchmark/traced_callgraph.py`, `tests/unit/evaluation/tracer/`, `tests/fixtures/tracer_pkg/` | yes (`d070066`) |
+
+**Correction (2026-09-02 audit):** the tracer package and the traced goldens were marked
+"uncommitted" above at capture time; `git ls-files` confirms both landed in `d070066`
+alongside this file. The three JSON dumps (`traced_callgraph.json`, `resolver_tier_scores.json`,
+`resolver_precision_sample.json`) were also committed in `d070066` but were untracked again by
+the later `bb87513` ("chore: untrack regenerable evaluation dumps, keep benchmark inputs only"),
+consistent with the standing rule that `evaluation/` dumps stay local — their "uncommitted" row
+above is accurate as the current state, not stale.
 
 ## 2. Substrate
 
@@ -51,7 +59,7 @@ PYTHONHASHSEED=0 ./scripts/test/run_tests.sh tests/unit -q -p no:randomly --time
 ```
 
 | Run | Result | Wall time |
-|---|---|---|
+| --- | --- | --- |
 | r1 (traced) | 4273 passed, 2 failed, 3 skipped | 165.0 s |
 | r2 (traced) | 4273 passed, 2 failed, 3 skipped | 136.6 s |
 | r3 (traced) | 4273 passed, 2 failed, 3 skipped | 135.8 s |
@@ -64,7 +72,7 @@ pre-date this work (section 10).
 Integrity block of `evaluation/traced_callgraph.json`:
 
 | Check | Value |
-|---|---|
+| --- | --- |
 | runs | 3 |
 | deterministic | true |
 | dropped_nondeterministic | 0 |
@@ -115,7 +123,7 @@ Denominators: |D| = 1,675, |I| = 222, |E_traced| = 1,894, |EXEC| = 1,318.
 ## 5. Per-tier results (B3)
 
 | tier | edges | hits_D | recall_marginal | recall_cumulative | hits_I | recall_indirect | prec_lb | edges_cov | hits_cov | prec_lb_cov | unwitnessable | unlabeled_cov |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | lsp | 1,421 | 816 | 0.4872 | 0.4872 | 3 | 0.0135 | 0.5764 | 1,026 | 819 | 0.7982 | 395 | 207 |
 | libcst | 498 | 235 | 0.1403 | 0.6275 | 4 | 0.0180 | 0.4799 | 318 | 239 | 0.7516 | 180 | 79 |
 | pyan | 1,183 | 183 | 0.1093 | 0.7063 | 3 | 0.0135 | 0.1572 | 723 | 186 | 0.2573 | 460 | 537 |
@@ -149,7 +157,7 @@ at k=50 with `hide_ambiguous=False`. Precision and `extra` columns are meaningle
 positive-only labels and are not reported.
 
 | Golden | Queries | Recall (micro) | Mean recall@n | Skipped targets |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `caller_golden_traced.json` (TC001 TC002 TC003 TC006 TC007) | 5 | 1.0 (18/18) | 0.70 | C004 no traced direct callers; C005 target never executed |
 | `callee_golden_traced.json` (TOB01 to TOB04, TOB07) | 5 | 1.0 (13/13) | 0.5167 | OB05, OB06 no traced direct callees |
 | `caller_golden.json` (curated, pre-repair) | 7 | 0.9231 (12/13), mean 0.8571 | 0.369 | none |
@@ -194,7 +202,7 @@ alias for split-eligible nodes since the same date.
 191 direct executed edges are found by no tier. First-match order is the order below.
 
 | Class | Count | Example (caller → callee) |
-|---|---|---|
+| --- | --- | --- |
 | wrapper_routed | 20 | `chunking/languages/base.py:method:LanguageChunker._child_is_chunked → chunking/languages/cpp.py:method:CppChunker.should_chunk_node` |
 | class_body_eval | 9 | `chunking/tree_sitter.py:class:TreeSitterChunker → chunking/languages/c.py:class:CChunker` (registry dict built in the class body) |
 | via_external | 28 | `chunking/languages/base.py:method:LanguageChunker._load_language → chunking/language_registry.py:decorated_definition:LanguageSpec` |
@@ -220,7 +228,7 @@ timed out and were retried serially afterwards; parallel `find_connections` call
 out, so each check below was a single sequential call.
 
 | Edge (tier attributed by scorer) | `find_connections` result |
-|---|---|
+| --- | --- |
 | lsp: `chunking/file_summarizer.py:function:generate_file_summaries → _build_file_summary` | listed in `direct_callees`, `resolver_source: lsp`, `resolver_confidence 0.98` (confirmed) |
 | libcst: `chunking/languages/base.py:method:LanguageChunker._get_chunking_config → search/config.py:function:get_chunking_config` | listed, `resolver_source: libcst`, 0.9 (confirmed) |
 | pyan: `chunking/languages/cpp.py:method:CudaChunker._neutralize → chunking/languages/_c_family.py:function:blank_preserving_layout` | listed, `resolver_source: pyan`, 0.75 (confirmed); the same call also lists `_CFamilyChunker._neutralize` as `lsp` 0.98 |
