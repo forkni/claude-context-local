@@ -9,7 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-*Nothing yet.*
+### Security
+
+- **nltk CVE-2026-81726 / GHSA-8mgp-746c-j5xp** (pathsec bypass in model-artifact APIs,
+  affects every release through 3.10.3, no fixed release yet) assessed **not applicable**: the
+  affected tagger/parser/maxent persistence APIs are unused and `pathsec` is never enabled; the
+  only nltk surface is stopwords/stemmer/tokenize with hardcoded data paths
+  (`search/bm25_index.py`). Deferred in the `pyproject.toml` CVE ledger with a reopening
+  condition (raise the floor once nltk publishes >3.10.3); Dependabot alert #33 dismissed
+  `not_used`. The predecessor deferral for CVE-2026-12243 no longer flags on 3.10.3 and was
+  folded into the same ledger entry.
 
 ---
 

@@ -373,10 +373,18 @@ evaluation = ["*.json", "*.md"]
 # * transformers PYSEC-2025-217 (X-CLIP checkpoint-conversion RCE) — no fix; not applicable (no X-CLIP conversion use)
 # * transformers PYSEC-2026-2290 / CVE-2026-5241 (LightGlue model-load RCE) — no fix; not applicable (no LightGlue use)
 # * diskcache CVE-2025-69872, sqlitedict CVE-2024-35515 (pickle RCE) — no upstream fix; sqlitedict mitigated via JSON serialization (metadata.py)
-# * nltk CVE-2026-12243 (path traversal, incomplete fix of CVE-2025-14009) — still no upstream fix as
-#   of nltk 3.10.0 (OSV: fix_versions=[]); no untrusted NLTK data paths in this project — the only
-#   calls are nltk.data.find("corpora/stopwords") and nltk.download("stopwords", quiet=True) with
-#   hardcoded literals (search/bm25_index.py:33,35).
+# * nltk CVE-2026-81726 / GHSA-8mgp-746c-j5xp (pathsec bypass in model-artifact APIs:
+#   TransitionParser.train/parse, AveragedPerceptron.save/load, PerceptronTagger.save_to_json,
+#   save_maxent_params) — affects <=3.10.3 (= PyPI latest), no fixed release as of 2026-09-02
+#   (OSV: last_affected=3.10.3). Not applicable: none of the affected APIs are used and pathsec
+#   is never enabled; the only nltk calls are stopwords/SnowballStemmer/word_tokenize plus the
+#   two hardcoded-literal data calls nltk.data.find("corpora/stopwords") and
+#   nltk.download("stopwords", quiet=True) (search/bm25_index.py:34,36). Upstream fixes merged
+#   to develop (nltk/nltk#3757, #3759, #3813, 2026-08-18..28), post-dating the v3.10.3 tag.
+#   Reopen: when nltk publishes >3.10.3, raise the floor to it and re-run pip-audit.
+#   Dependabot #33 dismissed not_used. (Predecessor entry nltk CVE-2026-12243 — path traversal,
+#   incomplete fix of CVE-2025-14009 — no longer flags on 3.10.3 per OSV query 2026-09-02;
+#   closed by the >=3.10.3 floor, see the direct-dependency comment above.)
 # * pyjwt PYSEC-2025-183 (disputed weak encryption) — no upstream fix
 # * torch 2.11.0+cu128, 1 CVE remaining (down from 8 as of 2026-08-06 — see the ML-stack-bump
 #   entry at the top of "Last audit" above and docs/adr/0033-lift-torch-ceiling.md). Note:
