@@ -424,6 +424,11 @@ LANGUAGE_SPECS: dict[str, LanguageSpec] = {
             "union_specifier",
             "enum_specifier",
             "type_definition",
+            # Call-graph parity step 5 (imports relationship): `#include`
+            # lines get their own dedicated "include" chunk, mirroring
+            # GLSL's `preproc_include` entry below, instead of producing no
+            # chunk at all as they did previously.
+            "preproc_include",
         },
         install_hint="pip install tree-sitter-c",
     ),
@@ -446,6 +451,11 @@ LANGUAGE_SPECS: dict[str, LanguageSpec] = {
             "field_declaration",
             "declaration",
             "alias_declaration",
+            # Call-graph parity step 5 (imports relationship): `#include`
+            # lines get their own dedicated "include" chunk, mirroring
+            # GLSL's `preproc_include` entry below, instead of producing no
+            # chunk at all as they did previously.
+            "preproc_include",
         },
         install_hint="pip install tree-sitter-cpp",
     ),

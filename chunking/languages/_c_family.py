@@ -485,6 +485,384 @@ def repair_macro_wrapped_declarations(
 
 
 # ---------------------------------------------------------------------------
+# Call-expression extraction (Wall 1)
+# ---------------------------------------------------------------------------
+
+
+def _leaf_call_name(node: Any | None, get_text: Callable[[Any], str]) -> str | None:
+    """Resolve a call-site name node to its leaf identifier text.
+
+    Peels one level of `template_function`/`template_method` (e.g. the
+    `max` in `max<int>(...)`, or the `sort` in `obj.sort<Cmp>(...)`) down to
+    its own `name` field before slicing text -- tree-sitter-cpp nests the
+    identifier one field deeper than a plain, non-templated call. Recursion
+    is bounded to one real level (a template can't itself be templated), so
+    no explicit-stack rewrite is needed here unlike the tree walks above.
+
+    Args:
+        node: The candidate name node -- a `call_expression`'s `function`
+            field, a `field_expression`'s `field` field, or a
+            `qualified_identifier`'s `name` field.
+        get_text: Callable that slices node text from source.
+
+    Returns:
+        The leaf identifier text, or None if `node` is None, MISSING, or
+        (after peeling) still not a plain name node.
+    """
+    if node is None or node.is_missing:
+        return None
+    if node.type in ("template_function", "template_method"):
+        return _leaf_call_name(node.child_by_field_name("name"), get_text)
+    return get_text(node)
+
+
+def _is_std_qualified(qualified: str | None) -> bool:
+    """True if a call's full qualified text is `std::`- or `::std::`-prefixed.
+
+    The single biggest, cheapest noise win measured by the Phase 0 probe
+    (5,679 of 33,996 call sites): nobody's project defines `std::sort`, so
+    every `std::`-qualified call is unconditionally noise -- unlike a bare
+    method name (`.size()`), which needs project context to judge (deferred
+    to `search/graph_integration.py`'s Wall-2 "unless the project defines
+    it" pattern, `_C_FAMILY_COMMON_MEMBERS` -- not duplicated here).
+    """
+    return qualified is not None and (
+        qualified.startswith("std::") or qualified.startswith("::std::")
+    )
+
+
+_CAST_KEYWORDS: frozenset[str] = frozenset(
+    {"static_cast", "dynamic_cast", "const_cast", "reinterpret_cast"}
+)
+
+
+def _is_cast_keyword(name: str) -> bool:
+    """True if `name` is a C++ cast-operator keyword, not a real call.
+
+    `static_cast<T>(x)` / `dynamic_cast<T>(x)` / `const_cast<T>(x)` /
+    `reinterpret_cast<T>(x)` parse identically to an ordinary templated
+    function call (`template_function` shape) in tree-sitter-cpp, so
+    without this check they're indistinguishable from a real call to a
+    project-defined `clamp<T>()`-style template. Measured on voro-engine's
+    real `--mode force` reindex (2026-09-03): 850 of 12,968 phantom
+    C-family call edges (6.6%) were exactly these four keywords --
+    unconditional noise, same class as `_is_std_qualified`.
+    """
+    return name in _CAST_KEYWORDS
+
+
+def extract_call_sites(
+    node: Any,
+    get_text: Callable[[Any], str],
+) -> list[tuple[str, int, bool, str | None]]:
+    """Walk `call_expression` nodes inside `node`, recording call sites.
+
+    Emits plain `(name, line, is_method_call, qualified)` 4-tuples, not
+    `CallSite` NamedTuples -- this module does not import
+    `chunking.relationships.edge_specs`, mirroring `GLSLChunker
+    ._extract_call_metadata` (glsl.py), which keeps `chunking/relationships/`
+    out of every language chunker.
+    `chunking.relationships.edge_specs._as_call_site` normalizes this shape
+    (and GLSL's narrower 2-tuple) into a real `CallSite` downstream.
+
+    Dispatches on the `function` field's node type, per the plan's table
+    (`docs/plans/IMPLEMENTATION_PLAN_CALLGRAPH_RECALL_20260901.md`):
+
+    - `identifier`: plain call, e.g. `helper_fn(1, 2)`.
+    - `field_expression`: method call (`obj.m()` / `ptr->m()`) --
+      `is_method_call=True`, name from the `field` field (itself peeled via
+      `_leaf_call_name` if it's a `template_method`, e.g. `obj.sort<Cmp>()`).
+    - `qualified_identifier` (C++ only): `std::sort(...)` / `Foo::bar(...)`
+      -- name from the `name` field (peeled the same way for
+      `std::max<int>(...)`'s `template_function` nesting), `qualified` set
+      to the full text.
+    - `template_function` (C++ only): a bare, unqualified templated call
+      (`clamp<int>(...)`) -- name from the `name` field.
+    - anything else (function-pointer calls, etc.): skipped.
+
+    `std::`/`::std::`-qualified calls are dropped (`_is_std_qualified`), and
+    bare `static_cast`/`dynamic_cast`/`const_cast`/`reinterpret_cast`
+    "calls" are dropped (`_is_cast_keyword`) -- both are unconditional,
+    file-local noise that belongs at chunk time. A static STL member-name
+    blocklist would need "unless the project defines it" project-wide
+    context this per-file walk doesn't have, so that lives at index time
+    instead (Wall 2, `_C_FAMILY_COMMON_MEMBERS`).
+
+    tree-sitter-c produces only the `identifier` shape (verified against
+    the Phase 0 probe -- C's grammar has no `qualified_identifier` or
+    `template_function`, and C's rare struct-function-pointer
+    `field_expression` calls are covered by the same dispatch row as C++
+    method calls), so this same function already covered C's call sites
+    fully before this widening; only C++ gains new dispatch rows here.
+
+    Iterative (explicit stack), not recursive -- same rationale as
+    `_error_nodes` and `unwrap_declarator_name`: deep real-world trees can
+    exceed Python's recursion limit.
+
+    Args:
+        node: A `function_definition` node (the chunk, or the
+            `function_definition` child of a `template_declaration` chunk,
+            being processed).
+        get_text: Callable that slices node text from source, e.g.
+            ``lambda n: self.get_node_text(n, source)``.
+
+    Returns:
+        Call sites in source-line order. Always a list (empty when the
+        function body makes no recognized calls), so "no calls" and
+        "language does not report calls" stay distinguishable downstream --
+        mirrors `GLSLChunker._extract_call_metadata`'s contract.
+    """
+    calls: list[tuple[str, int, bool, str | None]] = []
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == "call_expression":
+            func_node = current.child_by_field_name("function")
+            entry: tuple[str, int, bool, str | None] | None = None
+            if func_node is not None and not func_node.is_missing:
+                line = func_node.start_point[0] + 1
+                if func_node.type == "identifier":
+                    entry = (get_text(func_node), line, False, None)
+                elif func_node.type == "field_expression":
+                    name = _leaf_call_name(
+                        func_node.child_by_field_name("field"), get_text
+                    )
+                    if name is not None:
+                        entry = (name, line, True, None)
+                elif func_node.type == "qualified_identifier":
+                    name = _leaf_call_name(
+                        func_node.child_by_field_name("name"), get_text
+                    )
+                    if name is not None:
+                        qualified = get_text(func_node)
+                        if not _is_std_qualified(qualified):
+                            entry = (name, line, False, qualified)
+                elif func_node.type == "template_function":
+                    name = _leaf_call_name(
+                        func_node.child_by_field_name("name"), get_text
+                    )
+                    if name is not None and not _is_cast_keyword(name):
+                        entry = (name, line, False, None)
+            if entry is not None:
+                calls.append(entry)
+        stack.extend(current.children)
+    # Stack-based traversal visits children in reverse order; sort by source
+    # line so metadata["calls"] reads in document order (mirrors GLSL).
+    calls.sort(key=lambda c: c[1])
+    return calls
+
+
+# ---------------------------------------------------------------------------
+# Relationship extraction (Wall 1, step 5): imports / inherits / instantiates
+# ---------------------------------------------------------------------------
+
+
+def _add_relationship(
+    metadata: dict[str, Any],
+    rel_type: str,
+    target_name: str,
+    line_number: int,
+    **extra: Any,
+) -> None:
+    """Append a plain-dict relationship edge to metadata["relationships"].
+
+    A direct copy of `GLSLChunker`'s module-level `_add_relationship`
+    (glsl.py) -- both are trivial, dependency-free dict builders with no
+    `chunking/relationships/` import, so duplicating the ~10 lines here
+    keeps this language chunker independent of glsl.py rather than
+    introducing a cross-language-chunker import for a helper this small.
+    Mirrors the `metadata["calls"]` convention (Phase 2b): this emits plain
+    data only, converted into `RelationshipEdge` objects downstream by
+    `materialize_relationship_edges` (chunking/relationships/edge_specs.py).
+
+    Args:
+        metadata: Metadata dict being populated; must already have a
+            "relationships" list key (set at the top of extract_metadata).
+        rel_type: RelationshipType enum value string, e.g. "imports".
+        target_name: Name of the related symbol.
+        line_number: 1-indexed source line the relationship was found on.
+        **extra: Extra key/value pairs folded into the edge's metadata dict.
+    """
+    metadata["relationships"].append(
+        {
+            "relationship_type": rel_type,
+            "target_name": target_name,
+            "line_number": line_number,
+            "metadata": extra,
+        }
+    )
+
+
+def _type_leaf_name(node: Any | None, get_text: Callable[[Any], str]) -> str | None:
+    """Resolve a base-class or `new`-expression type node to its leaf name.
+
+    Peels `qualified_identifier` (`ns::Base`) down to its `name` field and
+    `template_type` (`Vector<int>`) down to its own `name` field, one level
+    each, recursing to unwind combinations of both (`ns::Vector<int>` ->
+    `qualified_identifier.name` = `template_type` -> `template_type.name` =
+    `type_identifier "Vector"`). Mirrors `_leaf_call_name`'s template-peeling,
+    but over the *type*-node vocabulary `base_class_clause`/`new_expression`
+    actually produce (`qualified_identifier`/`template_type`) rather than the
+    call-expression vocabulary (`template_function`/`template_method`)
+    `_leaf_call_name` targets -- verified against the real grammar output,
+    not just grammar.js (tmp/probe_cpp_grammar.py).
+
+    Args:
+        node: The candidate type node -- a `base_class_clause` entry, or a
+            `new_expression`'s `type` field.
+        get_text: Callable that slices node text from source.
+
+    Returns:
+        The leaf identifier text, or None if `node` is None or MISSING.
+    """
+    if node is None or node.is_missing:
+        return None
+    if node.type in ("qualified_identifier", "template_type"):
+        return _type_leaf_name(node.child_by_field_name("name"), get_text)
+    return get_text(node)
+
+
+def extract_include_metadata(
+    node: Any,
+    get_text: Callable[[Any], str],
+    metadata: dict[str, Any],
+) -> None:
+    """Populate `metadata` for a `preproc_include` chunk with an IMPORTS edge.
+
+    A direct port of `GLSLChunker._extract_include_metadata` (glsl.py):
+    tree-sitter-cpp and tree-sitter-c produce the identical
+    `string_literal`/`system_lib_string` shape for `#include` that GLSL's
+    (C-preprocessor-derived) grammar does -- verified empirically
+    (tmp/probe_cpp_include.py), not assumed from the two grammars sharing a
+    common preprocessor lineage. Shared here (unlike `extract_call_sites`,
+    which has C++-only dispatch rows) since `#include` parses identically in
+    both languages. Sets a self-referential relationship -- the include
+    chunk's own edge describes itself as an import, same as GLSL's -- plus
+    `name`/`include_path`/(for system includes) `is_system_include` on
+    `metadata` directly, matching `CppChunker`/`CChunker`'s other name-
+    extraction branches.
+
+    Args:
+        node: A `preproc_include` node.
+        get_text: Callable that slices node text from source.
+        metadata: Metadata dict being populated; must already have a
+            "relationships" list key (set at the top of extract_metadata).
+    """
+    line = node.start_point[0] + 1
+    for child in node.children:
+        if child.type == "string_literal":
+            for sub in child.children:
+                if sub.type == "string_content":
+                    path = get_text(sub)
+                    metadata["name"] = path
+                    metadata["include_path"] = path
+                    _add_relationship(
+                        metadata, "imports", path, line, is_system_include=False
+                    )
+                    return
+        elif child.type == "system_lib_string":
+            path = get_text(child).strip("<>")
+            metadata["name"] = path
+            metadata["include_path"] = path
+            metadata["is_system_include"] = True
+            _add_relationship(metadata, "imports", path, line, is_system_include=True)
+            return
+
+
+def extract_inheritance_relationships(
+    node: Any,
+    get_text: Callable[[Any], str],
+    metadata: dict[str, Any],
+) -> None:
+    """Walk a `class_specifier`/`struct_specifier`'s `base_class_clause`.
+
+    Emits one INHERITS relationship per base, in declaration order, e.g.
+    `class Derived : public Base, private ns::Mixin<int>` emits two edges,
+    target `"Base"` then target `"Mixin"` (both peeled to their leaf name via
+    `_type_leaf_name`, dropping `ns::`/`<int>` the same way the call-site
+    walk peels a call's leaf name into `callee_name` while keeping the full
+    text elsewhere) -- each tagged with its `access` specifier
+    (`"public"`/`"private"`/`"protected"`) when the grammar carries one as an
+    explicit `access_specifier` child; a base with none (rare -- every
+    example in practice specifies one) is tagged `access=None`.
+    `union_specifier` never has a `base_class_clause` (unions cannot inherit
+    in C++), so callers only invoke this for `class_specifier`/
+    `struct_specifier`. C has no `base_class_clause` at all, so `CChunker`
+    never calls this.
+
+    Args:
+        node: A `class_specifier` or `struct_specifier` node.
+        get_text: Callable that slices node text from source.
+        metadata: Metadata dict being populated; must already have a
+            "relationships" list key (set at the top of extract_metadata).
+    """
+    base_clause = next(
+        (child for child in node.children if child.type == "base_class_clause"), None
+    )
+    if base_clause is None:
+        return
+    access = None
+    for child in base_clause.children:
+        if child.type == "access_specifier":
+            access = get_text(child)
+        elif child.type in ("type_identifier", "qualified_identifier", "template_type"):
+            name = _type_leaf_name(child, get_text)
+            if name is not None:
+                _add_relationship(
+                    metadata,
+                    "inherits",
+                    name,
+                    child.start_point[0] + 1,
+                    access=access,
+                )
+            access = None
+
+
+def extract_instantiation_relationships(
+    node: Any,
+    get_text: Callable[[Any], str],
+    metadata: dict[str, Any],
+) -> None:
+    """Walk `new_expression` nodes inside `node`, emitting INSTANTIATES edges.
+
+    `new_expression`'s `type` field is `type_identifier` (`new Base()`),
+    `qualified_identifier` (`new ns::Base()`), or `template_type`
+    (`new Vector<int>()`) -- verified against the real grammar output
+    (tmp/probe_cpp_grammar.py) -- peeled to a leaf name via `_type_leaf_name`,
+    same as `extract_inheritance_relationships`'s bases.
+
+    `new_expression` is a C++-only keyword (C has no `new`), so this is only
+    ever called from `CppChunker`, not `CChunker` -- mirroring the plan's
+    explicit inherits/instantiates-are-C++-only scoping.
+
+    Iterative (explicit stack) -- same rationale as `extract_call_sites`.
+
+    Args:
+        node: A `function_definition` node (the chunk, or the inner function
+            of a `template_declaration` chunk) being processed.
+        get_text: Callable that slices node text from source.
+        metadata: Metadata dict being populated; must already have a
+            "relationships" list key (set at the top of extract_metadata).
+    """
+    sites: list[tuple[str, int]] = []
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == "new_expression":
+            type_node = current.child_by_field_name("type")
+            name = _type_leaf_name(type_node, get_text)
+            if name is not None:
+                sites.append((name, type_node.start_point[0] + 1))
+        stack.extend(current.children)
+    # Stack-based traversal visits children in reverse order; sort by source
+    # line so metadata["relationships"] reads in document order (mirrors
+    # extract_call_sites).
+    sites.sort(key=lambda s: s[1])
+    for name, line in sites:
+        _add_relationship(metadata, "instantiates", name, line)
+
+
+# ---------------------------------------------------------------------------
 # Shared preprocess/parse composition seam
 # ---------------------------------------------------------------------------
 

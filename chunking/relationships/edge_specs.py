@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from chunking.relationships.call_graph_extractor import CallEdge
 from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
@@ -42,6 +42,26 @@ if TYPE_CHECKING:
     from chunking.python_ast_chunker import CodeChunk
 
 logger = logging.getLogger(__name__)
+
+
+class CallSite(NamedTuple):
+    """One call-expression site emitted by a chunker's own parse-tree walk.
+
+    Widens GLSL's plain ``(name, line)`` 2-tuple to also carry
+    ``is_method_call`` and ``qualified`` for the C-family tree-sitter walk
+    (``field_expression`` -> method calls, e.g. ``obj.m()``/``ptr->m()``;
+    ``qualified_identifier`` -> ``std::sort``-shaped names, where ``qualified``
+    is the full ``a::b::c`` text and ``name`` is just the last segment).
+
+    ``materialize_call_edges`` accepts either shape in the same
+    ``metadata["calls"]`` list — GLSL keeps emitting bare ``(name, line)``
+    2-tuples, unchanged.
+    """
+
+    name: str
+    line: int
+    is_method_call: bool = False
+    qualified: str | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +92,16 @@ EDGE_EMISSION_SPECS: dict[str, EdgeEmissionSpec] = {
         call_chunk_types=frozenset({"function", "split_block"}),
         imports_from_relationships=True,
     ),
+    "cpp": EdgeEmissionSpec(
+        call_confidence=0.6,
+        call_chunk_types=frozenset({"function", "method", "template", "split_block"}),
+        imports_from_relationships=True,
+    ),
+    "c": EdgeEmissionSpec(
+        call_confidence=0.6,
+        call_chunk_types=frozenset({"function", "split_block"}),
+        imports_from_relationships=True,
+    ),
 }
 
 
@@ -93,20 +123,40 @@ def _in_split_block_window(chunk: CodeChunk, line: int) -> bool:
     return chunk.start_line <= line <= chunk.end_line
 
 
+def _as_call_site(entry: tuple) -> CallSite:
+    """Normalize one `metadata["calls"]` entry to a `CallSite`.
+
+    Accepts a `CallSite` NamedTuple (passed through unchanged), GLSL's plain
+    `(name, line)` 2-tuple, or the C-family walk's plain
+    `(name, line, is_method_call, qualified)` 4-tuple
+    (`chunking/languages/_c_family.py`'s `extract_call_sites`). Neither
+    language chunker imports `CallSite` itself -- see this module's docstring
+    ("keeps `chunking/relationships/` out of the language chunker") -- so both
+    emit plain tuples that only become `CallSite` instances here.
+    `CallSite(*entry)` covers both tuple widths: trailing fields omitted from
+    a 2-tuple fall back to `CallSite`'s own defaults (`is_method_call=False`,
+    `qualified=None`).
+    """
+    if isinstance(entry, CallSite):
+        return entry
+    return CallSite(*entry)
+
+
 def materialize_call_edges(
     chunk: CodeChunk,
     metadata: dict,
     chunk_id: str,
     spec: EdgeEmissionSpec,
 ) -> list[CallEdge] | None:
-    """Convert a chunker's metadata["calls"] pairs into CallEdge objects.
+    """Convert a chunker's metadata["calls"] entries into CallEdge objects.
 
     A tree-sitter language chunker (e.g. `GLSLChunker.extract_metadata`, see
     `chunking/languages/glsl.py`) already walks call-expression nodes and filters
     builtins, type constructors, and similar noise at parse time — this just
-    materializes the surviving `(callee_name, line_number)` pairs into `CallEdge`s,
-    with no re-parse and no `chunking/relationships/` import inside the language
-    chunker.
+    materializes the surviving entries into `CallEdge`s, with no re-parse and no
+    `chunking/relationships/` import inside the language chunker. Each entry is
+    either a plain `(name, line)` 2-tuple (GLSL) or a `CallSite` NamedTuple
+    (C-family) — see `_as_call_site`.
 
     `metadata["calls"]` is only meaningful for the chunk types named in
     `spec.call_chunk_types` — GLSL's row narrows this to "function" and
@@ -135,14 +185,14 @@ def materialize_call_edges(
     calls = [
         CallEdge(
             caller_id=chunk_id,
-            callee_name=name,
-            line_number=line,
-            is_method_call=False,
+            callee_name=site.name,
+            line_number=site.line,
+            is_method_call=site.is_method_call,
             confidence=spec.call_confidence,
-            callee_qualified=None,
+            callee_qualified=site.qualified,
         )
-        for name, line in raw_calls
-        if _in_split_block_window(chunk, line)
+        for site in (_as_call_site(entry) for entry in raw_calls)
+        if _in_split_block_window(chunk, site.line)
     ]
     if calls:
         logger.debug(f"Extracted {len(calls)} calls from {chunk_id}")

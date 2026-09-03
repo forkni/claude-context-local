@@ -4,7 +4,12 @@ from typing import Any
 
 from tree_sitter import Language
 
-from ._c_family import _CFamilyChunker, unwrap_declarator_name
+from ._c_family import (
+    _CFamilyChunker,
+    extract_call_sites,
+    extract_include_metadata,
+    unwrap_declarator_name,
+)
 
 
 class CChunker(_CFamilyChunker):
@@ -27,7 +32,10 @@ class CChunker(_CFamilyChunker):
 
     def extract_metadata(self, node: Any, source: bytes) -> dict[str, Any]:
         """Extract C-specific metadata."""
-        metadata = {"node_type": node.type}
+        metadata: dict[str, Any] = {"node_type": node.type, "relationships": []}
+
+        def get_text(n: Any) -> str:
+            return self.get_node_text(n, source)
 
         # Extract function name. Unwraps pointer_declarator (pointer-returning
         # functions, e.g. `int* getPtr()`) instead of the pre-v0.24 direct-
@@ -36,11 +44,11 @@ class CChunker(_CFamilyChunker):
         # function -- see chunking/languages/_c_family.py.
         if node.type == "function_definition":
             name = unwrap_declarator_name(
-                node.child_by_field_name("declarator"),
-                lambda n: self.get_node_text(n, source),
+                node.child_by_field_name("declarator"), get_text
             )
             if name is not None:
                 metadata["name"] = name
+            metadata["calls"] = extract_call_sites(node, get_text)
 
         # Extract struct/union/enum name
         elif node.type in ["struct_specifier", "union_specifier", "enum_specifier"]:
@@ -81,5 +89,8 @@ class CChunker(_CFamilyChunker):
                 )
                 if name is not None:
                     metadata["name"] = name
+
+        elif node.type == "preproc_include":
+            extract_include_metadata(node, get_text, metadata)
 
         return metadata

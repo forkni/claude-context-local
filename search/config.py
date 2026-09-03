@@ -1523,7 +1523,7 @@ class QueryExpansionConfig:
 
 @dataclass
 class CallGraphConfig:
-    """Call-graph resolver pipeline settings (12 fields).
+    """Call-graph resolver pipeline settings (13 fields).
 
     Controls which static-analysis backends run at full-index time to inject
     cross-module ``calls`` edges into the code graph.
@@ -1721,6 +1721,29 @@ class CallGraphConfig:
 
     Stays ``False`` until incremental-pass latency, edges recovered, and the
     RW-lock hold time (ADR-0008) are measured and judged acceptable.
+    """
+
+    ambiguous_fanout_cap: int = field(
+        default=3,
+        metadata=spec(range=(1.0, 50.0), reader="search/graph_integration.py"),
+    )
+    """Maximum candidate edges written for one ambiguous C-family call site.
+
+    Applies to the same-pass tree-sitter build in
+    ``GraphIntegration._get_ambiguous_candidates`` -- a different stage than
+    the cross-module resolver pipeline the fields above tune (``min_confidence``
+    et al.). Gated to C-family languages (``"c"``, ``"cpp"``) only; Python call
+    sites are never capped regardless of this value, so Python stays
+    byte-identical.
+
+    C/C++ symbol names collide far more than Python's -- vendored headers,
+    STL member names, and decl/def pairs all land in the same
+    ``name_to_chunk_ids`` bucket (the separator-agnostic indexing above).
+    Left uncapped, one ambiguous call site writes one edge per candidate: on
+    voro-engine this produced 77,172 new edges (+190% graph links) from 1,850
+    call sites with fan-out >=10. The default ``3`` was the Phase-0 probe's
+    measured sweet spot -- 36,318 edges (+90% links) while keeping every
+    candidate for names with <=3 collisions.
     """
 
     def __post_init__(self) -> None:
