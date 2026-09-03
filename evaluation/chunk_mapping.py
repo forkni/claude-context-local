@@ -211,29 +211,9 @@ def find_enclosing_chunk(
     return best
 
 
-# Chunk kinds whose *shape* is unambiguous: a bare ``function``/``class``
-# name has one part after the module path; a ``method`` name has two
-# (``Class.method``).  ``decorated_definition`` and ``split_block`` wrap
-# either shape, so for those the chunk name's own part count is used.
-_ONE_PART_KINDS = frozenset({"function", "class"})
-_TWO_PART_KINDS = frozenset({"method", "classmethod", "staticmethod"})
-
-
-def _kind_and_name(cid: str) -> tuple[str, str]:
-    """Split ``path:[start-end:]kind:name`` into ``(kind, name)``."""
-    parts = cid.split(":")
-    if len(parts) < 3:
-        return "", parts[-1]
-    return parts[-2], parts[-1]
-
-
-def _shape_matches(kind: str, cid_name: str, n_parts: int) -> bool:
-    """True when the chunk's shape agrees with an *n_parts*-long FQN tail."""
-    if kind in _ONE_PART_KINDS:
-        return n_parts == 1
-    if kind in _TWO_PART_KINDS:
-        return n_parts == 2
-    return cid_name.count(".") + 1 == n_parts
+def _chunk_name(cid: str) -> str:
+    """Return the name segment of ``path:[start-end:]kind:name``."""
+    return cid.split(":")[-1]
 
 
 def chunk_id_from_fqn(
@@ -255,13 +235,18 @@ def chunk_id_from_fqn(
 
     1. **Exact qualified match** — the chunk name equals the FQN tail
        (``module.func`` → ``function:func``; ``module.Class.method`` →
-       ``method:Class.method``).
+       ``method:Class.method``; ``module.Outer.Inner.m`` →
+       ``method:Outer.Inner.m``).
     2. **Suffix match** — the chunk name ends with ``"." + tail`` (e.g. a
-       pyan FQN that omits an enclosing class).
+       pyan FQN that omits an enclosing class).  When several remain, the
+       one with the fewest extra qualifying parts wins (``Klass.run`` beats
+       ``Outer.Klass.run`` for tail ``run``); ties fall back to file order.
 
-    When several candidates remain in the winning tier, the one whose kind
-    matches the FQN shape is preferred (a two-part tail is a method, a
-    one-part tail is a function/class); ties fall back to file order.
+    Shape is taken from the chunk *name* (its dot-separated part count),
+    never from the kind segment: ``decorated_definition`` wraps either
+    shape, and :func:`search.chunk_id.dedup_key` collapses ``split_block``
+    to ``method`` on normalization, so a split module-level function reads
+    as ``method:big_func`` in a ``normalize=True`` line map.
 
     This tiering is what stops a same-file ``_NoopExporter.force_flush``
     method from shadowing the module-level ``force_flush`` function when
@@ -288,20 +273,16 @@ def chunk_id_from_fqn(
         chunks = line_map.get(module_path)
         if not chunks:
             continue
-        exact: list[tuple[str, str, str]] = []
-        suffix: list[tuple[str, str, str]] = []
-        for _, _, cid in chunks:
-            kind, cid_name = _kind_and_name(cid)
+        suffix_best: tuple[int, int, str] | None = None
+        for order, (_, _, cid) in enumerate(chunks):
+            cid_name = _chunk_name(cid)
             if cid_name == name:
-                exact.append((kind, cid_name, cid))
-            elif cid_name.endswith("." + name):
-                suffix.append((kind, cid_name, cid))
-        candidates = exact or suffix
-        if not candidates:
-            continue
-        n_parts = len(parts) - split_at
-        for kind, cid_name, cid in candidates:
-            if _shape_matches(kind, cid_name, n_parts):
-                return cid
-        return candidates[0][2]
+                return cid  # exact tier: first in file order wins
+            if cid_name.endswith("." + name):
+                extra = cid_name.count(".") - name.count(".")
+                key = (extra, order, cid)
+                if suffix_best is None or key < suffix_best:
+                    suffix_best = key
+        if suffix_best is not None:
+            return suffix_best[2]
     return None

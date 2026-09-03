@@ -444,21 +444,27 @@ class TestChunkIdFromFqnFallbacks:
         line_map = {"pkg/mod.py": [(10, 20, method)]}
         assert chunk_id_from_fqn("pkg.mod.run", line_map, Path(".")) == method
 
-    def test_shape_preference_among_suffix_candidates(self) -> None:
-        """Synthetic: two suffix candidates, the kind matching the tail shape wins.
+    def test_suffix_prefers_fewest_extra_parts(self) -> None:
+        """Tail ``run``: ``Klass.run`` beats ``Outer.Klass.run`` regardless of order."""
+        nested = "pkg/mod.py:5-8:method:Outer.Klass.run"
+        direct = "pkg/mod.py:20-30:method:Klass.run"
+        ordered = {"pkg/mod.py": [(5, 8, nested), (20, 30, direct)]}
+        flipped = {"pkg/mod.py": [(20, 30, direct), (5, 8, nested)]}
+        assert chunk_id_from_fqn("pkg.mod.run", ordered, Path(".")) == direct
+        assert chunk_id_from_fqn("pkg.mod.run", flipped, Path(".")) == direct
 
-        Tail ``run`` is one part, so the ``function``-kind chunk is preferred
-        over the ``method``-kind one regardless of file order.
-        """
-        method = "pkg/mod.py:5-8:method:Outer.run"
-        function = "pkg/mod.py:20-30:function:Inner.run"
-        ordered = {"pkg/mod.py": [(5, 8, method), (20, 30, function)]}
-        flipped = {"pkg/mod.py": [(20, 30, function), (5, 8, method)]}
-        assert chunk_id_from_fqn("pkg.mod.run", ordered, Path(".")) == function
-        assert chunk_id_from_fqn("pkg.mod.run", flipped, Path(".")) == function
+    def test_nested_class_method_exact(self) -> None:
+        """Three-part tail matches a nested-class method exactly."""
+        nested = "pkg/mod.py:5-8:method:Outer.Inner.run"
+        other = "pkg/mod.py:20-30:method:Inner.run"
+        line_map = {"pkg/mod.py": [(20, 30, other), (5, 8, nested)]}
+        assert (
+            chunk_id_from_fqn("pkg.mod.Outer.Inner.run", line_map, Path(".")) == nested
+        )
+        assert chunk_id_from_fqn("pkg.mod.Inner.run", line_map, Path(".")) == other
 
     def test_decorated_definition_uses_name_shape(self) -> None:
-        """decorated_definition kind is shape-agnostic: name part count decides."""
+        """decorated_definition kind is shape-agnostic: the name decides."""
         deco_method = "pkg/mod.py:5-8:decorated_definition:Klass.run"
         deco_func = "pkg/mod.py:20-30:decorated_definition:run"
         line_map = {"pkg/mod.py": [(5, 8, deco_method), (20, 30, deco_func)]}
@@ -467,8 +473,33 @@ class TestChunkIdFromFqnFallbacks:
             chunk_id_from_fqn("pkg.mod.Klass.run", line_map, Path(".")) == deco_method
         )
 
+    def test_split_block_collapse_through_real_normalizer(self) -> None:
+        """A split module-level function normalizes to kind ``method`` but still
+        disambiguates against a real same-name method via the name tiers."""
+        store = _make_store(
+            ("pkg/mod.py:5-8:method:Klass.run", "pkg/mod.py", 5, 8, "method"),
+            ("pkg/mod.py:20-60:split_block:run", "pkg/mod.py", 20, 60, "split_block"),
+            ("pkg/mod.py:61-90:split_block:run", "pkg/mod.py", 61, 90, "split_block"),
+        )
+        line_map = build_line_to_chunk_map(
+            store,
+            semantic_types=frozenset({"method", "split_block"}),
+            normalize=True,
+        )
+        ids = [cid for _, _, cid in line_map["pkg/mod.py"]]
+        assert "pkg/mod.py:method:run" in ids  # collapse really happened
+        assert ":split_block:" not in "".join(ids)
+        assert (
+            chunk_id_from_fqn("pkg.mod.run", line_map, Path("."))
+            == "pkg/mod.py:method:run"
+        )
+        assert (
+            chunk_id_from_fqn("pkg.mod.Klass.run", line_map, Path("."))
+            == "pkg/mod.py:method:Klass.run"
+        )
+
     def test_tie_falls_back_to_file_order(self) -> None:
-        """Identical shape and name (e.g. split_block halves): first in file wins."""
+        """Identical names (e.g. raw split_block halves): first in file wins."""
         first = "pkg/mod.py:5-8:split_block:run"
         second = "pkg/mod.py:9-12:split_block:run"
         line_map = {"pkg/mod.py": [(5, 8, first), (9, 12, second)]}
