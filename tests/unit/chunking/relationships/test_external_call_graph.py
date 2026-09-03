@@ -1360,3 +1360,114 @@ class TestClassCalleeCallPositionGate:
             tmp_path, monkeypatch, caller, callee, {}
         )
         assert callee in seen
+
+
+@requires_pyan
+class TestCallPositionRecorderEdgeCases:
+    """Defensive branches of ``_TrackedVisitor.visit_Call`` and the anon-scope
+    collapse, driven directly so each early return is exercised without
+    depending on which shapes pyan happens to resolve on a given fixture."""
+
+    @staticmethod
+    def _visitor(tmp_path: Path):
+        from chunking.relationships.external_call_graph import _TrackedVisitor
+
+        (tmp_path / "m.py").write_text("def f():\n    pass\n", encoding="utf-8")
+        return _TrackedVisitor(_gather_py_files(tmp_path), root=str(tmp_path))
+
+    @staticmethod
+    def _call(src: str):
+        import ast as _ast
+
+        return _ast.parse(src).body[0].value
+
+    @staticmethod
+    def _patch_super_visit_call(monkeypatch: pytest.MonkeyPatch, func_node) -> None:
+        from pyan.analyzer import CallGraphVisitor
+
+        monkeypatch.setattr(
+            CallGraphVisitor, "visit_Call", lambda self, node: func_node
+        )
+
+    def test_super_call_is_not_recorded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``super()`` resolves to a CLASS node that is not an instantiation."""
+        visitor = self._visitor(tmp_path)
+        node = MagicMock()
+        node.namespace = "pkg"
+        node.flavor.name = "CLASS"
+        node.get_name.return_value = "pkg.Base"
+        self._patch_super_visit_call(monkeypatch, node)
+        visitor.call_position_names.clear()
+        assert visitor.visit_Call(self._call("super()")) is node
+        assert visitor.call_position_names == {}
+
+    def test_unresolved_or_namespace_less_func_node_is_ignored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        visitor = self._visitor(tmp_path)
+        visitor.call_position_names.clear()
+        self._patch_super_visit_call(monkeypatch, None)
+        assert visitor.visit_Call(self._call("g()")) is None
+        bare = MagicMock()
+        bare.namespace = None
+        self._patch_super_visit_call(monkeypatch, bare)
+        assert visitor.visit_Call(self._call("g()")) is bare
+        assert visitor.call_position_names == {}
+
+    def test_func_node_without_flavor_is_ignored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A node lacking ``flavor`` / ``get_name`` takes the AttributeError
+        fallback and is returned untouched."""
+
+        class Bare:
+            namespace = "pkg"
+
+        visitor = self._visitor(tmp_path)
+        visitor.call_position_names.clear()
+        node = Bare()
+        self._patch_super_visit_call(monkeypatch, node)
+        assert visitor.visit_Call(self._call("g()")) is node
+        assert visitor.call_position_names == {}
+
+    def test_collapse_skips_anon_scope_without_parent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An anonymous scope whose parent cannot be found is left in place
+        rather than raising or folding onto itself."""
+        visitor = self._visitor(tmp_path)
+        orphan = MagicMock()
+        orphan.name = "lambda"
+        orphan.get_name.return_value = "m.lambda"
+        looped = MagicMock()
+        looped.name = "listcomp"
+        looped.get_name.return_value = "m.f.listcomp"
+        visitor.call_position_names = {orphan: {"m.A"}, looped: {"m.B"}}
+        monkeypatch.setattr(
+            visitor,
+            "get_parent_node",
+            lambda n: None if n is orphan else n,
+        )
+        visitor._collapse_call_position_names()
+        assert visitor.call_position_names == {orphan: {"m.A"}, looped: {"m.B"}}
+
+
+def test_resolver_tolerates_visitor_without_call_position_map(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A visitor exposing no dict-typed ``call_position_names`` (older pyan
+    subclass, or a stub) makes the gate treat every CLASS callee as
+    out-of-call-position instead of crashing."""
+    caller = _make_pyan_node("FUNCTION", namespace="pkg")
+    callee = _make_pyan_node("CLASS", namespace="pkg")
+    callee.get_name.return_value = "pkg.a.Widget"
+    seen = TestClassCalleeCallPositionGate._resolve_with_fake_visitor(
+        tmp_path,
+        monkeypatch,
+        caller,
+        callee,
+        None,  # type: ignore[arg-type]
+    )
+    assert callee not in seen
