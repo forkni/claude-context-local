@@ -22,8 +22,9 @@ This script only reports. It never edits ``search/config.py``; see
 ``evaluation/RESOLVER_TIER_CALIBRATION_20260902.md`` §11 for what the output
 licenses.
 
-Usage:
-    .venv/Scripts/python.exe scripts/benchmark/precision_estimate.py \
+Usage (module form required -- ``scripts`` is not in the editable-install
+package map, ADR-0040):
+    .venv/Scripts/python.exe -m scripts.benchmark.precision_estimate \
         [--labels evaluation/resolver_precision_labels.json] \
         [--scores evaluation/resolver_tier_scores.json] \
         [--reference 0.4228] [--json]
@@ -40,10 +41,9 @@ from pathlib import Path
 from typing import Any
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
+# No sys.path bootstrap: run in module form (``python -m
+# scripts.benchmark.precision_estimate``) like the other ADR-0040 probes, so
+# tests/unit/evaluation/test_probe_hygiene.py's shrink-only ratchet holds.
 DEFAULT_LABELS = "evaluation/resolver_precision_labels.json"
 DEFAULT_SCORES = "evaluation/resolver_tier_scores.json"
 TAG_EXACT_REFERENCE = 0.4228
