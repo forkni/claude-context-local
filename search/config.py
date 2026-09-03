@@ -1712,7 +1712,16 @@ class CallGraphConfig:
 
     inject_on_incremental: bool = field(
         default=False,
-        metadata=spec(reader="search/index_write_stage.py"),
+        metadata=spec(
+            reader="search/index_write_stage.py",
+            benchmark_locked=(
+                "[latency] ADR-0044 + INJECT_ON_INCREMENTAL_COST_20260903: "
+                "measured on this repo's 233-file substrate at +36-38s per "
+                "incremental pass (~10-19x baseline), flat in K -- the "
+                "reopening condition (a changed-file-scoped injection "
+                "variant landing) is unmet, default stays False"
+            ),
+        ),
     )
     """Run the resolver-pipeline call-edge injection on incremental passes too.
 
@@ -1727,8 +1736,14 @@ class CallGraphConfig:
     indexed set, not just the changed files — see
     ``chunking/relationships/call_edge_resolver.py``'s ``prepare_scoped_files``).
 
-    Stays ``False`` until incremental-pass latency, edges recovered, and the
-    RW-lock hold time (ADR-0008) are measured and judged acceptable.
+    Measured on this repo (`evaluation/INJECT_ON_INCREMENTAL_COST_20260903.md`):
+    +36-38s per incremental pass (~10-19x the opt-out baseline), flat in K
+    because the resolver pass rescans the whole indexed ``.py`` set regardless
+    of how many files actually changed — the RW-lock hold time (ADR-0008) is
+    that same delta, since the pass runs under the reindex-vs-search lock.
+    ADR-0044's reopening condition (a changed-file-scoped injection variant
+    landing, whose cost scales with change size rather than project size) is
+    unmet, so this stays ``False``. See ``benchmark_locked`` above.
     """
 
     ambiguous_fanout_cap: int = field(

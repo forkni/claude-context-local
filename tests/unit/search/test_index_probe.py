@@ -107,6 +107,7 @@ class TestGuardrails:
             "ego_graph.max_neighbors_per_hop",
             "call_graph.resolvers",
             "call_graph.ambiguous_fanout_cap",
+            "call_graph.inject_on_incremental",
             "embedding.model_name",
         } == FORBIDDEN_AUTO_TUNE_KEYS
 

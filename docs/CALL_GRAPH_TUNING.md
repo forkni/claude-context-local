@@ -538,9 +538,14 @@ rewriting `resolvers`, not a human deliberately picking one of these presets.
 
 Incremental passes prune and re-add graph nodes for changed files, which restores only the
 always-on AST edges — resolver-injected pyan/LibCST/LSP edges for touched files are lost until
-the next full pass. `true` re-runs the injection pipeline on every incremental pass (measured
-+1.58 s per pass on this repo); the default keeps incremental passes cheap. Gated in
-`IndexWriteStage.inject_call_edges_if_enabled` (ADR-0052).
+the next full pass. `true` re-runs the injection pipeline on every incremental pass: ADR-0044
+measured +1.58 s on a 4-file fixture, and `evaluation/INJECT_ON_INCREMENTAL_COST_20260903.md`
+re-measured on this 233-file repo at +36-38 s per pass (~10-19x the opt-out baseline), flat in K
+because the resolver pass rescans the whole indexed set regardless of how many files changed —
+the default keeps incremental passes cheap. Gated in `IndexWriteStage.inject_call_edges_if_enabled`
+(ADR-0052). **`benchmark_locked`** (`[latency]`) as of 2026-09-03 — ADR-0044's reopening condition
+(a changed-file-scoped injection variant landing) is unmet, so the auto-tuner will not flip this;
+a human may still set it manually.
 
 ### 6.8 Traversal Gates — `TraversalPolicy`
 

@@ -35,6 +35,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`[retrieval]`/`[latency]`/`[graph]`/`[precision]`/`[pending]`/`[decision]`) on all
   `benchmark_locked` strings so a reader can tell a measured-and-pinned retrieval result apart
   from a settled human decision without a second metadata key.
+- **`CallGraphConfig.inject_on_incremental` is now `benchmark_locked`** (24 → 25
+  `FORBIDDEN_AUTO_TUNE_KEYS`), citation genre `[latency]` — ADR-0044 measured +1.58s on a 4-file
+  fixture and left the default (`False`) unquantified for larger projects;
+  `evaluation/INJECT_ON_INCREMENTAL_COST_20260903.md` closes that gap on this 233-file repo:
+  +36-38s per incremental pass (~10-19x the opt-out baseline), flat in K because the resolver
+  pass rescans the whole indexed set regardless of change size. ADR-0044's own reopening
+  condition (a changed-file-scoped injection variant landing) is unmet, so the default stays
+  `False`. `search/call_edge_injection.py` also gained a permanent inline
+  `resolve=%.1fs total=%.1fs` timer on its `[CALL_EDGES] Injected...` log line (plain
+  `time.perf_counter()`, not `utils.timing.timed()` — decorating either injection entry point
+  flips that chunk's kind to `decorated_definition:` and breaks five golden dataset entries).
 
 ### Migration
 
