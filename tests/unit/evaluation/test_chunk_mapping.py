@@ -211,7 +211,7 @@ NEXT_METHOD_ID = "search/indexer.py:284-400:method:CodeIndexManager.search"
 SPLIT_NORM = "search/indexer.py:method:CodeIndexManager.add_embeddings"
 
 
-def _split_store() -> dict:
+def _split_store() -> dict[str, dict[str, dict[str, object]]]:
     """A class whose middle method is chunked as two split_block fragments.
 
     Mirrors the live self-index: the ``def add_embeddings`` line is 181, the
