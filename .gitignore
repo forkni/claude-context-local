@@ -436,3 +436,6 @@ skills-lock.json
 
 # WS-B raw tracer runs (regenerable, large)
 evaluation/traced_runs/
+
+# Local pytest/benchmark output (indexed if left at repo root — keep in tmp/)
+test-results/
