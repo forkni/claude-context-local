@@ -4,6 +4,7 @@
     "end_line": 5,
     "language": "c",
     "metadata": {
+      "calls": [],
       "complexity_score": 1,
       "name": "add",
       "node_type": "function_definition"

@@ -4,7 +4,7 @@ from typing import Any
 
 from tree_sitter import Language
 
-from ._c_family import _CFamilyChunker, unwrap_declarator_name
+from ._c_family import _CFamilyChunker, extract_call_sites, unwrap_declarator_name
 
 
 class CChunker(_CFamilyChunker):
@@ -41,6 +41,9 @@ class CChunker(_CFamilyChunker):
             )
             if name is not None:
                 metadata["name"] = name
+            metadata["calls"] = extract_call_sites(
+                node, lambda n: self.get_node_text(n, source)
+            )
 
         # Extract struct/union/enum name
         elif node.type in ["struct_specifier", "union_specifier", "enum_specifier"]:

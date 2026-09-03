@@ -9,6 +9,7 @@ from ._c_family import (
     _CFamilyChunker,
     blank_preserving_layout,
     declarator_is_function_shaped,
+    extract_call_sites,
     unwrap_declarator_name,
 )
 
@@ -202,6 +203,14 @@ class CppChunker(_CFamilyChunker):
             if name_node is not None:
                 metadata["name"] = self.get_node_text(name_node, source)
 
+        if node.type == "function_definition":
+            # A separate `if`, not folded into the name-extraction elif-chain
+            # above: `field_declaration`/`declaration` (also in that chain)
+            # are header-only prototypes with no body to walk for calls.
+            metadata["calls"] = extract_call_sites(
+                node, lambda n: self.get_node_text(n, source)
+            )
+
         # Check for template parameters (only reached for a
         # template_declaration wrapping a free function, header-only
         # prototype, or alias -- should_chunk_node returns False for one
@@ -228,6 +237,16 @@ class CppChunker(_CFamilyChunker):
                     child_metadata = self.extract_metadata(child, source)
                     if "name" in child_metadata:
                         metadata["name"] = child_metadata["name"]
+                    if "calls" in child_metadata:
+                        # Propagates a templated function's calls up to the
+                        # template_declaration chunk itself -- the walk above
+                        # only ever fires on `function_definition` nodes, and
+                        # a templated function's *chunk* node is the wrapping
+                        # `template_declaration`, not the inner
+                        # `function_definition` (should_chunk_node only
+                        # returns False for a template wrapping a
+                        # class/struct/union, not a function).
+                        metadata["calls"] = child_metadata["calls"]
                     break
 
         return metadata

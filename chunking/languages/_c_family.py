@@ -485,6 +485,84 @@ def repair_macro_wrapped_declarations(
 
 
 # ---------------------------------------------------------------------------
+# Call-expression extraction (Wall 1)
+# ---------------------------------------------------------------------------
+
+
+def extract_call_sites(
+    node: Any,
+    get_text: Callable[[Any], str],
+) -> list[tuple[str, int, bool, str | None]]:
+    """Walk `call_expression` nodes inside `node`, recording call sites.
+
+    Emits plain `(name, line, is_method_call, qualified)` 4-tuples, not
+    `CallSite` NamedTuples -- this module does not import
+    `chunking.relationships.edge_specs`, mirroring `GLSLChunker
+    ._extract_call_metadata` (glsl.py), which keeps `chunking/relationships/`
+    out of every language chunker.
+    `chunking.relationships.edge_specs._as_call_site` normalizes this shape
+    (and GLSL's narrower 2-tuple) into a real `CallSite` downstream.
+
+    Step-3 scope: only the `function` field's `identifier` shape is
+    recognized here -- a plain call like `helper_fn(1, 2)`.
+    `field_expression` (method calls, `obj.m()`/`ptr->m()`),
+    `qualified_identifier` (`std::sort(...)`), and `template_function`
+    (`clamp<int>(...)`) are a later dispatch widening (see
+    `docs/plans/IMPLEMENTATION_PLAN_CALLGRAPH_RECALL_20260901.md`'s step 4)
+    and are silently skipped here, same as any other unrecognized `function`
+    field shape (e.g. a function-pointer call). tree-sitter-c never produces
+    those three shapes at all (verified against the Phase 0 probe -- C's
+    grammar has no `qualified_identifier`/`template_function`, and its own
+    `field_expression` calls, e.g. through a struct's function-pointer
+    member, are rare and share the same "recognized in step 4" deferral), so
+    this identifier-only dispatch already covers C's call sites fully; C++
+    call sites of those shapes are simply absent from `metadata["calls"]`
+    until step 4 lands.
+
+    No noise filtering here yet either (builtins/STL/`std::` -- see the
+    plan's "Noise model" section) -- every recognized identifier call
+    survives, same as `metadata["calls"]` being unfiltered before GLSL's
+    `_is_call_noise` existed.
+
+    Iterative (explicit stack), not recursive -- same rationale as
+    `_error_nodes` and `unwrap_declarator_name`: deep real-world trees can
+    exceed Python's recursion limit.
+
+    Args:
+        node: A `function_definition` node (the chunk, or the
+            `function_definition` child of a `template_declaration` chunk,
+            being processed).
+        get_text: Callable that slices node text from source, e.g.
+            ``lambda n: self.get_node_text(n, source)``.
+
+    Returns:
+        Call sites in source-line order. Always a list (empty when the
+        function body makes no recognized calls), so "no calls" and
+        "language does not report calls" stay distinguishable downstream --
+        mirrors `GLSLChunker._extract_call_metadata`'s contract.
+    """
+    calls: list[tuple[str, int, bool, str | None]] = []
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type == "call_expression":
+            func_node = current.child_by_field_name("function")
+            if (
+                func_node is not None
+                and func_node.type == "identifier"
+                and not func_node.is_missing
+            ):
+                calls.append(
+                    (get_text(func_node), func_node.start_point[0] + 1, False, None)
+                )
+        stack.extend(current.children)
+    # Stack-based traversal visits children in reverse order; sort by source
+    # line so metadata["calls"] reads in document order (mirrors GLSL).
+    calls.sort(key=lambda c: c[1])
+    return calls
+
+
+# ---------------------------------------------------------------------------
 # Shared preprocess/parse composition seam
 # ---------------------------------------------------------------------------
 
