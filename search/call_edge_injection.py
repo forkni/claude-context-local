@@ -17,6 +17,7 @@ config and testable without the config singleton.
 from __future__ import annotations
 
 import logging
+import time
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
@@ -94,6 +95,8 @@ def inject_call_edges(
         return InjectionStats(error="graph has zero nodes")
 
     try:
+        total_start = time.perf_counter()
+
         # Build raw-id line map (normalize=False → ids match graph node keys).
         raw_line_map = build_line_to_chunk_map(meta_store, normalize=False)
 
@@ -178,9 +181,11 @@ def inject_call_edges(
             return InjectionStats()
 
         # Run all available resolvers; merge by max confidence.
+        resolve_start = time.perf_counter()
         merged = run_resolvers(
             resolvers, Path(project_path).resolve(), raw_line_map, logger
         )
+        resolve_elapsed = time.perf_counter() - resolve_start
 
         # Apply the resolver_confidence floor — discard edges below the
         # threshold. `resolver_confidence` is the resolver pipeline's own
@@ -255,13 +260,17 @@ def inject_call_edges(
                 else:
                     skipped += 1
 
+        total_elapsed = time.perf_counter() - total_start
         logger.info(
             "[CALL_EDGES] Injected %d edges (added=%d, upgraded=%d, skipped=%d — "
-            "node not in graph, edge already present at equal/higher confidence)",
+            "node not in graph, edge already present at equal/higher confidence) "
+            "resolve=%.1fs total=%.1fs",
             injected,
             added,
             upgraded,
             skipped,
+            resolve_elapsed,
+            total_elapsed,
         )
         return InjectionStats(
             injected=injected,
