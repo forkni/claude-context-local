@@ -303,10 +303,20 @@ class TestChunkIdFromFqnFallbacks:
         assert chunk_id_from_fqn("pkg.mod.run", line_map, Path(".")) == first
 
     def test_file_present_but_no_match_continues_split(self) -> None:
-        """A file that exists but lacks the name doesn't stop the split search."""
-        deeper = "a/b.py:1-3:function:c"
+        """A file that exists but lacks the name doesn't stop the split search.
+
+        ``a.b.c`` first tries ``a/b.py`` with tail ``c``; that file has only
+        ``other``, so the search continues to ``a.py`` with tail ``b.c``.
+        """
+        nested = "a.py:1-3:method:b.c"
         line_map = {
-            "a/b/c.py": [(1, 3, "a/b/c.py:1-3:function:other")],
-            "a/b.py": [(1, 3, deeper)],
+            "a/b.py": [(1, 3, "a/b.py:1-3:function:other")],
+            "a.py": [(1, 3, nested)],
         }
-        assert chunk_id_from_fqn("a.b.c", line_map, Path(".")) == deeper
+        assert chunk_id_from_fqn("a.b.c", line_map, Path(".")) == nested
+
+    def test_id_without_kind_segment_matches_by_name(self) -> None:
+        """Defensive: an id with no kind segment still matches on its name."""
+        bare = "pkg/mod.py:run"
+        line_map = {"pkg/mod.py": [(1, 3, bare)]}
+        assert chunk_id_from_fqn("pkg.mod.run", line_map, Path(".")) == bare
