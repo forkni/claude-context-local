@@ -54,6 +54,7 @@ unmatched id silently degrades to "no edge added".
 
 from __future__ import annotations
 
+import ast
 import logging
 import time
 from collections.abc import Callable, Iterator
@@ -95,6 +96,14 @@ try:
 
         expanded_edges: set[tuple[object, object]]
         _failed_files: set[str]
+        # caller Node -> fully-qualified names that appeared as the ``func``
+        # of an ``ast.Call`` inside that caller (see ``visit_Call``).  pyan's
+        # ``uses_edges`` records every *use* of a class (annotations, enum
+        # member access, ``isinstance`` args, ``except`` clauses,
+        # ``self.<attr>`` reads resolved to the binding ``__init__``), so the
+        # resolver consults this map to admit a CLASS / ``__init__`` callee
+        # only when the reference actually sat in call position.
+        call_position_names: dict[object, set[str]]
 
         def __init__(
             self,
@@ -112,7 +121,71 @@ try:
             self._aborted = False
             self._seen_files: set[str] = set()
             self._failed_files: set[str] = set()
+            self.call_position_names = {}
             super().__init__(filenames, root=root, logger=logger)
+
+        def visit_Call(self, node):  # type: ignore[override]  # noqa: N802
+            # pyan resolves ``node.func`` through visit_Name/visit_Attribute,
+            # which add the same uses edge they would for a bare reference --
+            # nothing in ``uses_edges`` distinguishes ``Foo()`` from ``x: Foo``.
+            # Record the resolved func node here, at the one place the AST
+            # says "this was called", so the resolver can gate on it.
+            func_node = super().visit_Call(node)
+            if func_node is None or getattr(func_node, "namespace", None) is None:
+                return func_node
+            # ``super()`` resolves (via resolve_builtins) to the next class in
+            # the MRO -- a CLASS node returned from a call that is *not* an
+            # instantiation.  The attribute call hanging off it
+            # (``super().__init__()``) is visited on its own and recorded there.
+            if isinstance(node.func, ast.Name) and node.func.id == "super":
+                return func_node
+            try:
+                name = func_node.get_name()
+                flavor = func_node.flavor.name
+            except AttributeError:
+                return func_node
+            # ``obj.method()`` where ``obj`` is an instance attribute (e.g.
+            # ``self._index.clear()``) makes pyan's attribute resolution fall
+            # back to the *class* node when it cannot find ``method`` on it,
+            # so ``func_node`` is a CLASS even though nothing is instantiated.
+            # A real instantiation names the class in the call expression:
+            # ``Foo()`` / ``mod.Foo()``.  Require that for attribute calls.
+            if (
+                flavor == "CLASS"
+                and isinstance(node.func, ast.Attribute)
+                and getattr(func_node, "name", None) != node.func.attr
+            ):
+                return func_node
+            names = self.call_position_names.setdefault(
+                self.get_node_of_current_namespace(), set()
+            )
+            names.add(name)
+            if flavor == "CLASS":
+                # pyan emits the instantiation as a separate METHOD edge to
+                # ``Foo.__init__`` when the class is known; admit that too.
+                names.add(f"{name}.__init__")
+            return func_node
+
+        def _collapse_call_position_names(self) -> None:
+            # Mirror postprocessor.collapse_inner(): lambda/comprehension
+            # scopes are folded into their enclosing function, so a
+            # ``[Foo(x) for x in xs]`` recorded under ``f.listcomp.0`` must
+            # be attributed to ``f`` for the gate to see it.
+            from pyan.anutils import ANON_SCOPE_NAMES  # type: ignore[import-untyped]
+
+            def is_anon(n: object) -> bool:
+                name = getattr(n, "name", "") or ""
+                return name.partition(".")[0] in ANON_SCOPE_NAMES
+
+            anon = [n for n in self.call_position_names if is_anon(n)]
+            anon.sort(key=lambda n: n.get_name().count("."), reverse=True)
+            for n in anon:
+                parent = self.get_parent_node(n)
+                if parent is None or parent is n:
+                    continue
+                self.call_position_names.setdefault(parent, set()).update(
+                    self.call_position_names[n]
+                )
 
         def _past_deadline(self) -> bool:
             if self._aborted:
@@ -250,6 +323,7 @@ try:
                 for t in ts
                 if t not in pre.get(f, frozenset())
             }
+            self._collapse_call_position_names()
 
     _PYAN_AVAILABLE = True
 except ImportError:
@@ -260,7 +334,10 @@ _CALLABLE_FLAVORS = {"FUNCTION", "METHOD", "STATICMETHOD", "CLASSMETHOD"}
 
 # Flavors accepted as callees: callables + CLASS (instantiation calls e.g.
 # ``MyClass()`` resolve to the class node; pyan also emits a separate
-# METHOD edge to ``MyClass.__init__`` when the class is known).
+# METHOD edge to ``MyClass.__init__`` when the class is known).  A CLASS
+# callee is further gated on call position by ``PyanResolver.resolve`` (see
+# ``_TrackedVisitor.call_position_names``) because pyan records every *use*
+# of a class, not just instantiations.
 # NAME, ATTRIBUTE, UNKNOWN, IMPORTEDITEM are excluded — they produce phantom
 # "call into the enclosing function" edges via filename+lineno mapping.
 _CALLEE_FLAVORS = _CALLABLE_FLAVORS | {"CLASS"}
@@ -503,6 +580,11 @@ class PyanResolver:
             ResolverConfidence.PYAN_WILDCARD
         )  # expand_unknowns fan-out
 
+        # caller Node -> names seen in call position (see _TrackedVisitor.visit_Call).
+        call_position = getattr(visitor, "call_position_names", None)
+        if not isinstance(call_position, dict):
+            call_position = {}
+
         # 5-tuple: (caller_id, callee_id, line_num, is_method_call, confidence)
         raw_edges: set[tuple[str, str, int, bool, float]] = set()
         skipped = 0
@@ -540,6 +622,22 @@ class PyanResolver:
                 # NAME, ATTRIBUTE, UNKNOWN, IMPORTEDITEM produce phantom "call into
                 # enclosing function" edges via filename+lineno mapping — drop them.
                 if callee_flavor not in _CALLEE_FLAVORS:
+                    skipped += 1
+                    continue
+
+                # CLASS callees (and the ``Foo.__init__`` METHOD edge pyan
+                # pairs with them) must sit in call position.  pyan records
+                # every *use* of a class -- type annotations, enum-member
+                # access (``Kind.NONE``), ``isinstance`` args, ``except``
+                # clauses, and ``self.<attr>`` reads resolved to the binding
+                # ``__init__`` -- and those leak in as 0.75-confidence
+                # ``calls`` edges otherwise.  Non-call dependencies are
+                # already covered by the ``uses_type`` / ``uses_constant``
+                # relationship edges, so nothing is lost by dropping them.
+                if (
+                    callee_flavor == "CLASS"
+                    or getattr(callee_node, "name", "") == "__init__"
+                ) and callee_node.get_name() not in call_position.get(caller_node, ()):
                     skipped += 1
                     continue
 
