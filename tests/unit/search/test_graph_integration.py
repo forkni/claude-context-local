@@ -317,6 +317,7 @@ def _make_result(
     calls: list | None = None,
     relationships: list | None = None,
     file_path: str = "src/module.py",
+    language: str = "python",
 ) -> Mock:
     """Build a mock EmbeddingResult for testing populate_from_embeddings."""
     result = Mock()
@@ -326,7 +327,7 @@ def _make_result(
         "name": name,
         "parent_name": parent_name,
         "file_path": file_path,
-        "language": "python",
+        "language": language,
         "calls": calls or [],
         "relationships": relationships or [],
     }
@@ -1216,3 +1217,200 @@ class TestResolveCallTargetScopeAware(TestCase):
             callee_qualified=None,
         )
         self.assertEqual(resolved, "oauth.py:1-2:function:helper")
+
+
+class TestWall2CFamilyResolution(TestCase):
+    """Wall-2 resolution fixes (search/graph_integration.py): the Python-
+    builtins gate, the C-family common-member blocklist, separator-agnostic
+    Pass-1 indexing, and prefer-definition disambiguation. Each behavior
+    change is gated on `language`, so every "byte-identical" test below
+    exercises the exact code path a real Python build already used before
+    this change, alongside a same-shaped C-family test proving the new
+    behavior actually fires."""
+
+    def _make_graph(self) -> tuple[GraphIntegration, Mock]:
+        storage = Mock()
+        storage.__len__ = Mock(return_value=0)
+        graph = GraphIntegration.from_storage(storage)
+        return graph, storage
+
+    # ----- item 1: Python-builtins gate is language-scoped -----
+
+    def test_python_builtin_still_phantoms_python_caller(self):
+        """Byte-identical: a Python call to a builtin name (`len`) with no
+        project definition still becomes a phantom node."""
+        graph, storage = self._make_graph()
+        caller = _make_result(
+            "f.py:1-5:function:main",
+            name="main",
+            calls=[{"callee_name": "len", "line_number": 2, "is_method_call": False}],
+        )
+
+        graph.populate_from_embeddings([caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "len")
+        self.assertFalse(kwargs["is_resolved"])
+
+    def test_cpp_project_function_named_like_python_builtin_resolves(self):
+        """Defect fix: a C++ project function literally named `min` must NOT
+        be phantom-suppressed by the Python-builtins check -- that check now
+        only runs for `language == "python"` callers."""
+        graph, storage = self._make_graph()
+        project_min = _make_result(
+            "f.cpp:1-5:function:min",
+            name="min",
+            file_path="f.cpp",
+            language="cpp",
+        )
+        caller = _make_result(
+            "f.cpp:10-20:function:main",
+            name="main",
+            file_path="f.cpp",
+            language="cpp",
+            calls=[{"callee_name": "min", "line_number": 15, "is_method_call": False}],
+        )
+
+        graph.populate_from_embeddings([project_min, caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "f.cpp:1-5:function:min")
+        self.assertTrue(kwargs["is_resolved"])
+
+    # ----- item 2: C-family common-member blocklist -----
+
+    def test_cpp_stl_member_call_stays_phantom_without_project_definition(self):
+        """`.size()` with no project-defined `size` symbol stays phantom --
+        the C-family sibling of the existing Python `_COMMON_METHODS` rule."""
+        graph, storage = self._make_graph()
+        caller = _make_result(
+            "f.cpp:1-10:function:describe",
+            name="describe",
+            file_path="f.cpp",
+            language="cpp",
+            calls=[{"callee_name": "size", "line_number": 3, "is_method_call": True}],
+        )
+
+        graph.populate_from_embeddings([caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "size")
+        self.assertFalse(kwargs["is_resolved"])
+
+    def test_cpp_project_defined_size_resolves(self):
+        """When the project itself defines a `size` symbol, the call resolves
+        to it instead of being dropped -- same "unless the project defines
+        it" rule as `_COMMON_METHODS`."""
+        graph, storage = self._make_graph()
+        project_size = _make_result(
+            "f.cpp:1-3:function:size", name="size", file_path="f.cpp", language="cpp"
+        )
+        caller = _make_result(
+            "f.cpp:10-20:function:describe",
+            name="describe",
+            file_path="f.cpp",
+            language="cpp",
+            calls=[{"callee_name": "size", "line_number": 15, "is_method_call": True}],
+        )
+
+        graph.populate_from_embeddings([project_size, caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "f.cpp:1-3:function:size")
+        self.assertTrue(kwargs["is_resolved"])
+
+    def test_python_call_to_c_family_only_common_name_still_resolves(self):
+        """Regression guard: `size` is in the new `_C_FAMILY_COMMON_MEMBERS`
+        set but not in `_COMMON_METHODS`. A Python caller resolving a
+        project-defined `size` symbol must be unaffected by the new set's
+        existence -- resolution proceeds exactly as before."""
+        graph, storage = self._make_graph()
+        project_size = _make_result("f.py:1-3:function:size", name="size")
+        caller = _make_result(
+            "f.py:10-20:function:describe",
+            name="describe",
+            calls=[{"callee_name": "size", "line_number": 15, "is_method_call": True}],
+        )
+
+        graph.populate_from_embeddings([project_size, caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "f.py:1-3:function:size")
+        self.assertTrue(kwargs["is_resolved"])
+
+    # ----- items 3+4: separator-agnostic indexing + prefer-definition -----
+
+    def test_cpp_decl_def_pair_resolves_to_definition(self):
+        """The live voro-td shape from the plan: a header declaration
+        (`Foo.execute`, dot-joined via parent_name) and an out-of-class
+        source definition (`Foo::execute`, verbatim `::`) must collide into
+        one resolution bucket (item 3) and then resolve to the definition,
+        not the declaration (item 4), since the definition carries the body
+        and outbound edges."""
+        graph, storage = self._make_graph()
+        header_decl = _make_result(
+            "foo.h:5-5:method:Foo.execute",
+            chunk_type="method",
+            name="execute",
+            parent_name="Foo",
+            file_path="foo.h",
+            language="cpp",
+        )
+        source_def = _make_result(
+            "foo.cpp:10-20:function:Foo::execute",
+            chunk_type="function",
+            name="Foo::execute",
+            file_path="foo.cpp",
+            language="cpp",
+        )
+        caller = _make_result(
+            "bar.cpp:1-10:function:run",
+            name="run",
+            file_path="bar.cpp",
+            language="cpp",
+            calls=[
+                {
+                    "callee_name": "execute",
+                    "line_number": 5,
+                    "is_method_call": True,
+                }
+            ],
+        )
+
+        graph.populate_from_embeddings([header_decl, source_def, caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "foo.cpp:10-20:function:Foo::execute")
+        self.assertTrue(kwargs["is_resolved"])
+        self.assertEqual(kwargs.get("confidence"), "exact")
+
+    def test_python_dotted_name_indexing_unaffected_by_cpp_separator_logic(self):
+        """Byte-identical: a Python qualified-name resolution (`ClassName.
+        method`) is untouched by the new `::`-aware indexing, which is
+        gated to C-family languages only."""
+        graph, storage = self._make_graph()
+        method = _make_result(
+            "c.py:10-20:method:MyClass.process",
+            chunk_type="method",
+            name="process",
+            parent_name="MyClass",
+        )
+        caller = _make_result(
+            "c.py:30-40:method:MyClass.run",
+            chunk_type="method",
+            name="run",
+            parent_name="MyClass",
+            calls=[
+                {
+                    "callee_name": "process",
+                    "line_number": 35,
+                    "is_method_call": True,
+                }
+            ],
+        )
+
+        graph.populate_from_embeddings([method, caller])
+
+        kwargs = storage.add_call_edge.call_args_list[0].kwargs
+        self.assertEqual(kwargs["callee_name"], "c.py:10-20:method:MyClass.process")
+        self.assertTrue(kwargs["is_resolved"])
