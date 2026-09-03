@@ -111,11 +111,10 @@ construction, verified by a dedicated Python-invariance unit test per item, not 
    C-family analogue (an `#include`-set signal) is deferred as a later refinement, not first-tier
    scope.
 
-**Rollout: default-on for C-family languages**, kill-switchable only via
-`CallGraphConfig.ambiguous_fanout_cap=0` (disables the cap; there is no separate feature flag,
-since the walk itself has no failure mode that removing it would fix — C/C++ chunks had zero
-outbound call edges before this, so shipping strictly adds edges where none existed). All three
-target projects require a full `incremental=False` reindex — file content is unchanged, so
+**Rollout: default-on for C-family languages, with no kill switch.** There is no separate feature
+flag, since the walk itself has no failure mode that removing it would fix — C/C++ chunks had
+zero outbound call edges before this, so shipping strictly adds edges where none existed. All
+three target projects require a full `incremental=False` reindex — file content is unchanged, so
 content hashes are unchanged and an incremental pass would leave the old zero-edge chunks in
 place (this is the third instance of the `chunker_version` staleness pattern ADR-0037 twice
 declined to solve generally; see that ADR's follow-on note).
@@ -212,3 +211,13 @@ tree-sitter tier).
   resolved+ambiguous volume is byte-identical to the pre-fix probe (10,850), confirming this is a
   pure re-tag with no change to what resolves. Full breakdown and re-verification numbers in the
   precision-sample doc's "Update 2026-09-03" section. Unblocks task #14.)*
+- *(Update 2026-09-03: corrected a factual error in the Decision section's Rollout paragraph. It
+  previously claimed the tier was "kill-switchable ... via `CallGraphConfig.ambiguous_fanout_cap=0`
+  (disables the cap)". That is wrong on inspection of `_get_ambiguous_candidates`
+  (`search/graph_integration.py`): the cap is applied only when `fanout_cap > 0`, so setting it to
+  `0` fails that check and skips capping entirely — the *opposite* of a kill switch, reproducing
+  the uncapped +190%-link-growth scenario Phase 0 rejected. The field's own schema metadata
+  (`range=(1.0, 50.0)`) doesn't even accept `0` as a valid value. There is no working kill switch
+  for C-family call-graph edges today; disabling the tier requires a code change, not a config
+  change. User decision 2026-09-03: leave it that way for now rather than add a dedicated enable
+  flag — revisit if a real need surfaces during or after the voro-td/cuda-link reindex.)*
