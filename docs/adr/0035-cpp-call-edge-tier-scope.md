@@ -89,6 +89,11 @@ here only to close the door on introducing one as a substitute for libclang.
   (CMake/ninja or Bazel build), or clangd/libclang become available in this development
   environment. Until then, shipping those tiers would mean dead code paths for most Windows/
   MSBuild users and no way to validate them here.
+- *(Update 2026-09-03: the tier-1 walk this ADR scoped has shipped — see
+  [ADR-0060](0060-c-family-call-edge-tier.md), which records the implementation, the Wall-1/Wall-2
+  split, and restates the still-unmet tiers 2–3 reopening condition above. This ADR's scope
+  decision stands as the record of *why* tier 1 was chosen; ADR-0060 is the record of what was
+  built.)*
 - Reusable asset for that future work: `chunking/relationships/lsp_call_graph.py`'s `_LspClient`
   is already ~70% language-agnostic — frame codec, JSON-RPC ID correlation, the aggregate-budget
   watchdog, `_uri_to_path`, `_kill_process_tree`, and the `prepareCallHierarchy`/

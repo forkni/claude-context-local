@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **C/C++ call-edge tier** (ADR-0060) — C and C++ chunks now emit `calls`/`imports`/
+  `instantiates`/`inherits` edges the same way Python chunks do, closing a gap where every C/C++
+  chunk was graph-isolated (`find_connections`/`find_path` returned nothing for them). Tree-sitter
+  name matching only (confidence 0.6, no type resolution — `v.size()` and `myObj.size()` are
+  indistinguishable); libclang/clangd tiers remain deferred per ADR-0035's unmet reopening
+  condition (no `compile_commands.json`/clangd/libclang available in this environment). New
+  `CallGraphConfig.ambiguous_fanout_cap` (default `3`) caps per-symbol candidate fan-out for
+  C-family languages only — Python resolution is unaffected by construction (language-gated) and
+  by measurement (63q/133q golden-set canons flat, see
+  `evaluation/CANON_GATE_FANOUT_CAP_20260903.md`).
+
+### Migration
+
+- **Reindex required to see C/C++ call edges.** File content is unchanged by this change, so
+  `index_directory(..., incremental=True)` (the default) will not re-chunk already-indexed C/C++
+  files and the old zero-edge chunks will persist. Run
+  `index_directory(<project>, incremental=False)` (or `tools/batch_index.py --mode force`) once
+  per C/C++ project to pick up the new edges.
+
 ### Security
 
 - **nltk CVE-2026-81726 / GHSA-8mgp-746c-j5xp** (pathsec bypass in model-artifact APIs,

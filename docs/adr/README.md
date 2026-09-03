@@ -65,6 +65,7 @@ for avoiding re-litigating settled questions.
 | [0057](0057-derive-tool-guard-flags-from-decorators.md) | Derive `ToolSpec.mutation_lock` / `.requires_index` from decorator stamps | accepted | 2026-08-23 |
 | [0058](0058-index-freshness-verdict.md) | Add a content-only `index_is_current` freshness verdict | accepted | 2026-08-30 |
 | [0059](0059-execution-witnessed-callgraph-ground-truth.md) | Execution-witnessed call-graph ground truth for resolver-tier calibration | accepted | 2026-09-02 |
+| [0060](0060-c-family-call-edge-tier.md) | C/C++ call-edge tier: tree-sitter name matching, shipped | accepted | 2026-09-03 |
 
 ## Adding a new ADR
 
