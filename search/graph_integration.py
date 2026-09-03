@@ -736,6 +736,19 @@ class GraphIntegration:
                     line_number = call["line_number"]
                     is_method_call = call["is_method_call"]
                     callee_qualified = call.get("callee_qualified")
+                    # C-family method-call resolution is type-blind (no receiver
+                    # type info from tree-sitter), so even a uniquely-resolved
+                    # candidate is frequently the wrong class -- measured
+                    # precision 0.162 (is_method=True) vs. 0.839 (free functions),
+                    # evaluation/CPP_CALLGRAPH_PRECISION_SAMPLE_20260903.md.
+                    # Downgrade to the existing "ambiguous" tag so these are
+                    # hidden by default the same way genuine multi-candidate
+                    # fan-out already is (hide_ambiguous_edges_default), without
+                    # adding a new confidence tier. Free-function and Python
+                    # method-call edges are unaffected.
+                    downgrade_method_confidence = (
+                        is_method_call and spec.language in _C_FAMILY_LANGUAGES
+                    )
                     resolved = self._resolve_call_target(
                         callee_name,
                         name_to_chunk_ids,
@@ -750,10 +763,15 @@ class GraphIntegration:
                             line_number=line_number,
                             is_method_call=is_method_call,
                             is_resolved=True,
-                            confidence="exact",
+                            confidence=(
+                                "ambiguous" if downgrade_method_confidence else "exact"
+                            ),
                         )
                         call_edges += 1
-                        resolved_edges += 1
+                        if downgrade_method_confidence:
+                            ambiguous_edges += 1
+                        else:
+                            resolved_edges += 1
                     else:
                         ambiguous = self._get_ambiguous_candidates(
                             callee_name,

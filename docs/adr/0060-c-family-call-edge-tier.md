@@ -191,3 +191,24 @@ tree-sitter tier).
   3, 0 violations) and hand-labeled precision as hard gates. The ~150–200-edge hand-labeled
   precision sample and the `incremental=False` reindex of voro-td and cuda-link (voro-engine's is
   already current as of this update) remain open, tracked as plan tasks #13/#14.)*
+- *(Update 2026-09-03: the hand-labeled precision sample (task #13) landed —
+  `evaluation/CPP_CALLGRAPH_PRECISION_SAMPLE_20260903.md` — and found the `>= 0.85` gate failed
+  decisively overall (0.583 strict / 0.660 lenient, n=180), entirely concentrated in
+  `is_method=True` member-call resolution (0.162 strict, 68/180 of the sample but 46 of 54
+  confirmed-incorrect labels): tree-sitter has no receiver-type information, so `.empty()`/
+  `.size()`/`.count()`/`.get()` on an arbitrary project type routinely resolve to an unrelated
+  class's same-named method. Free-function (`is_method=False`) resolution was unaffected and
+  already cleared gate on its own (0.839 strict / 0.922 lenient). Fix: `_two_pass_build`
+  (`search/graph_integration.py`) now tags every C-family resolved edge with `is_method_call=True`
+  as `confidence="ambiguous"` — reusing the existing, already-shipped, already-A/B-tested
+  `hide_ambiguous_edges_default=True`/`filter_ambiguous_edges` machinery
+  (`evaluation/CONFIDENCE_EGO_AB_20260816.md`) instead of adding a new confidence tier, so no new
+  config/schema/doc surface was needed. The genuinely-ambiguous (`_get_ambiguous_candidates`)
+  branch was already tagged `"ambiguous"` unconditionally and needed no change. Re-crossing the
+  same 180-edge hand-labeled dataset by what's default-visible after the fix
+  (`confidence=="exact" & is_method==False`) measures **0.988 strict / 1.0 lenient (n=83)** —
+  clears gate decisively. Empirically re-verified on a real `--mode force` rebuild of
+  voro-engine's graph: zero `(is_method=True, confidence="exact")` edges exist post-fix, and total
+  resolved+ambiguous volume is byte-identical to the pre-fix probe (10,850), confirming this is a
+  pure re-tag with no change to what resolves. Full breakdown and re-verification numbers in the
+  precision-sample doc's "Update 2026-09-03" section. Unblocks task #14.)*

@@ -1346,7 +1346,10 @@ class TestWall2CFamilyResolution(TestCase):
         source definition (`Foo::execute`, verbatim `::`) must collide into
         one resolution bucket (item 3) and then resolve to the definition,
         not the declaration (item 4), since the definition carries the body
-        and outbound edges."""
+        and outbound edges. The call site is a method call, so its confidence
+        is downgraded to "ambiguous" (hidden by default) regardless of the
+        unique decl/def resolution -- see the type-blindness downgrade in
+        `_two_pass_build`."""
         graph, storage = self._make_graph()
         header_decl = _make_result(
             "foo.h:5-5:method:Foo.execute",
@@ -1382,7 +1385,7 @@ class TestWall2CFamilyResolution(TestCase):
         kwargs = storage.add_call_edge.call_args_list[0].kwargs
         self.assertEqual(kwargs["callee_name"], "foo.cpp:10-20:function:Foo::execute")
         self.assertTrue(kwargs["is_resolved"])
-        self.assertEqual(kwargs.get("confidence"), "exact")
+        self.assertEqual(kwargs.get("confidence"), "ambiguous")
 
     def test_python_dotted_name_indexing_unaffected_by_cpp_separator_logic(self):
         """Byte-identical: a Python qualified-name resolution (`ClassName.

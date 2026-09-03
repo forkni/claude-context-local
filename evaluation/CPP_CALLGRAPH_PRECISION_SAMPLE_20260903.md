@@ -148,3 +148,59 @@ would need either a narrower project-defined-method allowlist, dropping the "unl
 defines it" escape hatch for the common-STL-member blocklist, or downgrading `is_method=True`
 edges to a lower confidence tier (e.g. `speculative`, excluded from default traversal) rather than
 `exact`/`ambiguous`. That is a scoping decision for whoever picks up the next step, not made here.
+
+## Update 2026-09-03: fix shipped — downgrade `is_method=True` edges to `ambiguous`
+
+Per user decision, implemented the last recommendation above, minus the new tier: rather than
+inventing a `speculative` confidence level (which would need threading through config,
+`config_schema`, docs, tool specs, and status handlers), C-family `is_method=True` resolved edges
+are now tagged with the existing `"ambiguous"` string, reusing the already-shipped,
+already-A/B-gated `hide_ambiguous_edges_default=True` / `filter_ambiguous_edges` machinery
+(`evaluation/CONFIDENCE_EGO_AB_20260816.md`) verbatim — no new tier, no new config surface.
+Change is scoped to `_two_pass_build`'s resolved-edge branch in `search/graph_integration.py`;
+the genuine multi-candidate ambiguous branch was already unconditionally tagged `"ambiguous"` and
+needed no change. Free-function (`is_method=False`) and all Python-language edges are untouched.
+
+**Joint precision breakdown**, computed directly from the 180-edge hand-labeled dataset above by
+crossing `confidence` × `is_method` (the labels don't change — only which stratum an edge lands
+in after the fix does):
+
+| stratum after fix | n | correct | incorrect | uncertain | precision (strict) | precision (lenient) |
+|---|---|---|---|---|---|---|
+| `exact` & `is_method=False` (**default-visible**) | 83 | 82 | 0 | 1 | **0.988** | 1.0 |
+| `exact` & `is_method=True` (did not exist pre-fix; would-be-exact edges downgraded) | 27 | 8 | 19 | 0 | 0.296 | 0.296 |
+| `ambiguous` & `is_method=False` (already hidden by default, unchanged) | 29 | 12 | 8 | 9 | 0.414 | 0.6 |
+| `ambiguous` & `is_method=True` (already hidden; now also receives the 27 downgraded rows) | 41 | 3 | 27 | 11 | 0.073 | 0.1 |
+
+**Verdict: gate passes.** The only stratum that is default-visible after the fix
+(`exact & is_method=False`) measures **0.988 strict / 1.0 lenient precision (n=83)** —
+comfortably above the plan's `>= 0.85` gate, in fact within one `uncertain` label of perfect on
+this sample. The 27 `exact & is_method=True` edges that would have been default-visible before
+the fix (0.296 precision — well under gate) are now hidden by default, exactly as intended.
+
+**Empirical re-verification on the real pipeline** (not just unit tests): re-ran
+`tools/batch_index.py --path D:\Users\alexk\FORKNI\VORO\voro-engine --mode force` after the fix
+and read the rebuilt `<slug>_call_graph.json` directly. Cross-tabulating C-family `calls` edges by
+`(is_method, confidence)`:
+
+| `is_method` | `confidence` | count |
+|---|---|---|
+| `False` | `None` (phantom) | 7,111 |
+| `True` | `None` (phantom) | 5,007 |
+| `False` | `exact` | 4,799 |
+| `True` | `ambiguous` | 4,217 |
+| `False` | `ambiguous` | 1,834 |
+
+No `(True, "exact")` bucket exists — confirms the downgrade is unconditional on the real pipeline,
+not just in the unit-test double. Resolved+ambiguous totals are unchanged from the pre-fix probe
+(4,799 + 4,217 + 1,834 = 10,850 = the pre-fix 6,452 exact + 4,398 ambiguous exactly) — this is a
+pure re-tagging of the existing resolved population, not a change in what resolves.
+
+Test evidence: `tests/unit/search/test_graph_integration.py` updated (one assertion, one test
+docstring — a C++ method-call decl/def-pair test now correctly expects `confidence="ambiguous"`
+instead of `"exact"`) — 74/74 passed. Full suite: `./scripts/test/run_tests.sh tests/unit/ -q` →
+4,395 passed, 2 skipped, 0 failed.
+
+Unblocks plan task #14 (full `incremental=False` reindex of voro-td and cuda-link) — the plan's
+own gate ("hand-labeled precision >= 0.85") is now met by the edges that actually ship visible by
+default.
