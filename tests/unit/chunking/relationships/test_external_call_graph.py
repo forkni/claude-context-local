@@ -1002,3 +1002,361 @@ class TestPyanCooperativeDeadline:
         )
 
         assert set(baseline) == set(with_future_deadline)
+
+
+# ---------------------------------------------------------------------------
+# CLASS-callee call-position gate
+#
+# pyan's ``uses_edges`` records every *use* of a class -- type annotations,
+# enum-member access (``Kind.NONE``), ``isinstance`` arguments, ``except``
+# clauses -- and the resolver used to admit any CLASS-flavored callee as a
+# 0.75-confidence ``calls`` edge (hand-labeled sample 0/10 true,
+# evaluation/RESOLVER_PRECISION_LABELS_20260902.md rows 20-29).
+# ``_TrackedVisitor.visit_Call`` now records which resolved nodes sat in call
+# position and ``PyanResolver.resolve`` gates CLASS / ``__init__`` callees on
+# that record.  Non-call dependencies stay covered by the ``uses_type`` /
+# ``uses_constant`` relationship edges.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def class_reference_project(tmp_path: Path) -> dict[str, object]:
+    """Two-file project mixing class instantiations with non-call class uses.
+
+    Layout (line numbers matter -- the raw line map below mirrors them)::
+
+        pkg/a.py   Widget (with __init__), Kind (Enum), Plain (no __init__)
+        pkg/b.py   builds()            -> Widget()            instantiation
+                   builds_plain()      -> Plain()             no own __init__
+                   annotates()         -> annotation, isinstance, enum access
+                   in_comprehension()  -> [Plain() for ...]   anon scope
+                   Sub.__init__        -> super().__init__()  explicit init
+    """
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "a.py").write_text(
+        dedent("""\
+        from enum import Enum
+
+
+        class Widget:
+            def __init__(self):
+                self.parts = []
+
+            def clear(self):
+                return self.parts
+
+
+        class Kind(Enum):
+            NONE = 0
+            INSIDE = 1
+
+
+        class Plain:
+            pass
+        """),
+        encoding="utf-8",
+    )
+    (pkg / "b.py").write_text(
+        dedent("""\
+        from pkg.a import Kind, Plain, Widget
+
+
+        def builds():
+            return Widget()
+
+
+        def builds_plain():
+            return Plain()
+
+
+        def annotates(w: Widget) -> Kind:
+            if isinstance(w, Widget):
+                return Kind.NONE
+            return Kind.INSIDE
+
+
+        def in_comprehension(xs):
+            return [Plain() for _ in xs]
+
+
+        class Sub(Widget):
+            def __init__(self):
+                super().__init__()
+        """),
+        encoding="utf-8",
+    )
+    raw_line_map = {
+        "pkg/a.py": [
+            (4, 9, "pkg/a.py:4-9:class:Widget"),
+            (5, 6, "pkg/a.py:5-6:method:Widget.__init__"),
+            (8, 9, "pkg/a.py:8-9:method:Widget.clear"),
+            (12, 14, "pkg/a.py:12-14:class:Kind"),
+            (17, 18, "pkg/a.py:17-18:class:Plain"),
+        ],
+        "pkg/b.py": [
+            (4, 5, "pkg/b.py:4-5:function:builds"),
+            (8, 9, "pkg/b.py:8-9:function:builds_plain"),
+            (12, 15, "pkg/b.py:12-15:function:annotates"),
+            (18, 19, "pkg/b.py:18-19:function:in_comprehension"),
+            (22, 24, "pkg/b.py:22-24:class:Sub"),
+            (23, 24, "pkg/b.py:23-24:method:Sub.__init__"),
+        ],
+    }
+    return {"project_root": tmp_path, "raw_line_map": raw_line_map}
+
+
+def _pyan_edges(project: dict) -> dict[str, set[str]]:
+    """Run PyanResolver on the fixture; return caller_id -> {callee_id}."""
+    import logging
+
+    edges = PyanResolver().resolve(
+        project["project_root"],
+        project["raw_line_map"],
+        logging.getLogger("test_class_callee_gate"),
+    )
+    out: dict[str, set[str]] = {}
+    for e in edges:
+        out.setdefault(e.caller_id, set()).add(e.callee_id)
+    return out
+
+
+class TestClassCalleeCallPositionGate:
+    """CLASS callees are admitted only when the reference sat in call position."""
+
+    @requires_pyan
+    def test_instantiation_keeps_class_and_init_edges(
+        self, class_reference_project: dict
+    ) -> None:
+        by_caller = _pyan_edges(class_reference_project)
+        callees = by_caller.get("pkg/b.py:4-5:function:builds", set())
+        assert "pkg/a.py:4-9:class:Widget" in callees, by_caller
+        assert "pkg/a.py:5-6:method:Widget.__init__" in callees, by_caller
+
+    @requires_pyan
+    def test_instantiation_without_own_init_keeps_class_edge(
+        self, class_reference_project: dict
+    ) -> None:
+        """Dropping CLASS admission outright would lose this edge: pyan's
+        ``Plain.__init__`` node is undefined (no own ``__init__``) and is
+        contracted away, so the CLASS node is the only instantiation witness."""
+        by_caller = _pyan_edges(class_reference_project)
+        callees = by_caller.get("pkg/b.py:8-9:function:builds_plain", set())
+        assert callees == {"pkg/a.py:17-18:class:Plain"}, by_caller
+
+    @requires_pyan
+    def test_non_call_class_uses_produce_no_edges(
+        self, class_reference_project: dict
+    ) -> None:
+        """Annotation, ``isinstance`` argument and enum-member access are not
+        calls; pyan records CLASS uses for all three and the gate drops them."""
+        by_caller = _pyan_edges(class_reference_project)
+        assert by_caller.get("pkg/b.py:12-15:function:annotates", set()) == set(), (
+            by_caller
+        )
+
+    @requires_pyan
+    def test_instantiation_inside_comprehension_survives_collapse(
+        self, class_reference_project: dict
+    ) -> None:
+        """collapse_inner re-keys the listcomp scope onto the enclosing
+        function; the call-position record must follow it."""
+        by_caller = _pyan_edges(class_reference_project)
+        callees = by_caller.get("pkg/b.py:18-19:function:in_comprehension", set())
+        assert "pkg/a.py:17-18:class:Plain" in callees, by_caller
+
+    @requires_pyan
+    def test_super_init_call_keeps_init_edge_only(
+        self, class_reference_project: dict
+    ) -> None:
+        by_caller = _pyan_edges(class_reference_project)
+        callees = by_caller.get("pkg/b.py:23-24:method:Sub.__init__", set())
+        assert "pkg/a.py:5-6:method:Widget.__init__" in callees, by_caller
+        assert "pkg/a.py:4-9:class:Widget" not in callees, by_caller
+
+    @requires_pyan
+    def test_instance_attribute_method_call_is_not_instantiation(
+        self, tmp_path: Path
+    ) -> None:
+        """``obj.method()`` on an instance attribute must not count as a call
+        of the class.
+
+        pyan resolves ``self.items`` to the ``__init__`` that binds it, and
+        resolves ``e.apply`` (``e`` an instance from a module list) to the
+        *class* node when the attribute lookup falls back.  Both arrive in
+        ``visit_Call`` looking like a class call; neither constructs anything
+        (calibration rows 23-25 of RESOLVER_PRECISION_LABELS_20260902).
+        """
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+        (pkg / "a.py").write_text(
+            dedent("""            class Store:
+                def __init__(self):
+                    self.items = {}
+
+                def clear(self):
+                    self.items.clear()
+
+
+            class Enricher:
+                def apply(self, x):
+                    return x
+
+
+            ENRICHERS = [Enricher()]
+
+
+            def run_all(x):
+                for e in ENRICHERS:
+                    x = e.apply(x)
+                return x
+
+
+            def build():
+                return Store()
+            """)
+        )
+        raw_line_map = {
+            "pkg/a.py": [
+                (1, 6, "pkg/a.py:1-6:class:Store"),
+                (2, 3, "pkg/a.py:2-3:method:Store.__init__"),
+                (5, 6, "pkg/a.py:5-6:method:Store.clear"),
+                (9, 11, "pkg/a.py:9-11:class:Enricher"),
+                (10, 11, "pkg/a.py:10-11:method:Enricher.apply"),
+                (17, 20, "pkg/a.py:17-20:function:run_all"),
+                (23, 24, "pkg/a.py:23-24:function:build"),
+            ],
+        }
+        by_caller: dict[str, set[str]] = {}
+        for e in PyanResolver().resolve(tmp_path, raw_line_map, _LOG_ECG):
+            by_caller.setdefault(e.caller_id, set()).add(e.callee_id)
+
+        assert by_caller.get("pkg/a.py:5-6:method:Store.clear", set()) == set(), (
+            by_caller
+        )
+        run_all = by_caller.get("pkg/a.py:17-20:function:run_all", set())
+        assert "pkg/a.py:9-11:class:Enricher" not in run_all, by_caller
+        assert "pkg/a.py:10-11:method:Enricher.apply" in run_all, by_caller
+        build = by_caller.get("pkg/a.py:23-24:function:build", set())
+        assert {"pkg/a.py:1-6:class:Store", "pkg/a.py:2-3:method:Store.__init__"} <= (
+            build
+        ), by_caller
+
+    @requires_pyan
+    def test_visitor_records_call_position_names(
+        self, class_reference_project: dict
+    ) -> None:
+        """The visitor-level record names both the class and its ``__init__``
+        for an instantiation, and nothing under ``pkg.a`` for a non-call use."""
+        from chunking.relationships.external_call_graph import _TrackedVisitor
+
+        project_root = class_reference_project["project_root"]
+        visitor = _TrackedVisitor(
+            _gather_py_files(project_root), root=str(project_root)
+        )
+        by_name = {
+            n.get_name(): names for n, names in visitor.call_position_names.items()
+        }
+        assert by_name["pkg.b.builds"] == {"pkg.a.Widget", "pkg.a.Widget.__init__"}
+        assert not any(
+            n.startswith("pkg.a.") for n in by_name.get("pkg.b.annotates", set())
+        )
+
+    @staticmethod
+    def _resolve_with_fake_visitor(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caller: MagicMock,
+        callee: MagicMock,
+        call_position_names: dict,
+    ) -> list[object]:
+        """Run PyanResolver with a fake visitor; return the nodes that reached
+        ``_node_to_raw_chunk_id`` (i.e. survived every guard incl. the gate).
+
+        Unlike ``_run_resolver_with_fake_edges`` the deadline attributes are
+        set explicitly: a bare MagicMock's ``_aborted`` is truthy, which makes
+        the resolver bail out before the loop and would pass vacuously.
+        """
+        import chunking.relationships.external_call_graph as ecg
+
+        monkeypatch.setattr(ecg, "_PYAN_AVAILABLE", True)
+        fake_visitor = MagicMock()
+        fake_visitor._aborted = False
+        fake_visitor._seen_files = set()
+        fake_visitor._failed_files = set()
+        fake_visitor.uses_edges = {caller: [callee]}
+        fake_visitor.expanded_edges = set()
+        fake_visitor.call_position_names = call_position_names
+        (tmp_path / "a.py").write_text("def f(): pass\n", encoding="utf-8")
+        monkeypatch.setattr(
+            ecg, "_TrackedVisitor", MagicMock(return_value=fake_visitor), raising=False
+        )
+        seen: list[object] = []
+
+        def spy(node, project_root, raw_line_map):
+            if node is caller:
+                # The caller must map, otherwise the callee loop is skipped
+                # wholesale and the assertions below would be vacuous.
+                return "a.py:1-1:function:f"
+            seen.append(node)
+            return None
+
+        monkeypatch.setattr(ecg, "_node_to_raw_chunk_id", spy)
+        ecg.PyanResolver().resolve(tmp_path, {}, _LOG_ECG)
+        return seen
+
+    def test_fake_class_callee_dropped_without_call_position(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A CLASS callee whose (caller, name) is not in ``call_position_names``
+        never reaches the chunk-id mapping step (works without pyan installed)."""
+        caller = _make_pyan_node("FUNCTION", namespace="pkg")
+        callee = _make_pyan_node("CLASS", namespace="pkg")
+        callee.get_name.return_value = "pkg.a.Widget"
+        seen = self._resolve_with_fake_visitor(
+            tmp_path, monkeypatch, caller, callee, {caller: {"pkg.a.Other"}}
+        )
+        assert callee not in seen, (
+            "CLASS callee reached mapping despite no call position"
+        )
+
+    def test_fake_init_callee_dropped_without_call_position(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``self.<attr>`` reads that pyan resolves to the binding ``__init__``
+        arrive as METHOD callees named ``__init__``; they take the same gate."""
+        caller = _make_pyan_node("FUNCTION", namespace="pkg")
+        callee = _make_pyan_node("METHOD", namespace="pkg.a.Widget")
+        callee.name = "__init__"
+        callee.get_name.return_value = "pkg.a.Widget.__init__"
+        seen = self._resolve_with_fake_visitor(
+            tmp_path, monkeypatch, caller, callee, {}
+        )
+        assert callee not in seen, "__init__ callee reached mapping without a call"
+
+    def test_fake_class_callee_admitted_with_call_position(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        caller = _make_pyan_node("FUNCTION", namespace="pkg")
+        callee = _make_pyan_node("CLASS", namespace="pkg")
+        callee.get_name.return_value = "pkg.a.Widget"
+        seen = self._resolve_with_fake_visitor(
+            tmp_path, monkeypatch, caller, callee, {caller: {"pkg.a.Widget"}}
+        )
+        assert callee in seen, "CLASS callee in call position must reach mapping"
+
+    def test_fake_function_callee_unaffected_by_gate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Plain callable callees are not gated (pyan only records those on
+        call/reference sites the resolver already trusted)."""
+        caller = _make_pyan_node("FUNCTION", namespace="pkg")
+        callee = _make_pyan_node("FUNCTION", namespace="pkg")
+        callee.name = "helper"
+        callee.get_name.return_value = "pkg.a.helper"
+        seen = self._resolve_with_fake_visitor(
+            tmp_path, monkeypatch, caller, callee, {}
+        )
+        assert callee in seen
