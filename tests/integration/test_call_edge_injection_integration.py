@@ -285,16 +285,20 @@ def test_split_method_callee_lands_on_split_block_not_class(
     resolved = [edge for edge in data["edges"] if edge.get("resolver_source")]
     into_split = [e for e in resolved if ":split_block:Worker.process" in e["target"]]
     assert into_split, "no resolver edge reached a Worker.process split_block node"
-    # ``Worker()`` in main.run is a genuine class-target edge, recorded at the
-    # ``class`` statement line. The bug this guards against is the *other*
-    # kind: a callee ``def`` line inside the class body falling through to the
-    # class chunk because no fragment covered it.
+    # ``Worker()`` in main.run is a genuine class-target edge. Its ``line`` is
+    # whichever rail last wrote it: the LSP resolver records the callee's
+    # ``class`` statement line, while the AST rail (kept when libcst reports
+    # line=0, see search/call_edge_injection.py) records the call site
+    # relative to the caller chunk — neither falls inside the class body. The
+    # bug this guards against is the *other* kind: a callee ``def`` line
+    # strictly inside the class body falling through to the class chunk
+    # because no fragment covered it.
     (class_id,) = [n["id"] for n in data["nodes"] if ":class:Worker" in n["id"]]
-    class_start = int(class_id.split(":")[1].split("-")[0])
+    class_start, class_end = (int(part) for part in class_id.split(":")[1].split("-"))
     inside_body = [
         e
         for e in resolved
-        if e["target"] == class_id and (e.get("line") or 0) not in (0, class_start)
+        if e["target"] == class_id and class_start < (e.get("line") or 0) <= class_end
     ]
     assert not inside_body, (
         f"resolver edges still land on the class body: {inside_body}"
