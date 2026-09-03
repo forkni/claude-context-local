@@ -149,6 +149,51 @@ Reading guide:
   rows for this tier include several `MetadataStore.set` edges attached to callers that only use
   a builtin `set`; that is the name-only mechanism TraceEval calls class-name-as-callee.
 
+### 5a. Re-run after ADR-0061 (split_block callee folding), 2026-09-03
+
+`evaluation/RESOLVER_PRECISION_LABELS_20260902.md` found that callees inside long
+(`split_block`-chunked) methods were mapped to their enclosing `class:` chunk because the
+resolver line map excluded split fragments. ADR-0061 folds each split symbol's fragments into
+one span that also covers the `def` line, keyed to the first fragment. Both arms below start
+from the same stored graph with resolver provenance stripped, re-run `inject_call_edges` with
+the full pyan → libcst → lsp pipeline, and score against the unchanged
+`traced_callgraph.json` (denominators identical: |D| 1,675, |I| 222, |E_traced| 1,894,
+|EXEC| 1,318). The stored graph had drifted since section 5 (6,535 nodes; the baseline arm
+lands at 28,528 edges vs the 28,058 above), so the *baseline* column, not section 5, is the
+comparison point. Script: `tmp/ab_split_callee.py` (scratch, not committed).
+
+| tier | edges (old → new) | edges_cov (old → new) | prec_lb_cov (old → new) | recall_marginal (old → new) | recall_cumulative (old → new) |
+|---|---|---|---|---|---|
+| lsp | 1,437 → 1,848 | 1,023 → 1,249 | 0.7918 → **0.8159** | 0.4818 → 0.6048 | 0.4818 → 0.6048 |
+| libcst | 533 → 731 | 321 → 425 | 0.7477 → 0.6894 | 0.1409 → 0.1701 | 0.6227 → 0.7749 |
+| pyan | 1,276 → 1,234 | 754 → 896 | 0.2520 → 0.2511 | 0.1116 → 0.1325 | 0.7039 → 0.8704 |
+| ast | 3,748 → 3,377 | 2,272 → 1,954 | 0.1325 → 0.0276 | 0.1731 → 0.0299 | 0.8770 → 0.8991 |
+
+Ladder total: 6,874 → 7,021 edges, hits_D 1,469 → 1,506, **recall_ladder_total 0.8770 →
+0.8991**, prec_lb 0.2168 → 0.2175; classified misses 206 → 169.
+
+Inside-body `class:` targets (resolver-sourced `calls` edges whose target is a `class` chunk
+and whose recorded line is not the class statement line): lsp 38 → **0**, pyan 10 → **0**.
+libcst reads 72 → 96 but that count is not meaningful for libcst: libcst-only edges carry
+`line=0` and upgraded ones keep the AST call-site line, so the line never identifies the callee.
+
+Reading guide:
+
+- The lsp gain is mostly on the *caller* side. A split method's `def` line is now inside a
+  mapped span, so lsp probes 97 methods it previously never saw as callers; that is the
+  +411 edges and the recall_marginal jump from 0.48 to 0.60. Precision of the covered edges
+  rises 0.7918 → 0.8159 because the callee side no longer lands on class nodes.
+- pyan's `prec_lb_cov` is flat (0.2520 → 0.2511). Its class-target problem is fixed (10 → 0)
+  but that was never the bulk of its unlabeled edges; the pyan CLASS-admission issue in the
+  precision-labels record stands.
+- The `ast` and libcst marginal columns shrink or lose precision by construction: lsp now
+  overwrites edges those tiers previously owned, and what remains for libcst is dominated by
+  new split-method callers whose libcst resolution is weaker. Marginal accounting, not a
+  regression of either resolver.
+- Three of the 97 split groups have a `def`-to-body gap of 10+ lines (long decorators or
+  signatures). `_find_def_position` in the lsp resolver scans only 10 lines from the span
+  start, so those three are still not lsp callers. Follow-up, not addressed here.
+
 ## 6. Traced-golden harness and curated deltas
 
 Traced goldens were emitted for every curated target in `EXEC` (positive-only semantics,

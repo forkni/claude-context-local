@@ -196,3 +196,175 @@ class TestChunkIdFromFqn:
         }
         result = chunk_id_from_fqn("a.b.do_thing", line_map, Path("."))
         assert result == raw_id
+
+
+# ---------------------------------------------------------------------------
+# split_block folding (ADR-0061): callee lines inside a long method must
+# resolve to that method, not to the enclosing class.
+# ---------------------------------------------------------------------------
+
+CLASS_ID = "search/indexer.py:100-400:class:CodeIndexManager"
+PREV_METHOD_ID = "search/indexer.py:120-178:method:CodeIndexManager.create_index"
+SPLIT_1 = "search/indexer.py:182-217:split_block:CodeIndexManager.add_embeddings"
+SPLIT_2 = "search/indexer.py:219-281:split_block:CodeIndexManager.add_embeddings"
+NEXT_METHOD_ID = "search/indexer.py:284-400:method:CodeIndexManager.search"
+SPLIT_NORM = "search/indexer.py:method:CodeIndexManager.add_embeddings"
+
+
+def _split_store() -> dict:
+    """A class whose middle method is chunked as two split_block fragments.
+
+    Mirrors the live self-index: the ``def add_embeddings`` line is 181, the
+    first fragment starts at the docstring (182), and no chunk of any kind
+    covers 179-181.
+    """
+    return _make_store(
+        (CLASS_ID, "search/indexer.py", 100, 400, "class"),
+        (PREV_METHOD_ID, "search/indexer.py", 120, 178, "method"),
+        (SPLIT_2, "search/indexer.py", 219, 281, "split_block"),  # out of order
+        (SPLIT_1, "search/indexer.py", 182, 217, "split_block"),
+        (NEXT_METHOD_ID, "search/indexer.py", 284, 400, "method"),
+    )
+
+
+class TestSplitBlockFolding:
+    def test_split_block_included_by_default(self) -> None:
+        line_map = build_line_to_chunk_map(_split_store(), normalize=False)
+        ids = {cid for _, _, cid in line_map["search/indexer.py"]}
+        assert SPLIT_1 in ids
+
+    def test_fragments_fold_into_one_span(self) -> None:
+        line_map = build_line_to_chunk_map(_split_store(), normalize=False)
+        spans = [s for s in line_map["search/indexer.py"] if ":split_block:" in s[2]]
+        assert len(spans) == 1
+        start, end, cid = spans[0]
+        # From the line after the previous sibling to the last fragment's end.
+        assert (start, end) == (179, 281)
+        # Keyed to the first (lowest start_line) fragment, an existing graph node.
+        assert cid == SPLIT_1
+
+    def test_def_line_resolves_to_method_not_class(self) -> None:
+        """The LSP / pyan callee line is the ``def`` line, outside every fragment."""
+        line_map = build_line_to_chunk_map(_split_store(), normalize=False)
+        assert find_enclosing_chunk(line_map, "search/indexer.py", 181) == SPLIT_1
+
+    def test_body_line_in_any_fragment_resolves_to_first_fragment(self) -> None:
+        line_map = build_line_to_chunk_map(_split_store(), normalize=False)
+        assert find_enclosing_chunk(line_map, "search/indexer.py", 200) == SPLIT_1
+        assert find_enclosing_chunk(line_map, "search/indexer.py", 250) == SPLIT_1
+        # The blank line between fragments belongs to the method too.
+        assert find_enclosing_chunk(line_map, "search/indexer.py", 218) == SPLIT_1
+
+    def test_class_statement_still_resolves_to_class(self) -> None:
+        line_map = build_line_to_chunk_map(_split_store(), normalize=False)
+        assert find_enclosing_chunk(line_map, "search/indexer.py", 100) == CLASS_ID
+        assert find_enclosing_chunk(line_map, "search/indexer.py", 283) == CLASS_ID
+
+    def test_siblings_unaffected(self) -> None:
+        line_map = build_line_to_chunk_map(_split_store(), normalize=False)
+        assert (
+            find_enclosing_chunk(line_map, "search/indexer.py", 178) == PREV_METHOD_ID
+        )
+        assert (
+            find_enclosing_chunk(line_map, "search/indexer.py", 284) == NEXT_METHOD_ID
+        )
+
+    def test_normalized_map_uses_parent_kind_key(self) -> None:
+        line_map = build_line_to_chunk_map(_split_store(), normalize=True)
+        assert find_enclosing_chunk(line_map, "search/indexer.py", 181) == SPLIT_NORM
+        spans = [s for s in line_map["search/indexer.py"] if s[2] == SPLIT_NORM]
+        assert spans == [(179, 281, SPLIT_NORM)]
+
+    def test_first_member_bounded_by_class_statement(self) -> None:
+        """No previous sibling: extend up to, but not over, the class line."""
+        store = _make_store(
+            ("f.py:10-90:class:K", "f.py", 10, 90, "class"),
+            ("f.py:14-40:split_block:K.big", "f.py", 14, 40, "split_block"),
+            ("f.py:41-90:split_block:K.big", "f.py", 41, 90, "split_block"),
+        )
+        line_map = build_line_to_chunk_map(store, normalize=False)
+        assert find_enclosing_chunk(line_map, "f.py", 10) == "f.py:10-90:class:K"
+        assert (
+            find_enclosing_chunk(line_map, "f.py", 11) == "f.py:14-40:split_block:K.big"
+        )
+        assert (
+            find_enclosing_chunk(line_map, "f.py", 13) == "f.py:14-40:split_block:K.big"
+        )
+
+    def test_decorated_container_keeps_its_own_statement_line(self) -> None:
+        """A decorated class starts at the decorator; its ``class`` line is later."""
+        store = {
+            "f.py:10-90:decorated_definition:K": {
+                "metadata": {
+                    "relative_path": "f.py",
+                    "start_line": 10,
+                    "end_line": 90,
+                    "chunk_type": "decorated_definition",
+                    "decorators": ["@dataclass", "@final"],
+                }
+            },
+            **_make_store(
+                ("f.py:16-40:split_block:K.big", "f.py", 16, 40, "split_block"),
+                ("f.py:41-90:split_block:K.big", "f.py", 41, 90, "split_block"),
+            ),
+        }
+        line_map = build_line_to_chunk_map(store, normalize=False)
+        # Lines 10-12 are the two decorators and the ``class`` statement.
+        for line in (10, 11, 12):
+            assert (
+                find_enclosing_chunk(line_map, "f.py", line)
+                == "f.py:10-90:decorated_definition:K"
+            )
+        assert (
+            find_enclosing_chunk(line_map, "f.py", 13) == "f.py:16-40:split_block:K.big"
+        )
+
+    def test_module_level_split_function_extends_to_previous_chunk(self) -> None:
+        """Non-semantic chunks (module preamble) still bound the definition."""
+        store = _make_store(
+            ("f.py:1-8:module_preamble:f", "f.py", 1, 8, "module_preamble"),
+            ("f.py:12-60:split_block:main", "f.py", 12, 60, "split_block"),
+            ("f.py:61-120:split_block:main", "f.py", 61, 120, "split_block"),
+        )
+        line_map = build_line_to_chunk_map(store, normalize=False)
+        assert line_map["f.py"] == [(9, 120, "f.py:12-60:split_block:main")]
+        assert find_enclosing_chunk(line_map, "f.py", 8) is None
+
+    def test_split_function_with_no_preceding_chunk_extends_to_line_one(self) -> None:
+        store = _make_store(
+            ("f.py:5-30:split_block:main", "f.py", 5, 30, "split_block"),
+            ("f.py:31-50:split_block:main", "f.py", 31, 50, "split_block"),
+        )
+        line_map = build_line_to_chunk_map(store, normalize=False)
+        assert line_map["f.py"] == [(1, 50, "f.py:5-30:split_block:main")]
+
+    def test_two_split_methods_in_one_class_stay_separate(self) -> None:
+        store = _make_store(
+            ("f.py:1-100:class:K", "f.py", 1, 100, "class"),
+            ("f.py:4-30:split_block:K.a", "f.py", 4, 30, "split_block"),
+            ("f.py:31-50:split_block:K.a", "f.py", 31, 50, "split_block"),
+            ("f.py:54-80:split_block:K.b", "f.py", 54, 80, "split_block"),
+            ("f.py:81-100:split_block:K.b", "f.py", 81, 100, "split_block"),
+        )
+        line_map = build_line_to_chunk_map(store, normalize=False)
+        assert find_enclosing_chunk(line_map, "f.py", 3) == "f.py:4-30:split_block:K.a"
+        assert (
+            find_enclosing_chunk(line_map, "f.py", 52) == "f.py:54-80:split_block:K.b"
+        )
+        assert find_enclosing_chunk(line_map, "f.py", 1) == "f.py:1-100:class:K"
+
+    def test_split_block_excluded_when_not_in_semantic_types(self) -> None:
+        """Opting out reproduces the pre-ADR-0061 behaviour (class wins)."""
+        line_map = build_line_to_chunk_map(
+            _split_store(),
+            semantic_types=frozenset({"function", "method", "class"}),
+            normalize=False,
+        )
+        assert find_enclosing_chunk(line_map, "search/indexer.py", 181) == CLASS_ID
+
+    def test_chunk_id_from_fqn_finds_folded_split_symbol(self) -> None:
+        line_map = build_line_to_chunk_map(_split_store(), normalize=False)
+        result = chunk_id_from_fqn(
+            "search.indexer.CodeIndexManager.add_embeddings", line_map, Path(".")
+        )
+        assert result == SPLIT_1
