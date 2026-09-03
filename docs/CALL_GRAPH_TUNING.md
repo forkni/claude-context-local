@@ -391,6 +391,16 @@ to a non-existent chunk ID.
 Valid values: `"pyan"`, `"libcst"`, `"lsp"`.  Remove a resolver by removing
 its name from the list.
 
+**`resolvers` is `benchmark_locked`** (`search/index_probe.py`'s
+`FORBIDDEN_AUTO_TUNE_KEYS`) as of the 2026-09-03 call-graph verification
+session: `RESOLVER_TIER_CALIBRATION_20260902.md` §11/§12 execution-witnessed
+scoring considered dropping pyan (post-gate `prec_lb_cov` 0.2510) and decided
+it stays (0.6032 after the CLASS call-position gate, `recall_marginal`
+flat). This is an auto-tune interdiction, not a human-editing freeze — the
+value above remains a legitimate manual choice for a project that wants a
+faster/lower-precision index; only `search/index_probe.py`'s automated
+probe is barred from rewriting it.
+
 ### 6.4 LSP Tier
 
 ```json
@@ -513,6 +523,10 @@ interval on a healthy run.
 when the `[lsp]` extra is installed (`pip install -e ".[lsp]"`); otherwise the resolver's
 `available()` probe fails and it silently no-ops, so the "Balanced (default)" row above behaves
 identically to the pre-LSP pipeline on a machine that never installed the extra.
+
+Every `resolvers` value in this table is still a valid **manual** choice — see §6.3's
+`benchmark_locked` note: the lock only blocks `search/index_probe.py`'s automated probe from
+rewriting `resolvers`, not a human deliberately picking one of these presets.
 
 ### 6.7 `inject_on_incremental` — Resolver Edges on Incremental Passes (ADR-0044)
 

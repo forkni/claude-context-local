@@ -1547,7 +1547,15 @@ class CallGraphConfig:
 
     resolvers: list[str] | None = field(
         default=None,
-        metadata=spec(reader="search/call_edge_injection.py"),
+        metadata=spec(
+            reader="search/call_edge_injection.py",
+            benchmark_locked=(
+                "[precision] RESOLVER_TIER_CALIBRATION_20260902 §11/§12: "
+                "execution-witnessed per-tier scoring; B4 decided pyan stays "
+                "(post-gate prec_lb_cov 0.2510->0.6032, recall_marginal flat) -- "
+                "dropping a resolver is a human decision"
+            ),
+        ),
     )
     """Resolver names to attempt in the injection pipeline.
 
@@ -1725,7 +1733,16 @@ class CallGraphConfig:
 
     ambiguous_fanout_cap: int = field(
         default=3,
-        metadata=spec(range=(1.0, 50.0), reader="search/graph_integration.py"),
+        metadata=spec(
+            range=(1.0, 50.0),
+            reader="search/graph_integration.py",
+            benchmark_locked=(
+                "[graph] ADR-0060 §probe: cap=3 holds voro-engine ambiguous-edge "
+                "growth to +36,318 (+90% links) vs +77,172 (+190%) uncapped; "
+                "CANON_GATE_FANOUT_CAP_20260903 confirms Python retrieval "
+                "unaffected (63q 0.8348 / 133q 0.6375, both flat)"
+            ),
+        ),
     )
     """Maximum candidate edges written for one ambiguous C-family call site.
 
@@ -1898,9 +1915,21 @@ def _derive_benchmark_locks(subconfig_types: dict[str, type]) -> dict[str, str]:
     """Derive ``{"section.field": citation}`` for every field declared with
     ``spec(benchmark_locked=...)``.
 
-    Single declaration site per ADR-0022: a benchmark-pinned field carries its
-    own "do not re-tune" citation on its ``spec()`` row instead of being
-    restated in a hand-typed frozenset and a parallel citations dict in
+    Despite the name, ``benchmark_locked`` is an auto-tune interdiction with a
+    written reason, not strictly "this exact value was benchmark-optimal" --
+    two existing rows cite a pending A/B and a human retrieval-quality
+    decision rather than a completed measurement (see
+    ``graph_enhanced.centrality_exclude_phantoms`` /
+    ``graph_enhanced.drop_ambiguous_traversal_edges``). The common thread is
+    ``index_probe.py``'s own rule: a probe has no golden set on arbitrary
+    projects, so these stay human decisions. Citations increasingly open with
+    a bracketed genre tag (``[retrieval]``/``[latency]``/``[graph]``/
+    ``[precision]``/``[pending]``/``[decision]``) so the panel stays
+    self-documenting without a second metadata key.
+
+    Single declaration site per ADR-0022: a locked field carries its own "do
+    not re-tune" citation on its ``spec()`` row instead of being restated in
+    a hand-typed frozenset and a parallel citations dict in
     ``search/index_probe.py``. ``index_probe.FORBIDDEN_AUTO_TUNE_KEYS`` and
     ``index_probe.BENCHMARK_LOCK_CITATIONS`` are views over this table (plus
     the one non-benchmark routing lock, ``embedding.model_name``).

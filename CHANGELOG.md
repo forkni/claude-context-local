@@ -22,6 +22,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by measurement (63q/133q golden-set canons flat, see
   `evaluation/CANON_GATE_FANOUT_CAP_20260903.md`).
 
+### Changed
+
+- **`CallGraphConfig.resolvers` and `CallGraphConfig.ambiguous_fanout_cap` are now
+  `benchmark_locked`** (22 → 24 `FORBIDDEN_AUTO_TUNE_KEYS`) — `resolvers` cites
+  `RESOLVER_TIER_CALIBRATION_20260902` §11/§12 (B4 decided pyan stays: post-gate
+  `prec_lb_cov` 0.2510→0.6032, `recall_marginal` flat); `ambiguous_fanout_cap` cites ADR-0060
+  and `evaluation/CANON_GATE_FANOUT_CAP_20260903.md` (cap holds voro-engine ambiguous-edge growth
+  to +90% vs +190% uncapped, Python retrieval canons flat). Neither changes behavior — the lock
+  only blocks `search/index_probe.py`'s automated probe from rewriting the field; both remain
+  legitimate manual config edits. Introduces a citation-genre-prefix convention
+  (`[retrieval]`/`[latency]`/`[graph]`/`[precision]`/`[pending]`/`[decision]`) on all
+  `benchmark_locked` strings so a reader can tell a measured-and-pinned retrieval result apart
+  from a settled human decision without a second metadata key.
+
 ### Migration
 
 - **Reindex required to see C/C++ call edges.** File content is unchanged by this change, so

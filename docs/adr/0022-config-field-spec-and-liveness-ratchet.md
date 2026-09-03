@@ -160,6 +160,23 @@ manual bump.
 
 ### `:tuned_parameters`'s Benchmark-Locked list now derives from `FORBIDDEN_AUTO_TUNE_KEYS`
 
+> **Addendum (2026-09-03).** `benchmark_locked` was already broader than its name — two
+> pre-existing citations (`centrality_exclude_phantoms`, `drop_ambiguous_traversal_edges`)
+> pin a human decision or an A/B "not yet recorded", not a retrieval-benchmark number.
+> Rather than fork a parallel `decision_locked` key (which would fork
+> `_derive_benchmark_locks`, both derived views, the pinned test, and the menu panel — four
+> surfaces for zero behavioural difference, undoing exactly what this ADR collapsed), the key
+> stays reused as-is. Every new `benchmark_locked` citation string now opens with a
+> bracketed genre tag — `[retrieval]` / `[latency]` / `[graph]` / `[precision]` /
+> `[pending]` / `[decision]` — so a reader can tell "measured on the golden set" from
+> "settled by human judgment, no re-tuning without discussion" without a second metadata key
+> or code change. `CallGraphConfig.resolvers` (`[precision]`) and
+> `CallGraphConfig.ambiguous_fanout_cap` (`[graph]`) adopted the convention when they were
+> locked (22 → 24 keys); existing citations were left untagged rather than retrofitted, since
+> the operative rule the docstrings already state — "an auto-tune interdiction with a written
+> reason", not strictly a benchmark result — does not require every prior string rewritten to
+> stay correct.
+>
 > **Superseded (2026-09-02).** The two hand-typed tables described below no longer
 > exist. Each benchmark-pinned field now declares its own citation on its `spec()` row
 > via `spec(benchmark_locked="...")`; `SearchConfig._BENCHMARK_LOCK_CITATIONS` is
