@@ -368,3 +368,117 @@ class TestSplitBlockFolding:
             "search.indexer.CodeIndexManager.add_embeddings", line_map, Path(".")
         )
         assert result == SPLIT_1
+
+
+class TestChunkIdFromFqnSameFileCollision:
+    """Same bare name defined twice in one file: as a method and as a function.
+
+    Mirrors ``utils/observability.py`` (``_NoopExporter.force_flush`` at
+    line 76, module-level ``force_flush`` at line 90) — resolver precision
+    row 11, 2026-09-02.  The method sorts first in the line map, so a pure
+    suffix match used to return it for the *function* FQN.
+    """
+
+    METHOD = "utils/observability.py:76-77:method:_NoopExporter.force_flush"
+    FUNCTION = "utils/observability.py:90-102:function:force_flush"
+
+    def _line_map(self) -> dict:
+        return {
+            "utils/observability.py": [(76, 77, self.METHOD), (90, 102, self.FUNCTION)]
+        }
+
+    def test_function_fqn_prefers_module_function(self) -> None:
+        result = chunk_id_from_fqn(
+            "utils.observability.force_flush", self._line_map(), Path(".")
+        )
+        assert result == self.FUNCTION
+
+    def test_method_fqn_prefers_method(self) -> None:
+        result = chunk_id_from_fqn(
+            "utils.observability._NoopExporter.force_flush",
+            self._line_map(),
+            Path("."),
+        )
+        assert result == self.METHOD
+
+    def test_order_independent(self) -> None:
+        """Result does not depend on which chunk sorts first in the file."""
+        reversed_map = {
+            "utils/observability.py": [(90, 102, self.FUNCTION), (76, 77, self.METHOD)]
+        }
+        assert (
+            chunk_id_from_fqn(
+                "utils.observability.force_flush", reversed_map, Path(".")
+            )
+            == self.FUNCTION
+        )
+        assert (
+            chunk_id_from_fqn(
+                "utils.observability._NoopExporter.force_flush",
+                reversed_map,
+                Path("."),
+            )
+            == self.METHOD
+        )
+
+    def test_normalized_ids_same_behaviour(self) -> None:
+        method = "utils/observability.py:method:_NoopExporter.force_flush"
+        function = "utils/observability.py:function:force_flush"
+        line_map = {"utils/observability.py": [(76, 77, method), (90, 102, function)]}
+        assert (
+            chunk_id_from_fqn("utils.observability.force_flush", line_map, Path("."))
+            == function
+        )
+        assert (
+            chunk_id_from_fqn(
+                "utils.observability._NoopExporter.force_flush", line_map, Path(".")
+            )
+            == method
+        )
+
+
+class TestChunkIdFromFqnFallbacks:
+    def test_suffix_fallback_when_no_exact(self) -> None:
+        """pyan-style FQN that omits the class still resolves via suffix."""
+        method = "pkg/mod.py:10-20:method:Klass.run"
+        line_map = {"pkg/mod.py": [(10, 20, method)]}
+        assert chunk_id_from_fqn("pkg.mod.run", line_map, Path(".")) == method
+
+    def test_shape_preference_among_suffix_candidates(self) -> None:
+        """Synthetic: two suffix candidates, the kind matching the tail shape wins.
+
+        Tail ``run`` is one part, so the ``function``-kind chunk is preferred
+        over the ``method``-kind one regardless of file order.
+        """
+        method = "pkg/mod.py:5-8:method:Outer.run"
+        function = "pkg/mod.py:20-30:function:Inner.run"
+        ordered = {"pkg/mod.py": [(5, 8, method), (20, 30, function)]}
+        flipped = {"pkg/mod.py": [(20, 30, function), (5, 8, method)]}
+        assert chunk_id_from_fqn("pkg.mod.run", ordered, Path(".")) == function
+        assert chunk_id_from_fqn("pkg.mod.run", flipped, Path(".")) == function
+
+    def test_decorated_definition_uses_name_shape(self) -> None:
+        """decorated_definition kind is shape-agnostic: name part count decides."""
+        deco_method = "pkg/mod.py:5-8:decorated_definition:Klass.run"
+        deco_func = "pkg/mod.py:20-30:decorated_definition:run"
+        line_map = {"pkg/mod.py": [(5, 8, deco_method), (20, 30, deco_func)]}
+        assert chunk_id_from_fqn("pkg.mod.run", line_map, Path(".")) == deco_func
+        assert (
+            chunk_id_from_fqn("pkg.mod.Klass.run", line_map, Path(".")) == deco_method
+        )
+
+    def test_tie_falls_back_to_file_order(self) -> None:
+        """Identical shape and name (e.g. split_block halves): first in file wins."""
+        first = "pkg/mod.py:5-8:split_block:run"
+        second = "pkg/mod.py:9-12:split_block:run"
+        line_map = {"pkg/mod.py": [(5, 8, first), (9, 12, second)]}
+        assert chunk_id_from_fqn("pkg.mod.run", line_map, Path(".")) == first
+
+    def test_file_present_but_no_match_continues_split(self) -> None:
+        """A file that exists but lacks the name doesn't stop the split search."""
+        deeper = "a/b.py:1-3:function:c"
+        line_map = {
+            "a/b/c.py": [(1, 3, "a/b/c.py:1-3:function:other")],
+            "a/b.py": [(1, 3, deeper)],
+        }
+        assert chunk_id_from_fqn("a.b.c", line_map, Path(".")) == deeper
