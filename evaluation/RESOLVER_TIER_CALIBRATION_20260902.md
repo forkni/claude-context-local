@@ -374,16 +374,50 @@ survives because it is a different mechanism: a METHOD callee (`ModelLoader.load
 attribute flow whose `split_block` chunks collapse to the class chunk. That is outside the
 CLASS gate and remains open.
 
-**`precision_estimate.py` reading**: with the existing labels, pyan `prec_est` moves
-0.2510 → 0.6032 (ω 0.25 → 0.60), now "above tag:exact 0.4228, CI clear". The p̂ term is
+**`precision_estimate.py` reading**: with the 2026-09-02 labels, pyan `prec_est` moves
+0.2510 → 0.6032 (ω 0.25 → 0.60), now "above tag:exact 0.4228, CI clear". That p̂ term is
 biased low: the 0/10 sample was drawn from the pre-gate population and consisted entirely of
-the leak class that no longer exists. A fresh post-gate sample was emitted to
-`tmp/after2_precision_sample.json` in the worktree and is not yet labeled; do not publish an
-ω for pyan until it is.
+the leak class that no longer exists, so a fresh post-gate sample was drawn and labeled.
+
+**Post-gate pyan sample (labeled 2026-09-03, same rule as section 5's sample)**: 10 rows,
+evenly spaced over the 123 unlabeled covered pyan edges of the post-gate index. Files (local,
+untracked per the `evaluation/` rule): `evaluation/resolver_precision_sample_postgate_20260903.json`,
+`evaluation/resolver_precision_labels_postgate_20260903.json`. Only the pyan rows are labeled;
+26 of the 30 lsp/libcst/ast rows differ from the 2026-09-02 sample, whose labels remain
+authoritative for those tiers.
+
+| row | caller → callee | label | mechanism |
+|---|---|---|---|
+| 20 | `LanguageChunker.function_node_types` → `LanguageChunker._get_splittable_node_types` | false | attribute flow: reads `self.splittable_node_types`, bound in `__init__` from the callee |
+| 21 | `CodeEmbedder.embed_query` → `CodeEmbedder.__enter__` | false | `with self._lifecycle_lock:` enters a `threading.Lock`; pyan resolved the dunder to the class's own |
+| 22 | `CodeEmbedder.embed_chunk` → `CodeEmbedder.__exit__` | false | same as row 21 |
+| 23 | `TraceCollector.uninstall` → `_current_thread_profile` | false | attribute flow: passes `self._prev_thread_profile`, bound in `install()` from the callee |
+| 24 | `handle_switch_embedding_model` → `with_mutation_lock` | false | decorator application at module import, not in the handler body |
+| 25 | `handle_find_connections` → `RelationshipAnalyzer.from_searcher` | **true** | direct call (`search_handlers.py:363`) |
+| 26 | `_install_layer3_embedding_split` → `class:CodeEmbedder` | false | monkeypatches class attributes; never constructs |
+| 27 | `PathFilter.all_includes_unmatched` → `PathFilter._parse_all` | false | attribute flow: reads `self.include_patterns` / `self.include_hits`, bound in `__init__` via the callee |
+| 28 | `HybridSearcher.add_embeddings` → `GraphIntegration.from_storage` | false | attribute flow: calls `self._graph.populate_from_embeddings`; `_graph` was bound from the callee |
+| 29 | `CodeIndexManager.search` → `FaissVectorIndex.search` | **true** | direct call (`indexer.py:305`) |
+
+p̂ = 2/10, Wilson 95% [0.057, 0.510]. Estimator on the post-gate scores: pyan
+`prec_est` **0.6826**, range [0.6257, 0.8055], **ω 0.70**, declared 0.75 inside the range,
+"above tag:exact 0.4228, CI clear". Wilson n=10 is thin; the ω is indicative, not a
+re-declaration.
+
+What the remaining false rows say: the CLASS leak is gone (only row 26 is a class target,
+and it is a monkeypatch, not a reference leak). The dominant residual mechanism is
+**attribute flow** (rows 20, 23, 27, 28, plus row 22 of the earlier sample): pyan resolves a
+`self.<attr>` read to the function whose return value was bound to that attribute elsewhere,
+and emits a FUNCTION/METHOD callee the body never calls. Second is **dunder misresolution**
+(rows 21, 22): `with`/context-manager protocol calls on a non-class attribute resolve to the
+enclosing class's own `__enter__`/`__exit__`. Both are callable-flavor callees, so the
+call-position gate cannot touch them; a fix would need pyan's attribute-flow edges
+distinguished from its direct-call edges, which `uses_edges` does not expose. Row 24 is a
+decorator-application edge, arguably a correct static dependency but not a body call under
+the pinned rule.
 
 **B4 decision**: pyan's marginal recall over libcst is unchanged (0.1113 → 0.1101, 186 → 184
 direct hits), far outside the run-to-run noise on this substrate, so the plan's removal
 condition ("marginal recall inside noise") is not met. pyan stays, at 51% of its former edge
-count and with its lower-bound precision (0.6032) now above the declared confidence of the
-`ast` tier and inside the [0.6032, 0.7133] range the estimator gives it against the declared
-0.75. Declared confidences remain a separate decision.
+count, with lower-bound precision 0.6032 and a labeled `prec_est` of 0.6826 (ω 0.70) whose
+range contains the declared 0.75. Declared confidences remain a separate decision.
