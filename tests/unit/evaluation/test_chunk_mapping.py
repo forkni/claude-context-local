@@ -211,7 +211,7 @@ NEXT_METHOD_ID = "search/indexer.py:284-400:method:CodeIndexManager.search"
 SPLIT_NORM = "search/indexer.py:method:CodeIndexManager.add_embeddings"
 
 
-def _split_store() -> dict:
+def _split_store() -> dict[str, dict[str, dict[str, object]]]:
     """A class whose middle method is chunked as two split_block fragments.
 
     Mirrors the live self-index: the ``def add_embeddings`` line is 181, the
@@ -317,6 +317,34 @@ class TestSplitBlockFolding:
             )
         assert (
             find_enclosing_chunk(line_map, "f.py", 13) == "f.py:16-40:split_block:K.big"
+        )
+
+    def test_multi_line_decorator_counts_its_source_lines(self) -> None:
+        """Decorator text is the full node text and may span lines (review #66)."""
+        store = {
+            "f.py:10-90:decorated_definition:K": {
+                "metadata": {
+                    "relative_path": "f.py",
+                    "start_line": 10,
+                    "end_line": 90,
+                    "chunk_type": "decorated_definition",
+                    # Lines 10-13: a three-line decorator, then ``class K:``.
+                    "decorators": ["@register(\n    name='k',\n)"],
+                }
+            },
+            **_make_store(
+                ("f.py:17-40:split_block:K.big", "f.py", 17, 40, "split_block"),
+                ("f.py:41-90:split_block:K.big", "f.py", 41, 90, "split_block"),
+            ),
+        }
+        line_map = build_line_to_chunk_map(store, normalize=False)
+        for line in (10, 11, 12, 13):
+            assert (
+                find_enclosing_chunk(line_map, "f.py", line)
+                == "f.py:10-90:decorated_definition:K"
+            )
+        assert (
+            find_enclosing_chunk(line_map, "f.py", 14) == "f.py:17-40:split_block:K.big"
         )
 
     def test_module_level_split_function_extends_to_previous_chunk(self) -> None:

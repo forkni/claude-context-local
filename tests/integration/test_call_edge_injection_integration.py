@@ -190,3 +190,112 @@ def test_incremental_index_recovers_edges_when_enabled(mini_repo_project, tmp_pa
     data = json.loads(graph_path.read_text())
     resolved_edges = [edge for edge in data["edges"] if edge.get("resolver_source")]
     assert resolved_edges, "expected at least one edge with resolver_source set"
+
+
+@pytest.fixture
+def split_method_project(tmp_path):
+    """A project whose only class has one method long enough to be split.
+
+    ``main.run`` calls ``Worker.process`` cross-module, and ``Worker.process``
+    calls ``helpers.compute`` cross-module. Both call sites live in or target
+    a method the chunker breaks into ``split_block`` fragments (the body is
+    far past ``max_chunk_lines``/``max_split_chars``), so before ADR-0061 the
+    resolver line map mapped every line of that method to ``class:Worker``.
+    """
+    project_dir = tmp_path / "split_method_project"
+    project_dir.mkdir()
+    (project_dir / "helpers.py").write_text(
+        '"""Leaf helper called from inside the long method."""\n\n\n'
+        "def compute(value: int) -> int:\n"
+        '    """Double the value."""\n'
+        "    return value * 2\n",
+        encoding="utf-8",
+    )
+    # The splitter only cuts between block-boundary statements (if/for/...)
+    # that are direct children of the function body, so the padding is a flat
+    # run of small ``if`` blocks rather than one big loop.
+    body = "".join(
+        f"        if total >= {i}:  # padding block {i}\n"
+        f"            total = total + compute(items[{i} % len(items)])\n"
+        for i in range(120)
+    )
+    (project_dir / "worker.py").write_text(
+        '"""Holder of the oversized method."""\n\n'
+        "from helpers import compute\n\n\n"
+        "class Worker:\n"
+        '    """Owns one method long enough to be split into fragments."""\n\n'
+        "    def process(self, items: list[int]) -> int:\n"
+        '        """Sum the doubled items, very verbosely."""\n'
+        "        total = 0\n" + body + "        return total\n",
+        encoding="utf-8",
+    )
+    (project_dir / "main.py").write_text(
+        '"""Entry point calling the split method cross-module."""\n\n'
+        "from worker import Worker\n\n\n"
+        "def run() -> int:\n"
+        '    """Drive the worker."""\n'
+        "    return Worker().process([1, 2, 3])\n",
+        encoding="utf-8",
+    )
+    return project_dir
+
+
+@requires_pyan
+def test_split_method_callee_lands_on_split_block_not_class(
+    split_method_project, tmp_path
+):
+    """ADR-0061 through the production path: a resolver edge into a long
+    (split) method must target one of its ``split_block`` nodes, never the
+    enclosing ``class`` node.
+
+    ``inject_call_edges`` builds its line map with the default
+    ``semantic_types`` (search/call_edge_injection.py), so this is the same
+    map every real index build uses, not only the evaluation tooling.
+    """
+    embedder = CodeEmbedder()
+    hybrid_searcher = HybridSearcher(
+        storage_dir=str(tmp_path / "index"),
+        embedder=embedder,
+        project_id="split_method_test",
+    )
+    chunker = MultiLanguageChunker.for_project(str(split_method_project))
+    incremental_indexer = IncrementalIndexer(
+        indexer=hybrid_searcher,
+        embedder=embedder,
+        chunker=chunker,
+        snapshot_manager=SnapshotManager(storage_dir=tmp_path / "snapshots"),
+        resource_refresher=McpResourceRefresher(),
+    )
+
+    result = incremental_indexer.incremental_index(
+        str(split_method_project), "split_method_test"
+    )
+    assert result.success
+    assert result.call_edges_injected > 0
+
+    graph_path = hybrid_searcher.dense_index.graph_storage.graph_path
+    data = json.loads(graph_path.read_text())
+    split_nodes = [
+        node["id"]
+        for node in data["nodes"]
+        if ":split_block:Worker.process" in node["id"]
+    ]
+    assert len(split_nodes) >= 2, f"method was not split: {split_nodes}"
+
+    resolved = [edge for edge in data["edges"] if edge.get("resolver_source")]
+    into_split = [e for e in resolved if ":split_block:Worker.process" in e["target"]]
+    assert into_split, "no resolver edge reached a Worker.process split_block node"
+    # ``Worker()`` in main.run is a genuine class-target edge, recorded at the
+    # ``class`` statement line. The bug this guards against is the *other*
+    # kind: a callee ``def`` line inside the class body falling through to the
+    # class chunk because no fragment covered it.
+    (class_id,) = [n["id"] for n in data["nodes"] if ":class:Worker" in n["id"]]
+    class_start = int(class_id.split(":")[1].split("-")[0])
+    inside_body = [
+        e
+        for e in resolved
+        if e["target"] == class_id and (e.get("line") or 0) not in (0, class_start)
+    ]
+    assert not inside_body, (
+        f"resolver edges still land on the class body: {inside_body}"
+    )

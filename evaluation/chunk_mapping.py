@@ -35,9 +35,18 @@ DEFAULT_SEMANTIC_TYPES: frozenset[str] = frozenset(
 
 
 def _decorator_line_count(meta: Mapping[str, Any]) -> int:
-    """Number of decorator entries recorded on a chunk (0 when absent)."""
+    """Number of source lines the chunk's decorators occupy (0 when absent).
+
+    ``metadata["decorators"]`` holds each decorator's full node text
+    (``PythonChunker.extract_metadata``), which spans several lines for e.g.
+    ``@pytest.mark.parametrize(\\n ...\\n)``; count lines, not entries.
+    """
     decorators = meta.get("decorators") or []
-    return len(decorators) if isinstance(decorators, (list, tuple)) else 0
+    if not isinstance(decorators, (list, tuple)):
+        return 0
+    return sum(
+        text.count("\n") + 1 if isinstance(text, str) else 1 for text in decorators
+    )
 
 
 def _definition_start(
@@ -93,10 +102,16 @@ def _fold_split_groups(
     :func:`_definition_start`) to the last line of its last fragment.  The id
     is the normalized symbol key when *normalize* is set (every fragment
     already shares it via :func:`evaluation.metrics.normalize_chunk_id`),
-    otherwise the raw id of the fragment with the lowest ``start_line`` —
-    the same fragment ``GraphIntegration`` elects to carry the symbol's
-    outgoing AST call edges, so one real graph node owns both directions.
-    No synthetic ``method:`` node is created (ADR-0061).
+    otherwise the raw id of the fragment with the lowest ``start_line``.
+
+    That is the same fragment the graph side already treats as the symbol's
+    owner: ``GraphIntegration._resolve_callee`` picks the lowest-start
+    fragment explicitly when a callee name matches only split blocks, and
+    ``_extract_split_block_calls`` emits outgoing edges from the first
+    fragment it *sees*, which is the lowest-start one because the chunker
+    yields fragments in source order.  The election here sorts explicitly and
+    does not depend on store iteration order.  No synthetic ``method:`` node
+    is created (ADR-0061).
     """
     folded: dict[str, list[tuple[int, int, str]]] = {}
     for (path, key), fragments in groups.items():
