@@ -22,6 +22,93 @@ from evaluation.metrics import normalize_chunk_id
 from utils.path_utils import normalize_path
 
 
+SPLIT_BLOCK = "split_block"
+
+#: Chunk types mapped by default.  ``split_block`` fragments are included
+#: since ADR-0061: every fragment of one oversized function/method is folded
+#: into a single span keyed to that symbol (see :func:`_fold_split_groups`),
+#: so a call-site line inside a long method resolves to the method rather
+#: than to the enclosing ``class`` chunk.
+DEFAULT_SEMANTIC_TYPES: frozenset[str] = frozenset(
+    {"function", "method", "class", "decorated_definition", SPLIT_BLOCK}
+)
+
+
+def _decorator_line_count(meta: Mapping[str, Any]) -> int:
+    """Number of decorator entries recorded on a chunk (0 when absent)."""
+    decorators = meta.get("decorators") or []
+    return len(decorators) if isinstance(decorators, (list, tuple)) else 0
+
+
+def _definition_start(
+    boundaries: list[tuple[int, int, int]],
+    group_start: int,
+    group_end: int,
+) -> int:
+    """Extend a split symbol's span backwards over its definition line(s).
+
+    A ``split_block`` fragment starts at the first *body* statement, so the
+    ``def`` line (plus any decorators and a multi-line signature) is covered
+    by no fragment at all.  Both the LSP and the pyan resolver report a callee
+    by exactly that ``def`` line, so without this extension the line lookup
+    falls through to the enclosing class chunk.
+
+    The definition is bounded below by every chunk that ends before the first
+    fragment (the previous sibling: nothing but whitespace, comments,
+    decorators and the signature can sit between its last line and the first
+    body statement) and by every chunk that strictly encloses the group
+    (the owning class: its ``class`` statement, plus one line per recorded
+    decorator when it is a ``decorated_definition``, must stay outside the
+    method's span).  The tightest of those bounds is used; a symbol with no
+    preceding chunk at all extends to line 1.
+
+    Args:
+        boundaries: ``(start_line, end_line, decorator_count)`` for every
+            chunk in the file with valid line numbers, any chunk type.
+        group_start: Lowest ``start_line`` across the group's fragments.
+        group_end: Highest ``end_line`` across the group's fragments.
+
+    Returns:
+        The 1-based line the merged span should start at (``<= group_start``).
+    """
+    candidates = [1]
+    for start, end, n_decorators in boundaries:
+        if end < group_start:
+            candidates.append(end + 1)
+        elif start < group_start and end >= group_end:
+            # Strictly enclosing container: keep its own statement line (and
+            # its decorator lines, which precede the statement) outside.
+            candidates.append(start + 1 + n_decorators)
+    return min(max(candidates), group_start)
+
+
+def _fold_split_groups(
+    groups: Mapping[tuple[str, str], list[tuple[int, int, str]]],
+    boundaries: Mapping[str, list[tuple[int, int, int]]],
+    normalize: bool,
+) -> dict[str, list[tuple[int, int, str]]]:
+    """Collapse each split symbol's fragments into one span with one chunk id.
+
+    The span runs from the symbol's definition line (see
+    :func:`_definition_start`) to the last line of its last fragment.  The id
+    is the normalized symbol key when *normalize* is set (every fragment
+    already shares it via :func:`evaluation.metrics.normalize_chunk_id`),
+    otherwise the raw id of the fragment with the lowest ``start_line`` —
+    the same fragment ``GraphIntegration`` elects to carry the symbol's
+    outgoing AST call edges, so one real graph node owns both directions.
+    No synthetic ``method:`` node is created (ADR-0061).
+    """
+    folded: dict[str, list[tuple[int, int, str]]] = {}
+    for (path, key), fragments in groups.items():
+        fragments.sort()
+        group_start = fragments[0][0]
+        group_end = max(end for _, end, _ in fragments)
+        cid = key if normalize else fragments[0][2]
+        start = _definition_start(boundaries.get(path, []), group_start, group_end)
+        folded.setdefault(path, []).append((start, group_end, cid))
+    return folded
+
+
 def build_line_to_chunk_map(
     metadata_store: Any,
     semantic_types: frozenset[str] | None = None,
@@ -29,13 +116,20 @@ def build_line_to_chunk_map(
 ) -> dict[str, list[tuple[int, int, str]]]:
     """Build a per-file sorted list of ``(start_line, end_line, chunk_id)``.
 
+    ``split_block`` fragments (when included in *semantic_types*) never appear
+    individually: all fragments of one symbol are folded into a single span
+    that also covers the symbol's definition line, keyed to one chunk id —
+    see :func:`_fold_split_groups`.  Every other chunk type maps one span
+    per chunk.
+
     Args:
         metadata_store: A dict-like store mapping raw chunk_id → entry dict.
             Each entry must have a nested ``"metadata"`` dict with keys
             ``relative_path``, ``start_line``, ``end_line``, and
             ``chunk_type``.
         semantic_types: Chunk types to include.  Defaults to
-            ``{function, method, class, decorated_definition}``.
+            :data:`DEFAULT_SEMANTIC_TYPES`
+            (``{function, method, class, decorated_definition, split_block}``).
         normalize: When *True* (default), the stored ``chunk_id`` is the
             *normalized* id (line-range stripped via
             :func:`evaluation.metrics.normalize_chunk_id`).  When *False*,
@@ -48,10 +142,13 @@ def build_line_to_chunk_map(
         that :func:`find_enclosing_chunk` can iterate it efficiently.
     """
     if semantic_types is None:
-        semantic_types = frozenset(
-            {"function", "method", "class", "decorated_definition"}
-        )
+        semantic_types = DEFAULT_SEMANTIC_TYPES
     result: dict[str, list[tuple[int, int, str]]] = {}
+    # Every chunk with valid lines, any type: the bounds a split symbol's
+    # definition line is searched between.
+    boundaries: dict[str, list[tuple[int, int, int]]] = {}
+    # (path, normalized symbol key) → raw fragments of one split symbol.
+    split_groups: dict[tuple[str, str], list[tuple[int, int, str]]] = {}
     for raw_id, entry in metadata_store.items():
         meta = entry.get("metadata", {})
         path = normalize_path(meta.get("relative_path", ""))
@@ -62,9 +159,21 @@ def build_line_to_chunk_map(
         start = meta.get("start_line")
         end = meta.get("end_line")
         chunk_type = meta.get("chunk_type", "")
-        if path and start and end and chunk_type in semantic_types:
-            cid = normalize_chunk_id(raw_id) if normalize else raw_id
-            result.setdefault(path, []).append((start, end, cid))
+        if not (path and start and end):
+            continue
+        boundaries.setdefault(path, []).append(
+            (start, end, _decorator_line_count(meta))
+        )
+        if chunk_type not in semantic_types:
+            continue
+        if chunk_type == SPLIT_BLOCK:
+            key = (path, normalize_chunk_id(raw_id))
+            split_groups.setdefault(key, []).append((start, end, raw_id))
+            continue
+        cid = normalize_chunk_id(raw_id) if normalize else raw_id
+        result.setdefault(path, []).append((start, end, cid))
+    for path, spans in _fold_split_groups(split_groups, boundaries, normalize).items():
+        result.setdefault(path, []).extend(spans)
     for chunks in result.values():
         chunks.sort()
     return result
