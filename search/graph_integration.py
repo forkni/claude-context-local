@@ -18,6 +18,7 @@ except ImportError:
 
 from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
 from search.chunk_id import is_chunk_id as _is_chunk_id
+from search.config import get_search_config
 from utils.path_utils import normalize_path
 
 
@@ -714,6 +715,12 @@ class GraphIntegration:
                 )
 
         # === PASS 2: add call + relationship edges ===
+        # Build-time ambiguous fan-out cap (Wall-2 item 5, C-family only).
+        # Read once per build, not per ambiguous call-site -- get_search_config()
+        # does a cheap stat() each call (documented as intentional in
+        # SearchConfigManager.load_config), but there is no reason to pay it
+        # per-callsite when one value covers the whole pass.
+        fanout_cap = get_search_config().call_graph.ambiguous_fanout_cap
         self._file_ast_cache = {}
         self._seen_split_methods = set()
         call_edges = 0
@@ -753,6 +760,8 @@ class GraphIntegration:
                             name_to_chunk_ids,
                             caller_file=spec.file_path,
                             callee_qualified=callee_qualified,
+                            language=spec.language,
+                            fanout_cap=fanout_cap,
                         )
                         if ambiguous:
                             # Edges land between spec.chunk_id and real candidate
@@ -1105,8 +1114,10 @@ class GraphIntegration:
         name_to_chunk_ids: dict[str, list[str]],
         caller_file: str | None = None,
         callee_qualified: str | None = None,
+        language: str = "python",
+        fanout_cap: int | None = None,
     ) -> list[str]:
-        """Return all candidate chunk_ids for a callee name that has multiple matches.
+        """Return candidate chunk_ids for a callee name that has multiple matches.
 
         Used by the call-site in ``_build_graph_from_chunks`` when
         ``_resolve_call_target`` returns ``None`` but the name *does* appear in
@@ -1125,11 +1136,32 @@ class GraphIntegration:
                 here, reserved for future use — by the time this is called,
                 ``_resolve_call_target`` has already tried and failed to
                 narrow candidates with it).
+            language: Chunk source language (e.g. ``"python"``, ``"cpp"``,
+                ``"c"``). Gates the build-time ambiguous fan-out cap
+                (Wall-2 item 5) to C-family languages only — with the
+                default ``"python"``, `fanout_cap` is never applied, so
+                Python callers keep every candidate exactly as before this
+                parameter existed.
+            fanout_cap: Maximum number of candidates to return for a
+                C-family ambiguous name (``CallGraphConfig.ambiguous_fanout_cap``,
+                default 3 in production). Ignored unless `language` is
+                C-family. ``None`` (the default here) disables capping
+                entirely — the value existing direct callers (e.g. unit
+                tests that construct this call without it) get.
 
         Returns:
-            List of candidate chunk_ids (possibly empty).
+            List of candidate chunk_ids (possibly empty), truncated to
+            `fanout_cap` entries when `language` is C-family and a cap is
+            given.
         """
-        return list(name_to_chunk_ids.get(callee_name, []))
+        candidates = list(name_to_chunk_ids.get(callee_name, []))
+        if (
+            language in _C_FAMILY_LANGUAGES
+            and fanout_cap is not None
+            and fanout_cap > 0
+        ):
+            candidates = candidates[:fanout_cap]
+        return candidates
 
     def save(self) -> None:
         """Save call graph to disk."""

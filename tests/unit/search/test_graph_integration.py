@@ -1414,3 +1414,114 @@ class TestWall2CFamilyResolution(TestCase):
         kwargs = storage.add_call_edge.call_args_list[0].kwargs
         self.assertEqual(kwargs["callee_name"], "c.py:10-20:method:MyClass.process")
         self.assertTrue(kwargs["is_resolved"])
+
+    # ----- item 5: build-time ambiguous fan-out cap -----
+
+    def test_python_ambiguous_fanout_uncapped_regardless_of_cap_value(self):
+        """Byte-identical: a Python ambiguous call with more candidates than
+        `fanout_cap` still returns every candidate -- the cap is gated on
+        `language`, not on whether a cap value happens to be supplied."""
+        graph, _storage = self._make_graph()
+        name_to_chunk_ids = {
+            "helper": [
+                "a.py:1-2:function:helper",
+                "b.py:1-2:function:helper",
+                "c.py:1-2:function:helper",
+                "d.py:1-2:function:helper",
+            ]
+        }
+        candidates = graph._get_ambiguous_candidates(
+            "helper", name_to_chunk_ids, language="python", fanout_cap=2
+        )
+        self.assertEqual(len(candidates), 4)
+
+    def test_cpp_ambiguous_fanout_capped(self):
+        """New behavior: a C++ ambiguous call with more candidates than
+        `fanout_cap` is truncated to the cap, preserving candidate order."""
+        graph, _storage = self._make_graph()
+        name_to_chunk_ids = {
+            "execute": [
+                "a.cpp:1-2:function:execute",
+                "b.cpp:1-2:function:execute",
+                "c.cpp:1-2:function:execute",
+                "d.cpp:1-2:function:execute",
+            ]
+        }
+        candidates = graph._get_ambiguous_candidates(
+            "execute", name_to_chunk_ids, language="cpp", fanout_cap=2
+        )
+        self.assertEqual(
+            candidates,
+            ["a.cpp:1-2:function:execute", "b.cpp:1-2:function:execute"],
+        )
+
+    def test_cpp_ambiguous_fanout_cap_none_disables_capping(self):
+        """`fanout_cap=None` (the default) disables capping entirely even
+        for a C-family language -- the value every pre-existing direct
+        caller (one that predates this parameter) gets."""
+        graph, _storage = self._make_graph()
+        name_to_chunk_ids = {
+            "execute": [
+                "a.cpp:1-2:function:execute",
+                "b.cpp:1-2:function:execute",
+                "c.cpp:1-2:function:execute",
+            ]
+        }
+        candidates = graph._get_ambiguous_candidates(
+            "execute", name_to_chunk_ids, language="cpp"
+        )
+        self.assertEqual(len(candidates), 3)
+
+    def test_ambiguous_fanout_cap_wired_from_call_graph_config(self):
+        """End-to-end: `_two_pass_build` reads
+        `get_search_config().call_graph.ambiguous_fanout_cap` once per build
+        and threads it into `_get_ambiguous_candidates` -- the only test
+        here that exercises that plumbing rather than calling
+        `_get_ambiguous_candidates` directly. Three same-named `.cpp`
+        definitions all qualify as source files, so prefer-definition
+        (item 4) does not disambiguate them -- they stay genuinely
+        ambiguous, which is what makes the cap observable."""
+        graph, storage = self._make_graph()
+        candidate_a = _make_result(
+            "a.cpp:1-2:function:execute",
+            name="execute",
+            file_path="a.cpp",
+            language="cpp",
+        )
+        candidate_b = _make_result(
+            "b.cpp:1-2:function:execute",
+            name="execute",
+            file_path="b.cpp",
+            language="cpp",
+        )
+        candidate_c = _make_result(
+            "c.cpp:1-2:function:execute",
+            name="execute",
+            file_path="c.cpp",
+            language="cpp",
+        )
+        caller = _make_result(
+            "bar.cpp:1-10:function:run",
+            name="run",
+            file_path="bar.cpp",
+            language="cpp",
+            calls=[
+                {"callee_name": "execute", "line_number": 5, "is_method_call": True}
+            ],
+        )
+        fake_config = Mock()
+        fake_config.call_graph.ambiguous_fanout_cap = 2
+
+        with patch(
+            "search.graph_integration.get_search_config", return_value=fake_config
+        ):
+            graph.populate_from_embeddings(
+                [candidate_a, candidate_b, candidate_c, caller]
+            )
+
+        ambiguous_calls = [
+            c
+            for c in storage.add_call_edge.call_args_list
+            if c.kwargs.get("confidence") == "ambiguous"
+        ]
+        self.assertEqual(len(ambiguous_calls), 2)
