@@ -45,9 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `relationships` sections get their own one-hop all-types inbound query, so `contained_by`,
   `docked_by`, `shares_tag_with`, etc. are unchanged. Legacy untyped edges still normalise to
   `calls` in `CodeGraphStorage.get_edge_data`, so old-format call edges are not dropped.
-  Known looseness left as-is: `GraphQueryEngine._traverse_inbound` still *expands* through
-  non-matching edges, so a depth-2 indirect caller can be reached via a non-`calls` hop; the
-  reported edge itself is always a real `calls` edge.
+  `GraphQueryEngine._traverse_inbound`/`_traverse_outbound` now also *expand* only through
+  edges that match the requested `relation_types`, so a depth-N `indirect_caller` sits at the end
+  of N real `calls` edges — previously the BFS walked through a `contains`/`docked_to` hop and
+  then picked up `calls` edges into the neighbour (four Python "indirect callers" on the same TD
+  operator). Unfiltered queries (`relation_types=None`) are unchanged.
 - **`.tdgraph.json` chunker: `scripted_by` edges were silently dropped.** The real exporter emits
   them (`{type: scripted_by, src: <host op>, dst: <DAT>, par, via}` — 110 in the first export)
   but `_SIMPLE_EDGE_MAP` had no row, so each hit the "Unrecognized edge type" debug branch.

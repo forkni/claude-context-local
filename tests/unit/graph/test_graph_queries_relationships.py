@@ -151,3 +151,80 @@ def test_single_edge_pair_still_works(query_engine, graph_storage):
     assert entry.relationship_type == "calls"
     assert len(entry.parallel_edges) == 1
     assert entry.parallel_edges[0]["relationship_type"] == "calls"
+
+
+# ---------------------------------------------------------------------------
+# Filtered BFS expands through matching edges only
+# ---------------------------------------------------------------------------
+
+
+def _add(storage, cid, kind="function", file="f.py"):
+    storage.add_node(cid, cid.split(":")[-1], kind, file, language="python")
+
+
+@pytest.fixture
+def mixed_chain_graph(graph_storage):
+    """X -calls-> Y -contains-> Z  and  W -calls-> X.
+
+    Under ``relation_types=["calls"]`` Z has *no* callers at any depth: the
+    only inbound edge into Z is ``contains``. Y has X (depth 1) and W (depth 2).
+    Reproduces the TouchDesigner shape where an operator's structural
+    neighbours (contains/docked_to) pulled in Python callers as "indirect
+    callers" because the BFS kept expanding through the non-call hop.
+    """
+    z = "net.py:1-99:network:Z"
+    y = "net.py:10-20:operator:Y"
+    x = "a.py:1-5:function:X"
+    w = "b.py:1-5:function:W"
+    for cid in (z, y, x, w):
+        _add(graph_storage, cid)
+    graph_storage.graph.add_edge(y, z, key="contains", type="contains", confidence=1.0)
+    graph_storage.graph.add_edge(x, y, key="calls", type="calls", confidence=1.0)
+    graph_storage.graph.add_edge(w, x, key="calls", type="calls", confidence=1.0)
+    return graph_storage, z, y, x, w
+
+
+def test_filtered_inbound_does_not_expand_through_non_matching_edge(
+    query_engine, mixed_chain_graph
+):
+    _, z, _y, _x, _w = mixed_chain_graph
+    entries = query_engine.get_relationships(
+        z, direction="inbound", relation_types=["calls"], max_depth=3
+    )
+    assert entries == []
+
+
+def test_filtered_inbound_still_follows_matching_chain(query_engine, mixed_chain_graph):
+    _, _z, y, x, w = mixed_chain_graph
+    entries = query_engine.get_relationships(
+        y, direction="inbound", relation_types=["calls"], max_depth=3
+    )
+    assert {(e.chunk_id, e.depth) for e in entries} == {(x, 1), (w, 2)}
+    assert all(e.relationship_type == "calls" for e in entries)
+
+
+def test_unfiltered_inbound_expansion_is_unchanged(query_engine, mixed_chain_graph):
+    """No filter → every edge matches → expansion through contains still happens."""
+    _, z, y, x, w = mixed_chain_graph
+    entries = query_engine.get_relationships(z, direction="inbound", max_depth=3)
+    assert {(e.chunk_id, e.depth) for e in entries} == {(y, 1), (x, 2), (w, 3)}
+
+
+def test_filtered_outbound_does_not_expand_through_non_matching_edge(
+    query_engine, graph_storage
+):
+    """A -uses_type-> B -calls-> C: under a calls filter A has no callees."""
+    a, b, c = "a.py:1-5:function:A", "b.py:1-5:class:B", "c.py:1-5:function:C"
+    for cid in (a, b, c):
+        _add(graph_storage, cid)
+    graph_storage.graph.add_edge(
+        a, b, key="uses_type", type="uses_type", confidence=1.0
+    )
+    graph_storage.graph.add_edge(b, c, key="calls", type="calls", confidence=1.0)
+
+    filtered = query_engine.get_relationships(
+        a, direction="outbound", relation_types=["calls"], max_depth=3
+    )
+    assert filtered == []
+    unfiltered = query_engine.get_relationships(a, direction="outbound", max_depth=3)
+    assert {(e.chunk_id, e.depth) for e in unfiltered} == {(b, 1), (c, 2)}

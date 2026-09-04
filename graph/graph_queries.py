@@ -717,6 +717,11 @@ class GraphQueryEngine:
         - ``visited``: tracks nodes queued for BFS expansion (prevents loops).
         - ``reported``: tracks nodes already added to results (prevents duplicates).
 
+        With ``relation_types`` set, the BFS only *expands* through edges that
+        match the filter, so every depth-N entry sits at the end of a chain of N
+        matching edges. Without a filter every edge matches and expansion is
+        unrestricted (unchanged behaviour).
+
         Without this separation, a predecessor reachable from two different
         query-nodes via edges of different types would be marked visited on the
         first (possibly non-matching) encounter, silently suppressing the second
@@ -763,7 +768,11 @@ class GraphQueryEngine:
                         reported.add(pred)
 
                     # Queue for BFS expansion using a separate visited guard.
-                    if depth < max_depth:
+                    # Only expand through *matching* edges: with a filter set, a
+                    # depth-N entry must be reachable via N edges of the requested
+                    # types, not via an unrelated hop (contains/docked_to/...)
+                    # followed by one matching edge.
+                    if depth < max_depth and matches:
                         for v in self._node_variants(pred):
                             if v not in visited:
                                 next_query.add(v)
@@ -826,8 +835,9 @@ class GraphQueryEngine:
                         )
                         reported.add(succ)
 
-                    # Queue for BFS expansion.
-                    if depth < max_depth and succ not in visited:
+                    # Queue for BFS expansion -- through matching edges only
+                    # (same rule as _traverse_inbound).
+                    if depth < max_depth and matches and succ not in visited:
                         next_nodes.add(succ)
                         visited.add(succ)
 
