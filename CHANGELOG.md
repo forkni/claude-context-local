@@ -49,7 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   edges that match the requested `relation_types`, so a depth-N `indirect_caller` sits at the end
   of N real `calls` edges — previously the BFS walked through a `contains`/`docked_to` hop and
   then picked up `calls` edges into the neighbour (four Python "indirect callers" on the same TD
-  operator). Unfiltered queries (`relation_types=None`) are unchanged.
+  operator). Unfiltered queries (`relation_types=None`) are unchanged. Finally,
+  `GraphQueryEngine._node_variants` no longer adds symbol-name/bare-name lookup variants for
+  `td_network` chunks (`operator`/`network` kinds): TD edges already target full chunk ids, and the
+  bare name collided with any same-named Python symbol node — a TD operator called `Logger`
+  inherited every caller of the Python `Logger` class. Python chunks keep their variants
+  byte-identically.
 - **`.tdgraph.json` chunker: `scripted_by` edges were silently dropped.** The real exporter emits
   them (`{type: scripted_by, src: <host op>, dst: <DAT>, par, via}` — 110 in the first export)
   but `_SIMPLE_EDGE_MAP` had no row, so each hit the "Unrecognized edge type" debug branch.

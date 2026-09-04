@@ -657,6 +657,14 @@ class GraphQueryEngine:
     # Private BFS helpers
     # ------------------------------------------------------------------
 
+    # Languages whose relationship edges always target full chunk ids, so a
+    # symbol-name variant can only ever alias an *unrelated* node from another
+    # language (e.g. a TD operator named ``Logger`` vs a Python ``Logger`` class).
+    _FULL_ID_EDGE_LANGUAGES: frozenset[str] = frozenset({"td_network"})
+    # Fallback when the node is absent from the graph: chunk kinds only the
+    # full-id-edge languages produce.
+    _FULL_ID_EDGE_KINDS: frozenset[str] = frozenset({"operator", "network"})
+
     def _node_variants(self, chunk_id: str) -> list[str]:
         """Return lookup variants for a node.
 
@@ -664,8 +672,16 @@ class GraphQueryEngine:
         like ``file.py:10:function:bar`` the callers store an edge to ``bar``
         (and possibly ``ClassName.bar`` → bare ``bar``).  Querying both forms
         finds callers regardless of which variant they stored.
+
+        Chunks from ``_FULL_ID_EDGE_LANGUAGES`` (TouchDesigner ``.tdgraph.json``
+        operators/networks) get no symbol-name variants: their edges already
+        carry full chunk ids, and the bare name would collide with any Python
+        symbol node of the same name, attaching that symbol's callers to the
+        operator.
         """
         variants = [chunk_id]
+        if self._uses_full_id_edges(chunk_id):
+            return variants
         if ":" in chunk_id:
             symbol = chunk_id.split(":")[-1]
             if symbol and symbol != chunk_id:
@@ -674,6 +690,16 @@ class GraphQueryEngine:
                 if bare and bare != symbol:
                     variants.append(bare)
         return variants
+
+    def _uses_full_id_edges(self, chunk_id: str) -> bool:
+        """True when ``chunk_id`` belongs to a language whose edges target full
+        chunk ids (see ``_node_variants``). Reads the graph node's ``language``
+        when present, else falls back to the chunk kind embedded in the id."""
+        node = self.storage.graph.nodes.get(chunk_id)
+        if node is not None and node.get("language"):
+            return node["language"] in self._FULL_ID_EDGE_LANGUAGES
+        parts = chunk_id.split(":")
+        return len(parts) >= 4 and parts[-2] in self._FULL_ID_EDGE_KINDS
 
     @staticmethod
     def _resolve_entry_type(

@@ -228,3 +228,84 @@ def test_filtered_outbound_does_not_expand_through_non_matching_edge(
     assert filtered == []
     unfiltered = query_engine.get_relationships(a, direction="outbound", max_depth=3)
     assert {(e.chunk_id, e.depth) for e in unfiltered} == {(b, 1), (c, 2)}
+
+
+# ---------------------------------------------------------------------------
+# TD chunks get no symbol-name lookup variants (cross-language name collision)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def name_collision_graph(graph_storage):
+    """A TD operator named ``Logger`` next to a Python class ``Logger``.
+
+    Python call edges target the *symbol name* node ("Logger"), which is how
+    ``_node_variants`` finds a class's callers. The TD operator must not pick
+    those callers up just because its bare name is the same string. TD edges
+    (here ``scripted_by``) target full chunk ids and must still resolve.
+    """
+    td_op = "Graph/net.tdgraph.json:10-20:operator:Logger"
+    td_host = "Graph/net.tdgraph.json:30-40:operator:timer1"
+    py_cls = "log.py:1-20:class:Logger"
+    py_main = "main.py:1-10:function:main"
+    graph_storage.add_node(
+        td_op, "Logger", "operator", "Graph/net.tdgraph.json", language="td_network"
+    )
+    graph_storage.add_node(
+        td_host, "timer1", "operator", "Graph/net.tdgraph.json", language="td_network"
+    )
+    graph_storage.add_node(py_cls, "Logger", "class", "log.py", language="python")
+    graph_storage.add_node(py_main, "main", "function", "main.py", language="python")
+    graph_storage.graph.add_node("Logger")  # symbol-name node Python edges target
+    graph_storage.graph.add_edge(py_main, "Logger", key="calls", type="calls")
+    graph_storage.graph.add_edge(
+        td_host, td_op, key="scripted_by", type="scripted_by", confidence=1.0
+    )
+    return td_op, td_host, py_cls, py_main
+
+
+def test_td_operator_gets_only_its_own_id_as_variant(
+    query_engine, name_collision_graph
+):
+    td_op, _, py_cls, _ = name_collision_graph
+    assert query_engine._node_variants(td_op) == [td_op]
+    assert query_engine._node_variants(py_cls) == [py_cls, "Logger"]
+
+
+def test_td_operator_does_not_inherit_python_callers_of_same_name(
+    query_engine, name_collision_graph
+):
+    td_op, _, _, _ = name_collision_graph
+    callers = query_engine.get_relationships(
+        td_op, direction="inbound", relation_types=["calls"], max_depth=3
+    )
+    assert callers == []
+
+
+def test_python_class_still_finds_callers_via_symbol_variant(
+    query_engine, name_collision_graph
+):
+    _, _, py_cls, py_main = name_collision_graph
+    callers = query_engine.get_relationships(
+        py_cls, direction="inbound", relation_types=["calls"], max_depth=1
+    )
+    assert [(e.chunk_id, e.depth) for e in callers] == [(py_main, 1)]
+
+
+def test_td_full_id_edges_still_resolve_without_variants(
+    query_engine, name_collision_graph
+):
+    td_op, td_host, _, _ = name_collision_graph
+    inbound = query_engine.get_relationships(td_op, direction="inbound", max_depth=1)
+    assert [(e.chunk_id, e.relationship_type) for e in inbound] == [
+        (td_host, "scripted_by")
+    ]
+
+
+def test_kind_fallback_when_td_node_is_absent_from_graph(query_engine):
+    """A TD chunk id that has no graph node (nothing links to it) still gets
+    no variants -- the kind segment is enough to classify it."""
+    missing = "Graph/net.tdgraph.json:1-5:operator:Logger"
+    assert query_engine._node_variants(missing) == [missing]
+    py_missing = "log.py:1-5:class:Logger"
+    assert query_engine._node_variants(py_missing) == [py_missing, "Logger"]
