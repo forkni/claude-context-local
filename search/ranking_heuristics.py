@@ -10,6 +10,7 @@ from search.ranking_policy import (
     TYPE_BOOSTS_CLASS_KEYWORD,
     TYPE_BOOSTS_CODE,
     TYPE_BOOSTS_ENTITY,
+    effective_chunk_kind,
     lifecycle_demotion,
 )
 from search.tokenization import normalize_to_tokens
@@ -46,7 +47,11 @@ class RankingHeuristics:
         else:
             type_boosts = TYPE_BOOSTS_CODE
 
-        chunk_type = result.metadata.get("chunk_type", "unknown")
+        chunk_type = effective_chunk_kind(
+            result.metadata.get("chunk_type", "unknown"),
+            result.metadata.get("tags") or (),
+            getattr(result, "chunk_id", "") or "",
+        )
         score *= type_boosts.get(chunk_type, 1.0)
 
         name = result.metadata.get("name")

@@ -592,30 +592,56 @@ against the live chunker) and `test_td_golden_schema.py` (shape and category con
   `report.relationships[<edge_fields>]` instead of the `calls`-only `direct_callers` list (the
   TD chunker emits no `calls` edges, so the stock runner scores 0.0 on every TD target).
 
-### Retrieval (`td_golden_baseline.json`, 2026-09-04, hybrid, k=10)
+### Retrieval (`td_golden_typeboost2.json`, 2026-09-04, hybrid, k=10)
 
 | Dataset | Queries | MRR | Recall@5 | Recall@10 | NDCG@5 | pool_hit_rate |
 |---|---|---|---|---|---|---|
-| td_golden (all) | 19 | 0.785 | 1.000 | 1.000 | 0.868 | **1.000** |
-| TA operator by role | 5 | 0.600 | 1.000 | 1.000 | 0.852 | 1.000 |
-| TB structure | 5 | 0.733 | 1.000 | 1.000 | 0.759 | 1.000 |
+| td_golden (all) | 19 | 0.886 | 1.000 | 1.000 | 0.907 | **1.000** |
+| TA operator by role | 5 | 0.900 | 1.000 | 1.000 | 0.910 | 1.000 |
+| TB structure | 5 | 0.800 | 1.000 | 1.000 | 0.836 | 1.000 |
 | TC class capability | 4 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
-| TD cross-reference | 5 | 0.850 | 1.000 | 1.000 | 0.886 | 1.000 |
+| TD cross-reference | 5 | 0.867 | 1.000 | 1.000 | 0.900 | 1.000 |
 
 Gate (`pool_hit_rate >= 0.9`): **PASS** (1.000, R@10 1.000, avg pool 21.8 = the whole corpus).
 The file's own `thresholds` (`mrr >= 0.9`, `recall_at_5 >= 0.85`, `hit_rate_at_5 == 1.0`):
-recall@5 **PASS**, hit_rate@5 **PASS**, MRR **FAIL** (0.785). The MRR shortfall is an ordering
-property of the current ranking, not a golden-labeling error or a text gap, and the threshold
-is kept at the target rather than lowered:
+recall@5 **PASS**, hit_rate@5 **PASS**, MRR **FAIL** (0.886 against 0.9). The remaining
+shortfall is four rank-2/3 placements, none of them a labeling error or a text gap, and the
+threshold is kept at the target rather than lowered:
 
-- **TA (MRR 0.5 on four of five queries):** the `class` chunk (`class:glslTOP`,
-  `class:constantCHOP`, `class:textDAT`, ...) outranks its instance (`operator:glsl1`, ...) on
-  every type-descriptive query. The class chunk carries the MRO and `instances:` list, so it is
-  a legitimate rank-2 answer, but the instance is the labeled primary.
-- **TB / TD018 (anchor-first):** a query that names its anchor (`glsl1`, `master1`, `noise1`)
-  ranks the anchor first and the wired/bound/referencing neighbour at rank 3-4.
+- **TA / TD003 (class above instance, one query left):** `class:textDAT` still edges out
+  `operator:glslpixel1` on "text DAT holding the pixel shader source code" (blended 0.507 vs
+  0.490). Unlike the other three TA queries, the cross-encoder itself prefers the class chunk
+  here (0.357 vs 0.333) and the class chunk's centrality is higher (0.634 vs 0.411, it is the
+  `instantiates` hub of two DATs), so the summary-level `td_class` multiplier does not flip it.
+  Not tuned further: pushing `td_class` below the `module` value it now shares would be fitting
+  one query on a 22-chunk corpus.
+- **TB / TD (anchor-first: TD006, TD010, TD018):** a query that names its anchor (`glsl1`,
+  `master1`, `noise1`) ranks the anchor first and the wired/bound/referencing neighbour at rank
+  2-3. Left as is; the anchor is a legitimate top hit for the query text.
 
-History: the first run of this golden (same day, before the chunker change below) scored
+History, second fix (type boost, same day, `td_golden_baseline.json` 0.785 ->
+`td_golden_typeboost.json` 0.811 -> `td_golden_typeboost2.json` **0.886**; TA MRR 0.600 ->
+0.900). The ranking policy had no entry for the `operator` kind (multiplier 1.0) while the TD
+chunker's per-op-type `class` chunks inherited the x1.35 `class` boost tuned for Python classes,
+so on every type-descriptive TA query the class summary outranked its own instance even when the
+cross-encoder preferred the instance (TD002: reranker 0.436 for `noise1` vs 0.255 for
+`class:noiseTOP`). `search/ranking_policy.py` now keys `operator` like `function` (1.2 / 1.15 /
+1.2) and remaps a TD class chunk to `td_class`, which carries the `module` (summary) multiplier
+in every table (0.82 / 0.85 / 0.90). The first cut keyed the remap off the chunk's `td_class`
+tag and moved only TD001 (0.811): `result_view._format_search_results` emits no `tags` key, so
+the tag is never visible to `CentralityRanker` at runtime (the same reason the ranker's
+`role:` tag path is dead and its path-heuristic fallback does the work). The remap is therefore
+also keyed off the chunk id, whose file part is a `.tdgraph.json` export only for TD chunks
+(`effective_chunk_kind(chunk_type, tags, chunk_id)`), and `RankingHeuristics` passes the same
+three arguments. The self-index contains no TD chunks and the `operator` kind exists only there,
+so the 63q canon is unaffected by construction; re-measured anyway
+(`results/canon_typeboost_63q.json`, hybrid, k=10, intent off, 2858 chunks): MRR 0.8429,
+R@5 0.6734, R@10 0.7704, NDCG@5 0.6958 against the 2026-09-01 pin 0.8419 / 0.6432 / 0.7553 /
+0.6763, i.e. at or above the pin, with the small upward drift coming from the larger index
+(2642 -> 2858 chunks since the pin), not from this change. Python `class`, `function`,
+`method` and `module` multipliers are untouched.
+
+History, first fix: the first run of this golden (same day, before the chunker change below) scored
 MRR 0.709 / R@5 0.947 / NDCG@5 0.793 with hit_rate@5 **failing** on TD015 (`operator:info1`,
 comp1's callbacks DAT, was not in the top 10). The operator chunk then rendered forward
 `inputs:`/`outputs:`/`docked to:`/`hosts docked:`/`references:` lines but neither side of

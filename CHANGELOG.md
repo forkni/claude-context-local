@@ -104,6 +104,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Ranking policy keys TD chunks explicitly** (ADR-0062 Part D2) — `search/ranking_policy.py`
+  boosts the `operator` kind like `function` (1.2 / 1.15 / 1.2) and remaps the TD chunker's
+  per-op-type `class` chunks to `td_class`, which carries the `module` (summary) multiplier
+  (0.82 / 0.85 / 0.90) instead of the x1.35 Python-class boost. `effective_chunk_kind()` keys the
+  remap off the `td_class` tag *or* a `.tdgraph.json` chunk-id file part, because the formatted
+  result rows the centrality ranker sees carry no `tags`. TD golden MRR 0.785 -> 0.886 (TA
+  0.600 -> 0.900); Python kinds and the 63q canon are unaffected.
+
 - **`CallGraphConfig.resolvers` and `CallGraphConfig.ambiguous_fanout_cap` are now
   `benchmark_locked`** (22 → 24 `FORBIDDEN_AUTO_TUNE_KEYS`) — `resolvers` cites
   `RESOLVER_TIER_CALIBRATION_20260902` §11/§12 (B4 decided pyan stays: post-gate

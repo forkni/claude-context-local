@@ -17,6 +17,7 @@ from search.ranking_policy import (
     NAME_OVERLAP_TIERS,
     TYPE_BOOSTS_CODE,
     TYPE_BOOSTS_ENTITY,
+    effective_chunk_kind,
     lifecycle_demotion,
 )
 from search.tokenization import normalize_to_tokens
@@ -241,7 +242,7 @@ class CentralityRanker:
                 chunk_id = result.get("chunk_id", "")
                 tags = result.get("tags", [])
                 name = result.get("name", "") or _extract_name_impl(chunk_id)
-                self._apply_type_boost(result, chunk_type, query_lower)
+                self._apply_type_boost(result, chunk_type, query_lower, tags)
                 self._apply_synthetic_demotion(result, chunk_type, chunk_id)
                 self._apply_core_dir_boost(result, chunk_id)
                 self._apply_role_demotion(result, chunk_id, tags, query_lower)
@@ -307,13 +308,16 @@ class CentralityRanker:
         )
 
     def _apply_type_boost(
-        self, result: dict, chunk_type: str, query_lower: str
+        self, result: dict, chunk_type: str, query_lower: str, tags=()
     ) -> None:
         """Entity-query vs code-query type multiplier.
 
         Entity queries (mentioning class/module/struct/enum) promote class chunks
         and demote module summaries.  Code queries use a milder variant.
+        TD ``class`` chunks (tagged ``td_class``) are keyed as ``td_class`` so
+        they do not outrank their own operator instances.
         """
+        chunk_type = effective_chunk_kind(chunk_type, tags, result.get("chunk_id", ""))
         is_entity_query = any(
             w in query_lower for w in ("class", "module", "struct", "enum")
         )

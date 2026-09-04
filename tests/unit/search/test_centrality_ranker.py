@@ -630,6 +630,39 @@ class TestApplyTypeBoost:
         ranker._apply_type_boost(result, "module", "find class")
         assert result["blended_score"] == pytest.approx(0.85, abs=0.001)
 
+    def test_td_class_chunk_is_demoted_not_boosted(self):
+        """A ``class`` chunk tagged ``td_class`` gets the td_class multiplier."""
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_type_boost(
+            result, "class", "the glsl shader top", ["class", "td_class"]
+        )
+        assert result["blended_score"] == pytest.approx(0.9, abs=0.001)
+
+    def test_td_class_chunk_demoted_without_tags_via_chunk_id(self):
+        """Runtime rows have no tags key; the .tdgraph.json chunk id must suffice."""
+        ranker = self._make_ranker()
+        result = {
+            "blended_score": 1.0,
+            "chunk_id": "Test_network.tdgraph.json:0-0:class:noiseTOP",
+        }
+        ranker._apply_type_boost(result, "class", "the noise generator top")
+        assert result["blended_score"] == pytest.approx(0.9, abs=0.001)
+
+    def test_untagged_class_chunk_keeps_class_boost(self):
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_type_boost(result, "class", "the glsl shader top", ["class"])
+        assert result["blended_score"] == pytest.approx(1.35, abs=0.001)
+
+    def test_operator_chunk_boosted_like_function(self):
+        ranker = self._make_ranker()
+        result = {"blended_score": 1.0}
+        ranker._apply_type_boost(
+            result, "operator", "the glsl shader top", ["operator"]
+        )
+        assert result["blended_score"] == pytest.approx(1.2, abs=0.001)
+
     def test_decorated_definition_entity_query_boost(self):
         """decorated_definition with entity query → ×1.1.
 

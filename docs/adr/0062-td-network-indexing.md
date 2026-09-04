@@ -268,6 +268,20 @@ project's storage dir (the repo's own `search_config.json` stays off; see `docs/
   instances on type-descriptive queries (TA) and a query that names its anchor ranks the anchor
   above the neighbour it asks for (TB). Both are ranking traits, not text gaps; the threshold is
   left at the target rather than lowered.
+- **Committed fixture, retrieval, second fix (type boost).** With the text gap closed the TA
+  misses were a ranking-policy artefact: `search/ranking_policy.py` had no `operator` entry
+  (x1.0) while the chunker's per-op-type `class` chunks took the x1.35 Python-class boost, so
+  the summary outranked its instance even where the cross-encoder preferred the instance.
+  `operator` is now keyed like `function`, and a TD class chunk is remapped to `td_class` with
+  the `module` multiplier. The remap keys off the chunk id's `.tdgraph.json` file part as well
+  as the `td_class` tag, because `result_view._format_search_results` does not forward `tags`
+  to `CentralityRanker` (a tag-only cut moved one query: 0.785 -> 0.811). Re-run
+  (`results/td_golden_typeboost2.json`): MRR **0.886**, NDCG@5 0.907, recall@5 / hit_rate@5 /
+  pool_hit_rate 1.000; TA MRR 0.600 -> 0.900. MRR still FAILS the 0.9 target by one
+  class-above-instance query where the cross-encoder and centrality both favour the class chunk
+  (TD003) plus the three anchor-first queries; neither is tuned further on a 22-chunk corpus.
+  The self-index has no TD chunks, so the 63q canon is unaffected by construction (re-measured,
+  see `docs/BENCHMARKS.md`).
 - **Committed fixture, typed edge recall** (`results/td_edge_recall_baseline.json`, 8 targets):
   mean recall **1.000**, 9/9 edges, every directed TD relationship type exercised. Enabled by two
   additive changes: `run_caller_recall.py --relationship-types` (unions

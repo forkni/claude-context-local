@@ -8,6 +8,7 @@ from search.ranking_policy import (
     TYPE_BOOSTS_CLASS_KEYWORD,
     TYPE_BOOSTS_CODE,
     TYPE_BOOSTS_ENTITY,
+    effective_chunk_kind,
     lifecycle_demotion,
 )
 
@@ -86,6 +87,28 @@ class TestTypeBoostDicts:
     def test_dicts_are_plain_dicts(self):
         for d in (TYPE_BOOSTS_ENTITY, TYPE_BOOSTS_CODE, TYPE_BOOSTS_CLASS_KEYWORD):
             assert isinstance(d, dict)
+
+    def test_td_class_below_operator_in_every_table(self):
+        """ADR-0062 D2: a TD class summary must never outrank its instance."""
+        for d in (TYPE_BOOSTS_ENTITY, TYPE_BOOSTS_CODE, TYPE_BOOSTS_CLASS_KEYWORD):
+            assert d["td_class"] < 1.0 < d["operator"]
+            assert d["operator"] == d["function"]
+            assert d["td_class"] == d["module"], "td_class is keyed as a summary"
+
+    def test_effective_chunk_kind_only_remaps_tagged_td_class(self):
+        assert effective_chunk_kind("class", ["class", "td_class"]) == "td_class"
+        assert effective_chunk_kind("class", ["class"]) == "class"
+        assert effective_chunk_kind("class", None) == "class"
+        assert effective_chunk_kind("operator", ["td_class"]) == "operator"
+        assert effective_chunk_kind("function", []) == "function"
+
+    def test_effective_chunk_kind_remaps_untagged_tdgraph_class_by_chunk_id(self):
+        """MCP result rows carry no tags; the .tdgraph.json file part must suffice."""
+        cid = "Graph/net.tdgraph.json:0-0:class:noiseTOP"
+        assert effective_chunk_kind("class", [], cid) == "td_class"
+        assert effective_chunk_kind("class", None, cid) == "td_class"
+        assert effective_chunk_kind("operator", [], cid) == "operator"
+        assert effective_chunk_kind("class", [], "pkg/mod.py:1-9:class:Foo") == "class"
 
     def test_callers_can_extend_without_mutation(self):
         """Rankers should be able to merge without mutating the shared dict."""

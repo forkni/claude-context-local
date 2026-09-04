@@ -75,6 +75,8 @@ TYPE_BOOSTS_CLASS_KEYWORD: dict[str, float] = {
     "function": 1.2,
     "method": 1.2,
     "module": 0.82,
+    "operator": 1.2,
+    "td_class": 0.82,
 }
 """Applied when the query explicitly contains the word 'class' (ranking_heuristics branch)."""
 
@@ -84,6 +86,8 @@ TYPE_BOOSTS_ENTITY: dict[str, float] = {
     "method": 1.15,
     "module": 0.85,
     "struct": 1.25,
+    "operator": 1.15,
+    "td_class": 0.85,
 }
 """Applied when the query looks like an entity/type name (shared by both rankers)."""
 
@@ -92,8 +96,41 @@ TYPE_BOOSTS_CODE: dict[str, float] = {
     "method": 1.2,
     "class": 1.35,
     "module": 0.90,
+    "operator": 1.2,
+    "td_class": 0.9,
 }
 """Default type multipliers for code/prose queries (shared by both rankers)."""
+
+TD_CLASS_TAG = "td_class"
+"""Tag the TD network chunker puts on its synthetic per-op-type ``class`` chunks."""
+
+TD_NETWORK_SUFFIX = ".tdgraph.json"
+"""Compound extension of TD network exports (mirrors chunking.language_registry;
+duplicated here so ranking_policy stays a leaf module)."""
+
+
+def effective_chunk_kind(chunk_type: str, tags, chunk_id: str = "") -> str:
+    """Map a chunk's stored kind to the key used in the type-boost tables.
+
+    The TD network chunker emits one ``class`` chunk per operator type
+    (``class:glslTOP``) tagged ``td_class``.  It is a summary of the instances,
+    not a definition, so it must not inherit the ×1.35 ``class`` boost tuned for
+    Python classes; ADR-0062 D2 measured that boost putting the class chunk above
+    its own instance on every type-descriptive query.  Everything else passes
+    through unchanged.
+    """
+    if chunk_type != "class":
+        return chunk_type
+    if tags and TD_CLASS_TAG in tags:
+        return "td_class"
+    # The MCP result rows (result_view._format_search_results) carry no tags,
+    # so at runtime the chunk id is the only signal: a class chunk whose file
+    # part is a .tdgraph.json export can only come from the TD chunker.
+    file_part = chunk_id.split(":", 1)[0] if chunk_id else ""
+    if file_part.endswith(TD_NETWORK_SUFFIX):
+        return "td_class"
+    return chunk_type
+
 
 # ---------------------------------------------------------------------------
 # Name-overlap tiers
