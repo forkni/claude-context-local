@@ -7,10 +7,12 @@
     "_archive",
     "node_modules",
     ".venv",
+    ".uv-cache",
     "benchmark_results",
     "logs",
     "audit_reports",
     ".claude/Charlie_DOC.md",
+    ".claude/plans",
     "SESSION_LOG.md"
   ],
 
