@@ -1,0 +1,116 @@
+{
+  "_meta": {
+    "description": "TD network edge-recall golden set: find_connections coverage of every TD RelationshipType over the committed fixture (ADR-0062 Part D2)",
+    "usage": "scripts/benchmark/run_caller_recall.py run --project-path tests/fixtures/td_network --golden-path evaluation/td_caller_golden.json --relationship-types wires_to docked_to references_op binds_to exports_to scripted_by contains",
+    "project_path": "tests/fixtures/td_network",
+    "requires": "chunking.enable_td_network_indexing=true for the project at project_path, and --relationship-types on the run (without it analyze_impact only reports 'calls' edges, which TD chunks never emit, so every query scores 0.0)",
+    "normalization": "Chunk IDs have line-range portions stripped and are relative to project_path",
+    "format": "Each query names a target chunk, the report.relationships field(s) to read (names from get_relationship_field_mapping()), and the expected chunk IDs found under those fields. 'expected_callers' is kept for compatibility with the caller-recall harness; direction is always 'callers'.",
+    "stub_note": "TE006 expects the exporter stub node for /project1/external/mix1; its chunk id is the stub's path relative to the walked root's parent as emitted by TDNetworkChunker.",
+    "total_queries": 8,
+    "categories": {
+      "E": "Edge coverage per TD relationship type"
+    },
+    "relevance_scale": "binary: an expected chunk is either found under the named field or not"
+  },
+  "queries": [
+    {
+      "id": "TE001",
+      "category": "E",
+      "description": "glsl1 -> docked info DAT (dock edge, reverse field)",
+      "target_chunk_id": "Test_network.tdgraph.json:operator:glsl1",
+      "edge_fields": [
+        "docked_by"
+      ],
+      "expected_callers": [
+        "Test_network.tdgraph.json:operator:info1"
+      ]
+    },
+    {
+      "id": "TE002",
+      "category": "E",
+      "description": "glsl1 <- noise1 (wire edge, reverse field)",
+      "target_chunk_id": "Test_network.tdgraph.json:operator:glsl1",
+      "edge_fields": [
+        "wired_from"
+      ],
+      "expected_callers": [
+        "Test_network.tdgraph.json:operator:noise1"
+      ]
+    },
+    {
+      "id": "TE003",
+      "category": "E",
+      "description": "glslpixel1 <- glsl1 pixeldat par_ref (reverse field)",
+      "target_chunk_id": "Test_network.tdgraph.json:operator:glslpixel1",
+      "edge_fields": [
+        "referenced_by"
+      ],
+      "expected_callers": [
+        "Test_network.tdgraph.json:operator:glsl1"
+      ]
+    },
+    {
+      "id": "TE004",
+      "category": "E",
+      "description": "info1 scripts comp1 (scripted_by edge, reverse field)",
+      "target_chunk_id": "Test_network.tdgraph.json:operator:info1",
+      "edge_fields": [
+        "scripts"
+      ],
+      "expected_callers": [
+        "Test_network.tdgraph.json:operator:comp1"
+      ]
+    },
+    {
+      "id": "TE005",
+      "category": "E",
+      "description": "master1 <- slave1 bind (reverse field)",
+      "target_chunk_id": "Test_network.tdgraph.json:operator:master1",
+      "edge_fields": [
+        "bound_by"
+      ],
+      "expected_callers": [
+        "Test_network.tdgraph.json:operator:slave1"
+      ]
+    },
+    {
+      "id": "TE006",
+      "category": "E",
+      "description": "exportsrc1 exports to the external mix1 stub (forward field)",
+      "target_chunk_id": "Test_network.tdgraph.json:operator:exportsrc1",
+      "edge_fields": [
+        "exports_to"
+      ],
+      "expected_callers": [
+        "Test_network.tdgraph.json:operator:project1/external/mix1"
+      ]
+    },
+    {
+      "id": "TE007",
+      "category": "E",
+      "description": "comp1/grid1 contained by comp1 (reverse field)",
+      "target_chunk_id": "Test_network.tdgraph.json:operator:comp1/grid1",
+      "edge_fields": [
+        "contained_by"
+      ],
+      "expected_callers": [
+        "Test_network.tdgraph.json:operator:comp1"
+      ]
+    },
+    {
+      "id": "TE008",
+      "category": "E",
+      "description": "noise1 forward wire and reverse script reference",
+      "target_chunk_id": "Test_network.tdgraph.json:operator:noise1",
+      "edge_fields": [
+        "wires_to",
+        "referenced_by"
+      ],
+      "expected_callers": [
+        "Test_network.tdgraph.json:operator:glsl1",
+        "Test_network.tdgraph.json:operator:info1"
+      ]
+    }
+  ]
+}

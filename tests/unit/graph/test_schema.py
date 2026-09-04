@@ -100,6 +100,23 @@ class TestReverseRelationsCompleteness:
         """Snapshot: if this number changes, update the docstring in schema.py too."""
         assert len(REVERSE_RELATIONS) == 29
 
+    def test_every_relationship_type_has_an_edge_weight(self):
+        """Add a new RelationshipType -> give it a DEFAULT_EDGE_WEIGHTS entry too.
+
+        Weighted BFS / centrality fall back to a default for unknown types, so
+        a missing entry is silent rather than wrong -- which is exactly why the
+        8 TD network types (ADR-0062) shipped without one at first.
+        """
+        from chunking.relationships.relationship_types import RelationshipType
+        from graph.graph_storage import DEFAULT_EDGE_WEIGHTS
+
+        enum_values = {rt.value for rt in RelationshipType}
+        missing = enum_values - set(DEFAULT_EDGE_WEIGHTS)
+        assert not missing, (
+            f"graph/graph_storage.py DEFAULT_EDGE_WEIGHTS has no entry for: {missing!r}"
+        )
+        assert all(0.0 < w <= 1.0 for w in DEFAULT_EDGE_WEIGHTS.values())
+
 
 # ---------------------------------------------------------------------------
 # get_reverse_relation: mapped and fallback cases

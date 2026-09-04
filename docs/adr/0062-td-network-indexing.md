@@ -233,3 +233,49 @@ predicted in Consequences above, since `enable_td_network_indexing` defaults `Fa
   rebuilds on this project (same precedent cited in the C0 measurement above) — zero material
   movers, as the plan predicted. **Verdict: C1–C7 gate PASSES.** All three quality-gate thresholds
   (mrr≥0.5, recall@5≥0.55, hit_rate@5≥0.8) report `PASS` on both golden sets.
+
+**Part D2 dogfood (first real-project runs), 2026-09-04.** Measured by the session that closed
+Part D, with `enable_td_network_indexing=true` per project via `search_overrides.json` in each
+project's storage dir (the repo's own `search_config.json` stays off; see `docs/BENCHMARKS.md`
+"TD Network Retrieval Benchmark" for the committed-fixture tables).
+
+- **Real-project scale.** `D:\dev\SDTD_040` indexes to **1316 `operator` + 1 `network`** chunks
+  from its single export; `F:\RD_PROJECTS\COMPONENTS\TD_Glossary_tox` to **52 `operator` + 2
+  `network`** chunks from `Graph/project1__Test_network.tdgraph.json` and its near-duplicate
+  `Graph/project1__Test_network_1.tdgraph.json` (both `schema_version: 1`, exported 2026-09-03
+  21:41 by `NetworkGraphExt`, i.e. **before** commits `c25db85`/`b85926d`/`dfe0600` and before the
+  `scripted_by` emitter landed). Worked query on TD_Glossary_tox:
+  `search_code("glsl shader operator in Test_network", k=7, chunk_type="operator")` ranks
+  `Graph/project1__Test_network.tdgraph.json:151-173:operator:glsl1` **first**; the twin network's
+  `glsl1` crowds ranks 2-3 with identical text (accepted; delete the twin export or re-export a
+  single network before quoting rank numbers from that project).
+- **Fixture-vs-real deltas.** The stale real export has **0 `scripted_by`** and **0 `par_ref`**
+  edges (`oscin1_callbacks` appears only as a `dock`; the lone `script_ref` has `dst: null`), so
+  the `SCRIPTED_BY` and `REFERENCES_OP` mappings are exercised only by the committed fixture until
+  TD_Glossary_tox's live re-export (Part B5 / D1 `VerifyGraph`) lands; Envoy was down for the whole
+  session so that re-export is still pending.
+- **Committed fixture, retrieval** (`results/td_golden_baseline.json`, 19 queries, hybrid, k=10):
+  first run pool_hit_rate **1.000** (gate PASS), recall@10 1.000, recall@5 0.947, MRR 0.709,
+  NDCG@5 0.793, with the file's own `mrr >= 0.9` / `hit_rate_at_5 == 1.0` thresholds FAILING.
+  Root cause was a chunker content gap, not labeling: `TDNetworkChunker` rendered forward
+  `inputs`/`outputs`/`docked to`/`hosts docked`/`references` lines but neither side of
+  `scripted_by` nor any reverse reference, so edge-*target* operators (`info1` as comp1's
+  callbacks DAT, `glslpixel1`) had no text to be found by. Fixed the same day:
+  `_build_operator_chunk` now renders `scripted by:` / `scripts:` (with the edge's `via`) and
+  `referenced by:` (reverse `par_ref`/`bind`/`export`/`script_ref`/`shortcut_ref`). Re-run:
+  MRR **0.785**, recall@5 1.000, hit_rate@5 1.000, NDCG@5 0.868, pool_hit_rate 1.000; recall@5
+  and hit_rate@5 now PASS, MRR still FAILS the 0.9 target because class chunks outrank their
+  instances on type-descriptive queries (TA) and a query that names its anchor ranks the anchor
+  above the neighbour it asks for (TB). Both are ranking traits, not text gaps; the threshold is
+  left at the target rather than lowered.
+- **Committed fixture, typed edge recall** (`results/td_edge_recall_baseline.json`, 8 targets):
+  mean recall **1.000**, 9/9 edges, every directed TD relationship type exercised. Enabled by two
+  additive changes: `run_caller_recall.py --relationship-types` (unions
+  `report.relationships[<edge_fields>]`, falling back to `target_name` for stub/unindexed targets)
+  and `DEFAULT_EDGE_WEIGHTS` entries for all 8 TD types (`wires_to`/`contains` 0.9,
+  `docked_to`/`scripted_by` 0.8, `references_op`/`binds_to`/`exports_to` 0.7, `shares_tag` 0.3),
+  guarded by `test_schema.py::test_every_relationship_type_has_an_edge_weight`.
+- **Cross-file `SCRIPTED_BY` (C6) follow-up.** TD_Glossary_tox's exporter now writes
+  `script.file` (the DAT's `file` par) and `script.synced` (its `syncfile` toggle) into every
+  scripted node (Part B5). The chunker does not consume them yet; when it does, a DAT node can
+  emit `SCRIPTED_BY` to the synced `.py` module chunk instead of stopping at the DAT.

@@ -79,6 +79,8 @@ def _get_direct_edges(
     direction: str,
     max_depth: int = 1,
     hide_ambiguous: bool = False,
+    relationship_types: list[str] | None = None,
+    edge_fields: list[str] | None = None,
 ) -> tuple[list[str], dict[str, int]]:
     """Call analyze_impact and return normalized chunk IDs plus resolver provenance.
 
@@ -93,6 +95,16 @@ def _get_direct_edges(
             directly to the raw edge dicts rather than via a report-dict round
             trip -- ``analyze_impact`` here bypasses the MCP layer entirely, so
             this is the only way to exercise the knob through this harness.
+        relationship_types: When set, switch from the ``calls``-only
+            ``direct_callers``/``direct_callees`` lists to the typed 1-hop
+            ``report.relationships`` dict (``analyze_impact(...,
+            relationship_types=...)``), which is where every non-``calls``
+            edge lands (TD network edges, inherits, uses_type, ...). In this
+            mode ``max_depth`` is inert: ``relationships`` is always 1-hop.
+        edge_fields: Which ``report.relationships`` fields to union
+            (``get_relationship_field_mapping()`` names such as ``wired_from``
+            or ``docked_by``). ``None`` unions every field the filter left
+            populated. Only used together with ``relationship_types``.
 
     Returns:
         Tuple of (normalized_chunk_ids, resolver_source_counts).
@@ -100,14 +112,26 @@ def _get_direct_edges(
         carrying that resolver_source (e.g. {"lsp": 3, "libcst": 1}).
     """
     try:
-        report = analyzer.analyze_impact(
-            chunk_id=target_chunk_id,
-            max_depth=max_depth,
-        )
-        if direction == "callees":
-            raw_entries = report.direct_callees or []
+        if relationship_types:
+            report = analyzer.analyze_impact(
+                chunk_id=target_chunk_id,
+                max_depth=1,
+                relationship_types=list(relationship_types),
+            )
+            rels: dict[str, list[Any]] = report.relationships or {}
+            fields = list(edge_fields) if edge_fields else sorted(rels)
+            raw_entries = []
+            for field in fields:
+                raw_entries.extend(rels.get(field) or [])
         else:
-            raw_entries = report.direct_callers or []
+            report = analyzer.analyze_impact(
+                chunk_id=target_chunk_id,
+                max_depth=max_depth,
+            )
+            if direction == "callees":
+                raw_entries = report.direct_callees or []
+            else:
+                raw_entries = report.direct_callers or []
     except Exception as e:
         print(f"    [ERROR] analyze_impact failed: {e}", file=sys.stderr)
         raw_entries = []
@@ -123,6 +147,14 @@ def _get_direct_edges(
     for entry in raw_entries:
         if isinstance(entry, dict):
             cid = entry.get("chunk_id", "")
+            if not cid and relationship_types:
+                # Typed-relationship mode: an edge whose target is not an
+                # indexed chunk (a TD stub node outside the exported subtree,
+                # an external symbol) is enriched with ``chunk_id: ""`` and the
+                # graph node id in ``target_name``. The edge itself is real, so
+                # score it on that id; the golden's stub entries expect exactly
+                # this form.
+                cid = entry.get("target_name", "")
             rsrc = entry.get("resolver_source", "unknown")
         else:
             # Fallback for plain string entries (old format)
@@ -147,8 +179,13 @@ def _run_single(
     k: int,
     verbose: bool = True,
     hide_ambiguous: bool = False,
+    relationship_types: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Evaluate one query and return a result dict."""
+    """Evaluate one query and return a result dict.
+
+    With ``relationship_types`` set, the query's optional ``edge_fields`` list
+    selects which ``report.relationships`` fields count as retrieved.
+    """
     qid = query["id"]
     target = normalize_chunk_id(query["target_chunk_id"])
     expected_key = "expected_callees" if direction == "callees" else "expected_callers"
@@ -159,7 +196,12 @@ def _run_single(
 
     t0 = time.perf_counter()
     retrieved, resolver_sources = _get_direct_edges(
-        analyzer, target, direction, hide_ambiguous=hide_ambiguous
+        analyzer,
+        target,
+        direction,
+        hide_ambiguous=hide_ambiguous,
+        relationship_types=relationship_types,
+        edge_fields=query.get("edge_fields") if relationship_types else None,
     )
     latency_ms = (time.perf_counter() - t0) * 1000.0
 
@@ -331,6 +373,20 @@ def main() -> None:
             "GraphEnhancedConfig.hide_ambiguous_edges_default"
         ),
     )
+    run_p.add_argument(
+        "--relationship-types",
+        nargs="+",
+        metavar="TYPE",
+        default=None,
+        help=(
+            "Score typed 1-hop edges from report.relationships instead of the "
+            "calls-only direct_callers/direct_callees lists (e.g. wires_to "
+            "docked_to contains). Each golden query may name the relationship "
+            "fields to read via 'edge_fields'; --max-depth semantics do not "
+            "apply (relationships is always 1-hop). Needed for TD network "
+            "goldens, whose chunks emit no 'calls' edges."
+        ),
+    )
 
     # Compare mode
     cmp_p = subparsers.add_parser("compare", help="Compare two saved result JSONs")
@@ -412,6 +468,7 @@ def main() -> None:
             k=args.k,
             verbose=not args.quiet,
             hide_ambiguous=args.hide_ambiguous,
+            relationship_types=args.relationship_types,
         )
         results.append(row)
 
@@ -472,6 +529,7 @@ def main() -> None:
             "direction": direction,
             "k": args.k,
             "hide_ambiguous": args.hide_ambiguous,
+            "relationship_types": args.relationship_types,
         },
     }
 

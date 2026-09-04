@@ -1,0 +1,343 @@
+{
+  "_meta": {
+    "description": "TD network retrieval golden set: ranked-search gate over the committed .tdgraph.json fixture (ADR-0062 Part D2)",
+    "source": "tests/fixtures/td_network/Test_network.tdgraph.json chunked by chunking/td_network_chunker.py (22 chunks: 13 operator, 8 class, 1 network)",
+    "project_path": "tests/fixtures/td_network",
+    "requires": "chunking.enable_td_network_indexing=true for the project at project_path (per-project search_overrides.json; the flag has no env var)",
+    "labeled_by": "Claude Fable 5.1",
+    "labeled_date": "2026-09-04",
+    "normalization": "Chunk IDs have line-range portions stripped ('file:10-20:type:name' -> 'file:type:name') and are relative to project_path, not to this repo root",
+    "relevance_scale": "0=not_relevant, 1=marginal, 2=relevant, 3=highly_relevant",
+    "expected": "chunk IDs with label >= 2 (used for Recall@k, NDCG@k)",
+    "expected_primary": "chunk IDs with label == 3 (used for MRR)",
+    "scope_note": "A 22-chunk corpus is a wiring/contract gate (are TD chunks indexed, searchable and ranked at all), not a discriminating retrieval-quality measure. Numbers are corpus-specific and not comparable to the 63q/133q canonical sets.",
+    "total_queries": 19,
+    "categories": {
+      "TA": "Operator by role (find the operator that plays a described role)",
+      "TB": "Network structure (wires, docks, containment, replicator, bind)",
+      "TC": "Class capability (the td class chunk for an operator type)",
+      "TD": "Cross-reference (scripts, exports, shortcuts, network overview)"
+    },
+    "category_prefix_note": "Two-letter categories on purpose: run_sscg_benchmark.py excludes bare 'D' by default and routes bare 'F' through find_similar.",
+    "splits": {
+      "train": 11,
+      "val": 4,
+      "test": 4
+    },
+    "split_note": "Stratified: TA=3/1/1, TB=3/1/1, TC=2/1/1, TD=3/1/1"
+  },
+  "thresholds": {
+    "mrr": 0.9,
+    "recall_at_5": 0.85,
+    "hit_rate_at_5": 1.0
+  },
+  "queries": [
+    {
+      "id": "TD001",
+      "query": "the GLSL shader TOP that renders the pixel shader",
+      "category": "TA",
+      "split": "train",
+      "expected": [
+        "Test_network.tdgraph.json:operator:glsl1",
+        "Test_network.tdgraph.json:class:glslTOP"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:glsl1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:glsl1": 3,
+        "Test_network.tdgraph.json:class:glslTOP": 2,
+        "Test_network.tdgraph.json:operator:glslpixel1": 1
+      }
+    },
+    {
+      "id": "TD002",
+      "query": "noise generator TOP feeding the shader",
+      "category": "TA",
+      "split": "train",
+      "expected": [
+        "Test_network.tdgraph.json:operator:noise1",
+        "Test_network.tdgraph.json:class:noiseTOP"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:noise1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:noise1": 3,
+        "Test_network.tdgraph.json:class:noiseTOP": 2
+      }
+    },
+    {
+      "id": "TD003",
+      "query": "text DAT holding the pixel shader source code",
+      "category": "TA",
+      "split": "train",
+      "expected": [
+        "Test_network.tdgraph.json:operator:glslpixel1"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:glslpixel1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:glslpixel1": 3,
+        "Test_network.tdgraph.json:operator:info1": 1
+      }
+    },
+    {
+      "id": "TD004",
+      "query": "constant CHOP that exports its value to the external mixer",
+      "category": "TA",
+      "split": "val",
+      "expected": [
+        "Test_network.tdgraph.json:operator:exportsrc1"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:exportsrc1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:exportsrc1": 3,
+        "Test_network.tdgraph.json:class:constantCHOP": 1
+      }
+    },
+    {
+      "id": "TD005",
+      "query": "grid SOP geometry inside the comp1 container",
+      "category": "TA",
+      "split": "test",
+      "expected": [
+        "Test_network.tdgraph.json:operator:comp1/grid1"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:comp1/grid1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:comp1/grid1": 3,
+        "Test_network.tdgraph.json:operator:comp1/box1": 1
+      }
+    },
+    {
+      "id": "TD006",
+      "query": "which operator is wired into the input of glsl1",
+      "category": "TB",
+      "split": "train",
+      "expected": [
+        "Test_network.tdgraph.json:operator:noise1"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:noise1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:noise1": 3,
+        "Test_network.tdgraph.json:operator:glsl1": 1
+      }
+    },
+    {
+      "id": "TD007",
+      "query": "info DAT docked to the glsl1 shader",
+      "category": "TB",
+      "split": "train",
+      "expected": [
+        "Test_network.tdgraph.json:operator:info1"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:info1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:info1": 3,
+        "Test_network.tdgraph.json:operator:glsl1": 1
+      }
+    },
+    {
+      "id": "TD008",
+      "query": "geometry operators contained in the comp1 container",
+      "category": "TB",
+      "split": "train",
+      "expected": [
+        "Test_network.tdgraph.json:operator:comp1/box1",
+        "Test_network.tdgraph.json:operator:comp1/grid1"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:comp1/box1",
+        "Test_network.tdgraph.json:operator:comp1/grid1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:comp1/box1": 3,
+        "Test_network.tdgraph.json:operator:comp1/grid1": 3,
+        "Test_network.tdgraph.json:operator:comp1": 1
+      }
+    },
+    {
+      "id": "TD009",
+      "query": "replicator component and the item instance it generates",
+      "category": "TB",
+      "split": "val",
+      "expected": [
+        "Test_network.tdgraph.json:operator:rep1",
+        "Test_network.tdgraph.json:operator:rep1/item1"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:rep1",
+        "Test_network.tdgraph.json:operator:rep1/item1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:rep1": 3,
+        "Test_network.tdgraph.json:operator:rep1/item1": 3
+      }
+    },
+    {
+      "id": "TD010",
+      "query": "CHOP whose parameter is bound to master1",
+      "category": "TB",
+      "split": "test",
+      "expected": [
+        "Test_network.tdgraph.json:operator:slave1"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:slave1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:slave1": 3,
+        "Test_network.tdgraph.json:operator:master1": 1
+      }
+    },
+    {
+      "id": "TD011",
+      "query": "constant CHOP operator class",
+      "category": "TC",
+      "split": "train",
+      "expected": [
+        "Test_network.tdgraph.json:class:constantCHOP"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:class:constantCHOP"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:class:constantCHOP": 3
+      }
+    },
+    {
+      "id": "TD012",
+      "query": "GLSL TOP operator class",
+      "category": "TC",
+      "split": "train",
+      "expected": [
+        "Test_network.tdgraph.json:class:glslTOP"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:class:glslTOP"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:class:glslTOP": 3
+      }
+    },
+    {
+      "id": "TD013",
+      "query": "base COMP operator class",
+      "category": "TC",
+      "split": "val",
+      "expected": [
+        "Test_network.tdgraph.json:class:baseCOMP"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:class:baseCOMP"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:class:baseCOMP": 3
+      }
+    },
+    {
+      "id": "TD014",
+      "query": "text DAT operator class",
+      "category": "TC",
+      "split": "test",
+      "expected": [
+        "Test_network.tdgraph.json:class:textDAT"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:class:textDAT"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:class:textDAT": 3
+      }
+    },
+    {
+      "id": "TD015",
+      "query": "callbacks DAT that scripts the comp1 component",
+      "category": "TD",
+      "split": "train",
+      "expected": [
+        "Test_network.tdgraph.json:operator:info1"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:info1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:info1": 3,
+        "Test_network.tdgraph.json:operator:comp1": 1
+      }
+    },
+    {
+      "id": "TD016",
+      "query": "operator exporting a value to the external mix1 CHOP",
+      "category": "TD",
+      "split": "train",
+      "expected": [
+        "Test_network.tdgraph.json:operator:exportsrc1"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:exportsrc1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:exportsrc1": 3
+      }
+    },
+    {
+      "id": "TD017",
+      "query": "control component reached through the Ctrl parent shortcut",
+      "category": "TD",
+      "split": "val",
+      "expected": [
+        "Test_network.tdgraph.json:operator:ctrl1"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:ctrl1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:ctrl1": 3,
+        "Test_network.tdgraph.json:operator:info1": 1
+      }
+    },
+    {
+      "id": "TD018",
+      "query": "python script that references noise1 with an op call",
+      "category": "TD",
+      "split": "train",
+      "expected": [
+        "Test_network.tdgraph.json:operator:info1"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:operator:info1"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:operator:info1": 3,
+        "Test_network.tdgraph.json:operator:noise1": 1
+      }
+    },
+    {
+      "id": "TD019",
+      "query": "the Test_network container network overview",
+      "category": "TD",
+      "split": "test",
+      "expected": [
+        "Test_network.tdgraph.json:network:Test_network"
+      ],
+      "expected_primary": [
+        "Test_network.tdgraph.json:network:Test_network"
+      ],
+      "relevance_grades": {
+        "Test_network.tdgraph.json:network:Test_network": 3,
+        "Test_network.tdgraph.json:operator:comp1": 1
+      }
+    }
+  ]
+}

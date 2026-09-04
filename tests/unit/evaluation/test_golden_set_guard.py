@@ -8,6 +8,11 @@ found three entries (OB01, OB03, OB06) that had silently drifted after
 `run_resolvers` grew past the chunk-split threshold, and the harness scored
 them 0.0 without ever surfacing that the IDs themselves were stale.
 
+`evaluation/td_golden.json` / `evaluation/td_caller_golden.json` (ADR-0062,
+TD network fixture) are covered too, chunked with `TDNetworkChunker` directly
+because the `.tdgraph.json` pseudo-language is off by default (see
+`TD_GOLDEN_FILES`).
+
 `evaluation/golden_dataset.json` (77 queries, categories A-F) and
 `evaluation/golden_dataset_expanded.json` (its superset with additional
 queries) hand-curate the same kind of literal chunk_id strings in `expected` /
@@ -77,6 +82,60 @@ def _golden_dataset_ids(golden_path: Path) -> list[tuple[str, str]]:
     return pairs
 
 
+def _td_golden_ids(golden_path: Path) -> list[tuple[str, str]]:
+    """Return (source_label, chunk_id) pairs for a TD golden file.
+
+    `td_golden.json` follows the golden_dataset shape; `td_caller_golden.json`
+    follows the caller_golden shape. Both hold ids relative to
+    `_meta.project_path`, so each id is prefixed with that root here to give
+    `test_golden_chunk_ids_exist_in_live_index` a repo-relative file path.
+    """
+    data = json.loads(golden_path.read_text(encoding="utf-8"))
+    project_path = data["_meta"]["project_path"]
+    pairs = _golden_dataset_ids(golden_path) + _golden_ids_lenient(data)
+    return [(label, f"{project_path}/{chunk_id}") for label, chunk_id in pairs]
+
+
+def _golden_ids_lenient(data: dict) -> list[tuple[str, str]]:
+    """`_golden_ids` for parsed data whose queries may lack target_chunk_id."""
+    pairs: list[tuple[str, str]] = []
+    for query in data["queries"]:
+        qid = query["id"]
+        if "target_chunk_id" in query:
+            pairs.append((f"{qid}.target_chunk_id", query["target_chunk_id"]))
+        for expected in query.get("expected_callers", []):
+            pairs.append((f"{qid}.expected_callers", expected))
+        for expected in query.get("expected_callees", []):
+            pairs.append((f"{qid}.expected_callees", expected))
+    return pairs
+
+
+@cache
+def _td_live_normalized_ids(fixture_dir: str, file_name: str) -> frozenset[str]:
+    """Chunk one `.tdgraph.json` under *fixture_dir* with `TDNetworkChunker` directly.
+
+    Returned ids are prefixed with *fixture_dir* to line up with `_td_golden_ids`.
+    Relationship targets are included too: the exporter's stub nodes (an
+    operator outside the walked subtree, e.g. an export target) never become
+    chunks but are legitimate `find_connections` results and golden entries.
+    """
+    from chunking.td_network_chunker import TDNetworkChunker
+
+    root = REPO_ROOT / fixture_dir
+    chunks = TDNetworkChunker(root_path=str(root)).chunk_file(
+        str(root / file_name), file_name
+    )
+    ids: set[str] = set()
+    for c in chunks:
+        if c.chunk_id:
+            ids.add(f"{fixture_dir}/{normalize_chunk_id(c.chunk_id)}")
+        for edge in c.relationships or []:
+            target = getattr(edge, "target_name", "")
+            if target and target.count(":") >= 3:
+                ids.add(f"{fixture_dir}/{normalize_chunk_id(target)}")
+    return frozenset(ids)
+
+
 @cache
 def _get_chunker() -> MultiLanguageChunker:
     """Lazily construct the shared chunker on first use.
@@ -98,6 +157,9 @@ def _live_normalized_ids(file_path: str) -> frozenset[str]:
     ~240 distinct chunk_ids drawn from ~70 files, so without caching this would
     re-chunk the same file hundreds of times across the parametrized sweep.
     """
+    if file_path.endswith(".tdgraph.json"):
+        fixture_dir, _, file_name = file_path.rpartition("/")
+        return _td_live_normalized_ids(fixture_dir, file_name)
     abs_path = REPO_ROOT / file_path
     chunks = _get_chunker().chunk_file(str(abs_path))
     ids: set[str] = set()
@@ -166,7 +228,18 @@ GOLDEN_DATASET_FILES = [
 ]
 
 
-ALL_GOLDEN_FILES = GOLDEN_FILES + GOLDEN_DATASET_FILES
+# TD network goldens (ADR-0062 Part D2). Their chunk_ids are relative to the
+# fixture project named by `_meta.project_path`, not to this repo root, and
+# `.tdgraph.json` only chunks through `MultiLanguageChunker` when
+# `enable_td_network_indexing` is on -- which it is not in the test env, so
+# routing them through `_get_chunker()` would return [] and pass vacuously.
+# They are chunked with `TDNetworkChunker` directly instead.
+TD_GOLDEN_FILES = [
+    EVALUATION_DIR / "td_golden.json",
+    EVALUATION_DIR / "td_caller_golden.json",
+]
+
+ALL_GOLDEN_FILES = GOLDEN_FILES + GOLDEN_DATASET_FILES + TD_GOLDEN_FILES
 
 # Computed once at collection time (Phase 13.2.b). Previously this same work
 # (re-reading all 4 JSON files from disk) ran twice — once for @parametrize's
@@ -175,12 +248,14 @@ ALL_GOLDEN_FILES = GOLDEN_FILES + GOLDEN_DATASET_FILES
 # Grouping by golden file collapses that to 4 cases with identical protection:
 # every drifted ID is still collected and reported, just as one aggregate
 # assertion per file instead of one case per ID.
-_CASES_BY_FILE: dict[Path, list[tuple[str, str]]] = {
-    golden_path: _golden_ids(golden_path) for golden_path in GOLDEN_FILES
-} | {
-    dataset_path: _golden_dataset_ids(dataset_path)
-    for dataset_path in GOLDEN_DATASET_FILES
-}
+_CASES_BY_FILE: dict[Path, list[tuple[str, str]]] = (
+    {golden_path: _golden_ids(golden_path) for golden_path in GOLDEN_FILES}
+    | {
+        dataset_path: _golden_dataset_ids(dataset_path)
+        for dataset_path in GOLDEN_DATASET_FILES
+    }
+    | {td_path: _td_golden_ids(td_path) for td_path in TD_GOLDEN_FILES}
+)
 
 
 @pytest.mark.parametrize(

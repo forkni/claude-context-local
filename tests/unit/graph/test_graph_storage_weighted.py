@@ -279,7 +279,7 @@ def test_weighted_bfs_reverse_edges(graph_storage):
 
 
 def test_default_edge_weights_coverage():
-    """Test that DEFAULT_EDGE_WEIGHTS includes all 21 relationship types."""
+    """Test that DEFAULT_EDGE_WEIGHTS includes all 29 relationship types."""
     expected_types = [
         "calls",
         "inherits",
@@ -302,10 +302,19 @@ def test_default_edge_weights_coverage():
         "uses_global",
         "asserts_type",
         "uses_context_manager",
+        # TD network edge types (ADR-0062)
+        "wires_to",
+        "docked_to",
+        "contains",
+        "references_op",
+        "binds_to",
+        "exports_to",
+        "scripted_by",
+        "shares_tag",
     ]
 
     assert set(DEFAULT_EDGE_WEIGHTS) == set(expected_types), (
-        "DEFAULT_EDGE_WEIGHTS keys drifted from the expected 21 edge types"
+        "DEFAULT_EDGE_WEIGHTS keys drifted from the expected 29 edge types"
     )
     for edge_type in expected_types:
         assert edge_type in DEFAULT_EDGE_WEIGHTS, f"Missing weight for {edge_type}"

@@ -323,6 +323,8 @@ evaluation/*.json
 !evaluation/callee_golden.json
 !evaluation/caller_golden_traced.json
 !evaluation/callee_golden_traced.json
+!evaluation/td_golden.json
+!evaluation/td_caller_golden.json
 !evaluation/hard_query_candidates.json
 !evaluation/commit_mined_candidates.json
 !evaluation/raw_mcp_results_hybrid.json

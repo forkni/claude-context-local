@@ -567,6 +567,116 @@ Kept for continuity only — do not compare against the tables above. No current
 
 ---
 
+## TD Network Retrieval Benchmark
+
+**Added**: Unreleased (ADR-0062 Part D2)
+
+Wiring/contract gate for `.tdgraph.json` TouchDesigner network indexing: does a TD network
+export chunk, index, retrieve, and traverse end to end? The corpus is the committed 15-node
+fixture `tests/fixtures/td_network/` (22 chunks: 13 `operator`, 8 `class`, 1 `network`), indexed
+as its **own** project with `enable_td_network_indexing=true`. It is deliberately tiny, so the
+numbers below are **not comparable** to the 63q/133q canon and do not measure ranking quality
+in any discriminating sense; the published gate is `pool_hit_rate >= 0.9`, and the fixture run
+is expected at exactly 1.0 (anything less is a wiring bug, not a ranking regression).
+
+Two golden files, both guarded by `tests/unit/evaluation/test_golden_set_guard.py` (id drift
+against the live chunker) and `test_td_golden_schema.py` (shape and category conventions):
+
+- `evaluation/td_golden.json` — 19 retrieval queries, categories `TA` (operator by role), `TB`
+  (structure: wired/docked/contained/replicated/bound), `TC` (operator class capability), `TD`
+  (cross-reference: callbacks, export, shortcut, script_ref, network overview). Categories are
+  prefixed `T` because `run_sscg_benchmark.py` silently drops a bare `D` and reroutes a bare `F`
+  through `find_similar`.
+- `evaluation/td_caller_golden.json` — 8 typed 1-hop edge-recall targets covering every directed
+  TD relationship type; scored by `run_caller_recall.py --relationship-types`, which unions
+  `report.relationships[<edge_fields>]` instead of the `calls`-only `direct_callers` list (the
+  TD chunker emits no `calls` edges, so the stock runner scores 0.0 on every TD target).
+
+### Retrieval (`td_golden_baseline.json`, 2026-09-04, hybrid, k=10)
+
+| Dataset | Queries | MRR | Recall@5 | Recall@10 | NDCG@5 | pool_hit_rate |
+|---|---|---|---|---|---|---|
+| td_golden (all) | 19 | 0.785 | 1.000 | 1.000 | 0.868 | **1.000** |
+| TA operator by role | 5 | 0.600 | 1.000 | 1.000 | 0.852 | 1.000 |
+| TB structure | 5 | 0.733 | 1.000 | 1.000 | 0.759 | 1.000 |
+| TC class capability | 4 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
+| TD cross-reference | 5 | 0.850 | 1.000 | 1.000 | 0.886 | 1.000 |
+
+Gate (`pool_hit_rate >= 0.9`): **PASS** (1.000, R@10 1.000, avg pool 21.8 = the whole corpus).
+The file's own `thresholds` (`mrr >= 0.9`, `recall_at_5 >= 0.85`, `hit_rate_at_5 == 1.0`):
+recall@5 **PASS**, hit_rate@5 **PASS**, MRR **FAIL** (0.785). The MRR shortfall is an ordering
+property of the current ranking, not a golden-labeling error or a text gap, and the threshold
+is kept at the target rather than lowered:
+
+- **TA (MRR 0.5 on four of five queries):** the `class` chunk (`class:glslTOP`,
+  `class:constantCHOP`, `class:textDAT`, ...) outranks its instance (`operator:glsl1`, ...) on
+  every type-descriptive query. The class chunk carries the MRO and `instances:` list, so it is
+  a legitimate rank-2 answer, but the instance is the labeled primary.
+- **TB / TD018 (anchor-first):** a query that names its anchor (`glsl1`, `master1`, `noise1`)
+  ranks the anchor first and the wired/bound/referencing neighbour at rank 3-4.
+
+History: the first run of this golden (same day, before the chunker change below) scored
+MRR 0.709 / R@5 0.947 / NDCG@5 0.793 with hit_rate@5 **failing** on TD015 (`operator:info1`,
+comp1's callbacks DAT, was not in the top 10). The operator chunk then rendered forward
+`inputs:`/`outputs:`/`docked to:`/`hosts docked:`/`references:` lines but neither side of
+`scripted_by` nor any reverse reference, so an operator that is only the *target* of edges had
+no text to be found by. `TDNetworkChunker._build_operator_chunk` now also renders
+`scripted by: <dat> (<via>)`, `scripts: <host> (<via>)` and `referenced by: <src>, ...`
+(reverse `par_ref`/`bind`/`export`/`script_ref`/`shortcut_ref`); TD015 moved to rank 1 and
+TD cross-reference MRR rose from 0.662 to 0.850.
+
+### Edge recall (`td_edge_recall_baseline.json`, 2026-09-04)
+
+| Target | Edge field | Found/Expected | Recall | Precision |
+|---|---|---|---|---|
+| operator:glsl1 | `docked_by` | 1/1 (info1) | 1.00 | 1.00 |
+| operator:glsl1 | `wired_from` | 1/1 (noise1) | 1.00 | 1.00 |
+| operator:glslpixel1 | `referenced_by` | 1/1 (glsl1) | 1.00 | 1.00 |
+| operator:info1 | `scripts` | 1/1 (comp1) | 1.00 | 1.00 |
+| operator:master1 | `bound_by` | 1/1 (slave1) | 1.00 | 1.00 |
+| operator:exportsrc1 | `exports_to` | 1/1 (stub `project1/external/mix1`) | 1.00 | 1.00 |
+| operator:comp1/grid1 | `contained_by` | 1/1 (comp1) | 1.00 | 1.00 |
+| operator:noise1 | `wires_to`, `referenced_by` | 2/2 (glsl1, info1) | 1.00 | 1.00 |
+
+Mean recall **1.000**, micro recall 1.000, 9/9 edges. The stub target (`exports_to` a node
+outside the exported subtree) comes back from `analyze_impact` with `chunk_id: ""` and the
+graph node id in `target_name`; `run_caller_recall.py` scores that id in `--relationship-types`
+mode so a real-but-unindexed edge is not counted as a miss.
+
+### Running
+
+The fixture must be indexed as its own project with the TD flag on. The flag is a
+`ChunkingConfig` field with no env var, so use a per-project override file in the fixture's
+storage dir (`~/.claude_code_search/projects/td_network_<hash>_<model>/search_overrides.json`):
+
+```json
+{"overrides": {"chunking": {"enable_td_network_indexing": true}}}
+```
+
+Do **not** flip the flag in this repo's own `search_config.json`: that adds the 22 fixture chunks
+to the self-index and breaks 63q/133q comparability.
+
+```bash
+# Index the fixture as its own project (no MCP server needed)
+uv run python tools/batch_index.py --path tests/fixtures/td_network --mode force
+
+# Retrieval
+./scripts/benchmark/run_benchmark.sh --project-path "$(pwd)/tests/fixtures/td_network" \
+  --golden-dataset evaluation/td_golden.json --k 10 --search-mode hybrid \
+  --output results/td_golden_baseline.json
+
+# Typed edge recall
+./scripts/benchmark/run_caller_recall.sh run --project-path "$(pwd)/tests/fixtures/td_network" \
+  --golden-path evaluation/td_caller_golden.json \
+  --relationship-types wires_to docked_to references_op binds_to exports_to scripted_by contains \
+  --output results/td_edge_recall_baseline.json
+```
+
+Real-project numbers (TD_Glossary_tox, SDTD_040) are reported, not gated, in ADR-0062's
+Verification section: their `Graph/` exports are gitignored and undistributable.
+
+---
+
 ## Caller Recall Benchmark
 
 **Added**: v0.13.0

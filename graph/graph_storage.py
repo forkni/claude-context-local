@@ -154,6 +154,18 @@ DEFAULT_EDGE_WEIGHTS: dict[str, float] = {
     "uses_global": 0.3,  # Global references
     "asserts_type": 0.4,  # Type assertions
     "uses_context_manager": 0.4,  # Context manager usage
+    # TouchDesigner network edges (ADR-0062). Data flow first: a wire or a
+    # parent/child link is the TD equivalent of a call; a docked or scripting
+    # DAT is the operator's code; parameter references are weaker signals; a
+    # shared tag is a grouping hint only.
+    "wires_to": 0.9,
+    "contains": 0.9,
+    "docked_to": 0.8,
+    "scripted_by": 0.8,
+    "references_op": 0.7,
+    "binds_to": 0.7,
+    "exports_to": 0.7,
+    "shares_tag": 0.3,
 }
 
 

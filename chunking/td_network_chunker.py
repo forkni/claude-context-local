@@ -638,6 +638,40 @@ class TDNetworkChunker:
                 )
             lines.append(f"references: {', '.join(refs)}")
 
+        # Reverse references: this node is the *target* of another node's
+        # parameter/bind/export/script/shortcut reference. Without this line an
+        # operator that is only ever pointed at (a pixel-shader DAT, a bind
+        # master) has no text linking it to its users (ADR-0062 D2 finding).
+        referenced_by = [
+            e
+            for e in node_in_edges
+            if e.get("type")
+            in ("par_ref", "bind", "export", "script_ref", "shortcut_ref")
+        ]
+        if referenced_by:
+            names = sorted(
+                {self._relative_op_path(e["src"], target) for e in referenced_by}
+            )
+            lines.append(f"referenced by: {', '.join(names)}")
+
+        # scripted_by edges are {src: scripted host, dst: DAT holding its code}.
+        scripted_by = [e for e in node_out_edges if e.get("type") == "scripted_by"]
+        if scripted_by:
+            parts = []
+            for e in scripted_by:
+                name = self._relative_op_path(e["dst"], target)
+                via = e.get("via") or e.get("par")
+                parts.append(f"{name} ({via})" if via else name)
+            lines.append(f"scripted by: {', '.join(parts)}")
+        scripts_for = [e for e in node_in_edges if e.get("type") == "scripted_by"]
+        if scripts_for:
+            parts = []
+            for e in scripts_for:
+                name = self._relative_op_path(e["src"], target)
+                via = e.get("via") or e.get("par")
+                parts.append(f"{name} ({via})" if via else name)
+            lines.append(f"scripts: {', '.join(parts)}")
+
         if shortcuts:
             sc = ", ".join(f"{s.get('kind')}:{s.get('name')}" for s in shortcuts)
             lines.append(f"shortcuts: {sc}")

@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TD network retrieval benchmark** (ADR-0062 Part D2) — `evaluation/td_golden.json` (19
+  retrieval queries, categories `TA`/`TB`/`TC`/`TD`) and `evaluation/td_caller_golden.json` (8
+  typed edge-recall targets covering every directed TD relationship type) over the committed
+  `tests/fixtures/td_network/` fixture, guarded by `test_golden_set_guard.py` (now chunks
+  `.tdgraph.json` sources through `TDNetworkChunker` directly) and the new
+  `test_td_golden_schema.py`. Baselines and the `pool_hit_rate >= 0.9` gate are documented in
+  `docs/BENCHMARKS.md` ("TD Network Retrieval Benchmark").
+- **`TDNetworkChunker` operator chunks render reverse and script edges** — `scripted by: <dat>
+  (<via>)` / `scripts: <host> (<via>)` for both sides of `scripted_by`, and `referenced by:
+  <src>, ...` for incoming `par_ref`/`bind`/`export`/`script_ref`/`shortcut_ref`. An operator that
+  is only the *target* of edges (a pixel-shader DAT, a bind master, a callbacks DAT) previously
+  had no text linking it to its users; on the TD golden this took hit_rate@5 from 0.947 to 1.0
+  and MRR from 0.709 to 0.785 (ADR-0062 Part D2).
+- **`run_caller_recall.py --relationship-types TYPE [TYPE ...]`** — scores typed 1-hop edges from
+  `report.relationships` (per-query `edge_fields`) instead of the `calls`-only `direct_callers`
+  list, so non-`calls` relationship types (TD edges, `inherits`, `uses_type`) can be benchmarked;
+  stub/unindexed targets are scored on their graph node id. Default off; existing runs unchanged.
+- **Edge weights for the 8 TD relationship types** in `graph/graph_storage.py`
+  `DEFAULT_EDGE_WEIGHTS` (`wires_to`/`contains` 0.9, `docked_to`/`scripted_by` 0.8,
+  `references_op`/`binds_to`/`exports_to` 0.7, `shares_tag` 0.3) so centrality and ego-graph
+  ranking on TD projects is deliberate rather than the fallback weight; `test_schema.py` now
+  asserts every `RelationshipType` has a weight.
 - **`.tdgraph.json` TouchDesigner network indexing** (ADR-0062, opt-in) — a new pseudo-language
   chunker (`chunking/td_network_chunker.py`, `TDNetworkChunker`) builds `operator`/`class`/`network`
   chunks directly from a TD network JSON snapshot (no tree-sitter grammar involved), so
