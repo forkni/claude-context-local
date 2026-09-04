@@ -340,7 +340,7 @@ class TDNetworkChunker:
         """
         kept: list[CodeChunk] = []
         for c in chunks:
-            parsed = ChunkId.parse(c.chunk_id)
+            parsed = ChunkId.parse(c.chunk_id) if c.chunk_id is not None else None
             if parsed is None or not parsed.name:
                 logger.error(
                     "TDNetworkChunker produced a nameless chunk_id %r in %s "
