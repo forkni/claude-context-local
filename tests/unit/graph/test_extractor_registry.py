@@ -24,7 +24,10 @@ from chunking.relationships.relationship_types import (
 
 
 # Source exercising every relationship type in get_relationship_field_mapping()
-# except "calls" (produced by the call-graph pipeline, not an AST extractor).
+# except "calls" (produced by the call-graph pipeline, not an AST extractor) and
+# the 8 TouchDesigner network types (ADR-0062 -- produced by TDNetworkChunker
+# building RelationshipEdge objects directly from a .tdgraph.json snapshot, not
+# by an AST extractor walking Python source).
 # See test_extractor_roster_covers_every_mapped_relationship_type below.
 _FIXTURE_SOURCE = '''
 import os
@@ -109,8 +112,9 @@ def test_import_extractor_receives_relation_filter_from_context():
 
 def test_extractor_roster_covers_every_mapped_relationship_type():
     """Every relationship type in get_relationship_field_mapping() (except
-    "calls", produced by the call-graph pipeline, not an AST extractor) must
-    be producible by at least one registered extractor.
+    "calls", produced by the call-graph pipeline, and the 8 TouchDesigner
+    network types, produced by TDNetworkChunker -- neither is an AST
+    extractor) must be producible by at least one registered extractor.
 
     Guards against the 2026-08-03 dead-relationship-type gap: four
     RelationshipType members (ASSERTS_TYPE, USES_GLOBAL, ASSIGNS_TO,
@@ -143,7 +147,21 @@ def test_extractor_roster_covers_every_mapped_relationship_type():
         for edge in extractor.extract(_FIXTURE_SOURCE, chunk_metadata):
             produced_types.add(edge.relationship_type.value)
 
-    mapped_types = set(get_relationship_field_mapping()) - {"calls"}
+    # TouchDesigner network relationships (ADR-0062, Part C): built directly as
+    # RelationshipEdge objects by TDNetworkChunker from a .tdgraph.json
+    # snapshot -- there is no Python-source AST for them to come from, so they
+    # can never appear in produced_types here. Same shape as "calls".
+    td_network_types = {
+        "wires_to",
+        "docked_to",
+        "contains",
+        "references_op",
+        "binds_to",
+        "exports_to",
+        "scripted_by",
+        "shares_tag",
+    }
+    mapped_types = set(get_relationship_field_mapping()) - {"calls"} - td_network_types
     missing = mapped_types - produced_types
     assert not missing, (
         f"No extractor produced these mapped relationship types: {missing}. "

@@ -96,9 +96,9 @@ class TestReverseRelationsCompleteness:
             "Add the corresponding reverse-name strings to graph.schema.REVERSE_RELATIONS."
         )
 
-    def test_reverse_relations_has_21_entries(self):
+    def test_reverse_relations_has_29_entries(self):
         """Snapshot: if this number changes, update the docstring in schema.py too."""
-        assert len(REVERSE_RELATIONS) == 21
+        assert len(REVERSE_RELATIONS) == 29
 
 
 # ---------------------------------------------------------------------------

@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`.tdgraph.json` TouchDesigner network indexing** (ADR-0062, opt-in) — a new pseudo-language
+  chunker (`chunking/td_network_chunker.py`, `TDNetworkChunker`) builds `operator`/`class`/`network`
+  chunks directly from a TD network JSON snapshot (no tree-sitter grammar involved), so
+  `search_code`, `find_connections`, and `find_path` work over TD operators, their scripts, and the
+  `td` class hierarchy the same way they work over Python symbols. 8 new `RelationshipType` members
+  (`wires_to`, `docked_to`, `contains`, `references_op`, `binds_to`, `exports_to`, `scripted_by`,
+  `shares_tag`); `scripted_by` is defined but currently unused — the real Part B exporter
+  (`TD_Glossary_tox/Scripts/dat_NetworkGraphExt.py`) never records a companion external file for a
+  scripted operator, so there is nothing to point the edge at (see ADR-0062's C6 section). Gated
+  behind `ChunkingConfig.enable_td_network_indexing` (`search_config.json`, default `False`) —
+  inert on every existing indexed project, including this repo's own self-index, until a project
+  opts in.
 - **C/C++ call-edge tier** (ADR-0060) — C and C++ chunks now emit `calls`/`imports`/
   `instantiates`/`inherits` edges the same way Python chunks do, closing a gap where every C/C++
   chunk was graph-isolated (`find_connections`/`find_path` returned nothing for them). Tree-sitter
@@ -49,6 +61,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Migration
 
+- **Opting in to `.tdgraph.json` indexing.** Set `"chunking": {"enable_td_network_indexing": true}`
+  in a project's `search_config.json`, then run a non-incremental reindex
+  (`index_directory(..., incremental=False)`) — a new extension means new files, not a format
+  change to existing ones, so `INDEX_VERSION` is not bumped (ADR-0037 precedent). The Merkle
+  hashing scheme (`merkle/merkle_dag.py`) will also compute a real content hash instead of a
+  `size=0` stat hash for `.tdgraph.json` files once the flag is on, producing a one-time "modified"
+  flip on those files and their ancestor directory nodes.
 - **Reindex required to see C/C++ call edges.** File content is unchanged by this change, so
   `index_directory(..., incremental=True)` (the default) will not re-chunk already-indexed C/C++
   files and the old zero-edge chunks will persist. Run

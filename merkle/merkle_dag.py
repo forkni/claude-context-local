@@ -5,6 +5,8 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from chunking.language_registry import extension_key
+
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +245,7 @@ class MerkleDAG:
         if path.is_file():
             if (
                 self.supported_extensions is not None
-                and path.suffix.lower() not in self.supported_extensions
+                and extension_key(str(path)) not in self.supported_extensions
             ):
                 # Stat-based hash for non-indexed files: ~100x cheaper than content
                 # hash on Windows (no Defender scan, no content read). Detects

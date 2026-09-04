@@ -1,6 +1,6 @@
 """Unit tests for graph enrichment in search results (Phase 2 SSCG).
 
-Tests _get_graph_data_for_chunk() with all 21 relationship types,
+Tests _get_graph_data_for_chunk() with all 29 relationship types,
 max_per_type capping, symbol name lookup, and backward compatibility.
 """
 
@@ -176,8 +176,8 @@ def test_reverse_relation_name_unknown():
 
 
 def test_reverse_relation_map_completeness():
-    """Map covers all 21 relationship types."""
-    assert len(REVERSE_RELATIONS) == 21
+    """Map covers all 29 relationship types."""
+    assert len(REVERSE_RELATIONS) == 29
 
 
 def test_node_not_in_graph(mock_index_manager):

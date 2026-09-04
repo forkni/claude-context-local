@@ -93,6 +93,7 @@ def _run_accessibility_precheck(directory_path: Path) -> None:
     """
     try:
         # Quick file accessibility check on a sample of files
+        from chunking.language_registry import extension_key
         from chunking.tree_sitter import TreeSitterChunker
 
         ext_set = set(TreeSitterChunker.get_supported_extensions())
@@ -102,7 +103,7 @@ def _run_accessibility_precheck(directory_path: Path) -> None:
         # Avoids up to 19 separate rglob walks (one per extension) and eliminates
         # the materialize-before-slice anti-pattern that defeats rglob laziness.
         for p in directory_path.rglob("*"):
-            if p.is_file() and p.suffix.lower() in ext_set:
+            if p.is_file() and extension_key(str(p)) in ext_set:
                 sample_files.append(p)
                 if len(sample_files) >= 50:
                     break

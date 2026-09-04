@@ -175,3 +175,27 @@ C0's effect from the unrelated TD-work substrate growth (219→234 files across 
   Landed standalone, ahead of the TD-specific commits, per the plan's sequencing.
 - C1–C7 zero-mover gate (TD-specific changes, self-index has no `.tdgraph.json`) is tracked
   separately — see C8 below.
+
+**C8 (full test suite + benchmark gate), measured 2026-09-04.** Run per the plan, on the fully
+landed C0–C7 substrate (234 files / 2851 chunks; `get_index_status` confirms zero `operator`/
+`network` chunk types present — C1–C7's new vocabulary is dormant on this self-index exactly as
+predicted in Consequences above, since `enable_td_network_indexing` defaults `False` and no
+`.tdgraph.json` file exists in this repo).
+
+- `./scripts/test/run_tests.sh tests/unit/ -q`: **4501 passed, 2 skipped, 0 failed** — covers the
+  C0 phantom-promotion regression test, the C1 enumeration-site bumps (`REVERSE_RELATIONS` 21→29
+  in both `test_schema.py` and the second, source-plan-missed site in
+  `test_graph_enrichment.py`; `get_relationship_field_mapping` 19→27 in
+  `test_relationship_types.py`), the C3 compound-extension tests
+  (`tests/unit/chunking/test_language_registry.py`), and the C5 `TDNetworkChunker` fixture suite
+  (`tests/unit/chunking/test_td_network_chunker.py`).
+- 63q `run_sscg_benchmark.py` (`c8_final_63q.json`): MRR **0.8406**, recall@10 0.7704, recall@20
+  0.8432, ndcg@10 0.7382 — vs the pre-TD-work canon `CANON_20260901_REBASELINE.md` (219 files,
+  MRR 0.8419): Δ −0.0013.
+- 133q `run_sscg_benchmark.py` (`c8_final_133q.json`): MRR **0.6571**, recall@10 0.7337, recall@20
+  0.7979, ndcg@10 0.6562, hit_rate@5 0.8722 — vs the same pre-TD canon (133q MRR 0.6378): Δ
+  +0.0193.
+- Both deltas fall inside the established ±0.02 MRR run-to-run noise band for independent index
+  rebuilds on this project (same precedent cited in the C0 measurement above) — zero material
+  movers, as the plan predicted. **Verdict: C1–C7 gate PASSES.** All three quality-gate thresholds
+  (mrr≥0.5, recall@5≥0.55, hit_rate@5≥0.8) report `PASS` on both golden sets.

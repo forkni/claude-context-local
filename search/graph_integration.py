@@ -136,6 +136,8 @@ SEMANTIC_TYPES = (
     "variable",
     "merged",  # Sibling chunks combined during chunking (legacy, pre-existing indices)
     "split_block",  # Large node split blocks (AST block splitting)
+    "operator",  # TouchDesigner network operator (ADR-0062, Part C)
+    "network",  # TouchDesigner network/COMP summary chunk (ADR-0062, Part C)
 )
 
 # Common Python method/attribute names that are almost certainly stdlib

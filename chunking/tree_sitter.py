@@ -29,7 +29,14 @@ from typing import TYPE_CHECKING, Any
 
 from tree_sitter import Language
 
-from .language_registry import EXT_TO_LANGUAGE, LANGUAGE_SPECS
+from .language_registry import (
+    COMPOUND_EXTENSIONS,
+    EXT_TO_LANGUAGE,
+    LANGUAGE_SPECS,
+    PSEUDO_LANGUAGES,
+    extension_key,
+    td_network_indexing_enabled,
+)
 
 # Import base classes and language chunkers from languages package
 from .languages import (
@@ -341,7 +348,7 @@ class TreeSitterChunker:
         Returns:
             LanguageChunker instance or None if unsupported
         """
-        suffix = Path(file_path).suffix.lower()
+        suffix = extension_key(file_path)
 
         if suffix not in self.LANGUAGE_MAP:
             return None
@@ -617,7 +624,7 @@ class TreeSitterChunker:
         Returns:
             True if file type is supported
         """
-        suffix = Path(file_path).suffix.lower()
+        suffix = extension_key(file_path)
         if suffix not in self.LANGUAGE_MAP:
             return False
 
@@ -635,6 +642,20 @@ class TreeSitterChunker:
         for ext, (lang_name, _) in cls.LANGUAGE_MAP.items():
             if lang_name in AVAILABLE_LANGUAGES:
                 supported.append(ext)
+        if td_network_indexing_enabled():
+            # ADR-0062: pseudo-languages (currently just .tdgraph.json) have
+            # no tree-sitter grammar, so they're never in LANGUAGE_MAP /
+            # AVAILABLE_LANGUAGES above. They still belong in this list
+            # because it feeds the file walker / Merkle-hash extension set
+            # (incremental_indexer.py, index_freshness.py,
+            # index_handlers.py), not just TreeSitterChunker dispatch --
+            # MultiLanguageChunker.chunk_file() routes pseudo-language files
+            # to their own chunker, bypassing this class entirely.
+            supported.extend(
+                ext
+                for ext, lang_name in COMPOUND_EXTENSIONS.items()
+                if lang_name in PSEUDO_LANGUAGES
+            )
         return supported
 
     @classmethod

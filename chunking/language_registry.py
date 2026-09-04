@@ -10,6 +10,7 @@ import importlib
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 
@@ -49,10 +50,85 @@ EXT_TO_LANGUAGE: dict[str, str] = {
     ".tesc": "glsl",
     ".tese": "glsl",
     ".glslinc": "glsl",
+    # Pseudo-language, no tree-sitter grammar (ADR-0062). Registering it here
+    # unconditionally is harmless on its own -- it's just a declarative
+    # mapping; the actual feature is gated behind td_network_indexing_enabled()
+    # at the two consumption points that decide whether a file gets chunked
+    # (MultiLanguageChunker.is_supported, tree_sitter.get_supported_extensions).
+    # A compound (multi-dot) key: Path(...).suffix alone can't see it, hence
+    # extension_key() below.
+    ".tdgraph.json": "td_network",
 }
 
 # Supported file extensions for code chunking — derived from EXT_TO_LANGUAGE.
 SUPPORTED_EXTENSIONS: set[str] = set(EXT_TO_LANGUAGE.keys())
+
+# Compound (multi-dot) extensions that a plain Path(path).suffix lookup
+# cannot see -- Path("Test_network.tdgraph.json").suffix is ".json", not
+# ".tdgraph.json". extension_key() is the single place that checks for these
+# before falling back to Path.suffix, so every .suffix-based call site in
+# the codebase can be pointed at one function instead of reimplementing the
+# compound-suffix check itself. Keys are lowercase and include every dot.
+COMPOUND_EXTENSIONS: dict[str, str] = {
+    ".tdgraph.json": "td_network",
+}
+
+# Languages registered in EXT_TO_LANGUAGE that have no tree-sitter grammar
+# and are never looked up in LANGUAGE_SPECS/LANGUAGE_MAP.
+# chunking/tree_sitter.py's get_supported_extensions() must union these in
+# explicitly (its AVAILABLE_LANGUAGES filter would otherwise silently drop
+# them), and MultiLanguageChunker.chunk_file() routes them to a dedicated
+# chunker instead of TreeSitterChunker.
+PSEUDO_LANGUAGES: frozenset[str] = frozenset({"td_network"})
+
+
+def extension_key(path: str) -> str:
+    """Return the extension key used for language/registry lookups.
+
+    Prefers the longest matching entry in COMPOUND_EXTENSIONS (checked
+    against the lowercased path) over Path(path).suffix.lower(), so a file
+    like "Test_network.tdgraph.json" resolves to ".tdgraph.json" rather than
+    the plain ".json" that Path.suffix would report. Use this instead of
+    Path(path).suffix.lower() at any site that needs to recognize a
+    compound extension.
+    """
+    lowered = path.lower()
+    best_match = ""
+    for compound_ext in COMPOUND_EXTENSIONS:
+        if lowered.endswith(compound_ext) and len(compound_ext) > len(best_match):
+            best_match = compound_ext
+    if best_match:
+        return best_match
+    return Path(path).suffix.lower()
+
+
+def is_td_network_file(path: str) -> bool:
+    """True if `path` is a TouchDesigner network snapshot (.tdgraph.json)."""
+    return extension_key(path) == ".tdgraph.json"
+
+
+def td_network_indexing_enabled() -> bool:
+    """Master gate for TD network (.tdgraph.json) indexing (ADR-0062).
+
+    Every consumption point that decides whether .tdgraph.json is a
+    recognized, chunkable extension -- MultiLanguageChunker.is_supported()
+    and chunking.tree_sitter.get_supported_extensions() -- calls this single
+    helper rather than reading ChunkingConfig.enable_td_network_indexing
+    directly, so there is exactly one place that decides whether the
+    feature is active.
+
+    Mirrors the lazy-import pattern in
+    MultiLanguageChunker._max_file_size_bytes() (avoids a chunking <->
+    search.config import cycle), except the safe default here is False
+    (feature off) in both the disabled and config-unavailable cases, since
+    this is a feature gate, not a numeric cap.
+    """
+    from search.config import get_chunking_config
+
+    chunking_config = get_chunking_config()
+    return (
+        bool(chunking_config.enable_td_network_indexing) if chunking_config else False
+    )
 
 
 # Common large/build/tooling directories to skip during traversal

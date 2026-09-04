@@ -21,8 +21,12 @@ from .language_registry import (
     LANGUAGE_NODE_TYPE_OVERRIDES,
     NODE_TYPE_MAP,
     SUPPORTED_EXTENSIONS,
+    extension_key,
+    is_td_network_file,
+    td_network_indexing_enabled,
 )
 from .python_ast_chunker import CodeChunk
+from .td_network_chunker import TDNetworkChunker
 from .tree_sitter import TreeSitterChunk, TreeSitterChunker
 
 
@@ -301,8 +305,14 @@ class MultiLanguageChunker:
         Returns:
             True if file type is supported
         """
-        suffix = Path(file_path).suffix.lower()
-        return suffix in self.SUPPORTED_EXTENSIONS
+        ext_key = extension_key(file_path)
+        if ext_key == ".tdgraph.json":
+            # ADR-0062: pseudo-language, gated separately from the plain
+            # SUPPORTED_EXTENSIONS membership check below (which would
+            # otherwise say True unconditionally -- .tdgraph.json is
+            # registered in EXT_TO_LANGUAGE regardless of the flag).
+            return td_network_indexing_enabled()
+        return ext_key in self.SUPPORTED_EXTENSIONS
 
     def chunk_file(self, file_path: str) -> list[CodeChunk]:
         """Chunk a file into semantic units.
@@ -333,6 +343,26 @@ class MultiLanguageChunker:
                 logger.info(
                     f"Skipping {file_path}: {file_size:,}B exceeds "
                     f"max_file_size_bytes cap ({max_file_size_bytes:,}B)"
+                )
+                return []
+
+        if is_td_network_file(file_path):
+            # ADR-0062: pseudo-language, no grammar -- TDNetworkChunker builds
+            # CodeChunk objects directly from the JSON snapshot instead of going
+            # through tree_sitter_chunker below.
+            try:
+                relative_path = (
+                    str(Path(file_path).relative_to(self.root_path))
+                    if self.root_path
+                    else file_path
+                )
+                return TDNetworkChunker(self.root_path).chunk_file(
+                    file_path, relative_path
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to chunk TD network file {file_path}: {e}",
+                    exc_info=True,
                 )
                 return []
 
@@ -442,7 +472,7 @@ class MultiLanguageChunker:
         """
         parts = Path(relative_path).parts
         name = Path(relative_path).name.lower()
-        ext = Path(relative_path).suffix.lower()
+        ext = extension_key(relative_path)
 
         # Test files
         if any(

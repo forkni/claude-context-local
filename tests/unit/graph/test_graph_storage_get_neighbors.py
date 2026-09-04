@@ -1,7 +1,7 @@
 """
 Unit tests for CodeGraphStorage.get_neighbors() with expanded relationship type support.
 
-Tests verify that get_neighbors() supports all 21 relationship types beyond the
+Tests verify that get_neighbors() supports all 29 relationship types beyond the
 original "calls"/"called_by" limitation.
 """
 

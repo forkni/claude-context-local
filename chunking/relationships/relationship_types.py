@@ -1,7 +1,7 @@
 """
 Relationship types and edge representations for Phase 3.
 
-This module defines the 21 relationship types used in code graph analysis
+This module defines the 29 relationship types used in code graph analysis
 and provides a unified data structure for relationship edges.
 
 Core Relationship Types (Priority 1-3):
@@ -28,6 +28,16 @@ Entity Tracking Enhancements (Priority 4-5):
 - uses_global: global statement usage
 - asserts_type: Type assertion (isinstance)
 - uses_context_manager: Context manager usage
+
+TouchDesigner Network Relationships (ADR-0062, Priority 6):
+- wires_to: Operator output wired to another operator's input
+- docked_to: Operator docked to another operator
+- contains: Network/COMP contains an operator
+- references_op: par_ref/script_ref/shortcut_ref to another operator
+- binds_to: Parameter bind expression targets another operator
+- exports_to: Parameter export targets another operator's channel
+- scripted_by: Operator's script callback lives in a script module chunk
+- shares_tag: Two operators share a user tag (symmetric)
 
 Edge Direction:
 - Source (source_id): The code chunk creating the relationship
@@ -85,6 +95,16 @@ class RelationshipType(Enum):
     ASSERTS_TYPE = "asserts_type"  # assert isinstance(x, Type)
     USES_CONTEXT_MANAGER = "uses_context_manager"  # with X() as y:
 
+    # Priority 6: TouchDesigner Network Relationships (ADR-0062, Part C)
+    WIRES_TO = "wires_to"  # Operator output -> operator input
+    DOCKED_TO = "docked_to"  # Operator docked to another operator
+    CONTAINS = "contains"  # Network/COMP contains an operator
+    REFERENCES_OP = "references_op"  # par_ref/script_ref/shortcut_ref
+    BINDS_TO = "binds_to"  # Parameter bind expression
+    EXPORTS_TO = "exports_to"  # Parameter export
+    SCRIPTED_BY = "scripted_by"  # DAT operator's callback -> script module chunk
+    SHARES_TAG = "shares_tag"  # Two operators share a user tag (symmetric)
+
     @classmethod
     def from_string(cls, type_str: str) -> Optional["RelationshipType"]:
         """
@@ -134,6 +154,16 @@ class RelationshipType(Enum):
                 cls.USES_GLOBAL,
                 cls.ASSERTS_TYPE,
                 cls.USES_CONTEXT_MANAGER,
+            ],
+            6: [
+                cls.WIRES_TO,
+                cls.DOCKED_TO,
+                cls.CONTAINS,
+                cls.REFERENCES_OP,
+                cls.BINDS_TO,
+                cls.EXPORTS_TO,
+                cls.SCRIPTED_BY,
+                cls.SHARES_TAG,
             ],
         }
 
@@ -442,6 +472,17 @@ def get_relationship_field_mapping() -> dict[str, tuple]:
         "uses_global": ("uses_globals", "global_usages"),
         "asserts_type": ("asserts_types", "type_assertions"),
         "uses_context_manager": ("uses_context_managers", "context_manager_usages"),
+        # TouchDesigner network relationships (ADR-0062, Part C)
+        "wires_to": ("wires_to", "wired_from"),
+        "docked_to": ("docked_to", "docked_by"),
+        "contains": ("contains", "contained_by"),
+        "references_op": ("references", "referenced_by"),
+        "binds_to": ("binds_to", "bound_by"),
+        "exports_to": ("exports_to", "exported_by"),
+        "scripted_by": ("scripted_by", "scripts"),
+        # Symmetric relation: same field name both directions (see graph/schema.py's
+        # REVERSE_RELATIONS, which self-reverses "shares_tag" for the same reason).
+        "shares_tag": ("shares_tag_with", "shares_tag_with"),
     }
 
 

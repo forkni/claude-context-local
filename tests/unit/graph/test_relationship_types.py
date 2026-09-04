@@ -23,7 +23,7 @@ from chunking.relationships.relationship_types import (
 
 
 def test_relationship_type_enum_values():
-    """Test that all 21 relationship types are defined."""
+    """Test that all 29 relationship types are defined."""
     expected_types = {
         # Priority 1: Foundation
         "calls",
@@ -51,6 +51,15 @@ def test_relationship_type_enum_values():
         "uses_global",
         "asserts_type",
         "uses_context_manager",
+        # Priority 6: TouchDesigner Network Relationships (ADR-0062, Part C)
+        "wires_to",
+        "docked_to",
+        "contains",
+        "references_op",
+        "binds_to",
+        "exports_to",
+        "scripted_by",
+        "shares_tag",
     }
 
     actual_types = {rt.value for rt in RelationshipType}
@@ -107,6 +116,18 @@ def test_relationship_type_priority_groups():
     assert RelationshipType.OVERRIDES in priority3
     assert RelationshipType.ASSIGNS_TO in priority3
     assert RelationshipType.READS_FROM in priority3
+
+    # Check Priority 6 (8 types, ADR-0062 TouchDesigner network relationships)
+    priority6 = groups[6]
+    assert len(priority6) == 8
+    assert RelationshipType.WIRES_TO in priority6
+    assert RelationshipType.DOCKED_TO in priority6
+    assert RelationshipType.CONTAINS in priority6
+    assert RelationshipType.REFERENCES_OP in priority6
+    assert RelationshipType.BINDS_TO in priority6
+    assert RelationshipType.EXPORTS_TO in priority6
+    assert RelationshipType.SCRIPTED_BY in priority6
+    assert RelationshipType.SHARES_TAG in priority6
 
 
 # ===== RelationshipEdge Dataclass Tests =====
@@ -335,13 +356,23 @@ def test_get_relationship_field_mapping():
 
     # Check structure
     assert isinstance(mapping, dict)
-    assert len(mapping) == 19
+    assert len(mapping) == 27
 
     # Check specific mappings
     assert mapping["inherits"] == ("parent_classes", "child_classes")
     assert mapping["uses_type"] == ("uses_types", "used_as_type_in")
     assert mapping["calls"] == ("direct_callers", None)
     assert mapping["raises"] == ("exceptions_raised", "exception_handlers")
+
+    # TouchDesigner network relationships (ADR-0062, Part C)
+    assert mapping["wires_to"] == ("wires_to", "wired_from")
+    assert mapping["docked_to"] == ("docked_to", "docked_by")
+    assert mapping["contains"] == ("contains", "contained_by")
+    assert mapping["references_op"] == ("references", "referenced_by")
+    assert mapping["binds_to"] == ("binds_to", "bound_by")
+    assert mapping["exports_to"] == ("exports_to", "exported_by")
+    assert mapping["scripted_by"] == ("scripted_by", "scripts")
+    assert mapping["shares_tag"] == ("shares_tag_with", "shares_tag_with")
 
     # assigns_to/reads_from are deliberately unmapped: no extractor ever emits
     # them, and their mapping was directionally backwards. They remain

@@ -29,8 +29,19 @@ SPLIT_BLOCK = "split_block"
 #: into a single span keyed to that symbol (see :func:`_fold_split_groups`),
 #: so a call-site line inside a long method resolves to the method rather
 #: than to the enclosing ``class`` chunk.
+#: "operator"/"network" are TouchDesigner network chunk types (ADR-0062,
+#: Part C) -- included so line-mapped TD golden queries resolve to the
+#: enclosing operator/network chunk the same way Python call sites do.
 DEFAULT_SEMANTIC_TYPES: frozenset[str] = frozenset(
-    {"function", "method", "class", "decorated_definition", SPLIT_BLOCK}
+    {
+        "function",
+        "method",
+        "class",
+        "decorated_definition",
+        SPLIT_BLOCK,
+        "operator",
+        "network",
+    }
 )
 
 

@@ -89,7 +89,7 @@ it prints a per-pattern file-count/size breakdown and exits without indexing.
 | **file_pattern** | string | Substring match on file path | Any string (e.g., "auth", "test_", "utils/") |
 | **include_dirs** | array | Only search in these directories (prefix match) | `["src/", "lib/"]` |
 | **exclude_dirs** | array | Exclude from search (prefix match) | `["tests/", "vendor/", "node_modules/"]` |
-| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"module_preamble"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"`, `"merged"`, `"split_block"` |
+| **chunk_type** | string | Filter by code structure type | `"function"`, `"class"`, `"method"`, `"module"`, `"module_preamble"`, `"decorated_definition"`, `"interface"`, `"enum"`, `"struct"`, `"type"`, `"merged"`, `"split_block"`, `"operator"`, `"network"` |
 
 **Synthetic Summary Chunk Types (v0.9.0+)**:
 
@@ -100,6 +100,12 @@ it prints a per-pattern file-count/size breakdown and exits without indexing.
 - `"merged"`: Sibling chunks combined by `LanguageChunker._create_merged_chunk`. Multiple related code blocks merged together for better semantic context (e.g., related helper functions merged with main class).
 - `"module_preamble"`: Real (non-synthetic) top-of-file statements — import-time side effects, module-level constants/config, `if __name__ == "__main__":` guards — that sit between chunked functions/classes but have no chunkable ancestor node type. Unlike `"module"`, this contains the actual verbatim source with real line numbers, and is never subject to synthetic-chunk demotion/exclusion.
 - `"split_block"`: Large function blocks split at AST boundaries when exceeding `max_chunk_lines` (default: 100 lines). Enables better granularity for very large functions.
+
+**TouchDesigner Network Chunk Types (v0.26.0+, ADR-0062, opt-in)**:
+
+- `"operator"`: One TD operator (COMP/DAT/TOP/etc.) from a `.tdgraph.json` network snapshot — name, type, class hierarchy, wiring, docking, params, references, folded into NL content.
+- `"network"`: The network-level summary chunk for a `.tdgraph.json` file — node/edge counts, family breakdown, top-level operators, tag groups.
+- Both only appear when `enable_td_network_indexing` is turned on in `search_config.json` (default off — see `configure_chunking`) and the index contains `.tdgraph.json` files.
 
 ### Directory Filtering (v0.5.9+)
 

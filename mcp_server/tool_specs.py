@@ -212,8 +212,10 @@ RETURNS:
                         "type",
                         "merged",
                         "split_block",
+                        "operator",
+                        "network",
                     ],
-                    "description": "Filter by code structure type (function, class, method, module, module_preamble, decorated_definition, interface, enum, struct, type, merged, split_block), or None for all",
+                    "description": "Filter by code structure type (function, class, method, module, module_preamble, decorated_definition, interface, enum, struct, type, merged, split_block, operator, network -- the last two only present when enable_td_network_indexing is on, ADR-0062), or None for all",
                 },
                 "include_context": {
                     "type": "boolean",
@@ -781,7 +783,7 @@ extras to see `resolver_source: "lsp"` edges.""",
                 "relationship_types": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": 'Filter to only include specific relationship types (e.g., ["inherits", "imports", "decorates"]). If not provided, all relationship types are included. Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager. Note: uses_global and asserts_type require entity tracking (enable_entity_tracking, default True) and a reindex to populate on an existing index.',
+                    "description": 'Filter to only include specific relationship types (e.g., ["inherits", "imports", "decorates"]). If not provided, all relationship types are included. Valid types: calls, inherits, uses_type, imports, decorates, raises, catches, instantiates, implements, overrides, defines_constant, defines_enum_member, defines_class_attr, defines_field, uses_constant, uses_default, uses_global, asserts_type, uses_context_manager, wires_to, docked_to, contains, references_op, binds_to, exports_to, scripted_by, shares_tag. Note: uses_global and asserts_type require entity tracking (enable_entity_tracking, default True) and a reindex to populate on an existing index. The TouchDesigner network types (wires_to, docked_to, contains, references_op, binds_to, exports_to, scripted_by, shares_tag) only populate when enable_td_network_indexing is on (ADR-0062, default off) and the index contains .tdgraph.json files.',
                 },
                 "hide_ambiguous": {
                     **CONFIG_BACKED["find_connections.hide_ambiguous"],
@@ -958,6 +960,10 @@ RETURNS:
                 "max_file_size_bytes": {
                     **CONFIG_BACKED["configure_chunking.max_file_size_bytes"],
                     "description": "Files larger than this are skipped by the chunker (never chunked, never indexed). Does not affect the adaptive-sizing profiler, which reads its own import-time-seeded 5 MB default and is not affected by this setting.",
+                },
+                "enable_td_network_indexing": {
+                    **CONFIG_BACKED["configure_chunking.enable_td_network_indexing"],
+                    "description": "Index TouchDesigner network snapshots (.tdgraph.json) as a pseudo-language (ADR-0062). Off by default -- .tdgraph.json is otherwise an unrecognized extension. Re-index the project after enabling to pick up existing files.",
                 },
                 "output_format": {**OUTPUT_FORMAT_PROPERTY},
             },

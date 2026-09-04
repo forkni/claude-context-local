@@ -42,7 +42,7 @@ def _get_reverse_relation_name(rel_type: str) -> str:
 def _get_graph_data_for_chunk(
     index_manager: CodeIndexManager, chunk_id: str, max_per_type: int = 5
 ) -> dict | None:
-    """Get all graph relationship data for a chunk (21 relationship types).
+    """Get all graph relationship data for a chunk (29 relationship types).
 
     Iterates outgoing and incoming edges, grouping by relationship type.
     Also checks incoming edges by bare symbol name, since edges often

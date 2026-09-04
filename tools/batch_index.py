@@ -44,11 +44,21 @@ def _dry_run(
     """
     import os
 
-    from chunking.language_registry import SUPPORTED_EXTENSIONS
+    from chunking.language_registry import (
+        SUPPORTED_EXTENSIONS,
+        extension_key,
+        td_network_indexing_enabled,
+    )
     from search.filters import MatchKind, PathFilter, match_pattern
 
     root = project_path.resolve()
     path_filter = PathFilter(include_dirs, exclude_dirs, root)
+    # ADR-0062: SUPPORTED_EXTENSIONS registers .tdgraph.json unconditionally
+    # (it's a static declarative registry), so it must be excluded here
+    # explicitly when the feature flag is off -- otherwise this preview would
+    # count files that handle_index_directory's real chunking path (gated via
+    # MultiLanguageChunker.is_supported) would actually skip.
+    td_enabled = td_network_indexing_enabled()
 
     per_pattern_size: dict[str, int] = dict.fromkeys(
         (p.raw for p in path_filter.include_patterns), 0
@@ -73,7 +83,11 @@ def _dry_run(
         ]
 
         for name in sorted(filenames):
-            if Path(name).suffix.lower() not in SUPPORTED_EXTENSIONS:
+            ext_key = extension_key(name)
+            if ext_key == ".tdgraph.json":
+                if not td_enabled:
+                    continue
+            elif ext_key not in SUPPORTED_EXTENSIONS:
                 continue
             rel_file = name if rel_dir == "." else f"{rel_dir}/{name}"
             if not path_filter.should_index_file(rel_file):

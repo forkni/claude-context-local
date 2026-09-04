@@ -1001,7 +1001,7 @@ class OutputConfig:
 
 @dataclass
 class ChunkingConfig:
-    """Chunking algorithm settings (11 fields)."""
+    """Chunking algorithm settings (12 fields)."""
 
     # Large function splitting (cAST paper: AST-aware splitting improves Recall@5 +66%)
     enable_large_node_splitting: bool = field(
@@ -1099,6 +1099,20 @@ class ChunkingConfig:
             flat_alias="max_file_size_bytes",
             mcp="chunking",
             reader="chunking/multi_language_chunker.py",
+        ),
+    )
+
+    # TouchDesigner network snapshot indexing (ADR-0062, Part C). Off by
+    # default: a `.tdgraph.json` file is otherwise an unrecognized extension,
+    # exactly as it is today. Consumed through the single gate helper
+    # `chunking.language_registry.td_network_indexing_enabled()` -- do not
+    # read this field directly anywhere else.
+    enable_td_network_indexing: bool = field(
+        default=False,
+        metadata=spec(
+            flat_alias="enable_td_network_indexing",
+            mcp="chunking",
+            reader="chunking/language_registry.py",
         ),
     )
 
