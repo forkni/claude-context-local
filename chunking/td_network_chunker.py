@@ -22,16 +22,24 @@ actually instantiated by a node -- *not* every class in ``mro``), ``scripts``,
 ``tag_groups``, ``node_line_spans``, ``edge_types``, ``stats``.
 
 Emits three chunk_type kinds, all ``language="td_network"``, ids built exclusively
-via ``search/chunk_id.py::build()`` (never hand-rolled) and always carrying a line
-span -- ``0-0`` for anything without a natural one, mirroring
-``file_summarizer.py``'s module-chunk convention:
+via ``search/chunk_id.py::build()`` (never hand-rolled) and always carrying a real
+line span **into the ``.tdgraph.json`` file itself** (see ``_json_element_spans``):
+an operator's span is the line range of its node object, a class's span is the
+line range of its ``classes`` entry, and the network chunk spans the whole file.
+The exporter's ``node_line_spans`` key is deliberately *ignored* -- it holds the
+script line count of each Python DAT (``{"start_line": 1, "end_line": N}``), not a
+position in the snapshot, so it cannot drive ``Read``-able spans.
 
-- ``operator``  -- one per real (non-stub) node, named by its path relative to the
-  network target (``"glsl1"``, ``"comp1/box1"``).
+- ``operator``  -- one per real (non-stub) node *other than the network root*,
+  named by its path relative to the network target (``"glsl1"``, ``"comp1/box1"``).
+  The exporter emits the target COMP itself as a depth-0 node; it is folded into
+  the ``network`` chunk instead of getting an operator chunk (whose name would
+  otherwise be empty -- ``build()`` drops a falsy name, yielding an unparseable id).
 - ``class``     -- one per entry in the snapshot's ``classes`` table, named by class
   name.
 - ``network``   -- one per file, a synthetic summary of the whole snapshot (same
-  role as ``file_summarizer``'s ``module`` chunk).
+  role as ``file_summarizer``'s ``module`` chunk); also the edge endpoint for every
+  edge that touches the network root (contains/dock/shared_tag/...).
 
 Relationship edges are built as ``RelationshipEdge`` objects directly (not through
 ``chunking.relationships.edge_specs.materialize_relationship_edges`` -- there is no
@@ -44,6 +52,7 @@ first edge, exactly as it does for an edge to an unindexed Python symbol.
 
 from __future__ import annotations
 
+import bisect
 import json
 import logging
 from collections import defaultdict
@@ -52,6 +61,7 @@ from typing import Any
 
 from chunking.python_ast_chunker import CodeChunk
 from chunking.relationships.relationship_types import RelationshipEdge, RelationshipType
+from search.chunk_id import ChunkId
 from search.chunk_id import build as build_chunk_id
 
 
@@ -101,18 +111,28 @@ class TDNetworkChunker:
         """
         try:
             with open(file_path, encoding="utf-8") as fh:
-                graph: dict[str, Any] = json.load(fh)
+                text = fh.read()
+            graph: dict[str, Any] = json.loads(text)
         except OSError as e:
             logger.warning("Could not read %s: %s", file_path, e)
             return []
         except json.JSONDecodeError as e:
             logger.warning("Malformed .tdgraph.json %s: %s", file_path, e)
             return []
+        if not isinstance(graph, dict):
+            logger.warning(
+                "Malformed .tdgraph.json %s: top level is not an object", file_path
+            )
+            return []
 
         if relative_path is None:
             relative_path = self._compute_relative_path(file_path)
 
-        return self._build_chunks(graph, file_path, relative_path)
+        node_spans, class_spans = _json_element_spans(text)
+        total_lines = text.count("\n") + (0 if text.endswith("\n") else 1)
+        return self._build_chunks(
+            graph, file_path, relative_path, node_spans, class_spans, total_lines
+        )
 
     def _compute_relative_path(self, file_path: str) -> str:
         path = Path(file_path)
@@ -135,10 +155,13 @@ class TDNetworkChunker:
         ``"comp1/box1"``); nodes outside it -- an export/bind target that lives
         elsewhere in the project, or a ``stub`` node the exporter couldn't fully
         resolve -- keep their absolute path minus the leading slash, so the name
-        stays a stable, human-readable chunk_id component either way.
+        stays a stable, human-readable chunk_id component either way. The target
+        itself maps to its own leaf name (``"Test_network"``), never ``""`` -- it is
+        only used for display here (the root never gets an operator chunk; see
+        ``_build_chunks``).
         """
         if node_id == target:
-            return ""
+            return Path(target).name or target
         prefix = target.rstrip("/") + "/"
         if node_id.startswith(prefix):
             return node_id[len(prefix) :]
@@ -149,15 +172,27 @@ class TDNetworkChunker:
     # ------------------------------------------------------------------
 
     def _build_chunks(
-        self, graph: dict[str, Any], file_path: str, relative_path: str
+        self,
+        graph: dict[str, Any],
+        file_path: str,
+        relative_path: str,
+        node_spans: dict[str, tuple[int, int]] | None = None,
+        class_spans: dict[str, tuple[int, int]] | None = None,
+        total_lines: int = 0,
     ) -> list[CodeChunk]:
         target = graph.get("target", "")
         nodes = graph.get("nodes") or []
         edges = graph.get("edges") or []
         classes = graph.get("classes") or {}
-        node_line_spans = graph.get("node_line_spans") or {}
+        node_spans = node_spans or {}
+        class_spans = class_spans or {}
+        # NOTE: graph["node_line_spans"] is intentionally unused -- see module docstring.
 
-        real_nodes = [n for n in nodes if not n.get("stub")]
+        # The exporter emits the target COMP itself as a depth-0 real node. It is
+        # the network, not an operator *in* the network: skip it here and route
+        # every edge touching it to the network chunk (chunk_id_for below).
+        root_node = next((n for n in nodes if n.get("id") == target), None)
+        real_nodes = [n for n in nodes if not n.get("stub") and n.get("id") != target]
 
         # ---- Pass 1: assign chunk ids (needed before any edge can be built) ----
         op_chunk_id: dict[str, str] = {}
@@ -165,29 +200,37 @@ class TDNetworkChunker:
         for n in real_nodes:
             node_id = n["id"]
             op_path = self._relative_op_path(node_id, target)
-            span = node_line_spans.get(node_id)
-            start, end = (span["start_line"], span["end_line"]) if span else (0, 0)
+            start, end = node_spans.get(node_id, (0, 0))
             op_span[node_id] = (start, end)
             op_chunk_id[node_id] = build_chunk_id(
                 relative_path, start, end, "operator", op_path
             )
 
         network_name = Path(target).name or (target or Path(relative_path).stem)
-        network_chunk_id = build_chunk_id(relative_path, 0, 0, "network", network_name)
+        network_span = (1, total_lines) if total_lines > 0 else (0, 0)
+        network_chunk_id = build_chunk_id(
+            relative_path, network_span[0], network_span[1], "network", network_name
+        )
 
         class_chunk_id = {
-            cname: build_chunk_id(relative_path, 0, 0, "class", cname)
+            cname: build_chunk_id(
+                relative_path, *class_spans.get(cname, (0, 0)), "class", cname
+            )
             for cname in classes
         }
 
         def chunk_id_for(node_id: str) -> str:
             """Chunk_id for any node id, real or not.
 
-            Gives a stable RelationshipEdge target_name even for nodes this file
-            never builds an operator chunk for (a stub, or a reference that lives
-            outside the walked subtree) -- graph_storage creates a phantom node
-            for it on first edge, matching correction #8 in ADR-0062.
+            The network root resolves to the network chunk (it has no operator
+            chunk of its own). Otherwise gives a stable RelationshipEdge
+            target_name even for nodes this file never builds an operator chunk
+            for (a stub, or a reference that lives outside the walked subtree) --
+            graph_storage creates a phantom node for it on first edge, matching
+            correction #8 in ADR-0062.
             """
+            if node_id == target:
+                return network_chunk_id
             if node_id in op_chunk_id:
                 return op_chunk_id[node_id]
             return build_chunk_id(
@@ -261,6 +304,7 @@ class TDNetworkChunker:
                     relative_path,
                     folder_structure,
                     class_chunk_id[cname],
+                    class_spans.get(cname, (0, 0)),
                     relationships_by_source.get(class_chunk_id[cname]),
                 )
             )
@@ -270,6 +314,8 @@ class TDNetworkChunker:
                 graph,
                 network_name,
                 network_chunk_id,
+                network_span,
+                root_node,
                 real_nodes,
                 file_path,
                 relative_path,
@@ -279,7 +325,32 @@ class TDNetworkChunker:
             )
         )
 
-        return chunks
+        return self._drop_nameless(chunks, file_path)
+
+    @staticmethod
+    def _drop_nameless(chunks: list[CodeChunk], file_path: str) -> list[CodeChunk]:
+        """Guard: never emit a chunk whose id lost its ``:name`` segment.
+
+        ``build()`` silently omits the suffix for a falsy name, which produced an
+        unparseable ``<file>:0-0:operator`` id for the network root before the
+        root was routed to the network chunk. Any recurrence is a chunker bug --
+        log it loudly and drop the chunk rather than poison the index.
+        """
+        kept: list[CodeChunk] = []
+        for c in chunks:
+            parsed = ChunkId.parse(c.chunk_id)
+            if parsed is None or not parsed.name:
+                logger.error(
+                    "TDNetworkChunker produced a nameless chunk_id %r in %s "
+                    "(chunk_type=%s, name=%r); dropped",
+                    c.chunk_id,
+                    file_path,
+                    c.chunk_type,
+                    c.name,
+                )
+                continue
+            kept.append(c)
+        return kept
 
     # ------------------------------------------------------------------
     # Relationship-edge construction
@@ -336,11 +407,11 @@ class TDNetworkChunker:
 
             if etype == "contains":
                 # Root-sourced contains edges attach to the network chunk (the
-                # network root itself is never chunked as an "operator"); nested
-                # ones attach to the parent operator chunk.
-                source_id = network_chunk_id if src == target else chunk_id_for(src)
+                # network root is never chunked as an "operator" -- chunk_id_for
+                # maps it to network_chunk_id); nested ones attach to the parent
+                # operator chunk.
                 add(
-                    source_id,
+                    chunk_id_for(src),
                     chunk_id_for(dst),
                     RelationshipType.CONTAINS,
                     0,
@@ -613,6 +684,7 @@ class TDNetworkChunker:
         relative_path: str,
         folder_structure: list[str],
         chunk_id: str,
+        span: tuple[int, int],
         relationships: list[RelationshipEdge] | None,
     ) -> CodeChunk:
         mro = cdata.get("mro") or []
@@ -635,8 +707,8 @@ class TDNetworkChunker:
         return CodeChunk(
             content=content,
             chunk_type="class",
-            start_line=0,
-            end_line=0,
+            start_line=span[0],
+            end_line=span[1],
             file_path=file_path,
             relative_path=relative_path,
             folder_structure=folder_structure,
@@ -653,6 +725,8 @@ class TDNetworkChunker:
         graph: dict[str, Any],
         network_name: str,
         chunk_id: str,
+        span: tuple[int, int],
+        root_node: dict[str, Any] | None,
         real_nodes: list[dict],
         file_path: str,
         relative_path: str,
@@ -670,6 +744,20 @@ class TDNetworkChunker:
         family_counts = stats.get("family_counts") or {}
 
         lines = [f"{network_name} — TouchDesigner network at {target}"]
+        # The root COMP's own identity lives here, not on an operator chunk.
+        if root_node:
+            root_type = root_node.get("op_type") or root_node.get("class_name")
+            if root_type:
+                lines.append(
+                    f"root operator: {root_type} ({root_node.get('family', '')})"
+                )
+            root_mro = root_node.get("mro") or []
+            if len(root_mro) > 1:
+                lines.append("class " + " < ".join(root_mro))
+            root_params = root_node.get("params") or {}
+            if root_params:
+                param_str = ", ".join(f"{k}={v!r}" for k, v in root_params.items())
+                lines.append(f"params: {param_str}")
         lines.append(f"{node_count} operators, {edge_count} relationships")
         if family_counts:
             fam_str = ", ".join(f"{k}:{v}" for k, v in sorted(family_counts.items()))
@@ -697,8 +785,8 @@ class TDNetworkChunker:
         return CodeChunk(
             content=content,
             chunk_type="network",
-            start_line=0,
-            end_line=0,
+            start_line=span[0],
+            end_line=span[1],
             file_path=file_path,
             relative_path=relative_path,
             folder_structure=folder_structure,
@@ -709,3 +797,101 @@ class TDNetworkChunker:
             language="td_network",
             chunk_id=chunk_id,
         )
+
+
+# ----------------------------------------------------------------------
+# JSON position scanning
+# ----------------------------------------------------------------------
+
+
+def _json_element_spans(
+    text: str,
+) -> tuple[dict[str, tuple[int, int]], dict[str, tuple[int, int]]]:
+    """Locate every top-level ``nodes[]`` element and ``classes{}`` entry in *text*.
+
+    Returns ``(node_spans_by_id, class_spans_by_name)``, each value a 1-based
+    inclusive ``(start_line, end_line)`` range in the serialized file -- the span
+    ``Read`` needs to show exactly that node/class JSON. Works on any formatting
+    (``indent=2`` as the exporter writes it, or minified, where every element
+    collapses onto the same line).
+
+    Walks only the *top-level* object with ``json.JSONDecoder.raw_decode`` so a
+    nested ``"nodes"``/``"classes"`` key (say, inside a node's ``params``) can never
+    be mistaken for the real tables. Any structural surprise (non-object root,
+    non-list ``nodes``, malformed tail) degrades to whatever was collected so far
+    -- the caller already validated the document with ``json.loads``, so this
+    only guards against the walker's own assumptions.
+    """
+    node_spans: dict[str, tuple[int, int]] = {}
+    class_spans: dict[str, tuple[int, int]] = {}
+
+    newline_offsets = [i for i, ch in enumerate(text) if ch == "\n"]
+
+    def line_of(pos: int) -> int:
+        return bisect.bisect_right(newline_offsets, pos) + 1
+
+    def skip_ws(i: int) -> int:
+        n = len(text)
+        while i < n and text[i] in " \t\r\n":
+            i += 1
+        return i
+
+    decoder = json.JSONDecoder()
+
+    def walk_object(i: int, on_entry) -> int:
+        """Walk ``{ "k": v, ... }`` starting at the ``{`` at *i*; return the index
+        just past the closing ``}``. ``on_entry(key, key_pos, value_pos, value,
+        value_end)`` is invoked per pair."""
+        i = skip_ws(i)
+        if i >= len(text) or text[i] != "{":
+            raise ValueError("expected object")
+        i = skip_ws(i + 1)
+        while i < len(text) and text[i] != "}":
+            key_pos = i
+            key, i = decoder.raw_decode(text, i)
+            i = skip_ws(i)
+            if i >= len(text) or text[i] != ":":
+                raise ValueError("expected ':'")
+            value_pos = skip_ws(i + 1)
+            value, i = decoder.raw_decode(text, value_pos)
+            on_entry(key, key_pos, value_pos, value, i)
+            i = skip_ws(i)
+            if i < len(text) and text[i] == ",":
+                i = skip_ws(i + 1)
+        return i + 1
+
+    def walk_array(i: int, on_element) -> int:
+        """Walk ``[ v, ... ]`` starting at the ``[`` at *i*; return the index just
+        past the closing ``]``. ``on_element(value, value_pos, value_end)``."""
+        i = skip_ws(i)
+        if i >= len(text) or text[i] != "[":
+            raise ValueError("expected array")
+        i = skip_ws(i + 1)
+        while i < len(text) and text[i] != "]":
+            value_pos = i
+            value, i = decoder.raw_decode(text, i)
+            on_element(value, value_pos, i)
+            i = skip_ws(i)
+            if i < len(text) and text[i] == ",":
+                i = skip_ws(i + 1)
+        return i + 1
+
+    def on_node(value: Any, start: int, end: int) -> None:
+        if isinstance(value, dict) and isinstance(value.get("id"), str):
+            node_spans[value["id"]] = (line_of(start), line_of(end - 1))
+
+    def on_class(key: str, key_pos: int, _vpos: int, _value: Any, end: int) -> None:
+        class_spans[key] = (line_of(key_pos), line_of(end - 1))
+
+    def on_top(key: str, _kpos: int, value_pos: int, value: Any, _end: int) -> None:
+        if key == "nodes" and isinstance(value, list):
+            walk_array(value_pos, on_node)
+        elif key == "classes" and isinstance(value, dict):
+            walk_object(value_pos, on_class)
+
+    try:
+        walk_object(0, on_top)
+    except (ValueError, json.JSONDecodeError) as e:  # pragma: no cover - defensive
+        logger.debug("tdgraph position scan stopped early: %s", e)
+
+    return node_spans, class_spans

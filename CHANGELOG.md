@@ -34,6 +34,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by measurement (63q/133q golden-set canons flat, see
   `evaluation/CANON_GATE_FANOUT_CAP_20260903.md`).
 
+### Fixed
+
+- **`.tdgraph.json` chunker: real line spans and no nameless root id** (ADR-0062 follow-up, found
+  on the first real TouchDesigner export). Operator/class/network spans are now derived from the
+  JSON file's own element positions (`TDNetworkChunker._json_element_spans`) instead of the
+  exporter's `node_line_spans`, which holds Python-DAT script line counts, not file positions —
+  previously ~75% of operator chunks carried a `0-0` span and the rest meaningless values; class
+  and network chunks were hard-coded `0-0`. The exported target COMP (a depth-0 node) no longer
+  becomes an operator chunk with an empty name (`<file>:0-0:operator`); it is folded into the
+  `network` chunk and every edge touching it (`contains`/`wire`/`dock`/`shared_tag`) attaches
+  there. A `_drop_nameless` guard rejects any chunk whose id fails `ChunkId.parse`. Operator chunk
+  ids change (`...:330-358:operator:Logger/Logger`) — any existing index built with the gate on
+  needs one full reindex of that project. Fixture gains a root node + root-hosted `dock`/`shared_tag`
+  edges; 12 new/rewritten unit tests derive expected spans from the fixture text.
+
 ### Changed
 
 - **`CallGraphConfig.resolvers` and `CallGraphConfig.ambiguous_fanout_cap` are now

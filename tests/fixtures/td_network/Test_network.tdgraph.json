@@ -5,6 +5,19 @@
   "content_hash": "fixture0000000000000000000000000000000000000000000000000000",
   "nodes": [
     {
+      "id": "/project1/Test_network",
+      "name": "Test_network",
+      "family": "COMP",
+      "op_type": "containerCOMP",
+      "class_name": "containerCOMP",
+      "mro": ["containerCOMP", "PanelCOMP", "COMP", "OP"],
+      "signature": "containerCOMP()",
+      "parent": null,
+      "tags": ["ui"],
+      "params": {"w": 1280, "h": 720},
+      "layout": {"x": 0.0, "y": 0.0, "w": 0.0, "h": 0.0}
+    },
+    {
       "id": "/project1/Test_network/comp1",
       "name": "comp1",
       "family": "COMP",
@@ -54,6 +67,7 @@
       "parent": "/project1/Test_network",
       "parent_shortcut": "Ctrl",
       "shortcuts": [{"kind": "parent", "name": "Ctrl"}],
+      "rel": {"docked_to": "/project1/Test_network"},
       "tags": ["comp"],
       "params": {},
       "layout": {"x": 0.0, "y": 100.0, "w": 160.0, "h": 20.0}
@@ -205,6 +219,7 @@
     {"type": "wire", "src": "/project1/Test_network/noise1", "dst": "/project1/Test_network/glsl1", "dst_index": 0, "carries": "noiseTOP()"},
     {"type": "comp_wire", "src": "/project1/Test_network/ctrl1", "dst": "/project1/Test_network/comp1"},
     {"type": "dock", "src": "/project1/Test_network/glsl1", "dst": "/project1/Test_network/info1"},
+    {"type": "dock", "src": "/project1/Test_network", "dst": "/project1/Test_network/ctrl1"},
     {"type": "par_ref", "src": "/project1/Test_network/glsl1", "dst": "/project1/Test_network/glslpixel1", "par": "pixeldat"},
     {"type": "bind", "src": "/project1/Test_network/slave1", "dst": "/project1/Test_network/master1", "par": "value1"},
     {"type": "export", "src": "/project1/Test_network/exportsrc1", "dst": "/project1/external/mix1", "par": "value1"},
@@ -215,6 +230,7 @@
     {"type": "shortcut_ref", "src": "/project1/Test_network/info1", "dst": "/project1/Test_network/ctrl1", "shortcut": "Ctrl"},
     {"type": "shortcut_ref", "src": "/project1/Test_network/info1", "dst": "/project1/Test_network/glsl1", "shortcut": "GLSL1"},
     {"type": "replicator", "src": "/project1/Test_network/rep1", "dst": "/project1/Test_network/rep1/item1"},
+    {"type": "shared_tag", "src": "/project1/Test_network", "dst": "/project1/Test_network/comp1", "tag": "ui"},
     {"type": "shared_tag", "src": "/project1/Test_network/comp1", "dst": "/project1/Test_network/ctrl1", "tag": "comp"},
     {"type": "shared_tag", "src": "/project1/Test_network/comp1", "dst": "/project1/Test_network/glsl1", "tag": "comp"},
     {"type": "shared_tag", "src": "/project1/Test_network/comp1", "dst": "/project1/Test_network/info1", "tag": "comp"},
@@ -270,20 +286,20 @@
     {"type": "contains", "count": 13},
     {"type": "wire", "count": 2},
     {"type": "comp_wire", "count": 1},
-    {"type": "dock", "count": 1},
+    {"type": "dock", "count": 2},
     {"type": "par_ref", "count": 1},
     {"type": "bind", "count": 1},
     {"type": "export", "count": 1},
     {"type": "script_ref", "count": 4},
     {"type": "shortcut_ref", "count": 2},
     {"type": "replicator", "count": 1},
-    {"type": "shared_tag", "count": 8}
+    {"type": "shared_tag", "count": 9}
   ],
   "stats": {
-    "node_count": 14,
-    "edge_count": 35,
+    "node_count": 15,
+    "edge_count": 37,
     "class_count": 8,
-    "family_counts": {"CHOP": 4, "COMP": 4, "DAT": 2, "SOP": 2, "TOP": 2},
+    "family_counts": {"CHOP": 4, "COMP": 5, "DAT": 2, "SOP": 2, "TOP": 2},
     "isolated_nodes": []
   }
 }

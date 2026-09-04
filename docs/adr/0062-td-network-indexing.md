@@ -98,6 +98,30 @@ plan doc above):
    `shortcuts` into the operator chunk's NL `content` text instead, exactly where the plan's own
    "Operator chunk NL content" spec already puts them — this makes them BM25/semantic-searchable,
    which nothing would do for a write-only metadata dict with no reader anyway.
+
+   **Line spans and the network root (2026-09-04, first real export).** Two defects surfaced the
+   moment a real Part B export (`D:\dev\SDTD_040`, 512 nodes / 970 edges / 53 classes) was chunked,
+   both invisible to the original C4 fixture:
+   - *Spans come from the JSON file, not from `node_line_spans`.* The exporter fills
+     `node_line_spans` with each Python DAT's **script line count** (`{start_line: 1, end_line: N}`,
+     131 of 512 nodes), not a position in the snapshot, so 381 operator chunks landed on `0-0` and the
+     rest carried meaningless numbers. `chunk_file` now reads the text once and derives every span
+     from the JSON itself (`_json_element_spans`: a `json.JSONDecoder.raw_decode` walk over the
+     top-level `nodes` array and `classes` object, char offsets mapped to 1-based lines via a
+     newline table + `bisect`). Operator span = its node object's lines, class span = its `classes`
+     entry, network span = `(1, total_lines)`. A `Read` of any returned span shows exactly that
+     element's JSON, which is what the span was for. `node_line_spans` stays in the schema and is
+     ignored; formatting-independent (minified exports collapse every span to line 1, still valid).
+   - *The target COMP is a node too.* The exporter emits the target (`/project1/StreamDiffusionTD`)
+     as a real depth-0 node; `_relative_op_path` returned `""` for it and `build()` silently drops a
+     falsy name, yielding `<file>:0-0:operator` — an id with no name segment that every wire/dock/
+     shared_tag edge touching the root then resolved through. The root is now excluded from operator
+     chunks and folded into the network chunk (`root operator: <type> (<family>)`, its `class` mro,
+     its params); `chunk_id_for(target)` returns the network chunk id, so all root-touching edges
+     attach to the network chunk uniformly (the old `contains`-only special case is gone). A
+     `_drop_nameless` guard logs and discards any chunk whose id fails `ChunkId.parse` or has an empty
+     name, so a nameless id can never reach the index again. The fixture now carries a root node plus
+     `dock`/`shared_tag` edges hosted by it, mirroring the real export.
 6. **C6 — cross-file `SCRIPTED_BY` — researched, not buildable, deferred.** The plan's spec
    (`SCRIPTED_BY` from a DAT operator chunk to `f"{normalize_path(rel)}:0-0:module:{stem}"`, plus a
    "GLSL path via the `pixeldat` par_ref") assumes the exporter records an external companion source

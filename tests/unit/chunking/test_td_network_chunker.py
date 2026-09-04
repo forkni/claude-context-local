@@ -3,10 +3,12 @@
 Exercises the chunker directly against the hand-built fixture
 ``tests/fixtures/td_network/Test_network.tdgraph.json`` -- see the ADR and
 ``docs/adr/0062-td-network-indexing.md`` for the schema this fixture stands in for
-(no real ``.tdgraph.json`` export exists yet; Part B is blocked on a live TD
-session). The fixture covers every one of the 11 edge types once, plus the
+(shape cross-checked against a real Part B export, ``D:\\dev\\SDTD_040``,
+2026-09-04). The fixture covers every one of the 11 edge types once, plus the
 ``dock``/``replicator`` direction-inversion cases documented in
-``_build_relationship_edges``.
+``_build_relationship_edges``, and -- like every real export -- carries the
+target COMP itself as a depth-0 node (the "root"), which must never become an
+operator chunk.
 """
 
 from pathlib import Path
@@ -41,6 +43,36 @@ def _rel(chunk: CodeChunk, rtype: RelationshipType, target_suffix: str):
     return None
 
 
+def _fixture_lines() -> list[str]:
+    return FIXTURE_PATH.read_text(encoding="utf-8").splitlines()
+
+
+def _node_json_span(node_id: str) -> tuple[int, int]:
+    """1-based inclusive line range of the node object with `node_id` in the
+    fixture, derived from the file text itself (exporter writes indent=2 with
+    ``id`` as the first key, so the object opens on the line before ``"id"`` and
+    closes at the next 4-space-indented ``}``)."""
+    lines = _fixture_lines()
+    id_line = next(
+        i for i, ln in enumerate(lines) if ln.strip() == f'"id": "{node_id}",'
+    )
+    start = id_line  # 0-based index of the "{" line == 1-based line of "id" - 1
+    end = next(i for i in range(id_line, len(lines)) if lines[i].rstrip(",") == "    }")
+    return start, end + 1
+
+
+def _class_json_span(cname: str) -> tuple[int, int]:
+    """1-based inclusive line range of the ``classes[cname]`` entry."""
+    lines = _fixture_lines()
+    start = next(
+        i for i, ln in enumerate(lines) if ln.strip().startswith(f'"{cname}": {{')
+    )
+    if lines[start].rstrip(",").endswith("}"):
+        return start + 1, start + 1
+    end = next(i for i in range(start, len(lines)) if lines[i].rstrip(",") == "    }")
+    return start + 1, end + 1
+
+
 class TestChunkFileErrors:
     def test_missing_file_returns_empty_list(self):
         chunker = TDNetworkChunker(root_path=str(FIXTURE_DIR))
@@ -67,8 +99,25 @@ class TestChunkCounts:
         by_type: dict[str, int] = {}
         for c in chunks:
             by_type[c.chunk_type] = by_type.get(c.chunk_type, 0) + 1
-        # 13 real (non-stub) nodes, 8 classes table entries, 1 network summary.
+        # 15 nodes = 1 root (folded into the network chunk) + 13 real operators
+        # + 1 stub; 8 classes table entries; 1 network summary.
         assert by_type == {"operator": 13, "class": 8, "network": 1}
+
+    def test_network_root_gets_no_operator_chunk(self):
+        """The exporter emits the target COMP as a depth-0 node. Before the fix it
+        produced ``<file>:0-0:operator`` -- an id with no name segment."""
+        chunks = _chunk_fixture()
+        operators = [c for c in chunks if c.chunk_type == "operator"]
+        assert all(c.name not in ("", "Test_network") for c in operators)
+        assert all(":operator:" in c.chunk_id for c in operators)
+        assert all(ChunkId.parse(c.chunk_id).name for c in operators)
+
+    def test_network_chunk_carries_root_operator_identity(self):
+        chunks = _chunk_fixture()
+        network = next(c for c in chunks if c.chunk_type == "network")
+        assert "root operator: containerCOMP (COMP)" in network.content
+        assert "class containerCOMP < PanelCOMP < COMP < OP" in network.content
+        assert "params: w=1280, h=720" in network.content
 
     def test_stub_node_gets_no_operator_chunk(self):
         chunks = _chunk_fixture()
@@ -88,7 +137,10 @@ class TestChunkIdContract:
         assert len(ids) == len(set(ids))
         for cid in ids:
             assert is_chunk_id(cid)
-            assert ChunkId.parse(cid) is not None
+            parsed = ChunkId.parse(cid)
+            assert parsed is not None
+            # build() silently drops a falsy name -- every TD chunk must have one.
+            assert parsed.name, cid
 
     def test_dedup_keys_are_unique(self):
         chunks = _chunk_fixture()
@@ -108,27 +160,59 @@ class TestChunkIdContract:
         parsed = ChunkId.parse(box1.chunk_id)
         assert parsed.name == "comp1/box1"
 
-    def test_operator_with_line_span_uses_it(self):
+    @pytest.mark.parametrize("name", ["glsl1", "comp1/box1", "info1", "rep1/item1"])
+    def test_operator_span_is_the_node_object_position_in_the_file(self, name):
+        """Spans point into the .tdgraph.json itself so a Read of the span shows
+        exactly that node's JSON. Expected values are derived from the fixture
+        text, never hard-coded."""
+        chunks = _chunk_fixture()
+        chunk = _by_name(chunks, name)
+        expected = _node_json_span(f"/project1/Test_network/{name}")
+        assert (chunk.start_line, chunk.end_line) == expected
+        assert chunk.start_line >= 1 and chunk.end_line > chunk.start_line
+        parsed = ChunkId.parse(chunk.chunk_id)
+        assert (parsed.line_start, parsed.line_end) == expected
+
+    def test_exporter_node_line_spans_are_ignored(self):
+        """The exporter's ``node_line_spans`` is the *script line count* of each
+        Python DAT ({start_line: 1, end_line: N}), not a position in the snapshot.
+        The fixture gives info1 {1, 12}; the chunk must not carry that."""
         chunks = _chunk_fixture()
         info1 = _by_name(chunks, "info1")
-        # node_line_spans gives info1 {start_line: 1, end_line: 12} in the fixture.
-        assert info1.start_line == 1
-        assert info1.end_line == 12
+        assert (info1.start_line, info1.end_line) != (1, 12)
+        assert (info1.start_line, info1.end_line) == _node_json_span(
+            "/project1/Test_network/info1"
+        )
 
-    def test_operator_without_line_span_falls_back_to_zero(self):
+    def test_no_chunk_has_a_zero_span(self):
         chunks = _chunk_fixture()
-        glsl1 = _by_name(chunks, "glsl1")
-        assert glsl1.start_line == 0
-        assert glsl1.end_line == 0
+        assert all((c.start_line, c.end_line) != (0, 0) for c in chunks)
 
-    def test_class_and_network_chunks_use_zero_span(self):
+    @pytest.mark.parametrize("cname", ["glslTOP", "constantCHOP", "boxSOP"])
+    def test_class_span_is_the_classes_entry_position(self, cname):
+        chunks = _chunk_fixture()
+        cls = next(c for c in chunks if c.chunk_type == "class" and c.name == cname)
+        assert (cls.start_line, cls.end_line) == _class_json_span(cname)
+
+    def test_network_span_covers_the_whole_file(self):
         chunks = _chunk_fixture()
         network = next(c for c in chunks if c.chunk_type == "network")
-        glsl_class = next(
-            c for c in chunks if c.chunk_type == "class" and c.name == "glslTOP"
+        assert (network.start_line, network.end_line) == (1, len(_fixture_lines()))
+
+    def test_spans_are_formatting_independent(self, tmp_path):
+        """A minified export still yields well-formed, non-zero spans (every
+        element collapses onto line 1)."""
+        import json
+
+        minified = tmp_path / "Mini.tdgraph.json"
+        minified.write_text(
+            json.dumps(json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))),
+            encoding="utf-8",
         )
-        assert (network.start_line, network.end_line) == (0, 0)
-        assert (glsl_class.start_line, glsl_class.end_line) == (0, 0)
+        chunks = TDNetworkChunker(root_path=str(tmp_path)).chunk_file(str(minified))
+        assert len(chunks) == 22
+        assert all((c.start_line, c.end_line) == (1, 1) for c in chunks)
+        assert all(is_chunk_id(c.chunk_id) for c in chunks)
 
 
 class TestEdgeTypeMapping:
@@ -181,6 +265,34 @@ class TestEdgeTypeMapping:
         network = next(c for c in chunks if c.chunk_type == "network")
         edge = _rel(network, RelationshipType.CONTAINS, ":operator:glsl1")
         assert edge is not None
+
+    def test_dock_edge_hosted_by_network_root_targets_network_chunk(self):
+        """fixture: {type: dock, src: <root>, dst: ctrl1}. The root has no
+        operator chunk, so ctrl1 must read "docked_to <network chunk>", not a
+        phantom ``:0-0:operator`` id with an empty name."""
+        chunks = _chunk_fixture()
+        network = next(c for c in chunks if c.chunk_type == "network")
+        ctrl1 = _by_name(chunks, "ctrl1")
+        edge = _rel(ctrl1, RelationshipType.DOCKED_TO, ":network:Test_network")
+        assert edge is not None
+        assert edge.target_name == network.chunk_id
+        assert "docked to: Test_network" in ctrl1.content
+
+    def test_shared_tag_edge_from_network_root_uses_network_chunk_both_ways(self):
+        chunks = _chunk_fixture()
+        network = next(c for c in chunks if c.chunk_type == "network")
+        comp1 = _by_name(chunks, "comp1")
+        out = _rel(network, RelationshipType.SHARES_TAG, ":operator:comp1")
+        back = _rel(comp1, RelationshipType.SHARES_TAG, ":network:Test_network")
+        assert out is not None and out.metadata["tag"] == "ui"
+        assert back is not None and back.target_name == network.chunk_id
+
+    def test_no_edge_endpoint_is_a_nameless_operator_id(self):
+        chunks = _chunk_fixture()
+        for c in chunks:
+            for r in c.relationships or []:
+                assert not r.target_name.endswith(":operator"), r.target_name
+                assert not r.source_id.endswith(":operator"), r.source_id
 
     def test_contains_edge_nested_attaches_to_parent_operator_chunk(self):
         chunks = _chunk_fixture()
@@ -287,6 +399,19 @@ class TestClassHierarchy:
         edge = _rel(glsl_top, RelationshipType.INHERITS, ":class:TOP")
         assert is_chunk_id(edge.target_name)
 
+    def test_network_root_instantiates_its_class_from_the_network_chunk(self):
+        chunks = _chunk_fixture()
+        network = next(c for c in chunks if c.chunk_type == "network")
+        edge = _rel(network, RelationshipType.INSTANTIATES, ":class:containerCOMP")
+        assert edge is not None
+
+    def test_class_instances_never_list_the_root_as_empty_name(self):
+        chunks = _chunk_fixture()
+        container = next(
+            c for c in chunks if c.chunk_type == "class" and c.name == "containerCOMP"
+        )
+        assert "instances: comp1" in container.content
+
     def test_operator_instantiates_its_class(self):
         chunks = _chunk_fixture()
         glsl1 = _by_name(chunks, "glsl1")
@@ -320,8 +445,13 @@ class TestChunkContent:
 
 
 class TestConfigGate:
-    def test_disabled_by_default_via_multi_language_chunker(self):
+    def test_disabled_by_default_via_multi_language_chunker(self, monkeypatch):
+        import search.config as sc
         from chunking.multi_language_chunker import MultiLanguageChunker
+
+        # Pin the *dataclass default*, not the developer's live search_config.json
+        # (which may already have the gate flipped on).
+        monkeypatch.setattr(sc, "get_chunking_config", lambda: sc.ChunkingConfig())
 
         mc = MultiLanguageChunker(root_path=str(FIXTURE_DIR))
         assert mc.is_supported(str(FIXTURE_PATH)) is False
