@@ -122,6 +122,36 @@ class TestCodeGraphStorage:
         assert node_data["is_target_name"] is True
         assert node_data.get("is_call_target") is True
 
+    def test_add_node_clears_phantom_flags_on_promotion(self, graph_storage):
+        """ADR-0062 C0: promoting a placeholder node (created by add_call_edge
+        for an unresolved callee) to a real chunk must clear the phantom-
+        marking flags, not merge over them. Before the fix, nx.add_node's
+        attribute-merge semantics left is_target_name/is_call_target=True on
+        the node forever, so is_phantom_node() kept reporting a real,
+        fully-indexed chunk as a phantom -- excluding it from PageRank/degree
+        centrality (ADR-0055)."""
+        from graph.schema import is_phantom_node
+
+        # An unresolved call creates "target_func" as a phantom placeholder.
+        graph_storage.add_call_edge("foo_id", "target_func", line_number=1)
+        node_data = graph_storage.get_node_data("target_func")
+        assert is_phantom_node(node_data) is True
+
+        # The real chunk for "target_func" is indexed later in the pass.
+        graph_storage.add_node(
+            chunk_id="target_func",
+            name="target_func",
+            chunk_type="function",
+            file_path="test.py",
+            language="python",
+        )
+
+        promoted_data = graph_storage.get_node_data("target_func")
+        assert is_phantom_node(promoted_data) is False
+        assert promoted_data.get("is_target_name") is None
+        assert promoted_data.get("is_call_target") is None
+        assert promoted_data["type"] == "function"
+
     def test_get_callers_by_symbol_name(self, graph_storage):
         """Test get_callers works with bare symbol name (not full chunk_id)."""
         # Setup: Multiple callers for same method

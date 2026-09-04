@@ -311,6 +311,19 @@ class CodeGraphStorage:
                 if not self._name_index[old_name]:
                     del self._name_index[old_name]
 
+            # Promoting a placeholder node (created by add_call_edge/
+            # add_relationship_edge for an unresolved target) to a real
+            # chunk. nx.Graph.add_node() merges attributes into the existing
+            # dict rather than replacing it, so the phantom-marking flags set
+            # at placeholder creation would otherwise survive promotion
+            # forever -- is_phantom_node() would keep reporting a real,
+            # fully-indexed chunk as a phantom, excluding it from
+            # PageRank/degree centrality (ADR-0055). Neither flag is ever
+            # passed through **kwargs by a real-chunk caller, so an explicit
+            # pop is required; a bare merge cannot clear them. See ADR-0062 C0.
+            self.graph.nodes[chunk_id].pop(NODE_ATTR_IS_TARGET_NAME, None)
+            self.graph.nodes[chunk_id].pop(NODE_ATTR_IS_CALL_TARGET, None)
+
         self.graph.add_node(
             chunk_id,
             name=name,
