@@ -991,6 +991,38 @@ class TestAnalyzeImpactCallsOnly(TestCase):
             {"src/target.py", "src/caller.py", "src/far.py"},
         )
 
+    def test_symmetric_relationship_lists_each_peer_once(self):
+        """shares_tag is stored as one edge per direction (TD chunker emits both),
+        so the same peer arrives once outbound and once inbound. It must appear
+        once in ``shares_tag_with``; a non-symmetric type is not touched."""
+        from graph.graph_queries import RelationshipEntry
+
+        peer_out = RelationshipEntry(
+            chunk_id=self.TAGGED,
+            relationship_type="shares_tag",
+            direction="outbound",
+            depth=1,
+            edge_data={"confidence": 1.0, "relationship_type": "shares_tag"},
+        )
+        inbound = [
+            _entry(self.TAGGED, "shares_tag", depth=1),
+            _entry(self.CONTAINER, "contains", depth=1),
+        ]
+        known = {
+            cid: _FakeResult(chunk_id=cid)
+            for cid in (self.TARGET, self.CONTAINER, self.TAGGED)
+        }
+        analyzer, searcher = _make_analyzer(
+            get_by_chunk_id_side_effect=lambda cid, **kw: known.get(cid)
+        )
+        searcher.find_similar_to_chunk.return_value = []
+        analyzer.graph_engine = _RecordingEngine(inbound, outbound=[peer_out])
+
+        rel = analyzer.analyze_impact(chunk_id=self.TARGET, max_depth=1).relationships
+
+        self.assertEqual([r["chunk_id"] for r in rel["shares_tag_with"]], [self.TAGGED])
+        self.assertEqual([r["chunk_id"] for r in rel["contained_by"]], [self.CONTAINER])
+
     def test_non_calls_edges_still_reach_their_typed_sections(self):
         analyzer, _ = self._analyzer(self._inbound())
         report = analyzer.analyze_impact(chunk_id=self.TARGET, max_depth=3)

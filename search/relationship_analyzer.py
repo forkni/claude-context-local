@@ -314,14 +314,22 @@ class RelationshipAnalyzer:
             for typed_entry in _fanout(entry):
                 if typed_entry.relationship_type == "calls":
                     continue
-                _, rev_field = field_mapping.get(
+                fwd_field, rev_field = field_mapping.get(
                     typed_entry.relationship_type, (None, None)
                 )
                 if not rev_field or rev_field not in result:
                     continue
                 enriched = self._enrich_reverse(typed_entry, _should_include)
-                if enriched is not None:
-                    result[rev_field].append(enriched)
+                if enriched is None:
+                    continue
+                # Symmetric relationships (fwd_field == rev_field, e.g. shares_tag)
+                # are stored as one edge per direction, so the same peer arrives
+                # once outbound and once inbound. Report each peer once.
+                if fwd_field == rev_field and enriched.get("chunk_id") in {
+                    e.get("chunk_id") for e in result[rev_field]
+                }:
+                    continue
+                result[rev_field].append(enriched)
 
         return result
 

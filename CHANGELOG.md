@@ -55,6 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bare name collided with any same-named Python symbol node — a TD operator called `Logger`
   inherited every caller of the Python `Logger` class. Python chunks keep their variants
   byte-identically.
+- **`find_connections`: symmetric relationships listed each peer twice.** The `.tdgraph.json`
+  chunker stores `shares_tag` as one edge per direction (so a spoke sees its peers directly, not
+  only via the exporter's per-tag hub), and `_build_graph_relationships` reported the outbound and
+  inbound copy separately — `shares_tag_with` on `Logger/Logger` showed 18 entries for 9 peers.
+  Types whose forward and reverse fields coincide are now deduplicated by peer chunk id; every
+  asymmetric section is untouched.
 - **`.tdgraph.json` chunker: `scripted_by` edges were silently dropped.** The real exporter emits
   them (`{type: scripted_by, src: <host op>, dst: <DAT>, par, via}` — 110 in the first export)
   but `_SIMPLE_EDGE_MAP` had no row, so each hit the "Unrecognized edge type" debug branch.
