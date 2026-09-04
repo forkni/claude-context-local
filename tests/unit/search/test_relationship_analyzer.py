@@ -872,3 +872,170 @@ class TestFilterAmbiguousEdges(TestCase):
 
         d = self._make_report_dict()
         self.assertEqual(filter_ambiguous_edges(d), d)
+
+
+# ---------------------------------------------------------------------------
+# Tests: analyze_impact caller lists are `calls`-edge only
+# ---------------------------------------------------------------------------
+
+
+class _RecordingEngine:
+    """Fake GraphQueryEngine: records every get_relationships call and returns
+    canned RelationshipEntry lists keyed on (direction, relation_types)."""
+
+    def __init__(self, inbound: list[Any], outbound: list[Any] | None = None):
+        self._inbound = inbound
+        self._outbound = outbound or []
+        self.calls: list[dict[str, Any]] = []
+        self.storage = MagicMock()
+        self.storage.get_nodes_by_name.return_value = []
+
+    def get_stats(self) -> dict[str, Any]:
+        return {}
+
+    def get_direct_successors(self, chunk_id: str) -> list[str]:
+        return []
+
+    def get_relationships(
+        self,
+        chunk_id: str,
+        direction: str = "both",
+        relation_types: list[str] | None = None,
+        max_depth: int = 1,
+    ) -> list[Any]:
+        self.calls.append(
+            {
+                "chunk_id": chunk_id,
+                "direction": direction,
+                "relation_types": relation_types,
+                "max_depth": max_depth,
+            }
+        )
+        pool = self._inbound if direction == "inbound" else self._outbound
+        return [
+            e
+            for e in pool
+            if e.depth <= max_depth
+            and (relation_types is None or e.relationship_type in relation_types)
+        ]
+
+
+def _entry(chunk_id: str, rtype: str, depth: int = 1, confidence: str = "exact"):
+    from graph.graph_queries import RelationshipEntry
+
+    return RelationshipEntry(
+        chunk_id=chunk_id,
+        relationship_type=rtype,
+        direction="inbound",
+        depth=depth,
+        edge_data={"confidence": confidence, "relationship_type": rtype},
+    )
+
+
+class TestAnalyzeImpactCallsOnly(TestCase):
+    """direct_callers / indirect_callers must contain only `calls` edges; every
+    other inbound type stays in its typed `relationships` section.
+
+    Regression for the first real TouchDesigner export, where an operator's
+    contains/docked_to/shares_tag neighbours all showed up as exact callers.
+    """
+
+    TARGET = "src/target.py:10-20:function:target"
+    CALLER = "src/caller.py:1-5:function:caller"
+    CONTAINER = "src/net.py:1-99:network:Net"
+    TAGGED = "src/peer.py:1-5:function:peer"
+    INDIRECT = "src/far.py:1-5:function:far"
+
+    def _analyzer(self, inbound: list[Any]):
+        known = {
+            cid: _FakeResult(chunk_id=cid)
+            for cid in (
+                self.TARGET,
+                self.CALLER,
+                self.CONTAINER,
+                self.TAGGED,
+                self.INDIRECT,
+            )
+        }
+        analyzer, searcher = _make_analyzer(
+            get_by_chunk_id_side_effect=lambda cid, **kw: known.get(cid)
+        )
+        searcher.find_similar_to_chunk.return_value = []
+        engine = _RecordingEngine(inbound)
+        analyzer.graph_engine = engine
+        return analyzer, engine
+
+    def _inbound(self) -> list[Any]:
+        return [
+            _entry(self.CALLER, "calls", depth=1),
+            _entry(self.CONTAINER, "contains", depth=1),
+            _entry(self.TAGGED, "shares_tag", depth=1),
+            _entry(self.INDIRECT, "calls", depth=2),
+        ]
+
+    def test_non_calls_inbound_edges_are_not_callers(self):
+        analyzer, _ = self._analyzer(self._inbound())
+        report = analyzer.analyze_impact(chunk_id=self.TARGET, max_depth=3)
+
+        self.assertEqual([c["chunk_id"] for c in report.direct_callers], [self.CALLER])
+        self.assertEqual(
+            [c["chunk_id"] for c in report.indirect_callers], [self.INDIRECT]
+        )
+        self.assertEqual(report.direct_callers_exact, 1)
+        self.assertEqual(report.direct_callers_recovered, 0)
+        self.assertEqual(report.direct_callers_ambiguous, 0)
+        # similar_code is empty here → total = direct + indirect only
+        self.assertEqual(report.total_impacted, 2)
+        self.assertEqual(
+            report.unique_files,
+            {"src/target.py", "src/caller.py", "src/far.py"},
+        )
+
+    def test_non_calls_edges_still_reach_their_typed_sections(self):
+        analyzer, _ = self._analyzer(self._inbound())
+        report = analyzer.analyze_impact(chunk_id=self.TARGET, max_depth=3)
+
+        rel = report.relationships
+        self.assertEqual([r["chunk_id"] for r in rel["contained_by"]], [self.CONTAINER])
+        self.assertEqual([r["chunk_id"] for r in rel["shares_tag_with"]], [self.TAGGED])
+
+    def test_caller_query_is_filtered_and_typed_query_is_one_hop(self):
+        analyzer, engine = self._analyzer(self._inbound())
+        analyzer.analyze_impact(chunk_id=self.TARGET, max_depth=3)
+
+        inbound_calls = [c for c in engine.calls if c["direction"] == "inbound"]
+        self.assertEqual(len(inbound_calls), 2)
+        caller_q = next(c for c in inbound_calls if c["relation_types"] is not None)
+        typed_q = next(c for c in inbound_calls if c["relation_types"] is None)
+        self.assertEqual(caller_q["relation_types"], ["calls"])
+        self.assertEqual(caller_q["max_depth"], 3)
+        self.assertEqual(typed_q["max_depth"], 1)
+
+    def test_only_non_calls_inbound_gives_empty_caller_lists(self):
+        """The TD-operator shape: every inbound edge is structural, none are calls."""
+        analyzer, _ = self._analyzer(
+            [
+                _entry(self.CONTAINER, "contains", depth=1),
+                _entry(self.TAGGED, "shares_tag", depth=1),
+            ]
+        )
+        report = analyzer.analyze_impact(chunk_id=self.TARGET, max_depth=3)
+
+        self.assertEqual(report.direct_callers, [])
+        self.assertEqual(report.indirect_callers, [])
+        self.assertEqual(report.total_impacted, 0)
+        self.assertEqual(report.direct_callers_exact, 0)
+        self.assertEqual(len(report.relationships["contained_by"]), 1)
+
+    def test_ambiguous_calls_edge_survives_and_is_counted(self):
+        inbound = self._inbound() + [
+            _entry(self.TAGGED, "calls", depth=1, confidence="ambiguous")
+        ]
+        analyzer, _ = self._analyzer(inbound)
+        report = analyzer.analyze_impact(chunk_id=self.TARGET, max_depth=3)
+
+        by_id = {c["chunk_id"]: c for c in report.direct_callers}
+        self.assertEqual(set(by_id), {self.CALLER, self.TAGGED})
+        self.assertEqual(by_id[self.TAGGED]["confidence"], "ambiguous")
+        self.assertEqual(report.direct_callers_exact, 1)
+        self.assertEqual(report.direct_callers_ambiguous, 1)

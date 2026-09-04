@@ -88,6 +88,8 @@ _SIMPLE_EDGE_MAP: dict[str, tuple[RelationshipType, tuple[str, ...]]] = {
     "bind": (RelationshipType.BINDS_TO, ("par",)),
     "export": (RelationshipType.EXPORTS_TO, ("par",)),
     "shortcut_ref": (RelationshipType.REFERENCES_OP, ("shortcut",)),
+    # host op -> the DAT that scripts it (par="callbacks"|"op"|..., via="callbacks"|"execute")
+    "scripted_by": (RelationshipType.SCRIPTED_BY, ("par", "via")),
 }
 
 

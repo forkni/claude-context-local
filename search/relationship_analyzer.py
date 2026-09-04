@@ -81,7 +81,9 @@ class RelationshipAnalyzer:
             symbol_name: Symbol name (requires search, may be ambiguous).
             max_depth: Maximum depth for caller traversal.
             exclude_dirs: Directories to exclude.
-            relationship_types: Edge types to include; None = all.
+            relationship_types: Edge types to include in the typed
+                ``relationships`` sections; None = all. The caller/callee
+                lists are always ``calls``-edge only.
 
         Returns:
             ImpactReport with structured impact data.
@@ -103,18 +105,24 @@ class RelationshipAnalyzer:
         )
         symbol_info = self._extract_symbol_info(target_result, target_id, symbol_name)
 
-        # Step 2+3: inbound callers up to max_depth
+        # Step 2+3: inbound `calls` edges up to max_depth → callers.
+        # Only real call edges qualify; contains/docked_to/inherits/... neighbours
+        # are surfaced in their typed `relationships` sections (Step 5), never as
+        # callers. The outbound side (Step 5b) applies the same rule.
         stale_count = 0
         exact_d = recovered_d = ambiguous_d = 0
         direct_callers: list[dict[str, Any]] = []
         indirect_callers: list[dict[str, Any]] = []
 
         if self.graph_engine:
-            inbound = self.graph_engine.get_relationships(
-                target_id, direction="inbound", max_depth=max_depth
+            inbound_calls = self.graph_engine.get_relationships(
+                target_id,
+                direction="inbound",
+                relation_types=["calls"],
+                max_depth=max_depth,
             )
-            direct_raw = [e for e in inbound if e.depth == 1]
-            indirect_raw = [e for e in inbound if e.depth > 1]
+            direct_raw = [e for e in inbound_calls if e.depth == 1]
+            indirect_raw = [e for e in inbound_calls if e.depth > 1]
 
             enriched_direct, stale_d, exact_d, recovered_d, ambiguous_d = (
                 self._enrich_callers(direct_raw, exclude_dirs)
@@ -125,13 +133,13 @@ class RelationshipAnalyzer:
             direct_callers = self._dedup_and_sort_edges(enriched_direct)
             indirect_callers = self._dedup_and_sort_edges(enriched_indirect)
             stale_count = stale_d + stale_i
-        else:
-            inbound = []
 
         # Step 4: semantically similar code
         similar_code = self._find_similar(target_id, exclude_dirs)
 
-        # Step 5: graph relationships (inheritance, type usage, imports, …)
+        # Step 5: graph relationships (inheritance, type usage, imports, …) —
+        # every edge type, one hop, both directions. Queried separately from the
+        # calls-only caller traversal above.
         graph_relationships: dict[str, list[dict[str, Any]]] = {}
         direct_callees: list[dict[str, Any]] = []
         exact_ce = recovered_ce = ambiguous_ce = 0
@@ -139,9 +147,9 @@ class RelationshipAnalyzer:
             outbound = self.graph_engine.get_relationships(
                 target_id, direction="outbound", max_depth=1
             )
-            inbound_1hop = [
-                e for e in (inbound if self.graph_engine else []) if e.depth == 1
-            ]
+            inbound_1hop = self.graph_engine.get_relationships(
+                target_id, direction="inbound", max_depth=1
+            )
             graph_relationships = self._build_graph_relationships(
                 target_id, inbound_1hop, outbound, exclude_dirs
             )
@@ -416,7 +424,7 @@ class RelationshipAnalyzer:
         entry: RelationshipEntry,
         should_include: Any,
     ) -> dict[str, Any] | None:
-        """Enrich an inbound RelationshipEntry with metadata from the searcher."""
+        """Enrich an inbound (non-`calls`) RelationshipEntry from the searcher."""
         source = entry.chunk_id
         edge_data = entry.edge_data
         line = edge_data.get("line_number") or edge_data.get("line", 0)
@@ -456,7 +464,7 @@ class RelationshipAnalyzer:
         entries: list[RelationshipEntry],
         exclude_dirs: list[str] | None,
     ) -> tuple[list[dict[str, Any]], int, int, int, int]:
-        """Convert inbound RelationshipEntry objects to enriched caller dicts.
+        """Convert inbound `calls` RelationshipEntry objects to caller dicts.
 
         On exact lookup miss, retries via the Tier 1→2 symbol-resolution cascade
         (_resolve_by_symbol) instead of silently discarding graph-found callers.

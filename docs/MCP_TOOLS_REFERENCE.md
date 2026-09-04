@@ -904,9 +904,12 @@ Server startup:              0 MB VRAM (lazy loading)
 
 **Output Includes**:
 
-- **Direct callers**: Functions that call this symbol (inbound edges)
-- **Direct callees**: Functions this symbol calls (outbound edges, v0.14.0+)
-- **Indirect callers**: Multi-hop call chains (depth 1-N)
+- **Direct callers**: Functions that call this symbol (inbound `calls` edges only)
+- **Direct callees**: Functions this symbol calls (outbound `calls` edges only, v0.14.0+)
+- **Indirect callers**: Multi-hop call chains (depth 1-N, `calls` edges only)
+- **Typed relationships**: Every other edge type (`inherits`, `imports`, `uses_type`, `contains`,
+  `docked_to`, `shares_tag`, …) appears only in its own `relationships` section, never in the
+  caller/callee lists or in `total_impacted`
 - **Similar code**: Semantically related implementations
 - **Impact severity**: Low/Medium/High based on caller count
 - **Dependency graph**: DOT-format graph for visualization

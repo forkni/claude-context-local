@@ -219,6 +219,23 @@ class TestEdgeTypeMapping:
     """One assertion per .tdgraph.json edge type, cross-checked against the
     fixture's literal edge list (see the module docstring)."""
 
+    def test_scripted_by_edge_maps_to_scripted_by(self, caplog):
+        """fixture: {type: scripted_by, src: comp1, dst: info1, par: callbacks,
+        via: callbacks}. Exporter-native direction (host op -> DAT)."""
+        import logging
+
+        with caplog.at_level(logging.DEBUG, logger="chunking.td_network_chunker"):
+            chunks = _chunk_fixture()
+        comp1 = _by_name(chunks, "comp1")
+        info1 = _by_name(chunks, "info1")
+        edge = _rel(comp1, RelationshipType.SCRIPTED_BY, ":operator:info1")
+        assert edge is not None
+        assert edge.target_name == info1.chunk_id
+        assert edge.metadata["td_edge_type"] == "scripted_by"
+        assert edge.metadata["par"] == "callbacks"
+        assert edge.metadata["via"] == "callbacks"
+        assert "'scripted_by'" not in caplog.text  # not the "Unrecognized" branch
+
     def test_wire_edge_maps_to_wires_to_with_metadata(self):
         chunks = _chunk_fixture()
         grid1 = _by_name(chunks, "comp1/grid1")

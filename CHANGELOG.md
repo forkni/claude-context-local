@@ -17,9 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `search_code`, `find_connections`, and `find_path` work over TD operators, their scripts, and the
   `td` class hierarchy the same way they work over Python symbols. 8 new `RelationshipType` members
   (`wires_to`, `docked_to`, `contains`, `references_op`, `binds_to`, `exports_to`, `scripted_by`,
-  `shares_tag`); `scripted_by` is defined but currently unused — the real Part B exporter
-  (`TD_Glossary_tox/Scripts/dat_NetworkGraphExt.py`) never records a companion external file for a
-  scripted operator, so there is nothing to point the edge at (see ADR-0062's C6 section). Gated
+  `shares_tag`). Gated
   behind `ChunkingConfig.enable_td_network_indexing` (`search_config.json`, default `False`) —
   inert on every existing indexed project, including this repo's own self-index, until a project
   opts in.
@@ -36,6 +34,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`find_connections`: `direct_callers`/`indirect_callers` are now `calls`-edge lists only.**
+  `RelationshipAnalyzer.analyze_impact` fed every inbound edge type into the caller lists (and
+  into `caller_confidence`/`total_impacted`), so on a TouchDesigner operator chunk its `contains`/
+  `docked_to`/`shares_tag`/`instantiates` neighbours all appeared as "callers" tagged
+  `confidence: "exact"` — eleven phantom callers on `Logger/Logger` in the first real export.
+  Python chunks were affected the same way whenever `inherits`/`imports`/`uses_type` edges pointed
+  at them; it only looked like a call graph because those are rare. The caller traversal now
+  passes `relation_types=["calls"]` (mirroring the existing outbound-callee filter) and the typed
+  `relationships` sections get their own one-hop all-types inbound query, so `contained_by`,
+  `docked_by`, `shares_tag_with`, etc. are unchanged. Legacy untyped edges still normalise to
+  `calls` in `CodeGraphStorage.get_edge_data`, so old-format call edges are not dropped.
+  Known looseness left as-is: `GraphQueryEngine._traverse_inbound` still *expands* through
+  non-matching edges, so a depth-2 indirect caller can be reached via a non-`calls` hop; the
+  reported edge itself is always a real `calls` edge.
+- **`.tdgraph.json` chunker: `scripted_by` edges were silently dropped.** The real exporter emits
+  them (`{type: scripted_by, src: <host op>, dst: <DAT>, par, via}` — 110 in the first export)
+  but `_SIMPLE_EDGE_MAP` had no row, so each hit the "Unrecognized edge type" debug branch.
+  Added `"scripted_by" → RelationshipType.SCRIPTED_BY` with `par`/`via` metadata, exporter-native
+  direction. Index-time change: re-chunk the graph file (re-export in TD, or force reindex) to see
+  the edges. Fixture gains one `scripted_by` edge (`edge_count` 38).
 - **`.tdgraph.json` chunker: real line spans and no nameless root id** (ADR-0062 follow-up, found
   on the first real TouchDesigner export). Operator/class/network spans are now derived from the
   JSON file's own element positions (`TDNetworkChunker._json_element_spans`) instead of the

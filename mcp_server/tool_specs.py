@@ -735,7 +735,10 @@ WHEN TO USE:
 - Finding all code connected to a symbol
 - Impact assessment for breaking changes
 
-RETURNS:
+RETURNS (direct_callers / indirect_callers / direct_callees are `calls`-edge
+lists only; every other inbound/outbound relationship type — inherits, imports,
+uses_type, contains, docked_to, shares_tag, ... — appears solely in its typed
+`relationships` section):
 - direct_callers: list of chunks that call this symbol, each with
     - chunk_id, file, start/end lines, symbol info
     - confidence: "exact" | "recovered" | "ambiguous"

@@ -145,12 +145,22 @@ plan doc above):
    at. Reopening condition: only if Part B ever adds a real external-file field (e.g. a TD "Sync to
    File" DAT integration) would this become buildable; until then it is not a config gap or a bug,
    it is a feature with no data source.
+
+   **Update 2026-09-04 — same-file `scripted_by` is live.** The above concerns *cross-file*
+   `SCRIPTED_BY` (operator → external `.py` module chunk), which stays unbuildable. The exporter
+   does, however, emit an in-network `scripted_by` edge (`{type: scripted_by, src: <host op>,
+   dst: <DAT>, par: "callbacks"|"op"|…, via: "callbacks"|"execute"}` — 110 of them in the first
+   SDTD_040 export, e.g. `timer_stream → timer1_callbacks`), and `_SIMPLE_EDGE_MAP` had no row for
+   it, so every one was skipped as "Unrecognized edge type". It is now mapped to
+   `RelationshipType.SCRIPTED_BY` in exporter-native direction (host op → DAT chunk) with `par`/`via`
+   metadata; `find_connections` on the host shows `scripted_by`, on the DAT `scripts`.
 7. **C7 — MCP schema + docs** updated for the two new chunk types.
 
 Not built: `docs/CALL_GRAPH_TUNING.md` changes (it holds only a resolver table — nothing there
 describes chunk types or relationship types), any `document_composer.compose` branch (it switches on
 policy flags, never `chunk_type`; a JSON file already composes to `""` harmlessly), and C6's
-cross-file `SCRIPTED_BY` edge emission (see above — no data source in the real exporter).
+*cross-file* `SCRIPTED_BY` edge emission (see above — no data source in the real exporter; the
+in-network `scripted_by` edge is mapped since 2026-09-04).
 
 ## Consequences
 

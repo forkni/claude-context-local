@@ -739,8 +739,14 @@ def test_analyze_impact_dedups_and_sorts_indirect_callers(
         ),
     ]
 
-    def _get_relationships(chunk_id, direction, max_depth=1):
-        return indirect_entries if direction == "inbound" else []
+    def _get_relationships(chunk_id, direction, relation_types=None, max_depth=1):
+        # Both entries are `calls` edges, so they pass the caller-list filter;
+        # the 1-hop typed-section query (max_depth=1) sees no depth-1 entries.
+        return (
+            [e for e in indirect_entries if e.depth <= max_depth]
+            if direction == "inbound"
+            else []
+        )
 
     mock_graph_engine.get_relationships.side_effect = _get_relationships
 

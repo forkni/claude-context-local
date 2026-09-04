@@ -229,6 +229,7 @@
     {"type": "script_ref", "src": "/project1/Test_network/info1", "dst": "/project1/Test_network/noise1", "target": "/project1/Test_network/noise1", "kind": "op_call", "line": 3, "col": 8},
     {"type": "shortcut_ref", "src": "/project1/Test_network/info1", "dst": "/project1/Test_network/ctrl1", "shortcut": "Ctrl"},
     {"type": "shortcut_ref", "src": "/project1/Test_network/info1", "dst": "/project1/Test_network/glsl1", "shortcut": "GLSL1"},
+    {"type": "scripted_by", "src": "/project1/Test_network/comp1", "dst": "/project1/Test_network/info1", "par": "callbacks", "via": "callbacks"},
     {"type": "replicator", "src": "/project1/Test_network/rep1", "dst": "/project1/Test_network/rep1/item1"},
     {"type": "shared_tag", "src": "/project1/Test_network", "dst": "/project1/Test_network/comp1", "tag": "ui"},
     {"type": "shared_tag", "src": "/project1/Test_network/comp1", "dst": "/project1/Test_network/ctrl1", "tag": "comp"},
@@ -297,7 +298,7 @@
   ],
   "stats": {
     "node_count": 15,
-    "edge_count": 37,
+    "edge_count": 38,
     "class_count": 8,
     "family_counts": {"CHOP": 4, "COMP": 5, "DAT": 2, "SOP": 2, "TOP": 2},
     "isolated_nodes": []
