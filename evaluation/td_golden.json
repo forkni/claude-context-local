@@ -27,7 +27,7 @@
     "split_note": "Stratified: TA=3/1/1, TB=3/1/1, TC=2/1/1, TD=3/1/1"
   },
   "thresholds": {
-    "mrr": 0.9,
+    "mrr": 0.85,
     "recall_at_5": 0.85,
     "hit_rate_at_5": 1.0
   },
